@@ -6,6 +6,7 @@ import flopy.utils.binaryfile as bf
 from pathlib import Path
 import plotly.graph_objs as go
 import geopandas as gpd
+import mf2Dplots
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -224,21 +225,36 @@ class HeadsPlus(bf.HeadFile):
         if zmin is None:
             zmin = choro_dict[choro_key].min()
 
-        chorobox = go.Choroplethmapbox(
+        fig_mbox = mf2Dplots.ChoroplethPlot()
+        vor_list = self.vor.gdf_vorPolys.geometry.to_list()
+        cell_list = [i for i in range(len(vor_list))]
+        head_list = self.all_heads.loc[stp_per_to_plot, :]['elev'].to_list()
+        area_list = [cell.area for cell in vor_list]
+        x_list = [cell.centroid.xy[0][0] for cell in vor_list]
+        y_list = [cell.centroid.xy[1][0] for cell in vor_list]
+        custom_data, hover_template = fig_mbox.create_hover(
+            {
+                'Cell No.': cell_list,
+                'Head': head_list,
+                'Area': area_list,
+                'x': x_list,
+                'y': y_list
+            }
+        )
+        fig_mbox.add_choroplethmapbox(
             geojson=vor.latslons,
             featureidkey="id",
             locations=vor.gdf_latlon.cell.to_list(),
             z=choro_dict[choro_key],
             hoverinfo="text",
+            hovertemplate=hover_template,
+            customdata=custom_data,
             text=choro_dict[choro_key],
             colorscale="earth",
             zmax=zmax,
             zmin=zmin,
         )
-        fig_mbox = go.Figure(
-            data=chorobox,
-            layout=self.fig_layout
-        )
+
         fig_mbox.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
             mapbox_style="carto-positron",

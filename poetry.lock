@@ -824,6 +824,17 @@ pyproj = ">=3.3.0"
 shapely = ">=1.8.0"
 
 [[package]]
+name = "grass-session"
+version = "0.5"
+description = "GRASS GIS session utilities"
+optional = false
+python-versions = "*"
+files = [
+    {file = "grass-session-0.5.tar.gz", hash = "sha256:7155314535790145da8e2e31b0d20cd2be91477d54083a738b5c319164e7f03b"},
+    {file = "grass_session-0.5-py2.py3-none-any.whl", hash = "sha256:ce03a53e28cc14bc7fff91482e83ed4f174a1325732c4333ed183dd15de39f8d"},
+]
+
+[[package]]
 name = "idna"
 version = "3.4"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -2905,4 +2916,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "5d00b362fb1f18a1474b7a164932cda99644ebf40117c740fefc83af96259906"
+content-hash = "f9888dea90ff2044ce14df97279e0d0e87797377e2a7512982d92d3907e75b63"

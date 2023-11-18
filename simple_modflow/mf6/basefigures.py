@@ -1,5 +1,7 @@
 import plotly.graph_objs as go
 import plotly.subplots as subplots
+import plotly
+
 
 class MfBaseFigure(go.Figure):
     def __init__(self):
@@ -39,6 +41,36 @@ class MfBaseFigure(go.Figure):
         self._template = go.layout.Template(layout=self._template_layout)
         self.layout = go.Layout(template=self._template)
 
-    def show(self, *args, **kwargs):
-        super().show(config=self._config, renderer='browser', *args, **kwargs)
+    def show(self, renderer='browser', *args, **kwargs):
+        super().show(config=self._config, renderer=renderer, *args, **kwargs)
 
+    @staticmethod
+    def create_hover(name_list: dict = None):
+        """
+        Function to return a hover template for a Plotly figure
+        :return: hovertemplate
+        """
+        names = list(name_list.keys())
+        lists = list(name_list.values())
+        list_len = len(lists[0])
+        custom_data = []
+
+        for i in range(list_len):
+            this_list = [param[i] for param in lists]
+            custom_data.append(this_list)
+
+        hover_template_list = [
+            f'<b>{name}: </b>%{{customdata[{i}]}}<br>' for i, name in enumerate(names)
+        ]
+        hover_template_list.append('<extra></extra>')
+        hover_template = ''.join(hover_template_list)
+
+        return custom_data, hover_template
+
+if __name__ == "__main__":
+
+    d = {'model': [1, 2, 3], 'version': [4, 5, 6], 'user': [7, 8, 9]}
+    fig = MfBaseFigure()
+    hover = fig.create_hover(d)
+    print(hover[0])
+    print(hover[1])

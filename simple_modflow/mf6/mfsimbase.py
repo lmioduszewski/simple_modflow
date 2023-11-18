@@ -83,13 +83,13 @@ class DisuGrid:
         if top is None:
             try:
                 top = vor.gdf_topbtm["top"].to_list()
-            except:
-                top = 10
+            except ValueError:
+                print('no top in voronoi grid. cannot find top')
         if bottom is None:
             try:
                 bottom = vor.gdf_topbtm["bottom"].to_list()
-            except:
-                bottom = 0
+            except ValueError:
+                print('no bottom in voronoi grid. cannot find bottom')
         grid_props = vor.get_disv_gridprops()
         self.disu = flopy.mf6.ModflowGwfdisu(
             model.gwf,

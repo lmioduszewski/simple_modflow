@@ -213,6 +213,12 @@ class WaterLevelPlot(MfBaseFigure):
         return precip_fig
 
 
+class ChoroplethPlot(MfBaseFigure):
+
+    def __init__(self, ):
+        super().__init__()
+
+
 if __name__ == "__main__":
     date_range = pd.date_range('2021.10.1','2022.04.01')
     start_day = pd.to_datetime('2021.10.01')

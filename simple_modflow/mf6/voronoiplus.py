@@ -13,11 +13,11 @@ from shapely.geometry import LineString
 from shapely.geometry import Polygon, MultiLineString, Point
 import json
 from pathlib import Path
+import mf2Dplots
 
 
 def flatten(l):
     return [item for sublist in l for item in sublist]
-
 
 class TriangleGrid(Triangle):
 
@@ -30,15 +30,17 @@ class TriangleGrid(Triangle):
             center_coords: tuple = (0, 0),
             polygon_to_add=None,
             point_to_add=None,
-            point_region_size_max=1
+            point_region_size_max=1,
+            return_only: bool = False,
+            radians_step: int = 0.1
     ):
         """Create a circular grid. Center coords must be a single (x,y) tuple."""
-        theta = np.arange(0.0, 2 * np.pi, 0.2)
-        radius = radius
+        theta = np.arange(0.0, 2 * np.pi, radians_step)
         x = radius * np.cos(theta) + center_coords[0]
         y = radius * np.sin(theta) + center_coords[1]
         circle_poly = [(x, y) for x, y in zip(x, y)]
-        self.add_polygon(circle_poly)
+        if not return_only:
+            self.add_polygon(circle_poly)
 
         if polygon_to_add:
             polygon_to_add = Polygon(shell=polygon_to_add)
@@ -46,18 +48,24 @@ class TriangleGrid(Triangle):
         if point_to_add:
             self.add_region(point=point_to_add, maximum_area=point_region_size_max)
 
+        return circle_poly
+
     def add_rectangle(
             self,
-            x_dist=1000,
-            y_dist=1000,
-            origin=(0, 0)
+            x_dist=100,
+            y_dist=100,
+            origin=(0, 0),
+            return_only = False
     ):
         x_min, y_min = origin[0], origin[1]
         x_max, y_max = x_min + x_dist, y_min + y_dist
         polygon_coords = ((x_min, y_min), (x_min, y_max),
                           (x_max, y_max), (x_max, y_min))
         polygon = shp.Polygon(polygon_coords)
-        self.add_polygon(polygon)
+        if not return_only:
+            self.add_polygon(polygon)
+
+        return polygon
 
     def add_regions(self, points, attributes=None, maximum_areas=None):
         """
@@ -120,12 +128,14 @@ class VoronoiGridPlus(VoronoiGrid):
         self._ja, self._cl12, self._hwva = None, None, None
         self.centroids_x, self.centroids_y = self.get_centroids()
 
+        print('Getting SciPy voronoi grid')
         self.vor_scipy = Voronoi(self.tri.verts)
         self.scipy_points = self.vor_scipy.points
         self.scipy_ridge_points = self.vor_scipy.ridge_points
         self.scipy_ridge_vertices = self.vor_scipy.ridge_vertices
         self.scipy_verts = self.vor_scipy.vertices
         self.scipy_regions = self.vor_scipy.regions
+        print('Got SciPy voronoi grid')
 
         self.config = {
             'scrollZoom': True,
@@ -158,7 +168,9 @@ class VoronoiGridPlus(VoronoiGrid):
         self.gdf_latlon = None
         self.latslons = None
         if self.crs is not None:
+            print('getting lats and lons')
             self.get_latslons()  # generate json of grid and save to self
+            print('got lats and lons')
         self.grid_centroid = self.get_grid_centroid()
 
     @property
@@ -283,22 +295,31 @@ class VoronoiGridPlus(VoronoiGrid):
         if zmin is None:
             zmin = 0
 
-        chorobox = go.Choroplethmapbox(
+        fig_mbox = mf2Dplots.ChoroplethPlot()
+
+        vor_list = self.gdf_vorPolys.geometry.to_list()
+        cell_list = [i for i in range(len(vor_list))]
+        area_list = [cell.area for cell in vor_list]
+        x_list = [cell.centroid.xy[0][0] for cell in vor_list]
+        y_list = [cell.centroid.xy[1][0] for cell in vor_list]
+        custom_data, hover_template = fig_mbox.create_hover(
+            {
+                'Cell No.': cell_list,
+                'Area': area_list,
+                'x': x_list,
+                'y': y_list
+            }
+        )
+        fig_mbox.add_choroplethmapbox(
             geojson=self.latslons,
             featureidkey="id",
             locations=self.gdf_latlon.cell.to_list(),
             z=self.gdf_latlon.cell.to_list(),
-            customdata=self.gdf_vorPolys['geometry'].area.to_list(),
-            text=self.gdf_latlon.cell.to_list(),
+            customdata=custom_data,
             colorscale="earth",
             zmax=zmax,
             zmin=zmin,
-            hovertemplate="<b>Cell No.: </b>%{text}<br>" +
-                          "<b>Area</b>: %{customdata:.2f}" +  # add area
-                          "<extra></extra>"  # remove other info at the end of hover label
-        )
-        fig_mbox = go.Figure(
-            data=chorobox
+            hovertemplate=hover_template
         )
         fig_mbox.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
@@ -336,7 +357,14 @@ class VoronoiGridPlus(VoronoiGrid):
             overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries = None,
             predicate: str = 'covered_by'
     ):
-
+        """
+        Compares given geometries to the voronoi polygon geometries and returns
+        cells that math the given predicate (as defined by GeoPandas spatial query).
+        :param overlapping_geometry: Geometry to compare to voronoi gird, can be a
+        shapely polygon, point, or a GeoSeries
+        :param predicate: options defined by GeoPandas spatial index query
+        :return: Pandas Series of intersecting cells
+        """
         if isinstance(overlapping_geometry, (shp.Polygon, shp.Point)):
             print('ok')
 
@@ -370,7 +398,7 @@ class VoronoiGridPlus(VoronoiGrid):
         """Method to show selected cells of the voronoi grid.
         Just provide a list of cell indices."""
 
-        choro = self.map_nodes()
+        choro = self.plot_choropleth()
         choro.data[0].selectedpoints = (tuple(cell_list))
 
         return go.Figure(choro)
@@ -633,44 +661,6 @@ class VoronoiGridPlus(VoronoiGrid):
         length = intersection.length
         return length
 
-    def get_centroid_elevations(self, elevations_files: list, labels: list):
-        n_rasters = len(elevations_files)
-
-        # Open the elevations raster files
-        srcs = []
-        for i in range(n_rasters):
-            srcs.append(rasterio.open(elevations_files[i]))
-        # Get the elevations for each raster file as a numpy array
-        elevations = []
-        for i in range(n_rasters):
-            elevations.append(srcs[i].read(1))
-
-        # Create a function to get the elevation at a point for each raster file
-        def get_elevations(x, y):
-            elevs = []
-            for i in range(n_rasters):
-                row, col = srcs[i].index(x, y)
-                elev = elevations[i][row-1, col-1]  # subtract 1 so rows and cols start at zero, else Python error
-                elevs.append(elev)
-            return tuple(elevs)
-
-        # Get the centroids of the polygons as a geodataframe
-        centroids_gdf = self.gdf_vorPolys.copy()
-        centroids_gdf.geometry = centroids_gdf.centroid
-        # Get the elevation at each centroid for each raster file
-        for i in range(n_rasters):
-            label = labels[i]
-            centroids_gdf[label] = centroids_gdf.apply(
-                lambda row: (get_elevations(
-                    row.geometry.x, row.geometry.y)[i]
-                ), axis=1
-            )
-        # Close the raster files
-        for i in range(n_rasters):
-            srcs[i].close()
-
-        return centroids_gdf
-
     def get_gdf_vorPolys(self, crs=None):
         vertices_by_cells = []
         xvertices_by_cells = []
@@ -718,7 +708,46 @@ class VoronoiGridPlus(VoronoiGrid):
             if top_botm_diff[i] < 0:
                 print(f'{i} is bad. Setting bottom to 1 foot below top')
                 gdf_topbtm.loc[i, 'bottom'] = gdf_topbtm.loc[i, 'top'] - 1
+            gdf_topbtm.loc[i, 'diff'] = top_botm_diff[i]
         return gdf_topbtm
+
+    def get_centroid_elevations(self, elevations_files: list, labels: list):
+        n_rasters = len(elevations_files)
+
+        # Open the elevations raster files
+        srcs = []
+        for i in range(n_rasters):
+            srcs.append(rasterio.open(elevations_files[i]))
+        # Get the elevations for each raster file as a numpy array
+        elevations = []
+        for i in range(n_rasters):
+            elevations.append(srcs[i].read(1))
+
+        # Create a function to get the elevation at a point for each raster file
+        def get_elevations(x, y):
+            elevs = []
+            for i in range(n_rasters):
+                row, col = srcs[i].index(x, y)
+                elev = elevations[i][row-1, col-1]  # subtract 1 so rows and cols start at zero, else Python error
+                elevs.append(elev)
+            return tuple(elevs)
+
+        # Get the centroids of the polygons as a geodataframe
+        centroids_gdf = self.gdf_vorPolys.copy()
+        centroids_gdf.geometry = centroids_gdf.centroid
+        # Get the elevation at each centroid for each raster file
+        for i in range(n_rasters):
+            label = labels[i]
+            centroids_gdf[label] = centroids_gdf.apply(
+                lambda row: (get_elevations(
+                    row.geometry.x, row.geometry.y)[i]
+                ), axis=1
+            )
+        # Close the raster files
+        for i in range(n_rasters):
+            srcs[i].close()
+
+        return centroids_gdf
 
     def get_cell_areas(self):
         print('getting cell areas')
@@ -942,6 +971,7 @@ class VoronoiGridPlus(VoronoiGrid):
         elevation_data = np.zeros((height, width), dtype=rasterio.float32)
 
         # Calculate the elevation values
+        print('getting elevations for raster')
         for row in range(height):
             for col in range(width):
                 # Calculate the position of the current pixel
@@ -955,6 +985,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
                 # Set the elevation value in the raster array
                 elevation_data[row, col] = elevation
+        print('got raster from strike and dip')
 
         # Write the raster to a file
         with rasterio.open(

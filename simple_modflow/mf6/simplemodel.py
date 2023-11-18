@@ -11,6 +11,7 @@ import mfsimbase as mf
 
 
 class SimpleModel(mf.SimulationBase):
+    """Class for a simple modflow model for quick results and analysis."""
 
     def __init__(
             self,
@@ -20,7 +21,8 @@ class SimpleModel(mf.SimulationBase):
             k: int = 100,
             top=None,
             bottom=None,
-            rch_dict: dict = None
+            rch_dict: dict = None,
+            boundary_conductance: int = 1000
     ):
         super().__init__()
         self.vor = vor
@@ -34,9 +36,8 @@ class SimpleModel(mf.SimulationBase):
         self.disu = mf.DisuGrid(vor=self.vor, model=self, top=self.top, bottom=self.bottom)
         self.drain_stress_period_data = Boundaries(vor=self.vor).get_drn_stress_period_data(
             cells=self.boundary_cells,
-            bottom_addition=1,
-            conductance=10000,
-            #bottoms=self.bottom
+            bottom_addition=0,
+            conductance=boundary_conductance,
         )
         self.ic = mf.InitialConditions(model=self, vor=self.vor, initial_sat_thickness=self.initial_sat_thickness)
         self.k = mf.KFlow(model=self, k_list=self.k)
@@ -74,14 +75,21 @@ if __name__ == "__main__":
     center_cells = [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
                     57, 58, 59, 60, 61, 62, 63, 98, 123, 124, 163, 164, 165, 193, 194, 195, 196, 210, 211, 212, 213,
                     234, 235, 236, 314, 337, 374, 375, 388, 392]
-    rch_trans = [np.random.random() + 2 for per in range(nper)]
+    rch_trans = [np.random.random() + 4 for per in range(nper)]
     rch_dict = {}
     for per in range(nper):
-        rch_dict[per] = [[cell, rch_trans[per]] for cell in center_cells]
+        cell_list = []
+        for cell in range(vor.ncpl):
+            if cell in center_cells:
+                cell_list.append([cell, rch_trans[per]])
+            else:
+                cell_list.append([cell, 0.01])
+
+        rch_dict[per] = cell_list
     model = SimpleModel(
         vor,
         #bottom=bottom_elevs['elev'].to_list(),
-        top=50,
+        #top=50,
         nper=nper,
         rch_dict=rch_dict
     )

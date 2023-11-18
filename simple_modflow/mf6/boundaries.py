@@ -14,7 +14,7 @@ class Boundaries:
     def get_drn_stress_period_data(
         self, 
         cells: list,
-        bottom_addition: float = 1,
+        bottom_addition: float = 0,
         conductance: float = 100,
         disMf: str = 'disu',
         bottoms: dict = None,
