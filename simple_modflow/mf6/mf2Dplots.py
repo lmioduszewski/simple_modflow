@@ -5,9 +5,9 @@ import plotly.graph_objects as go
 import plotly.subplots
 from plotly.subplots import make_subplots
 from pathlib import Path
-from paths import *
+from .paths import *
 
-from basefigures import MfBaseFigure
+from .basefigures import MfBaseFigure
 
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',

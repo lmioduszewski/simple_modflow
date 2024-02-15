@@ -1,12 +1,12 @@
 import numpy as np
 import pandas as pd
-from mf2Dplots import WaterLevelPlot
-from voronoiplus import VoronoiGridPlus as vgp
+from .mf2Dplots import WaterLevelPlot
+from .voronoiplus import VoronoiGridPlus as vgp
 import flopy.utils.binaryfile as bf
 from pathlib import Path
 import plotly.graph_objs as go
 import geopandas as gpd
-import mf2Dplots
+from . import mf2Dplots
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 

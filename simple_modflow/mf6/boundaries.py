@@ -1,4 +1,4 @@
-from voronoiplus import VoronoiGridPlus as vgp
+from .voronoiplus import VoronoiGridPlus as vgp
 
 class Boundaries:
     

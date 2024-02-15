@@ -1,6 +1,6 @@
 import flopy
 from pathlib import Path
-from voronoiplus import VoronoiGridPlus as Vor
+from .voronoiplus import VoronoiGridPlus as Vor
 
 
 class SimulationBase:

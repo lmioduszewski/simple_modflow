@@ -1,13 +1,13 @@
 from pathlib import Path
 import flopy
-from voronoiplus import VoronoiGridPlus as Vor
-from voronoiplus import TriangleGrid as Triangle
-from boundaries import Boundaries
+from .voronoiplus import VoronoiGridPlus as Vor
+from .voronoiplus import TriangleGrid as Triangle
+from .boundaries import Boundaries
 import numpy as np
 from shapely import Polygon
-from headsplus import HeadsPlus as hp
+from .headsplus import HeadsPlus as hp
 import shapely as shp
-import mfsimbase as mf
+from . import mfsimbase as mf
 
 
 class SimpleModel(mf.SimulationBase):

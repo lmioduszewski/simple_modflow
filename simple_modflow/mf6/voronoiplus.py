@@ -13,7 +13,7 @@ from shapely.geometry import LineString
 from shapely.geometry import Polygon, MultiLineString, Point
 import json
 from pathlib import Path
-import mf2Dplots
+from . import mf2Dplots
 
 
 def flatten(l):
