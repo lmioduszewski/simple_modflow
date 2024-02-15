@@ -50,6 +50,12 @@ class HeadsPlus(bf.HeadFile):
         self.all_heads = self.get_all_heads()
         self.nper = pd.DataFrame(self.hds.get_kstpkper()).iloc[:, 1].max() + 1
         self.numstp = pd.DataFrame(self.hds.get_kstpkper()).iloc[:, 0].max() + 1
+        self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
+        self.cell_list = [i for i in range(len(self.vor_list))]
+        self.area_list = [cell.area for cell in self.vor_list]
+        self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
+        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+
 
     def get_all_heads(self):
         """Method to get all heads for this model and store in
@@ -201,11 +207,9 @@ class HeadsPlus(bf.HeadFile):
                 :param zoom: define zoom level of plot. Default is 18.
             """
 
-        num_stp = self.numstp
-        nper = self.nper
-        stp_to_plot = stp_per_to_plot[0]  # subtract 1 to make zero index compatible
+        stp_to_plot = stp_per_to_plot[0]
         per_to_plot = stp_per_to_plot[1]
-        choro_key = f"sp{per_to_plot}ts{stp_to_plot}"
+        kstpkper_key = f"sp{per_to_plot}ts{stp_to_plot}"
         choro_dict = {}
         choro_heads = {}
         vor = self.vor
@@ -217,48 +221,39 @@ class HeadsPlus(bf.HeadFile):
             bottom_elev = vor.gdf_topbtm["bottom"].to_numpy()
         else:
             bottom_elev = 0
-        choro_heads[choro_key] = self.hds.get_data(kstpkper=(stp_to_plot, per_to_plot))[0][0]
-        choro_dict[choro_key] = choro_heads[choro_key] - bottom_elev
+        choro_heads[kstpkper_key] = self.all_heads.loc[(stp_to_plot, per_to_plot)]
+        choro_dict[kstpkper_key] = choro_heads[kstpkper_key]['elev'] - bottom_elev
 
         if zmax is None:
-            zmax = choro_dict[choro_key].max()
+            zmax = choro_dict[kstpkper_key].max()
         if zmin is None:
-            zmin = choro_dict[choro_key].min()
+            zmin = choro_dict[kstpkper_key].min()
 
-        fig_mbox = mf2Dplots.ChoroplethPlot()
-        vor_list = self.vor.gdf_vorPolys.geometry.to_list()
-        cell_list = [i for i in range(len(vor_list))]
-        head_list = self.all_heads.loc[stp_per_to_plot, :]['elev'].to_list()
-        area_list = [cell.area for cell in vor_list]
-        x_list = [cell.centroid.xy[0][0] for cell in vor_list]
-        y_list = [cell.centroid.xy[1][0] for cell in vor_list]
-        custom_data, hover_template = fig_mbox.create_hover(
-            {
-                'Cell No.': cell_list,
-                'Head': head_list,
-                'Area': area_list,
-                'x': x_list,
-                'y': y_list
-            }
-        )
+        fig_mbox = mf2Dplots.ChoroplethPlot(vor=vor, zoom=zoom)
+
+        # create lists for hover data and get hover template
+        head_list = choro_heads[kstpkper_key]['elev'].to_list()
+        hover_dict = {
+            'Cell No.': self.cell_list,
+            'Head': head_list,
+            'Area': self.area_list,
+            'x': self.x_list,
+            'y': self.y_list
+        }
+        if plot_mounding:
+            mounding_list = choro_dict[kstpkper_key].to_list()
+            hover_dict['Mounding'] = mounding_list
+        custom_data, hover_template = fig_mbox.create_hover(hover_dict)
+
         fig_mbox.add_choroplethmapbox(
             geojson=vor.latslons,
             featureidkey="id",
             locations=vor.gdf_latlon.cell.to_list(),
-            z=choro_dict[choro_key],
-            hoverinfo="text",
+            z=choro_dict[kstpkper_key],
             hovertemplate=hover_template,
             customdata=custom_data,
-            text=choro_dict[choro_key],
             colorscale="earth",
             zmax=zmax,
             zmin=zmin,
         )
-
-        fig_mbox.update_layout(
-            margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            mapbox_style="carto-positron",
-            mapbox_zoom=zoom,
-            mapbox_center={"lat": vor.grid_centroid.y, "lon": vor.grid_centroid.x},
-        )
-        fig_mbox.show(renderer="browser")
+        return fig_mbox

@@ -95,4 +95,4 @@ if __name__ == "__main__":
     )
     model.run_simulation()
     hds = hp(hds_path=model.model_output_folder_path.joinpath('mf6_model.hds'), vor=vor)
-    hds.plot_choropleth((19, 0), zoom=19, plot_mounding=True)
+    hds.plot_choropleth((19, 0), zoom=19, plot_mounding=True).show()

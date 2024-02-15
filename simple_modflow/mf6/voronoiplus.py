@@ -173,6 +173,12 @@ class VoronoiGridPlus(VoronoiGrid):
             print('got lats and lons')
         self.grid_centroid = self.get_grid_centroid()
 
+        self.vor_list = self.gdf_vorPolys.geometry.to_list()
+        self.cell_list = [i for i in range(len(self.vor_list))]
+        self.area_list = [cell.area for cell in self.vor_list]
+        self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
+        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+
     @property
     def gdf_topbtm(self):
         if self._gdf_topbtm is None and self.rasters is not None:
@@ -284,7 +290,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
 
-    def plot_choropleth(self, zmin=None, zmax=None, ):
+    def plot_choropleth(self, zmin=None, zmax=None, zoom=18):
         """Plot choropleth of Voronoi grid.
 
             Args:
@@ -295,19 +301,13 @@ class VoronoiGridPlus(VoronoiGrid):
         if zmin is None:
             zmin = 0
 
-        fig_mbox = mf2Dplots.ChoroplethPlot()
-
-        vor_list = self.gdf_vorPolys.geometry.to_list()
-        cell_list = [i for i in range(len(vor_list))]
-        area_list = [cell.area for cell in vor_list]
-        x_list = [cell.centroid.xy[0][0] for cell in vor_list]
-        y_list = [cell.centroid.xy[1][0] for cell in vor_list]
+        fig_mbox = mf2Dplots.ChoroplethPlot(vor=self, zoom=zoom)
         custom_data, hover_template = fig_mbox.create_hover(
             {
-                'Cell No.': cell_list,
-                'Area': area_list,
-                'x': x_list,
-                'y': y_list
+                'Cell No.': self.cell_list,
+                'Area': self.area_list,
+                'x': self.x_list,
+                'y': self.y_list
             }
         )
         fig_mbox.add_choroplethmapbox(
@@ -321,12 +321,7 @@ class VoronoiGridPlus(VoronoiGrid):
             zmin=zmin,
             hovertemplate=hover_template
         )
-        fig_mbox.update_layout(
-            margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            mapbox_style="carto-positron",
-            mapbox_zoom=18,
-            mapbox_center={"lat": self.grid_centroid.y, "lon": self.grid_centroid.x},
-        )
+
         return fig_mbox
 
     def map_nodes(self):

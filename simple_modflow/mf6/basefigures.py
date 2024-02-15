@@ -54,14 +54,21 @@ class MfBaseFigure(go.Figure):
         lists = list(name_list.values())
         list_len = len(lists[0])
         custom_data = []
+        hover_template_list = []
 
         for i in range(list_len):
             this_list = [param[i] for param in lists]
             custom_data.append(this_list)
 
-        hover_template_list = [
-            f'<b>{name}: </b>%{{customdata[{i}]}}<br>' for i, name in enumerate(names)
-        ]
+        for i, name in enumerate(names):
+            if type(custom_data[0][i]) is float:
+                hover_template_list.append(
+                    f'<b>{name}: </b>%{{customdata[{i}]:.2f}}<br>'
+                )
+            else:
+                hover_template_list.append(
+                    f'<b>{name}: </b>%{{customdata[{i}]}}<br>'
+                )
         hover_template_list.append('<extra></extra>')
         hover_template = ''.join(hover_template_list)
 
@@ -72,5 +79,5 @@ if __name__ == "__main__":
     d = {'model': [1, 2, 3], 'version': [4, 5, 6], 'user': [7, 8, 9]}
     fig = MfBaseFigure()
     hover = fig.create_hover(d)
-    print(hover[0])
-    print(hover[1])
+    print(hover)
+

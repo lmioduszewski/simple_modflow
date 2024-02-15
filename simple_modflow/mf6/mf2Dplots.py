@@ -6,6 +6,7 @@ import plotly.subplots
 from plotly.subplots import make_subplots
 from pathlib import Path
 from paths import *
+
 from basefigures import MfBaseFigure
 
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
@@ -215,8 +216,19 @@ class WaterLevelPlot(MfBaseFigure):
 
 class ChoroplethPlot(MfBaseFigure):
 
-    def __init__(self, ):
+    def __init__(self, vor=None, zoom=None):
         super().__init__()
+
+        if vor:
+            mapbox_center = {"lat": vor.grid_centroid.y, "lon": vor.grid_centroid.x}
+        else:
+            mapbox_center = None
+        self.update_layout(
+            margin={"r": 0, "t": 20, "l": 0, "b": 0},
+            mapbox_style="carto-positron",
+            mapbox_zoom=zoom,
+            mapbox_center=mapbox_center
+        )
 
 
 if __name__ == "__main__":
