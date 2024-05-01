@@ -5,9 +5,9 @@ import plotly.graph_objects as go
 import plotly.subplots
 from plotly.subplots import make_subplots
 from pathlib import Path
-from .paths import *
+from simple_modflow.mf6.paths import *
+from figs import Fig, Template
 
-from .basefigures import MfBaseFigure
 
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',
@@ -15,7 +15,7 @@ colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214
 dashes = ['solid', 'dash', 'dashdot', 'dot', 'longdash', 'longdashdot']
 
 
-class WaterLevelPlot(MfBaseFigure):
+class WaterLevelPlot(Fig):
     def __init__(self):
         super().__init__()
 
@@ -205,16 +205,16 @@ class WaterLevelPlot(MfBaseFigure):
                 marker_color=trace_color
             ), row=2, col=1
         )
-        precip_fig.update_layout(MfBaseFigure().layout)
+        precip_fig.update_layout(Fig().layout)
         precip_fig.update_yaxes(title_text=f'{legend_title} ({precip_units})', row=2, col=1)
         precip_fig.update_yaxes(title_text='Groundwater Elevation (feet)', row=1, col=1)
-        precip_fig.update_xaxes(MfBaseFigure()._xaxis_template)
+        precip_fig.update_xaxes(Template()._xaxis_template)
         precip_fig.update_layout(
             title=go.layout.Title(text=plot_title, font_size=30, x=0.5, xanchor='center'))
         return precip_fig
 
 
-class ChoroplethPlot(MfBaseFigure):
+class ChoroplethPlot(Fig):
 
     def __init__(self, vor=None, zoom=None):
         super().__init__()

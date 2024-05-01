@@ -1,10 +1,10 @@
 import plotly.graph_objs as go
 import pandas as pd
 import numpy as np
-from basefigures import MfBaseFigure
+import figs
 
 
-class SurfacePlot(MfBaseFigure):
+class SurfacePlot(figs.Fig):
 
     def __init__(self):
         super().__init__()

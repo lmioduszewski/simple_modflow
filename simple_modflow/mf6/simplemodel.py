@@ -1,13 +1,13 @@
 from pathlib import Path
 import flopy
-from .voronoiplus import VoronoiGridPlus as Vor
-from .voronoiplus import TriangleGrid as Triangle
-from .boundaries import Boundaries
+from simple_modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+from simple_modflow.mf6.voronoiplus import TriangleGrid as Triangle
+from simple_modflow.mf6.boundaries import Boundaries
 import numpy as np
 from shapely import Polygon
-from .headsplus import HeadsPlus as hp
+from simple_modflow.mf6.headsplus import HeadsPlus as hp
 import shapely as shp
-from . import mfsimbase as mf
+from simple_modflow.mf6 import mfsimbase as mf
 
 
 class SimpleModel(mf.SimulationBase):
@@ -88,6 +88,7 @@ if __name__ == "__main__":
         rch_dict[per] = cell_list
     model = SimpleModel(
         vor,
+        k=5,
         #bottom=bottom_elevs['elev'].to_list(),
         #top=50,
         nper=nper,
