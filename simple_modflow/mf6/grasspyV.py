@@ -1,117 +1,204 @@
 import subprocess
 import sys
 import os
-from grass_session import Session
-import grass_session
-import grass.pygrass as pyg
 from pathlib import Path
-from grass.script import core as gcore
-import grass.pygrass.modules.shortcuts as shortCuts
+os.environ['GISBASE'] = Path(r'C:\OSGeo4W\apps\grass\grass83').as_posix()
+
 from grass.pygrass.modules.shortcuts import raster as r
 from grass.pygrass.modules.shortcuts import general as g
 from grass.pygrass.modules.shortcuts import vector as v
-import grass.script as gs
 import grass.script.setup as gsetup
 
-location = "vector"
-mapset = "PERMANENT"
-QvtRasterOutput = Path().cwd().joinpath("raster", "QvtRasterfromVectorOutput.tif")
-QvtRasterOutputPosix = Path().cwd().joinpath("raster", "QvtRasterfromVectorOutput.tif").as_posix()
-gisdb = Path.home().joinpath("grassdata")
-mpath = Path.home().joinpath("grassdata", location, mapset)
-lpath = Path.home().joinpath("grassdata", location)
-grassdata = gisdb
-location = location
-#mapset = mpath
+class SurfaceInterpFromShp:
 
-epsg_code = '2927'
-grass8bin = Path("C:/").joinpath('OSGeo4W', 'bin', 'grass83.bat')
-
-qvtshp = Path().cwd().joinpath('shp', 'Qvt contours', 'Qvt Contours Geophys v3.shp').as_posix()
-qvtoutput = 'qvtRast_V3.tif'
-
-cdf_lidar = Path().cwd().joinpath('raster','cdf_lidar.tif').as_posix()
-
-def create_grass_location(
-    grass8bin=grass8bin,
-    epsg_code=epsg_code,
-    location_path=lpath
+    def __init__(
+            self,
+            location: str = 'temp_loc',
+            mapset: str = 'MAPSET',
+            grassdata:str = 'grassdata',
+            epsg: str = '2927',
+            shp_path: Path = None,
+            region_dimensions_raster:Path = None,
+            write_interpolated_surface_and_finish: bool = False,
+            output_resolution = 4,
+            shp_attribute_for_z = 'Elev',
+            surf_out = 'interp_surface.tiff'
     ):
+        self.grass8bin = Path(r'C:\OSGeo4W\bin\grass83.bat')
+        self.grassdata = Path.home().joinpath(grassdata)
+        self.epsg_code = epsg
+        self.session = None
 
-    grass_cmd = [grass8bin, '-c', 'epsg:' + epsg_code, '-e', lpath]
-    #grass_cmd = [grass8bin, '-c', cdf_lidar, '-e', lpath]
+        self.location = location
+        self.location_path = self.grassdata / self.location
 
-    p = subprocess.Popen(grass_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = p.communicate()
-    if p.returncode == 0:
-        print("Location successfully created.")
-    else:
-        print("Error creating location.")
-        print(err)
+        self.mapset = mapset
+        self.mapset_path = self.grassdata.joinpath(self.location, self.mapset)
 
-try: #start the grass session
-    session = gsetup.init(
-        grassdata, 
-        location, 
-        #mapset
+        #  default names to use for the various working rasters and vectors in the grass session
+        self.grassname_vect_cont = 'vectContours'
+        self.grassname_rast_cont = 'rastContours'
+        self.surf_out = surf_out
+        self.region_dimensions_raster = region_dimensions_raster
+
+        #  if writing an interpolated surface on object init is set to True, run self.write_surf()
+        self.shp_path = shp_path
+        self.shp_attribute_for_z = shp_attribute_for_z
+        self.write_interpolated_surface_and_finish = write_interpolated_surface_and_finish
+        self.output_resolution = output_resolution
+        if self.shp_path is not None and self.write_interpolated_surface_and_finish:
+            self.write_surf()
+
+    def write_surf(self, finish=True):
+        """create a grass location, start a grass session, import the shapefile of contours,
+        rasterize the contours, generate an interpolated raster surface, then write as a
+        geotiff, and finally close the session if 'finish' arg is True"""
+
+        print('starting grass session')
+        self.start_grass_session()
+        print('importing vector contours')
+        self.import_vector_contours(self.shp_path)
+
+        #  then define the region using a raster (such as a clip of lidar or other raster
+        #  that on the same projection as the vector contours
+        print('setting region from raster')
+        self.set_region_from_raster(self.region_dimensions_raster)
+        print('rasterizing contours')
+        self.rasterize_vector_contours()
+        print('interpolating surface')
+        self.interpolate_surface_from_rasterized_contours()
+        print('done, closing grass session')
+
+        if finish is True:
+            self.session.finish()
+
+    def create_grass_location(self):
+        """Create location on the computer's hard drive (a file folder) that will
+        contain the working files for the grass gis session"""
+        grass_cmd = [self.grass8bin, '-c', 'epsg:' + self.epsg_code, '-e', self.location_path]
+        p = subprocess.Popen(grass_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        if p.returncode == 0:
+            print("Location successfully created.")
+        else:
+            print("Error creating location.")
+            print(err)
+
+    def start_grass_session(self):
+        """start the grass gis session based on provided location. The location will
+        be created if it does not exist on the hard drive in the grassdata directory."""
+        grassdata = self.grassdata
+        location = self.location
+        try: #start the grass session
+            self.session = gsetup.init(grassdata, location,
+                #mapset
+                    )
+        except: #if location doesn't exist, create that first then start session
+            self.create_grass_location()
+            self.session = gsetup.init(grassdata, location,
+                #mapset
+                    )
+
+    @property
+    def gisenv(self):
+        return g.gisenv()
+
+    def import_vector_contours(self, shp_path=None, grass_vector_name=None, info=True):
+        """
+        imports a shapfile of vector contours to the grass gis session
+        :param shp_path: path to the shapefile
+        :return: None
+        """
+        if grass_vector_name is not None:
+            self.grassname_vect_cont = grass_vector_name
+        if shp_path is not None:
+            self.shp_path = shp_path
+        v.in_ogr(
+            input=self.shp_path,
+            output=self.grassname_vect_cont,
+            overwrite=True,
+            flags='o'
+        )
+        if info:
+            v.info(
+                map=self.grassname_vect_cont,
+                flags='c'
             )
-except: #if location doesn't exist, create that first then start session
-    create_grass_location()
-    session = gsetup.init(
-        grassdata, 
-        location, 
-        #mapset
-            )
-    
-def run_rSurfContour():
 
-    r.surf_contour(
-        input='qvtRastOut',
-        output='interpedRastQvt',
-        overwrite=True,
-        verbose=True
+    def set_region_from_raster(self, raster=None, resolution=None):
+        """
+        sets the grass gis region from a provided raster. The raster should be on the
+        same projection as the contour shapefile.
+        :param raster: raster used to define the region
+        :param resolution: resolution to use for the raster defined region
+        :return: None
+        """
+        raster = raster if raster is not None else self.region_dimensions_raster
+        resolution = resolution if resolution is not None else self.output_resolution
+        r.in_gdal(
+            overwrite=True,
+            input=raster,
+            output='regionRaster',
+            flags='o'
+        )
+        g.region(
+            raster='regionRaster',
+            res=resolution,
+            flags='p'
+        )
+
+    def rasterize_vector_contours(self, attribute_for_z=None):
+        """Create a rasterized version of the shapefile contours provided as an arguement
+        to the function. The rasterized contours are then used to interpolate a surface in
+        a separate function: interpolate_surface_from_rasterized_contours"""
+        attribute_for_z = attribute_for_z if attribute_for_z is not None else self.shp_attribute_for_z
+        v.to_rast(
+            overwrite=True,
+            input=self.grassname_vect_cont,
+            type='line',
+            output=self.grassname_rast_cont,
+            use='attr',
+            attribute_column=attribute_for_z
+        )
+        r.out_gdal(
+            input=self.grassname_rast_cont,
+            output='rast_contours.tif',
+            format='GTiff',
+            overwrite=True,
+            verbose=True
+        )
+
+    def interpolate_surface_from_rasterized_contours(self, surf_out=None):
+        """
+        interpolate a surface from rasterized contours
+        :param surf_out: file (geotiff) name to output
+        :return: writes a file to surf_out
+        """
+        surf_out = surf_out if surf_out is not None else self.surf_out
+        r.surf_contour(
+            input=self.grassname_rast_cont,
+            output='interpdSurface',
+            overwrite=True,
+            verbose=True
+        )
+        print('writing to geotiff')
+        r.out_gdal(
+            input='interpdSurface',
+            output=surf_out,
+            format='GTiff',
+            overwrite=True,
+            verbose=True
+        )
+
+
+if __name__ == '__main__':
+
+    top_of_qpf_shp = Path('C:/Users/lukem/Python/MODFLOW/LakePointe/inputs/surfaces/top_of_qpf.shp').as_posix()
+    region_raster = Path('C:/Users/lukem/Python/MODFLOW/LakePointe/inputs/lakepointe_lidar.tif').as_posix()
+    interp_qpf = SurfaceInterpFromShp(
+        shp_path=top_of_qpf_shp,
+        region_dimensions_raster= region_raster,
+        shp_attribute_for_z='Elevation',
+        output_resolution=20
     )
-    r.out_gdal(
-        input='interpedRastQvt',
-        output=qvtoutput,
-        format='GTiff',
-        overwrite=True,
-        verbose=True
-    )
-
-
-g.gisenv()
-v.in_ogr(
-    input=qvtshp,
-    output='qvtcontV',
-    overwrite=True,
-    flags='o'
-)
-r.in_gdal(
-    overwrite=True,
-    input=cdf_lidar,
-    output='cdflidar',
-    flags='o'
-)
-
-g.region(
-    raster='cdflidar',
-    res=4,
-    flags='p'
-)
-v.info(
-    map='qvtcontV',
-    flags='c'
-)
-v.to_rast(
-    overwrite=True,
-    input='qvtcontV',
-    type='line',
-    output='qvtRastOut',
-    use='attr',
-    attribute_column='Elev'
-)
-
-run_rSurfContour()
-
-session.finish()
+    interp_qpf.write_surf()

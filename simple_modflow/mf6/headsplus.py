@@ -7,6 +7,7 @@ from pathlib import Path
 import plotly.graph_objs as go
 import geopandas as gpd
 from . import mf2Dplots
+import figs
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -243,7 +244,7 @@ class HeadsPlus(bf.HeadFile):
         if plot_mounding:
             mounding_list = choro_dict[kstpkper_key].to_list()
             hover_dict['Mounding'] = mounding_list
-        custom_data, hover_template = fig_mbox.create_hover(hover_dict)
+        custom_data, hover_template = figs.create_hover(hover_dict)
 
         fig_mbox.add_choroplethmapbox(
             geojson=vor.latslons,

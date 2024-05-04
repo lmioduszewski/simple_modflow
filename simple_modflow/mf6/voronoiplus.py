@@ -14,6 +14,7 @@ from shapely.geometry import Polygon, MultiLineString, Point
 import json
 from pathlib import Path
 from . import mf2Dplots
+from figs import create_hover
 
 
 def flatten(l):
@@ -302,7 +303,7 @@ class VoronoiGridPlus(VoronoiGrid):
             zmin = 0
 
         fig_mbox = mf2Dplots.ChoroplethPlot(vor=self, zoom=zoom)
-        custom_data, hover_template = fig_mbox.create_hover(
+        custom_data, hover_template = create_hover(
             {
                 'Cell No.': self.cell_list,
                 'Area': self.area_list,
