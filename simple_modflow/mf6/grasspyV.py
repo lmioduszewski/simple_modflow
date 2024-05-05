@@ -22,8 +22,36 @@ class SurfaceInterpFromShp:
             write_interpolated_surface_and_finish: bool = False,
             output_resolution = 4,
             shp_attribute_for_z = 'Elev',
+            data_dir: Path = Path.home() / 'Python',
             surf_out = 'interp_surface.tiff'
     ):
+        """
+        Class used to create an interpolated raster surface from a set of vector contours.
+        As in, an elevation surface from elevation contours.
+        :param location:
+        :param mapset:
+        :param grassdata:
+        :param epsg:
+        :param shp_path:
+        :param region_dimensions_raster:
+        :param write_interpolated_surface_and_finish:
+        :param output_resolution:
+        :param shp_attribute_for_z:
+        :param data_dir:
+        :param surf_out:
+
+        Example Usage:
+
+            top_of_qpf_shp = Path('shapefile path').as_posix()
+            region_raster = Path('raster to define region').as_posix()
+            interp_qpf = SurfaceInterpFromShp(
+                shp_path=top_of_qpf_shp,
+                region_dimensions_raster= region_raster,
+                shp_attribute_for_z='Elevation',
+                output_resolution=15
+            )
+            interp_qpf.write_surf()
+        """
         self.grass8bin = Path(r'C:\OSGeo4W\bin\grass83.bat')
         self.grassdata = Path.home().joinpath(grassdata)
         self.epsg_code = epsg
@@ -38,7 +66,8 @@ class SurfaceInterpFromShp:
         #  default names to use for the various working rasters and vectors in the grass session
         self.grassname_vect_cont = 'vectContours'
         self.grassname_rast_cont = 'rastContours'
-        self.surf_out = surf_out
+        # define the full surface output path
+        self.surf_out = (data_dir / surf_out).as_posix()
         self.region_dimensions_raster = region_dimensions_raster
 
         #  if writing an interpolated surface on object init is set to True, run self.write_surf()
@@ -199,6 +228,6 @@ if __name__ == '__main__':
         shp_path=top_of_qpf_shp,
         region_dimensions_raster= region_raster,
         shp_attribute_for_z='Elevation',
-        output_resolution=20
+        output_resolution=15
     )
     interp_qpf.write_surf()
