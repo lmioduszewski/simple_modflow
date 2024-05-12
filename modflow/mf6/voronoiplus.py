@@ -14,7 +14,7 @@ from shapely.geometry import Polygon, MultiLineString, Point
 import json
 from pathlib import Path
 import simple_modflow.modflow.mf6.mf2Dplots as mf2Dplots
-from figs import create_hover
+from figs import create_hover, Fig
 
 
 def flatten(l):
@@ -105,7 +105,8 @@ class VoronoiGridPlus(VoronoiGrid):
                  tri: Triangle,
                  crs: str = 'EPSG:2927',
                  rasters: list | Path = None,
-                 name: str = 'voronoi_grid'
+                 name: str = 'voronoi_grid',
+                 nlay: int = None
                  ):
 
         super().__init__(tri)
@@ -114,6 +115,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self.verts = self.vor.verts
         self.iverts = self.vor.iverts
         self.tri = tri
+        self.nlay = nlay
         self.crs_latlon = "EPSG:4326"
         self.rasters = rasters
         self.crs = crs
@@ -183,7 +185,7 @@ class VoronoiGridPlus(VoronoiGrid):
     @property
     def gdf_topbtm(self):
         if self._gdf_topbtm is None and self.rasters is not None:
-            self._gdf_topbtm = self.get_gdf_topbtm(rasters=self.rasters)
+            self._gdf_topbtm = self.get_gdf_topbtm_multilyr(rasters=self.rasters)
         return self._gdf_topbtm
 
     @gdf_topbtm.setter
@@ -291,7 +293,15 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
 
-    def plot_choropleth(self, zmin=None, zmax=None, zoom=18):
+    def plot_choropleth(
+            self,
+            zmin=None,
+            zmax=None,
+            zoom=18,
+            hoverlabels=None,
+            hoverdata=None,
+            custom_z=None
+    ):
         """Plot choropleth of Voronoi grid.
 
             Args:
@@ -303,19 +313,29 @@ class VoronoiGridPlus(VoronoiGrid):
             zmin = 0
 
         fig_mbox = mf2Dplots.ChoroplethPlot(vor=self, zoom=zoom)
-        custom_data, hover_template = create_hover(
-            {
-                'Cell No.': self.cell_list,
-                'Area': self.area_list,
-                'x': self.x_list,
-                'y': self.y_list
-            }
-        )
+        hoverdict = {
+                    'Cell No.': self.cell_list,
+                    'Area': self.area_list,
+                    'x': self.x_list,
+                    'y': self.y_list
+                }
+        # if additional custom hover data is provided, add it
+        if hoverlabels is not None and hoverdata is not None:
+            datalen = len(hoverlabels)
+            for num in range(datalen):
+                hoverdict[hoverlabels[num]] = hoverdata[num]
+        custom_data, hover_template = create_hover(hoverdict)
+
+        #allow for a custom colorscale z-value
+        if custom_z is None:
+            zs = self.gdf_latlon.index.to_list()
+        else:
+            zs = custom_z
         fig_mbox.add_choroplethmapbox(
             geojson=self.latslons,
             featureidkey="id",
-            locations=self.gdf_latlon.cell.to_list(),
-            z=self.gdf_latlon.cell.to_list(),
+            locations=self.gdf_latlon.index.to_list(),
+            z=zs,
             customdata=custom_data,
             colorscale="earth",
             zmax=zmax,
@@ -348,7 +368,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return fig_sel
 
-    def get_overlapping_grid_cells(
+    def get_vor_cells_as_series(
             self,
             overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries = None,
             predicate: str = 'covered_by'
@@ -377,8 +397,6 @@ class VoronoiGridPlus(VoronoiGrid):
             print('Wrong data types')
             return
 
-        print('well done')
-
         geometries = gpd.GeoSeries(overlapping_geometry)
         intersecting_cells = geometries.array.sindex.query(
             self.gdf_vorPolys["geometry"],
@@ -387,17 +405,57 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return pd.Series(intersecting_cells)
 
+    def get_vor_cells_as_dict(
+            self,
+            locs: Path,
+            crs: str  =  "EPSG:2927",
+            predicate: str = 'contains',
+            loc_name_field: str = None,
+            return_gdf: bool = False
+    ) -> dict:
+        """
+        Provide a shapefile (locs) and get back the voronoi cells that contains them, by default.
+        But you can change the predicate to search by something else, like 'overlaps'.
+        :param locs: shapefile of features to check against the vornoi grid
+        :param crs: crs of method output. defaults to EPSG:2927
+        :param predicate: None, “contains”, “contains_properly”, “covered_by”, “covers”,
+        “crosses”, “intersects”, “overlaps”, “touches”, “within”.
+        :param loc_name_field: field in the loc shapefile that will be the dict key
+        :return: dict of voronoi cells indices (values) that contain each location in locs (keys)
+        """
+        gdf_locs = gpd.read_file(locs).to_crs(crs)
+
+        loc_vor_cell_dict = {}
+        for idx in gdf_locs.index:
+            if loc_name_field is None:
+                location_name = idx
+            else:
+                location_name = gdf_locs.iloc[idx][loc_name_field]
+            vor_cells = (self.get_vor_cells_as_series(gdf_locs.geometry[idx], predicate).tolist())
+            loc_vor_cell_dict[location_name] = vor_cells
+
+        if return_gdf:
+            return loc_vor_cell_dict, gdf_locs
+        else:
+            return loc_vor_cell_dict
+
+
     def show_selected_cells(
             self,
-            cell_list: list = None
+            cell_list: list = None,
+            hoverlabels=None,
+            hoverdata=None,
+            custom_z=None,
+            **kwargs
+
     ):
         """Method to show selected cells of the voronoi grid.
         Just provide a list of cell indices."""
 
-        choro = self.plot_choropleth()
+        choro = self.plot_choropleth(hoverlabels=hoverlabels, hoverdata=hoverdata, custom_z=custom_z, **kwargs)
         choro.data[0].selectedpoints = (tuple(cell_list))
 
-        return go.Figure(choro)
+        return go.Figure(choro).show(renderer='browser')
 
     def get_model_boundary_polygons(self) -> dict:
         """Returns a dict of the polygons that form the model domain boundary.
@@ -686,28 +744,41 @@ class VoronoiGridPlus(VoronoiGrid):
             polys_ListbyShapely += [thispoly]
         """instantiate GeoDataFrame of Voronoi polygons"""
         self.gdf_vorPolys = gpd.GeoDataFrame(geometry=polys_ListbyShapely, crs=crs)
-        self.gdf_vorPolys["cell"] = self.gdf_vorPolys.index.astype(str)
+        #  self.gdf_vorPolys["cell"] = self.gdf_vorPolys.index.astype(str)
         """set x and y list attributes"""
         self.x_coords_by_node = xvertices_by_cells
         self.y_coords_by_node = yvertices_by_cells
 
         return self.gdf_vorPolys
 
-    def get_gdf_topbtm(self, rasters: list, labels: list | tuple = ('bottom', 'top')):
+    def get_gdf_topbtm(self, rasters: list, labels: list = None):
+        """written for a one layer model with a top and bottom. More general funtion needed.
+        Use get_gdf_topbtm_multilyr"""
 
+        gdf_topbtm = self.get_gdf_topbtm_multilyr(rasters=rasters, labels=labels)
+
+        return gdf_topbtm
+
+    def get_gdf_topbtm_multilyr(self, rasters:list, labels: list = None):
+        if labels is None:
+            labels = list(range(1, len(rasters)+1))
         gdf_topbtm = self.get_centroid_elevations(
             elevations_files=rasters,
             labels=labels
         )
-        top_botm_diff = gdf_topbtm['top'] - gdf_topbtm['bottom']
-        for i in range(len(gdf_topbtm)):
-            if top_botm_diff[i] < 0:
-                print(f'{i} is bad. Setting bottom to 1 foot below top')
-                gdf_topbtm.loc[i, 'bottom'] = gdf_topbtm.loc[i, 'top'] - 1
-            gdf_topbtm.loc[i, 'diff'] = top_botm_diff[i]
+        #  TODO check difference between layers
+
         return gdf_topbtm
 
-    def get_centroid_elevations(self, elevations_files: list, labels: list):
+    def get_centroid_elevations(self, elevations_files: list, labels: list) -> gpd.GeoDataFrame:
+        """
+        Method to get centroid elevations of the voronoi grid for each elevation raster given in the
+        elevation_files list
+        :param elevations_files: list of elevation rasters
+        :param labels: list of names for each raster
+        :return: GeoDataFrame of the centroid elevs in the voronoi grid for each raster
+        """
+
         n_rasters = len(elevations_files)
 
         # Open the elevations raster files
@@ -1103,3 +1174,32 @@ class VoronoiGridPlus(VoronoiGrid):
             tri.add_polygon(gdf_allPolys.loc[poly, 'geometry'])
 
         return gdf_allPolys
+
+
+    def reconcile_surfaces(self, df: pd.DataFrame = None, labels: list = None, min_sep=0.1):
+        """
+        helper to iterate through surface elevations and check for layers that are above the overlying
+        layer, then adjust so they don't overlap.
+        :param df: dataframe of surface elevations at each voronoi cell, column names are the surface names
+        :param labels: labels of columns which correspond to the surface names
+        :param min_sep: surfaces that are too high will be reduced below the overlying surface by this minimum separation
+        :return: new dataframe with adjusted surface elevations
+        """
+        df = self.gdf_topbtm if df is None else df
+        if isinstance(df, gpd.GeoDataFrame):
+            df = df.drop(columns='geometry').applymap(lambda x: pd.to_numeric(x, errors='coerce'))
+        else:
+            df = df.applymap(lambda x: pd.to_numeric(x, errors='coerce'))
+        labels = list(df.columns) if labels is None else labels
+        df = df.loc[:, labels]
+        # find difference between cols of surfaces
+        for i, label in enumerate(labels):
+            #  skip first diff column since it will be all NaN
+            if i == 0:
+                continue
+            diffs = df.diff(axis=1)
+            #  create list of cells where the elevation of this column is higher than the previous
+            diff_list = list(diffs[diffs[label] >= 0].index)
+            #  adjust the cells that are too high, based on the min_sep
+            df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+        return df

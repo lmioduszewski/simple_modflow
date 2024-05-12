@@ -7,13 +7,13 @@ from plotly.subplots import make_subplots
 from pathlib import Path
 from simple_modflow.modflow.mf6.paths import *
 from figs import Fig, Template
-from plotly.colors import DEFAULT_PLOTLY_COLORS as colors
+from plotly.colors import DEFAULT_PLOTLY_COLORS as colorsbo
 
 
 
-"""colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
+colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',
-          'rgb(188, 189, 34)', 'rgb(23, 190, 207)']"""
+          'rgb(188, 189, 34)', 'rgb(23, 190, 207)']
 dashes = ['solid', 'dash', 'dashdot', 'dot', 'longdash', 'longdashdot']
 
 

@@ -22,24 +22,31 @@ class SimpleModel(mf.SimulationBase):
             top=None,
             bottom=None,
             rch_dict: dict = None,
-            boundary_conductance: int = 1000
+            boundary_conductance: int = 1000,
+            nlay=None,
+            disv_disu='disu'
     ):
         super().__init__()
         self.vor = vor
         self.k = k
+        self.nlay = nlay
         self.top = top
         self.bottom = bottom
         self.rch_dict = rch_dict
         self.initial_sat_thickness = initial_sat_thickness
         self.boundary_cells = list(self.vor.get_model_boundary_polygons().keys())
         self.tdis = mf.TemporalDiscretization(model=self, nper=nper)
-        self.disu = mf.DisuGrid(vor=self.vor, model=self, top=self.top, bottom=self.bottom)
+        if disv_disu == 'disu':
+            self.disu = mf.DisuGrid(vor=self.vor, model=self, top=self.top, bottom=self.bottom)
+        if disv_disu == 'disv':
+            self.disv = mf.DisvGrid(vor=self.vor, model=self, nlay=nlay,top=self.top, bottom=self.bottom)
         self.drain_stress_period_data = Boundaries(vor=self.vor).get_drn_stress_period_data(
             cells=self.boundary_cells,
             bottom_addition=0.1,
             conductance=boundary_conductance,
+            disMf=disv_disu
         )
-        self.ic = mf.InitialConditions(model=self, vor=self.vor, initial_sat_thickness=self.initial_sat_thickness)
+        self.ic = mf.InitialConditions(model=self, vor=self.vor, initial_sat_thickness=self.initial_sat_thickness, nlay=self.nlay)
         self.k = mf.KFlow(model=self, k_list=self.k)
         self.oc = mf.OutputControl(model=self)
         self.drn = mf.Drains(model=self, stress_period_data=self.drain_stress_period_data)
@@ -94,6 +101,7 @@ if __name__ == "__main__":
         nper=nper,
         rch_dict=rch_dict
     )
+    print(rch_dict)
     model.run_simulation()
     hds = hp(hds_path=model.model_output_folder_path.joinpath('mf6_model.hds'), vor=vor)
     hds.plot_choropleth((19, 0), zoom=19, plot_mounding=True).show()

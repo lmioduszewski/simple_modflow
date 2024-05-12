@@ -8,9 +8,10 @@ class SimulationBase:
     def __init__(
             self,
             name: str = 'mf6_model',
-            mf_folder_path: Path = Path().home().joinpath('mf6')
+            mf_folder_path: Path = Path().home().joinpath('mf6'),
     ):
         self.name = name
+        self.nlay = None
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -80,6 +81,7 @@ class DisuGrid:
             top=None,
             bottom=None
     ):
+        self.nlay = 1
         if top is None:
             try:
                 top = vor.gdf_topbtm["top"].to_list()
@@ -111,6 +113,32 @@ class DisuGrid:
             idomain=[1 for i in range(vor.ncpl)],
         )
 
+class DisvGrid:
+
+    def __init__(
+            self,
+            vor: Vor,
+            model: SimulationBase,
+            top=None,
+            bottom=None,
+            nlay=1,
+    ):
+        self.nlay = nlay
+        grid_props = vor.get_disv_gridprops()
+        self.disv = flopy.mf6.ModflowGwfdisv(
+            model.gwf,
+            length_units="FEET",
+            nlay=nlay,
+            ncpl=grid_props['ncpl'],
+            nvert=len(grid_props["vertices"]),
+            vertices=grid_props['vertices'],
+            cell2d=grid_props['cell2d'],
+            pname='disv',
+            filename=f'{model.name}.disv',
+            top=top,
+            botm=bottom
+        )
+
 
 class InitialConditions:
 
@@ -119,14 +147,18 @@ class InitialConditions:
             model: SimulationBase,
             vor: Vor,
             botm_cells: list = None,
-            initial_sat_thickness: float = 0.5
+            initial_sat_thickness: float = 0.5,
+            nlay = 1,
+            strt = None
     ):
         if botm_cells is None:
-            botm_cells = [0 for cell in range(vor.ncpl)]
+            botm_cells = [0 for cell in range(vor.ncpl * nlay)]
+        if strt is None:
+            strt = [cell_elev + initial_sat_thickness for cell_elev in botm_cells]
         self.ic = flopy.mf6.modflow.mfgwfic.ModflowGwfic(
             model.gwf,
             pname="ic",
-            strt=[cell_elev + initial_sat_thickness for cell_elev in botm_cells],
+            strt=strt,
             filename=f"{model.name}.ic",
         )
 
@@ -206,7 +238,7 @@ class Recharge:
             self,
             model: SimulationBase,
             vor: Vor,
-            rch_dict: dict
+            rch_dict: dict = None
     ):
         self.rch = flopy.mf6.ModflowGwfrch(
             model.gwf,
@@ -235,4 +267,21 @@ class Drains:
             print_flows=False,
             print_input=False,
             stress_period_data=stress_period_data,
+        )
+
+class GHB:
+
+    def __init__(
+            self,
+            model: SimulationBase,
+            stress_period_data
+    ):
+        self.ghb = flopy.mf6.ModflowGwfghb(
+            model=model.gwf,
+            print_input=False,
+            print_flows=False,
+            save_flows=True,
+            filename=f"{model.name}.ghb",
+            pname='ghb',
+            stress_period_data=stress_period_data
         )

@@ -222,13 +222,13 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    top_of_qpf_shp = Path('C:/Users/lukem/Python/MODFLOW/LakePointe/inputs/surfaces/top_of_qpff_bot.shp').as_posix()
+    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\top_of_qpf.shp").as_posix()
     region_raster = Path('C:/Users/lukem/Python/MODFLOW/LakePointe/inputs/lakepointe_lidar.tif').as_posix()
-    interp_qpf = SurfaceInterpFromShp(
-        shp_path=top_of_qpf_shp,
+    interp = SurfaceInterpFromShp(
+        shp_path=top_shp,
         region_dimensions_raster= region_raster,
         shp_attribute_for_z='Elevation',
         output_resolution=15,
-        surf_out='qpfftop_model_bottom.tif'
+        surf_out='qvf_top.tif'
     )
-    interp_qpf.write_surf()
+    interp.write_surf()

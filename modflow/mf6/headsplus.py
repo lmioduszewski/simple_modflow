@@ -19,7 +19,11 @@ class HeadsPlus(bf.HeadFile):
             hds_path: Path,
             vor: vgp = None
     ):
-
+        """
+        Class to do stuff with a MODFLOW heads file. This class subclasses the flopy.utils.binaryfile.HeadFile class.
+        :param hds_path: path to the heads file
+        :param vor: voronoi grid representing model grid for the heads file, optional
+        """
         super().__init__(filename=hds_path)
 
         self.hds = bf.HeadFile(filename=hds_path)
@@ -48,7 +52,7 @@ class HeadsPlus(bf.HeadFile):
         }
         self.vor = vor
         self.obs_heads_df = None
-        self.all_heads = self.get_all_heads()
+        self._all_heads = None
         self.nper = pd.DataFrame(self.hds.get_kstpkper()).iloc[:, 1].max() + 1
         self.numstp = pd.DataFrame(self.hds.get_kstpkper()).iloc[:, 0].max() + 1
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -56,6 +60,13 @@ class HeadsPlus(bf.HeadFile):
         self.area_list = [cell.area for cell in self.vor_list]
         self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
         self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+
+
+    @property
+    def all_heads(self):
+        if self._all_heads is None:
+            self._all_heads = self.get_all_heads()
+        return self._all_heads
 
 
     def get_all_heads(self):
@@ -88,33 +99,6 @@ class HeadsPlus(bf.HeadFile):
 
         return df_heads
 
-    def get_obs_cells(
-            self,
-            locs: Path,
-            crs: str = "EPSG:2927",
-    ) -> dict:
-        """Get a dict of obs and associated cell indices"""
-
-        if not self.vor:
-            return print('Error: No valid grid defined!')
-        vor = self.vor
-        crs_latlon = "EPSG:4326"
-
-        gdf_obs = gpd.read_file(locs).to_crs(crs)
-
-        """Create dictionary with Vornoi cell indices that contain each well"""
-        obs_VorIdx_dict = {}
-        for idx in gdf_obs.index:
-            thiswell = (
-                gpd.GeoSeries(gdf_obs.to_crs(crs_latlon).iloc[idx]["geometry"])
-                .sindex.query(
-                    vor.gdf_vorPolys["geometry"].to_crs(crs_latlon), predicate="contains"
-                )[0]
-                .tolist()
-            )
-            obs_VorIdx_dict[gdf_obs.iloc[idx]["ExploName"]] = thiswell
-
-        return obs_VorIdx_dict
 
     def sort_dict_by_keys(
             self,
@@ -137,9 +121,12 @@ class HeadsPlus(bf.HeadFile):
             plot
 
             Args:
-                locs (Path, optional): Path to shapefile of points to plots heads. Defaults to None.
-                normalized_head_per_obs (Dict, optional): Dict where the keys are the loc names and the values are the elevations to normalize to
-                to_date_range (tuple, optional): tuple of starting and ending dates. Assumes daily data.
+                locs (Path, optional): Path to shapefile of points to plots heads. Defaults to
+                 None.
+                normalized_head_per_obs (Dict, optional): Dict where the keys are the loc names
+                 and the values are the elevations to normalize to
+                to_date_range (tuple, optional): tuple of starting and ending dates. Assumes
+                daily data.
             Returns:
                 Returns the fig object and plots it
             """
@@ -147,7 +134,11 @@ class HeadsPlus(bf.HeadFile):
         if locs is not None:
 
             heads = self.get_all_heads().to_dict()['elev']
-            obs_dict = self.get_obs_cells(locs=locs, crs=crs)
+            obs_dict = self.vor.get_vor_cells_as_dict(locs=locs,
+                                                      crs=crs,
+                                                      predicate='contains',
+                                                      loc_name_field='Exploname'
+                                                      )
             obs_dict = self.sort_dict_by_keys(obs_dict)
 
             obs_heads_dict = {}  # define the empty dict
@@ -196,7 +187,8 @@ class HeadsPlus(bf.HeadFile):
             zmin=None,
             zmax=None,
             zoom=18,
-            bottom=None
+            bottom=None,
+            bottom_array=None
     ):
         """Plot heads for a specified time step and stress period on a
             choropleth map. Heads may show saturated thickness (mounding) or
@@ -219,7 +211,10 @@ class HeadsPlus(bf.HeadFile):
         if bottom:
             bottom_elev = bottom
         elif plot_mounding:
-            bottom_elev = vor.gdf_topbtm["bottom"].to_numpy()
+            if bottom_array is not None:
+                bottom_elev = bottom_array
+            else:
+                bottom_elev = vor.gdf_topbtm["bottom"].to_numpy()
         else:
             bottom_elev = 0
         choro_heads[kstpkper_key] = self.all_heads.loc[(stp_to_plot, per_to_plot)]
@@ -249,7 +244,7 @@ class HeadsPlus(bf.HeadFile):
         fig_mbox.add_choroplethmapbox(
             geojson=vor.latslons,
             featureidkey="id",
-            locations=vor.gdf_latlon.cell.to_list(),
+            locations=vor.gdf_latlon.index.to_list(),
             z=choro_dict[kstpkper_key],
             hovertemplate=hover_template,
             customdata=custom_data,
