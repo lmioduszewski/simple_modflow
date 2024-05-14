@@ -371,7 +371,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def get_vor_cells_as_series(
             self,
             overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries = None,
-            predicate: str = 'covered_by'
+            predicate: str = 'intersects'
     ):
         """
         Compares given geometries to the voronoi polygon geometries and returns
@@ -382,11 +382,9 @@ class VoronoiGridPlus(VoronoiGrid):
         :return: Pandas Series of intersecting cells
         """
         if isinstance(overlapping_geometry, (shp.Polygon, shp.Point)):
-            print('ok')
-
+            pass
         elif isinstance(overlapping_geometry, gpd.GeoSeries):
             geocount = overlapping_geometry.count()
-
             if isinstance(overlapping_geometry.array, gpd.array.GeometryArray) and geocount != 0:
                 print(f'You gave me {geocount} geometries to check')
             else:
@@ -409,17 +407,17 @@ class VoronoiGridPlus(VoronoiGrid):
             self,
             locs: Path,
             crs: str  =  "EPSG:2927",
-            predicate: str = 'contains',
+            predicate: str = 'intersects',
             loc_name_field: str = None,
             return_gdf: bool = False
     ) -> dict:
         """
         Provide a shapefile (locs) and get back the voronoi cells that contains them, by default.
-        But you can change the predicate to search by something else, like 'overlaps'.
+        But you can change the predicate to search by something else, like 'intersects'.
         :param locs: shapefile of features to check against the vornoi grid
         :param crs: crs of method output. defaults to EPSG:2927
         :param predicate: None, “contains”, “contains_properly”, “covered_by”, “covers”,
-        “crosses”, “intersects”, “overlaps”, “touches”, “within”.
+        “crosses”, “intersects”, “intersects”, “touches”, “within”.
         :param loc_name_field: field in the loc shapefile that will be the dict key
         :return: dict of voronoi cells indices (values) that contain each location in locs (keys)
         """
@@ -431,6 +429,7 @@ class VoronoiGridPlus(VoronoiGrid):
                 location_name = idx
             else:
                 location_name = gdf_locs.iloc[idx][loc_name_field]
+
             vor_cells = (self.get_vor_cells_as_series(gdf_locs.geometry[idx], predicate).tolist())
             loc_vor_cell_dict[location_name] = vor_cells
 

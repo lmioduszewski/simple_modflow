@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib as mpl
-from voronoiplus import VoronoiGridPlus as vgp
+from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as vgp
 import flopy.utils.binaryfile as bf
 import math
 from pathlib import Path

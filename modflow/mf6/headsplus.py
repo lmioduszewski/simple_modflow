@@ -79,9 +79,10 @@ class HeadsPlus(bf.HeadFile):
         hds_mdx = pd.MultiIndex.from_product(
             iterables=[
                 self.kstpkper,
+                list(range(self.nlay)),
                 vor_cell_list
             ],
-            names=['kstpkper', 'cell']
+            names=['kstpkper', 'layer', 'cell']
         )
         """Set up a MultiIndex DataFrame to hold the heads
             for all cells and stress periods"""
@@ -91,11 +92,10 @@ class HeadsPlus(bf.HeadFile):
         )
         """get data for each stress period"""
         for kstpkper in self.kstpkper:
-            spHds = pd.DataFrame(self.get_data(kstpkper=kstpkper)[0][0])
+            spHds = pd.DataFrame(self.get_data(kstpkper=kstpkper).squeeze().transpose())
             """copy and paste this stress period data to the MultiIndex DataFrame"""
-            df_heads.loc[kstpkper,] = spHds.values
-
-        self.heads = df_heads
+            for layer in range(self.nlay):
+                df_heads.loc[idxx[kstpkper, layer], :] = spHds.iloc[:, layer].values
 
         return df_heads
 
@@ -188,7 +188,9 @@ class HeadsPlus(bf.HeadFile):
             zmax=None,
             zoom=18,
             bottom=None,
-            bottom_array=None
+            bottom_array=None,
+            all_layers=False,
+            layer=0
     ):
         """Plot heads for a specified time step and stress period on a
             choropleth map. Heads may show saturated thickness (mounding) or
@@ -207,17 +209,20 @@ class HeadsPlus(bf.HeadFile):
         choro_heads = {}
         vor = self.vor
 
-        """If plot_mounding == True then plot saturated thickness"""
+        """If plot_mounding == True then plot head over cell bottom"""
         if bottom:
             bottom_elev = bottom
         elif plot_mounding:
             if bottom_array is not None:
                 bottom_elev = bottom_array
             else:
-                bottom_elev = vor.gdf_topbtm["bottom"].to_numpy()
+                bottom_elev = vor.gdf_topbtm.iloc[:, -1].to_numpy()
         else:
             bottom_elev = 0
-        choro_heads[kstpkper_key] = self.all_heads.loc[(stp_to_plot, per_to_plot)]
+
+        if all_layers is True:
+            pass
+        choro_heads[kstpkper_key] = self.all_heads.loc[idxx[(stp_to_plot, per_to_plot), layer], :]
         choro_dict[kstpkper_key] = choro_heads[kstpkper_key]['elev'] - bottom_elev
 
         if zmax is None:

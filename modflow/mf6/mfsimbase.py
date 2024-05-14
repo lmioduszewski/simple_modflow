@@ -190,14 +190,14 @@ class KFlow:
     def __init__(
             self,
             model: SimulationBase,
-            k_list: list = None,
+            k: list = None,
 
     ):
         self.npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
             model.gwf,
             pname="npf",
             icelltype=1,
-            k=k_list,
+            k=k,
             save_flows=True,
             filename=f"{model.name}.npf",
             # perched=True,
@@ -285,3 +285,21 @@ class GHB:
             pname='ghb',
             stress_period_data=stress_period_data
         )
+
+class CHD:
+
+    def __init__(
+            self,
+            model: SimulationBase,
+            stress_period_data
+    ):
+        self.chd = flopy.mf6.ModflowGwfchd(
+            model=model.gwf,
+            print_input=False,
+            print_flows=False,
+            save_flows=True,
+            filename=f"{model.name}.chd",
+            pname='chd',
+            stress_period_data=stress_period_data
+        )
+

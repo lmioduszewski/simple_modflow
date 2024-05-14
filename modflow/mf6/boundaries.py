@@ -1,5 +1,8 @@
+import pandas as pd
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as vgp
 from pathlib import Path
+
+idxx = pd.IndexSlice
 
 class Boundaries:
     
@@ -72,10 +75,11 @@ class Boundaries:
         # get drain cells based on shapefile
         drn_cells, gdf_drn = self.vor.get_vor_cells_as_dict(
             locs=shapefile_path,
-            predicate='overlaps',
+            predicate='intersects',
             loc_name_field=fields['name'],
             return_gdf=True
         )
+        print(drn_cells)
         # get bottoms of model layers from voronoi grid
         lyr_botms = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
         gdf_drn = gdf_drn.set_index(fields['name'])
@@ -159,7 +163,7 @@ class Boundaries:
             }
         ghb_cells, gdf_ghb = self.vor.get_vor_cells_as_dict(
             locs=shapefile_path,
-            predicate='overlaps',
+            predicate='intersects',
             loc_name_field=fields['name'],
             return_gdf=True
         )
@@ -177,3 +181,77 @@ class Boundaries:
                     cell_list.append([cell_id, boundary_head, conductance])
             ghb_dict[per] = cell_list
         return ghb_dict
+
+    def get_chd_from_shp(
+            self,
+            shapefile_path: Path,
+            grid_type: str = 'disv',
+            nper: int = 1,
+            fields: dict = None
+    ):
+        """
+        Returns a dictionary to use as input into the chd flopy constructor. keys of the dict are stress periods.
+        :param shapefile_path: path to shapefile with chd information
+        :param grid_type: disv or disu
+        :param nper: number of stress periods in the model
+        :param fields: field names in the shapefile corresponding to name, elevation, and layer of the chd
+        :return: dict where keys are stress periods and values are the chd data for flopy
+        """
+        if fields is None:
+            fields = {
+                'name': 'name',
+                'elevation': 'elev',
+                'layer': 'layer'
+            }
+        chd_cells, gdf_chd = self.vor.get_vor_cells_as_dict(
+            locs=shapefile_path,
+            predicate='intersects',
+            loc_name_field=fields['name'],
+            return_gdf=True
+        )
+        gdf_chd = gdf_chd.set_index(fields['name'])
+        chd_dict = {}
+        for per in range(nper):
+            cell_list = []
+            for name, cell_nums in chd_cells.items():
+                boundary_head = gdf_chd.loc[name, fields['elevation']]
+                layer = gdf_chd.loc[name, fields['layer']]
+                layer_idx = layer - 1
+                for cell in cell_nums:
+                    cell_id = cell if grid_type == 'disu' else (layer_idx, cell)
+                    cell_list.append([cell_id, boundary_head])
+            chd_dict[per] = cell_list
+        return chd_dict
+
+    def get_k_from_shp(
+            self,
+            shapefile_path: Path,
+            grid_type: str = 'disv',
+            fields: dict = None,
+            nlay: int = 1
+    ):
+        if fields is None:
+            fields = {
+                'name': 'name',
+                'k': 'k',
+                'layer': 'layer'
+            }
+        k_cells, gdf_k = self.vor.get_vor_cells_as_dict(
+            locs=shapefile_path,
+            predicate='intersects',
+            loc_name_field=fields['name'],
+            return_gdf=True
+        )
+        gdf_k = gdf_k.set_index(fields['name'])
+
+        k_midx = pd.MultiIndex.from_product(
+            iterables=[list(range(nlay)), list(range(self.vor.ncpl))],
+            names=['layer', 'cell'])
+        k_df = pd.DataFrame(index=k_midx, columns=['k'])
+        for name, cell_nums in k_cells.items():
+            k = gdf_k.loc[name, fields['k']]
+            layer = gdf_k.loc[name, fields['layer']]
+            layer_idx = layer - 1
+            k_df.loc[idxx[layer_idx, cell_nums], 'k'] = k
+
+        return k_df
