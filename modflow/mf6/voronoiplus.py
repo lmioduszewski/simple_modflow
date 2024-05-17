@@ -320,6 +320,11 @@ class VoronoiGridPlus(VoronoiGrid):
                     'y': self.y_list
                 }
         # if additional custom hover data is provided, add it
+        if self.nlay:
+            nlay = self.nlay
+            for lyr in range(nlay):
+                lyr_elevs = self.gdf_topbtm.loc[:, lyr].to_list()
+                hoverdict[f'Layer {lyr} Bottom Elev: '] = lyr_elevs
         if hoverlabels is not None and hoverdata is not None:
             datalen = len(hoverlabels)
             for num in range(datalen):
@@ -381,7 +386,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param predicate: options defined by GeoPandas spatial index query
         :return: Pandas Series of intersecting cells
         """
-        if isinstance(overlapping_geometry, (shp.Polygon, shp.Point)):
+        if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString)):
             pass
         elif isinstance(overlapping_geometry, gpd.GeoSeries):
             geocount = overlapping_geometry.count()
@@ -758,9 +763,17 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gdf_topbtm
 
-    def get_gdf_topbtm_multilyr(self, rasters:list, labels: list = None):
-        if labels is None:
-            labels = list(range(1, len(rasters)+1))
+    def get_gdf_topbtm_multilyr(self, rasters:list):
+        """
+        get a GeoDataFrame that has the elevations for the top of the model and the bottom of evey model layer for
+        every voronoi cell in the model grid. For this to work as intended, the list of rasters need to be provided
+        in order of top to bottom.
+        :param rasters: this assumes that the list of raster is ordered from top to bottom
+        :return: GeoDataFrame of top of model and bottom of every layer. The DataFrame columns are labeled starting at
+        zero for the top of model, and all subsequent numbers correspond to elevations at the bottom of that numbered
+        layer, for example label number '1' refers to the bottom of layer 1.
+        """
+        labels = list(range(0, len(rasters)))
         gdf_topbtm = self.get_centroid_elevations(
             elevations_files=rasters,
             labels=labels
@@ -1071,6 +1084,13 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return centroids_gdf
 
+
+    def to_shapefile(self, filepath: str | Path = 'vor_shp.shp'):
+        return self.gdf_vorPolys.to_file(filepath)
+
+    def get_domain(self):
+        return self.gdf_vorPolys.unary_union
+
     @staticmethod
     def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.array:
         """
@@ -1175,21 +1195,21 @@ class VoronoiGridPlus(VoronoiGrid):
         return gdf_allPolys
 
 
-    def reconcile_surfaces(self, df: pd.DataFrame = None, labels: list = None, min_sep=0.1):
+    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1):
         """
         helper to iterate through surface elevations and check for layers that are above the overlying
         layer, then adjust so they don't overlap.
         :param df: dataframe of surface elevations at each voronoi cell, column names are the surface names
-        :param labels: labels of columns which correspond to the surface names
         :param min_sep: surfaces that are too high will be reduced below the overlying surface by this minimum separation
         :return: new dataframe with adjusted surface elevations
         """
         df = self.gdf_topbtm if df is None else df
+        #  drop the geometry if needed, so we can force all values to be numeric
         if isinstance(df, gpd.GeoDataFrame):
             df = df.drop(columns='geometry').applymap(lambda x: pd.to_numeric(x, errors='coerce'))
         else:
             df = df.applymap(lambda x: pd.to_numeric(x, errors='coerce'))
-        labels = list(df.columns) if labels is None else labels
+        labels = list(df.columns)
         df = df.loc[:, labels]
         # find difference between cols of surfaces
         for i, label in enumerate(labels):

@@ -1,6 +1,7 @@
 import pandas as pd
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as vgp
 from pathlib import Path
+import numpy as np
 
 idxx = pd.IndexSlice
 
@@ -79,7 +80,6 @@ class Boundaries:
             loc_name_field=fields['name'],
             return_gdf=True
         )
-        print(drn_cells)
         # get bottoms of model layers from voronoi grid
         lyr_botms = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
         gdf_drn = gdf_drn.set_index(fields['name'])
@@ -228,7 +228,8 @@ class Boundaries:
             shapefile_path: Path,
             grid_type: str = 'disv',
             fields: dict = None,
-            nlay: int = 1
+            nlay: int = 1,
+            return_array: bool = True
     ):
         if fields is None:
             fields = {
@@ -248,10 +249,16 @@ class Boundaries:
             iterables=[list(range(nlay)), list(range(self.vor.ncpl))],
             names=['layer', 'cell'])
         k_df = pd.DataFrame(index=k_midx, columns=['k'])
+        k_lists = []
         for name, cell_nums in k_cells.items():
             k = gdf_k.loc[name, fields['k']]
             layer = gdf_k.loc[name, fields['layer']]
             layer_idx = layer - 1
             k_df.loc[idxx[layer_idx, cell_nums], 'k'] = k
-
-        return k_df
+        if return_array:
+            for layer in range(nlay):
+                k_lists.append(k_df.loc[layer].squeeze().tolist())
+            k_array = np.array(k_lists)
+            return k_array
+        else:
+            return k_df

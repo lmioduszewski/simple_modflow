@@ -10,7 +10,7 @@ from . import mf2Dplots
 import figs
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
-
+crs_latlon = "EPSG:4326"
 
 class HeadsPlus(bf.HeadFile):
 
@@ -183,23 +183,24 @@ class HeadsPlus(bf.HeadFile):
     def plot_choropleth(
             self,
             stp_per_to_plot: tuple = (0, 0),
-            plot_mounding=False,
+            plot_mounding: bool = False,
             zmin=None,
             zmax=None,
             zoom=18,
             bottom=None,
             bottom_array=None,
             all_layers=False,
-            layer=0
+            layer=1,
+            obs: Path = None,
+            obs_name: str = 'ExploName'
     ):
         """Plot heads for a specified time step and stress period on a
             choropleth map. Heads may show saturated thickness (mounding) or
             show elevation head.
 
-            Args:
-                stp_per_to_plot (tuple, optional): Tuple defining time step and stress period to plot. Defaults to (0,0).
-                plot_mounding (boolean, optional): Boolean to determine whether to plot elevation head or mounding (sat thickness)
-                :param zoom: define zoom level of plot. Default is 18.
+            :param stp_per_to_plot (tuple, optional): Tuple defining time step and stress period to plot. Defaults to (0,0).
+            :param plot_mounding (boolean, optional): Boolean to determine whether to plot elevation head or mounding (sat thickness)
+            :param zoom: define zoom level of plot. Default is 18.
             """
 
         stp_to_plot = stp_per_to_plot[0]
@@ -216,7 +217,7 @@ class HeadsPlus(bf.HeadFile):
             if bottom_array is not None:
                 bottom_elev = bottom_array
             else:
-                bottom_elev = vor.gdf_topbtm.iloc[:, -1].to_numpy()
+                bottom_elev = vor.gdf_topbtm.loc[:, layer].to_numpy()
         else:
             bottom_elev = 0
 
@@ -236,11 +237,13 @@ class HeadsPlus(bf.HeadFile):
         head_list = choro_heads[kstpkper_key]['elev'].to_list()
         hover_dict = {
             'Cell No.': self.cell_list,
-            'Head': head_list,
             'Area': self.area_list,
             'x': self.x_list,
-            'y': self.y_list
+            'y': self.y_list,
         }
+        for lyr in range(self.nlay):
+            lyr_heads = self.all_heads.loc[idxx[(stp_to_plot, per_to_plot), lyr], 'elev'].to_list()
+            hover_dict[f'Layer {lyr+1} Heads'] = lyr_heads
         if plot_mounding:
             mounding_list = choro_dict[kstpkper_key].to_list()
             hover_dict['Mounding'] = mounding_list
@@ -257,4 +260,14 @@ class HeadsPlus(bf.HeadFile):
             zmax=zmax,
             zmin=zmin,
         )
+        if obs:
+            obs = gpd.read_file(obs).to_crs(crs_latlon)
+            fig_mbox.add_scattermapbox(
+                lat=obs.geometry.y,
+                lon=obs.geometry.x,
+                text=obs[obs_name],
+                hoverinfo='text',
+                marker_color='red'
+            )
+
         return fig_mbox
