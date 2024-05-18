@@ -303,3 +303,43 @@ class CHD:
             stress_period_data=stress_period_data
         )
 
+class LAK:
+
+    def __init__(
+            self,
+            model: SimulationBase,
+            nlakes: int = 1,
+            noutlets: int = 0,
+            ntables: int = 1,
+            packagedata = None,
+            connectiondata = None,
+            tables = None,
+            outlets = None,
+            perioddata = None
+    ):
+
+        self.lak = flopy.mf6.ModflowGwflak(
+            model=model.gwf,
+            print_input=False,
+            print_flows=False,
+            print_stage=False,
+            save_flows=True,
+            stage_filerecord=f'{model.name}_stage.lak',
+            budget_filerecord=f'{model.name}_budget.lak',
+            budgetcsv_filerecord=f'{model.name}_lake_budget.csv',
+            package_convergence_filerecord=f'{model.name}_lake_convergence.csv',
+            mover=True,
+            surfdep=0,
+            time_conversion=86_400.0, #  assumes model time units are DAYS
+            length_conversion=3.28081, #  assumes model length units are FEET
+            nlakes=nlakes,
+            noutlets=noutlets,
+            ntables=ntables,
+            packagedata=packagedata,
+            connectiondata=connectiondata,
+            tables=tables,
+            outlets=outlets,
+            perioddata=perioddata,
+            filename=f'{model.name}_lak',
+            pname='lak'
+        )

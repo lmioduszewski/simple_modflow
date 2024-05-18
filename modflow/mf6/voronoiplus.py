@@ -194,6 +194,11 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def ja(self):
+        """ja (integer) is a list of cell number (n) followed by its connecting cell numbers (m)
+        for each of the m cells connected to cell n. The number of values to provide for cell n
+        is IAC(n). This list is sequentially provided for the first to the last cell. The first
+        value in the list must be cell n itself, and the remaining cells must be listed in an
+        increasing order (sorted from lowest number to highest). """
         if self._ja is None:
             ja_cl12_hwva = self.get_ja_cl12_hwva()
             self._ja = ja_cl12_hwva[0]
@@ -203,6 +208,8 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def cl12(self):
+        """cl12 (double) is the array containing connection lengths between the center
+        of cell n and the shared face with each adjacent m cell."""
         if self._cl12 is None:
             ja_cl12_hwva = self.get_ja_cl12_hwva()
             self._ja = ja_cl12_hwva[0]
@@ -212,6 +219,16 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def hwva(self):
+        """hwva (double) is a symmetric array of size NJA. For horizontal connections,
+        entries in HWVA are the horizontal width perpendicular to flow. For vertical
+        connections, entries in HWVA are the vertical area for flow. Thus, values in the
+        HWVA array contain dimensions of both length and area. Entries in the HWVA array
+        have a one-to-one correspondence with the connections specified in the JA array.
+        Likewise, there is a one-to-one correspondence between entries in the HWVA array
+        and entries in the IHC array, which specifies the connection type (horizontal or
+        vertical). Entries in the HWVA array must be symmetric; the program will terminate
+        with an error if the value for HWVA for an n to m connection does not equal the
+        value for HWVA for the corresponding n to m connection."""
         if self._hwva is None:
             ja_cl12_hwva = self.get_ja_cl12_hwva()
             self._ja = ja_cl12_hwva[0]
@@ -237,12 +254,18 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def iac(self):
+        """iac (integer) is the number of connections (plus 1) for each cell. The sum of all
+        the entries in IAC must be equal to NJA."""
         if self._iac is None:
             self._iac = self.get_iac()
         return self._iac
 
     @property
     def nja(self):
+        """nja (integer) is the sum of the number of connections and NODES. When calculating the
+        total number of connections, the connection between cell n and cell m is considered to
+        be different from the connection between cell m and cell n. Thus, NJA is equal to the
+        total number of connections, including n to m and m to n, and the total number of cells."""
         if self._nja is None:
             self._nja = self.get_nja()
         return self._nja
@@ -395,6 +418,8 @@ class VoronoiGridPlus(VoronoiGrid):
             else:
                 print('The GeoSeries is empty!')
                 return
+        elif isinstance(overlapping_geometry, Path):
+            overlapping_geometry = gpd.read_file(overlapping_geometry).geometry
 
         else:
             print('Wrong data types')
@@ -671,6 +696,14 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return adjacent
 
+    def find_adjacent_cells(self, cell_id):
+
+        start_index = sum(self.iac[:cell_id])
+        num_connections = self.iac[cell_id]
+        connections = self.ja[start_index:start_index + num_connections]
+        adjacent_cells = [cell for cell in connections if cell != cell_id]
+        return adjacent_cells
+
     def calculate_distance(self, gdf, poly_idx1, poly_idx2):
         """Calculates the distance between the centroid of one polygon
         and the shared face of an adjacent polygon
@@ -838,14 +871,14 @@ class VoronoiGridPlus(VoronoiGrid):
 
     def get_iac(self):
         ### Find Parameter iac for DISU Package
-        print('getting iac for disu')
+        print('getting iac')
         num_adjacent_by_cell = [None for cell in self.adjacent_cells_idx]
         for i, cell in enumerate(self.adjacent_cells_idx):
             num_adjacent_by_cell[i] = len(cell) + 1
         return num_adjacent_by_cell
 
     def get_nja(self):
-        print('getting nja for disu')
+        print('getting nja')
         ### Find Parameter nja for DISU Package ###
         sumiac = 0
         for i, num in enumerate(self.iac):
@@ -854,7 +887,7 @@ class VoronoiGridPlus(VoronoiGrid):
         return nja_for_disu
 
     def get_ja_cl12_hwva(self):
-        print('getting ja, cl12, and hwva for disu')
+        print('getting ja, cl12, and hwva')
         ### Find Parameter ja, cl12, and hwva for DISU Package ###
         ja_for_disu = []
         cl12_for_disu = []
