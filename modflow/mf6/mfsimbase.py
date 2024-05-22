@@ -23,7 +23,6 @@ class SimulationBase:
             self.sim,
             modelname=self.name,
             model_nam_file=f"{self.name}.nam",
-            newtonoptions="under_relaxation",
             print_flows=True,
             save_flows=True
         )
@@ -33,12 +32,20 @@ class SimulationBase:
             complexity="COMPLEX",
             under_relaxation="DBD",
             under_relaxation_theta=0.72,
-            under_relaxation_kappa=0.24,
-            under_relaxation_momentum=0.0001,
+            under_relaxation_kappa=0.2,
+            under_relaxation_momentum=0.001,
             backtracking_number=20,
             backtracking_tolerance=100,
-            backtracking_reduction_factor=0.3,
+            backtracking_reduction_factor=0.2,
             backtracking_residual_limit=100,
+            outer_maximum=1000,
+            inner_maximum=500,
+            #outer_dvclose=1e-4,
+            #inner_dvclose=1e-5,
+            #rcloserecord=[0.01, 'strict'],
+            #relaxation_factor=0.97,
+            #linear_acceleration='BICGSTAB',
+
         )
 
     def run_simulation(
@@ -174,7 +181,7 @@ class TemporalDiscretization:
             period_data: list = None
     ):
         if period_data is None:
-            period_data = [[per_len, 20, 1.2] for per in range(nper)]
+            period_data = [[per_len, 30, 1.1] for per in range(nper)]
         self.tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
             model.sim,
             pname="tdis",
@@ -322,7 +329,7 @@ class LAK:
             model=model.gwf,
             print_input=False,
             print_flows=False,
-            print_stage=False,
+            print_stage=True,
             save_flows=True,
             stage_filerecord=f'{model.name}_stage.lak',
             budget_filerecord=f'{model.name}_budget.lak',
@@ -341,5 +348,7 @@ class LAK:
             outlets=outlets,
             perioddata=perioddata,
             filename=f'{model.name}_lak',
-            pname='lak'
+            pname='lak',
+            maximum_iterations=10000,
+            maximum_stage_change=0.01
         )

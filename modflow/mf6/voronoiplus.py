@@ -270,6 +270,13 @@ class VoronoiGridPlus(VoronoiGrid):
             self._nja = self.get_nja()
         return self._nja
 
+    def get_disu_props(self):
+        self.iac
+        self.ja
+        self.nja
+        self.cl12
+        self.hwva
+
     def get_voronoi_polygons(self):
         """get polygons for each Voronoi cell, returns
         a list of Shapely polygons objects
@@ -1255,3 +1262,30 @@ class VoronoiGridPlus(VoronoiGrid):
             #  adjust the cells that are too high, based on the min_sep
             df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
         return df
+
+    def adjust_top_btm_overlaps(self, elev_df=None, shp: Path = None, buffer = 1, layer_bottom_name=1) -> pd.DataFrame:
+        """
+        method to easily adjust the bottoms of certain voronoi cells so that the bottoms are not higher than any of
+        the tops of the adjacent cells. In order to have a continually overlapping layer of cells horiontally. This
+        is mostly an issue for steeply sloping surfaces with thinner layer thicknesses.
+        :param elev_df: DataFrame with cell elevations to adjust. Defaults to the return df of self.reconcile_surfaces()
+        :param shp: Path of shapefile that identifies cells to be adjusted
+        :param buffer: how much extra below the lowest adjacent cell top to lower each cell, defaults to 1
+        :param layer_bottom_name: name of the layer we are adjusting, defaults to layer 1
+        :return: returns a new dataframe of reconciled surfaces
+        """
+        elev_df = self.reconcile_surfaces() if elev_df is None else elev_df
+        cells_to_adjust = self.get_vor_cells_as_series(shp)
+        new_bottoms = {}
+
+        for cell_id in cells_to_adjust:
+            adjacent_cells = self.find_adjacent_cells(cell_id)
+            ja_cell_tops = elev_df[0].loc[adjacent_cells]
+            ja_min = ja_cell_tops.min()
+            new_bottoms[cell_id] = ja_min - buffer
+
+        new_bottoms = pd.Series(new_bottoms, name=layer_bottom_name)
+        elev_df[layer_bottom_name].update(new_bottoms)
+        new_surfaces = self.reconcile_surfaces(df=elev_df)
+
+        return new_surfaces

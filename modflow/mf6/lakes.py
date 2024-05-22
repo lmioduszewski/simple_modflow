@@ -10,6 +10,7 @@ from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from flopy.mf6.modflow.mfutllaktab import ModflowUtllaktab
 
+
 class LakeAreaVolumeRelationship:
     """Defines the lake elevation, surface area, volume relationship for a given lake. The lake table
     will be generated and associated with the provided GWF model provided. The relationship
@@ -21,17 +22,21 @@ class LakeAreaVolumeRelationship:
             dem_path: Path,
             lake_shapefile: Path,
             elevations: list = None,
-            nlake: int = 0,
-            model: SimulationBase = None
+            lake_num: int = 0,
+            model: SimulationBase = None,
+            shapefile_buffer=0
     ):
         self.dem_path = dem_path
         self.lake_shapefile = lake_shapefile
+        self.shapefile_buffer = shapefile_buffer
         self.load_dem()
         self.load_lake_footprint()
         self._lake_table = None
         self.elevations = elevations
-        self.nlake = nlake,
+        self.lake_num = lake_num
         self.model = model
+        self.filename = f'lake_table.lak'
+        self.table_block = [self.lake_num, self.filename]
 
         if self.model:
             self.add_to_model()
@@ -53,7 +58,7 @@ class LakeAreaVolumeRelationship:
 
     def load_lake_footprint(self):
         lake_gdf = gpd.read_file(self.lake_shapefile)
-        self.lake_polygon = lake_gdf.geometry.iloc[0]
+        self.lake_polygon = lake_gdf.geometry.iloc[0].buffer(self.shapefile_buffer)
         self.clip_dem_to_lake()
 
     def clip_dem_to_lake(self):
@@ -116,21 +121,28 @@ class LakeAreaVolumeRelationship:
             nrow=len(self.lake_table),
             ncol=3,
             table=self.lake_table,
-            filename='lake_table.lak',
+            filename=self.filename,
             pname='lak'
         )
 
 
 class LakeConnectionData:
 
-    def __init__(self, vor: Vor, lake_shp: Path, bed_leakance = 1, nlake: int = 0):
+    def __init__(
+            self, vor: Vor,
+            lake_shp: Path,
+            bed_leakance = 1,
+            lake_num: int = 0,
+            only_layer = None,
+    ):
 
         self.vor = vor
         self.lake_shp = lake_shp
         self.lake_vor_cells = vor.get_vor_cells_as_series(self.lake_shp)
         self._connection_data = None
-        self.lake_no = nlake
+        self.lake_num = lake_num
         self.bed_leakance = bed_leakance
+        self.only_layer = only_layer
 
     @property
     def connection_data(self):
@@ -138,37 +150,57 @@ class LakeConnectionData:
             self._connection_data = self.get_connection_data()
         return self._connection_data
 
-    def get_connection_data(self, use_reconciled_surfaces=True):
+    def get_connection_data(self, use_reconciled_surfaces=True, alt_surface_df=None, min_sep=None, only_vertical=False):
         """gets the connection data for the MODFLOW 6 LAK package based on the provided vornoi grid
         and a shapefile of the lake footprint"""
 
-        idx_conn = 0
+        only_layer = self.only_layer
+        idx_conn = 0  # starting index for numbering connections
         vor = self.vor
-        lake_no = self.lake_no
+        lake_num = self.lake_num
         bed_leakance = self.bed_leakance
         connection_data = []
-        elev_df = vor.reconcile_surfaces() if use_reconciled_surfaces else vor.gdf_topbtm
+        min_sep = 0.1 if min_sep is None else min_sep
+        if alt_surface_df is not None:
+            elev_df = alt_surface_df
+        else:
+            elev_df = vor.reconcile_surfaces(min_sep=min_sep) if use_reconciled_surfaces else vor.gdf_topbtm
+        adjusted_cells = {}
 
         for cell_id in self.lake_vor_cells:
             start_index = sum(vor.iac[:cell_id])
             #  set vertical connection for cell
-            vert_conn = [lake_no, idx_conn, (0, cell_id), 'VERTICAL', bed_leakance, 0, 0, 0, 0]
+            vert_conn = [lake_num, idx_conn, (0, cell_id), 'VERTICAL', bed_leakance, 0, 0, 0, 0]
             connection_data.append(vert_conn)
             idx_conn += 1
 
+            if only_vertical:
+                continue
+
             adjacent_cells = vor.find_adjacent_cells(cell_id)
-            ja_cell_top_elevs = elev_df[0].loc[adjacent_cells]
-            cell_top_elev = elev_df[0].loc[cell_id]
+            ja_cell_tops = elev_df[0].loc[adjacent_cells]
+            cell_top = elev_df[0].loc[cell_id]
+
             for idx, ja_cell in enumerate(adjacent_cells):
-                """iterate through all adjacent cells and if the adjacent cell is lower in elevation
-                then get parameters for a horizontal lake connection"""
-                if ja_cell_top_elevs[ja_cell] < cell_top_elev:
-                    top = cell_top_elev
-                    botm = ja_cell_top_elevs[ja_cell]
-                    conn_len = vor.cl12[start_index + idx + 1]  # add 1 to skip the cell itself
-                    conn_width = vor.hwva[start_index + idx + 1]
-                    #  set horizontal connection for cell
-                    horz_conn = [lake_no, idx_conn, (0, cell_id), 'HORIZONTAL', bed_leakance, botm, top, conn_len,
+                ja_cell_top = elev_df.loc[ja_cell, 0]
+                conn_len = vor.cl12[start_index + idx + 1]  # add 1 to skip the cell itself
+                conn_width = vor.hwva[start_index + idx + 1]
+                #  get list of booleans that indicate what layers for this cell are higher than adjacent cell top
+                cell_comp = (elev_df.loc[cell_id] > ja_cell_top)
+                for layer, boolean in enumerate(cell_comp):
+                    if only_layer is not None:
+                        if layer != only_layer:
+                            continue
+                    if boolean:  # if cell's top of this layer higher than adjacent cell top
+                        top = elev_df.loc[cell_id, layer]
+                        # if cell's bottom of this layer is not higher than adjacent cell top
+                        if not cell_comp[layer + 1]:
+                            botm = ja_cell_top
+                        else:  # but if this cell's bottom is higher than the adjacent cell top
+                            botm = elev_df.loc[cell_id, layer + 1]
+                    else:  # if this cell's top is not higher than adjacent cell top then no more connection data needed
+                        break
+                    horz_conn = [lake_num, idx_conn, (layer, cell_id), 'HORIZONTAL', bed_leakance, botm, top, conn_len,
                                  conn_width]
                     connection_data.append(horz_conn)
                     idx_conn += 1
