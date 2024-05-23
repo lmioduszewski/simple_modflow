@@ -1258,12 +1258,18 @@ class VoronoiGridPlus(VoronoiGrid):
                 continue
             diffs = df.diff(axis=1)
             #  create list of cells where the elevation of this column is higher than the previous
-            diff_list = list(diffs[diffs[label] >= 0].index)
+            diff_list = list(diffs[diffs[label] >= -5].index)
             #  adjust the cells that are too high, based on the min_sep
             df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
         return df
 
-    def adjust_top_btm_overlaps(self, elev_df=None, shp: Path = None, buffer = 1, layer_bottom_name=1) -> pd.DataFrame:
+    def adjust_top_btm_overlaps(
+            self,
+            elev_df=None,
+            shp: Path = None, buffer = 1,
+            layer_bottom_name=1,
+            min_sep=None
+    ) -> pd.DataFrame:
         """
         method to easily adjust the bottoms of certain voronoi cells so that the bottoms are not higher than any of
         the tops of the adjacent cells. In order to have a continually overlapping layer of cells horiontally. This
@@ -1274,7 +1280,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param layer_bottom_name: name of the layer we are adjusting, defaults to layer 1
         :return: returns a new dataframe of reconciled surfaces
         """
-        elev_df = self.reconcile_surfaces() if elev_df is None else elev_df
+        elev_df = self.reconcile_surfaces(min_sep=min_sep) if elev_df is None else elev_df
         cells_to_adjust = self.get_vor_cells_as_series(shp)
         new_bottoms = {}
 

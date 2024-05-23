@@ -24,6 +24,7 @@ class SimulationBase:
             modelname=self.name,
             model_nam_file=f"{self.name}.nam",
             print_flows=True,
+            newtonoptions='under_relaxation',
             save_flows=True
         )
         self.ims = flopy.mf6.modflow.mfims.ModflowIms(
