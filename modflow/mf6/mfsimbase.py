@@ -12,6 +12,9 @@ class SimulationBase:
     ):
         self.name = name
         self.nlay = None
+        self.nper = None
+        self.num_steps = None
+        self.per_len = None
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -23,7 +26,7 @@ class SimulationBase:
             self.sim,
             modelname=self.name,
             model_nam_file=f"{self.name}.nam",
-            print_flows=True,
+            print_flows=False,
             newtonoptions='under_relaxation',
             save_flows=True
         )
@@ -36,17 +39,16 @@ class SimulationBase:
             under_relaxation_kappa=0.2,
             under_relaxation_momentum=0.001,
             backtracking_number=20,
-            backtracking_tolerance=100,
+            backtracking_tolerance=1.1,
             backtracking_reduction_factor=0.2,
             backtracking_residual_limit=100,
-            outer_maximum=1000,
-            inner_maximum=500,
+            outer_maximum=2000,
+            inner_maximum=1000,
             #outer_dvclose=1e-4,
             #inner_dvclose=1e-5,
             #rcloserecord=[0.01, 'strict'],
-            #relaxation_factor=0.97,
+            # relaxation_factor=0.97,
             #linear_acceleration='BICGSTAB',
-
         )
 
     def run_simulation(
@@ -179,10 +181,15 @@ class TemporalDiscretization:
             time_units: str = 'DAYS',
             nper: int = 1,
             per_len: int = 1,
-            period_data: list = None
+            period_data: list = None,
+            num_steps = 30,
+            multiplier = 1.1
     ):
         if period_data is None:
-            period_data = [[per_len, 30, 1.1] for per in range(nper)]
+            period_data = [[per_len, num_steps, multiplier] for per in range(nper)]
+        model.nper = nper
+        model.num_steps = num_steps
+        model.per_len = per_len
         self.tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
             model.sim,
             pname="tdis",
@@ -351,5 +358,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.01
+            maximum_stage_change=0.05
         )

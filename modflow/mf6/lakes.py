@@ -212,8 +212,8 @@ class LakePackageData:
             self,
             nlakes: int,
             starting_stage: list,
-            connectiondata: list,
-            boundnames: list
+            connectiondata: list = None,
+            boundnames: list = None
 
     ):
         self._packagedata = None
@@ -241,4 +241,90 @@ class LakePackageData:
             lakeconn = connectiondata[lake]
             lak_packagedata = [lake, lak_starting_stage, len(lakeconn)]
             packagedata.append(lak_packagedata)
+
         return packagedata
+
+
+class LakePeriodData:
+
+    def __init__(
+            self,
+            model: SimulationBase = None,
+            lake_ids = [0],
+            lake_stages = None,
+            rainfall_rates = None,
+            evaporation_rates = None,
+            withdrawals = None,
+            nper = 1
+    ):
+        self.model = model
+        self.lake_ids = lake_ids
+        self.lake_stages = lake_stages
+        self.rainfall_rates = rainfall_rates
+        self.evaporation_rates = evaporation_rates
+        self.withdrawals = withdrawals
+        self.nper = nper if self.model is None else self.model.nper
+        self._period_data = None
+
+    @property
+    def perioddata(self):
+        self._period_data = self.get_lak_period_data(
+            nper=self.nper,
+            lake_ids=self.lake_ids,
+            lake_stages=self.lake_stages,
+            rainfall_rates=self.rainfall_rates,
+            evaporation_rates=self.evaporation_rates,
+            withdrawals=self.withdrawals
+        )
+        return self._period_data
+
+
+    def get_lak_period_data(
+            self,
+            nper: int = None,
+            lake_ids: list = [0],
+            lake_stages: list = None,
+            rainfall_rates: list = None,
+            evaporation_rates: list = None,
+            withdrawals: list = None
+    ) -> list:
+        """
+        Generate period data for the MODFLOW 6 LAK package.
+
+        Parameters:
+        num_stress_periods (int): Number of stress periods.
+        lake_ids (list of int): List of lake IDs.
+        lake_stages (list of float, optional): List of lake stages for each stress period.
+        rainfall_rates (list of float, optional): List of rainfall rates for each stress period.
+        evaporation_rates (list of float, optional): List of evaporation rates for each stress period.
+        withdrawals (list of float, optional): List of withdrawal rates for each stress period.
+
+        Returns:
+        dict: Dictionary of period data for the LAK package. Each key is a stress period number, and the value is a list of lists.
+        """
+        period_data = {}
+        nper = self.nper if nper is None else nper
+
+        for period in range(nper):
+            period_data[period] = []
+
+            for lake_id in lake_ids:
+                lake_number = lake_id  # lake_id is 0-based
+
+                laksetting = [lake_number]
+                if lake_stages is not None and period < len(lake_stages):
+                    print(lake_stages[period])
+                    print(len(lake_stages))
+                    laksetting.extend(['stage', lake_stages[period]])
+                if rainfall_rates is not None:
+                    laksetting.extend(['rainfall', rainfall_rates[period]])
+                if evaporation_rates is not None:
+                    laksetting.extend(['evaporation', evaporation_rates[period]])
+                if withdrawals is not None:
+                    laksetting.extend(['withdrawal', withdrawals[period]])
+
+                period_data[period].append(laksetting)
+
+        return period_data
+
+

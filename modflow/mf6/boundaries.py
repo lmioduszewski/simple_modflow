@@ -2,6 +2,7 @@ import pandas as pd
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as vgp
 from pathlib import Path
 import numpy as np
+from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 
 idxx = pd.IndexSlice
 
@@ -10,11 +11,14 @@ class Boundaries:
     def __init__(
         self,
         vor: vgp,
+        model: SimulationBase = None,
         bound_type: str = None
     ):
         
         self.vor = vor
         self.bound_type = bound_type
+        self.model = model
+        self.nper = model.nper
 
     def get_drn_stress_period_data(
         self, 
@@ -66,6 +70,7 @@ class Boundaries:
             nper: int = 1,
             fields: dict = None
     ):
+        nper = nper if self.nper is None else self.nper
         if fields is None:
             fields = {
                 'name': 'name',
@@ -105,7 +110,7 @@ class Boundaries:
             recharges: dict = None,
             grid_type:str = 'disv',
             background_rch: int | float = None,
-            nper: int = None
+            nper: int = 1
     ) -> dict:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
@@ -120,8 +125,8 @@ class Boundaries:
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
-        if nper is None:
-            nper = len(list(recharges.values())[0])
+        nper = nper if self.nper is None else self.nper
+        assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
         for per in range(nper):
             cell_list = []
             all_rch_cells = []
