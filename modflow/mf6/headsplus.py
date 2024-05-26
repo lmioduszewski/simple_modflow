@@ -114,7 +114,8 @@ class HeadsPlus(bf.HeadFile):
             locs: Path,
             crs: str = "EPSG:2927",
             normalized_head_per_obs: dict = None,
-            to_date_range: tuple = None
+            to_date_range: tuple = None,
+            loc_name_field='ExploName'
     ):
         """Plots heads for specified locations in the model.
             Locations should be specified as the model cell/node to 
@@ -137,7 +138,7 @@ class HeadsPlus(bf.HeadFile):
             obs_dict = self.vor.get_vor_cells_as_dict(locs=locs,
                                                       crs=crs,
                                                       predicate='contains',
-                                                      loc_name_field='Exploname'
+                                                      loc_name_field=loc_name_field
                                                       )
             obs_dict = self.sort_dict_by_keys(obs_dict)
 
@@ -146,7 +147,8 @@ class HeadsPlus(bf.HeadFile):
             for obs in obs_dict:  # add all heads for obs to the new dict
                 obs_heads_dict[obs] = []
                 for stp_per in self.kstpkper:
-                    obs_heads_dict[obs] += [heads[(stp_per, obs_dict[obs][0])]]
+                    for layer in range(self.nlay):
+                        obs_heads_dict[obs] += [heads[(stp_per, layer, obs_dict[obs][0])]]
             fig = go.Figure(
                 layout=self.fig_layout,
             )

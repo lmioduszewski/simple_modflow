@@ -31,24 +31,20 @@ class SFR:
         self.stream_gdf = gpd.read_file(stream_path)
         self.stream_geom = self.stream_gdf.geometry.unary_union
         self.stream_points = {}
-        self.vor_intersect = {}
         self._reach_lens = None
         self.sfr = None
 
         x, y = self.stream_geom.coords.xy
         self.stream_points = [shp.Point(point) for point in list(zip(x,y))]
-        self.vor_intersect = vor.get_vor_cells_as_series(self.stream_geom).to_list()
-
-        self.vor_intersect_flat_list = sorted(self.vor_intersect)
-        self.nreaches = len(self.vor_intersect_flat_list)  # Number of stream reaches
-        self.stream_cells = None
+        self._stream_cells = None
+        self.nreaches = len(self.stream_cells)  # Number of stream reaches
         self.sfr_reach_data = None
         self._sfr_connection_data = None
         self.sfr_period_data = None
 
-        print('getting reach data')
-        self.get_reach_data()
         if add_sfr:
+            print('getting reach data')
+            self.get_reach_data()
             self.add_sfr()
 
 
@@ -60,21 +56,26 @@ class SFR:
         return self._reach_lens
 
     @property
+    def stream_cells(self):
+        if self._stream_cells is None:
+            stream_cells = self.get_sorted_cells_along_stream(self.stream_idx, self.reverse)[0]
+            self._stream_cells = stream_cells
+        return self._stream_cells
+
+    @property
     def sfr_connection_data(self):
         if self._sfr_connection_data is None:
-            stream_cells, _ = self.get_sorted_cells_along_stream(self.stream_idx, self.reverse)
-            self._sfr_connection_data = self.get_connection_data(stream_cells)
+            self._sfr_connection_data = self.get_connection_data(self.stream_cells)
         return self._sfr_connection_data
 
     def get_gradient(self):
         pass
 
-    def get_reach_data(self):
+    def get_reach_data(self, elev_add=0.1):
 
         # Define the stream network data
-        elev_add = 2
         nreaches = self.nreaches
-        sfr_cells = [(0, i) for i in self.vor_intersect_flat_list]  # cells where the stream reaches are located in lyr 1
+        sfr_cells = [(0, i) for i in sorted(self.stream_cells)]  # cells where the stream reaches are located in lyr 1
         top_elevs = self.get_smoothed_reach_elevs()
 
         # Define SFR package data
@@ -106,7 +107,7 @@ class SFR:
             sfr_reach_data['rlen'][i] = self.reach_lens[i]  # Length of each reach in feet
             sfr_reach_data['rwid'][i] = 3  # Width of each reach in feet
             sfr_reach_data['rgrd'][i] = 0.002  # Gradient of each reach (dimensionless)
-            sfr_reach_data['rtp'][i] = top_elevs[self.vor_intersect_flat_list[i]] + elev_add  # Top elevation of each reach in feet
+            sfr_reach_data['rtp'][i] = top_elevs[sorted(self.stream_cells)[i]] + elev_add  # Top elevation of each reach in feet
             sfr_reach_data['rbth'][i] = 2  # Thickness of the streambed in feet
             sfr_reach_data['rhk'][i] = 0.005  # Hydraulic conductivity of the streambed in feet/day
             sfr_reach_data['man'][i] = 0.025  # Manning's roughness coefficient (example value)
@@ -132,12 +133,14 @@ class SFR:
             perioddata=self.sfr_period_data,
             maximum_picard_iterations=1,
             maximum_iterations=1000,
-            maximum_depth_change=0.01
+            maximum_depth_change=0.01,
+            budget_filerecord='sfr_budget.sfr',
+            stage_filerecord='sfr_stage.sfr'
         )
         return self.sfr
 
     def get_reach_lens(self):
-        vor_idxs = self.vor_intersect_flat_list
+        vor_idxs = sorted(self.stream_cells)
         reach_lens = []
         for idx in vor_idxs:
             reach_len = self.stream_geom.intersection(self.vor.gdf_vorPolys.loc[idx]).geometry.length
@@ -216,6 +219,10 @@ class SFR:
             connection_data.append(connections)
 
         return connection_data
+
+    def show_stream(self):
+        cells = self.stream_cells
+        self.vor.show_selected_cells(cells)
 
 
 

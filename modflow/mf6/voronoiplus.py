@@ -1235,7 +1235,7 @@ class VoronoiGridPlus(VoronoiGrid):
         return gdf_allPolys
 
 
-    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1):
+    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1):
         """
         helper to iterate through surface elevations and check for layers that are above the overlying
         layer, then adjust so they don't overlap.
@@ -1243,6 +1243,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param min_sep: surfaces that are too high will be reduced below the overlying surface by this minimum separation
         :return: new dataframe with adjusted surface elevations
         """
+
         df = self.gdf_topbtm if df is None else df
         #  drop the geometry if needed, so we can force all values to be numeric
         if isinstance(df, gpd.GeoDataFrame):
@@ -1258,10 +1259,35 @@ class VoronoiGridPlus(VoronoiGrid):
                 continue
             diffs = df.diff(axis=1)
             #  create list of cells where the elevation of this column is higher than the previous
-            diff_list = list(diffs[diffs[label] >= -5].index)
+            diff_list = list(diffs[diffs[label] >= -trigger_sep].index)
             #  adjust the cells that are too high, based on the min_sep
             df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+
         return df
+
+    def adjust_cells_by_id(
+            self,
+            cell_ids: list,
+            adjustment: int | float,
+            df: pd.DataFrame = None,
+            layer: int = 0,
+            reconcile: bool = True
+    ):
+        """
+        method to adjust the elevations of provided cells by given adjustment amount
+        :param cell_ids: list of cell ids to adjust
+        :param adjustment: amount to adjust the cells by
+        :param df: DataFrame of layer elevations. Index are cell ids, columns are layers
+        :param layer: which layer to adjust, 0 = top of 1st layer, 1 = 1st layer botom, 2 = 2nd layer bottom, etc.
+        :param reconcile: boolean value to indicate if the adjusted surfaces df should be sent to self.reconciled_surfaces
+        :return: df
+        """
+
+        df = self.gdf_topbtm.copy() if df is None else df.copy()
+        df.loc[cells, layer] = df.loc[cells, layer] + adjustment
+        df = self.reconcile_surfaces(df) if reconcile else df
+        return df
+
 
     def adjust_top_btm_overlaps(
             self,
@@ -1295,3 +1321,5 @@ class VoronoiGridPlus(VoronoiGrid):
         new_surfaces = self.reconcile_surfaces(df=elev_df)
 
         return new_surfaces
+
+
