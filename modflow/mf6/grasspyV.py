@@ -222,13 +222,15 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\pit surface simplified.shp").as_posix()
-    region_raster = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\raster_surface\pit_area.tif").as_posix()
+    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\top_of_qvt.shp").as_posix()
+    region_raster = (Path(
+        r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\raster_surface\finals\2023 - top of model.tif")
+                     .as_posix())
     interp = SurfaceInterpFromShp(
         shp_path=top_shp,
         region_dimensions_raster= region_raster,
-        shp_attribute_for_z='elev',
-        output_resolution=3,
-        surf_out='pittop.tif'
+        shp_attribute_for_z='Elevation',
+        output_resolution=15,
+        surf_out='Qvt_top.tif'
     )
     interp.write_surf()

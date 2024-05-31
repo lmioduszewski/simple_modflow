@@ -17,7 +17,8 @@ class HeadsPlus(bf.HeadFile):
     def __init__(
             self,
             hds_path: Path,
-            vor: vgp = None
+            vor: vgp = None,
+            obs_path: Path = None
     ):
         """
         Class to do stuff with a MODFLOW heads file. This class subclasses the flopy.utils.binaryfile.HeadFile class.
@@ -60,6 +61,9 @@ class HeadsPlus(bf.HeadFile):
         self.area_list = [cell.area for cell in self.vor_list]
         self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
         self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+        self._obs = {}
+        self._obs_heads = None
+        self.obs_path = obs_path
 
 
     @property
@@ -68,6 +72,23 @@ class HeadsPlus(bf.HeadFile):
             self._all_heads = self.get_all_heads()
         return self._all_heads
 
+    @property
+    def obs(self):
+        return self._obs
+
+    @property
+    def obs_path(self):
+        return self._obs_path
+
+    @obs_path.setter
+    def obs_path(self, val):
+        self._obs_path = val
+
+    @property
+    def obs_heads(self):
+        if self._obs_heads is None:
+            self._obs_heads = self.get_obs_heads()
+        return self._obs_heads
 
     def get_all_heads(self):
         """Method to get all heads for this model and store in
@@ -108,6 +129,55 @@ class HeadsPlus(bf.HeadFile):
         sorted_keys = sorted(dict_to_sort.keys())
         sorted_dict = {i: dict_to_sort[i] for i in sorted_keys}
         return sorted_dict
+
+    def get_obs_cells(self, locs: Path, crs: str = "EPSG:2927", loc_name_field='ExploName'):
+        """
+        method to get cells that contain certain observation locations. Locations
+        should be points in a shapefile
+        :param locs: Path for shapefile with locations of obs as points
+        :param crs: crs of shapefile. Defaults to EPSG_2927 (South WA)
+        :param loc_name_field: field name in the shapefile attribute table containing observation names.
+        :return: dict where observation names are keys and the lists of cells containing them are the values.
+        """
+        locs = self.obs_path if locs is None else locs
+        if locs is None:
+            return print('no obs path found')
+        obs_dict = self.vor.get_vor_cells_as_dict(
+            locs=locs,
+            crs=crs,
+            predicate='contains',
+            loc_name_field=loc_name_field)
+        obs_dict = self.sort_dict_by_keys(obs_dict)
+        for obs, cell_ids in obs_dict.items():
+            assert len(cell_ids) == 1, f'more than one cell found for {obs}. Fix to make it one cell'
+            obs_dict[obs] = cell_ids[0]
+        return obs_dict
+
+    def get_obs_heads(self, locs: Path = None, crs: str = "EPSG:2927", loc_name_field='ExploName'):
+
+        if locs is not None:
+            new_obs = self.get_obs_cells(locs, crs, loc_name_field)
+            self._obs.update(new_obs)
+        if not self.obs:
+            d = self.get_obs_cells(self.obs_path, crs, loc_name_field)
+            self._obs.update(d)
+        obs_cell_dict = self.obs
+        assert obs_cell_dict, 'no observations found'
+        obs_cells = list(obs_cell_dict.values())
+        all_heads = self.all_heads.copy()
+        obs_heads = all_heads.loc[idxx[:, :, obs_cells], :]
+        obs_reset_idx = obs_heads.reset_index()
+        for ob, cell in obs_cell_dict.items():
+            obs_reset_idx.loc[obs_reset_idx['cell'] == cell, 'cell'] = ob
+        obs_heads = obs_reset_idx.pivot(
+            index=['layer', 'kstpkper'],
+            columns='cell',
+            values='elev'
+        )
+        obs_heads.columns.name = 'obs'
+
+        return obs_heads
+
 
     def plot_heads(
             self,

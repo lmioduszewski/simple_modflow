@@ -358,5 +358,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.001
+            maximum_stage_change=0.01
         )

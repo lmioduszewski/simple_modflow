@@ -71,11 +71,11 @@ class SFR:
     def get_gradient(self):
         pass
 
-    def get_reach_data(self, elev_add=0.1):
+    def get_reach_data(self, elev_add=0.1, streambed_k = 1):
 
         # Define the stream network data
         nreaches = self.nreaches
-        sfr_cells = [(0, i) for i in sorted(self.stream_cells)]  # cells where the stream reaches are located in lyr 1
+        sfr_cells = [(0, i) for i in self.stream_cells]  # cells where the stream reaches are located in lyr 1
         top_elevs = self.get_smoothed_reach_elevs()
 
         # Define SFR package data
@@ -105,11 +105,11 @@ class SFR:
             sfr_reach_data['rno'][i] = i
             sfr_reach_data['cellid'][i] = cell
             sfr_reach_data['rlen'][i] = self.reach_lens[i]  # Length of each reach in feet
-            sfr_reach_data['rwid'][i] = 3  # Width of each reach in feet
+            sfr_reach_data['rwid'][i] = 10  # Width of each reach in feet
             sfr_reach_data['rgrd'][i] = 0.002  # Gradient of each reach (dimensionless)
-            sfr_reach_data['rtp'][i] = top_elevs[sorted(self.stream_cells)[i]] + elev_add  # Top elevation of each reach in feet
-            sfr_reach_data['rbth'][i] = 2  # Thickness of the streambed in feet
-            sfr_reach_data['rhk'][i] = 0.005  # Hydraulic conductivity of the streambed in feet/day
+            sfr_reach_data['rtp'][i] = top_elevs[self.stream_cells[i]] + elev_add  # Top elevation of each reach in feet
+            sfr_reach_data['rbth'][i] = 1  # Thickness of the streambed in feet
+            sfr_reach_data['rhk'][i] = streambed_k  # Hydraulic conductivity of the streambed in feet/day
             sfr_reach_data['man'][i] = 0.025  # Manning's roughness coefficient (example value)
             sfr_reach_data['ncon'][i] = nconn  # Number of connections (example value)
             sfr_reach_data['ustrf'][i] = 1.0  # Upstream fraction (example value)
@@ -135,7 +135,11 @@ class SFR:
             maximum_iterations=1000,
             maximum_depth_change=0.01,
             budget_filerecord='sfr_budget.sfr',
-            stage_filerecord='sfr_stage.sfr'
+            stage_filerecord='sfr_stage.sfr',
+            #  unit_conversion=128342.4,  # since we are using feet and days
+            length_conversion=3.28081,  # since we are using feet instead of meters
+            time_conversion=86_400  # since we are using days instead of seconds
+
         )
         return self.sfr
 
