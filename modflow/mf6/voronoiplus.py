@@ -20,6 +20,30 @@ from figs import create_hover, Fig
 def flatten(l):
     return [item for sublist in l for item in sublist]
 
+def densify_poly(polygon: shp.Polygon = None, distance_between: int | float = None) -> shp.Polygon:
+    """
+    adds points along the exterior of a polygon with at a specified distance between them
+    :param polygon: shapely polygon to densify
+    :param distance_between: distance between points to add
+    :return: densified polygon
+    """
+    exterior: shp.geometry.polygon.LinearRing = polygon.exterior
+    total_length = exterior.length
+    current_distance = 0.0
+    new_points = []
+
+    while current_distance < total_length:
+        point = exterior.interpolate(current_distance)
+        new_points.append(point)
+        current_distance += distance_between
+
+    # Add the last point to ensure the polygon is closed
+    new_points.append(exterior.interpolate(total_length))
+
+    new_poly = shp.Polygon(new_points)
+
+    return new_poly
+
 class TriangleGrid(Triangle):
 
     def __init__(self, *args, **kwargs):
@@ -56,7 +80,8 @@ class TriangleGrid(Triangle):
             x_dist=100,
             y_dist=100,
             origin=(0, 0),
-            return_only = False
+            return_only = False,
+            max_area = None
     ):
         x_min, y_min = origin[0], origin[1]
         x_max, y_max = x_min + x_dist, y_min + y_dist
@@ -65,6 +90,9 @@ class TriangleGrid(Triangle):
         polygon = shp.Polygon(polygon_coords)
         if not return_only:
             self.add_polygon(polygon)
+            if max_area:
+                representative_point = polygon.representative_point().coords[0]
+                self.add_region(representative_point, maximum_area=max_area)
 
         return polygon
 
