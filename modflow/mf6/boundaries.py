@@ -46,13 +46,15 @@ class Boundaries:
         self.model = model
         self.vor = vor
         self.bound_type = bound_type
-        self.gdf = gpd.read_file(shp)
-        self.gdf.to_crs(inplace=True, epsg=crs)
+        if shp is not None:
+            self.gdf = gpd.read_file(shp)
+            self.gdf.to_crs(inplace=True, epsg=crs)
         self.nper = model.nper
         self.uid = uid
         self._intersections = None
         self._intersections_no_duplicates = None
         self._vor_bound_polys = None
+        self._rch_scale = None
 
     @property
     def intersections(self):
@@ -88,6 +90,14 @@ class Boundaries:
             vor_polys['geometry'] = vor_polys['no_dup'].apply(lambda x: self.vor.gdf_vorPolys.loc[x].unary_union)
             self._vor_bound_polys = gpd.GeoDataFrame(vor_polys, geometry='geometry').drop(columns='no_dup')
         return self._vor_bound_polys
+
+    @property
+    def shp_to_vor_poly_scale(self):
+        """gets a DataFrame giving the scaling between the areas of the shapefile vs. voronoi polys"""
+        if self._rch_scale is None:
+            rch_scale = self.gdf.area / self.vor_bound_polys.area
+            self._rch_scale = rch_scale
+        return self._rch_scale
 
     def get_drn_stress_period_data(
         self, 

@@ -5,9 +5,6 @@ import geopandas as gpd
 import pandas as pd
 from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
 import simple_modflow.modflow.mf6.mfsimbase as mf
-import grid
-import simple_modflow.modflow.mf6.mfsimbase as mf
-import grid
 from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
 from simple_modflow.modflow.mf6.boundaries import Boundaries
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
@@ -27,7 +24,8 @@ class RechargeFromShp(Boundaries):
             shp: Path = None,
             uid: str = None,
             crs: int = 2927,
-            rch_cols = None
+            rch_fields: list | slice = None,
+            rch_fields_to_pers: list = None
 
     ):
         """
@@ -37,13 +35,54 @@ class RechargeFromShp(Boundaries):
         :param shp: path to shapefile that holds the polygons for the boundary
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
-        :param rch_cols: field names corresponding to the recharge data in the shapefile attribute table
+        :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
+        :param rch_fields_to_pers: list of indices of length nper that correspond to the fields in rch_fields. Defines which field should be used for each stress period.
         :param bound_type: arbitary identifier for this boundary type
         """
         super().__init__(model, vor, shp, uid, crs)
         self.bound_type = 'rch'
+        self.fields = rch_fields
+        self.rch_fields_to_pers = rch_fields_to_pers
+        self._cell_ids = None
+        self._rch_fields = None
+        self.uid = uid
+        self._recharges = None
 
+    @property
+    def cell_ids(self):
+        """gets cell ids for each recharge polygon in the shapefile as a dict. Keys are
+        unique ids (uids)"""
+        if self._cell_ids is None:
+            cell_ids = self.intersections_no_duplicates
+            cell_ids = cell_ids.set_index(self.uid)['no_dup'].to_dict()
+            self._cell_ids = cell_ids
+        return self._cell_ids
 
+    @property
+    def rch_fields(self):
+        """gets a DataFrame of just the recharge data fields from the shapefile.
+        Used to build the recharge dict for input into a flopy modflow model"""
+        if self._rch_fields is None:
+            rch_fields = self.gdf.loc[:, self.fields]
+            self._rch_fields = pd.concat([self.gdf[self.uid], rch_fields], axis=1).set_index(self.uid)
+        return self._rch_fields
+
+    @property
+    def recharges(self):
+        if self._recharges is None:
+            recharges = {}
+            nper = self.nper
+            uids = self.gdf[self.uid].to_list()
+            rch_fields_dict = self.rch_fields.to_dict()
+            rch_fields_cols = self.rch_fields.columns
+            for uid in uids:
+                recharges[uid] = []
+            for per in range(nper):
+                for uid in uids:
+                    field_for_per = rch_fields_cols[self.rch_fields_to_pers[per]]
+                    recharges[uid].append(rch_fields_dict[field_for_per][uid])
+            self._recharges = recharges
+        return self._recharges
 
     def get_rch(
             self,
