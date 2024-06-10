@@ -25,7 +25,10 @@ class RechargeFromShp(Boundaries):
             uid: str = None,
             crs: int = 2927,
             rch_fields: list | slice = None,
-            rch_fields_to_pers: list = None
+            rch_fields_to_pers: list = None,
+            xlsx_rch: Path = None,
+            background_rch: float = 0.0,
+            apply_background_rch: bool = True
 
     ):
         """
@@ -38,14 +41,19 @@ class RechargeFromShp(Boundaries):
         :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
         :param rch_fields_to_pers: list of indices of length nper that correspond to the fields in rch_fields. Defines which field should be used for each stress period.
         :param bound_type: arbitary identifier for this boundary type
+        :param xlsx_rch: path to an excel file which contains the recharge data for each uid polygon. optional, otherwise data will be taken froim the shapefile attribute table. if excel is provided, it will be prioritized over the shapefile
         """
         super().__init__(model, vor, shp, uid, crs)
         self.bound_type = 'rch'
         self.fields = rch_fields
         self.rch_fields_to_pers = rch_fields_to_pers
+        self.background_rch = background_rch
+        self.apply_background_rch = apply_background_rch
+        self.xlsx_rch = xlsx_rch
         self._cell_ids = None
         self._rch_fields = None
         self.uid = uid
+        self._fields_to_pers = None
         self._recharges = None
 
     @property
@@ -60,27 +68,63 @@ class RechargeFromShp(Boundaries):
 
     @property
     def rch_fields(self):
-        """gets a DataFrame of just the recharge data fields from the shapefile.
+        """gets a DataFrame of just the recharge data fields from the shapefile or from excel file if proivded.
         Used to build the recharge dict for input into a flopy modflow model"""
         if self._rch_fields is None:
-            rch_fields = self.gdf.loc[:, self.fields]
+            if self.xlsx_rch:
+                """use excel if it exists, otherwise get from shapefile"""
+                rch_fields = pd.read_excel(self.xlsx_rch)
+                assert len(rch_fields) == len(self.gdf, 'number of rows in excel file and number of shapefile polys must be the equal')
+            else:
+                rch_fields = self.gdf.loc[:, self.fields]
             self._rch_fields = pd.concat([self.gdf[self.uid], rch_fields], axis=1).set_index(self.uid)
         return self._rch_fields
 
     @property
+    def fields_to_pers(self):
+        """creates a list of indices and values that correspond to the columns/fields of the rch_fields DataFrame.
+        In the case that the length of the fields is not long enough, -1 or -2 is added with correspond to either,
+        use the last index given for the remaining stress periods or set the remaining stress periods to a background
+        recharge, defined by setting the background recharge class attribute and setting apply_background_rch to True."""
+        if self._fields_to_pers is None:
+            fields_to_pers = self.rch_fields_to_pers.copy()
+            fields_to_pers = [] if fields_to_pers is None else fields_to_pers
+            for per in range(self.nper):
+                if len(fields_to_pers) <= per:
+                    if self.apply_background_rch:
+                        fields_to_pers.append(-2)
+                    else:
+                        fields_to_pers.append(-1)
+            self._fields_to_pers = fields_to_pers
+        return self._fields_to_pers
+
+    @property
     def recharges(self):
+        """gets a dict of recharge values for each recharge area (each uid) for each stress period. Pass to
+        get_rch() to generate a recharge dict to pass to the flopy recharge class."""
+        nper = self.nper
+        uids = self.gdf[self.uid].to_list()
+        scaled_rch_fields = self.rch_fields.mul(self.shp_to_vor_poly_scale, axis=0)
+        rch_fields_dict = scaled_rch_fields.to_dict()
+        rch_fields_cols = self.rch_fields.columns
+
         if self._recharges is None:
             recharges = {}
-            nper = self.nper
-            uids = self.gdf[self.uid].to_list()
-            rch_fields_dict = self.rch_fields.to_dict()
-            rch_fields_cols = self.rch_fields.columns
             for uid in uids:
                 recharges[uid] = []
             for per in range(nper):
-                for uid in uids:
-                    field_for_per = rch_fields_cols[self.rch_fields_to_pers[per]]
-                    recharges[uid].append(rch_fields_dict[field_for_per][uid])
+                if self.fields_to_pers[per] == -1:
+                    for uid in uids:
+                        #  if -1 then apply the last field indicated in the provided rch_fields_to_pers agrument
+                        field_for_per = rch_fields_cols[self.rch_fields_to_pers[-1]]
+                        recharges[uid].append(rch_fields_dict[field_for_per][uid])
+                elif self.fields_to_pers[per] == -2:
+                    for uid in uids:
+                        recharges[uid].append(self.background_rch)
+                else:
+                    for uid in uids:
+                        field_for_per = rch_fields_cols[self.fields_to_pers[per]]
+                        recharges[uid].append(rch_fields_dict[field_for_per][uid])
             self._recharges = recharges
         return self._recharges
 
@@ -105,6 +149,8 @@ class RechargeFromShp(Boundaries):
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
+        cell_ids = self.cell_ids if cell_ids is None else cell_ids
+        recharges = self.recharges if recharges is None else recharges
         nper = nper if self.nper is None else self.nper
         assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
         for per in range(nper):

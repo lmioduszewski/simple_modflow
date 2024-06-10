@@ -9,10 +9,11 @@ class SimulationBase:
             self,
             name: str = 'mf6_model',
             mf_folder_path: Path = Path().home().joinpath('mf6'),
+            nper: int = 1
     ):
         self.name = name
         self.nlay = None
-        self.nper = None
+        self.nper = nper
         self.num_steps = None
         self.per_len = None
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
@@ -179,15 +180,14 @@ class TemporalDiscretization:
             self,
             model: SimulationBase,
             time_units: str = 'DAYS',
-            nper: int = 1,
             per_len: int = 1,
             period_data: list = None,
             num_steps = 30,
             multiplier = 1.1
     ):
+        nper = model.nper
         if period_data is None:
             period_data = [[per_len, num_steps, multiplier] for per in range(nper)]
-        model.nper = nper
         model.num_steps = num_steps
         model.per_len = per_len
         self.tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
