@@ -12,7 +12,6 @@ import pickle
 from simple_modflow.modflow.mf6.boundaries import Boundaries
 
 idxx = pd.IndexSlice
-# Conversion factors
 inches_to_feet = 1 / 12
 
 class RechargeFromShp(Boundaries):
