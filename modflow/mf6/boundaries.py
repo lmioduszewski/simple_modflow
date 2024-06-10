@@ -96,6 +96,7 @@ class Boundaries:
         """gets a DataFrame giving the scaling between the areas of the shapefile vs. voronoi polys"""
         if self._rch_scale is None:
             rch_scale = self.gdf.area / self.vor_bound_polys.area
+            rch_scale.index = self.gdf[self.uid]
             self._rch_scale = rch_scale
         return self._rch_scale
 
