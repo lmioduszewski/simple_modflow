@@ -38,7 +38,7 @@ class Boundaries:
         :param model: model to which this boundary applies
         :param vor: voronoi grid to which this boundary apples
         :param shp: path to shapefile that holds the polygons for the boundary
-        :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
+        :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon. required
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param bound_type: arbitary identifier for this boundary type
         """
@@ -46,11 +46,11 @@ class Boundaries:
         self.model = model
         self.vor = vor
         self.bound_type = bound_type
+        self.uid = uid
         if shp is not None:
-            self.gdf = gpd.read_file(shp)
+            self.gdf = gpd.read_file(shp).set_index(self.uid)
             self.gdf.to_crs(inplace=True, epsg=crs)
         self.nper = model.nper
-        self.uid = uid
         self._intersections = None
         self._intersections_no_duplicates = None
         self._vor_bound_polys = None
@@ -64,8 +64,7 @@ class Boundaries:
             vor_polys = self.vor.gdf_vorPolys
             df_intersect = self.gdf.geometry.apply(
                 lambda geom: vor_polys[vor_polys.intersects(geom)].index.tolist())
-            df_intersect = pd.concat([self.gdf[self.uid], df_intersect], axis=1)
-            df_intersect.columns = [self.uid, 'intersect']
+            df_intersect.name = 'intersect'
             self._intersections = df_intersect
         return self._intersections
 
@@ -75,8 +74,10 @@ class Boundaries:
         if self._intersections_no_duplicates is None:
             seen = set()
             no_dups = self.intersections.copy()
-            no_dups['len'] = no_dups['intersect'].apply(lambda x: len(x))
-            no_dups['no_dup'] = no_dups.sort_values(by='len').loc[:, 'intersect'].apply(
+            lens = no_dups.apply(lambda x: len(x)).sort_values()
+            lens.name = 'len'
+            no_dups = pd.concat([lens, no_dups], axis=1)
+            no_dups['no_dup'] = no_dups.loc[:, 'intersect'].apply(
                 lambda x: remove_duplicates(x, seen))
             no_dups.drop(['len', 'intersect'], inplace=True, axis='columns')
             self._intersections_no_duplicates = no_dups
@@ -96,7 +97,6 @@ class Boundaries:
         """gets a DataFrame giving the scaling between the areas of the shapefile vs. voronoi polys"""
         if self._rch_scale is None:
             rch_scale = self.gdf.area / self.vor_bound_polys.area
-            rch_scale.index = self.gdf[self.uid]
             self._rch_scale = rch_scale
         return self._rch_scale
 

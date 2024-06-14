@@ -206,6 +206,7 @@ class KFlow:
             self,
             model: SimulationBase,
             k: list = None,
+            k33_vert = None
 
     ):
         self.npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
@@ -213,6 +214,7 @@ class KFlow:
             pname="npf",
             icelltype=1,
             k=k,
+            k33=k33_vert,
             save_flows=True,
             filename=f"{model.name}.npf",
             # perched=True,

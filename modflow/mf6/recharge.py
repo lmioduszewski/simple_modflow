@@ -27,7 +27,8 @@ class RechargeFromShp(Boundaries):
             rch_fields_to_pers: list = None,
             xlsx_rch: Path = None,
             background_rch: float = 0.0,
-            apply_background_rch: bool = True
+            apply_background_rch: bool = True,
+            rch_in_vol: bool = False
 
     ):
         """
@@ -54,6 +55,7 @@ class RechargeFromShp(Boundaries):
         self.uid = uid
         self._fields_to_pers = None
         self._recharges = None
+        self.rch_in_vol = rch_in_vol
 
     @property
     def cell_ids(self):
@@ -61,7 +63,7 @@ class RechargeFromShp(Boundaries):
         unique ids (uids)"""
         if self._cell_ids is None:
             cell_ids = self.intersections_no_duplicates
-            cell_ids = cell_ids.set_index(self.uid)['no_dup'].to_dict()
+            cell_ids = cell_ids['no_dup'].to_dict()
             self._cell_ids = cell_ids
         return self._cell_ids
 
@@ -72,11 +74,13 @@ class RechargeFromShp(Boundaries):
         if self._rch_fields is None:
             if self.xlsx_rch:
                 """use excel if it exists, otherwise get from shapefile"""
-                rch_fields = pd.read_excel(self.xlsx_rch)
-                assert len(rch_fields) == len(self.gdf, 'number of rows in excel file and number of shapefile polys must be the equal')
+                rch_fields = pd.read_excel(self.xlsx_rch).set_index(self.uid)
+                assert len(rch_fields) == len(self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
             else:
                 rch_fields = self.gdf.loc[:, self.fields]
-            self._rch_fields = pd.concat([self.gdf[self.uid], rch_fields], axis=1).set_index(self.uid)
+            if self.rch_in_vol:  # if recharge is in volumes, divide by the voronoi area of each polygon
+                rch_fields = rch_fields.apply(lambda row: row / self.gdf.area)
+            self._rch_fields = rch_fields
         return self._rch_fields
 
     @property
@@ -102,7 +106,7 @@ class RechargeFromShp(Boundaries):
         """gets a dict of recharge values for each recharge area (each uid) for each stress period. Pass to
         get_rch() to generate a recharge dict to pass to the flopy recharge class."""
         nper = self.nper
-        uids = self.gdf[self.uid].to_list()
+        uids = self.gdf.index.to_list()
         scaled_rch_fields = self.rch_fields.mul(self.shp_to_vor_poly_scale, axis=0)
         rch_fields_dict = scaled_rch_fields.to_dict()
         rch_fields_cols = self.rch_fields.columns
@@ -132,8 +136,7 @@ class RechargeFromShp(Boundaries):
             cell_ids: dict = None,
             recharges: dict = None,
             grid_type:str = 'disv',
-            background_rch: int | float = None,
-            nper: int = 1
+            background_rch: int | float = None
     ) -> dict:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
@@ -150,7 +153,7 @@ class RechargeFromShp(Boundaries):
         rch_dict = {}
         cell_ids = self.cell_ids if cell_ids is None else cell_ids
         recharges = self.recharges if recharges is None else recharges
-        nper = nper if self.nper is None else self.nper
+        nper = self.nper
         assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
         for per in range(nper):
             cell_list = []

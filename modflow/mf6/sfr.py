@@ -116,6 +116,15 @@ class SFR:
             sfr_reach_data['ndv'][i] = 0  # Number of downstream diversions (example value)
 
         self.sfr_period_data = {0: [(0, 'inflow', 432000)]}  # Inflow of 5 cubic feet s day at the first reach
+        lake_pump_rates = pd.read_excel(
+            Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\excel\lake_pump_rates.xlsx"))
+        lake_pump_rates['rate (gpm)'] = (lake_pump_rates['rate (gpm)'] * 192.5).fillna(0)
+        lake_pump_rates = lake_pump_rates['rate (gpm)'].to_list()
+        for per, rate in enumerate(lake_pump_rates):
+            if per in self.sfr_period_data:
+                self.sfr_period_data[per].append((112, 'inflow', rate))
+            else:
+                self.sfr_period_data[per] = [(112, 'inflow', rate)]
         self.sfr_reach_data = sfr_reach_data.tolist()
 
     def add_sfr(self):
