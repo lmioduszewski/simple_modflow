@@ -1,0 +1,68 @@
+[
+	{
+		"Program Information" : 
+		{
+			"Developer" : "S.S. Papadopulos & Assoc. Inc.",
+			"Title" : "writeP3DOutput",
+			"Version" : 
+			{
+				"Date" : "10/2022",
+				"Number" : "2.1.7"
+			}
+		}
+	},
+	{
+		"Timing" : 
+		{
+			"Elapsed" : 
+			{
+				"minutes" : 2.50188233e-002,
+				"seconds" : 1.50112940e+000
+			},
+			"Finished" : "Fri Jun 21 14:57:04 2024\n",
+			"Started" : "Fri Jun 21 14:57:02 2024\n"
+		}
+	},
+	{
+		"OUTPUTS" : 
+		{
+			"ASCII_TABLE" : 
+			{
+				"FILE_NAME" : "NAME_OF_OUTPUT.dat"
+			},
+			"COUNT" : 8,
+			"DBF_TABLE" : 
+			{
+				"FILE_NAME" : "NAME_OF_OUTPUT.dbf"
+			},
+			"ENDPOINTS" : 
+			{
+				"FILE_NAME" : "NAME_04_OF_OUTPUT.shp"
+			},
+			"PATHLINE_PARTS" : 
+			{
+				"FILE_NAME" : "NAME_02_OF_OUTPUT.shp"
+			},
+			"PATHLINE_WHOLE" : 
+			{
+				"FILE_NAME" : "NAME_01_OF_OUTPUT.shp"
+			},
+			"POINTS_IN_TIME" : 
+			{
+				"FILE_NAME" : "NAME_03_OF_OUTPUT.shp"
+			},
+			"SUMMARY" : null,
+			"TYPES" : [          "SUMMARY",      "ASCII_TABLE",        "DBF_TABLE",   "PATHLINE_WHOLE",   "PATHLINE_PARTS",   "POINTS_IN_TIME",         "ENDPOINT",         "V100_PTL" ],
+			"V100_PTL" : 
+			{
+				"FILE_NAME" : "NAME_OF_OUTPUT.ptl"
+			}
+		}
+	},
+	{
+		"Warning(s)" : null
+	},
+	{
+		"Error(s)" : null
+	}
+]

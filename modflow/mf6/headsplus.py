@@ -8,6 +8,7 @@ import plotly.graph_objs as go
 import geopandas as gpd
 from . import mf2Dplots
 import figs
+from scipy.interpolate import RBFInterpolator
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 crs_latlon = "EPSG:4326"
@@ -120,9 +121,8 @@ class HeadsPlus(bf.HeadFile):
 
         return df_heads
 
-
+    @staticmethod
     def sort_dict_by_keys(
-            self,
             dict_to_sort: dict = None
     ):
         """Sorts the given dict by its keys and returns the sorted dict"""
@@ -259,6 +259,7 @@ class HeadsPlus(bf.HeadFile):
             zmin=None,
             zmax=None,
             zoom=18,
+            custom_hover: dict = None,
             bottom=None,
             bottom_array=None,
             all_layers=False,
@@ -319,6 +320,10 @@ class HeadsPlus(bf.HeadFile):
         if plot_mounding:
             mounding_list = choro_dict[kstpkper_key].to_list()
             hover_dict['Mounding'] = mounding_list
+        if custom_hover:
+            for name, data in custom_hover.items():
+                hover_dict[str(name)] = data
+
         custom_data, hover_template = figs.create_hover(hover_dict)
 
         fig_mbox.add_choroplethmapbox(
@@ -343,3 +348,53 @@ class HeadsPlus(bf.HeadFile):
             )
 
         return fig_mbox
+
+    def interpolate_and_save_raster(
+            self, x, y, z, output_tif='interpd.tif', grid_res=100, save=True):
+        """
+        Interpolates irregular x, y points with associated z-values to a gridded surface
+        and writes the output to a GeoTIFF raster with the specified CRS.
+
+        Parameters:
+        x (array-like): Array of x coordinates.
+        y (array-like): Array of y coordinates.
+        z (array-like): Array of z values.
+        output_tif (str): Path to the output GeoTIFF file.
+        crs (str): Coordinate reference system (CRS) in EPSG format (e.g., 'EPSG:2927').
+        grid_res (int): Resolution of the grid (number of grid points along each axis).
+
+        Returns:
+        None
+        """
+        # Define the extent of the grid
+        xmin, ymin = np.min(x), np.min(y)
+        xmax, ymax = np.max(x), np.max(y)
+        crs = self.vor.crs
+
+        # Create grid coordinates
+        grid_x, grid_y = np.meshgrid(
+            np.linspace(xmin, xmax, grid_res),
+            np.linspace(ymin, ymax, grid_res)
+        )
+
+        # Interpolate data using RBFInterpolator
+        interpolator = RBFInterpolator(np.column_stack((x, y)), z, neighbors=10)
+        grid_z = interpolator(np.column_stack((grid_x.ravel(), grid_y.ravel()))).reshape(grid_x.shape)
+
+        # Define the transform and CRS
+        xres = (xmax - xmin) / (grid_res - 1)
+        yres = (ymax - ymin) / (grid_res - 1)
+        transform = from_bounds(xmin, ymin, xmax, ymax, grid_res, grid_res)
+
+        # Flip the grid_z array vertically
+        grid_z = np.flipud(grid_z)
+
+        # Save the grid as a GeoTIFF
+        if save:
+            with rasterio.open(output_tif, 'w', driver='GTiff',
+                               height=grid_res, width=grid_res,
+                               count=1, dtype=grid_z.dtype,
+                               crs=crs, transform=transform) as dst:
+                dst.write(grid_z, 1)
+
+        return grid_x, grid_y, grid_z

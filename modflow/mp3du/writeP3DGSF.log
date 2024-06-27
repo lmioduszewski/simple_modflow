@@ -1,0 +1,65 @@
+[
+	{
+		"Program Information" : 
+		{
+			"Developer" : "S.S. Papadopulos & Assoc. Inc.",
+			"Title" : "writeP3DGSF",
+			"Version" : 
+			{
+				"Date" : "10/2022",
+				"Number" : "2.1.7"
+			}
+		}
+	},
+	{
+		"Timing" : 
+		{
+			"Elapsed" : 
+			{
+				"minutes" : 8.33050300e-002,
+				"seconds" : 4.99830180e+000
+			},
+			"Finished" : "Fri Jun 21 14:31:04 2024\n",
+			"Started" : "Fri Jun 21 14:30:59 2024\n"
+		}
+	},
+	{
+		"Transformation" : 
+		{
+			"rot" : 0.00000000e+000,
+			"xoff" : 0.00000000e+000,
+			"yoff" : 0.00000000e+000
+		}
+	},
+	{
+		"Flow Model" : 
+		{
+			"GRB file" : "LkPnt_1.4_rch.disv.grb",
+			"GSF" : 
+			[
+				{
+					"NVERT" : 62191
+				}
+			],
+			"Grid" : 
+			{
+				"Last node-number in layer" : [              30444,              60888,              91332 ],
+				"Number of layers" : 3,
+				"Number of nodes" : 91332,
+				"Type" : "Unstructured"
+			},
+			"Model type" : "USGS Hydrologic Framework",
+			"Note(s)" : 
+			[
+				"Successfully read USGS Framework files.",
+				"Successfully copied necessary MODFLOW values/arrays."
+			]
+		}
+	},
+	{
+		"Warning(s)" : null
+	},
+	{
+		"Error(s)" : null
+	}
+]

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import geopandas as gpd
+import shapely as shp
 
 idxx = pd.IndexSlice
 # Conversion factors
@@ -47,6 +48,7 @@ class Boundaries:
         self.vor = vor
         self.bound_type = bound_type
         self.uid = uid
+        self.crs = crs
         if shp is not None:
             self.gdf = gpd.read_file(shp).set_index(self.uid)
             self.gdf.to_crs(inplace=True, epsg=crs)
@@ -55,6 +57,7 @@ class Boundaries:
         self._intersections_no_duplicates = None
         self._vor_bound_polys = None
         self._rch_scale = None
+        self._sorted_cells_along_line = None
 
     @property
     def intersections(self):
@@ -99,6 +102,31 @@ class Boundaries:
             rch_scale = self.gdf.area / self.vor_bound_polys.area
             self._rch_scale = rch_scale
         return self._rch_scale
+
+    def sorted_cells_along_line(self, idx=0):
+        """
+        method to get a list of voronoi model cells along the length of a line in order from
+        the beginning to end of the linestring.
+        :param idx: index of the line, if there was more than one provided in the shapefile
+        :return: dataframe of intersecting cells, sorted with distance along line and centroids
+        """
+
+        line_gdf = self.gdf
+        line = line_gdf.geometry[idx]
+        assert isinstance(line, shp.geometry.linestring.LineString), 'geometry not a LineString!'
+        intersecting_cells = self.vor.gdf_vorPolys.loc[self.intersections.to_list()[idx], :]
+        intersecting_cells['centroid'] = intersecting_cells.centroid
+
+        # Calculate the distance along the line for each cell centroid
+        intersecting_cells['distance_along_line'] = intersecting_cells.centroid.apply(
+            lambda point: line.project(point)
+        )
+        # Sort the cells based on the distance along the line
+        sorted_cells = intersecting_cells.sort_values('distance_along_line')
+        sorted_cells.index.name = 'cell'
+
+        return sorted_cells
+
 
     def get_drn_stress_period_data(
         self, 
@@ -224,6 +252,9 @@ class Boundaries:
                         cell_list.append([cell_id, background_rch])
             rch_dict[per] = cell_list
         return rch_dict
+
+
+
 
     def get_ghb_from_shp(
             self,

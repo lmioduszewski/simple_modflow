@@ -40,7 +40,7 @@ class SFR:
         self.nreaches = len(self.stream_cells)  # Number of stream reaches
         self.sfr_reach_data = None
         self._sfr_connection_data = None
-        self.sfr_period_data = None
+        self._sfr_period_data = None
 
         if add_sfr:
             print('getting reach data')
@@ -67,6 +67,14 @@ class SFR:
         if self._sfr_connection_data is None:
             self._sfr_connection_data = self.get_connection_data(self.stream_cells)
         return self._sfr_connection_data
+
+    @property
+    def period_data(self):
+        return self._sfr_period_data
+
+    @period_data.setter
+    def period_data(self, val):
+        self._sfr_period_data = val
 
     def get_gradient(self):
         pass
@@ -115,16 +123,16 @@ class SFR:
             sfr_reach_data['ustrf'][i] = 1.0  # Upstream fraction (example value)
             sfr_reach_data['ndv'][i] = 0  # Number of downstream diversions (example value)
 
-        self.sfr_period_data = {0: [(0, 'inflow', 432000)]}  # Inflow of 5 cubic feet s day at the first reach
-        lake_pump_rates = pd.read_excel(
-            Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\excel\lake_pump_rates.xlsx"))
+        self.period_data = {0: [(0, 'inflow', 432000)]}  # Inflow of 5 cubic feet s day at the first reach
+        """lake_pump_rates = pd.read_excel(
+            Path(r"C:\\Users\lukem\Python\MODFLOW\LakePointe\inputs\excel\lake_pump_rates.xlsx"))
         lake_pump_rates['rate (gpm)'] = (lake_pump_rates['rate (gpm)'] * 192.5).fillna(0)
         lake_pump_rates = lake_pump_rates['rate (gpm)'].to_list()
         for per, rate in enumerate(lake_pump_rates):
             if per in self.sfr_period_data:
                 self.sfr_period_data[per].append((112, 'inflow', rate))
             else:
-                self.sfr_period_data[per] = [(112, 'inflow', rate)]
+                self.sfr_period_data[per] = [(112, 'inflow', rate)]"""
         self.sfr_reach_data = sfr_reach_data.tolist()
 
     def add_sfr(self):
@@ -139,7 +147,7 @@ class SFR:
             nreaches=self.nreaches,
             packagedata=self.sfr_reach_data,
             connectiondata=self.sfr_connection_data,
-            perioddata=self.sfr_period_data,
+            perioddata=self.period_data,
             maximum_picard_iterations=1,
             maximum_iterations=1000,
             maximum_depth_change=0.01,
@@ -204,7 +212,6 @@ class SFR:
             if next_cell_elev > elev:
                 stream_cells[next_cell] = elev
         return stream_cells
-
 
     def get_connection_data(self, cell_ids):
         """

@@ -14,23 +14,19 @@ from simple_modflow.modflow.mf6.boundaries import Boundaries
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
-class RechargeFromShp(Boundaries):
+class GeneralHeadBoundary(Boundaries):
 
     def __init__(
             self,
             model: mf.SimulationBase = None,
             vor: Vor = None,
             shp: Path = None,
+            line_shp: Path = None,
             uid: str = None,
             crs: int = 2927,
             rch_fields: list | slice = None,
             rch_fields_to_pers: list = None,
             xlsx_rch: Path = None,
-            background_rch: float = 0.0,
-            apply_background_rch: bool = True,
-            rch_in_vol: bool = False,
-            multiplier = 1
-
     ):
         """
         class to set up recharge for a modflow 6 model
@@ -43,25 +39,20 @@ class RechargeFromShp(Boundaries):
         :param rch_fields_to_pers: list of indices of length nper that correspond to the fields in rch_fields. Defines which field should be used for each stress period.
         :param bound_type: arbitary identifier for this boundary type
         :param xlsx_rch: path to an excel file which contains the recharge data for each uid polygon. optional, otherwise data will be taken froim the shapefile attribute table. if excel is provided, it will be prioritized over the shapefile
-        :param background_rch: background recharge to apply if there are more stress periods than rch_fields_to_pers and apply_background_rch is True. Default is 0.0
-        :param apply_background_rch:if True, and there are more stress periods than given in rch_fields_to_pers, then the remaining stress periods will be assigned the background recharge
-        :param rch_in_vol: if True, data is assumed to be in volume and will be divided by area of recharge polygons
-        :param multiplier: a value to multiply the recharge data, optional. Otherwise, a value of 1 is used.
         """
         super().__init__(model, vor, shp, uid, crs)
         self.bound_type = 'rch'
         self.fields = rch_fields
         self.rch_fields_to_pers = rch_fields_to_pers
-        self.background_rch = background_rch
-        self.apply_background_rch = apply_background_rch
         self.xlsx_rch = xlsx_rch
         self._cell_ids = None
         self._rch_fields = None
         self.uid = uid
         self._fields_to_pers = None
         self._recharges = None
-        self.rch_in_vol = rch_in_vol
-        self.multiplier = multiplier
+        self.line_shp = line_shp
+        self._line_ghb = None
+        self.line_fields = {'cond': ['cond_strt', 'cond_end'], 'elev': ['elev_strt', 'elev_end'], 'layer': 'layer'}
 
     @property
     def cell_ids(self):
@@ -86,7 +77,6 @@ class RechargeFromShp(Boundaries):
                 rch_fields = self.gdf.loc[:, self.fields]
             if self.rch_in_vol:  # if recharge is in volumes, divide by the voronoi area of each polygon
                 rch_fields = rch_fields.apply(lambda row: row / self.gdf.area)
-            rch_fields = rch_fields * self.multiplier
             self._rch_fields = rch_fields
         return self._rch_fields
 
@@ -137,6 +127,52 @@ class RechargeFromShp(Boundaries):
                         recharges[uid].append(rch_fields_dict[field_for_per][uid])
             self._recharges = recharges
         return self._recharges
+
+    @property
+    def line_ghb(self):
+        if self._line_ghb is None:
+            assert isinstance(self.line_shp, Path), 'No line shapefile provided. Set the line_shp attribute'
+            line_ghb = Boundaries(self.model, self.vor, self.line_shp, self.uid, self.crs, bound_type='ghb')
+            self._line_ghb = line_ghb
+        return self._line_ghb
+
+    def add_line_ghb(self, existing_ghb_dict: dict=None):
+        elev_strt = self.line_ghb.gdf[self.line_fields['elev'][0]]
+        elev_end = self.line_ghb.gdf[self.line_fields['elev'][1]]
+        elev_delta = elev_end - elev_strt
+        cond_strt = self.line_ghb.gdf[self.line_fields['cond'][0]]
+        cond_end = self.line_ghb.gdf[self.line_fields['cond'][1]]
+        cond_delta = cond_end - cond_strt
+        ghb_line_lists = []
+        for idx, delta in enumerate(elev_delta):
+            line_len = self.line_ghb.gdf.geometry[idx].length
+            sorted_cells = self.line_ghb.sorted_cells_along_line(idx)
+            line_layer = self.line_ghb.gdf['layer'][idx] - 1
+            for cell in sorted_cells.index:
+                len_ratio = sorted_cells.loc[cell, 'distance_along_line'] / line_len
+                elev_delta_ratio = elev_delta[idx] * len_ratio
+                this_elev = elev_strt[idx] + elev_delta_ratio
+                cond_delta_ratio = cond_delta[idx] * len_ratio
+                this_cond = cond_strt[idx] + cond_delta_ratio
+                this_cell = (line_layer, cell)
+                this_ghb_list = [this_cell, this_elev, this_cond]
+                ghb_line_lists.append(this_ghb_list)
+        # TODO this only works assumiung constant ghb boundary. Adds the ghb data to stress period 1. Need to make more generic
+        to_add = {0: ghb_line_lists}
+        updated_ghb_dict = self.add_to_ghb_dict(existing_ghb_dict, to_add)
+        return updated_ghb_dict
+
+    def add_to_ghb_dict(self, existing_ghb_dict: dict=None, dict_to_add:dict =None):
+        for per, ghb_list_of_lists in dict_to_add.items():
+            assert isinstance(ghb_list_of_lists, list)
+            updated_ghb_dict = existing_ghb_dict.copy()
+            existing_list_of_lists: list = existing_ghb_dict[per]
+            existing_cells = [existing_list[0] for existing_list in existing_list_of_lists]
+            for ghb_list in ghb_list_of_lists:
+                assert isinstance(ghb_list, list)
+                assert ghb_list[0] not in existing_cells, (f'{ghb_list[0]} already in ghb dict. Remove duplicate cells.')
+                updated_ghb_dict[per] = updated_ghb_dict[per] + [ghb_list]
+        return updated_ghb_dict
 
     def get_rch(
             self,

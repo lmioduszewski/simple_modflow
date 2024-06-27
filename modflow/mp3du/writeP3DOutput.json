@@ -1,0 +1,28 @@
+{
+  "MP3DU_BIN" : "LkPnt_1.4_rch_PATHLINE.bin",
+    "OUTPUTS" : [
+      { "SUMMARY" : {
+      } },
+      { "ASCII_TABLE" : {
+        "FILE_NAME" : "NAME_OF_OUTPUT.dat"
+      } },
+      { "DBF_TABLE" : {
+        "FILE_NAME" : "NAME_OF_OUTPUT.dbf"
+      } },
+      { "PATHLINE_WHOLE" : {
+        "FILE_NAME" : "NAME_01_OF_OUTPUT.shp"
+      } },
+      { "PATHLINE_PARTS" : {
+        "FILE_NAME" : "NAME_02_OF_OUTPUT.shp"
+      } },
+      { "POINTS_IN_TIME" : {
+        "FILE_NAME" : "NAME_03_OF_OUTPUT.shp"
+      } },
+      { "ENDPOINT" : {
+        "FILE_NAME" : "NAME_04_OF_OUTPUT.shp"
+      } },
+      { "V100_PTL" : {
+        "FILE_NAME" : "NAME_OF_OUTPUT.ptl"
+      } }
+    ]
+}

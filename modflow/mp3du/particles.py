@@ -4,6 +4,7 @@ import subprocess
 import flopy
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from pathlib import Path
+import pickle
 
 
 class ParticleTrackingInput:
@@ -26,7 +27,6 @@ class ParticleTrackingInput:
         self._output_path = output_path
         self._porosities_by_layer = porosities_by_layer
         self.path_file_path = self.output_path.joinpath('mp3du.p3d')
-        self.gsf_output_path = self.output_path.joinpath(f'{self.model.name}.gsf')
         self.particle_shp = particle_shp
         self._variables = None
 
@@ -36,10 +36,11 @@ class ParticleTrackingInput:
         if self._model_output_files is None:
             model_name = self.model.name
             model_output_files = {
-                'grb': f'{model_name}.grb',
+                'grb': f'{model_name}.disv.grb',
                 'tdis': f'{model_name}.tdis',
                 'hds': f'{model_name}.hds',
-                'cbc': f'{model_name}.cbc'
+                'cbc': f'{model_name}.cbc',
+                'gsf': f'{model_name}.gsf'
             }
             self._model_output_files = model_output_files
         return self._model_output_files
@@ -79,14 +80,28 @@ class ParticleTrackingInput:
 
     def create_gsf_file(self):
         # Use the provided grb file with writeP3DGSF.exe to create the GSF file
-        gsf_output_path = self.gsf_output_path
-        cmd = [self.writep3dgsf_path, self.model_output_files['grb'], gsf_output_path]
+        gsf_json = {
+          "FLOW_MODEL_TYPE" : {
+            "USGS_HFWK" : {
+              "GRB_FILE" : self.model_output_files['grb'],
+              "GSF_FILE" : {
+                "TYPE" : "HFWK_GRB_V.1.0.0"
+              }
+            }
+          },
+          "OUTPUT_FILENAME" : f"{self.model.name}.gsf"
+        }
+        gsf_json_file_path = self.output_path / 'grb_to_gsf.json'
+        with open(gsf_json_file_path, 'w') as f:
+            json.dump(gsf_json, f, indent=4)
+
+        cmd = [self.writep3dgsf_path.as_posix(), gsf_json_file_path.as_posix(), 'colorcode']
         run = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         if run.returncode != 0:
             print(f"Error running writeP3DGSF.exe: {run.stderr}")
         else:
-            print(f"GSF file created successfully at {gsf_output_path}")
+            print("GSF file created successfully")
 
     def create_modflow_input_files(self):
         cwd = Path.cwd()
@@ -104,20 +119,20 @@ class ParticleTrackingInput:
         path_file_path = self.path_file_path
         porosities_by_layer = self.porosities_by_layer
         with open(path_file_path, 'w') as f:
-            f.write("# PATH3D input file\n")
+            f.write("# PATH3D input file\n\n")
             for variable in self.variables:
-                for layer in range(self.model.nlay):
+                for layer in range(self.model.gwf.modelgrid.nlay):
                     if variable == 'POROSITY':
-                        f.write(f"  CONSTANT    {variables[variable][layer]}   POROSITY {layer + 1}\n")
+                        f.write(f"  CONSTANT    {self.variables[variable][layer]}   POROSITY {layer + 1}\n")
                     else:
-                        f.write(f"  CONSTANT    {variables[variable]}   {variable} {layer + 1}\n")
+                        f.write(f"  CONSTANT    {self.variables[variable]}   {variable} {layer + 1}\n")
         print(f"PATH file created at {path_file_path}")
         return path_file_path
 
     def run_mp3du(self, json_file_path):
         # Run the mp3du.exe with the created JSON file
-        cmd = [self.mp3du_path, '-i', json_file_path]
-
+        cmd = [self.mp3du_path.as_posix(), json_file_path, 'colorcode']
+        print(cmd)
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         if result.returncode != 0:
@@ -132,15 +147,15 @@ class ParticleTrackingInput:
                 "USGS_HFWK": {
                     "GRB_FILE": self.model_output_files['grb'],
                     "TDIS_FILE": self.model_output_files['tdis'],
-                    "PATH_FILE": self.path_file_path,
+                    "PATH_FILE": self.path_file_path.as_posix(),
                     "HDS_FILE": self.model_output_files['hds'],
                     "CBB_FILE": self.model_output_files['cbc'],
                     "GSF_FILE": {
                         "TYPE": "GSF_V.1.1.0",
-                        "FILE_NAME": self.gsf_output_path
+                        "FILE_NAME": self.model_output_files['gsf']
                     },
                     "OUTPUT_PRECISION": "DOUBLE",
-                    "IFACE": [{"GHB": 7}, {"RCH": 6}, {"DRN": 7}, {"SFR": 6}, {"LAK": 7}],
+                    "IFACE": [{"GHB": 7}, {"RCH": 6}, {"DRN": 7}, {"SFR": 6}],
                     "THREAD_COUNT": 1
                 }
             },
@@ -157,7 +172,7 @@ class ParticleTrackingInput:
                         "OPTIONS": ["TRACK_TO_TERMINATION"],
                         "PARTICLE_START_LOCATIONS": {
                             "SHAPEFILE": {
-                                "FILE_NAME": self.particle_shp,
+                                "FILE_NAME": self.particle_shp.as_posix(),
                                 "CELLID_ATTR": "Node",
                                 "TIME_ATTR": "TimeRel",
                                 "ZLOC_ATTR": "ZLoc",
@@ -180,23 +195,43 @@ class ParticleTrackingInput:
         self.create_gsf_file()
         self.create_modflow_input_files()
         path_file_path = self.create_path_file()
-        json_file_path = self.create_json_file()
+        json_file_path = self.create_json_file().as_posix()
         self.run_mp3du(json_file_path)
+
+    def get_output_json(self):
+
+        output_json = {
+            "MP3DU_BIN" : "LkPnt_1.4_rch_PATHLINE.bin",
+            "OUTPUTS" : [
+              { "SUMMARY" : {
+              } },
+              { "DBF_TABLE" : {
+                "FILE_NAME" : "NAME_OF_OUTPUT.dbf"
+              } },
+              { "PATHLINE_WHOLE" : {
+                "FILE_NAME" : "NAME_01_OF_OUTPUT.shp"
+              } },
+              { "PATHLINE_PARTS" : {
+                "FILE_NAME" : "NAME_02_OF_OUTPUT.shp"
+              } },
+              { "POINTS_IN_TIME" : {
+                "FILE_NAME" : "NAME_03_OF_OUTPUT.shp"
+              } },
+              { "ENDPOINT" : {
+                "FILE_NAME" : "NAME_04_OF_OUTPUT.shp"
+              } }
+            ]
+        }
 
 
 if __name__ == "__main__":
 
-    # Example usage
-    model_name = 'your_model_name'
-    model_path = 'path_to_your_model'
-    output_path = 'path_to_output_directory'
-    writep3dgsf_path = 'path_to_writeP3DGSF_executable'
-    mp3du_path = 'path_to_mp3du_executable'
-    grb_file_path = 'path_to_your_grb_file'
-
+    with open(Path(r"C:\Users\lukem\mf6\LkPnt_1.4_rch\LakePointe.model"), 'rb') as file:
+        model: SimulationBase = pickle.load(file)
+    particles = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\shp\forward_particles.shp")
     pti = ParticleTrackingInput(
-        model,
-        porosities_by_layer=None,
-        particle_shp=None
+        model=model,
+        porosities_by_layer=[0.3, 0.2, 0.2],
+        particle_shp=particles
     )
     pti.run()
