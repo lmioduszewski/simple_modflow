@@ -17,6 +17,8 @@ class SimulationBase:
         self.num_steps = None
         self.per_len = None
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
+        self._master_celld = {}
+
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
             exe_name="mf6",
@@ -51,6 +53,10 @@ class SimulationBase:
             # relaxation_factor=0.97,
             #linear_acceleration='BICGSTAB',
         )
+
+    @property
+    def master_celld(self):
+        return self._master_celld
 
     def run_simulation(
             self,
