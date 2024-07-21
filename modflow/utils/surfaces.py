@@ -138,6 +138,11 @@ class InterpolatedSurface:
         return self._rbf_interp
 
     def plot(self, surface=None):
+        """
+        plot surface using plotly, defaults to griddata_interp
+        :param surface: surface to plot, ex. self.griddata_interp or self.rbf_interp
+        :return: plots surface to browser
+        """
         if surface is None:
             surface = self.griddata_interp
         fig = go.Figure()
