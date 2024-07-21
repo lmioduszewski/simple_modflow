@@ -137,6 +137,7 @@ class GeneralHeadBoundary(Boundaries):
         return self._line_ghb
 
     def add_line_ghb(self, existing_ghb_dict: dict=None):
+        """adds a line based ghb boundary to an existing ghb dict"""
         elev_strt = self.line_ghb.gdf[self.line_fields['elev'][0]]
         elev_end = self.line_ghb.gdf[self.line_fields['elev'][1]]
         elev_delta = elev_end - elev_strt

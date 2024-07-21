@@ -20,27 +20,55 @@ class SFR:
             stream_path: Path = None,
             reverse_stream: bool = False,
             stream_idx = 0,
+            inflows: dict | int | float = None,
+            widths: list | int | float = None,
+            gradients: list | float = None,
+            mannings: list | float = None,
+            streambed_k: list | int | float = None,
+            streambed_thickness: list | int | float = None,
             add_sfr = True
     ):
+        """
+
+        :param model: modflow model file, should be class SimulationBase
+        :param vor: voronoi grid file, should be class Vor
+        :param stream_path:
+        :param reverse_stream:
+        :param stream_idx: arbitary index for the stream
+        :param inflows: dict where keys are all stress periods and each value is a list of tuples with len 2. Each tuple = (reach id, inflow)
+        :param widths: list of reach widths for the stream. List length must be equal to the number of reaches. Or may provide single value (int or float) for all reaches
+        :param gradients: list of reach gradients. List length must be equal to the number of reaches or may provide single float to apply to all reaches
+        :param mannings: list of reach manning's coefficients, or a float to apply to all reaches
+        :param streambed_k:
+        :param streambed_thickness:
+        :param add_sfr:
+        """
         print('initing sfr')
         self.model = model
         self.vor = vor
+        self.stream_idx = stream_idx
         self.stream_path = stream_path
         self.reverse = reverse_stream
-        self.stream_idx = stream_idx
+        self._stream_cells = None
+        self.sfr_reach_data = None
+        self._sfr_connection_data = None
+        self._sfr_period_data = None
         self.stream_gdf = gpd.read_file(stream_path)
         self.stream_geom = self.stream_gdf.geometry.unary_union
         self.stream_points = {}
         self._reach_lens = None
         self.sfr = None
 
+        self.inflows = inflows
+        self.widths = widths
+        self.gradients = gradients
+        self.mannings = mannings
+        self.streambed_k = streambed_k
+        self.streambed_thickness = streambed_thickness
+
         x, y = self.stream_geom.coords.xy
         self.stream_points = [shp.Point(point) for point in list(zip(x,y))]
-        self._stream_cells = None
-        self.nreaches = len(self.stream_cells)  # Number of stream reaches
-        self.sfr_reach_data = None
-        self._sfr_connection_data = None
-        self._sfr_period_data = None
+        self.nrch = len(self.stream_cells)  # Number of stream reaches
 
         if add_sfr:
             print('getting reach data')
@@ -63,26 +91,104 @@ class SFR:
         return self._stream_cells
 
     @property
+    def num_sfr_cells(self):
+        return len(self.stream_cells)
+
+    @property
     def sfr_connection_data(self):
         if self._sfr_connection_data is None:
             self._sfr_connection_data = self.get_connection_data(self.stream_cells)
         return self._sfr_connection_data
 
     @property
+    def inflows(self):
+        return self._inflows
+
+    @inflows.setter
+    def inflows(self, val):
+        """setter that adds 'inflow' in the middle of each tuple in the provided val."""
+        if isinstance(val, dict):
+            for per in val.keys():
+                tupls = []
+                for tup in val[per]:
+                    tupl = (tup[0], 'inflow', tup[1])
+                    tupls.append(tupl)
+                val[per] = tupls
+        elif isinstance(val, int | float):
+            print(f'applying {val} as starting inflow to the stream in all stress periods')
+            starting_sfr_cell = self.stream_cells[0]
+            val = {per: [(starting_sfr_cell, 'inflow', val)] for per in range(self.model.nper)}
+        else:
+            raise ValueError('must provide at least one inflow to the stream. The starting inflow')
+        self._inflows = val
+
+    @property
     def period_data(self):
+        periodd = {}
+        for per in range(self.model.nper):
+            periodd[per] = []
+        if self.inflows is not None:
+            for per in periodd.keys():
+                for rch_inflow in self.inflows[per]:
+                    periodd[per].append(rch_inflow)
+        self._sfr_period_data = periodd
         return self._sfr_period_data
 
-    @period_data.setter
-    def period_data(self, val):
-        self._sfr_period_data = val
+    @property
+    def widths(self):
+        return self._widths
+
+    @widths.setter
+    def widths(self, val):
+        if isinstance(val, list):
+            assert len(val) == self.num_sfr_cells, 'length of width list must be equal to number of reaches'
+            self._widths = val
+        elif isinstance(val, int | float):
+            print(f'applying {val} as width to all reaches')
+            wid = [val for reach in range(self.num_sfr_cells)]
+            self._widths = wid
+        else:
+            raise ValueError(f'width provided invalid. Must be list, int, or float, not type: {type(val)}')
+
+    @property
+    def gradients(self):
+        return self._gradients
+
+    @gradients.setter
+    def gradients(self, val):
+        if isinstance(val, list):
+            assert len(val) == self.num_sfr_cells, 'length of gradients list must be equal to number of reaches'
+            self._gradients = val
+        elif isinstance(val, float):
+            print(f'applying {val} as gradient to all reaches')
+            grad = [val for reach in range(self.num_sfr_cells)]
+            self._gradients = grad
+        else:
+            raise ValueError(f'gradients provided invalid. Must be list of floats or float, not type: {type(val)}')
+
+    @property
+    def mannings(self):
+        return self._mannings
+
+    @mannings.setter
+    def mannings(self, val):
+        if isinstance(val, list):
+            assert len(val) == self.num_sfr_cells, 'length of mannings coefficients list must be equal to number of reaches'
+            self._mannings = val
+        elif isinstance(val, float):
+            print(f'applying {val} as mannings coefficient to all reaches')
+            man = [val for reach in range(self.num_sfr_cells)]
+            self._mannings = man
+        else:
+            raise ValueError(f'mannings coeff provided invalid. Must be list of floats or float, not type: {type(val)}')
 
     def get_gradient(self):
-        pass
+        raise NotImplementedError
 
     def get_reach_data(self, elev_add=0.1, streambed_k = 1):
 
         # Define the stream network data
-        nreaches = self.nreaches
+        nreaches = self.nrch
         sfr_cells = [(0, i) for i in self.stream_cells]  # cells where the stream reaches are located in lyr 1
         top_elevs = self.get_smoothed_reach_elevs()
 
@@ -113,26 +219,15 @@ class SFR:
             sfr_reach_data['rno'][i] = i
             sfr_reach_data['cellid'][i] = cell
             sfr_reach_data['rlen'][i] = self.reach_lens[i]  # Length of each reach in feet
-            sfr_reach_data['rwid'][i] = 10  # Width of each reach in feet
-            sfr_reach_data['rgrd'][i] = 0.002  # Gradient of each reach (dimensionless)
+            sfr_reach_data['rwid'][i] = self.widths[i]  # Width of each reach in feet
+            sfr_reach_data['rgrd'][i] = self.gradients[i]  # Gradient of each reach (dimensionless)
             sfr_reach_data['rtp'][i] = top_elevs[self.stream_cells[i]] + elev_add  # Top elevation of each reach in feet
             sfr_reach_data['rbth'][i] = 1  # Thickness of the streambed in feet
             sfr_reach_data['rhk'][i] = streambed_k  # Hydraulic conductivity of the streambed in feet/day
-            sfr_reach_data['man'][i] = 0.025  # Manning's roughness coefficient (example value)
+            sfr_reach_data['man'][i] = self.mannings[i]  # Manning's roughness coefficient (example value)
             sfr_reach_data['ncon'][i] = nconn  # Number of connections (example value)
             sfr_reach_data['ustrf'][i] = 1.0  # Upstream fraction (example value)
             sfr_reach_data['ndv'][i] = 0  # Number of downstream diversions (example value)
-
-        self.period_data = {0: [(0, 'inflow', 432000)]}  # Inflow of 5 cubic feet s day at the first reach
-        """lake_pump_rates = pd.read_excel(
-            Path(r"C:\\Users\lukem\Python\MODFLOW\LakePointe\inputs\excel\lake_pump_rates.xlsx"))
-        lake_pump_rates['rate (gpm)'] = (lake_pump_rates['rate (gpm)'] * 192.5).fillna(0)
-        lake_pump_rates = lake_pump_rates['rate (gpm)'].to_list()
-        for per, rate in enumerate(lake_pump_rates):
-            if per in self.sfr_period_data:
-                self.sfr_period_data[per].append((112, 'inflow', rate))
-            else:
-                self.sfr_period_data[per] = [(112, 'inflow', rate)]"""
         self.sfr_reach_data = sfr_reach_data.tolist()
 
     def add_sfr(self):
@@ -144,7 +239,7 @@ class SFR:
             print_input=True,
             print_flows=True,
             pname='sfr',
-            nreaches=self.nreaches,
+            nreaches=self.nrch,
             packagedata=self.sfr_reach_data,
             connectiondata=self.sfr_connection_data,
             perioddata=self.period_data,
@@ -153,7 +248,6 @@ class SFR:
             maximum_depth_change=0.01,
             budget_filerecord='sfr_budget.sfr',
             stage_filerecord='sfr_stage.sfr',
-            #  unit_conversion=128342.4,  # since we are using feet and days
             length_conversion=3.28081,  # since we are using feet instead of meters
             time_conversion=86_400  # since we are using days instead of seconds
 

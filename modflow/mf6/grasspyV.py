@@ -222,7 +222,7 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\top_of_qvt_V2.shp").as_posix()
+    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\top_of_qpf.shp").as_posix()
     region_raster = (Path(
         r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\raster_surface\finals\2023 - top of model.tif")
                      .as_posix())
@@ -231,6 +231,6 @@ if __name__ == '__main__':
         region_dimensions_raster= region_raster,
         shp_attribute_for_z='Elevation',
         output_resolution=15,
-        surf_out='Qvt_top_v2.tif'
+        surf_out='Qpf_top_v3.tif'
     )
     interp.write_surf()
