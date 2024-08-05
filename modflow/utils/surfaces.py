@@ -67,6 +67,7 @@ class InterpolatedSurface:
 
     @property
     def zs(self):
+        """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
         zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, :], :].values
         self._zs = zs
         return self._zs
@@ -144,7 +145,10 @@ class InterpolatedSurface:
         :return: plots surface to browser
         """
         if surface is None:
-            surface = self.griddata_interp
+            try:
+                surface = self.griddata_interp
+            except:
+                surface = self.rbf_interp
         fig = go.Figure()
         fig.add_surface(z=surface)
         fig.show(renderer='browser')

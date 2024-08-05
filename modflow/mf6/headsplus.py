@@ -9,6 +9,7 @@ import geopandas as gpd
 from . import mf2Dplots
 import figs
 from scipy.interpolate import RBFInterpolator
+from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 crs_latlon = "EPSG:4326"
@@ -17,7 +18,8 @@ class HeadsPlus(bf.HeadFile):
 
     def __init__(
             self,
-            hds_path: Path,
+            hds_path: Path = None,
+            model: SimulationBase = None,
             vor: vgp = None,
             obs_path: Path = None
     ):
@@ -26,9 +28,17 @@ class HeadsPlus(bf.HeadFile):
         :param hds_path: path to the heads file
         :param vor: voronoi grid representing model grid for the heads file, optional
         """
-        super().__init__(filename=hds_path)
 
-        self.hds = bf.HeadFile(filename=hds_path)
+        if hds_path is None:
+            if model is None:
+                raise ValueError("Must provide heads file or model")
+            self.hds_path = model.model_output_folder_path / f'{model.name}.hds'
+        else:
+            self.hds_path = hds_path
+
+        super().__init__(filename=self.hds_path)
+
+        self.hds = bf.HeadFile(filename=self.hds_path)
         self.kstpkper = self.get_kstpkper()
         self.vor = vor
 
@@ -117,7 +127,12 @@ class HeadsPlus(bf.HeadFile):
             spHds = pd.DataFrame(self.get_data(kstpkper=kstpkper).squeeze().transpose())
             """copy and paste this stress period data to the MultiIndex DataFrame"""
             for layer in range(self.nlay):
-                df_heads.loc[idxx[kstpkper, layer], :] = spHds.iloc[:, layer].values
+                try:
+                    df_heads.loc[idxx[kstpkper, layer], :] = spHds.iloc[:, layer].values
+                except:
+                    # was getting an error using above code. Not sure why since it used to work. The below is a fix
+                    # TODO need to figure out WHY!!!!
+                    df_heads.loc[idxx[kstpkper, layer, :]] = spHds.iloc[:, layer].values.reshape(-1, 1)
 
         return df_heads
 
