@@ -50,6 +50,7 @@ class InterpolatedSurface:
         self.layer = layer
         self.resolution = resolution
         self.neighbors = 10
+        self.colorscale = 'Earth'
 
     @property
     def xs(self):
@@ -150,6 +151,6 @@ class InterpolatedSurface:
             except:
                 surface = self.rbf_interp
         fig = go.Figure()
-        fig.add_surface(z=surface)
+        fig.add_surface(z=surface, colorscale=self.colorscale)
         fig.show(renderer='browser')
 

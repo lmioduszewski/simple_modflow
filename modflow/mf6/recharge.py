@@ -143,7 +143,9 @@ class RechargeFromShp(Boundaries):
             cell_ids: dict = None,
             recharges: dict = None,
             grid_type:str = 'disv',
-            background_rch: int | float = None
+            background_rch: int | float = None,
+            limit_to_k33 = True,
+            verbose = False
     ) -> dict:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
@@ -170,7 +172,16 @@ class RechargeFromShp(Boundaries):
                 recharge = recharges[name][per]
                 for cell in cell_nums:
                     cell_id = cell if grid_type == 'disu' else (0, cell)
-                    cell_list.append([cell_id, recharge])
+                    if limit_to_k33:
+                        k33 = self.model.gwf.npf.k33.data[0]
+                        if k33[cell] < recharge:
+                            if verbose:
+                                print(f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}. Changing recharge to {k33[cell]}')
+                            cell_list.append([cell_id, k33[cell]])
+                        else:
+                            cell_list.append([cell_id, recharge])
+                    else:
+                        cell_list.append([cell_id, recharge])
             if background_rch is not None:
                 for cell in range(self.vor.ncpl):
                     if cell not in all_rch_cells:
@@ -178,4 +189,18 @@ class RechargeFromShp(Boundaries):
                         cell_list.append([cell_id, background_rch])
             rch_dict[per] = cell_list
         return rch_dict
+
+    @staticmethod
+    def add_to_rch_dict(rch_dict: dict, rch_to_add: dict) -> dict:
+
+        keys = rch_to_add.keys()
+        new_rch_dict = rch_dict.copy()
+        for key in keys:
+            for cell_data in rch_to_add[key]:
+                cell_num = cell_data[0]
+                rch_add = cell_data[1]
+                cell_rch = new_rch_dict[key][cell_num].copy()
+                new_rch_dict[key][cell_num] = [cell_rch[0], cell_rch[1] + rch_add]
+
+        return new_rch_dict
 

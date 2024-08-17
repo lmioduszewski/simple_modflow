@@ -91,7 +91,7 @@ class Boundaries:
         """gets the intersecting voronoi polygons equivalent to the shapefile polygons"""
         if self._vor_bound_polys is None:
             vor_polys = self.intersections_no_duplicates.copy()
-            vor_polys['geometry'] = vor_polys['no_dup'].apply(lambda x: self.vor.gdf_vorPolys.loc[x].unary_union)
+            vor_polys['geometry'] = vor_polys['no_dup'].apply(lambda x: self.vor.gdf_vorPolys.loc[x].union_all())
             self._vor_bound_polys = gpd.GeoDataFrame(vor_polys, geometry='geometry').drop(columns='no_dup')
         return self._vor_bound_polys
 

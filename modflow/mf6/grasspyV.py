@@ -2,12 +2,14 @@ import subprocess
 import sys
 import os
 from pathlib import Path
-os.environ['GISBASE'] = Path(r'C:\OSGeo4W\apps\grass\grass83').as_posix()
+#os.environ['GISBASE'] = Path(r'C:\OSGeo4W\apps\grass\grass83').as_posix()
 
 from grass.pygrass.modules.shortcuts import raster as r
 from grass.pygrass.modules.shortcuts import general as g
 from grass.pygrass.modules.shortcuts import vector as v
 import grass.script.setup as gsetup
+
+
 
 class SurfaceInterpFromShp:
 
@@ -17,7 +19,7 @@ class SurfaceInterpFromShp:
             mapset: str = 'MAPSET',
             grassdata:str = 'grassdata',
             epsg: str = '2927',
-            shp_path: Path = None,
+            shp_gpkg_path: Path = None,
             region_dimensions_raster:Path = None,
             write_interpolated_surface_and_finish: bool = False,
             output_resolution = 4,
@@ -32,7 +34,7 @@ class SurfaceInterpFromShp:
         :param mapset:
         :param grassdata:
         :param epsg:
-        :param shp_path:
+        :param shp_gpkg_path:
         :param region_dimensions_raster:
         :param write_interpolated_surface_and_finish:
         :param output_resolution:
@@ -52,7 +54,7 @@ class SurfaceInterpFromShp:
             )
             interp_qpf.write_surf()
         """
-        self.grass8bin = Path(r'C:\OSGeo4W\bin\grass83.bat')
+        self.grass8bin = Path(r'C:\OSGeo4W\bin\grass84.bat')
         self.grassdata = Path.home().joinpath(grassdata)
         self.epsg_code = epsg
         self.session = None
@@ -71,11 +73,11 @@ class SurfaceInterpFromShp:
         self.region_dimensions_raster = region_dimensions_raster
 
         #  if writing an interpolated surface on object init is set to True, run self.write_surf()
-        self.shp_path = shp_path
+        self.shp_gpkg_path = shp_gpkg_path
         self.shp_attribute_for_z = shp_attribute_for_z
         self.write_interpolated_surface_and_finish = write_interpolated_surface_and_finish
         self.output_resolution = output_resolution
-        if self.shp_path is not None and self.write_interpolated_surface_and_finish:
+        if self.shp_gpkg_path is not None and self.write_interpolated_surface_and_finish:
             self.write_surf()
 
     def write_surf(self, finish=True):
@@ -86,7 +88,7 @@ class SurfaceInterpFromShp:
         print('starting grass session')
         self.start_grass_session()
         print('importing vector contours')
-        self.import_vector_contours(self.shp_path)
+        self.import_vector_contours(self.shp_gpkg_path)
 
         #  then define the region using a raster (such as a clip of lidar or other raster
         #  that on the same projection as the vector contours
@@ -132,18 +134,18 @@ class SurfaceInterpFromShp:
     def gisenv(self):
         return g.gisenv()
 
-    def import_vector_contours(self, shp_path=None, grass_vector_name=None, info=True):
+    def import_vector_contours(self, shp_gpkg_path=None, grass_vector_name=None, info=True):
         """
         imports a shapfile of vector contours to the grass gis session
-        :param shp_path: path to the shapefile
+        :param shp_gpkg_path: path to the shapefile
         :return: None
         """
         if grass_vector_name is not None:
             self.grassname_vect_cont = grass_vector_name
-        if shp_path is not None:
-            self.shp_path = shp_path
+        if shp_gpkg_path is not None:
+            self.shp_gpkg_path = shp_gpkg_path
         v.in_ogr(
-            input=self.shp_path,
+            input=self.shp_gpkg_path,
             output=self.grassname_vect_cont,
             overwrite=True,
             flags='o'
@@ -222,15 +224,15 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    top_shp = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\top_of_qpf.shp").as_posix()
+    delt = Path(r"C:\Users\lukem\QGIS\SHP\Tehaleh\RLR\rlr_more_delta.shp").as_posix()
     region_raster = (Path(
-        r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\surfaces\raster_surface\finals\2023 - top of model.tif")
+        r"C:\Users\lukem\QGIS\RASTER\Tehaleh\RLR\more_delta.tif")
                      .as_posix())
     interp = SurfaceInterpFromShp(
-        shp_path=top_shp,
+        shp_gpkg_path=delt,
         region_dimensions_raster= region_raster,
-        shp_attribute_for_z='Elevation',
-        output_resolution=15,
-        surf_out='Qpf_top_v3.tif'
+        shp_attribute_for_z='elev',
+        output_resolution=10,
+        surf_out='rlr_more_delta.tif'
     )
     interp.write_surf()

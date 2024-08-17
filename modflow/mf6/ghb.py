@@ -148,13 +148,13 @@ class GeneralHeadBoundary(Boundaries):
         for idx, delta in enumerate(elev_delta):
             line_len = self.line_ghb.gdf.geometry[idx].length
             sorted_cells = self.line_ghb.sorted_cells_along_line(idx)
-            line_layer = self.line_ghb.gdf['layer'][idx] - 1
+            line_layer = self.line_ghb.gdf['layer'].iloc[idx] - 1
             for cell in sorted_cells.index:
                 len_ratio = sorted_cells.loc[cell, 'distance_along_line'] / line_len
-                elev_delta_ratio = elev_delta[idx] * len_ratio
-                this_elev = elev_strt[idx] + elev_delta_ratio
-                cond_delta_ratio = cond_delta[idx] * len_ratio
-                this_cond = cond_strt[idx] + cond_delta_ratio
+                elev_delta_ratio = elev_delta.iloc[idx] * len_ratio
+                this_elev = elev_strt.iloc[idx] + elev_delta_ratio
+                cond_delta_ratio = cond_delta.iloc[idx] * len_ratio
+                this_cond = cond_strt.iloc[idx] + cond_delta_ratio
                 this_cell = (line_layer, cell)
                 this_ghb_list = [this_cell, this_elev, this_cond]
                 ghb_line_lists.append(this_ghb_list)

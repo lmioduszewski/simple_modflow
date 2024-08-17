@@ -4,6 +4,17 @@ import numpy as np
 class CooperJacob:
 
     def __init__(self, q=None, S=None, r=None, t=None, T=None, k=None, b=None, gpm_ft_day=True):
+        """
+        Class to calculate the Cooper-Jacob drawdown. Default assumes 'q' will be provided in gpm. All other parameters must then be in feet and days. If gpm_ft_day is set to False, then units of all parameters can be anything but must be consistent.
+        :param q: flux
+        :param S: Storativity
+        :param r: radius
+        :param t: time
+        :param T: Transmissivity
+        :param k: Hydraulic conductivity
+        :param b: aquifer thickness
+        :param gpm_ft_day: If True, assumes that the provide 'q' is in gpm, and it will be converted to ft^3 /day. The units of other parameters must then also be provided in feet and days.
+        """
         self.q = q
         self.T = T
         self.S = S

@@ -128,7 +128,8 @@ class HeadsPlus(bf.HeadFile):
             """copy and paste this stress period data to the MultiIndex DataFrame"""
             for layer in range(self.nlay):
                 try:
-                    df_heads.loc[idxx[kstpkper, layer], :] = spHds.iloc[:, layer].values
+                    # df_heads.loc[idxx[kstpkper, layer], :] = spHds.iloc[:, layer].values
+                    df_heads.loc[idxx[kstpkper, layer, :]] = spHds.iloc[:, layer].values.reshape(-1, 1)
                 except:
                     # was getting an error using above code. Not sure why since it used to work. The below is a fix
                     # TODO need to figure out WHY!!!!

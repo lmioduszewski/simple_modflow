@@ -54,7 +54,7 @@ class SFR:
         self._sfr_connection_data = None
         self._sfr_period_data = None
         self.stream_gdf = gpd.read_file(stream_path)
-        self.stream_geom = self.stream_gdf.geometry.unary_union
+        self.stream_geom = self.stream_gdf.geometry.union_all()
         self.stream_points = {}
         self._reach_lens = None
         self.sfr = None

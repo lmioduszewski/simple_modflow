@@ -76,7 +76,7 @@ class LakeAreaVolumeRelationship:
             polygon = Polygon(coords)
             if polygon.is_valid and polygon.area < self.lake_area * 0.9:  # Exclude entire footprint
                 polygons.append(polygon)
-        return gpd.GeoSeries(polygons).unary_union
+        return gpd.GeoSeries(polygons).union_all()
 
     def analyze_lake(self):
         elevations = self.elevations

@@ -365,6 +365,24 @@ class VoronoiGridPlus(VoronoiGrid):
             Args:
 
             """
+        fig = self.choropleth(zmin, zmax, zoom, hoverlabels, hoverdata, custom_z)
+        return fig.show()
+
+
+    def choropleth(
+            self,
+            zmin=None,
+            zmax=None,
+            zoom=18,
+            hoverlabels=None,
+            hoverdata=None,
+            custom_z=None
+    ):
+        """Plot choropleth of Voronoi grid.
+
+            Args:
+
+            """
         if zmax is None:
             zmax = len(self.latslons['features'])
         if zmin is None:
@@ -372,11 +390,11 @@ class VoronoiGridPlus(VoronoiGrid):
 
         fig_mbox = mf2Dplots.ChoroplethPlot(vor=self, zoom=zoom)
         hoverdict = {
-                    'Cell No.': self.cell_list,
-                    'Area': self.area_list,
-                    'x': self.x_list,
-                    'y': self.y_list
-                }
+            'Cell No.': self.cell_list,
+            'Area': self.area_list,
+            'x': self.x_list,
+            'y': self.y_list
+        }
         # if additional custom hover data is provided, add it
         if self.nlay:
             nlay = self.nlay
@@ -389,7 +407,7 @@ class VoronoiGridPlus(VoronoiGrid):
                 hoverdict[hoverlabels[num]] = hoverdata[num]
         custom_data, hover_template = create_hover(hoverdict)
 
-        #allow for a custom colorscale z-value
+        # allow for a custom colorscale z-value
         if custom_z is None:
             zs = self.gdf_latlon.index.to_list()
         else:
@@ -407,6 +425,7 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
         return fig_mbox
+
 
     def map_nodes(self):
 
@@ -516,7 +535,7 @@ class VoronoiGridPlus(VoronoiGrid):
         """Method to show selected cells of the voronoi grid.
         Just provide a list of cell indices."""
 
-        choro = self.plot_choropleth(hoverlabels=hoverlabels, hoverdata=hoverdata, custom_z=custom_z, **kwargs)
+        choro = self.choropleth(hoverlabels=hoverlabels, hoverdata=hoverdata, custom_z=custom_z, **kwargs)
         choro.data[0].selectedpoints = (tuple(cell_list))
 
         return go.Figure(choro).show(renderer='browser')
@@ -871,10 +890,13 @@ class VoronoiGridPlus(VoronoiGrid):
             elevations.append(srcs[i].read(1))
 
         # Create a function to get the elevation at a point for each raster file
-        def get_elevations(x, y):
+        def get_elevations(x, y, debug=False):
             elevs = []
             for i in range(n_rasters):
                 row, col = srcs[i].index(x, y)
+                if debug:
+                    print(f'x: {x}, y: {y}')
+                    print(i, f'row: {row}', f'col: {col}')
                 elev = elevations[i][row-1, col-1]  # subtract 1 so rows and cols start at zero, else Python error
                 elevs.append(elev)
             return tuple(elevs)
@@ -1018,8 +1040,8 @@ class VoronoiGridPlus(VoronoiGrid):
 
         if shp_to_query:
             gdf_query = gpd.read_file(shp_to_query).to_crs(crs)
-        if gdf_to_query:
-            gdf_query = gdf_to_query
+        if gdf_to_query is not None:
+            gdf_query = gdf_to_query.to_crs(crs)
 
         """Create dictionary with Vornoi cell indices that contain/intersect each location"""
         VorIdx_dict = {}
@@ -1275,9 +1297,9 @@ class VoronoiGridPlus(VoronoiGrid):
         df = self.gdf_topbtm if df is None else df
         #  drop the geometry if needed, so we can force all values to be numeric
         if isinstance(df, gpd.GeoDataFrame):
-            df = df.drop(columns='geometry').applymap(lambda x: pd.to_numeric(x, errors='coerce'))
+            df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))
         else:
-            df = df.applymap(lambda x: pd.to_numeric(x, errors='coerce'))
+            df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
         labels = list(df.columns)
         df = df.loc[:, labels]
         # find difference between cols of surfaces
