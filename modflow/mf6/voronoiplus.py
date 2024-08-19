@@ -453,7 +453,8 @@ class VoronoiGridPlus(VoronoiGrid):
     def get_vor_cells_as_series(
             self,
             overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries = None,
-            predicate: str = 'intersects'
+            predicate: str = 'intersects',
+            return_dict = False
     ):
         """
         Compares given geometries to the voronoi polygon geometries and returns
@@ -465,13 +466,18 @@ class VoronoiGridPlus(VoronoiGrid):
         """
         if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString)):
             pass
-        elif isinstance(overlapping_geometry, gpd.GeoSeries):
+
+        elif isinstance(overlapping_geometry, gpd.GeoSeries | gpd.GeoDataFrame):
+            # make it a GeoSeries if needed
+            if isinstance(overlapping_geometry, gpd.GeoDataFrame):
+                overlapping_geometry = gpd.GeoSeries(data=overlapping_geometry.geometry)
             geocount = overlapping_geometry.count()
             if isinstance(overlapping_geometry.array, gpd.array.GeometryArray) and geocount != 0:
                 print(f'You gave me {geocount} geometries to check')
             else:
                 print('The GeoSeries is empty!')
                 return
+
         elif isinstance(overlapping_geometry, Path):
             overlapping_geometry = gpd.read_file(overlapping_geometry).geometry
 
@@ -479,13 +485,20 @@ class VoronoiGridPlus(VoronoiGrid):
             print('Wrong data types')
             return
 
-        geometries = gpd.GeoSeries(overlapping_geometry)
-        intersecting_cells = geometries.array.sindex.query(
-            self.gdf_vorPolys["geometry"],
-            predicate=predicate,
-        )[0]
-
-        return pd.Series(intersecting_cells)
+        if return_dict:
+            intersecting_cells = {}
+            for i, geometry in enumerate(overlapping_geometry):
+                i_cells = gpd.GeoSeries(geometry).array.sindex.query(
+                    self.gdf_vorPolys["geometry"],
+                    predicate=predicate)[0]
+                intersecting_cells[i] = pd.Series(i_cells)
+            return intersecting_cells
+        else:
+            geometries = gpd.GeoSeries(overlapping_geometry)
+            intersecting_cells = geometries.array.sindex.query(
+                self.gdf_vorPolys["geometry"],
+                predicate=predicate)[0]
+            return pd.Series(intersecting_cells)
 
     def get_vor_cells_as_dict(
             self,

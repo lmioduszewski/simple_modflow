@@ -9,6 +9,8 @@ from pathlib import Path
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from flopy.mf6.modflow.mfutllaktab import ModflowUtllaktab
+from simple_modflow.modflow.utils import read_gpkg
+import pandas as pd
 
 
 class LakeAreaVolumeRelationship:
@@ -17,28 +19,31 @@ class LakeAreaVolumeRelationship:
     calculations are based on a provided DEM, lake footprint shapefile, and a list of elevations. The lake
     number should be defined (default is zero), and needs to be the same lake number referenced in the other
     lake package classes during setup."""
+
     def __init__(
             self,
-            dem_path: Path,
-            lake_shapefile: Path,
+            dem_path: Path = None,
+            lake_shapefile: Path = None,
             elevations: list = None,
             lake_num: int = 0,
             model: SimulationBase = None,
-            shapefile_buffer=0
+            shapefile_buffer=0,
+            filename=None
     ):
         self.dem_path = dem_path
         self.lake_shapefile = lake_shapefile
         self.shapefile_buffer = shapefile_buffer
-        self.load_dem()
-        self.load_lake_footprint()
+        if dem_path and lake_shapefile:
+            self.load_dem()
+            self.load_lake_footprint()
         self._lake_table = None
         self.elevations = elevations
         self.lake_num = lake_num
         self.model = model
-        self.filename = f'lake_table.lak'
+        self.filename = f'lake_table.lak' if filename is None else filename
         self.table_block = [self.lake_num, self.filename]
 
-        if self.model:
+        if all([self.model, self.dem_path, self.lake_shapefile]):
             self.add_to_model()
 
     @property
@@ -114,6 +119,26 @@ class LakeAreaVolumeRelationship:
         volume = np.nansum(depth[depth > 0]) * cell_area
         return volume
 
+    def add_table_for_buried_facility(self, area, btm, top, storage_coeff, elev_every=1, model: SimulationBase = None):
+        """gets a table for a simple rectangular-shaped buried infiltration facility"""
+        model = model if model is not None else self.model
+        tot_vol = area * (top - btm) * storage_coeff
+        elev = btm + elev_every
+        table = []
+        while elev <= top:
+            this_vol = area * (elev - btm) * storage_coeff
+            table.append([elev, this_vol, area])
+            elev = elev + elev_every
+
+        laktab = ModflowUtllaktab(
+            model=model.gwf,
+            nrow=len(table),
+            ncol=3,
+            table=table,
+            filename=self.filename,
+            pname=f'laktab_{self.lake_num}'
+        )
+
     def add_to_model(self):
 
         laktab = ModflowUtllaktab(
@@ -122,27 +147,136 @@ class LakeAreaVolumeRelationship:
             ncol=3,
             table=self.lake_table,
             filename=self.filename,
-            pname='lak'
+            pname=f'laktab_{self.lake_num}'
         )
 
 
 class LakeConnectionData:
 
     def __init__(
-            self, vor: Vor,
-            lake_shp: Path,
-            bed_leakance = 1,
-            lake_num: int = 0,
-            only_layer = None,
+            self,
+            vor: Vor,
+            paths: Path | list = None,
+            bed_leakance: list | int = 1,
+            only_layer=None,
+            horizontal_connections: dict = None,
+            use_reconciled_surfaces=True,
+            alt_surface_df=None,
+            min_sep=0.1,
+            only_vertical=False,
     ):
+        """
+        Provide one or more Path objects that are shapefiles. Use property connection_data as an argument in the
+        LakePackageData class.
+        :param vor: VoronoiGridPlus voronoi grid object
+        :param paths: one or more Path objects, a geopackage, a shapefile, or a list of shapefiles.
+                      Not a list of geopackages.
+        :param bed_leakance: an integer defining the lakebed leakance, or a list of integers if multiple lakes.
+                             If only one value is provided for multiple lakes, it will be used for all lakes.
+        :param only_layer: if you only want the lake to be connected to one particular model layer. This is a zero index.
+        :param horizontal_connections: dict of lake numbers that have horizontal connections and top and bottom of those lakes.
+
+                for example {0: [380, 370]} for a one lake model with a top of 380 and bottom of 370.
+        """
 
         self.vor = vor
-        self.lake_shp = lake_shp
-        self.lake_vor_cells = vor.get_vor_cells_as_series(self.lake_shp)
+        self._lakes = None
+        self._num_lakes = None
+        self._bed_leakance = None
         self._connection_data = None
-        self.lake_num = lake_num
-        self.bed_leakance = bed_leakance
+        self._lakes_vor_cells = None
+        self._horizontal_connections = None
+        self.use_reconciled_surfaces = use_reconciled_surfaces
+        self.alt_surface_df = alt_surface_df
+        self.min_sep = min_sep
+        self.only_vertical = only_vertical
+
+        if paths:
+            self.lakes = paths
+        if bed_leakance:
+            self.bed_leakance = bed_leakance
+        if horizontal_connections:
+            self.horizontal_connections = horizontal_connections
+
         self.only_layer = only_layer
+
+    @property
+    def horizontal_connections(self) -> dict:
+        return self._horizontal_connections
+
+    @horizontal_connections.setter
+    def horizontal_connections(self, val):
+        assert isinstance(val, dict), 'horizontal_connections must be a dict'
+        for key, value in val.items():
+            assert key in list(range(self.num_lakes)), 'dict keys must be integers less than num lakes'
+            assert isinstance(value, list), 'dict values must be lists'
+            assert len(value) == 2, 'dict value lists must be length 2, top and bottom of lake horizontal connections'
+            assert all(isinstance(i, int | float) for i in value), 'value list items must be integers or floats'
+        self._horizontal_connections = val
+
+    @property
+    def num_lakes(self):
+        self._num_lakes = len(self.lakes) if self.lakes is not None else 0
+        return self._num_lakes
+
+    @property
+    def lakes(self) -> gpd.GeoDataFrame:
+        """A GeoDataFrame containing the lake footprints."""
+        return self._lakes
+
+    @lakes.setter
+    def lakes(self, val):
+
+        if isinstance(val, Path):
+            if val.suffix == 'shp':
+                try:
+                    self._lakes = gpd.read_file(val)
+                except:
+                    raise ValueError(f'cannot read shapefile {val}')
+            elif val.suffix == 'gpkg':
+                try:
+                    self._lakes = read_gpkg(val)
+                except:
+                    raise ValueError(f'cannot read geopackage {val}')
+            else:
+                raise ValueError('path must be a .shp or .gpkg')
+
+        elif isinstance(val, list):
+            are_paths = all(isinstance(i, Path) for i in val)
+            assert are_paths, 'all items in list must be Path'
+            all_are_shp = all(path.suffix == '.shp' for path in val)
+            assert all_are_shp, 'all lakes must have .shp extension'
+            try:
+                lakes = [gpd.read_file(lake_shp) for lake_shp in val]
+                geoms = [lake.geometry for lake in lakes]
+                self._lakes = gpd.GeoDataFrame.from_records(geoms).set_geometry(0)
+            except:
+                raise ValueError(f'cannot read lakes shapefile list {val}')
+
+    @property
+    def bed_leakance(self) -> list:
+        """lakebed leakance, one value for each lake"""
+        return self._bed_leakance
+
+    @bed_leakance.setter
+    def bed_leakance(self, val) -> list:
+        if isinstance(val, int):
+            if self.num_lakes > 1:
+                print(f'applying bed leakance {val} to all {self.num_lakes} lakes')
+            self._bed_leakance = [val] * self.num_lakes
+        elif isinstance(val, list):
+            assert len(val) == self.num_lakes, f'list must have {self.num_lakes} leakance values, one for each lake'
+            assert all(isinstance(num, int | float) for num in val), 'all lakes must have integer leakance values'
+            self._bed_leakance = val
+
+    @property
+    def lakes_vor_cells(self) -> dict:
+        """Dict of lake cells for each lake. Keys are lake numbers and values are lake cells"""
+        if self.num_lakes == 0:
+            return None
+        lakes_vor_cells = self.vor.get_vor_cells_as_series(self.lakes, return_dict=True)
+        self._lakes_vor_cells = lakes_vor_cells
+        return self._lakes_vor_cells
 
     @property
     def connection_data(self):
@@ -150,61 +284,130 @@ class LakeConnectionData:
             self._connection_data = self.get_connection_data()
         return self._connection_data
 
-    def get_connection_data(self, use_reconciled_surfaces=True, alt_surface_df=None, min_sep=None, only_vertical=False):
-        """gets the connection data for the MODFLOW 6 LAK package based on the provided vornoi grid
+    def custom_horizontal_connections(
+            self,
+            cell_id,
+            lak_idx_conn,
+            only_layer,
+            bed_leakance,
+            connection_data,
+            elev_df,
+            start_index,
+            lake_num,
+            adjacent_cells,
+            top: int | float = None,
+            botm: int | float = None
+
+    ) -> tuple:
+        """
+        If you want to force certain horizontal connections of the 'lake'. Useful if using this class to define a
+        rectangular lake to simulate an infiltration vault, trench, or other rectangular lake-like structure, such
+        as buried facilities with storage rock. You can define a top and bottom elevation for all lake connections to
+        create a box-like lake which may contain some sort of media.
+        :param cell_id: cell id
+        :param lak_idx_conn:
+        :param only_layer:
+        :param bed_leakance:
+        :param connection_data:
+        :param elev_df:
+        :param start_index:
+        :param lake_num:
+        :param adjacent_cells:
+        :param top:
+        :param botm:
+        :return:
+        """
+
+        vor = self.vor
+        if not top or not botm:
+            top, botm = self.horizontal_connections[lake_num][0], self.horizontal_connections[lake_num][1]
+
+        for idx, ja_cell in enumerate(adjacent_cells):
+            conn_len = vor.cl12[start_index + idx + 1]  # add 1 to skip the cell itself
+            conn_width = vor.hwva[start_index + idx + 1]
+            n_layers = len(vor.gdf_topbtm.drop('geometry', axis=1).columns) - 1
+
+            for layer in range(n_layers):
+                if only_layer is not None:
+                    if layer != only_layer:
+                        continue
+
+                horiz_conn = [lake_num, lak_idx_conn, (layer, cell_id), 'HORIZONTAL',
+                              bed_leakance[lake_num], botm, top, conn_len, conn_width]
+                connection_data.append(horiz_conn)
+                lak_idx_conn += 1
+
+        return cell_id, lak_idx_conn, only_layer, bed_leakance, connection_data, elev_df, start_index, lake_num
+
+    def get_connection_data(self):
+
+        """The meat...gets the connection data for the MODFLOW 6 LAK package based on the provided voronoi grid
         and a shapefile of the lake footprint"""
 
+        use_reconciled_surfaces = self.use_reconciled_surfaces
+        alt_surface_df = self.alt_surface_df
+        min_sep = self.min_sep
+        only_vertical = self.only_vertical
         only_layer = self.only_layer
-        idx_conn = 0  # starting index for numbering connections
         vor = self.vor
-        lake_num = self.lake_num
         bed_leakance = self.bed_leakance
+
         connection_data = []
-        min_sep = 0.1 if min_sep is None else min_sep
+
         if alt_surface_df is not None:
             elev_df = alt_surface_df
         else:
-            elev_df = vor.reconcile_surfaces(min_sep=min_sep) if use_reconciled_surfaces else vor.gdf_topbtm
-        adjusted_cells = {}
+            elev_df = vor.reconcile_surfaces(self.min_sep) \
+                if use_reconciled_surfaces else vor.gdf_topbtm
 
-        for cell_id in self.lake_vor_cells:
-            start_index = sum(vor.iac[:cell_id])
-            #  set vertical connection for cell
-            vert_conn = [lake_num, idx_conn, (0, cell_id), 'VERTICAL', bed_leakance, 0, 0, 0, 0]
-            connection_data.append(vert_conn)
-            idx_conn += 1
+        for lake_num, lake_cells in self.lakes_vor_cells.items():
+            lak_idx_conn = 0  # starting index for numbering each lake's connections
+            for cell_id in lake_cells:
+                start_index = sum(vor.iac[:cell_id])  # index to start when looking up conn_len and conn_width
+                #  set vertical connection for cell
+                vert_conn = [lake_num, lak_idx_conn, (0, cell_id), 'VERTICAL', bed_leakance[lake_num], 0, 0, 0, 0]
+                connection_data.append(vert_conn)
+                lak_idx_conn += 1
+                adjacent_cells = vor.find_adjacent_cells(cell_id)
 
-            if only_vertical:
-                continue
+                if only_vertical:
+                    continue
+                if self.horizontal_connections:
+                    if lake_num in self.horizontal_connections.keys():
+                        (cell_id, lak_idx_conn, only_layer, bed_leakance,
+                         connection_data, elev_df, start_index, lake_num) = self.custom_horizontal_connections(
+                            cell_id, lak_idx_conn, only_layer, bed_leakance,
+                            connection_data, elev_df, start_index, lake_num, adjacent_cells)
+                        continue
 
-            adjacent_cells = vor.find_adjacent_cells(cell_id)
-            ja_cell_tops = elev_df[0].loc[adjacent_cells]
-            cell_top = elev_df[0].loc[cell_id]
+                for idx, ja_cell in enumerate(adjacent_cells):
+                    ja_cell_top = elev_df.loc[ja_cell, 0]
+                    conn_len = vor.cl12[start_index + idx + 1]  # add 1 to skip the cell itself
+                    conn_width = vor.hwva[start_index + idx + 1]
+                    #  get list of booleans that indicate what layers for this cell are higher than adjacent cell top
+                    cell_comp = (elev_df.loc[cell_id] > ja_cell_top)
+                    for layer, boolean in enumerate(cell_comp):
+                        if only_layer is not None:
+                            if layer != only_layer:
+                                continue
+                        if boolean:  # if cell's top of this layer higher than adjacent cell top
+                            top = elev_df.loc[cell_id, layer]
+                            # if cell's bottom of this layer is not higher than adjacent cell top
+                            if not cell_comp[layer + 1]:
+                                botm = ja_cell_top
+                            else:  # but if this cell's bottom is higher than the adjacent cell top
+                                botm = elev_df.loc[cell_id, layer + 1]
+                        else:
+                            # if this cell's top is not higher than adjacent cell top
+                            # then no more connection data needed
+                            break
+                        horz_conn = [lake_num, lak_idx_conn, (layer, cell_id), 'HORIZONTAL',
+                                     bed_leakance[lake_num], botm, top, conn_len, conn_width]
+                        connection_data.append(horz_conn)
+                        lak_idx_conn += 1
 
-            for idx, ja_cell in enumerate(adjacent_cells):
-                ja_cell_top = elev_df.loc[ja_cell, 0]
-                conn_len = vor.cl12[start_index + idx + 1]  # add 1 to skip the cell itself
-                conn_width = vor.hwva[start_index + idx + 1]
-                #  get list of booleans that indicate what layers for this cell are higher than adjacent cell top
-                cell_comp = (elev_df.loc[cell_id] > ja_cell_top)
-                for layer, boolean in enumerate(cell_comp):
-                    if only_layer is not None:
-                        if layer != only_layer:
-                            continue
-                    if boolean:  # if cell's top of this layer higher than adjacent cell top
-                        top = elev_df.loc[cell_id, layer]
-                        # if cell's bottom of this layer is not higher than adjacent cell top
-                        if not cell_comp[layer + 1]:
-                            botm = ja_cell_top
-                        else:  # but if this cell's bottom is higher than the adjacent cell top
-                            botm = elev_df.loc[cell_id, layer + 1]
-                    else:  # if this cell's top is not higher than adjacent cell top then no more connection data needed
-                        break
-                    horz_conn = [lake_num, idx_conn, (layer, cell_id), 'HORIZONTAL', bed_leakance, botm, top, conn_len,
-                                 conn_width]
-                    connection_data.append(horz_conn)
-                    idx_conn += 1
         return connection_data
+
 
 class LakePackageData:
 
@@ -236,10 +439,12 @@ class LakePackageData:
         boundnames = self.boundnames
         packagedata = []
 
+        # get the number of connections for each lake
+        length_conns = pd.DataFrame(connectiondata[0]).loc[:, 0].value_counts()
+
         for lake in range(nlakes):
             lak_starting_stage = starting_stage[lake]
-            lakeconn = connectiondata[lake]
-            lak_packagedata = [lake, lak_starting_stage, len(lakeconn)]
+            lak_packagedata = [lake, lak_starting_stage, length_conns[lake]]
             packagedata.append(lak_packagedata)
 
         return packagedata
@@ -250,12 +455,13 @@ class LakePeriodData:
     def __init__(
             self,
             model: SimulationBase = None,
-            lake_ids = [0],
-            lake_stages = None,
-            rainfall_rates = None,
-            evaporation_rates = None,
-            withdrawals = None,
-            nper = 1
+            lake_ids=[0],
+            lake_stages=None,
+            rainfall_rates=None,
+            evaporation_rates=None,
+            withdrawals=None,
+            inflow=None,
+            nper=1
     ):
         self.model = model
         self.lake_ids = lake_ids
@@ -263,6 +469,7 @@ class LakePeriodData:
         self.rainfall_rates = rainfall_rates
         self.evaporation_rates = evaporation_rates
         self.withdrawals = withdrawals
+        self.inflow = inflow
         self.nper = nper if self.model is None else self.model.nper
         self._period_data = None
 
@@ -274,10 +481,10 @@ class LakePeriodData:
             lake_stages=self.lake_stages,
             rainfall_rates=self.rainfall_rates,
             evaporation_rates=self.evaporation_rates,
-            withdrawals=self.withdrawals
+            withdrawals=self.withdrawals,
+            inflow=self.inflow
         )
         return self._period_data
-
 
     def get_lak_period_data(
             self,
@@ -286,7 +493,8 @@ class LakePeriodData:
             lake_stages: list = None,
             rainfall_rates: list = None,
             evaporation_rates: list = None,
-            withdrawals: list = None
+            withdrawals: list = None,
+            inflow: list = None
     ) -> list:
         """
         Generate period data for the MODFLOW 6 LAK package.
@@ -298,6 +506,7 @@ class LakePeriodData:
         rainfall_rates (list of float, optional): List of rainfall rates for each stress period.
         evaporation_rates (list of float, optional): List of evaporation rates for each stress period.
         withdrawals (list of float, optional): List of withdrawal rates for each stress period.
+        inflow (list of float, optional): List of inflow rates for each stress period.
 
         Returns:
         dict: Dictionary of period data for the LAK package. Each key is a stress period number, and the value is a list of lists.
@@ -308,23 +517,42 @@ class LakePeriodData:
         for period in range(nper):
             period_data[period] = []
 
-            for lake_id in lake_ids:
-                lake_number = lake_id  # lake_id is 0-based
+            if len(lake_ids) == 1:
 
-                laksetting = [lake_number]
-                if lake_stages is not None and period < len(lake_stages):
-                    print(lake_stages[period])
-                    print(len(lake_stages))
-                    laksetting.extend(['stage', lake_stages[period]])
-                if rainfall_rates is not None:
-                    laksetting.extend(['rainfall', rainfall_rates[period]])
-                if evaporation_rates is not None:
-                    laksetting.extend(['evaporation', evaporation_rates[period]])
-                if withdrawals is not None:
-                    laksetting.extend(['withdrawal', withdrawals[period]])
+                for lake_id in lake_ids:
+                    lake_number = lake_id  # lake_id is 0-based
 
-                period_data[period].append(laksetting)
+                    laksetting = [lake_number]
+                    if lake_stages is not None and period < len(lake_stages):
+                        laksetting.extend(['stage', lake_stages[period]])
+                    if rainfall_rates is not None:
+                        laksetting.extend(['rainfall', rainfall_rates[period]])
+                    if evaporation_rates is not None:
+                        laksetting.extend(['evaporation', evaporation_rates[period]])
+                    if withdrawals is not None:
+                        laksetting.extend(['withdrawal', withdrawals[period]])
+                    if inflow is not None:
+                        laksetting.extend(['inflow', inflow[period]])
+
+                    period_data[period].append(laksetting)
+
+            elif len(lake_ids) > 1:
+
+                for lake_number in lake_ids:
+                    if lake_stages is not None and lake_number not in lake_stages.keys():
+                        continue
+                    laksetting = [lake_number]
+                    if lake_stages is not None and period < len(lake_stages[lake_number]):
+                        laksetting.extend(['stage', lake_stages[lake_number][period]])
+                    if rainfall_rates is not None:
+                        laksetting.extend(['rainfall', rainfall_rates[lake_number][period]])
+                    if evaporation_rates is not None:
+                        laksetting.extend(['evaporation', evaporation_rates[lake_number][period]])
+                    if withdrawals is not None:
+                        laksetting.extend(['withdrawal', withdrawals[lake_number][period]])
+                    if inflow is not None:
+                        laksetting.extend(['inflow', inflow[lake_number][period]])
+
+                    period_data[period].append(laksetting)
 
         return period_data
-
-

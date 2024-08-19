@@ -238,7 +238,7 @@ class Storage:
             sto_transient: dict = None,
 
     ):
-        if sto_steady is None:
+        if sto_steady is None and sto_transient is None:
             sto_steady = {0: True}
         if sto_transient is None:
             sto_transient = {1: True}
@@ -366,5 +366,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.01
+            maximum_stage_change=0.5
         )

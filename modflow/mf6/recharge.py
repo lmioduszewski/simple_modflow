@@ -14,6 +14,7 @@ from simple_modflow.modflow.mf6.boundaries import Boundaries
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
+
 class RechargeFromShp(Boundaries):
 
     def __init__(
@@ -26,10 +27,14 @@ class RechargeFromShp(Boundaries):
             rch_fields: list | slice = None,
             rch_fields_to_pers: list = None,
             xlsx_rch: Path = None,
-            background_rch: float = 0.0,
+            background_rch: int | float = 0.0,
             apply_background_rch: bool = True,
             rch_in_vol: bool = False,
-            multiplier = 1
+            multiplier=1,
+            grid_type: str = 'disv',
+            limit_to_k33: bool = True,
+            limit_to_k33_by: int | float = 1,
+            verbose: bool = False
 
     ):
         """
@@ -47,6 +52,10 @@ class RechargeFromShp(Boundaries):
         :param apply_background_rch:if True, and there are more stress periods than given in rch_fields_to_pers, then the remaining stress periods will be assigned the background recharge
         :param rch_in_vol: if True, data is assumed to be in volume and will be divided by area of recharge polygons
         :param multiplier: a value to multiply the recharge data, optional. Otherwise, a value of 1 is used.
+        :param grid_type: string identifying grid type - 'disv' or 'disu'
+        :param limit_to_k33: whether to limit the vertical recharge to the vertical K of each cell, default True
+        :param limit_to_k33_by: if limit_to_k33 is True, k33 is multiplied by this to obtain max vertical recharge, defaults to 1
+        :param verbose: be verbose or not, defaults to False
         """
         super().__init__(model, vor, shp, uid, crs)
         self.bound_type = 'rch'
@@ -62,6 +71,10 @@ class RechargeFromShp(Boundaries):
         self._recharges = None
         self.rch_in_vol = rch_in_vol
         self.multiplier = multiplier
+        self.limit_to_k33 = limit_to_k33
+        self.limit_to_k33_by = limit_to_k33_by
+        self.grid_type = grid_type.lower()
+        self.verbose = verbose
 
     @property
     def cell_ids(self):
@@ -81,7 +94,8 @@ class RechargeFromShp(Boundaries):
             if self.xlsx_rch:
                 """use excel if it exists, otherwise get from shapefile"""
                 rch_fields = pd.read_excel(self.xlsx_rch).set_index(self.uid)
-                assert len(rch_fields) == len(self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
+                assert len(rch_fields) == len(
+                    self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
             else:
                 rch_fields = self.gdf.loc[:, self.fields]
             if self.rch_in_vol:  # if recharge is in volumes, divide by the voronoi area of each polygon
@@ -142,28 +156,28 @@ class RechargeFromShp(Boundaries):
             self,
             cell_ids: dict = None,
             recharges: dict = None,
-            grid_type:str = 'disv',
             background_rch: int | float = None,
-            limit_to_k33 = True,
-            verbose = False
     ) -> dict:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
         top layer
         :param cell_ids: dictionary where each key is an arbitrary name given each recharge area and the values
         are a list of cell ids in that area where recharge will be applied. Cell id is the cell2d number.
-        :param nper: number of stress periods for model
-        :param recharges: dictionary where each key is an arbitary name for each recharge area. Must match the keys
+        :param recharges: dictionary where each key is an arbitrary name for each recharge area. Must match the keys
         in the cell_ids dict. The dictionary values are each a list of recharge. Length of the list must equal to the
         number of stress periods.
-        :param grid_type: string identifying grid type - 'disv' or 'disu'
+        :param background_rch: adds a background recharge to all cells that don't have recharge in the model, optional
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
+        grid_type = self.grid_type
         cell_ids = self.cell_ids if cell_ids is None else cell_ids
         recharges = self.recharges if recharges is None else recharges
+        background_rch = self.background_rch if background_rch is None else background_rch
+        k33 = self.model.gwf.npf.k33.data[0] if self.limit_to_k33 else None
         nper = self.nper
         assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
+
         for per in range(nper):
             cell_list = []
             all_rch_cells = []
@@ -172,12 +186,13 @@ class RechargeFromShp(Boundaries):
                 recharge = recharges[name][per]
                 for cell in cell_nums:
                     cell_id = cell if grid_type == 'disu' else (0, cell)
-                    if limit_to_k33:
-                        k33 = self.model.gwf.npf.k33.data[0]
+                    if self.limit_to_k33:
                         if k33[cell] < recharge:
-                            if verbose:
-                                print(f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}. Changing recharge to {k33[cell]}')
-                            cell_list.append([cell_id, k33[cell]])
+                            if self.verbose:
+                                print(
+                                    f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}.'
+                                    f' Changing recharge to {k33[cell] * self.limit_to_k33_by}')
+                            cell_list.append([cell_id, k33[cell] * self.limit_to_k33_by])
                         else:
                             cell_list.append([cell_id, recharge])
                     else:
@@ -193,14 +208,13 @@ class RechargeFromShp(Boundaries):
     @staticmethod
     def add_to_rch_dict(rch_dict: dict, rch_to_add: dict) -> dict:
 
-        keys = rch_to_add.keys()
+        pers = rch_to_add.keys()
         new_rch_dict = rch_dict.copy()
-        for key in keys:
-            for cell_data in rch_to_add[key]:
+        for per in pers:
+            for cell_data in rch_to_add[per]:
                 cell_num = cell_data[0]
-                rch_add = cell_data[1]
-                cell_rch = new_rch_dict[key][cell_num].copy()
-                new_rch_dict[key][cell_num] = [cell_rch[0], cell_rch[1] + rch_add]
+                cell_recharge = cell_data[1]
+                cell_rch = new_rch_dict[per][cell_num].copy()
+                new_rch_dict[per][cell_num] = [cell_rch[0], cell_rch[1] + cell_recharge]
 
         return new_rch_dict
-
