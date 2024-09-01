@@ -180,33 +180,36 @@ class RechargeFromShp(Boundaries):
 
         for per in range(nper):
             cell_list = []
-            all_rch_cells = []
+            all_rch_cells = set()
+
             for name, cell_nums in cell_ids.items():
-                all_rch_cells += cell_nums
                 recharge = recharges[name][per]
                 for cell in cell_nums:
+                    all_rch_cells.add(cell)
                     cell_id = cell if grid_type == 'disu' else (0, cell)
-                    if self.limit_to_k33:
-                        if k33[cell] < recharge:
-                            if self.verbose:
-                                print(
-                                    f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}.'
-                                    f' Changing recharge to {k33[cell] * self.limit_to_k33_by}')
-                            cell_list.append([cell_id, k33[cell] * self.limit_to_k33_by])
-                        else:
-                            cell_list.append([cell_id, recharge])
+                    if self.limit_to_k33 and k33[cell] < recharge:
+                        limited_recharge = k33[cell] * self.limit_to_k33_by
+                        if self.verbose:
+                            print(
+                                f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}.'
+                                f' Changing recharge to {k33[cell] * self.limit_to_k33_by}'
+                            )
+                        cell_list.append([cell_id, limited_recharge])
                     else:
                         cell_list.append([cell_id, recharge])
+
             if background_rch is not None:
                 for cell in range(self.vor.ncpl):
                     if cell not in all_rch_cells:
                         cell_id = cell if grid_type == 'disu' else (0, cell)
                         cell_list.append([cell_id, background_rch])
+
             rch_dict[per] = cell_list
+
         return rch_dict
 
     @staticmethod
-    def add_to_rch_dict(rch_dict: dict, rch_to_add: dict) -> dict:
+    def add_to_rch_dict(rch_dict: dict, rch_to_add: dict, replace: bool = True) -> dict:
 
         pers = rch_to_add.keys()
         new_rch_dict = rch_dict.copy()
@@ -215,6 +218,7 @@ class RechargeFromShp(Boundaries):
                 cell_num = cell_data[0]
                 cell_recharge = cell_data[1]
                 cell_rch = new_rch_dict[per][cell_num].copy()
-                new_rch_dict[per][cell_num] = [cell_rch[0], cell_rch[1] + cell_recharge]
+                new_cell_rch = cell_rch[1] + cell_recharge if not replace else cell_recharge
+                new_rch_dict[per][cell_num] = [cell_rch[0], new_cell_rch]
 
         return new_rch_dict

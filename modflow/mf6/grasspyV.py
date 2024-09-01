@@ -224,15 +224,15 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    delt = Path(r"C:\Users\lukem\QGIS\SHP\Tehaleh\RLR\rlr_more_delta.shp").as_posix()
+    shp_gpkg = Path(r"C:\Users\lukem\QGIS\SHP\lakepointe\final pond grading.shp").as_posix()
     region_raster = (Path(
-        r"C:\Users\lukem\QGIS\RASTER\Tehaleh\RLR\more_delta.tif")
+        r"C:\Users\lukem\QGIS\RASTER\LakePointe\final pond extent dimensions.tif")
                      .as_posix())
     interp = SurfaceInterpFromShp(
-        shp_gpkg_path=delt,
+        shp_gpkg_path=shp_gpkg,
         region_dimensions_raster= region_raster,
-        shp_attribute_for_z='elev',
-        output_resolution=10,
-        surf_out='rlr_more_delta.tif'
+        shp_attribute_for_z='Elevation',
+        output_resolution=5,
+        surf_out='LkPt_final_pond_grading.tif'
     )
     interp.write_surf()

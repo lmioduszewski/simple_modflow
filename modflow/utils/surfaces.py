@@ -1,14 +1,25 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+
 import numpy as np
 from scipy.interpolate import griddata, RBFInterpolator
 import figs as f
 import pandas as pd
 import rasterio
 from pathlib import Path
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import plotly.graph_objs as go
+from shapely.geometry import Polygon
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
+from rasterio.mask import mask
 from pandas import IndexSlice as idxx
+from shapely.geometry import mapping
+from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
+
 
 class InterpolatedSurface:
 
@@ -22,13 +33,15 @@ class InterpolatedSurface:
             model: SimulationBase = None,
             layer: int = 0,
             kstpkper: tuple = None,
-            resolution: int = 1000
+            resolution: int = 1000,
+            use_rbf: bool = False,
+            surf_type: str = 'hds'
     ):
         """
         Base class for interpolated surfaces.
         :param xs: optional, array of x coordinates. If not provided will get from vor
         :param ys: optional, array of y coordinates. If not provided will get from vor
-        :param zs:
+        :param zs: optional, array of z coordinates. If not provided will get from hds obj
         :param vor: voronoi grid object corresponding to model
         :param hds: Optional, HeadsPlus object corresponding to model, will get from model if not provided
         :param model: mf6 SimulationBase model
@@ -37,11 +50,13 @@ class InterpolatedSurface:
         :param resolution: defaults to 1000
         """
         self.model = model
-        self.vor = vor
+        self.vor = self.model.vor if vor is None else vor
+        self.surf_type = surf_type
         self._xs = xs
         self._ys = ys
         self._zs = zs
         self._xys = None
+        self.use_rbf = use_rbf
         self._griddata_interp = None
         self._rbf_interp = None
         self._meshgrid = None
@@ -68,9 +83,12 @@ class InterpolatedSurface:
 
     @property
     def zs(self):
-        """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
-        zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, :], :].values
-        self._zs = zs
+        if self.surf_type == 'hds':
+            """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
+            zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, :], :].values
+            self._zs = zs
+        if self.surf_type == 'lyr':
+            zs = self.vor.gdf_topbtm.loc[:, self.layer].values
         return self._zs
 
     @zs.setter
@@ -139,18 +157,122 @@ class InterpolatedSurface:
             self._rbf_interp = grid_z
         return self._rbf_interp
 
+    @property
+    def transform(self):
+        """
+        Returns an affine transformation matrix for the given surface
+        """
+        xs = self.xs
+        ys = self.ys
+
+        xmin, ymin = np.min(xs), np.min(ys)
+        xmax, ymax = np.max(xs), np.max(ys)
+        xres = (xmax - xmin) / self.resolution
+        yres = (ymax - ymin) / self.resolution
+        transform = from_origin(xmin, ymin, xres, -yres)
+
+        return transform
+
+    @property
+    def memfile(self):
+
+        if self.use_rbf:
+            grid_z = self.rbf_interp
+        else:
+            grid_z = self.griddata_interp
+
+        memfile = MemoryFile()
+        with memfile.open(
+                driver='GTiff',
+                height=self.resolution,
+                width=self.resolution,
+                count=1,
+                dtype=grid_z.dtype,
+                crs=self.vor.crs,
+                transform=self.transform) as dst:
+            dst.write(grid_z, 1)
+
+        return memfile
+
+    @property
+    def surface(self):
+        """returns griddata interpolation first, if that fails then return the rbf interpolation"""
+        try:
+            return self.griddata_interp
+        except:
+            return self.rbf_interp
+
+    def clip_raster_with_polygon(self, polygon: Polygon = None):
+        """
+        Clips the in-memory raster with a vector polygon and returns the clipped raster data.
+
+        Parameters:
+        memfile (MemoryFile): In-memory GeoTIFF raster.
+        polygon (shapely.geometry.Polygon): Polygon to use for clipping.
+
+        Returns:
+        tuple: Clipped raster data array and the updated transform.
+        """
+        polygon = self.vor.gdf_vorPolys.union_all() if polygon is None else polygon
+        with self.memfile.open() as dataset:
+            shapes = [mapping(polygon)]
+
+            # Clip the raster with the polygon
+            clipped_image, clipped_transform = mask(dataset, shapes, crop=False)
+
+            return clipped_image, clipped_transform, dataset.meta
+
+    def save_clipped_raster(
+            self,
+            clipped_image=None,
+            clipped_transform=None,
+            meta=None,
+            output_tif='clipped_raster.tif'
+    ):
+        """
+        Saves the clipped raster data to a GeoTIFF file.
+
+        Parameters:
+        clipped_image (numpy.ndarray): Clipped raster data array.
+        clipped_transform (Affine): Transform for the clipped raster.
+        meta (dict): Metadata of the original raster dataset.
+        output_tif (str): Path to the output GeoTIFF file.
+
+        Returns:
+        None
+        """
+
+        if not any([clipped_image, clipped_transform, meta]):
+            clipped_image, clipped_transform, meta = self.clip_raster_with_polygon()
+            clip = pd.DataFrame(clipped_image[0]).replace(0.0, np.nan)
+            clipped_image = clip.to_numpy().reshape((1, self.resolution, self.resolution))
+
+        # Update the metadata with the new transform and dimensions
+        meta.update({
+            "driver": "GTiff",
+            "height": clipped_image.shape[1],
+            "width": clipped_image.shape[2],
+            "transform": clipped_transform
+        })
+
+        # Write the clipped raster to a GeoTIFF file
+        with rasterio.open(output_tif, "w", **meta) as dst:
+            dst.write(clipped_image)
+
+    def plot_heatmap(self):
+
+        clipped_image = self.clip_raster_with_polygon()[0]
+        fig = f.Fig()
+        fig.add_heatmap(z=clipped_image[0])
+        fig.show()
+
     def plot(self, surface=None):
         """
         plot surface using plotly, defaults to griddata_interp
         :param surface: surface to plot, ex. self.griddata_interp or self.rbf_interp
         :return: plots surface to browser
         """
-        if surface is None:
-            try:
-                surface = self.griddata_interp
-            except:
-                surface = self.rbf_interp
+        surface = self.surface if surface is None else surface
         fig = go.Figure()
         fig.add_surface(z=surface, colorscale=self.colorscale)
         fig.show(renderer='browser')
-

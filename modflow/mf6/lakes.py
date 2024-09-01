@@ -9,7 +9,7 @@ from pathlib import Path
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from flopy.mf6.modflow.mfutllaktab import ModflowUtllaktab
-from simple_modflow.modflow.utils import read_gpkg
+from simple_modflow import read_gpkg, read_shp_gpkg
 import pandas as pd
 
 
@@ -28,7 +28,12 @@ class LakeAreaVolumeRelationship:
             lake_num: int = 0,
             model: SimulationBase = None,
             shapefile_buffer=0,
-            filename=None
+            filename=None,
+            area: int | float = None,
+            top: int | float = None,
+            btm: int | float = None,
+            storage_coeff: int | float = 1,
+            get_elevation_every: int | float = 1
     ):
         self.dem_path = dem_path
         self.lake_shapefile = lake_shapefile
@@ -42,8 +47,18 @@ class LakeAreaVolumeRelationship:
         self.model = model
         self.filename = f'lake_table.lak' if filename is None else filename
         self.table_block = [self.lake_num, self.filename]
+        self.area = area
+        self.top = top
+        self.btm = btm
+        self.storage_coeff = storage_coeff
+        self.get_elevation_every = get_elevation_every
 
         if all([self.model, self.dem_path, self.lake_shapefile]):
+            self.add_to_model()
+            if any([self.top, self.btm, self.area]):
+                print(f'Ignoring top, btm, and area arugments, since a dem path and shapefile were provided')
+        elif all([self.top, self.btm, self.area]):
+            self.rectangular_facility()
             self.add_to_model()
 
     @property
@@ -119,25 +134,32 @@ class LakeAreaVolumeRelationship:
         volume = np.nansum(depth[depth > 0]) * cell_area
         return volume
 
-    def add_table_for_buried_facility(self, area, btm, top, storage_coeff, elev_every=1, model: SimulationBase = None):
+    def rectangular_facility(
+            self,
+            area: int | float = None,
+            top: int | float = None,
+            btm: int | float = None,
+            storage_coeff: int | float = None,
+            get_elevation_every: int = None,
+            model: SimulationBase = None
+    ):
         """gets a table for a simple rectangular-shaped buried infiltration facility"""
         model = model if model is not None else self.model
+        area = area if area is not None else self.area
+        top = top if top is not None else self.top
+        btm = btm if btm is not None else self.btm
+        storage_coeff = storage_coeff if storage_coeff is not None else self.storage_coeff
+        get_elevation_every = get_elevation_every if get_elevation_every is not None else self.get_elevation_every
+
         tot_vol = area * (top - btm) * storage_coeff
-        elev = btm + elev_every
+        elev = btm + get_elevation_every
         table = []
         while elev <= top:
             this_vol = area * (elev - btm) * storage_coeff
             table.append([elev, this_vol, area])
-            elev = elev + elev_every
-
-        laktab = ModflowUtllaktab(
-            model=model.gwf,
-            nrow=len(table),
-            ncol=3,
-            table=table,
-            filename=self.filename,
-            pname=f'laktab_{self.lake_num}'
-        )
+            elev = elev + get_elevation_every
+        self._lake_table = table
+        return table
 
     def add_to_model(self):
 
@@ -160,10 +182,11 @@ class LakeConnectionData:
             bed_leakance: list | int = 1,
             only_layer=None,
             horizontal_connections: dict = None,
-            use_reconciled_surfaces=True,
+            use_reconciled_surfaces: bool = True,
             alt_surface_df=None,
             min_sep=0.1,
-            only_vertical=False,
+            only_vertical: bool = False,
+            verbose: bool = False
     ):
         """
         Provide one or more Path objects that are shapefiles. Use property connection_data as an argument in the
@@ -244,14 +267,14 @@ class LakeConnectionData:
         elif isinstance(val, list):
             are_paths = all(isinstance(i, Path) for i in val)
             assert are_paths, 'all items in list must be Path'
-            all_are_shp = all(path.suffix == '.shp' for path in val)
-            assert all_are_shp, 'all lakes must have .shp extension'
+            all_are_shp = all(path.suffix == '.shp' or path.suffix == '.gpkg' for path in val)
+            assert all_are_shp, 'all lakes must have .shp or .gpkg extension'
             try:
-                lakes = [gpd.read_file(lake_shp) for lake_shp in val]
+                lakes = [read_shp_gpkg(lake_shp) for lake_shp in val]
                 geoms = [lake.geometry for lake in lakes]
                 self._lakes = gpd.GeoDataFrame.from_records(geoms).set_geometry(0)
             except:
-                raise ValueError(f'cannot read lakes shapefile list {val}')
+                raise ValueError(f'cannot read lakes list {val}')
 
     @property
     def bed_leakance(self) -> list:
@@ -361,6 +384,10 @@ class LakeConnectionData:
                 if use_reconciled_surfaces else vor.gdf_topbtm
 
         for lake_num, lake_cells in self.lakes_vor_cells.items():
+            print(f'Getting connection data for lake {lake_num}')
+            if self.horizontal_connections:
+                if lake_num in self.horizontal_connections.keys():
+                    print(f'Using custom horizontal connections for lake {lake_num}')
             lak_idx_conn = 0  # starting index for numbering each lake's connections
             for cell_id in lake_cells:
                 start_index = sum(vor.iac[:cell_id])  # index to start when looking up conn_len and conn_width
@@ -442,6 +469,7 @@ class LakePackageData:
         # get the number of connections for each lake
         length_conns = pd.DataFrame(connectiondata[0]).loc[:, 0].value_counts()
 
+        print(f'Getting package data for {nlakes} lakes')
         for lake in range(nlakes):
             lak_starting_stage = starting_stage[lake]
             lak_packagedata = [lake, lak_starting_stage, length_conns[lake]]
@@ -461,6 +489,7 @@ class LakePeriodData:
             evaporation_rates=None,
             withdrawals=None,
             inflow=None,
+            status=None,
             nper=1
     ):
         self.model = model
@@ -470,6 +499,7 @@ class LakePeriodData:
         self.evaporation_rates = evaporation_rates
         self.withdrawals = withdrawals
         self.inflow = inflow
+        self.status = status
         self.nper = nper if self.model is None else self.model.nper
         self._period_data = None
 
@@ -482,7 +512,8 @@ class LakePeriodData:
             rainfall_rates=self.rainfall_rates,
             evaporation_rates=self.evaporation_rates,
             withdrawals=self.withdrawals,
-            inflow=self.inflow
+            inflow=self.inflow,
+            status=self.status
         )
         return self._period_data
 
@@ -494,7 +525,8 @@ class LakePeriodData:
             rainfall_rates: list = None,
             evaporation_rates: list = None,
             withdrawals: list = None,
-            inflow: list = None
+            inflow: list = None,
+            status: list = None,
     ) -> list:
         """
         Generate period data for the MODFLOW 6 LAK package.
@@ -507,6 +539,7 @@ class LakePeriodData:
         evaporation_rates (list of float, optional): List of evaporation rates for each stress period.
         withdrawals (list of float, optional): List of withdrawal rates for each stress period.
         inflow (list of float, optional): List of inflow rates for each stress period.
+        status (list of float, optional): List of lake status for each stress period.
 
         Returns:
         dict: Dictionary of period data for the LAK package. Each key is a stress period number, and the value is a list of lists.
@@ -533,8 +566,11 @@ class LakePeriodData:
                         laksetting.extend(['withdrawal', withdrawals[period]])
                     if inflow is not None:
                         laksetting.extend(['inflow', inflow[period]])
+                    if status is not None:
+                        laksetting.extend(['status', status[period]])
 
-                    period_data[period].append(laksetting)
+                    if len(laksetting) > 1:
+                        period_data[period].append(laksetting)
 
             elif len(lake_ids) > 1:
 
@@ -552,7 +588,10 @@ class LakePeriodData:
                         laksetting.extend(['withdrawal', withdrawals[lake_number][period]])
                     if inflow is not None:
                         laksetting.extend(['inflow', inflow[lake_number][period]])
+                    if status is not None:
+                        laksetting.extend(['status', status[lake_number][period]])
 
-                    period_data[period].append(laksetting)
+                    if len(laksetting) > 1:
+                        period_data[period].append(laksetting)
 
         return period_data

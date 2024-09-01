@@ -1,7 +1,6 @@
 import numpy as np
 import plotly.graph_objects as go
 from scipy.spatial import Voronoi
-from shapely.geometry import Polygon, Point
 import pandas as pd
 import geopandas as gpd
 from flopy.utils.voronoi import VoronoiGrid, tri2vor
@@ -9,12 +8,12 @@ from flopy.utils.triangle import Triangle as Triangle
 import rasterio
 from rasterio.transform import from_origin
 import shapely as shp
-from shapely.geometry import LineString
-from shapely.geometry import Polygon, MultiLineString, Point
+from shapely.geometry import Polygon, MultiLineString, Point, LineString
 import json
 from pathlib import Path
 import simple_modflow.modflow.mf6.mf2Dplots as mf2Dplots
 from figs import create_hover, Fig
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 
 
 def flatten(l):
@@ -126,6 +125,20 @@ class TriangleGrid(Triangle):
         for region in regions:
             self._regions.append(region)
         return
+
+    def add_poly_regions(
+            self,
+            shp_gpkg: list | Path,
+            points: list | tuple = None,
+            use_representative_point: bool = True,
+            maximum_areas: list | int | float = None,
+            *args,
+            **kwargs
+    ):
+        if isinstance(shp_gpkg, Path):
+            shp_gpkg = [shp_gpkg]
+        polys = read_shp_gpkg(shp_gpkg).geometry
+        self.add_region(*args, **kwargs)
 
 
 class VoronoiGridPlus(VoronoiGrid):
@@ -552,6 +565,11 @@ class VoronoiGridPlus(VoronoiGrid):
         choro.data[0].selectedpoints = (tuple(cell_list))
 
         return go.Figure(choro).show(renderer='browser')
+
+    def show_overlapping_geometry(self, shp_gpkg):
+        """convenience method to show overlapping geometries just by providing a shapefile or geopackage"""
+        cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        self.show_selected_cells(cells)
 
     def get_model_boundary_polygons(self) -> dict:
         """Returns a dict of the polygons that form the model domain boundary.
@@ -1023,6 +1041,12 @@ class VoronoiGridPlus(VoronoiGrid):
         """
         grid_centroid = shp.MultiPolygon(self.gdf_latlon['geometry'].to_list()).centroid
         return grid_centroid
+
+    def get_overlapping_area(self, shp_gpkg):
+        """simple method to get the voronoi cell area of an overlapping geometry"""
+        cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        area = self.gdf_vorPolys.loc[cells].union_all().area
+        return area
 
     def get_vor_idx_from_geometry(
             self,

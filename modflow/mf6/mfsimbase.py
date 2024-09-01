@@ -1,6 +1,10 @@
 import flopy
 from pathlib import Path
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
+from simple_modflow.modflow.utils.datatypes.surface_data import SurfaceData
+from typing import Optional
+from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
 
 
 class SimulationBase:
@@ -9,15 +13,19 @@ class SimulationBase:
             self,
             name: str = 'mf6_model',
             mf_folder_path: Path = Path().home().joinpath('mf6'),
-            nper: int = 1
+            nper: int = 1,
+            vor: Vor = None
     ):
         self.name = name
+        self.vor = vor
         self.nlay = None
         self.nper = nper
         self.num_steps = None
         self.per_len = None
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
         self._master_celld = {}
+        self._hds = None
+        self._bud = None
 
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -55,17 +63,71 @@ class SimulationBase:
         )
 
     @property
+    def hds(self):
+        self._hds = Hp(model=self, vor=self.vor)
+        return self._hds
+
+    @property
+    def surf(self):
+        return ModelSurface(model=self)
+
+    @property
     def master_celld(self):
         return self._master_celld
 
-    def run_simulation(
-            self,
-    ):
+    def run_simulation(self):
         # Write the datasets
         self.sim.write_simulation()
         # Run the simulation
         success, buff = self.sim.run_simulation()
         print("\nSuccess is: ", success)
+
+    def plot_hds(self, kstpkper, zoom=13, plot_mounding=False, layer=0, zmin=None, zmax=None):
+        layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
+        hover = {"": ["" for cell in range(self.vor.ncpl)]}
+        hover.update({
+            f'Top of Model': self.vor.gdf_topbtm.loc[:, 0].to_list()
+        })
+        hover.update({
+            f'Layer {layer} Bottom': self.vor.gdf_topbtm.loc[:, layer_num].to_list() for layer_num in layer_nums
+        })
+
+        self.hds.plot_choropleth(
+            kstpkper=kstpkper,
+            zoom=zoom,
+            plot_mounding=plot_mounding,
+            custom_hover=hover,
+            layer=layer,
+            zmax=zmax,
+            zmin=zmin
+        )
+
+
+class ModelSurface:
+
+    def __init__(
+            self,
+            model: SimulationBase = None,
+    ):
+        self._model = model
+        self._surfaces = {}
+        self.nper = model.gwf.modeltime.nper
+        self.nstp = model.gwf.modeltime.nstp
+
+    def hds(self, layer=0, kstpkper: tuple = None, plot: bool = True, **kwargs):
+
+        kstpkper = (self.nstp[0] - 1, 0) if kstpkper is None else kstpkper
+        surf = InterpolatedSurface(model=self.model, layer=layer, kstpkper=kstpkper, **kwargs)
+        if plot:
+            surf.plot()
+
+        return surf.surface
+
+
+
+    @property
+    def model(self):
+        return self._model
 
 
 class OutputControl:
@@ -130,6 +192,7 @@ class DisuGrid:
             idomain=[1 for i in range(vor.ncpl)],
         )
 
+
 class DisvGrid:
 
     def __init__(
@@ -165,8 +228,8 @@ class InitialConditions:
             vor: Vor,
             botm_cells: list = None,
             initial_sat_thickness: float = 0.5,
-            nlay = 1,
-            strt = None
+            nlay=1,
+            strt=None
     ):
         if botm_cells is None:
             botm_cells = [0 for cell in range(vor.ncpl * nlay)]
@@ -188,8 +251,8 @@ class TemporalDiscretization:
             time_units: str = 'DAYS',
             per_len: int = 1,
             period_data: list = None,
-            num_steps = 30,
-            multiplier = 1.1
+            num_steps=30,
+            multiplier=1.1
     ):
         nper = model.nper
         if period_data is None:
@@ -212,7 +275,7 @@ class KFlow:
             self,
             model: SimulationBase,
             k: list = None,
-            k33_vert = None
+            k33_vert=None
 
     ):
         self.npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
@@ -292,6 +355,7 @@ class Drains:
             stress_period_data=stress_period_data,
         )
 
+
 class GHB:
 
     def __init__(
@@ -308,6 +372,7 @@ class GHB:
             pname='ghb',
             stress_period_data=stress_period_data
         )
+
 
 class CHD:
 
@@ -326,6 +391,7 @@ class CHD:
             stress_period_data=stress_period_data
         )
 
+
 class LAK:
 
     def __init__(
@@ -334,13 +400,12 @@ class LAK:
             nlakes: int = 1,
             noutlets: int = 0,
             ntables: int = 1,
-            packagedata = None,
-            connectiondata = None,
-            tables = None,
-            outlets = None,
-            perioddata = None
+            packagedata=None,
+            connectiondata=None,
+            tables=None,
+            outlets=None,
+            perioddata=None
     ):
-
         self.lak = flopy.mf6.ModflowGwflak(
             model=model.gwf,
             print_input=False,
@@ -353,8 +418,8 @@ class LAK:
             package_convergence_filerecord=f'{model.name}_lake_convergence.csv',
             mover=True,
             surfdep=0,
-            time_conversion=86_400.0, #  assumes model time units are DAYS
-            length_conversion=3.28081, #  assumes model length units are FEET
+            time_conversion=86_400.0,  #  assumes model time units are DAYS
+            length_conversion=3.28081,  #  assumes model length units are FEET
             nlakes=nlakes,
             noutlets=noutlets,
             ntables=ntables,
@@ -366,5 +431,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.5
+            maximum_stage_change=0.1
         )
