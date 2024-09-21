@@ -72,7 +72,7 @@ class TriangleGrid(Triangle):
         if point_to_add:
             self.add_region(point=point_to_add, maximum_area=point_region_size_max)
 
-        return circle_poly
+        return shp.Polygon(circle_poly)
 
     def add_rectangle(
             self,
@@ -1174,23 +1174,25 @@ class VoronoiGridPlus(VoronoiGrid):
         # Create an affine transform for the raster
         transform = from_origin(min_x, max_y, pixel_size, pixel_size)
         # Initialize the raster array
-        elevation_data = np.zeros((height, width), dtype=rasterio.float32)
+        # elevation_data = np.zeros((height, width), dtype=rasterio.float32)
 
-        # Calculate the elevation values
+        # Calculate the elevation values using vectorized operations
         print('getting elevations for raster')
-        for row in range(height):
-            for col in range(width):
-                # Calculate the position of the current pixel
-                x = min_x + col * pixel_size
-                y = max_y - row * pixel_size
 
-                # Project the point onto the normal vector
-                point_vector = np.array([x - known_x, y - known_y, 0])
-                distance_along_normal = np.dot(point_vector, normal) / np.linalg.norm(normal)
-                elevation = known_elevation - distance_along_normal * np.cos(dip_rad)
+        # Create a meshgrid of x and y coordinates
+        x_coords = min_x + np.arange(width) * pixel_size
+        y_coords = max_y - np.arange(height) * pixel_size
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
 
-                # Set the elevation value in the raster array
-                elevation_data[row, col] = elevation
+        # Calculate the position vectors of all pixels relative to the known point
+        point_vectors = np.stack([x_grid - known_x, y_grid - known_y, np.zeros_like(x_grid)], axis=-1)
+
+        # Calculate the dot product for all points
+        norm_normal = np.linalg.norm(normal)
+        distance_along_normal = np.dot(point_vectors, normal) / norm_normal
+
+        # Calculate the elevation for all points
+        elevation_data = known_elevation - distance_along_normal * np.cos(dip_rad)
         print('got raster from strike and dip')
 
         # Write the raster to a file
@@ -1216,7 +1218,7 @@ class VoronoiGridPlus(VoronoiGrid):
         return self.gdf_vorPolys.to_file(filepath)
 
     def get_domain(self):
-        return self.gdf_vorPolys.unary_union
+        return self.gdf_vorPolys.union_all()
 
     @staticmethod
     def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.array:
@@ -1371,7 +1373,7 @@ class VoronoiGridPlus(VoronoiGrid):
         """
 
         df = self.gdf_topbtm.copy() if df is None else df.copy()
-        df.loc[cells, layer] = df.loc[cells, layer] + adjustment
+        df.loc[cell_ids, layer] = df.loc[cell_ids, layer] + adjustment
         df = self.reconcile_surfaces(df) if reconcile else df
         return df
 

@@ -10,6 +10,7 @@ idxx = pd.IndexSlice
 # Conversion factors
 inches_to_feet = 1 / 12
 
+
 def remove_duplicates(lst: list, seen: set = None):
     """Removes duplicates from a list"""
     seen = set() if seen is None else seen
@@ -127,15 +128,15 @@ class Boundaries:
 
         return sorted_cells
 
-
     def get_drn_stress_period_data(
-        self, 
-        cells: list,
-        bottom_addition: float = 0,
-        conductance: float = 100,
-        disMf: str = 'disu',
-        bottoms: dict = None,
-        ) -> list:
+            self,
+            cells: list,
+            bottom_addition: float = 0,
+            conductance: float = 100,
+            disMf: str = 'disv',
+            bottoms: dict = None,
+            layer: int = None,
+    ) -> list:
         """Returns a list of lists. Each nested list corresponds to the DRN package
         boundary data for a particular voronoi cell in the grid, which includes cell
         ID, elevation of drain, and conductance. Can be passed to the flopy DRN package.
@@ -146,30 +147,32 @@ class Boundaries:
             bottom_addition (float): height above the bottom of cell for the drain. This is added to the bottom of cell elevation derived from the Voronoi grid object.
             conductance (float): conductance for this drain cell
             disMf (str, optional): Either 'disu' or 'disv' works, and refers to the MODFLOW6 discretization package being used. Defaults to 'disu'.
+            layer: layer to apply drains
 
         Returns:
             list: List of lists that contain the data for this drain and can be passed to the flopy DRN package
         """
-        
+
         if self.vor is None:
             return print("No voronoi grid defined")
         drn_values = []
         for cell in cells:
+            cell_id = cell if disMf == 'disu' else (layer, cell)
             if bottoms:
-                thisdrn = [cell, (bottoms[cell] + bottom_addition), conductance]
+                thisdrn = [cell_id, (bottoms[cell] + bottom_addition), conductance]
             elif self.vor.gdf_topbtm is not None:
                 try:
-                    thisdrn = [cell, (self.vor.gdf_topbtm.loc[cell, "bottom"] + bottom_addition), conductance]
+                    #  need a better way
+                    thisdrn = [cell_id, (self.vor.gdf_topbtm.loc[cell, layer + 1] + bottom_addition), conductance]
                 except:
                     print("can't get bottom elevations for drains. Assuming bottom elev is zero")
-                    thisdrn = [cell, bottom_addition, conductance]
+                    thisdrn = [cell_id, bottom_addition, conductance]
             else:
-                thisdrn = [cell, bottom_addition, conductance]
-            if disMf == "disv":
-                thisdrn = [0] + thisdrn  # add layer num for disv grid
+                thisdrn = [cell_id, bottom_addition, conductance]
+            """if disMf == "disv":
+                thisdrn = [0] + thisdrn  # add layer num for disv grid"""
             drn_values.append(thisdrn)
         return drn_values
-
 
     def get_drn_from_shp(
             self,
@@ -216,7 +219,7 @@ class Boundaries:
             self,
             cell_ids: dict = None,
             recharges: dict = None,
-            grid_type:str = 'disv',
+            grid_type: str = 'disv',
             background_rch: int | float = None,
             nper: int = 1
     ) -> dict:
@@ -252,9 +255,6 @@ class Boundaries:
                         cell_list.append([cell_id, background_rch])
             rch_dict[per] = cell_list
         return rch_dict
-
-
-
 
     def get_ghb_from_shp(
             self,

@@ -9,8 +9,6 @@ from simple_modflow.modflow.mf6.paths import *
 from figs import Fig, Template
 from plotly.colors import DEFAULT_PLOTLY_COLORS as colorsbo
 
-
-
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',
           'rgb(188, 189, 34)', 'rgb(23, 190, 207)']
@@ -26,7 +24,6 @@ class WaterLevelPlot(Fig):
         self._colors_already_assigned = []
         self._dash_dict = {}
         self._precip_fig = None
-
 
     def read_excel_files_in_dir(self, data_path: Path = None) -> dict:
         """
@@ -218,7 +215,7 @@ class WaterLevelPlot(Fig):
 
 class ChoroplethPlot(Fig):
 
-    def __init__(self, vor=None, zoom=None):
+    def __init__(self, vor=None, zoom=13):
         super().__init__()
 
         if vor:
@@ -234,11 +231,12 @@ class ChoroplethPlot(Fig):
 
 
 if __name__ == "__main__":
-    date_range = pd.date_range('2021.10.1','2022.04.01')
+    date_range = pd.date_range('2021.10.1', '2022.04.01')
     start_day = pd.to_datetime('2021.10.01')
     end_day = pd.to_datetime('2022.04.01')
     excel_path = Path().home().joinpath('mf6', 'CDF_Mounding', 'xls', 'wls')
     precip_path = Path().home().joinpath('mf6', 'CDF_Mounding', 'xls', 'Precip_daily2.xlsx')
+
 
     def fig_D_8():
         plt = WaterLevelPlot()
@@ -253,8 +251,10 @@ if __name__ == "__main__":
                 continue
         df[list(df.keys())[0]] = actual_df
         plt.plot_from_excel_dict(resample_time_step='D', by='mean', group_legend=True, vary_dash_by_df=True)
-        precip_plt = plt.add_precip(precip_path, plot_title='Figure D-8 | Simulated vs. Actual Water Levels - 2021 - 2022 Wet Season')
+        precip_plt = plt.add_precip(precip_path,
+                                    plot_title='Figure D-8 | Simulated vs. Actual Water Levels - 2021 - 2022 Wet Season')
         precip_plt.show(config={'scrollZoom': True})
+
 
     def fig_D_9():
 
@@ -279,7 +279,8 @@ if __name__ == "__main__":
                     mode='lines', marker_size=3,
                     line_color=trace_colors_dict[name],
                 )
-            sep_plt_per_file.update_yaxes(title_text='Separation from 3.75-foot Trigger Elevation (feet)', range=[-20,2])
+            sep_plt_per_file.update_yaxes(title_text='Separation from 3.75-foot Trigger Elevation (feet)',
+                                          range=[-20, 2])
             sep_plt_title = go.layout.Title(
                 text=f'Figure D-{fig_num} | {filename[4:]}',
                 font_size=30, x=0.5,
@@ -294,5 +295,5 @@ if __name__ == "__main__":
             sep_path = Path().home().joinpath('mf6', 'CDF_Mounding', 'html_figs', f'{filename}.jpg')
             #plotly.io.write_image(sep_plt_per_file, sep_path, format='jpg', scale=6, width=1000, height=750)
 
-    fig_D_8()
 
+    fig_D_8()

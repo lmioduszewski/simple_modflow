@@ -42,12 +42,14 @@ class InterpolatedSurface:
         :param xs: optional, array of x coordinates. If not provided will get from vor
         :param ys: optional, array of y coordinates. If not provided will get from vor
         :param zs: optional, array of z coordinates. If not provided will get from hds obj
-        :param vor: voronoi grid object corresponding to model
+        :param vor: voronoi grid object corresponding to model, will get from model if not provided
         :param hds: Optional, HeadsPlus object corresponding to model, will get from model if not provided
         :param model: mf6 SimulationBase model
         :param layer: defaults to 0
         :param kstpkper: tuple of time step and period for surface
         :param resolution: defaults to 1000
+        :param use_rbf: defaults to False
+        :param surf_type: defaults to 'hds', can be 'lyr' or 'hds'. 'lyr' returns just model surfaces
         """
         self.model = model
         self.vor = self.model.vor if vor is None else vor
@@ -65,7 +67,7 @@ class InterpolatedSurface:
         self.layer = layer
         self.resolution = resolution
         self.neighbors = 10
-        self.colorscale = 'Earth'
+        self.colorscale = 'Earth_r' # reverse earth so blue is low nums
 
     @property
     def xs(self):
@@ -89,6 +91,7 @@ class InterpolatedSurface:
             self._zs = zs
         if self.surf_type == 'lyr':
             zs = self.vor.gdf_topbtm.loc[:, self.layer].values
+            self._zs = zs
         return self._zs
 
     @zs.setter
@@ -195,6 +198,21 @@ class InterpolatedSurface:
         return memfile
 
     @property
+    def projected_xys(self):
+        """Gets projected x and y coordinates for the surface. Used in plotting."""
+        with self.memfile.open() as dataset:
+
+            data = dataset.read(1)
+            transform = dataset.transform
+            nrows, ncols = data.shape
+            xs, ys = np.meshgrid(np.arange(ncols), np.arange(nrows))
+            projected_x, projected_y = rasterio.transform.xy(transform, ys, xs, offset='center')
+            projected_x = np.array(projected_x)
+            projected_y = np.array(projected_y)
+
+            return projected_x, projected_y
+
+    @property
     def surface(self):
         """returns griddata interpolation first, if that fails then return the rbf interpolation"""
         try:
@@ -222,12 +240,13 @@ class InterpolatedSurface:
 
             return clipped_image, clipped_transform, dataset.meta
 
-    def save_clipped_raster(
+    def save_raster(
             self,
+            output_tif='clipped_raster.tif',
             clipped_image=None,
             clipped_transform=None,
             meta=None,
-            output_tif='clipped_raster.tif'
+            polygon_clip: Polygon = None
     ):
         """
         Saves the clipped raster data to a GeoTIFF file.
@@ -243,7 +262,7 @@ class InterpolatedSurface:
         """
 
         if not any([clipped_image, clipped_transform, meta]):
-            clipped_image, clipped_transform, meta = self.clip_raster_with_polygon()
+            clipped_image, clipped_transform, meta = self.clip_raster_with_polygon(polygon=polygon_clip)
             clip = pd.DataFrame(clipped_image[0]).replace(0.0, np.nan)
             clipped_image = clip.to_numpy().reshape((1, self.resolution, self.resolution))
 
@@ -274,5 +293,10 @@ class InterpolatedSurface:
         """
         surface = self.surface if surface is None else surface
         fig = go.Figure()
-        fig.add_surface(z=surface, colorscale=self.colorscale)
+        fig.add_surface(
+            z=surface,
+            x=self.projected_xys[0],
+            y=self.projected_xys[1],
+            colorscale=self.colorscale
+        )
         fig.show(renderer='browser')

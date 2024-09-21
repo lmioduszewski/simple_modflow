@@ -2,9 +2,11 @@ import flopy
 from pathlib import Path
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
-from simple_modflow.modflow.utils.datatypes.surface_data import SurfaceData
 from typing import Optional
 from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
+from simple_modflow.modflow.utils.datatypes.surface_data import ModelSurface
+from simple_modflow.modflow.utils.datatypes.choros import Choro
+from simple_modflow.modflow.utils.datatypes.xsections import XSection
 
 
 class SimulationBase:
@@ -71,6 +73,17 @@ class SimulationBase:
     def surf(self):
         return ModelSurface(model=self)
 
+    def choro(self, **kwargs):
+        """
+        kwargs can be any allowable keyword arguments from the Choro class
+        :param kwargs:
+        :return:
+        """
+        return Choro(model=self, **kwargs)
+
+    def xs(self, kstpkper: tuple = None, layer: int = None, cell: int = None, xy: str = None):
+        return
+
     @property
     def master_celld(self):
         return self._master_celld
@@ -101,33 +114,6 @@ class SimulationBase:
             zmax=zmax,
             zmin=zmin
         )
-
-
-class ModelSurface:
-
-    def __init__(
-            self,
-            model: SimulationBase = None,
-    ):
-        self._model = model
-        self._surfaces = {}
-        self.nper = model.gwf.modeltime.nper
-        self.nstp = model.gwf.modeltime.nstp
-
-    def hds(self, layer=0, kstpkper: tuple = None, plot: bool = True, **kwargs):
-
-        kstpkper = (self.nstp[0] - 1, 0) if kstpkper is None else kstpkper
-        surf = InterpolatedSurface(model=self.model, layer=layer, kstpkper=kstpkper, **kwargs)
-        if plot:
-            surf.plot()
-
-        return surf.surface
-
-
-
-    @property
-    def model(self):
-        return self._model
 
 
 class OutputControl:
@@ -204,6 +190,7 @@ class DisvGrid:
             nlay=1,
     ):
         self.nlay = nlay
+        model.nlay = nlay
         grid_props = vor.get_disv_gridprops()
         self.disv = flopy.mf6.ModflowGwfdisv(
             model.gwf,
@@ -251,7 +238,7 @@ class TemporalDiscretization:
             time_units: str = 'DAYS',
             per_len: int = 1,
             period_data: list = None,
-            num_steps=30,
+            num_steps=10,
             multiplier=1.1
     ):
         nper = model.nper
