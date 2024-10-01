@@ -1,0 +1,9 @@
+2024-09-27 10:17:51.707902 starting: opening PstFrom.log for logging
+2024-09-27 10:17:51.708903 starting PstFrom process
+2024-09-27 10:17:51.708903 starting: setting up dirs
+2024-09-27 10:17:51.708903 starting: removing existing new_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3\pest'
+2024-09-27 10:17:51.751604 finished: removing existing new_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3\pest' took: 0:00:00.042701
+2024-09-27 10:17:51.751604 starting: copying original_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3' to new_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3\pest'
+2024-09-27 10:17:52.072169 finished: copying original_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3' to new_d 'C:\Users\lukem\mf6\LkPt_F5_flow_lk3\pest' took: 0:00:00.320565
+2024-09-27 10:17:52.073168 finished: setting up dirs took: 0:00:00.364265
+2024-09-27 10:18:08.813127 starting: drawing realizations
