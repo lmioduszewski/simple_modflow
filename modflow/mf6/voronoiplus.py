@@ -220,8 +220,8 @@ class VoronoiGridPlus(VoronoiGrid):
         self.vor_list = self.gdf_vorPolys.geometry.to_list()
         self.cell_list = [i for i in range(len(self.vor_list))]
         self.area_list = [cell.area for cell in self.vor_list]
-        self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
-        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+        self.x_list = [cell.centroid.x_or_y[0][0] for cell in self.vor_list]
+        self.y_list = [cell.centroid.x_or_y[1][0] for cell in self.vor_list]
 
     @property
     def gdf_topbtm(self):
@@ -1406,7 +1406,7 @@ class VoronoiGridPlus(VoronoiGrid):
             new_bottoms[cell_id] = ja_min - buffer
 
         new_bottoms = pd.Series(new_bottoms, name=layer_bottom_name)
-        elev_df[layer_bottom_name].update(new_bottoms)
+        elev_df[layer_bottom_name] = elev_df[layer_bottom_name].update(new_bottoms)
         new_surfaces = self.reconcile_surfaces(df=elev_df)
 
         return new_surfaces

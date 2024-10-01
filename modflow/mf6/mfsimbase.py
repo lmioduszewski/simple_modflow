@@ -7,6 +7,7 @@ from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
 from simple_modflow.modflow.utils.datatypes.surface_data import ModelSurface
 from simple_modflow.modflow.utils.datatypes.choros import Choro
 from simple_modflow.modflow.utils.datatypes.xsections import XSection
+from shapely import LineString
 
 
 class SimulationBase:
@@ -81,12 +82,35 @@ class SimulationBase:
         """
         return Choro(model=self, **kwargs)
 
-    def xs(self, kstpkper: tuple = None, layer: int = None, cell: int = None, xy: str = None):
-        return
+    def xsect(
+            self,
+            kstpkper: tuple = None,
+            layer: int = 0,
+            cells: int | list[int] = None,
+            x_or_y: str = None,
+            spacing: int = 10,
+            num_points: int = 100,
+            extrapolate_beyond_section_ends: bool = False
+    ):
+        """Returns an instance of XSection class"""
+        return XSection(
+            model=self,
+            kstpkper=kstpkper,
+            layer=layer,
+            cells=cells,
+            x_or_y=x_or_y,
+            spacing=spacing,
+            num_points=num_points,
+            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends
+        )
 
     @property
     def master_celld(self):
         return self._master_celld
+
+    @property
+    def kstpkper(self):
+        return self.hds.kstpkper
 
     def run_simulation(self):
         # Write the datasets
