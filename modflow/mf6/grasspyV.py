@@ -8,7 +8,7 @@ from grass.pygrass.modules.shortcuts import raster as r
 from grass.pygrass.modules.shortcuts import general as g
 from grass.pygrass.modules.shortcuts import vector as v
 import grass.script.setup as gsetup
-
+from grass.pygrass.modules import Module
 
 
 class SurfaceInterpFromShp:
@@ -17,30 +17,33 @@ class SurfaceInterpFromShp:
             self,
             location: str = 'temp_loc',
             mapset: str = 'MAPSET',
-            grassdata:str = 'grassdata',
+            grassdata: str = 'grassdata',
             epsg: str = '2927',
-            shp_gpkg_path: Path = None,
-            region_dimensions_raster:Path = None,
+            shp_gpkg_path: Path | str = None,
+            region_dimensions_raster: Path | str = None,
+            region_vector: Path | str = None,
             write_interpolated_surface_and_finish: bool = False,
-            output_resolution = 4,
-            shp_attribute_for_z = 'Elev',
+            output_resolution=4,
+            shp_attribute_for_z='Elev',
             data_dir: Path = Path.home() / 'Python',
-            surf_out = 'interp_surface.tif'
+            surf_out='interp_surface.tif',
+            clip: bool = True
     ):
         """
         Class used to create an interpolated raster surface from a set of vector contours.
         As in, an elevation surface from elevation contours.
-        :param location:
-        :param mapset:
-        :param grassdata:
-        :param epsg:
-        :param shp_gpkg_path:
-        :param region_dimensions_raster:
+        :param location: where to save location dir
+        :param mapset: mapset name
+        :param grassdata: grassdata location dir
+        :param epsg: crs
+        :param shp_gpkg_path: path for vector contours
+        :param region_dimensions_raster: sets region from raster
+        :param region_vector: sets region from vector, ignored if raster provided
         :param write_interpolated_surface_and_finish:
-        :param output_resolution:
-        :param shp_attribute_for_z:
-        :param data_dir:
-        :param surf_out:
+        :param output_resolution: output resolution for raster
+        :param shp_attribute_for_z: attribute name to z field
+        :param data_dir: dir to save interpolated raster data
+        :param surf_out: name of interpolated surface file
 
         Example Usage:
 
@@ -58,6 +61,7 @@ class SurfaceInterpFromShp:
         self.grassdata = Path.home().joinpath(grassdata)
         self.epsg_code = epsg
         self.session = None
+        self.clip = clip
 
         self.location = location
         self.location_path = self.grassdata / self.location
@@ -71,6 +75,7 @@ class SurfaceInterpFromShp:
         # define the full surface output path
         self.surf_out = (data_dir / surf_out).as_posix()
         self.region_dimensions_raster = region_dimensions_raster
+        self.region_vector = region_vector
 
         #  if writing an interpolated surface on object init is set to True, run self.write_surf()
         self.shp_gpkg_path = shp_gpkg_path
@@ -92,8 +97,10 @@ class SurfaceInterpFromShp:
 
         #  then define the region using a raster (such as a clip of lidar or other raster
         #  that on the same projection as the vector contours
-        print('setting region from raster')
-        self.set_region_from_raster(self.region_dimensions_raster)
+        self.set_region(
+            raster=self.region_dimensions_raster,
+            vector=self.region_vector
+        )
         print('rasterizing contours')
         self.rasterize_vector_contours()
         print('interpolating surface')
@@ -120,15 +127,15 @@ class SurfaceInterpFromShp:
         be created if it does not exist on the hard drive in the grassdata directory."""
         grassdata = self.grassdata
         location = self.location
-        try: #start the grass session
+        try:  #start the grass session
             self.session = gsetup.init(grassdata, location,
-                #mapset
-                    )
-        except: #if location doesn't exist, create that first then start session
+                                       #mapset
+                                       )
+        except:  #if location doesn't exist, create that first then start session
             self.create_grass_location()
             self.session = gsetup.init(grassdata, location,
-                #mapset
-                    )
+                                       #mapset
+                                       )
 
     @property
     def gisenv(self):
@@ -156,24 +163,50 @@ class SurfaceInterpFromShp:
                 flags='c'
             )
 
-    def set_region_from_raster(self, raster=None, resolution=None):
+    def set_region(self, raster=None, resolution=None, vector=None):
         """
         sets the grass gis region from a provided raster. The raster should be on the
         same projection as the contour shapefile.
+        :param vector: vector used to define the region, ignored if raster provided
         :param raster: raster used to define the region
         :param resolution: resolution to use for the raster defined region
         :return: None
         """
         raster = raster if raster is not None else self.region_dimensions_raster
         resolution = resolution if resolution is not None else self.output_resolution
-        r.in_gdal(
-            overwrite=True,
-            input=raster,
-            output='regionRaster',
-            flags='o'
-        )
+        vector = vector if vector is not None else self.region_vector
+
+        if raster:
+            r.in_gdal(
+                overwrite=True,
+                input=raster,
+                output='Region',
+                flags='o'
+            )
+        elif vector:
+            print('setting region from vector')
+            v.in_ogr(
+                overwrite=True,
+                input=vector,
+                output='VRegion',
+                flags='o'
+            )
+            g.region(
+                vector='VRegion',
+                res=resolution,
+                flags='p'
+            )
+            v.to_rast(
+                overwrite=True,
+                input='VRegion',
+                output='Region',
+                use='value',
+                value=1
+
+            )
+        print('setting region')
         g.region(
-            raster='regionRaster',
+            raster='Region',
             res=resolution,
             flags='p'
         )
@@ -212,6 +245,9 @@ class SurfaceInterpFromShp:
             overwrite=True,
             verbose=True
         )
+        if self.clip:
+            print('Clipping raster')
+            r.mapcalc(expression="interpdSurface = if(Region, interpdSurface, null())", overwrite=True)
         print('writing to geotiff')
         r.out_gdal(
             input='interpdSurface',
@@ -223,16 +259,23 @@ class SurfaceInterpFromShp:
 
 
 if __name__ == '__main__':
-
-    shp_gpkg = Path(r"C:\Users\lukem\QGIS\SHP\lakepointe\final pond grading.shp").as_posix()
+    deep_lake_cont = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep lake bathymetry.gpkg").as_posix()
+    hyde_lake_cont = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde lake bathymetry wag.gpkg").as_posix()
+    aq = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\bottom_of_aq_FINAL.gpkg").as_posix()
     region_raster = (Path(
-        r"C:\Users\lukem\QGIS\RASTER\LakePointe\final pond extent dimensions.tif")
+        r"C:\Users\lukem\mf6\Cumberland general\Surfaces\lidar_top_of_model.tif")
                      .as_posix())
+    deep_lake_path = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep lake.gpkg").as_posix()
+    hyde_lake_path = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde lake.gpkg").as_posix()
+    hyde_buffer = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde_lake_buffer.gpkg").as_posix()
+    deep_buffer = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep_lake_buffer.gpkg").as_posix()
     interp = SurfaceInterpFromShp(
-        shp_gpkg_path=shp_gpkg,
-        region_dimensions_raster= region_raster,
-        shp_attribute_for_z='Elevation',
-        output_resolution=5,
-        surf_out='LkPt_final_pond_grading.tif'
+        shp_gpkg_path=deep_lake_cont,
+        # region_dimensions_raster= region_raster,
+        region_vector=deep_buffer,
+        shp_attribute_for_z='elevation',
+        output_resolution=10,
+        surf_out='deep_lake.tif',
+        epsg='2926'
     )
     interp.write_surf()

@@ -8,6 +8,7 @@ from simple_modflow.modflow.utils.datatypes.surface_data import ModelSurface
 from simple_modflow.modflow.utils.datatypes.choros import Choro
 from simple_modflow.modflow.utils.datatypes.xsections import XSection
 from shapely import LineString
+import pickle
 
 
 class SimulationBase:
@@ -66,6 +67,11 @@ class SimulationBase:
         )
 
     @property
+    def modelgrid(self) -> flopy.discretization.vertexgrid.VertexGrid:
+        modelgrid: flopy.discretization.vertexgrid.VertexGrid = self.gwf.modelgrid
+        return modelgrid
+
+    @property
     def hds(self):
         self._hds = Hp(model=self, vor=self.vor)
         return self._hds
@@ -74,13 +80,60 @@ class SimulationBase:
     def surf(self):
         return ModelSurface(model=self)
 
-    def choro(self, **kwargs):
+    def choro(
+            self,
+            kstpkper: tuple = None,
+            layer: int = 0,
+            choro_type: str = 'hds',
+            custom_hover: dict = None,
+            custom_zs: list = None,
+            zmin: float | int = None,
+            zmax: float | int = None,
+            zoom: int = 13,
+            show_layer_elevs: bool = False,
+            show_mounding: bool = False,
+            hover_heads: bool = True,
+            hover_ks: bool = False,
+            locs=None,
+            **kwargs
+    ) -> Choro:
         """
         kwargs can be any allowable keyword arguments from the Choro class
+        Class defining the basic choropleth plots generated from a modflow model.
+
+        :param kstpkper:
+        :param layer:
+        :param choro_type:
+        :param custom_hover:
+        :param custom_zs:
+        :param zmin:
+        :param zmax:
+        :param zoom:
+        :param show_layer_elevs:
+        :param show_mounding:
+        :param hover_heads:
+        :param hover_ks:
+        :param locs:
         :param kwargs:
         :return:
         """
-        return Choro(model=self, **kwargs)
+        return Choro(
+            model=self,
+            kstpkper=kstpkper,
+            layer=layer,
+            choro_type=choro_type,
+            custom_hover=custom_hover,
+            custom_zs=custom_zs,
+            zmin=zmin,
+            zmax=zmax,
+            zoom=zoom,
+            show_layer_elevs=show_layer_elevs,
+            show_mounding=show_mounding,
+            hover_heads=hover_heads,
+            hover_ks=hover_ks,
+            locs=locs,
+            **kwargs
+        )
 
     def xsect(
             self,
@@ -90,7 +143,9 @@ class SimulationBase:
             x_or_y: str = None,
             spacing: int = 10,
             num_points: int = 100,
-            extrapolate_beyond_section_ends: bool = False
+            extrapolate_beyond_section_ends: bool = False,
+            interpolate: bool = False,
+            use_rbf: bool = False
     ):
         """Returns an instance of XSection class"""
         return XSection(
@@ -101,7 +156,9 @@ class SimulationBase:
             x_or_y=x_or_y,
             spacing=spacing,
             num_points=num_points,
-            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends
+            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
+            interpolate=interpolate,
+            use_rbf=use_rbf
         )
 
     @property
@@ -115,6 +172,11 @@ class SimulationBase:
     def run_simulation(self):
         # Write the datasets
         self.sim.write_simulation()
+        # Save the model object to a .model file
+        model_file_path = self.model_output_folder_path / f'{self.name}.model'
+        with open(model_file_path, 'wb') as file:
+            pickle.dump(self, file)
+
         # Run the simulation
         success, buff = self.sim.run_simulation()
         print("\nSuccess is: ", success)
@@ -286,7 +348,8 @@ class KFlow:
             self,
             model: SimulationBase,
             k: list = None,
-            k33_vert=None
+            k33_vert=None,
+            perched: bool = False
 
     ):
         self.npf = flopy.mf6.modflow.mfgwfnpf.ModflowGwfnpf(
@@ -294,6 +357,7 @@ class KFlow:
             pname="npf",
             icelltype=1,
             k=k,
+            perched=perched,
             k33=k33_vert,
             save_flows=True,
             filename=f"{model.name}.npf",
@@ -415,13 +479,16 @@ class LAK:
             connectiondata=None,
             tables=None,
             outlets=None,
-            perioddata=None
-    ):
-        self.lak = flopy.mf6.ModflowGwflak(
-            model=model.gwf,
+            perioddata=None,
             print_input=False,
             print_flows=False,
             print_stage=True,
+    ):
+        self.lak = flopy.mf6.ModflowGwflak(
+            model=model.gwf,
+            print_input=print_input,
+            print_flows=print_flows,
+            print_stage=print_stage,
             save_flows=True,
             stage_filerecord=f'{model.name}_stage.lak',
             budget_filerecord=f'{model.name}_budget.lak',
@@ -442,5 +509,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.1
+            maximum_stage_change=0.001
         )

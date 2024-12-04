@@ -1,8 +1,15 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+
 import pandas as pd
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+# from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from pathlib import Path
 import numpy as np
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+# from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import geopandas as gpd
 import shapely as shp
 
@@ -28,7 +35,7 @@ class Boundaries:
             self,
             model: SimulationBase = None,
             vor: Vor = None,
-            shp: Path = None,
+            shp_gpkg: Path = None,
             uid: str = None,
             crs: int = 2927,
             bound_type: str = None
@@ -39,22 +46,29 @@ class Boundaries:
         classes that inherit from this.
         :param model: model to which this boundary applies
         :param vor: voronoi grid to which this boundary apples
-        :param shp: path to shapefile that holds the polygons for the boundary
+        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon. required
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param bound_type: arbitary identifier for this boundary type
         """
 
         self.model = model
-        self.vor = vor
+        try:
+            self.vor = self.model.vor if vor is None else vor
+            self.nper = self.model.nper
+        except:
+            self.vor = None
+            self.nper = None
         self.bound_type = bound_type
         self.uid = uid
         self.crs = crs
-        if shp is not None:
-            self.gdf = gpd.read_file(shp).set_index(self.uid)
+        if shp_gpkg is not None:
+            self.gdf = gpd.read_file(shp_gpkg)
+            if self.uid is not None:
+                self.gdf = self.gdf.set_index(self.uid)
             self.gdf.to_crs(inplace=True, epsg=crs)
-        self.nper = model.nper
         self._intersections = None
+        self._edge_intersections = None
         self._intersections_no_duplicates = None
         self._vor_bound_polys = None
         self._rch_scale = None
@@ -71,6 +85,17 @@ class Boundaries:
             df_intersect.name = 'intersect'
             self._intersections = df_intersect
         return self._intersections
+
+    @property
+    def edge_intersections(self):
+        """gets a DataFrame with unique ids (uid) for each shapefile polygon and the associated
+        intersecting voronoi grid cells, but then filters for only those on a grid edge"""
+        if self._edge_intersections is None:
+            edge_cells = self.vor.get_grid_edge()
+            intersections = self.intersections
+            filtered = intersections.apply(lambda x: [cell for cell in x if cell in edge_cells])
+            self._edge_intersections = filtered
+        return self._edge_intersections
 
     @property
     def intersections_no_duplicates(self):
@@ -129,96 +154,25 @@ class Boundaries:
         return sorted_cells
 
     def get_drn_stress_period_data(
-            self,
-            cells: list,
-            bottom_addition: float = 0,
-            conductance: float = 100,
-            disMf: str = 'disv',
-            bottoms: dict = None,
-            layer: int = None,
-    ) -> list:
-        """Returns a list of lists. Each nested list corresponds to the DRN package
-        boundary data for a particular voronoi cell in the grid, which includes cell
-        ID, elevation of drain, and conductance. Can be passed to the flopy DRN package.
+            self, *args, **kwargs
+    ):
 
-        Args:
-            cells (list): list of cell IDs in this drain
-            bottoms (dict): dict of bottoms, keys are the cell indices, values are the bottom elevations
-            bottom_addition (float): height above the bottom of cell for the drain. This is added to the bottom of cell elevation derived from the Voronoi grid object.
-            conductance (float): conductance for this drain cell
-            disMf (str, optional): Either 'disu' or 'disv' works, and refers to the MODFLOW6 discretization package being used. Defaults to 'disu'.
-            layer: layer to apply drains
+        print('Deprecated. Use method of same name from the DRN class')
 
-        Returns:
-            list: List of lists that contain the data for this drain and can be passed to the flopy DRN package
-        """
-
-        if self.vor is None:
-            return print("No voronoi grid defined")
-        drn_values = []
-        for cell in cells:
-            cell_id = cell if disMf == 'disu' else (layer, cell)
-            if bottoms:
-                thisdrn = [cell_id, (bottoms[cell] + bottom_addition), conductance]
-            elif self.vor.gdf_topbtm is not None:
-                try:
-                    #  need a better way
-                    thisdrn = [cell_id, (self.vor.gdf_topbtm.loc[cell, layer + 1] + bottom_addition), conductance]
-                except:
-                    print("can't get bottom elevations for drains. Assuming bottom elev is zero")
-                    thisdrn = [cell_id, bottom_addition, conductance]
-            else:
-                thisdrn = [cell_id, bottom_addition, conductance]
-            """if disMf == "disv":
-                thisdrn = [0] + thisdrn  # add layer num for disv grid"""
-            drn_values.append(thisdrn)
-        return drn_values
+        return NotImplementedError
 
     def get_drn_from_shp(
-            self,
-            shapefile_path: Path,
-            grid_type: str = 'disv',
-            nper: int = 1,
-            fields: dict = None
+            self, *args, **kwargs
     ):
-        nper = nper if self.nper is None else self.nper
-        if fields is None:
-            fields = {
-                'name': 'name',
-                'height_over_btm': 'height',
-                'conductance': 'cond',
-                'layer': 'layer'
-            }
-        # get drain cells based on shapefile
-        drn_cells, gdf_drn = self.vor.get_vor_cells_as_dict(
-            locs=shapefile_path,
-            predicate='intersects',
-            loc_name_field=fields['name'],
-            return_gdf=True
-        )
-        # get bottoms of model layers from voronoi grid
-        lyr_botms = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
-        gdf_drn = gdf_drn.set_index(fields['name'])
-        drn_dict = {}
-        for per in range(nper):
-            cell_list = []
-            for name, cell_nums in drn_cells.items():
-                boundary_height = gdf_drn.loc[name, fields['height_over_btm']]
-                conductance = gdf_drn.loc[name, fields['conductance']]
-                layer = gdf_drn.loc[name, fields['layer']]
-                # adjust layer number for zero-based indexing
-                layer_idx = layer - 1
-                for cell in cell_nums:
-                    boundary_elev = lyr_botms.iloc[cell, layer_idx] + boundary_height
-                    cell_id = cell if grid_type == 'disu' else (layer_idx, cell)
-                    cell_list.append([cell_id, boundary_elev, conductance])
-            drn_dict[per] = cell_list
-        return drn_dict
+
+        print('Deprecated. Use method of same name from the DRN class')
+
+        return NotImplementedError
 
     def get_rch_dict(
             self,
-            cell_ids: dict = None,
-            recharges: dict = None,
+            zone_cell_id_dict: dict = None,
+            zone_rch_dict: dict = None,
             grid_type: str = 'disv',
             background_rch: int | float = None,
             nper: int = 1
@@ -226,25 +180,24 @@ class Boundaries:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
         top layer
-        :param cell_ids: dictionary where each key is an arbitrary name given each recharge area and the values
+        :param zone_cell_id_dict: dictionary where each key is an arbitrary name given each recharge area and the values
         are a list of cell ids in that area where recharge will be applied. Cell id is the cell2d number.
         :param nper: number of stress periods for model
-        :param recharges: dictionary where each key is an arbitary name for each recharge area. Must match the keys
-        in the cell_ids dict. The dictionary values are each a list of recharge. Length of the list must equal to the
+        :param zone_rch_dict: dictionary where each key is an arbitary name for each recharge area. Must match the keys
+        in the rch_zone_dict dict. The dictionary values are each a list of recharge. Length of the list must equal to the
         number of stress periods.
         :param grid_type: string identifying grid type - 'disv' or 'disu'
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
         nper = nper if self.nper is None else self.nper
-        print(nper)
-        assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
+        assert nper == len(list(zone_rch_dict.values())[0]), 'Number of periods and length of recharge values must match'
         for per in range(nper):
             cell_list = []
             all_rch_cells = []
-            for name, cell_nums in cell_ids.items():
+            for name, cell_nums in zone_cell_id_dict.items():
                 all_rch_cells += cell_nums
-                recharge = recharges[name][per]
+                recharge = zone_rch_dict[name][per]
                 for cell in cell_nums:
                     cell_id = cell if grid_type == 'disu' else (0, cell)
                     cell_list.append([cell_id, recharge])

@@ -3,10 +3,7 @@ import shapely as shp
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
 import simple_modflow.modflow.mf6.mfsimbase as mf
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
-from simple_modflow.modflow.mf6.boundaries import Boundaries
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 import pickle
 from simple_modflow.modflow.mf6.boundaries import Boundaries
@@ -21,7 +18,7 @@ class RechargeFromShp(Boundaries):
             self,
             model: mf.SimulationBase = None,
             vor: Vor = None,
-            shp: Path = None,
+            shp_gpkg: Path = None,
             uid: str = None,
             crs: int = 2927,
             rch_fields: list | slice = None,
@@ -41,7 +38,7 @@ class RechargeFromShp(Boundaries):
         class to set up recharge for a modflow 6 model
         :param model: model to which this boundary applies
         :param vor: voronoi grid to which this boundary apples
-        :param shp: path to shapefile that holds the polygons for the boundary
+        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
@@ -57,7 +54,7 @@ class RechargeFromShp(Boundaries):
         :param limit_to_k33_by: if limit_to_k33 is True, k33 is multiplied by this to obtain max vertical recharge, defaults to 1
         :param verbose: be verbose or not, defaults to False
         """
-        super().__init__(model, vor, shp, uid, crs)
+        super().__init__(model, vor, shp_gpkg, uid, crs)
         self.bound_type = 'rch'
         self.fields = rch_fields
         self.rch_fields_to_pers = rch_fields_to_pers

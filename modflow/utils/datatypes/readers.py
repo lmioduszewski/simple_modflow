@@ -4,14 +4,7 @@ import shapely as shp
 import geopandas as gpd
 
 
-def read_gpkg(filepath: Path, crs="EPSG:2927"):
-    """
-    Reads a GPKG file, iterates through all features, and returns a geopandas.GeoDataFrame with all found geometries
-
-    :param filepath: gpkg file path
-    :param crs: coordinate reference system, defaults to EPSG:2927
-    :return: geopandas.GeoDataFrame with all found geometries
-    """
+"""def read_gpkg(filepath: Path, crs="EPSG:2927"):
     layer = True
     layer_num = 0
     layers = []
@@ -31,6 +24,7 @@ def read_gpkg(filepath: Path, crs="EPSG:2927"):
                 else:
                     raise TypeError(f'Unexpected geometry type: {type(g)}')
             layer_num += 1
+        # if layer number is not valid, end the while loop by setting layer to False
         except:
             layer = False
             if layer_num == 0:
@@ -38,6 +32,45 @@ def read_gpkg(filepath: Path, crs="EPSG:2927"):
 
     print(f'Imported {num_features} features from {filepath}')
     gdf = gpd.GeoDataFrame(geometry=layers, crs=crs)
+
+    return gdf"""
+
+
+def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
+    """
+    Reads a GPKG file, iterates through all features, and returns a geopandas.GeoDataFrame with all found geometries
+    Useful when you have multiple layers and geometries in a file.
+
+    :param gpkg_path: gpkg file path
+    :return: geopandas.GeoDataFrame with all found geometries
+    """
+    num_features = 0
+    layer_num = 0
+    layers = []
+    gpkg = gpd.read_file(gpkg_path)
+    try:
+        for idx, row in gpkg.iterrows():
+            if isinstance(row.geometry, shp.Polygon | shp.Point | shp.MultiLineString | shp.LineString):
+                layers.append(row)
+                num_features += 1
+            elif isinstance(row.geometry, shp.MultiPolygon):
+                for geom in row.geometry.geoms:
+                    new_row = row.copy()
+                    new_row.geometry = geom
+                    layers.append(new_row)
+                    num_features += 1
+            else:
+                raise TypeError(f'Unexpected geometry type: {type(g)}')
+            layer_num += 1
+    # if layer number is not valid, end the while loop by setting layer to False
+    except:
+        layer = False
+        if layer_num == 0:
+            raise ValueError('Could not read gpkg file')
+
+    print(f'Imported {num_features} features from {gpkg_path}')
+    gdf = gpd.GeoDataFrame.from_records(data=layers)
+    gdf.set_geometry('geometry', inplace=True)
 
     return gdf
 

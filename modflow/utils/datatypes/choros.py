@@ -7,6 +7,15 @@ if TYPE_CHECKING:
 
 from pandas import IndexSlice as idxx
 from figs import Fig, create_hover
+import dash
+from dash import dcc
+from dash import html, Input, Output
+import dash_bootstrap_components as dbc
+import numpy as np
+import shapely as shp
+from pathlib import Path
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
+import geopandas as gpd
 
 
 class Choro:
@@ -19,6 +28,7 @@ class Choro:
             layer: int = 0,
             choro_type: str = 'hds',
             custom_hover: dict = None,
+            custom_zs: list = None,
             zmin: float | int = None,
             zmax: float | int = None,
             zoom: int = 13,
@@ -26,10 +36,27 @@ class Choro:
             show_mounding: bool = False,
             hover_heads: bool = True,
             hover_ks: bool = False,
-            locs=None
+            locs: Path = None
 
     ):
-        """Class defining the basic choropleth plots generated from a modflow model."""
+        """
+        Class defining the basic choropleth plots generated from a modflow model.
+        :param model:
+        :param vor:
+        :param kstpkper:
+        :param layer:
+        :param choro_type:
+        :param custom_hover:
+        :param custom_zs:
+        :param zmin:
+        :param zmax:
+        :param zoom:
+        :param show_layer_elevs:
+        :param show_mounding:
+        :param hover_heads:
+        :param hover_ks:
+        :param locs:
+        """
 
         self.model = model
         self.vor = model.vor if model is not None else vor
@@ -37,6 +64,7 @@ class Choro:
         self._layer = layer
         self.choro_type = choro_type
         self._custom_hover = custom_hover
+        self._custom_zs = custom_zs
         self._zmin = zmin
         self._zmax = zmax
         self.zoom = zoom
@@ -126,6 +154,36 @@ class Choro:
                 lyr_ks = self.all_ks[lyr].tolist()
                 self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
 
+        if self.show_layer_elevs:
+            layer_nums = self.model.vor.gdf_topbtm.columns[2:].to_list()
+            botms = self.model.gwf.modelgrid.botm
+            top = self.model.gwf.modelgrid.top
+            layer_nums = list(range(len(botms)))
+            self._hover_dict.update(
+                {f'Top of Model': np.round(top, 2)})
+            self._hover_dict.update(
+                {
+                    f'Layer {lyr+1} Bottom': np.round(botm, 2) for lyr, botm in enumerate(botms)
+                }
+            )
+        if self.show_mounding:
+            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+            layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
+            zs = z_hd - layer_bottom
+            # remove negative mounding values
+            zs = zs.mask(zs < 0, 0)
+            self._hover_dict.update(
+                {
+                    f'Layer {self.layer + 1} Mounding': zs
+                }
+            )
+        else:
+            self._hover_dict.update(
+                {
+                    f'zs': self.zs
+                }
+            )
+
         return self._hover_dict
 
     @property
@@ -139,9 +197,29 @@ class Choro:
         self._layer = layer
 
     @property
+    def custom_zs(self):
+        return self._custom_zs
+
+    @custom_zs.setter
+    def custom_zs(self, custom_zs):
+        if not isinstance(self.custom_zs, list):
+            raise ValueError('custom_zs must be an instance of list')
+        assert len(custom_zs) == self.vor.ncpl, 'customs zs must be provided for every cell'
+        self._custom_zs = custom_zs
+
+    @property
     def zs(self):
+        if self.custom_zs is not None:
+            return self.custom_zs
         if self.choro_type == 'hds':
-            zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].to_list()
+            if self.show_mounding is True:
+                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
+                zs = z_hd - layer_bottom
+                # remove negative mounding values
+                zs = zs.mask(zs < 0, 0)
+            else:
+                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].to_list()
         elif self.choro_type == 'ks':
             zs = self.all_ks[self.layer].tolist()
         else:
@@ -154,6 +232,22 @@ class Choro:
             return 'earth'
         elif self.choro_type == 'ks':
             return 'earth'
+
+    @property
+    def locs(self):
+        return self._locs
+
+    @locs.setter
+    def locs(self, locs):
+        if locs is not None:
+            assert isinstance(locs, Path), 'locs must be a Path object'
+            try:
+                gdf = gpd.read_file(locs)
+                gdf = gdf.to_crs(epsg=4326)  # convert to lat/lon
+                locs = gdf
+            except ValueError:
+                print(f'Unable to read {locs}')
+        self._locs = locs
 
     def update_layout(self):
 
@@ -185,6 +279,73 @@ class Choro:
             zmin=self._zmin,
         )
 
+    def add_locs(self, name_field = 'ExploName'):
+        if self.locs is not None:
+            geoms = self.locs.geometry
+            for idx, row in self.locs.iterrows():
+                geom = row.geometry
+                if isinstance(geom, shp.Polygon):
+                    coords = geom.exterior.xy
+                    mode = 'lines'
+                elif isinstance(geom, shp.Point):
+                    coords = geom.xy
+                    mode = 'markers'
+                self.fig.add_scattermapbox(
+                    mode=mode,
+                    lat=coords[1].tolist(),
+                    lon=coords[0].tolist(),
+                    name=row[name_field]
+                )
+
     def plot(self):
         self.add_choropleth()
+        if self.locs is not None:
+            self.add_locs()
         self.fig.show()
+
+    def dash_selector(self):
+
+        self.add_choropleth()
+
+        app = dash.Dash()
+        app.layout = html.Div(
+            [
+                dbc.Row(
+                    dbc.Col(
+                        [
+                            dcc.Graph(
+                                figure=self.fig,
+                                className="flex-grow-1",
+                                style={"height": "95vh"},
+                                id="fig",
+                            )
+                        ],
+                        class_name="h-100 d-flex flex-column",
+                        style={"height": "95vh"},
+                    ),
+                    style={"height": "95vh"},
+                ),
+                dcc.Store(id="selected"),
+                html.Div(
+                    id='cell_print'
+                )
+            ],
+            style={"height": "95vh"},
+        )
+
+        @app.callback(
+            Output(component_id="selected", component_property="data"),
+            Output(component_id='cell_print', component_property="children"),
+            Input(component_id="fig", component_property="selectedData"),
+            prevent_initial_callbacks=True,
+        )
+        def on_select(selectedData):
+            if not selectedData:
+                return None, None
+            selected_cells = []
+            for cell in selectedData["points"]:
+                selected_cells.append(int(cell["location"]))
+
+            return selected_cells, str(selected_cells)
+
+        app.run(debug=True, port=8050, jupyter_mode='external', use_reloader=False)

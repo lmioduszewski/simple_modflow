@@ -146,6 +146,8 @@ class HeadsPlus(bf.HeadFile):
             predicate='contains',
             loc_name_field=loc_name_field)
         obs_dict = self.sort_dict_by_keys(obs_dict)
+        # remove dict entries where the loc was not contained in a cell (outside the grid)
+        obs_dict = {key: value for key, value in obs_dict.items() if len(value) > 0}
         for obs, cell_ids in obs_dict.items():
             assert len(cell_ids) == 1, f'more than one cell found for {obs}. Fix to make it one cell'
             obs_dict[obs] = cell_ids[0]
@@ -208,6 +210,8 @@ class HeadsPlus(bf.HeadFile):
                     predicate='contains',
                     loc_name_field=loc_name_field
                 )
+                # remove dict entries where the loc was not contained in a cell (outside the grid)
+                obs_dict = {key: value for key, value in obs_dict.items() if len(value) > 0}
                 obs_df = pd.DataFrame.from_dict(obs_dict).transpose()
                 obs_locs = obs_df.index
             elif isinstance(locs, int):

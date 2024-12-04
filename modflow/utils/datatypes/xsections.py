@@ -13,6 +13,7 @@ from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
 import figs as f
 import plotly.graph_objs as go
 import numpy as np
+from shapely import line_locate_point
 
 
 class XSection:
@@ -27,7 +28,9 @@ class XSection:
             spacing: int = 10,
             num_points: int = 100,
             extrapolate_beyond_section_ends: bool = False,
-            surf_type: str = 'hds'
+            surf_type: str = 'hds',
+            interpolate: bool = False,
+            use_rbf: bool = False,
     ):
         """
         Use to plot a cross-section of heads through a model. Can be used to create an animation
@@ -74,10 +77,19 @@ class XSection:
         self._x_min_max = None
         self._y_min_max = None
         self.surf_type = surf_type
+        self.interpolate = interpolate
+        self.use_rbf = use_rbf
+        self._all_heads = None
 
     @property
     def model(self):
         return self._model
+
+    @property
+    def all_heads(self):
+        if self._all_heads is None:
+            self._all_heads = self.model.hds.all_heads
+        return self._all_heads
 
     @property
     def vor(self):
@@ -225,7 +237,8 @@ class XSection:
             model=self.model,
             layer=self.layer,
             kstpkper=self.kstpkper,
-            surf_type=self.surf_type
+            surf_type=self.surf_type,
+            use_rbf=self.use_rbf
         )
         memfile = interp.memfile
 
@@ -235,14 +248,27 @@ class XSection:
     def xsect(self):
         """Opens a rasterio memfile to get points
         elevations at those points to draw a cross-section"""
-        with self.memfile.open() as dataset:
-            # Use the sample method to extract the elevation along the profile line
-            points = [(point.x, point.y) for point in self.points]
-            elevations = list(dataset.sample(points))
-            elevations = [e[0] for e in elevations]
 
-        # drop the x-section ends [1:-1] then return
-        return points[1:-1], elevations[1:-1]
+        if self.interpolate is True:
+            with self.memfile.open() as dataset:
+                # Use the sample method to extract the elevation along the profile line
+                points = [(point.x, point.y) for point in self.points]
+                elevations = list(dataset.sample(points))
+                elevations = [e[0] for e in elevations]
+
+            # drop the x-section ends [1:-1] then return
+            return points[1:-1], elevations[1:-1]
+
+        elif self.interpolate is False:
+            # if no interpolation, just get head elevations of each overlapping cell
+            vor = self.model.vor
+            linestring = self.xsect_linestring
+            overlapcells = vor.get_vor_cells_as_series(linestring).to_list()
+            xs = line_locate_point(linestring, vor.gdf_vorPolys.centroid).loc[overlapcells].sort_values()
+            ys = self.all_heads.loc[idxx[self.kstpkper, self.layer, xs.index.to_list()]]
+
+            # return distance along xsection line for each cell centroid and head of each cell
+            return xs.values, [y[0] for y in ys.values]
 
     @property
     def xs_as_length(self):
@@ -265,10 +291,14 @@ class XSection:
         fig = f.Fig()
         points, elevations = self.xsect
 
-        fig.add_scatter(
-            x=self.xs_as_length,
-            y=elevations,
-        )
+        if self.interpolate is True:
+            fig.add_scatter(
+                x=self.xs_as_length,
+                y=elevations,
+            )
+
+        elif self.interpolate is False:
+            fig.add_scatter(x=points, y=elevations)
 
         return fig
 
@@ -292,12 +322,19 @@ class XSection:
                 y_min = np.min(elevations)
 
             # define frame for this stress period and append to the frames list
-            frame = go.Frame(data=go.Scatter(
-                x=self.xs_as_length,
-                y=elevations,
-                name=f'{per}'
+            if self.interpolate is True:
+                frame = go.Frame(data=go.Scatter(
+                    x=self.xs_as_length,
+                    y=elevations,
+                    name=f'{per}'
+                ), name=f'{per}')
+            elif self.interpolate is False:
+                frame = go.Frame(data=go.Scatter(
+                    x=points,
+                    y=elevations,
+                    name=f'{per}'
+                ), name=f'{per}')
 
-            ), name=f'{per}')
             frames.append(frame)
 
         y_max = y_max + ((y_max - y_min) * 0.05)  # add a buffer of 5% of the total y-span to y max

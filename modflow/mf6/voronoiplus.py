@@ -19,6 +19,7 @@ from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 def flatten(l):
     return [item for sublist in l for item in sublist]
 
+
 def densify_poly(polygon: shp.Polygon = None, distance_between: int | float = None) -> shp.Polygon:
     """
     adds points along the exterior of a polygon with at a specified distance between them
@@ -42,6 +43,7 @@ def densify_poly(polygon: shp.Polygon = None, distance_between: int | float = No
     new_poly = shp.Polygon(new_points)
 
     return new_poly
+
 
 class TriangleGrid(Triangle):
 
@@ -79,8 +81,8 @@ class TriangleGrid(Triangle):
             x_dist=100,
             y_dist=100,
             origin=(0, 0),
-            return_only = False,
-            max_area = None
+            return_only=False,
+            max_area=None
     ):
         x_min, y_min = origin[0], origin[1]
         x_max, y_max = x_min + x_dist, y_min + y_dist
@@ -139,6 +141,88 @@ class TriangleGrid(Triangle):
             shp_gpkg = [shp_gpkg]
         polys = read_shp_gpkg(shp_gpkg).geometry
         self.add_region(*args, **kwargs)
+        return NotImplementedError
+
+    def add_polygon(
+            self,
+            polygon: shp.Polygon | Path,
+            domain: shp.Polygon | Path = None,
+            buffer: int | float = 0,
+            simplify_tolerance=None,
+            ignore_holes=True,
+            max_area=None,
+            densify_dist: int = None,
+    ):
+        """
+        wrapper for flopy TriangleGrid.add_polygon. Allows for clipping to domain,
+        and will also define the max area of triangulation within polygon if max
+        area is given.
+        :param simplify_tolerance: distance value to constrain simplification.
+        :param densify_dist: if given, buffer vertex points will be added equidistant along polygon
+        :param polygon: polygon to add
+        :param domain: model domain polygon, used for clipping
+        :param buffer: negative buffer to give polygon after clipping
+        :param ignore_holes: defaults to True
+        :param max_area: max area of triangulation within polygon
+        :return:
+        """
+        if isinstance(polygon, Path):
+            polygon = read_shp_gpkg(polygon).union_all()
+            assert isinstance(polygon, shp.Polygon), 'must be polygon'
+        if domain:
+            if isinstance(domain, Path):
+                domain = read_shp_gpkg(domain).union_all()
+            assert isinstance(domain, shp.Polygon), 'domain must be a shapely polygon'
+            if not domain.contains(polygon):
+                print('clipping to domain!')
+                if isinstance(polygon, shp.Polygon):
+                    polygon = gpd.GeoDataFrame(geometry=[polygon])
+                polygon = polygon.clip(domain).union_all()
+        if buffer != 0:
+            polygon = polygon.buffer(buffer)
+        if domain:
+            assert domain.contains(polygon), 'polygon not fully within domain'
+        if simplify_tolerance:
+            polygon = polygon.simplify(simplify_tolerance)
+        if densify_dist:
+            polygon = densify_poly(polygon, densify_dist)
+
+        super().add_polygon(polygon, ignore_holes=ignore_holes)
+
+        if max_area:
+            point = (polygon.representative_point().x, polygon.representative_point().y)
+            self.add_region(point, maximum_area=max_area)
+
+    def add_line_buffer(
+            self,
+            line: Path,
+            buffer: int = 10,
+            simplify_tolerance: int = 10,
+            densify_dist: int = None,
+            domain: shp.Polygon | Path = None,
+            max_area: int = None
+    ):
+        """
+        Add a line buffer polygon to the triangulation.
+        :param line: Path to line shape
+        :param buffer: buffer distance, defaults to 10
+        :param simplify_tolerance: distance value to constrain simplification.
+        :param densify_dist: if given, buffer vertex points will be added equidistant along buffer
+        :param domain: domain polygon, used for clipping
+        :param max_area: max area of triangulation within buffer polygon
+        :return:
+        """
+        line_geom = read_shp_gpkg(line).union_all()
+        line_buffer = line_geom.buffer(buffer)
+        if simplify_tolerance:
+            line_buffer = line_buffer.simplify(simplify_tolerance)
+        if densify_dist:
+            line_buffer = densify_poly(line_buffer, densify_dist)
+        self.add_polygon(
+            line_buffer,
+            domain=domain,
+            max_area=max_area,
+        )
 
 
 class VoronoiGridPlus(VoronoiGrid):
@@ -220,8 +304,8 @@ class VoronoiGridPlus(VoronoiGrid):
         self.vor_list = self.gdf_vorPolys.geometry.to_list()
         self.cell_list = [i for i in range(len(self.vor_list))]
         self.area_list = [cell.area for cell in self.vor_list]
-        self.x_list = [cell.centroid.x_or_y[0][0] for cell in self.vor_list]
-        self.y_list = [cell.centroid.x_or_y[1][0] for cell in self.vor_list]
+        self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
+        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
 
     @property
     def gdf_topbtm(self):
@@ -381,7 +465,6 @@ class VoronoiGridPlus(VoronoiGrid):
         fig = self.choropleth(zmin, zmax, zoom, hoverlabels, hoverdata, custom_z)
         return fig.show()
 
-
     def choropleth(
             self,
             zmin=None,
@@ -439,7 +522,6 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return fig_mbox
 
-
     def map_nodes(self):
 
         latlonselect = self.gdf_vorPolys.to_crs('EPSG:4326')
@@ -467,7 +549,7 @@ class VoronoiGridPlus(VoronoiGrid):
             self,
             overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries = None,
             predicate: str = 'intersects',
-            return_dict = False
+            return_dict=False
     ):
         """
         Compares given geometries to the voronoi polygon geometries and returns
@@ -516,7 +598,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def get_vor_cells_as_dict(
             self,
             locs: Path,
-            crs: str  =  "EPSG:2927",
+            crs: str = "EPSG:2927",
             predicate: str = 'intersects',
             loc_name_field: str = None,
             return_gdf: bool = False
@@ -548,7 +630,6 @@ class VoronoiGridPlus(VoronoiGrid):
         else:
             return loc_vor_cell_dict
 
-
     def show_selected_cells(
             self,
             cell_list: list = None,
@@ -575,6 +656,8 @@ class VoronoiGridPlus(VoronoiGrid):
         """Returns a dict of the polygons that form the model domain boundary.
         The keys of the dict are voronoi cell indices"""
 
+        print("Deprecated. Only works if the convex hull is equivalent to the actual grid boundary")
+        print("Use get_grid_edge")
         grid = shp.MultiPolygon(self.gdf_vorPolys.geometry.to_list())
         polygons = self.gdf_vorPolys.geometry.to_list()
         convex_hull = grid.convex_hull
@@ -591,6 +674,17 @@ class VoronoiGridPlus(VoronoiGrid):
                 boundary_polygons_idx.append(idx)
         boundary_polygon_dict = dict(zip(boundary_polygons_idx, boundary_polygons))
         return boundary_polygon_dict
+
+    def get_grid_edge(self) -> list:
+        def is_edge(cell, idx):
+            num_ja_cells = len(self.adjacent_cells_idx[idx])
+            num_cell_faces = len(cell.geometry.exterior.coords) - 1
+            edge_bool = True if num_cell_faces > num_ja_cells else False
+            return edge_bool
+
+        df = self.gdf_vorPolys
+        edges = list(df[df.apply(lambda x: is_edge(x, x.name), axis=1)].index)
+        return edges
 
     def plot3d(self, z=None) -> go.Figure:
         if z == None:
@@ -881,7 +975,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gdf_topbtm
 
-    def get_gdf_topbtm_multilyr(self, rasters:list):
+    def get_gdf_topbtm_multilyr(self, rasters: list):
         """
         get a GeoDataFrame that has the elevations for the top of the model and the bottom of evey model layer for
         every voronoi cell in the model grid. For this to work as intended, the list of rasters need to be provided
@@ -928,7 +1022,7 @@ class VoronoiGridPlus(VoronoiGrid):
                 if debug:
                     print(f'x: {x}, y: {y}')
                     print(i, f'row: {row}', f'col: {col}')
-                elev = elevations[i][row-1, col-1]  # subtract 1 so rows and cols start at zero, else Python error
+                elev = elevations[i][row - 1, col - 1]  # subtract 1 so rows and cols start at zero, else Python error
                 elevs.append(elev)
             return tuple(elevs)
 
@@ -1042,9 +1136,14 @@ class VoronoiGridPlus(VoronoiGrid):
         grid_centroid = shp.MultiPolygon(self.gdf_latlon['geometry'].to_list()).centroid
         return grid_centroid
 
-    def get_overlapping_area(self, shp_gpkg):
+    def get_overlapping_area(self, shp_gpkg=None, cell_list=None):
         """simple method to get the voronoi cell area of an overlapping geometry"""
-        cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        if shp_gpkg is not None:
+            cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        elif cell_list is not None:
+            cells = cell_list
+        else:
+            raise ValueError('You must provide a shp_gpkg or cell_list')
         area = self.gdf_vorPolys.loc[cells].union_all().area
         return area
 
@@ -1213,7 +1312,6 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return centroids_gdf
 
-
     def to_shapefile(self, filepath: str | Path = 'vor_shp.shp'):
         return self.gdf_vorPolys.to_file(filepath)
 
@@ -1323,7 +1421,6 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gdf_allPolys
 
-
     def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1):
         """
         helper to iterate through surface elevations and check for layers that are above the overlying
@@ -1338,6 +1435,7 @@ class VoronoiGridPlus(VoronoiGrid):
         if isinstance(df, gpd.GeoDataFrame):
             df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))
         else:
+            print(df)
             df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
         labels = list(df.columns)
         df = df.loc[:, labels]
@@ -1377,11 +1475,10 @@ class VoronoiGridPlus(VoronoiGrid):
         df = self.reconcile_surfaces(df) if reconcile else df
         return df
 
-
     def adjust_top_btm_overlaps(
             self,
             elev_df=None,
-            shp: Path = None, buffer = 1,
+            shp: Path = None, buffer=1,
             layer_bottom_name=1,
             min_sep=None
     ) -> pd.DataFrame:
@@ -1406,9 +1503,7 @@ class VoronoiGridPlus(VoronoiGrid):
             new_bottoms[cell_id] = ja_min - buffer
 
         new_bottoms = pd.Series(new_bottoms, name=layer_bottom_name)
-        elev_df[layer_bottom_name] = elev_df[layer_bottom_name].update(new_bottoms)
+        elev_df[layer_bottom_name].update(new_bottoms)
         new_surfaces = self.reconcile_surfaces(df=elev_df)
 
         return new_surfaces
-
-

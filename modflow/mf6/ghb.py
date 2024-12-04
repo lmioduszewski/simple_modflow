@@ -20,7 +20,7 @@ class GeneralHeadBoundary(Boundaries):
             self,
             model: mf.SimulationBase = None,
             vor: Vor = None,
-            shp: Path = None,
+            shp_gpkg: Path = None,
             line_shp: Path = None,
             uid: str = None,
             crs: int = 2927,
@@ -32,7 +32,7 @@ class GeneralHeadBoundary(Boundaries):
         class to set up recharge for a modflow 6 model
         :param model: model to which this boundary applies
         :param vor: voronoi grid to which this boundary apples
-        :param shp: path to shapefile that holds the polygons for the boundary
+        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
@@ -40,7 +40,7 @@ class GeneralHeadBoundary(Boundaries):
         :param bound_type: arbitary identifier for this boundary type
         :param xlsx_rch: path to an excel file which contains the recharge data for each uid polygon. optional, otherwise data will be taken froim the shapefile attribute table. if excel is provided, it will be prioritized over the shapefile
         """
-        super().__init__(model, vor, shp, uid, crs)
+        super().__init__(model, vor, shp_gpkg, uid, crs)
         self.bound_type = 'rch'
         self.fields = rch_fields
         self.rch_fields_to_pers = rch_fields_to_pers

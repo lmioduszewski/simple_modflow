@@ -74,9 +74,11 @@ if __name__ == "__main__":
         model_ws=Path.cwd(),
         angle=30
     )
-    tri.add_circle(radius=10_000, center_coords=(0, 0))
-    ssb = tri.add_rectangle(300, 300, origin=(-150, -150), max_area=200)
-    tri.add_region(point=(-500, -500), maximum_area=100_000)
+    tri.add_circle(radius=5_000, center_coords=(0, 0))
+    ssb = tri.add_rectangle(10, 300, origin=(-150, -150), max_area=50)
+    #ssb2 = tri.add_rectangle(10, 300, origin=(150, -150), max_area=50)
+    #ssb3 = tri.add_rectangle(10, 300, origin=(0, -150), max_area=50)
+    tri.add_region(point=(-500, -500), maximum_area=5000)
     tri.model_ws = Path.cwd().joinpath('sample_model_output')
     tri.build()
 
@@ -91,19 +93,27 @@ if __name__ == "__main__":
     top_raster_path = Path.cwd().joinpath('sample_model_output', 'top_raster.tif')
     vor = Vor(tri)
     top_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 660), pixel_size, top_raster_path)
-    l1_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 530), pixel_size, l1_botm)
+    l1_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 640), pixel_size, l1_botm)
     l2_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 490), pixel_size, l2_botm)
     l3_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 450), pixel_size, l3_botm)
 
-    with open(Path(r"C:\Users\lukem\mf6\simplemodel\iheads.hds"), 'rb') as file:
-        iheads = pickle.load(file)  # initial heads import
+    #with open(Path(r"C:\Users\lukem\mf6\simplemodel\iheads.hds"), 'rb') as file:
+        #iheads = pickle.load(file)  # initial heads import
 
     vor = Vor(tri, rasters=[top_raster_path, l1_botm, l2_botm, l3_botm])
     surface_elevs = vor.reconcile_surfaces()
     vor.gdf_topbtm.loc[:, 0:] = surface_elevs
-    nper = 60
-    center_cells = vor.get_vor_cells_as_series(ssb).to_list()
-    rch_trans = [0.000001] + [3 for i in range(nper - 1)]
+    nper = 13
+
+    center_cells = []
+    for fac in [ssb,
+        #ssb2, ssb3
+                ]:
+        c = vor.get_vor_cells_as_series(fac).to_list()
+        center_cells += c
+
+    facility_area = vor.get_overlapping_area(cell_list=center_cells)
+    rch_trans = [0.001] + [300_000 / facility_area for i in range(nper - 1)]
     rch_dict = {}
     for per in range(nper):
         cell_list = []
@@ -111,7 +121,7 @@ if __name__ == "__main__":
             if cell in center_cells:
                 cell_list.append([(0, cell), rch_trans[per]])
             else:
-                cell_list.append([(0, cell), 0.000001])
+                cell_list.append([(0, cell), 0.001])
 
         rch_dict[per] = cell_list
 
@@ -122,7 +132,7 @@ if __name__ == "__main__":
 
     model = SimpleModel(
         vor,
-        k=[40, 40, 10],
+        k=[1000, 0.01, 1000],
         bottom=botms,
         top=vor.gdf_topbtm.loc[:, 0].to_list(),
         nper=nper,
@@ -137,4 +147,4 @@ if __name__ == "__main__":
         pickle.dump(model, file)
     # print(rch_dict)
     model.run_simulation()
-    model.choro().plot()
+    model.choro(kstpkper=(9, 12)).plot()

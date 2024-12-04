@@ -11,6 +11,7 @@ from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from flopy.mf6.modflow.mfutllaktab import ModflowUtllaktab
 from simple_modflow import read_gpkg, read_shp_gpkg
 import pandas as pd
+from simple_modflow.modflow.utils.gdal import get_contours_as_polygons
 
 
 class LakeAreaVolumeRelationship:
@@ -33,7 +34,9 @@ class LakeAreaVolumeRelationship:
             top: int | float = None,
             btm: int | float = None,
             storage_coeff: int | float = 1,
-            get_elevation_every: int | float = 1
+            get_elevation_every: int | float = 1,
+            bathymetry_shp: Path = None,
+            use_gdal: bool = False,
     ):
         self.dem_path = dem_path
         self.lake_shapefile = lake_shapefile
@@ -52,6 +55,7 @@ class LakeAreaVolumeRelationship:
         self.btm = btm
         self.storage_coeff = storage_coeff
         self.get_elevation_every = get_elevation_every
+        self.use_gdal = use_gdal
 
         if all([self.model, self.dem_path, self.lake_shapefile]):
             self.add_to_model()
@@ -60,11 +64,15 @@ class LakeAreaVolumeRelationship:
         elif all([self.top, self.btm, self.area]):
             self.rectangular_facility()
             self.add_to_model()
+        elif bathymetry_shp:
+            pass
 
     @property
     def lake_table(self):
         if self._lake_table is None:
-            if self.elevations:
+            if self.use_gdal:
+                self._lake_table = self.create_table()
+            elif self.elevations:
                 self._lake_table = self.create_table()
             else:
                 raise ValueError('No elevations were provided')
@@ -93,6 +101,11 @@ class LakeAreaVolumeRelationship:
         polygons = []
         for contour in contours:
             coords = [self.transform * (c[1], c[0]) for c in contour]
+            if len(coords) < 4:
+                print('Too few points. Not using these...')
+                print(elevation)
+                print(coords)
+                continue
             polygon = Polygon(coords)
             if polygon.is_valid and polygon.area < self.lake_area * 0.9:  # Exclude entire footprint
                 polygons.append(polygon)
@@ -113,8 +126,33 @@ class LakeAreaVolumeRelationship:
             })
         return results
 
+    def analyze_lake_gdal(self, area_tol=1, vol_tol=1):
+        """
+        use gdal to get lake contours, areas, and volumes
+        :param area_tol: low end tolerance for areas; areas less than this value will be ignored
+        :param vol_tol: low end tolerance for volumes; areas less than this value will be ignored
+        :return: a list of dictionaries containing lake contour elevations, areas, and volumes; one dict per elevation
+        """
+        results = []
+        contours = get_contours_as_polygons(self.dem_path, contour_interval=self.get_elevation_every)
+        for elev, poly in contours.items():
+            area = poly.area
+            volume = self.calculate_volume(poly, elev)
+            if area < area_tol or volume < vol_tol:
+                continue
+            results.append({
+                'elevation': elev,
+                'area': area,
+                'volume': volume,
+                'geometry': poly
+            })
+        return results
+
     def create_table(self):
-        results = self.analyze_lake()
+        if self.use_gdal:
+            results = self.analyze_lake_gdal()
+        else:
+            results = self.analyze_lake()
         lake_table = []
         for result in results:
             row = [result['elevation'], result['volume'], result['area']]
@@ -198,6 +236,7 @@ class LakeConnectionData:
                              If only one value is provided for multiple lakes, it will be used for all lakes.
         :param only_layer: if you only want the lake to be connected to one particular model layer. This is a zero index.
         :param horizontal_connections: dict of lake numbers that have horizontal connections and top and bottom of those lakes.
+        :param alt_surface_df: can provide alternative model surface dataframes to define the lake surfaces
 
                 for example {0: [380, 370]} for a one lake model with a top of 380 and bottom of 370.
         """
@@ -380,7 +419,7 @@ class LakeConnectionData:
         if alt_surface_df is not None:
             elev_df = alt_surface_df
         else:
-            elev_df = vor.reconcile_surfaces(self.min_sep) \
+            elev_df = vor.reconcile_surfaces(df=vor.gdf_topbtm, min_sep=self.min_sep) \
                 if use_reconciled_surfaces else vor.gdf_topbtm
 
         for lake_num, lake_cells in self.lakes_vor_cells.items():
