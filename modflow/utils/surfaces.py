@@ -88,6 +88,7 @@ class InterpolatedSurface:
         if self.surf_type == 'hds':
             """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
             zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, :], :].values
+            zs[zs > 10_000] = np.nan # remove large zs, which would be inactive cells
             self._zs = zs
         if self.surf_type == 'lyr':
             zs = self.vor.gdf_topbtm.loc[:, self.layer].values
@@ -215,9 +216,13 @@ class InterpolatedSurface:
     @property
     def surface(self):
         """returns griddata interpolation first, if that fails then return the rbf interpolation"""
-        try:
-            return self.griddata_interp
-        except:
+        if self.use_rbf is False:
+            try:
+                return self.griddata_interp
+            except:
+                print('error with griddata interpolation, using rbf')
+                return self.rbf_interp
+        elif self.use_rbf is True:
             return self.rbf_interp
 
     def clip_raster_with_polygon(self, polygon: Polygon = None):
@@ -285,13 +290,15 @@ class InterpolatedSurface:
         fig.add_heatmap(z=clipped_image[0])
         fig.show()
 
-    def plot(self, surface=None):
+    def plot(self, surface=None, clip=False):
         """
         plot surface using plotly, defaults to griddata_interp
         :param surface: surface to plot, ex. self.griddata_interp or self.rbf_interp
         :return: plots surface to browser
         """
         surface = self.surface if surface is None else surface
+        if clip:
+            surface = self.clip_raster_with_polygon()[0][0]
         fig = go.Figure()
         fig.add_surface(
             z=surface,

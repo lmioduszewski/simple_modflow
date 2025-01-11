@@ -37,8 +37,9 @@ class Boundaries:
             vor: Vor = None,
             shp_gpkg: Path = None,
             uid: str = None,
-            crs: int = 2927,
-            bound_type: str = None
+            crs: int = None,
+            bound_type: str = None,
+            idomain: list[int] | pd.Series = None
 
     ):
         """
@@ -50,11 +51,13 @@ class Boundaries:
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon. required
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param bound_type: arbitary identifier for this boundary type
+        :param idomain: list of integers (1 or 0), one for each cell in the grid. If 0, that cell index is inactive
         """
 
         self.model = model
         try:
             self.vor = self.model.vor if vor is None else vor
+            self.crs = self.vor.crs if crs is None else crs
             self.nper = self.model.nper
         except:
             self.vor = None
@@ -73,6 +76,24 @@ class Boundaries:
         self._vor_bound_polys = None
         self._rch_scale = None
         self._sorted_cells_along_line = None
+        self._inactive_cells = None
+        self.idomain = idomain
+
+    @property
+    def inactive_cells(self):
+        if self._inactive_cells is None:
+            if self.idomain is None:
+                return None
+            elif self.idomain is not None and self.vor is not None:
+                assert len(self.idomain) == self.vor.ncpl, 'idomain length must be equal to num cells in vor grid'
+                if isinstance(self.idomain,list):
+                    self.idomain = pd.Series(self.idomain)
+                assert isinstance(self.idomain,pd.Series), 'error: could not make idomain a pd.Series'
+                inactive_cells = self.idomain[self.idomain == 0].index.tolist()
+                self._inactive_cells = inactive_cells
+            else:
+                print('no active grid object provided. Cannot determine inactive cells')
+        return self._inactive_cells
 
     @property
     def intersections(self):
@@ -175,7 +196,8 @@ class Boundaries:
             zone_rch_dict: dict = None,
             grid_type: str = 'disv',
             background_rch: int | float = None,
-            nper: int = 1
+            nper: int = 1,
+            shift: int = 0
     ) -> dict:
         """
         get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
@@ -186,27 +208,38 @@ class Boundaries:
         :param zone_rch_dict: dictionary where each key is an arbitary name for each recharge area. Must match the keys
         in the rch_zone_dict dict. The dictionary values are each a list of recharge. Length of the list must equal to the
         number of stress periods.
+        :param shift: number of stress periods to shift each recharge, to delay it if needed
         :param grid_type: string identifying grid type - 'disv' or 'disu'
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
         nper = nper if self.nper is None else self.nper
-        assert nper == len(list(zone_rch_dict.values())[0]), 'Number of periods and length of recharge values must match'
+        assert nper == len(list(zone_rch_dict.values())[0]), "nper and length of rch dict must match"
         for per in range(nper):
+            if per + shift >= nper:
+                continue
             cell_list = []
             all_rch_cells = []
             for name, cell_nums in zone_cell_id_dict.items():
+                if isinstance(cell_nums, int):
+                    cell_nums = [cell_nums]
+                cell_nums = [cell for cell in cell_nums if cell not in self.inactive_cells]
                 all_rch_cells += cell_nums
                 recharge = zone_rch_dict[name][per]
                 for cell in cell_nums:
                     cell_id = cell if grid_type == 'disu' else (0, cell)
                     cell_list.append([cell_id, recharge])
             if background_rch is not None:
-                for cell in range(self.vor.ncpl):
+                back_cells = [cell for cell in list(range(self.vor.ncpl)) if cell not in self.inactive_cells]
+                for cell in back_cells:
                     if cell not in all_rch_cells:
                         cell_id = cell if grid_type == 'disu' else (0, cell)
                         cell_list.append([cell_id, background_rch])
-            rch_dict[per] = cell_list
+
+            if per == 0 and shift > 0:
+                for s in range(shift):
+                    rch_dict[s] = cell_list  # duplicate the first stress period to meet specified shift
+            rch_dict[per + shift] = cell_list
         return rch_dict
 
     def get_ghb_from_shp(
@@ -307,11 +340,13 @@ class Boundaries:
                 'k': 'k',
                 'layer': 'layer'
             }
+        crs = self.vor.crs if self.vor is not None else None
         k_cells, gdf_k = self.vor.get_vor_cells_as_dict(
             locs=shapefile_path,
             predicate='intersects',
             loc_name_field=fields['name'],
-            return_gdf=True
+            return_gdf=True,
+            crs=crs
         )
         gdf_k = gdf_k.set_index(fields['name'])
 

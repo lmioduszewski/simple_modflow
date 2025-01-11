@@ -1,3 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+
 import numpy as np
 import plotly.graph_objects as go
 from scipy.spatial import Voronoi
@@ -14,6 +20,7 @@ from pathlib import Path
 import simple_modflow.modflow.mf6.mf2Dplots as mf2Dplots
 from figs import create_hover, Fig
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
+from simple_modflow.modflow.utils.datatypes.choros import Choro
 
 
 def flatten(l):
@@ -181,7 +188,7 @@ class TriangleGrid(Triangle):
         if buffer != 0:
             polygon = polygon.buffer(buffer)
         if domain:
-            assert domain.contains(polygon), 'polygon not fully within domain'
+            assert domain.contains(polygon), 'polygon not fully within domain, try adding a negative buffer'
         if simplify_tolerance:
             polygon = polygon.simplify(simplify_tolerance)
         if densify_dist:
@@ -200,7 +207,8 @@ class TriangleGrid(Triangle):
             simplify_tolerance: int = 10,
             densify_dist: int = None,
             domain: shp.Polygon | Path = None,
-            max_area: int = None
+            max_area: int = None,
+            negative_buffer_after_clipping: float | int = 0
     ):
         """
         Add a line buffer polygon to the triangulation.
@@ -210,8 +218,13 @@ class TriangleGrid(Triangle):
         :param densify_dist: if given, buffer vertex points will be added equidistant along buffer
         :param domain: domain polygon, used for clipping
         :param max_area: max area of triangulation within buffer polygon
+        :param negative_buffer_after_clipping: negative buffer to pass to add_polygon. Will apply this buffer after
+        clipping to the domain. Value must be negative
         :return:
         """
+        if negative_buffer_after_clipping:
+            assert negative_buffer_after_clipping <= 0, \
+                f'clipping buffer must be less than or equal to zero, not {negative_buffer_after_clipping}'
         line_geom = read_shp_gpkg(line).union_all()
         line_buffer = line_geom.buffer(buffer)
         if simplify_tolerance:
@@ -222,6 +235,7 @@ class TriangleGrid(Triangle):
             line_buffer,
             domain=domain,
             max_area=max_area,
+            buffer=negative_buffer_after_clipping
         )
 
 
@@ -242,6 +256,8 @@ class VoronoiGridPlus(VoronoiGrid):
         self.tri = tri
         self.nlay = nlay
         self.crs_latlon = "EPSG:4326"
+        self._gdf_latlon = None
+        self._latlon = None
         self.rasters = rasters
         self.crs = crs
         self.name = name
@@ -293,12 +309,10 @@ class VoronoiGridPlus(VoronoiGrid):
         self.j = [tri_idx[1] for tri_idx in self.iverts]
         self.k = [tri_idx[2] for tri_idx in self.iverts]
 
-        self.gdf_latlon = None
-        self.latslons = None
-        if self.crs is not None:
+
+        """if self.crs is not None:
             print('getting lats and lons')
-            self.get_latslons()  # generate json of grid and save to self
-            print('got lats and lons')
+            print('got lats and lons')"""
         self.grid_centroid = self.get_grid_centroid()
 
         self.vor_list = self.gdf_vorPolys.geometry.to_list()
@@ -448,7 +462,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
 
-    def plot_choropleth(
+    """def plot_choropleth(
             self,
             zmin=None,
             zmax=None,
@@ -457,15 +471,11 @@ class VoronoiGridPlus(VoronoiGrid):
             hoverdata=None,
             custom_z=None
     ):
-        """Plot choropleth of Voronoi grid.
 
-            Args:
-
-            """
         fig = self.choropleth(zmin, zmax, zoom, hoverlabels, hoverdata, custom_z)
-        return fig.show()
+        return fig.show()"""
 
-    def choropleth(
+    """def choropleth(
             self,
             zmin=None,
             zmax=None,
@@ -474,13 +484,8 @@ class VoronoiGridPlus(VoronoiGrid):
             hoverdata=None,
             custom_z=None
     ):
-        """Plot choropleth of Voronoi grid.
-
-            Args:
-
-            """
         if zmax is None:
-            zmax = len(self.latslons['features'])
+            zmax = len(self.latlon['features'])
         if zmin is None:
             zmin = 0
 
@@ -509,7 +514,7 @@ class VoronoiGridPlus(VoronoiGrid):
         else:
             zs = custom_z
         fig_mbox.add_choroplethmapbox(
-            geojson=self.latslons,
+            geojson=self.latlon,
             featureidkey="id",
             locations=self.gdf_latlon.index.to_list(),
             z=zs,
@@ -521,6 +526,54 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
         return fig_mbox
+
+"""
+
+    def choropleth(
+            self,
+            model: SimulationBase = None,
+            kstpkper: tuple = None,
+            per: int = None,
+            layer: int = 0,
+            choro_type: str = 'hds',
+            custom_hover: dict = None,
+            custom_zs: list = None,
+            zmin: float | int = None,
+            zmax: float | int = None,
+            zoom: int = 13,
+            show_layer_elevs: bool = False,
+            show_mounding: bool = False,
+            hover_heads: bool = True,
+            hover_ks: bool = False,
+            locs: Path = None,
+
+    ):
+        choro = Choro(
+            vor=self,
+            model=model,
+            kstpkper=kstpkper,
+            per=per,
+            layer=layer,
+            choro_type=choro_type,
+            custom_hover=custom_hover,
+            custom_zs=custom_zs,
+            zmin=zmin,
+            zmax=zmax,
+            zoom=zoom,
+            show_layer_elevs=show_layer_elevs,
+            show_mounding=show_mounding,
+            hover_heads=hover_heads,
+            hover_ks=hover_ks,
+            locs=locs,
+        )
+        return choro
+
+    @property
+    def dash_selector(self):
+        return self.choropleth().dash_selector()
+
+    def show(self):
+        return self.choropleth().plot()
 
     def map_nodes(self):
 
@@ -598,7 +651,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def get_vor_cells_as_dict(
             self,
             locs: Path,
-            crs: str = "EPSG:2927",
+            crs: str = None,
             predicate: str = 'intersects',
             loc_name_field: str = None,
             return_gdf: bool = False
@@ -613,6 +666,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param loc_name_field: field in the loc shapefile that will be the dict key
         :return: dict of voronoi cells indices (values) that contain each location in locs (keys)
         """
+        crs = self.crs if crs is None else crs
         gdf_locs = gpd.read_file(locs).to_crs(crs)
 
         loc_vor_cell_dict = {}
@@ -633,16 +687,13 @@ class VoronoiGridPlus(VoronoiGrid):
     def show_selected_cells(
             self,
             cell_list: list = None,
-            hoverlabels=None,
-            hoverdata=None,
-            custom_z=None,
             **kwargs
 
     ):
         """Method to show selected cells of the voronoi grid.
         Just provide a list of cell indices."""
 
-        choro = self.choropleth(hoverlabels=hoverlabels, hoverdata=hoverdata, custom_z=custom_z, **kwargs)
+        choro = self.choropleth(**kwargs).choropleth()
         choro.data[0].selectedpoints = (tuple(cell_list))
 
         return go.Figure(choro).show(renderer='browser')
@@ -1116,16 +1167,19 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return origin_xy
 
-    def get_latslons(self):
-        """Generate a JSON representation of the Voronoi grid Polygons
-        """
-        gdf_latlon = self.gdf_vorPolys.to_crs(self.crs_latlon)
-        latslons = json.loads(gdf_latlon["geometry"].to_json())
+    @property
+    def gdf_latlon(self):
+        if self._gdf_latlon is None:
+            gdf_ll = self.gdf_vorPolys.to_crs(self.crs_latlon)
+            self._gdf_latlon = gdf_ll
+        return self._gdf_latlon
 
-        self.gdf_latlon = gdf_latlon
-        self.latslons = latslons
-
-        return latslons
+    @property
+    def latlon(self):
+        if self._latlon is None:
+            latlon = json.loads(self.gdf_latlon["geometry"].to_json())
+            self._latlon = latlon
+        return self._latlon
 
     def get_grid_centroid(self):
         """Gets the Shapley representation of the centroid of the defined voronoi grid

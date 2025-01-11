@@ -1,14 +1,25 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+import pandas as pd
+
+if TYPE_CHECKING:
+    from .voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
+    from simple_modflow.modflow.mf6.sfr import SFR
+
 import flopy
 from pathlib import Path
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
-from typing import Optional
-from simple_modflow.modflow.utils.surfaces import InterpolatedSurface
 from simple_modflow.modflow.utils.datatypes.surface_data import ModelSurface
 from simple_modflow.modflow.utils.datatypes.choros import Choro
 from simple_modflow.modflow.utils.datatypes.xsections import XSection
 from shapely import LineString
 import pickle
+from simple_modflow.modflow.mf6.sfr import SFR
+from simple_modflow.modflow.utils.inputs import RchInput
+from simple_modflow.modflow.utils.outputs import LakOutputData, SFROutputData
+from simple_modflow.modflow.mf6.budget import Budget
 
 
 class SimulationBase:
@@ -18,7 +29,8 @@ class SimulationBase:
             name: str = 'mf6_model',
             mf_folder_path: Path = Path().home().joinpath('mf6'),
             nper: int = 1,
-            vor: Vor = None
+            vor: Vor = None,
+            per_dates: list | pd.DatetimeIndex = None
     ):
         self.name = name
         self.vor = vor
@@ -30,6 +42,9 @@ class SimulationBase:
         self._master_celld = {}
         self._hds = None
         self._bud = None
+        self._sfr_input = None
+        self._per_dates = None
+        self.per_dates = per_dates
 
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -67,14 +82,43 @@ class SimulationBase:
         )
 
     @property
+    def per_dates(self):
+        return self._per_dates
+
+    @per_dates.setter
+    def per_dates(self, per_dates):
+        if per_dates is not None:
+            if isinstance(per_dates, list):
+                try:
+                    per_dates = pd.to_datetime(per_dates)
+                except ValueError:
+                    print("Can't convert provided period dates to Pandas DateTime")
+            else:
+                assert isinstance(per_dates, pd.DatetimeIndex), 'Cannot recognize valid dates in provide period dates'
+        self._per_dates = per_dates
+
+    @property
     def modelgrid(self) -> flopy.discretization.vertexgrid.VertexGrid:
         modelgrid: flopy.discretization.vertexgrid.VertexGrid = self.gwf.modelgrid
         return modelgrid
 
     @property
+    def sfr_input(self) -> SFR:
+        if self._sfr_input is not None:
+            assert isinstance(self._sfr_input, SFR), 'sfr input not SFR class'
+            sfr_input: SFR = self._sfr_input
+            return sfr_input
+        else:
+            return None
+
+    @property
     def hds(self):
         self._hds = Hp(model=self, vor=self.vor)
         return self._hds
+
+    @property
+    def all_heads(self):
+        return self.hds.all_heads
 
     @property
     def surf(self):
@@ -83,6 +127,7 @@ class SimulationBase:
     def choro(
             self,
             kstpkper: tuple = None,
+            per: int = None,
             layer: int = 0,
             choro_type: str = 'hds',
             custom_hover: dict = None,
@@ -120,6 +165,7 @@ class SimulationBase:
         return Choro(
             model=self,
             kstpkper=kstpkper,
+            per=per,
             layer=layer,
             choro_type=choro_type,
             custom_hover=custom_hover,
@@ -160,6 +206,24 @@ class SimulationBase:
             interpolate=interpolate,
             use_rbf=use_rbf
         )
+
+    @property
+    def inputs(self):
+        return RchInput(self)
+
+    @property
+    def lak(self):
+        return LakOutputData(self)
+
+    @property
+    def sfr(self):
+        return SFROutputData(self)
+
+    def bud(self, package: str = None):
+        if package is None:
+            return Budget(self)
+        else:
+            return Budget(self, package)
 
     @property
     def master_celld(self):
@@ -269,14 +333,16 @@ class DisvGrid:
 
     def __init__(
             self,
-            vor: Vor,
-            model: SimulationBase,
+            vor: Vor = None,
+            model: SimulationBase = None,
             top=None,
             bottom=None,
             nlay=1,
+            idomain=None
     ):
         self.nlay = nlay
         model.nlay = nlay
+        vor = model.vor if vor is None else vor
         grid_props = vor.get_disv_gridprops()
         self.disv = flopy.mf6.ModflowGwfdisv(
             model.gwf,
@@ -289,7 +355,8 @@ class DisvGrid:
             pname='disv',
             filename=f'{model.name}.disv',
             top=top,
-            botm=bottom
+            botm=bottom,
+            idomain=idomain
         )
 
 
@@ -398,9 +465,11 @@ class Recharge:
     def __init__(
             self,
             model: SimulationBase,
-            vor: Vor,
+            vor: Vor = None,
             rch_dict: dict = None
     ):
+        vor = model.vor if vor is None else vor
+        print(vor.ncpl)
         self.rch = flopy.mf6.ModflowGwfrch(
             model.gwf,
             pname="rch",
@@ -420,6 +489,7 @@ class Drains:
             model: SimulationBase,
             stress_period_data: list
     ):
+
         self.drn = flopy.mf6.ModflowGwfdrn(
             model=model.gwf,
             pname="drn",
@@ -483,6 +553,7 @@ class LAK:
             print_input=False,
             print_flows=False,
             print_stage=True,
+            mover=False
     ):
         self.lak = flopy.mf6.ModflowGwflak(
             model=model.gwf,
@@ -494,7 +565,7 @@ class LAK:
             budget_filerecord=f'{model.name}_budget.lak',
             budgetcsv_filerecord=f'{model.name}_lake_budget.csv',
             package_convergence_filerecord=f'{model.name}_lake_convergence.csv',
-            mover=True,
+            mover=mover,
             surfdep=0,
             time_conversion=86_400.0,  #  assumes model time units are DAYS
             length_conversion=3.28081,  #  assumes model length units are FEET
@@ -509,5 +580,5 @@ class LAK:
             filename=f'{model.name}_lak',
             pname='lak',
             maximum_iterations=10000,
-            maximum_stage_change=0.001
+            maximum_stage_change=0.001,
         )

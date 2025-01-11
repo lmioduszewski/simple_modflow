@@ -5,6 +5,7 @@ import flopy
 from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from pathlib import Path
 import pickle
+import shutil
 
 
 class ParticleTrackingInput:
@@ -110,7 +111,8 @@ class ParticleTrackingInput:
             if not os.path.exists(cwd / file):
                 original_file = self.model.model_output_folder_path / file
                 if os.path.exists(original_file):
-                    os.symlink(original_file, file)
+                    # os.symlink(original_file, file)
+                    shutil.copyfile(original_file, file)  # Copies the file instead of linking it
                 else:
                     raise FileNotFoundError(f"Required file {original_file} not found.")
 
@@ -155,8 +157,8 @@ class ParticleTrackingInput:
                         "FILE_NAME": self.model_output_files['gsf']
                     },
                     "OUTPUT_PRECISION": "DOUBLE",
-                    "IFACE": [{"GHB": 7}, {"RCH": 6}, {"DRN": 7}, {"SFR": 6}],
-                    "THREAD_COUNT": 1
+                    "IFACE": [{"RCH": 6}, {"DRN": 7}, {"SFR": 6}],
+                    "THREAD_COUNT": 4
                 }
             },
             "SIMULATIONS": [
@@ -164,11 +166,12 @@ class ParticleTrackingInput:
                     "PATHLINE": {
                         "NAME": self.model.name,
                         "DIRECTION": "FORWARD",
-                        "THREAD_COUNT": 1,
+                        "THREAD_COUNT": 4,
                         "INITIAL_STEPSIZE": 0.1,
                         "EULER_DT": 1.0e-7,
                         "ADAPTIVE_STEP_ERROR": 1.000000e-06,
                         "CAPTURE_RADIUS": 10.000000,
+                        "SIMULATION_END_TIME": 120.0,
                         "OPTIONS": ["TRACK_TO_TERMINATION"],
                         "PARTICLE_START_LOCATIONS": {
                             "SHAPEFILE": {
@@ -201,7 +204,7 @@ class ParticleTrackingInput:
     def get_output_json(self):
 
         output_json = {
-            "MP3DU_BIN" : "LkPnt_1.4_rch_PATHLINE.bin",
+            "MP3DU_BIN" : "cumb_v2b_PATHLINE.bin",
             "OUTPUTS" : [
               { "SUMMARY" : {
               } },
@@ -222,16 +225,19 @@ class ParticleTrackingInput:
               } }
             ]
         }
+        with open('P3DOutput_json.json', 'w') as f:
+            json.dump(output_json, f, indent=4)
 
 
 if __name__ == "__main__":
 
-    with open(Path(r"C:\Users\lukem\mf6\LkPnt_1.4_rch\LakePointe.model"), 'rb') as file:
+    with open(Path(r"C:\Users\lukem\mf6\cumb_v2.1b\cumb_v2.1b.model"), 'rb') as file:
         model: SimulationBase = pickle.load(file)
-    particles = Path(r"C:\Users\lukem\Python\MODFLOW\LakePointe\inputs\shp\forward_particles.shp")
+    particles = Path(r"C:\Users\lukem\Python\Projects\simple_modflow\modflow\mp3du\deep_lake_particles.shp")
     pti = ParticleTrackingInput(
         model=model,
-        porosities_by_layer=[0.3, 0.2, 0.2],
+        porosities_by_layer=[0.3],
         particle_shp=particles
     )
     pti.run()
+    pti.get_output_json()

@@ -14,6 +14,7 @@ from simple_modflow.modflow.mf6.boundaries import Boundaries
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
+
 class GeneralHeadBoundary(Boundaries):
 
     def __init__(
@@ -29,7 +30,7 @@ class GeneralHeadBoundary(Boundaries):
             xlsx_rch: Path = None,
     ):
         """
-        class to set up recharge for a modflow 6 model
+        class to set up general head boundaries for a modflow 6 model
         :param model: model to which this boundary applies
         :param vor: voronoi grid to which this boundary apples
         :param shp_gpkg: path to shapefile that holds the polygons for the boundary
@@ -72,7 +73,8 @@ class GeneralHeadBoundary(Boundaries):
             if self.xlsx_rch:
                 """use excel if it exists, otherwise get from shapefile"""
                 rch_fields = pd.read_excel(self.xlsx_rch).set_index(self.uid)
-                assert len(rch_fields) == len(self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
+                assert len(rch_fields) == len(
+                    self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
             else:
                 rch_fields = self.gdf.loc[:, self.fields]
             if self.rch_in_vol:  # if recharge is in volumes, divide by the voronoi area of each polygon
@@ -136,7 +138,7 @@ class GeneralHeadBoundary(Boundaries):
             self._line_ghb = line_ghb
         return self._line_ghb
 
-    def add_line_ghb(self, existing_ghb_dict: dict=None):
+    def add_line_ghb(self, existing_ghb_dict: dict = None):
         """adds a line based ghb boundary to an existing ghb dict"""
         elev_strt = self.line_ghb.gdf[self.line_fields['elev'][0]]
         elev_end = self.line_ghb.gdf[self.line_fields['elev'][1]]
@@ -163,7 +165,7 @@ class GeneralHeadBoundary(Boundaries):
         updated_ghb_dict = self.add_to_ghb_dict(existing_ghb_dict, to_add)
         return updated_ghb_dict
 
-    def add_to_ghb_dict(self, existing_ghb_dict: dict=None, dict_to_add:dict =None):
+    def add_to_ghb_dict(self, existing_ghb_dict: dict = None, dict_to_add: dict = None):
         for per, ghb_list_of_lists in dict_to_add.items():
             assert isinstance(ghb_list_of_lists, list)
             updated_ghb_dict = existing_ghb_dict.copy()
@@ -171,7 +173,8 @@ class GeneralHeadBoundary(Boundaries):
             existing_cells = [existing_list[0] for existing_list in existing_list_of_lists]
             for ghb_list in ghb_list_of_lists:
                 assert isinstance(ghb_list, list)
-                assert ghb_list[0] not in existing_cells, (f'{ghb_list[0]} already in ghb dict. Remove duplicate cells.')
+                assert ghb_list[0] not in existing_cells, (
+                    f'{ghb_list[0]} already in ghb dict. Remove duplicate cells.')
                 updated_ghb_dict[per] = updated_ghb_dict[per] + [ghb_list]
         return updated_ghb_dict
 
@@ -179,7 +182,7 @@ class GeneralHeadBoundary(Boundaries):
             self,
             cell_ids: dict = None,
             recharges: dict = None,
-            grid_type:str = 'disv',
+            grid_type: str = 'disv',
             background_rch: int | float = None
     ) -> dict:
         """
@@ -215,4 +218,3 @@ class GeneralHeadBoundary(Boundaries):
                         cell_list.append([cell_id, background_rch])
             rch_dict[per] = cell_list
         return rch_dict
-

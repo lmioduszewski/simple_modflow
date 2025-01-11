@@ -48,8 +48,12 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     layer_num = 0
     layers = []
     gpkg = gpd.read_file(gpkg_path)
+    crs = gpkg.crs
     try:
         for idx, row in gpkg.iterrows():
+            if row.geometry is None:
+                print(f'skipping row {idx} because the geometry is None')
+                continue
             if isinstance(row.geometry, shp.Polygon | shp.Point | shp.MultiLineString | shp.LineString):
                 layers.append(row)
                 num_features += 1
@@ -71,6 +75,7 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     print(f'Imported {num_features} features from {gpkg_path}')
     gdf = gpd.GeoDataFrame.from_records(data=layers)
     gdf.set_geometry('geometry', inplace=True)
+    gdf.crs = crs
 
     return gdf
 

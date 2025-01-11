@@ -1,10 +1,13 @@
-import numpy as np
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from .voronoiplus import VoronoiGridPlus as Vor
+
 import pandas as pd
-from .mf2Dplots import WaterLevelPlot
-from .voronoiplus import VoronoiGridPlus as vgp
 import flopy.utils.binaryfile as bf
 from pathlib import Path
-import plotly.graph_objs as go
 import geopandas as gpd
 from . import mf2Dplots
 import figs
@@ -19,7 +22,7 @@ class HeadsPlus(bf.HeadFile):
             self,
             hds_path: Path = None,
             model=None,
-            vor: vgp = None,
+            vor: Vor = None,
             obs_path: Path = None
     ):
         """
@@ -27,22 +30,23 @@ class HeadsPlus(bf.HeadFile):
         :param hds_path: path to the heads file
         :param vor: voronoi grid representing model grid for the heads file, optional
         """
-
         from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+        if hds_path is None:
+            if model is None:
+                raise ValueError("Must provide heads file or model")
+            assert isinstance(model, SimulationBase), 'no valid model provided'
+            self.hds_path = model.model_output_folder_path / f'{model.name}.hds'
+        else:
+            self.hds_path = hds_path
+
+        super().__init__(filename=self.hds_path)
+
         if model is None:
             self.model = None
         elif isinstance(model, SimulationBase):
             self.model = model
         else:
             raise ValueError("model must be an instance of SimulationBase")
-        if hds_path is None:
-            if self.model is None:
-                raise ValueError("Must provide heads file or model")
-            self.hds_path = self.model.model_output_folder_path / f'{self.model.name}.hds'
-        else:
-            self.hds_path = hds_path
-
-        super().__init__(filename=self.hds_path)
 
         self.hds = bf.HeadFile(filename=self.hds_path)
         self.kstpkper = self.get_kstpkper()
@@ -59,6 +63,7 @@ class HeadsPlus(bf.HeadFile):
         self._obs = {}
         self._obs_heads = None
         self.obs_path = obs_path
+        self.crs = self.vor.crs
 
     @property
     def all_heads(self):
@@ -128,16 +133,17 @@ class HeadsPlus(bf.HeadFile):
         sorted_dict = {i: dict_to_sort[i] for i in sorted_keys}
         return sorted_dict
 
-    def get_obs_cells(self, locs: Path, crs: str = "EPSG:2927", loc_name_field='ExploName'):
+    def get_obs_cells(self, locs: Path, crs: str = None, loc_name_field='ExploName'):
         """
         method to get cells that contain certain observation locations. Locations
         should be points in a shapefile
         :param locs: Path for shapefile with locations of obs as points
-        :param crs: crs of shapefile. Defaults to EPSG_2927 (South WA)
+        :param crs: crs of shapefile. Gets from Voronoi grid object if no crs provided
         :param loc_name_field: field name in the shapefile attribute table containing observation names.
         :return: dict where observation names are keys and the lists of cells containing them are the values.
         """
         locs = self.obs_path if locs is None else locs
+        crs = self.crs if crs is None else crs
         if locs is None:
             return print('no obs path found')
         obs_dict = self.vor.get_vor_cells_as_dict(
@@ -153,8 +159,9 @@ class HeadsPlus(bf.HeadFile):
             obs_dict[obs] = cell_ids[0]
         return obs_dict
 
-    def get_obs_heads(self, locs: Path = None, crs: str = "EPSG:2927", loc_name_field='ExploName'):
+    def get_obs_heads(self, locs: Path = None, crs: str = None, loc_name_field='ExploName'):
 
+        crs = self.crs if crs is None else crs
         if locs is not None:
             new_obs = self.get_obs_cells(locs, crs, loc_name_field)
             self._obs.update(new_obs)
@@ -186,9 +193,10 @@ class HeadsPlus(bf.HeadFile):
     def plot_heads(
             self,
             locs: Path | int | list,
-            crs: str = "EPSG:2927",
+            crs: str = None,
             layer: int = 0,
-            loc_name_field='ExploName'
+            loc_name_field='ExploName',
+            return_fig: bool = False
     ):
         """Plots heads for specified locations in the model.
             Locations should be specified as the model cell/node to 
@@ -200,6 +208,7 @@ class HeadsPlus(bf.HeadFile):
             Returns:
                 Returns the fig object and plots it
             """
+        crs = self.crs if crs is None else crs
         if locs is not None:
             fig = figs.Fig()
             heads = self.all_heads
@@ -223,12 +232,16 @@ class HeadsPlus(bf.HeadFile):
                     obs_heads = heads.loc[idxx[:, layer, obs_df.loc[obs_loc]], 'elev']
                 elif isinstance(locs, int | list):
                     obs_heads = heads.loc[idxx[:, layer, obs_loc], 'elev']
+                # plot actual period dates on x-axis if provided with model
+                xs = self.model.per_dates if self.model.per_dates is not None else list(range(len(self.kstpkper)))
                 fig.add_scattergl(
-                    x=list(range(len(self.kstpkper))),
+                    x=xs,
                     y=obs_heads,
                     name=obs_loc
                 )
-            return fig.show()
+            fig.show()
+            if return_fig:
+                return fig
 
         return None
 

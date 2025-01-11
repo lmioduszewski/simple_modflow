@@ -16,6 +16,7 @@ import shapely as shp
 from pathlib import Path
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 import geopandas as gpd
+import json
 
 
 class Choro:
@@ -25,6 +26,7 @@ class Choro:
             model: SimulationBase = None,
             vor: Vor = None,
             kstpkper: tuple = None,
+            per: int = None,
             layer: int = 0,
             choro_type: str = 'hds',
             custom_hover: dict = None,
@@ -44,6 +46,7 @@ class Choro:
         :param model:
         :param vor:
         :param kstpkper:
+        :param per:
         :param layer:
         :param choro_type:
         :param custom_hover:
@@ -58,9 +61,15 @@ class Choro:
         :param locs:
         """
 
+        self._vor = None
         self.model = model
         self.vor = model.vor if model is not None else vor
-        self.kstpkper = self.model.hds.kstpkper[0] if kstpkper is None else kstpkper
+        if model is not None:
+            self.kstpkper = self.model.hds.kstpkper[0] if kstpkper is None else kstpkper
+        else:
+            self.kstpkper = None
+        self._per = None
+        self.per = per
         self._layer = layer
         self.choro_type = choro_type
         self._custom_hover = custom_hover
@@ -85,6 +94,20 @@ class Choro:
         self._all_heads = None
         self._all_ks = None
         self._hover_dict = self.hover_dict_default
+
+    @property
+    def per(self):
+        return self._per
+
+    @per.setter
+    def per(self, per):
+        if per is not None:
+            kstpkper = self.model.kstpkper
+            per_idx = [i for i, period in enumerate(list(zip(*kstpkper))[1]) if period == per]
+            assert len(per_idx) == 1, f'more than one kstpkper with stress period - {per}. Provide unique kstpkper.'
+            per_tpl = kstpkper[per_idx[0]]
+            self.kstpkper = per_tpl
+        self._per = per
 
     @property
     def all_heads(self):
@@ -133,8 +156,9 @@ class Choro:
 
     @kstpkper.setter
     def kstpkper(self, kstpkper):
-        assert isinstance(kstpkper, tuple), 'kstpkper must be an instance of tuple'
-        assert kstpkper in self.model.hds.kstpkper, f'kstpkper {kstpkper} invalid, not listed in hds file'
+        if kstpkper is not None:
+            assert isinstance(kstpkper, tuple), 'kstpkper must be an instance of tuple'
+            assert kstpkper in self.model.hds.kstpkper, f'kstpkper {kstpkper} invalid, not listed in hds file'
         self._kstpkper = kstpkper
 
     @property
@@ -144,20 +168,25 @@ class Choro:
     @property
     def hover_dict(self):
 
-        if self.choro_type == 'hds' or self.hover_heads is True:
-            for lyr in range(self.nlay):
-                lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], 'elev'].to_list()
-                self._hover_dict[f'Layer {lyr + 1} Heads'] = lyr_heads
+        if self.model is not None:
+            if self.choro_type == 'hds' or self.hover_heads is True:
+                for lyr in range(self.nlay):
+                    lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], 'elev'].to_list()
+                    self._hover_dict[f'Layer {lyr + 1} Heads'] = lyr_heads
 
-        if self.choro_type == 'ks' or self.hover_ks is True:
-            for lyr in range(self.nlay):
-                lyr_ks = self.all_ks[lyr].tolist()
-                self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
+            if self.choro_type == 'ks' or self.hover_ks is True:
+                for lyr in range(self.nlay):
+                    lyr_ks = self.all_ks[lyr].tolist()
+                    self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
 
         if self.show_layer_elevs:
-            layer_nums = self.model.vor.gdf_topbtm.columns[2:].to_list()
-            botms = self.model.gwf.modelgrid.botm
-            top = self.model.gwf.modelgrid.top
+            layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
+            if self.model is not None:
+                botms = self.model.gwf.modelgrid.botm
+                top = self.model.gwf.modelgrid.top
+            else:
+                botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1,1).transpose()
+                top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1,1).transpose()[0]  # TODO why do i have to add [0]
             layer_nums = list(range(len(botms)))
             self._hover_dict.update(
                 {f'Top of Model': np.round(top, 2)})
@@ -183,6 +212,13 @@ class Choro:
                     f'zs': self.zs
                 }
             )
+        if self._custom_hover:
+            for key in self._custom_hover.keys():
+                self._hover_dict.update(
+                    {
+                        f'{key}': self._custom_hover[key]
+                    }
+                )
 
         return self._hover_dict
 
@@ -211,19 +247,21 @@ class Choro:
     def zs(self):
         if self.custom_zs is not None:
             return self.custom_zs
-        if self.choro_type == 'hds':
+        if self.choro_type == 'hds' and self.model is not None:
             if self.show_mounding is True:
                 z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
                 layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
+                z_hd.loc[z_hd == 1e+30] = np.nan  # make modflow empty elevations NaN
                 zs = z_hd - layer_bottom
                 # remove negative mounding values
                 zs = zs.mask(zs < 0, 0)
             else:
-                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].to_list()
-        elif self.choro_type == 'ks':
+                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
+        elif self.choro_type == 'ks' and self.model is not None:
             zs = self.all_ks[self.layer].tolist()
         else:
-            zs = None
+            zs = self.vor.gdf_vorPolys.index.to_list()
         return zs
 
     @property
@@ -268,7 +306,7 @@ class Choro:
         custom_data, hover_template = create_hover(self.hover_dict)
         self.update_layout()
         self.fig.add_choroplethmapbox(
-            geojson=self.vor.latslons,
+            geojson=self.vor.latlon,
             featureidkey="id",
             locations=self.vor.gdf_latlon.index.to_list(),
             z=self.zs,
@@ -297,10 +335,14 @@ class Choro:
                     name=row[name_field]
                 )
 
-    def plot(self):
+    def choropleth(self):
         self.add_choropleth()
         if self.locs is not None:
             self.add_locs()
+        return self.fig
+
+    def plot(self):
+        fig = self.choropleth()
         self.fig.show()
 
     def dash_selector(self):

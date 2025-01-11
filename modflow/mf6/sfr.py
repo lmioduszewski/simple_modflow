@@ -1,11 +1,15 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from .voronoiplus import VoronoiGridPlus as Vor
+
 import flopy
-import pandas as pd
 import geopandas as gpd
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from pathlib import Path
-import shapely as shp
 import numpy as np
+import pandas as pd
 import pickle
 
 """def flatten(l):
@@ -21,14 +25,14 @@ class SFR:
             stream_paths: list[Path] = None,
             reverse_streams: list[bool] = None,
             inflows: dict | int | float | list = None,
-            widths: list | int | float = None,
-            gradients: list | float = None,
-            mannings: list | float = None,
-            streambed_k: list | int | float = None,
-            streambed_thickness: list | int | float = None,
-            upstream_fraction: list | int | float = None,
+            diversion_perioddata: dict = None,
+            widths: list | int | float = 10,
+            gradients: list | float = 0.001,
+            mannings: list | float = 0.03,
+            streambed_k: list | int | float = 1,
+            streambed_thickness: list | int | float = 1,
             stream_end_conn: dict = None,
-            diversions: dict = None,
+            div_prioritization='FRACTION',
             mover: bool = False,
             add_sfr=True
     ):
@@ -38,23 +42,21 @@ class SFR:
         :param vor: voronoi grid file, should be class Vor
         :param stream_paths:
         :param reverse_streams:
-        :param stream_idx: arbitary index for the stream
         :param inflows: dict where keys are all stress periods and each value is a list of tuples with len 2. Each tuple = (reach id, inflow)
         :param widths: list of reach widths for the stream. List length must be equal to the number of reaches. Or may provide single value (int or float) for all reaches
         :param gradients: list of reach gradients. List length must be equal to the number of reaches or may provide single float to apply to all reaches
         :param mannings: list of reach manning's coefficients, or a float to apply to all reaches
         :param streambed_k:
         :param streambed_thickness:
-        :param upstream_fraction:
         :param stream_end_conn: dict of sfr connections. Keys are stream indexes with an end point connection, values
         are tuples of length three. First tuple values are the stream indexes that connect to that end point. Second
         tuple values indicate which end of the key stream connects to the value stream, +1 for the start of the stream,
         -1 for the end of the stream. Thirds tuple values indicates whether the stream end upstream or downstream of
         the connecting stream, +1 for downstream and -1 for upstream, e.g. {0: (1, -1, 1)} means the 'end' end of
         stream 0 connects to and is downstream of stream 1.
-        :param diversions: dict of sfr diversions. Keys are start reaches, values are target reaches, e.g., {3: 10} diverts from reach 3 to reach 10)
         :param mover: boolean value to indicate that this SFR package can be used with the water mover (MVR) package
-        :param add_sfr:
+        :param div_prioritization: Defines how the diversion splits water, defaults to 'FRACTION'.
+        :param add_sfr: boolean. True adds sfr package to model on sfr class init.
         """
         print('initing sfr')
 
@@ -65,8 +67,12 @@ class SFR:
         self.stream_paths = stream_paths
         self.reverse_streams = reverse_streams if reverse_streams else [False] * len(stream_paths)
         self._stream_cells = None
+        self._stream_reaches = None
         self._stream_polys = None
-        self._sfr_connection_data = None
+        self._ncon = None
+        self._connectiondata = None
+        self._div_prioritization = None
+        self._diversion_perioddata = None
         self._sfr_period_data = None
         self._reach_lens = None
         self.sfr = None
@@ -80,6 +86,7 @@ class SFR:
         self._mapped_diversions = None
         self.mover = mover
         self._rno_to_cell_dict = None
+        self._diversions = None
 
         self.inflows = inflows
         self.widths = widths
@@ -87,13 +94,11 @@ class SFR:
         self.mannings = mannings
         self.rhk = streambed_k
         self.rbth = streambed_thickness
-        self.ustrf = upstream_fraction
         self.stream_endpoint_connections = stream_end_conn
-        self.diversions = diversions
+        self.div_prioritization = div_prioritization
+        self.diversion_perioddata = diversion_perioddata
 
         if add_sfr:
-            print('Processing streams')
-            self.process_streams()
             print('Adding SFR package')
             self.add_sfr()
 
@@ -121,6 +126,19 @@ class SFR:
         return self._stream_cells
 
     @property
+    def stream_reaches(self):
+        """return a nested list of stream reach indices, one list per stream"""
+        if self._stream_reaches is None:
+            stream_reaches = []
+            for riv in self.stream_cells:
+                cell_to_rno = pd.DataFrame.from_dict(self.cell_to_rno_dict, orient='index')
+                riv_rno = cell_to_rno.loc[riv][0].to_list()
+                riv_rno = [i + 1 for i in riv_rno]
+                stream_reaches.append(riv_rno)
+            self._stream_reaches = stream_reaches
+        return self._stream_reaches
+
+    @property
     def stream_polys(self):
         """list of stream voronoi polygons for each stream"""
         if self._stream_polys is None:
@@ -135,7 +153,7 @@ class SFR:
         if self._rno_to_cell_dict is None:
             rno_dict = {}
             rno = 0
-            for s in sfr.stream_cells:
+            for s in self.stream_cells:
                 for cell in s:
                     rno_dict[rno] = cell
                     rno += 1
@@ -213,10 +231,35 @@ class SFR:
         return self._mapped_diversions
 
     @property
+    def div_prioritization(self):
+        return self._div_prioritization
+
+    @div_prioritization.setter
+    def div_prioritization(self, prior: str):
+        allowed_proirs = ['FRACTION', 'EXCESS', 'THRESHOLD', 'UPTO']
+        assert prior in allowed_proirs, f'Diversion prioritization must be one of {allowed_proirs}'
+        self._div_prioritization = prior
+
+    @property
+    def diversions(self):
+        """gets diversions data for direct input into the SFR flopy package"""
+        if self._diversions is None:
+            diversions = []
+            for ustr_cell, dstr_cell in self.mapped_diversions.items():
+                ustr_reach = self.cell_to_rno_dict[ustr_cell]
+                dstr_reach = self.cell_to_rno_dict[dstr_cell]
+                idiv = 0  # assumes only one diversion per reach allowed
+                # TODO update to allow multiple
+                diversions.append([ustr_reach, idiv, dstr_reach, self.div_prioritization])
+                # TODO allow more than one type of diversion in package
+            self._diversions = diversions
+        return self._diversions
+
+    @property
     def connectiondata(self):
-        if self._sfr_connection_data is None:
-            self._sfr_connection_data = self.get_connection_data()
-        return self._sfr_connection_data
+        if self._connectiondata is None:
+            self.get_connection_data()
+        return self._connectiondata
 
     @property
     def inflows(self):
@@ -225,32 +268,54 @@ class SFR:
     @inflows.setter
     def inflows(self, val):
         """setter that adds 'inflow' in the middle of each tuple in the provided val."""
-        if isinstance(val, dict):
-            for per in val.keys():
-                tupls = []
-                for tup in val[per]:
-                    tupl = (tup[0], 'inflow', tup[1])
-                    tupls.append(tupl)
-                val[per] = tupls
-            assert len(val) >= self.model.nper
-        elif isinstance(val, int | float):
-            print(f'applying {val} as starting inflow to the first stream (index of 0) in all stress periods')
-            val = {per: [(0, 'inflow', val)] for per in range(self.model.nper)}
-        else:
-            raise ValueError('must provide at least one inflow to the stream. The starting inflow')
+        val = self.perioddata_validator('inflow', val)
         self._inflows = val
 
     @property
-    def period_data(self):
-        periodd = {}
+    def diversion_perioddata(self):
+        return self._diversion_perioddata
+
+    @diversion_perioddata.setter
+    def diversion_perioddata(self, val):
+        val = self.perioddata_validator('diversion', val)
+        self._diversion_perioddata = val
+
+    @property
+    def perioddata(self):
+        """builds perioddata for input to flopy sfr class"""
+        perioddata = {}
         for per in range(self.model.nper):
-            periodd[per] = []
+            perioddata[per] = []
         if self.inflows is not None:
-            for per in periodd.keys():
-                for rch_inflow in self.inflows[per]:
-                    periodd[per].append(rch_inflow)
-        self._sfr_period_data = periodd
+            for per in perioddata.keys():
+                for setting in self.inflows[per]:
+                    perioddata[per].append(setting)
+        if self.diversion_perioddata is not None:
+            for per in perioddata.keys():
+                for setting in self.diversion_perioddata[per]:
+                    perioddata[per].append(setting)
+        self._sfr_period_data = perioddata
         return self._sfr_period_data
+
+    def perioddata_validator(self, name: str, data: dict):
+
+        allowed_settings = ['STATUS', 'MANNING', 'STAGE', 'INFLOW', 'RAINFALL', 'EVAPORATION',
+                            'RUNOFF', 'DIVERSION', 'UPSTREAM_FRACTION', 'AUXILIARY']
+        if data is None:
+            return data
+        assert isinstance(data, dict), f'data must be dict type'
+        assert name.upper() in allowed_settings, f'Perioddata {name} must be one of {allowed_settings}'
+        assert all(per in data.keys() for per in list(range(self.model.nper))), 'data keys must be valid stress periods'
+        for per, settings in data.items():
+            assert isinstance(settings, list), f'setting for {name} must be a list of tuples or lists'
+            new_settings = []
+            for setting in settings:
+                assert setting[0] in list(range(self.total_nreaches)), 'first item in dict value must be a valid reach'
+                new_data = (setting[0], name.upper(), *setting[1:])
+                new_settings.append(new_data)
+            data[per] = new_settings
+        assert len(data) >= self.model.nper
+        return data
 
     def package_data_validator(
             self,
@@ -310,12 +375,20 @@ class SFR:
 
     @property
     def ndv(self):
+        """Sets number of diversions for each reach. Sets to 0 unless the reach is upstream of a diversion,
+                then ndv is 1"""
+        if self._ndv is None:
+            ndv = []
+            for s in self.stream_cells:
+                s_ndv = []
+                for cell in s:
+                    if cell in self.mapped_diversions.keys():
+                        s_ndv.append(1)  # set to 1 if the cell is upstream of a diversion
+                    else:
+                        s_ndv.append(0)
+                ndv.append(s_ndv)
+            self._ndv = ndv
         return self._ndv
-
-    @ndv.setter
-    def ndv(self, val):
-        ndv = self.package_data_validator(name='ndv', data=val)
-        self._ndv = ndv
 
     @property
     def rhk(self):
@@ -337,12 +410,26 @@ class SFR:
 
     @property
     def ustrf(self):
+        """Sets upstream flow fraction for each reach. Sets to 1.0 unless the reach is downstream of a diversion,
+        then ustrf is 0.0, and the upstream flow is set in the diversions in perioddata"""
+        if self._ustrf is None:
+            ustrf = []
+            for s in self.stream_cells:
+                s_ustrf = []
+                for cell in s:
+                    if cell in self.mapped_diversions.values():
+                        s_ustrf.append(0.0)  # set to 0.0 if the cell is downstream of a diversion
+                    else:
+                        s_ustrf.append(1.0)
+                ustrf.append(s_ustrf)
+            self._ustrf = ustrf
         return self._ustrf
 
-    @ustrf.setter
-    def ustrf(self, val):
-        usrtf = self.package_data_validator(name='ustrf', data=val)
-        self._ustrf = usrtf
+    @property
+    def ncon(self):
+        if self._ncon is None:
+            self.get_connection_data()
+        return self._ncon
 
     def get_gradient(self):
         """get reach gradients from the reach elevations and distances"""
@@ -370,13 +457,6 @@ class SFR:
         # Populate the reach data
         for stream_idx, stream_cells in enumerate(self.stream_cells):
             for cell_idx, cell in enumerate(stream_cells):
-                i = 1
-                if i == 0:
-                    nconn = 1
-                elif i == self.num_reach_cells_per_stream[stream_idx] - 1:
-                    nconn = 1
-                else:
-                    nconn = 2
                 sfr_reach_data['rno'][rno] = rno
                 sfr_reach_data['cellid'][rno] = (0, cell)
                 sfr_reach_data['rlen'][rno] = self.reach_lens[stream_idx][cell_idx]
@@ -386,13 +466,14 @@ class SFR:
                 sfr_reach_data['rbth'][rno] = self.rbth[stream_idx][cell_idx]
                 sfr_reach_data['rhk'][rno] = self.rhk[stream_idx][cell_idx]
                 sfr_reach_data['man'][rno] = self.mannings[stream_idx][cell_idx]
-                sfr_reach_data['ncon'][rno] = nconn
+                sfr_reach_data['ncon'][rno] = self.ncon[stream_idx][cell_idx]
                 sfr_reach_data['ustrf'][rno] = self.ustrf[stream_idx][cell_idx]
-                sfr_reach_data['ndv'][rno] = 0
+                sfr_reach_data['ndv'][rno] = self.ndv[stream_idx][cell_idx]
 
                 rno += 1
-        assert int(rno) == int(
-            self.total_nreaches), f'something is wrong, total number of reaches in reach data {rno} is incorrect, total_nreaches  is {self.total_nreaches}'
+        assert int(rno) == int(self.total_nreaches), \
+            (f'something is wrong, total number of reaches in reach data {rno} '
+             f'is incorrect, total_nreaches  is {self.total_nreaches}')
 
         return sfr_reach_data.tolist()
 
@@ -411,7 +492,7 @@ class SFR:
             nreaches=self.total_nreaches,
             packagedata=self.packagedata,
             connectiondata=self.connectiondata,
-            perioddata=self.period_data,
+            perioddata=self.perioddata,
             maximum_picard_iterations=1,
             maximum_iterations=1000,
             maximum_depth_change=0.01,
@@ -419,8 +500,10 @@ class SFR:
             stage_filerecord='sfr_stage.sfr',
             length_conversion=3.28081,  # since we are using feet instead of meters
             time_conversion=86_400,  # since we are using days instead of seconds
-            mover=self.mover
+            mover=self.mover,
+            diversions=self.diversions
         )
+        self.model._sfr_input = self
         return self.sfr
 
     def get_reach_lens(self):
@@ -494,8 +577,11 @@ class SFR:
         """
 
         connection_data = []
+        ncon = []  # list to store number of connections per reach for packagedata
         rno = 0  # starting reach number
+        inverse_mapped_connections = {v: k for k, v in self.mapped_connections.items()}
         for stream_idx, stream_cells in enumerate(self.stream_cells):
+            stream_ncon = []
             for cell_idx, cell in enumerate(stream_cells):
                 connections = [rno]  # Start with the reach number
                 if cell_idx > 0:  # if not the first reach
@@ -503,18 +589,26 @@ class SFR:
                 if cell_idx < self.num_reach_cells_per_stream[stream_idx] - 1:  # if not the last reach in this stream
                     connections.append(-(rno + 1))  # add downstream connection (negative index)
                 if cell in self.mapped_connections.keys():  # reach has mapped downstream connection to another stream
-                    connections.append(-self.cell_to_rno_dict[cell])  # add downstream connection (negative index)
-                if cell in self.mapped_connections.values():  # reach has mapped upstream connection to another stream
-                    connections.append(self.cell_to_rno_dict[cell])  # add upstream connection (positive index)
+                    downstream_reach = self.cell_to_rno_dict[self.mapped_connections[cell]]
+                    connections.append(-downstream_reach)  # add downstream connection (negative index)
+                if cell in inverse_mapped_connections.keys():  # reach has mapped upstream connection to another stream
+                    upstream_reach = self.cell_to_rno_dict[inverse_mapped_connections[cell]]
+                    connections.append(upstream_reach)  # add upstream connection (positive index)
 
+                stream_ncon.append(len(connections) - 1)
                 connection_data.append(connections)
                 rno += 1
+            ncon.append(stream_ncon)
+        self._ncon = ncon
+        self._connectiondata = connection_data
 
         return connection_data
 
     def show_stream(self):
-        cells = self.stream_cells
-        self.vor.show_selected_cells(cells)
+        all_cells = []
+        for one_stream in self.stream_cells:
+            all_cells = all_cells + one_stream
+        self.vor.show_selected_cells(all_cells)
 
 
 if __name__ == "__main__":
