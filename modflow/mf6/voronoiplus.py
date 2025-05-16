@@ -513,7 +513,7 @@ class VoronoiGridPlus(VoronoiGrid):
             zs = self.gdf_latlon.index.to_list()
         else:
             zs = custom_z
-        fig_mbox.add_choroplethmapbox(
+        fig_mbox.add_choroplethmap(
             geojson=self.latlon,
             featureidkey="id",
             locations=self.gdf_latlon.index.to_list(),
@@ -581,7 +581,7 @@ class VoronoiGridPlus(VoronoiGrid):
         latlonselect['cellidx'] = latlonselect.index.astype(str)
         geojsonselect = json.loads(latlonselect['geometry'].to_json())
         centroid_grid = self.grid_centroid
-        fig_sel = go.Figure(go.Choroplethmapbox(
+        fig_sel = go.Figure(go.Choroplethmap(
             geojson=geojsonselect,
             locations=latlonselect['cellidx'].to_list(),
             featureidkey='id',
@@ -591,9 +591,9 @@ class VoronoiGridPlus(VoronoiGrid):
 
         fig_sel.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            mapbox_style="carto-positron",
-            mapbox_zoom=15,
-            mapbox_center={"lat": centroid_grid.y, "lon": centroid_grid.x},
+            map_style="carto-positron",
+            map_zoom=15,
+            map_center={"lat": centroid_grid.y, "lon": centroid_grid.x},
         )
 
         return fig_sel
@@ -612,7 +612,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param predicate: options defined by GeoPandas spatial index query
         :return: Pandas Series of intersecting cells
         """
-        if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString)):
+        if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString, shp.MultiPolygon)):
             pass
 
         elif isinstance(overlapping_geometry, gpd.GeoSeries | gpd.GeoDataFrame):
@@ -693,7 +693,7 @@ class VoronoiGridPlus(VoronoiGrid):
         """Method to show selected cells of the voronoi grid.
         Just provide a list of cell indices."""
 
-        choro = self.choropleth(**kwargs).choropleth()
+        choro = self.choropleth(**kwargs).choropleth
         choro.data[0].selectedpoints = (tuple(cell_list))
 
         return go.Figure(choro).show(renderer='browser')
@@ -726,7 +726,15 @@ class VoronoiGridPlus(VoronoiGrid):
         boundary_polygon_dict = dict(zip(boundary_polygons_idx, boundary_polygons))
         return boundary_polygon_dict
 
-    def get_grid_edge(self) -> list:
+    def get_grid_edge(self, idomain: list = None, idomain_path: Path = None, include_interiors: bool = True) -> list:
+        """
+        get edge cells for the voronoi grid. If a shapefile or geopackage of the idomain
+        is provided, the returned edge cells are adjusted for the inactive cells
+        :param include_interiors: if True, will include interior holes when returning grid edge cells
+        :param idomain: provide list of idomain cells, instead of a geometry path, idomain path
+        :param idomain_path: provide to remove idomain cells from the returned grid edge cells
+        :return:  list of grid edge cells
+        """
         def is_edge(cell, idx):
             num_ja_cells = len(self.adjacent_cells_idx[idx])
             num_cell_faces = len(cell.geometry.exterior.coords) - 1
@@ -735,6 +743,28 @@ class VoronoiGridPlus(VoronoiGrid):
 
         df = self.gdf_vorPolys
         edges = list(df[df.apply(lambda x: is_edge(x, x.name), axis=1)].index)
+
+        if idomain_path:  # if idomain, determine new edge cells after removing idomain cells
+            idomain = read_shp_gpkg(idomain_path)
+            icells = self.get_vor_cells_as_series(idomain.geometry).to_list()
+        elif idomain:
+            icells = idomain
+        if idomain_path or idomain:
+            all_cells = self.gdf_vorPolys.copy()
+            not_icells = [cell for cell in all_cells.index if cell not in icells]
+            new_cells = all_cells.loc[not_icells, :]
+            new_exterior = new_cells.union_all().exterior
+            new_edge_cells = self.get_vor_cells_as_series(new_exterior)
+            if include_interiors:
+                interiors = new_cells.union_all().interiors
+                interior_cells = []
+                for interior in interiors:
+                    interior_cells.append(self.get_vor_cells_as_series(interior))
+                interior_cells.append(new_edge_cells)
+                new_edge_cells = pd.concat(interior_cells)
+            new_edge_cells = [cell for cell in new_edge_cells if cell not in icells]
+            return new_edge_cells
+
         return edges
 
     def plot3d(self, z=None) -> go.Figure:
@@ -1191,7 +1221,15 @@ class VoronoiGridPlus(VoronoiGrid):
         return grid_centroid
 
     def get_overlapping_area(self, shp_gpkg=None, cell_list=None):
-        """simple method to get the voronoi cell area of an overlapping geometry"""
+        """
+        simple method to get the voronoi cell area of an overlapping geometry. Can provide
+        a shapefile or geopackage of the geometry. Function will determine what voronoi cells
+        the geometry overlaps and then calculate the area of those voronoi cells. Alternatively,
+        if you know the cell ids, you can provide a list of cell indices.
+        :param shp_gpkg: shapefile or geopackage of geometry to check
+        :param cell_list: list of cell ids. If both shp_gpkg and cell_list are provided, shp_gpkg takes precedence
+        :return:
+        """
         if shp_gpkg is not None:
             cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
         elif cell_list is not None:
@@ -1475,10 +1513,12 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gdf_allPolys
 
-    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1):
+    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
         """
         helper to iterate through surface elevations and check for layers that are above the overlying
         layer, then adjust so they don't overlap.
+        :param which: 'bottom' or 'top'. If bottom, will adjust bottom layer to maintain min_sep. Same with top.
+        :param trigger_sep: trigger separation, if separation is less than this the layers will be adjusted
         :param df: dataframe of surface elevations at each voronoi cell, column names are the surface names
         :param min_sep: surfaces that are too high will be reduced below the overlying surface by this minimum separation
         :return: new dataframe with adjusted surface elevations
@@ -1489,7 +1529,6 @@ class VoronoiGridPlus(VoronoiGrid):
         if isinstance(df, gpd.GeoDataFrame):
             df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))
         else:
-            print(df)
             df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
         labels = list(df.columns)
         df = df.loc[:, labels]
@@ -1502,7 +1541,12 @@ class VoronoiGridPlus(VoronoiGrid):
             #  create list of cells where the elevation of this column is higher than the previous
             diff_list = list(diffs[diffs[label] >= -trigger_sep].index)
             #  adjust the cells that are too high, based on the min_sep
-            df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+            if which == 'bottom':
+                df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+            elif which == 'top':
+                df.iloc[diff_list, (i - 1)] = df.iloc[diff_list, i] + min_sep
+            else:
+                raise ValueError(f'which arg {which} is not valid. Must be "top" or "bottom"')
 
         return df
 

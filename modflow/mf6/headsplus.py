@@ -11,6 +11,7 @@ from pathlib import Path
 import geopandas as gpd
 from . import mf2Dplots
 import figs
+from simple_modflow.modflow.utils.datatypes.datalists import convert_nested_to_int
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 crs_latlon = "EPSG:4326"
@@ -49,7 +50,7 @@ class HeadsPlus(bf.HeadFile):
             raise ValueError("model must be an instance of SimulationBase")
 
         self.hds = bf.HeadFile(filename=self.hds_path)
-        self.kstpkper = self.get_kstpkper()
+        self.kstpkper = convert_nested_to_int(self.get_kstpkper())
         self.vor = self.model.vor if vor is None else vor
         self.obs_heads_df = None
         self._all_heads = None
@@ -353,7 +354,7 @@ class HeadsPlus(bf.HeadFile):
 
         custom_data, hover_template = figs.create_hover(hover_dict)
 
-        fig_mbox.add_choroplethmapbox(
+        fig_mbox.add_choroplethmap(
             geojson=vor.latslons,
             featureidkey="id",
             locations=vor.gdf_latlon.index.to_list(),
@@ -366,7 +367,7 @@ class HeadsPlus(bf.HeadFile):
         )
         if obs:
             obs = gpd.read_file(obs).to_crs(crs_latlon)
-            fig_mbox.add_scattermapbox(
+            fig_mbox.add_scattermap(
                 lat=obs.geometry.y,
                 lon=obs.geometry.x,
                 text=obs[obs_name],

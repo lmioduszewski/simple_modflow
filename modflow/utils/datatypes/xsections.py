@@ -14,6 +14,8 @@ import figs as f
 import plotly.graph_objs as go
 import numpy as np
 from shapely import line_locate_point
+from simple_modflow.modflow.utils.animations import Animation
+import shapely as shp
 
 
 class XSection:
@@ -21,6 +23,7 @@ class XSection:
     def __init__(
             self,
             model: SimulationBase = None,
+            per: int = None,
             kstpkper: tuple = None,
             layer: int = 0,
             cells: int | list[int] = None,
@@ -30,7 +33,11 @@ class XSection:
             extrapolate_beyond_section_ends: bool = False,
             surf_type: str = 'hds',
             interpolate: bool = False,
-            use_rbf: bool = False,
+            use_rbf: bool = True,
+            interpolator: str = None,
+            section_name: str = None,
+            clip: shp.Polygon = None,
+            **kwargs
     ):
         """
         Use to plot a cross-section of heads through a model. Can be used to create an animation
@@ -51,6 +58,8 @@ class XSection:
                 XSection(model, cells=[1653, 651, 1241], kstpkper=(9, 50)).show()
 
         :param model: model (SimulationBase object) instance
+        :param section_name: name of section to show on figure (optional), will default to model name
+        :param per: stress period number, O-based index; will take presedence over kstpkper if provided
         :param kstpkper: defaults to the first model stress period if not provided
         :param layer: defaults to 0
         :param cells: defines cross-section location. Can provide any number of cells
@@ -58,13 +67,19 @@ class XSection:
         the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
         :param spacing: x distance between points on the plot
         :param num_points: number of points in the cross-section plot
-        :param extrapolate_beyond_section_ends:
+        :param extrapolate_beyond_section_ends: not implemented
         :param surf_type: can be hds (default) or lyr (for model layers)
+        :param interpolate: whether to interpolate the cross-section
+        :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
+        :param clip: shapely Polygon object to clip the cross-section to
+        :param interpolator: define interpolation method. See InterpolatedSurface class for options.
+        :param kwargs: additional keyword arguments to pass to InterpolatedSurface class
 
         """
         self._model = model
         self._vor = None
-        self._kstpkper = kstpkper
+        self._kstpkper = self.model.kstpkper[per] if per is not None else kstpkper
+        self.interpolator = interpolator
         self._layer = layer
         self._cells = cells
         self._x_or_y = x_or_y
@@ -77,9 +92,12 @@ class XSection:
         self._x_min_max = None
         self._y_min_max = None
         self.surf_type = surf_type
-        self.interpolate = interpolate
+        self.interpolate = True if self.interpolator is not None else interpolate
         self.use_rbf = use_rbf
         self._all_heads = None
+        self.section_name = model.name if section_name is None else section_name
+        self._clip = clip
+        self._kwargs = kwargs
 
     @property
     def model(self):
@@ -218,7 +236,6 @@ class XSection:
         """Get points for cross-section from self.xsect_linestring based on number of points"""
 
         if self._points is None:
-
             linestring = self.xsect_linestring
             length = linestring.length
             spacing = length / (self.num_points - 1)
@@ -238,7 +255,10 @@ class XSection:
             layer=self.layer,
             kstpkper=self.kstpkper,
             surf_type=self.surf_type,
-            use_rbf=self.use_rbf
+            use_rbf=self.use_rbf,
+            clip=self._clip,
+            interpolator=self.interpolator,
+            **self._kwargs
         )
         memfile = interp.memfile
 
@@ -269,13 +289,14 @@ class XSection:
 
             # return distance along xsection line for each cell centroid and head of each cell
             return xs.values, [y[0] for y in ys.values]
+        else:
+            return None
 
     @property
     def xs_as_length(self):
         """gets xs for cross-section as length along self.xsect_linestring"""
 
         if self._xs_as_length is None:
-
             length = self.xsect_linestring.length
             x_start = 0
             xs = np.linspace(x_start, length, self.num_points)
@@ -292,13 +313,10 @@ class XSection:
         points, elevations = self.xsect
 
         if self.interpolate is True:
-            fig.add_scatter(
-                x=self.xs_as_length,
-                y=elevations,
-            )
+            fig.add_scatter(x=self.xs_as_length, y=elevations, name=self.section_name)
 
         elif self.interpolate is False:
-            fig.add_scatter(x=points, y=elevations)
+            fig.add_scatter(x=points, y=elevations, name=self.section_name)
 
         return fig
 
@@ -309,6 +327,10 @@ class XSection:
         frames = []
         y_max = 0
         y_min = 1_000_000
+
+        print(f'reading {self.model.name} data...', end='\n')
+        if self.interpolator:
+            print(f'using {self.interpolator} interpolation method')
 
         for per in self.model.kstpkper:
 
@@ -337,6 +359,8 @@ class XSection:
 
             frames.append(frame)
 
+        print(f'\ndone reading model {self.model.name}', end='\n')
+
         y_max = y_max + ((y_max - y_min) * 0.05)  # add a buffer of 5% of the total y-span to y max
 
         for frame in frames:
@@ -357,55 +381,137 @@ class XSection:
             yaxis={
                 'range': [y_min, y_max]
             },
-            updatemenus=[{
-                'type': 'buttons',
-                'buttons': [
-                    {'args': [None, {'frame': {'duration': 125, 'redraw': False},
-                                     'transition': {'duration': 0, 'easing': 'quad-in'},
-                                     'fromcurrent': True,
-                                     'mode': 'afterall'}],
-                     'label': 'Play',
-                     'method': 'animate'},
-                    {'args': [[None], {'mode': 'immediate',
-                                       'frame': {'duration': 0, 'redraw': False}
-                                       }],
-                     'label': 'Pause',
-                     'method': 'animate'}
-                ]
-            }])
-
+            updatemenus=Animation(self.model).updatemenus)
         fig.update_layout(
-            sliders=[{
-                'active': 0,
-                'yanchor': 'top',
-                'xanchor': 'left',
-                'currentvalue': {
-                    'font': {'size': 20},
-                    'prefix': 'Frame:',
-                    'visible': True,
-                    'xanchor': 'right'
-                },
-                'transition': {'duration': 0,
-                               'easing': 'linear'},
-                'pad': {'b': 10, 't': 50},
-                'len': 0.9,
-                'x': 0.1,
-                'y': 0,
-                'steps': [{
-                    'args': [[f'{per}'],
-                             {'frame': {'duration': 100, 'redraw': False},
-                              'mode': 'immediate',
-                              'transition': {
-                                  'duration': 0,
-                                  'easing': 'linear'
-                              }}],
-                    'label': f'{per}',
-                    'method': 'animate'} for per in self.model.kstpkper]}
-            ]
+            sliders=Animation(self.model).sliders
         )
-
         return fig
 
     def show(self):
         """shows the figure"""
         self.fig.show()
+
+
+class MultiModelXSection:
+
+    def __init__(
+            self,
+            models: list[SimulationBase],
+            section_names: list[str] = None,
+            cells: int | list[int] = None,
+            per: int = None,
+            kstpkper: tuple = None,
+            layer: int = 0,
+            x_or_y: str = 'x',
+            spacing: int = 10,
+            num_points: int = 100,
+            extrapolate_beyond_section_ends: bool = False,
+            surf_type: str = 'hds',
+            interpolate: bool = False,
+            interpolator: str = None,
+            use_rbf: bool = True,
+            clip: shp.Polygon = None,
+            **kwargs
+    ):
+        """
+        set up a list of XSection objects, one for each model provided in 'models' arg. For each model, the
+        remaining args will be applied in creating a list of XSection objects. Can then show the animation figure
+        using .show() method.
+        :param models: list of SimulationBase objects for which to create XSection objects. Should have the same
+        model grid or there will be errors or will return erroneous results.
+        :param section_names: list of section names to show on figure (optional), will default to model names
+        :param cells: defines cross-section location. Can provide any number of cells
+        :param per: stress period number, O-based index; will take presedence over kstpkper if provided
+        :param kstpkper: defaults to the first model stress period if not provided
+        :param layer: defaults to 0
+        :param x_or_y: only used if one cell is given, defines whether
+        the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
+        :param spacing: x distance between points on the plot
+        :param num_points: number of points in the cross-section plot
+        :param extrapolate_beyond_section_ends: not yet implemented
+        :param surf_type: can be hds (default) or lyr (for model layers)
+        :param interpolate: if True, interpolate between cells along cross section line
+        :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
+        :param interpolator: define interpolation method. See InterpolatedSurface class for options.
+
+        Example usage: MultiModelXSection(models=[model7a, model7b, model7c], cells=[23444, 15525, 16264]).show()
+        """
+
+        self.xsect_class_objs = []
+        if section_names is not None:
+            assert (isinstance(section_names, list)), 'section_names must be a list'
+            assert (len(section_names) == len(models)), 'section_names must have same length as models'
+            section_names = [str(name) for name in section_names]
+        else:
+            section_names = [model.name for model in models]
+        for i, model in enumerate(models):
+            self.xsect_class_objs.append(
+                XSection(
+                    model=model,
+                    section_name=section_names[i],
+                    cells=cells,
+                    per=per,
+                    kstpkper=kstpkper,
+                    layer=layer,
+                    x_or_y=x_or_y,
+                    spacing=spacing,
+                    num_points=num_points,
+                    extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
+                    surf_type=surf_type,
+                    interpolate=interpolate,
+                    interpolator=interpolator,
+                    use_rbf=use_rbf,
+                    clip=clip,
+                    **kwargs
+                )
+            )
+
+        self._anis = None
+
+    @property
+    def anis(self):
+        """get a list of animation figures for each XSection object"""
+
+        if self._anis is None:
+            anis = [xsect_obj.ani for xsect_obj in self.xsect_class_objs]
+        self._anis = anis
+
+        return self._anis
+
+    @property
+    def fig(self):
+        """create and show the animation figure, including all models provided to MultiModelXSection class"""
+
+        anis = self.anis
+        animation_fig = anis[0]
+
+        if len(anis) == 1:
+            return animation_fig
+        else:
+            print(f'\n{len(anis)} models for xsection animation')
+            for ani in anis[1:]:
+                animation_fig.add_traces(ani.data)
+                for i, frame in enumerate(animation_fig.frames):
+                    frame.data += tuple(ani.frames[i].data)
+
+            return animation_fig
+
+    def show(self):
+        self.fig.show()
+
+
+if __name__ == '__main__':
+    import pickle
+    from pathlib import Path
+
+    model_path_v7b_et = Path(r"C:\Users\lukem\mf6\cum7bET\cum7bET.model")
+    with open(model_path_v7b_et, 'rb') as file:
+        model7b: SimulationBase = pickle.load(file)
+
+    fig = XSection(
+        model=model7b,
+        cells=[16264, 15525, 23444],
+        section_name='dev',
+        interpolator='cloughTocher2D',
+        resolution=300
+    ).ani.show()

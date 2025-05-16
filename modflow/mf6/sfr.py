@@ -208,20 +208,21 @@ class SFR:
         if self._mapped_connections is None:
             mapped_connections = {}
             mapped_diversions = {}
-            for stream_idx, stream_conn in self.stream_endpoint_connections.items():
-                which_end = 0 if stream_conn[1] == 1 else -1
-                end_poly = self.stream_polys[stream_idx].iloc[which_end]
-                end_cell = self.stream_cells[stream_idx][which_end]
-                # find distances from end poly to all connecting stream polys, and then find minimum distance
-                distances = self.stream_polys[stream_conn[0]].apply(lambda x: x.distance(end_poly))
-                closest_cell = distances.sort_values().index[0]
-                upstream_reach = end_cell if stream_conn[2] == -1 else closest_cell
-                downstream_reach = end_cell if stream_conn[2] == 1 else closest_cell
-                mapped_connections[upstream_reach] = downstream_reach
-                if downstream_reach == end_cell:
-                    mapped_diversions[upstream_reach] = downstream_reach
-            self._mapped_connections = mapped_connections
-            self._mapped_diversions = mapped_diversions
+            if self.stream_endpoint_connections is not None:
+                for stream_idx, stream_conn in self.stream_endpoint_connections.items():
+                    which_end = 0 if stream_conn[1] == 1 else -1
+                    end_poly = self.stream_polys[stream_idx].iloc[which_end]
+                    end_cell = self.stream_cells[stream_idx][which_end]
+                    # find distances from end poly to all connecting stream polys, and then find minimum distance
+                    distances = self.stream_polys[stream_conn[0]].apply(lambda x: x.distance(end_poly))
+                    closest_cell = distances.sort_values().index[0]
+                    upstream_reach = end_cell if stream_conn[2] == -1 else closest_cell
+                    downstream_reach = end_cell if stream_conn[2] == 1 else closest_cell
+                    mapped_connections[upstream_reach] = downstream_reach
+                    if downstream_reach == end_cell:
+                        mapped_diversions[upstream_reach] = downstream_reach
+                self._mapped_connections = mapped_connections
+                self._mapped_diversions = mapped_diversions
         return self._mapped_connections
 
     @property
@@ -244,6 +245,8 @@ class SFR:
     def diversions(self):
         """gets diversions data for direct input into the SFR flopy package"""
         if self._diversions is None:
+            if self.mapped_diversions is None:
+                return None
             diversions = []
             for ustr_cell, dstr_cell in self.mapped_diversions.items():
                 ustr_reach = self.cell_to_rno_dict[ustr_cell]
@@ -377,13 +380,18 @@ class SFR:
     def ndv(self):
         """Sets number of diversions for each reach. Sets to 0 unless the reach is upstream of a diversion,
                 then ndv is 1"""
+        if self.mapped_diversions is None:
+            return None
         if self._ndv is None:
             ndv = []
             for s in self.stream_cells:
                 s_ndv = []
                 for cell in s:
-                    if cell in self.mapped_diversions.keys():
-                        s_ndv.append(1)  # set to 1 if the cell is upstream of a diversion
+                    if self.mapped_diversions is not None:
+                        if cell in self.mapped_diversions.keys():
+                            s_ndv.append(1)  # set to 1 if the cell is upstream of a diversion
+                        else:
+                            s_ndv.append(0)
                     else:
                         s_ndv.append(0)
                 ndv.append(s_ndv)
@@ -412,13 +420,18 @@ class SFR:
     def ustrf(self):
         """Sets upstream flow fraction for each reach. Sets to 1.0 unless the reach is downstream of a diversion,
         then ustrf is 0.0, and the upstream flow is set in the diversions in perioddata"""
+        if self.mapped_diversions is None:
+            return None
         if self._ustrf is None:
             ustrf = []
             for s in self.stream_cells:
                 s_ustrf = []
                 for cell in s:
-                    if cell in self.mapped_diversions.values():
-                        s_ustrf.append(0.0)  # set to 0.0 if the cell is downstream of a diversion
+                    if self.mapped_connections is not None:
+                        if cell in self.mapped_diversions.values():
+                            s_ustrf.append(0.0)  # set to 0.0 if the cell is downstream of a diversion
+                        else:
+                            s_ustrf.append(1.0)
                     else:
                         s_ustrf.append(1.0)
                 ustrf.append(s_ustrf)
@@ -467,8 +480,9 @@ class SFR:
                 sfr_reach_data['rhk'][rno] = self.rhk[stream_idx][cell_idx]
                 sfr_reach_data['man'][rno] = self.mannings[stream_idx][cell_idx]
                 sfr_reach_data['ncon'][rno] = self.ncon[stream_idx][cell_idx]
-                sfr_reach_data['ustrf'][rno] = self.ustrf[stream_idx][cell_idx]
-                sfr_reach_data['ndv'][rno] = self.ndv[stream_idx][cell_idx]
+                sfr_reach_data['ustrf'][rno] = self.ustrf[stream_idx][cell_idx] if self.ustrf is not None else 1
+                if self.ndv is not None:
+                    sfr_reach_data['ndv'][rno] = self.ndv[stream_idx][cell_idx]
 
                 rno += 1
         assert int(rno) == int(self.total_nreaches), \
@@ -579,7 +593,10 @@ class SFR:
         connection_data = []
         ncon = []  # list to store number of connections per reach for packagedata
         rno = 0  # starting reach number
-        inverse_mapped_connections = {v: k for k, v in self.mapped_connections.items()}
+        if self.mapped_connections is not None:
+            inverse_mapped_connections = {v: k for k, v in self.mapped_connections.items()}
+        else:
+            inverse_mapped_connections = {}
         for stream_idx, stream_cells in enumerate(self.stream_cells):
             stream_ncon = []
             for cell_idx, cell in enumerate(stream_cells):
@@ -588,9 +605,10 @@ class SFR:
                     connections.append(rno - 1)  # add upstream connection (positive index)
                 if cell_idx < self.num_reach_cells_per_stream[stream_idx] - 1:  # if not the last reach in this stream
                     connections.append(-(rno + 1))  # add downstream connection (negative index)
-                if cell in self.mapped_connections.keys():  # reach has mapped downstream connection to another stream
-                    downstream_reach = self.cell_to_rno_dict[self.mapped_connections[cell]]
-                    connections.append(-downstream_reach)  # add downstream connection (negative index)
+                if self.mapped_connections is not None:
+                    if cell in self.mapped_connections.keys():  # reach has mapped downstream connection to another stream
+                        downstream_reach = self.cell_to_rno_dict[self.mapped_connections[cell]]
+                        connections.append(-downstream_reach)  # add downstream connection (negative index)
                 if cell in inverse_mapped_connections.keys():  # reach has mapped upstream connection to another stream
                     upstream_reach = self.cell_to_rno_dict[inverse_mapped_connections[cell]]
                     connections.append(upstream_reach)  # add upstream connection (positive index)

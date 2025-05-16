@@ -259,23 +259,15 @@ class SurfaceInterpFromShp:
 
 
 if __name__ == '__main__':
-    deep_lake_cont = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep lake bathymetry.gpkg").as_posix()
-    hyde_lake_cont = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde lake bathymetry wag.gpkg").as_posix()
-    botm_aq = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\bottom_of_aq_FINAL.gpkg").as_posix()
-    region_raster = (Path(
-        r"C:\Users\lukem\mf6\Cumberland general\Surfaces\lidar_top_of_model.tif")
-                     .as_posix())
-    deep_lake_path = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep lake.gpkg").as_posix()
-    hyde_lake_path = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde lake.gpkg").as_posix()
-    hyde_buffer = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\hyde_lake_buffer.gpkg").as_posix()
-    deep_buffer = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\deep_lake_buffer.gpkg").as_posix()
+
+    botm_aq = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\bottom_of_aq_FINAL_v5.gpkg").as_posix()
+    region_raster = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\lidar_top_of_model_v3.tif").as_posix()
     interp = SurfaceInterpFromShp(
         shp_gpkg_path=botm_aq,
-        region_dimensions_raster= region_raster,
-        # region_vector=deep_buffer,
+        region_dimensions_raster=region_raster,
         shp_attribute_for_z='Elev',
         output_resolution=20,
-        surf_out='botm_aq_Cumb.tif',
+        surf_out='botm_aq_Cumb_v5.tif',
         epsg='2926'
     )
     interp.write_surf()

@@ -12,6 +12,7 @@ import numpy as np
 # from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import geopandas as gpd
 import shapely as shp
+from simple_modflow import read_shp_gpkg
 
 idxx = pd.IndexSlice
 # Conversion factors
@@ -39,8 +40,8 @@ class Boundaries:
             uid: str = None,
             crs: int = None,
             bound_type: str = None,
-            idomain: list[int] | pd.Series = None
-
+            idomain: list[int] | pd.Series = None,
+            idomain_path: Path = None,
     ):
         """
         Base class for boundary conditions. Shouldn't need to instantiate. Instead use the boundary condition
@@ -52,6 +53,7 @@ class Boundaries:
         :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param bound_type: arbitary identifier for this boundary type
         :param idomain: list of integers (1 or 0), one for each cell in the grid. If 0, that cell index is inactive
+        :param idomain_path: path to shapefile or gpkg that holds the polygons for idomain
         """
 
         self.model = model
@@ -70,6 +72,8 @@ class Boundaries:
             if self.uid is not None:
                 self.gdf = self.gdf.set_index(self.uid)
             self.gdf.to_crs(inplace=True, epsg=crs)
+        else:
+            self.gdf: gpd.GeoDataFrame = None
         self._intersections = None
         self._edge_intersections = None
         self._intersections_no_duplicates = None
@@ -78,11 +82,16 @@ class Boundaries:
         self._sorted_cells_along_line = None
         self._inactive_cells = None
         self.idomain = idomain
+        self.idomain_path = idomain_path
+        self._boundary_dict = None
+        self.limit_to_k33 = True
+        self.limit_to_k33_by = 0.1
+        self.verbose = False
 
     @property
     def inactive_cells(self):
         if self._inactive_cells is None:
-            if self.idomain is None:
+            if self.idomain is None and self.idomain_path is None:
                 return None
             elif self.idomain is not None and self.vor is not None:
                 assert len(self.idomain) == self.vor.ncpl, 'idomain length must be equal to num cells in vor grid'
@@ -91,6 +100,10 @@ class Boundaries:
                 assert isinstance(self.idomain,pd.Series), 'error: could not make idomain a pd.Series'
                 inactive_cells = self.idomain[self.idomain == 0].index.tolist()
                 self._inactive_cells = inactive_cells
+            elif self.idomain_path is not None and self.vor is not None:
+                idomain = read_shp_gpkg(self.idomain_path)
+                icells = self.vor.get_vor_cells_as_series(idomain.geometry).to_list()
+                self._inactive_cells = icells
             else:
                 print('no active grid object provided. Cannot determine inactive cells')
         return self._inactive_cells
@@ -112,7 +125,12 @@ class Boundaries:
         """gets a DataFrame with unique ids (uid) for each shapefile polygon and the associated
         intersecting voronoi grid cells, but then filters for only those on a grid edge"""
         if self._edge_intersections is None:
-            edge_cells = self.vor.get_grid_edge()
+            if self.idomain_path is not None:
+                edge_cells = self.vor.get_grid_edge(idomain_path=self.idomain_path)
+            elif self.idomain is not None:
+                edge_cells = self.vor.get_grid_edge(idomain=self.inactive_cells)
+            else:
+                edge_cells = self.vor.get_grid_edge()
             intersections = self.intersections
             filtered = intersections.apply(lambda x: [cell for cell in x if cell in edge_cells])
             self._edge_intersections = filtered
@@ -213,8 +231,9 @@ class Boundaries:
         :return: recharge dictionary of stress period data to pass to flopy
         """
         rch_dict = {}
+        k33 = self.model.gwf.npf.k.data[0]
         nper = nper if self.nper is None else self.nper
-        assert nper == len(list(zone_rch_dict.values())[0]), "nper and length of rch dict must match"
+        # assert nper == len(list(zone_rch_dict.values())[0]), "nper and length of rch dict must match"
         for per in range(nper):
             if per + shift >= nper:
                 continue
@@ -228,7 +247,16 @@ class Boundaries:
                 recharge = zone_rch_dict[name][per]
                 for cell in cell_nums:
                     cell_id = cell if grid_type == 'disu' else (0, cell)
-                    cell_list.append([cell_id, recharge])
+                    if self.limit_to_k33 and k33[cell] < recharge:
+                        limited_recharge = k33[cell] * self.limit_to_k33_by
+                        if self.verbose:
+                            print(
+                                f'cell {cell_id} has k33 {k33[cell]}, which is less than given recharge {recharge}.'
+                                f' Changing recharge to {k33[cell] * self.limit_to_k33_by}'
+                            )
+                        cell_list.append([cell_id, limited_recharge])
+                    else:
+                        cell_list.append([cell_id, recharge])
             if background_rch is not None:
                 back_cells = [cell for cell in list(range(self.vor.ncpl)) if cell not in self.inactive_cells]
                 for cell in back_cells:
@@ -367,3 +395,8 @@ class Boundaries:
             return k_array
         else:
             return k_df
+
+    @property
+    def boundary_dict(self):
+        return self._boundary_dict
+

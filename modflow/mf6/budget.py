@@ -65,10 +65,11 @@ class Budget:
         if self._df is None:
 
             buds = self.budget
+            kstpkper_all = self.model.kstpkper
             dfs = []
-            assert len(buds) == self.model.nper, 'number of budgets does not match number of periods'
+            # assert len(buds) == self.model.nper, 'number of budgets does not match number of periods'
             for per, bud in enumerate(buds):
-                kstpkper = self.model.kstpkper[per]
+                kstpkper = kstpkper_all[per]
                 df = pd.DataFrame(bud)
                 df['kstpkper'] = [kstpkper for _ in range(len(df))]
                 dfs.append(df)
@@ -117,6 +118,7 @@ class LakBudget:
                     df['kstpkper'] = [per for _ in range(len(df))]
                     bud[idx] = df
                 return pd.concat(bud)
+
 
 class LakStage:
     """class to work with lak stage output data"""
@@ -172,9 +174,22 @@ class SFRBudget:
                     bud[idx] = df
                 return pd.concat(bud)
 
-    def plot_flows(self, kstpkper: tuple = None, cfd_to_cfs: bool = False, cfd_to_gpm: bool = False):
-        """plot flows for all streams in given stress period. Can convert to cfs or gpm using boolean arguments.
-        Defaults to first stress period if none is specified."""
+    def plot_flows(
+            self,
+            kstpkper: tuple = None,
+            cfd_to_cfs: bool = False,
+            cfd_to_gpm: bool = False,
+            html: str = None
+    ):
+        """
+        plot flows for all streams in given stress period. Can convert to cfs or gpm using boolean arguments.
+        Defaults to first stress period if none is specified.
+        :param kstpkper: stress period and timestep to plot
+        :param cfd_to_cfs: convert to cfs
+        :param cfd_to_gpm: convert to gpm
+        :param html: if you want to save to html, provide html name
+        :return:
+        """
         if kstpkper is None:
             kstpkper = [self.model.kstpkper[0]]
         gpm = 448.8 if cfd_to_gpm else 1
@@ -192,6 +207,8 @@ class SFRBudget:
         for i, flows in enumerate(stream_flows):
             flows = flows.reset_index().drop('kstpkper', axis=1)
             fig.add_scattergl(x=flows.node, y=flows.q, name=f'stream {i}')
+        if html is not None:
+            fig.write_html(file=html)
         fig.show()
 
 
@@ -211,7 +228,24 @@ class SFRStage:
         return stg_data
 
 
-class DRNBudget():
+class DRNBudget:
 
-    def __init__(self):
-        pass
+    def __init__(self, model: SimulationBase = None):
+        self.model = model
+
+    def plot_choro(self, per: int = 0, zmax=None):
+
+        model = self.model
+        kstpkper = model.kstpkper[per]
+        drn_df = model.bud('drn').df
+        drn_flows = drn_df.loc[idxx[:, kstpkper], :].q.droplevel(1) * -1
+        if zmax is None:
+            zmax = drn_flows.max()
+        node = drn_flows.reset_index().drop_duplicates('node')
+        node['node'] = node['node'] - 1
+        node.set_index('node', inplace=True)
+        full_idx = range(model.vor.ncpl)
+        # Set index to include all cells, and fill empty values with zero
+        drn_flows = node.reindex(full_idx, fill_value=0)
+        model.choro(per=per, custom_zs=drn_flows.q.to_list(), zmin=0, zmax=zmax).plot()
+

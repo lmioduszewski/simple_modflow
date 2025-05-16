@@ -19,6 +19,7 @@ from rasterio.mask import mask
 from pandas import IndexSlice as idxx
 from shapely.geometry import mapping
 from simple_modflow.modflow.mf6.headsplus import HeadsPlus as Hp
+import shapely as shp
 
 
 class InterpolatedSurface:
@@ -32,10 +33,13 @@ class InterpolatedSurface:
             hds: Hp = None,
             model: SimulationBase = None,
             layer: int = 0,
+            per: int = None,
             kstpkper: tuple = None,
             resolution: int = 1000,
-            use_rbf: bool = False,
-            surf_type: str = 'hds'
+            use_rbf: bool = True,
+            surf_type: str = 'hds',
+            clip: shp.Polygon = None,
+            interpolator: str = None
     ):
         """
         Base class for interpolated surfaces.
@@ -46,13 +50,18 @@ class InterpolatedSurface:
         :param hds: Optional, HeadsPlus object corresponding to model, will get from model if not provided
         :param model: mf6 SimulationBase model
         :param layer: defaults to 0
+        :param per: stress period number, O-based index; will take precedence over kstpkper if provided
         :param kstpkper: tuple of time step and period for surface
         :param resolution: defaults to 1000
-        :param use_rbf: defaults to False
+        :param use_rbf: defaults to True
         :param surf_type: defaults to 'hds', can be 'lyr' or 'hds'. 'lyr' returns just model surfaces
+        :param clip: optional shapely Polygon to clip interpolated surface to
         """
         self.model = model
         self.vor = self.model.vor if vor is None else vor
+        self._interpolators = ['griddata', 'rbf', 'linearND', 'cloughTocher2D']
+        self._interpolator = None
+        self.interpolator = interpolator
         self.surf_type = surf_type
         self._xs = xs
         self._ys = ys
@@ -61,37 +70,87 @@ class InterpolatedSurface:
         self.use_rbf = use_rbf
         self._griddata_interp = None
         self._rbf_interp = None
+        self._linearND_interp = None
+        self._cloughTocher2D_interp = None
         self._meshgrid = None
+        self._kstpkper = None
         self._hds = hds
-        self.kstpkper = kstpkper
+        if per is not None:
+            self.kstpkper = self.model.kstpkper[per]
+        else:
+            self.kstpkper = kstpkper
         self.layer = layer
         self.resolution = resolution
         self.neighbors = 10
         self.colorscale = 'Earth_r' # reverse earth so blue is low nums
+        self.clip = clip
+        self._clipped_cells = None
+
+    @property
+    def interpolator(self):
+        return self._interpolator
+
+    @interpolator.setter
+    def interpolator(self, val):
+        if val is not None:
+            if val not in self._interpolators:
+                print(f'interpolator must be one of {self._interpolators}')
+            else:
+                self._interpolator = val
+
+    @property
+    def kstpkper(self):
+        if self._kstpkper is None:
+            if self.model:
+                self._kstpkper = self.model.kstpkper[0]
+            else:
+                print('no model defined')
+                raise ValueError
+        return self._kstpkper
+
+    @kstpkper.setter
+    def kstpkper(self, val):
+        if val is not None:
+            if len(val) == 2:
+                assert isinstance(val, tuple), (
+                    'kstpkper must be a tuple of (timestep, period)'
+                )
+                self._kstpkper = val
+            else:
+                print('kstpkper must be a tuple of (timestep, period)')
 
     @property
     def xs(self):
         if self._xs is None:
-            xs = np.array(self.vor.centroids_x)
+            if self.clip:
+                self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
+                xs = pd.Series(self.vor.centroids_x).loc[self._clipped_cells].to_numpy()
+            else:
+                xs = np.array(self.vor.centroids_x)
             self._xs = xs
         return self._xs
 
     @property
     def ys(self):
         if self._ys is None:
-            ys = np.array(self.vor.centroids_y)
+            if self.clip:
+                self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
+                ys = pd.Series(self.vor.centroids_y).loc[self._clipped_cells].to_numpy()
+            else:
+                ys = np.array(self.vor.centroids_y)
             self._ys = ys
         return self._ys
 
     @property
     def zs(self):
+        cells = slice(None) if self._clipped_cells is None else self._clipped_cells
         if self.surf_type == 'hds':
             """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
-            zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, :], :].values
+            zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, cells], :].values
             zs[zs > 10_000] = np.nan # remove large zs, which would be inactive cells
             self._zs = zs
         if self.surf_type == 'lyr':
-            zs = self.vor.gdf_topbtm.loc[:, self.layer].values
+            zs = self.vor.gdf_topbtm.loc[cells, self.layer].values
             self._zs = zs
         return self._zs
 
@@ -162,6 +221,28 @@ class InterpolatedSurface:
         return self._rbf_interp
 
     @property
+    def linearND_interp(self):
+        """interpolated surface using scipy LinearNDInterpolator"""
+        if self._linearND_interp is None:
+            from scipy.interpolate import LinearNDInterpolator
+            coords = np.column_stack((self.xs, self.ys))
+            interpolator = LinearNDInterpolator(coords, self.zs)
+            grid_z = interpolator(self.xy_meshgrid).reshape(self.xy_meshgrid[0].shape)
+            self._linearND_interp = grid_z
+        return self._linearND_interp
+
+    @property
+    def cloughTocher2D_interp(self):
+        """interpolated surface using scipy CloughTocher2DInterpolator"""
+        if self._cloughTocher2D_interp is None:
+            from scipy.interpolate import CloughTocher2DInterpolator
+            coords = np.column_stack((self.xs, self.ys))
+            interpolator = CloughTocher2DInterpolator(coords, self.zs)
+            grid_z = interpolator(self.xy_meshgrid).reshape(self.xy_meshgrid[0].shape)
+            self._cloughTocher2D_interp = grid_z
+        return self._cloughTocher2D_interp
+
+    @property
     def transform(self):
         """
         Returns an affine transformation matrix for the given surface
@@ -180,10 +261,7 @@ class InterpolatedSurface:
     @property
     def memfile(self):
 
-        if self.use_rbf:
-            grid_z = self.rbf_interp
-        else:
-            grid_z = self.griddata_interp
+        grid_z = self.surface
 
         memfile = MemoryFile()
         with memfile.open(
@@ -216,6 +294,17 @@ class InterpolatedSurface:
     @property
     def surface(self):
         """returns griddata interpolation first, if that fails then return the rbf interpolation"""
+        if self.interpolator is not None:
+            if self.interpolator == 'griddata':
+                return self.griddata_interp
+            elif self.interpolator == 'rbf':
+                return self.rbf_interp
+            elif self.interpolator == 'linearND':
+                return self.linearND_interp
+            elif self.interpolator == 'cloughTocher2D':
+                return self.cloughTocher2D_interp
+            else:
+                print(f'interpolator must be one of {self._interpolators}')
         if self.use_rbf is False:
             try:
                 return self.griddata_interp
@@ -307,3 +396,18 @@ class InterpolatedSurface:
             colorscale=self.colorscale
         )
         fig.show(renderer='browser')
+
+
+if __name__ == '__main__':
+    import pickle
+    model_path_v7b_et = Path(r"C:\Users\lukem\mf6\cum7bET\cum7bET.model")
+    with open(model_path_v7b_et, 'rb') as file:
+        model7b: SimulationBase = pickle.load(file)
+
+    surf = InterpolatedSurface(
+        model=model7b,
+        per=75,
+        interpolator='linearND',
+        resolution=200
+    )
+    surf.plot(clip=True)

@@ -8,6 +8,15 @@ import pandas as pd
 from simple_modflow.modflow.utils.datatypes.choros import Choro
 
 
+class Inputs:
+    def __init__(self, model: SimulationBase):
+        self.model = model
+
+    @property
+    def rch(self):
+        return RchInput(self.model)
+
+
 class RchInput:
 
     def __init__(
@@ -16,7 +25,7 @@ class RchInput:
     ):
         self.model = model
 
-    def plot_input(
+    def plot(
             self,
             per: tuple = None,
             to_in_per_yr: bool = False
@@ -39,7 +48,6 @@ class DrnInput:
             self,
             model: SimulationBase,
     ):
-
         self.model = model
 
     def plot_input(

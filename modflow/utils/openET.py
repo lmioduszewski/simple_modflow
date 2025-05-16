@@ -135,11 +135,25 @@ class OpenETtoVor:
 
 
 if __name__ == "__main__":
-    api_key = '8n9LsycWsdg6EQ2RGgD8O3mBKQBRQNN1GBGXMK2JaMpUbMwBfCfohscxqevS'
+
+    import pickle
+    raster_dir = Path(r"C:\Users\lukem\mf6\Cumberland general\ET")
+    model_path = Path(r"C:\Users\lukem\mf6\cumb_v7b\cumb_v7b.model")
+    with open(model_path, 'rb') as file:
+        model = pickle.load(file)
+    vor = model.vor
+    et = OpenETtoVor(vor, raster_dir)
+
+    et_path = Path().home() / 'mf6' / 'et_per_cell_pits.et'
+    with open(et_path, 'wb') as file:
+        pickle.dump(et.vor_et, file)
+
+    """api_key = '8n9LsycWsdg6EQ2RGgD8O3mBKQBRQNN1GBGXMK2JaMpUbMwBfCfohscxqevS'
     date_range = ["2024-01-01", "2024-02-01"]
     geometry = [-121.973571242, 47.326251526, -121.897909136, 47.327471047,
                 -121.897390248, 47.259707461, -121.970796765, 47.257356792]
 
     r = OpenETRequest(date_range=date_range, api_key=api_key, geometry=geometry)
     # r.request()
-    print(r.dl_links())
+    print(r.dl_links())"""
+    pass

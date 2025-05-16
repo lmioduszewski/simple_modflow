@@ -17,6 +17,9 @@ from pathlib import Path
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 import geopandas as gpd
 import json
+import pandas as pd
+import plotly.graph_objs as go
+from simple_modflow.modflow.utils.animations import Animation
 
 
 class Choro:
@@ -34,11 +37,13 @@ class Choro:
             zmin: float | int = None,
             zmax: float | int = None,
             zoom: int = 13,
-            show_layer_elevs: bool = False,
+            show_layer_elevs: bool = True,
             show_mounding: bool = False,
             hover_heads: bool = True,
             hover_ks: bool = False,
-            locs: Path = None
+            locs: Path = None,
+            rch_scale: float = None,
+            bgs: bool = False
 
     ):
         """
@@ -46,19 +51,22 @@ class Choro:
         :param model:
         :param vor:
         :param kstpkper:
-        :param per:
-        :param layer:
+        :param per: can just provide stress period. appropriate kstpkper tuple will be determined, will throw an
+        error if more than one valid kstpkper in the model output exists with the provided per
+        :param layer: what layer to plot, a zero-index. 0 equals layer 1.
         :param choro_type:
         :param custom_hover:
         :param custom_zs:
         :param zmin:
         :param zmax:
         :param zoom:
-        :param show_layer_elevs:
-        :param show_mounding:
+        :param show_layer_elevs: Default is True. To show elevations of all layers on hover
+        :param show_mounding: if True, colorscale will be mounding over given Layer
         :param hover_heads:
         :param hover_ks:
-        :param locs:
+        :param locs: specify the path of a shapefile or geopackage with location points to show on choropleth
+        :param rch_scale: value to scale z-values in choropleth. For example to convert units in recharge to another L/T
+        :param bgs: if True, will take precedence, and will plot water levels in given Layer relative to top of model
         """
 
         self._vor = None
@@ -82,6 +90,9 @@ class Choro:
         self.hover_heads = hover_heads
         self.hover_ks = hover_ks
         self.locs = locs
+        self.rch_scale = rch_scale
+        self.bgs = bgs
+        self._show_mounding_above_ground = False
 
         self.fig = Fig()
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -179,25 +190,35 @@ class Choro:
                     lyr_ks = self.all_ks[lyr].tolist()
                     self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
 
+            if self.choro_type == 'rch':
+                self._hover_dict['Recharge'] = self.output_rch_zs
+
         if self.show_layer_elevs:
             layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
             if self.model is not None:
                 botms = self.model.gwf.modelgrid.botm
                 top = self.model.gwf.modelgrid.top
             else:
-                botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1,1).transpose()
-                top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1,1).transpose()[0]  # TODO why do i have to add [0]
+                botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1, 1).transpose()
+                top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1, 1).transpose()[
+                    0]  # TODO why do i have to add [0]
             layer_nums = list(range(len(botms)))
             self._hover_dict.update(
                 {f'Top of Model': np.round(top, 2)})
             self._hover_dict.update(
                 {
-                    f'Layer {lyr+1} Bottom': np.round(botm, 2) for lyr, botm in enumerate(botms)
+                    f'Layer {lyr + 1} Bottom': np.round(botm, 2) for lyr, botm in enumerate(botms)
                 }
             )
         if self.show_mounding:
+            if self.layer == -1:
+                self._show_mounding_above_ground = True
+                self.layer = 0
+            if self._show_mounding_above_ground is True:
+                layer_bottom = self.model.gwf.modelgrid.top.transpose()
+            else:
+                layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
             z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
-            layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
             zs = z_hd - layer_bottom
             # remove negative mounding values
             zs = zs.mask(zs < 0, 0)
@@ -219,6 +240,15 @@ class Choro:
                         f'{key}': self._custom_hover[key]
                     }
                 )
+        if self.bgs:
+            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+            model_top = self.model.gwf.modelgrid.top.transpose()
+            zs = z_hd - model_top
+            self._hover_dict.update(
+                {
+                    f'Layer {self.layer + 1} Below Ground': zs
+                }
+            )
 
         return self._hover_dict
 
@@ -245,23 +275,78 @@ class Choro:
 
     @property
     def zs(self):
+        """Defines the z values of the choropleth plot, which will be represented by a varying colorscale"""
         if self.custom_zs is not None:
             return self.custom_zs
+
         if self.choro_type == 'hds' and self.model is not None:
             if self.show_mounding is True:
+                # if layer is specified as -1, show mounding above ground
+                if self.layer == -1:
+                    self._show_mounding_above_ground = True
+                    self.layer = 0
+                if self._show_mounding_above_ground is True:
+                    layer_bottom = self.model.gwf.modelgrid.top.transpose()
+                else:
+                    layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
                 z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
-                layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
                 z_hd.loc[z_hd == 1e+30] = np.nan  # make modflow empty elevations NaN
                 zs = z_hd - layer_bottom
                 # remove negative mounding values
                 zs = zs.mask(zs < 0, 0)
+            elif self.bgs is True:
+                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                model_top = self.model.gwf.modelgrid.top.transpose()
+                zs = z_hd - model_top
             else:
                 zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
                 zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
+
         elif self.choro_type == 'ks' and self.model is not None:
             zs = self.all_ks[self.layer].tolist()
+
+        elif self.choro_type == 'output_rch' and self.model is not None:
+            zs = self.output_rch_zs
+
+        elif self.choro_type == 'input_rch' and self.model is not None:
+            zs = self.input_rch_zs
+
         else:
             zs = self.vor.gdf_vorPolys.index.to_list()
+
+        return zs
+
+    @property
+    def output_rch_zs(self):
+        """gets model output recharge values for the specified kstpkper"""
+        df = self.model.bud('rch').df
+        df = df[~df.index.duplicated()].reset_index()  # remove duplicates...TODO why are there duplicates sometimes
+        areas = pd.Series(self.model.vor.area_list, name='area')
+        areas.index.name = 'node'
+        m = pd.merge(df, areas, on='node')
+        full_idx = range(self.model.vor.ncpl)
+        m['rch_per_period'] = (m['q'] / m['area'])  # calc L/T recharge
+        m = m[m.loc[:, 'kstpkper'] == self.kstpkper]
+        m.loc[:, 'node'] = m['node'] - 1  # adjust for zero-based index
+        m = m.set_index('node')
+        m = m.reindex(full_idx, fill_value=0)
+        zs = m['rch_per_period'].to_list()
+        if self.rch_scale is not None:
+            zs = (np.array(zs) * self.rch_scale).tolist()
+        return zs
+
+    @property
+    def input_rch_zs(self):
+        """gets model input recharge values for the specified kstpkper"""
+        d = pd.DataFrame(self.model.gwf.rch.stress_period_data.data[37])
+        d['cell'] = d['cellid'].apply(lambda x: x[1])
+        d = d.set_index('cell')
+        d = d[~d.index.duplicated()]  # remove duplicates if they exist
+        full_idx = range(self.model.vor.ncpl)
+        d = d.reindex(full_idx, fill_value=0)  # fill in missing cell indices
+        zs = d['recharge'].to_list()
+        if self.rch_scale is not None:
+            zs = (np.array(zs) * self.rch_scale).tolist()
         return zs
 
     @property
@@ -269,6 +354,10 @@ class Choro:
         if self.choro_type == 'hds':
             return 'earth'
         elif self.choro_type == 'ks':
+            return 'earth'
+        elif self.choro_type == 'rch':
+            return 'earth'
+        else:
             return 'earth'
 
     @property
@@ -291,21 +380,26 @@ class Choro:
 
         # Set up default choropleth map styles
         if self.vor:
-            mapbox_center = {"lat": self.vor.grid_centroid.y, "lon": self.vor.grid_centroid.x}
+            map_center = {"lat": self.vor.grid_centroid.y, "lon": self.vor.grid_centroid.x}
         else:
-            mapbox_center = None
+            map_center = None
         self.fig.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            mapbox_style="carto-positron",
-            mapbox_zoom=self.zoom,
-            mapbox_center=mapbox_center
+            map_style="carto-voyager",
+            map_zoom=self.zoom,
+            map_center=map_center
         )
 
     def add_choropleth(self):
         """creates a choropleth map based on the provided params and adds to the fig"""
         custom_data, hover_template = create_hover(self.hover_dict)
         self.update_layout()
-        self.fig.add_choroplethmapbox(
+        self.fig.add_trace(self.get_choropleth())
+
+    def get_choropleth(self):
+
+        custom_data, hover_template = create_hover(self.hover_dict)
+        choropleth = go.Choroplethmap(
             geojson=self.vor.latlon,
             featureidkey="id",
             locations=self.vor.gdf_latlon.index.to_list(),
@@ -316,8 +410,9 @@ class Choro:
             zmax=self._zmax,
             zmin=self._zmin,
         )
+        return choropleth
 
-    def add_locs(self, name_field = 'ExploName'):
+    def add_locs(self, name_field='ExploName'):
         if self.locs is not None:
             geoms = self.locs.geometry
             for idx, row in self.locs.iterrows():
@@ -328,21 +423,69 @@ class Choro:
                 elif isinstance(geom, shp.Point):
                     coords = geom.xy
                     mode = 'markers'
-                self.fig.add_scattermapbox(
+                self.fig.add_scattermap(
                     mode=mode,
                     lat=coords[1].tolist(),
                     lon=coords[0].tolist(),
-                    name=row[name_field]
+                    name=row[name_field],
+                    marker_color='black',
+                    showlegend=False,
                 )
 
+    @property
     def choropleth(self):
         self.add_choropleth()
         if self.locs is not None:
             self.add_locs()
         return self.fig
 
+    @property
+    def ani(self):
+        """get animation frames for a choropleth plot"""
+
+        frames = []
+        zmin = 1_000_000
+        zmax = 0
+
+        for i, per in enumerate(self.model.kstpkper):
+            if i > 5:
+                continue
+            print(f'reading kstpkper {per}', end='\r')
+            self.kstpkper = per
+            choropleth = self.get_choropleth()
+            frame = go.Frame(data=choropleth, name=str(per), baseframe=str(self.model.kstpkper[0]))
+            frames.append(frame)
+            frame_zmin = round(choropleth.z.min())
+            frame_zmax = round(choropleth.z.max())
+            zmin = frame_zmin if frame_zmin < zmin else zmin
+            zmax = frame_zmax if frame_zmax > zmax else zmax
+
+        # make zmin and zmax the same for all frames
+        for frame in frames:
+            frame.data[0]['zmin'] = zmin
+            frame.data[0]['zmax'] = zmax
+
+
+        self.fig = Fig(
+            data=frames[0].data,
+            frames=frames,
+            layout=go.Layout(
+                updatemenus=[
+                    dict(
+                        type="buttons",
+                        buttons=[dict(label="Play", method="animate", args=[None])],
+                    ),
+                ],
+                # sliders=sliders,
+            ),
+        )
+        # self.fig.update_layout(updatemenus=Animation(self.model).updatemenus)
+        # self.fig.update_layout(sliders=Animation(self.model).sliders)
+
+        return self.fig
+
     def plot(self):
-        fig = self.choropleth()
+        fig = self.choropleth
         self.fig.show()
 
     def dash_selector(self):

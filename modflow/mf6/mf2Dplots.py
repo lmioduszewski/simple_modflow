@@ -219,14 +219,14 @@ class ChoroplethPlot(Fig):
         super().__init__()
 
         if vor:
-            mapbox_center = {"lat": vor.grid_centroid.y, "lon": vor.grid_centroid.x}
+            map_center = {"lat": vor.grid_centroid.y, "lon": vor.grid_centroid.x}
         else:
-            mapbox_center = None
+            map_center = None
         self.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            mapbox_style="carto-positron",
-            mapbox_zoom=zoom,
-            mapbox_center=mapbox_center
+            map_style="carto-positron",
+            map_zoom=zoom,
+            map_center=map_center
         )
 
 

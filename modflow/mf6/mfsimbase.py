@@ -17,9 +17,11 @@ from simple_modflow.modflow.utils.datatypes.xsections import XSection
 from shapely import LineString
 import pickle
 from simple_modflow.modflow.mf6.sfr import SFR
-from simple_modflow.modflow.utils.inputs import RchInput
+from simple_modflow.modflow.utils.inputs import Inputs
 from simple_modflow.modflow.utils.outputs import LakOutputData, SFROutputData
 from simple_modflow.modflow.mf6.budget import Budget
+from simple_modflow.modflow.utils.datatypes.modelgrid import create_custom_modelgrid
+import numpy as np
 
 
 class SimulationBase:
@@ -45,6 +47,9 @@ class SimulationBase:
         self._sfr_input = None
         self._per_dates = None
         self.per_dates = per_dates
+        self._node_to_lni = None
+        self._lni_to_node = None
+        self._kstpkper = None
 
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -62,23 +67,25 @@ class SimulationBase:
         )
         self.ims = flopy.mf6.modflow.mfims.ModflowIms(
             self.sim,
+            print_option='ALL',
             pname="ims",
             complexity="COMPLEX",
             under_relaxation="DBD",
             under_relaxation_theta=0.72,
             under_relaxation_kappa=0.1,
+            # under_relaxation_gamma=0.2,
             under_relaxation_momentum=0.001,
-            backtracking_number=10,
+            backtracking_number=20,
             backtracking_tolerance=1.1,
-            backtracking_reduction_factor=0.2,
-            backtracking_residual_limit=100,
-            outer_maximum=2000,
-            inner_maximum=1000,
-            #outer_dvclose=1e-4,
-            #inner_dvclose=1e-5,
-            #rcloserecord=[0.01, 'strict'],
-            # relaxation_factor=0.97,
-            #linear_acceleration='BICGSTAB',
+            backtracking_reduction_factor=0.3,
+            backtracking_residual_limit=75,
+            outer_maximum=200,
+            inner_maximum=200,
+            outer_dvclose=0.3,
+            inner_dvclose=0.2,
+            # rcloserecord=[300_000, 'strict'],
+            relaxation_factor=0.97,
+            linear_acceleration='BICGSTAB',
         )
 
     @property
@@ -101,6 +108,41 @@ class SimulationBase:
     def modelgrid(self) -> flopy.discretization.vertexgrid.VertexGrid:
         modelgrid: flopy.discretization.vertexgrid.VertexGrid = self.gwf.modelgrid
         return modelgrid
+
+    @property
+    def node_to_lni(self) -> dict:
+        """
+        create a dict where keys are model nodes and values are corresponding layer node indices,
+        i.e. layer specific index of node
+        :return: dict
+        """
+        if self._node_to_lni is None:
+
+            node_to_lni = {}
+            for node in range(self.modelgrid.nnodes):
+                node_to_lni[node] = self.modelgrid.get_lni([node])[0]
+            self._node_to_lni = node_to_lni
+
+        return self._node_to_lni
+
+    @property
+    def lni_to_node(self) -> dict:
+        """
+        create a dict where keys are layer node indices and values are corresponding model nodes
+        :return: dict
+        """
+        if self._lni_to_node is None:
+
+            lni_to_node = {}
+            for node in range(self.modelgrid.nnodes):
+                lni_to_node[self.modelgrid.get_lni([node])[0]] = node
+            self._lni_to_node = lni_to_node
+
+        return self._lni_to_node
+
+    @property
+    def cellids(self):
+        return list(self.lni_to_node.keys())
 
     @property
     def sfr_input(self) -> SFR:
@@ -135,17 +177,20 @@ class SimulationBase:
             zmin: float | int = None,
             zmax: float | int = None,
             zoom: int = 13,
-            show_layer_elevs: bool = False,
+            show_layer_elevs: bool = True,
             show_mounding: bool = False,
             hover_heads: bool = True,
             hover_ks: bool = False,
             locs=None,
+            rch_scale=None,
+            bgs=False,
             **kwargs
     ) -> Choro:
         """
         kwargs can be any allowable keyword arguments from the Choro class
         Class defining the basic choropleth plots generated from a modflow model.
 
+        :param rch_scale:
         :param kstpkper:
         :param layer:
         :param choro_type:
@@ -178,11 +223,14 @@ class SimulationBase:
             hover_heads=hover_heads,
             hover_ks=hover_ks,
             locs=locs,
+            rch_scale=rch_scale,
+            bgs=bgs,
             **kwargs
         )
 
     def xsect(
             self,
+            per: int = None,
             kstpkper: tuple = None,
             layer: int = 0,
             cells: int | list[int] = None,
@@ -193,9 +241,40 @@ class SimulationBase:
             interpolate: bool = False,
             use_rbf: bool = False
     ):
-        """Returns an instance of XSection class"""
+        """
+        Use to plot a cross-section of heads through a model. Can be used to create an animation
+        of head changes for all stress periods. The cross-section line can be defined by providing
+        one cell (the 'cells' parameter) or as two ends by providing two cells to the 'cells'
+        parameter. If just one cell is given, 'x_or_y' parameter defines whether the cross-section
+        is vertical (along 'y' axis) or horizontal (along 'x' axis).
+
+        Examples:
+
+            Show an animated cross-section of all stress periods:
+
+                XSection(model, cells=[1653, 651, 1241]).ani.show() ...OR...
+                XSection(model, cells=69, layer=2, x_or_y='y').ani.show()
+
+            Show just a cross-section of one stress period, no animation:
+
+                XSection(model, cells=[1653, 651, 1241], kstpkper=(9, 50)).show()
+
+        :param model: model (SimulationBase object) instance
+        :param per: stress period number, O-based index; will take presedence over kstpkper if provided
+        :param kstpkper: defaults to the first model stress period if not provided
+        :param layer: defaults to 0
+        :param cells: defines cross-section location. Can provide any number of cells
+        :param x_or_y: only used if one cell is given, defines whether
+        the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
+        :param spacing: x distance between points on the plot
+        :param num_points: number of points in the cross-section plot
+        :param extrapolate_beyond_section_ends: not implemented
+        :param surf_type: can be hds (default) or lyr (for model layers)
+
+        """
         return XSection(
             model=self,
+            per=per,
             kstpkper=kstpkper,
             layer=layer,
             cells=cells,
@@ -209,7 +288,7 @@ class SimulationBase:
 
     @property
     def inputs(self):
-        return RchInput(self)
+        return Inputs(self)
 
     @property
     def lak(self):
@@ -231,7 +310,10 @@ class SimulationBase:
 
     @property
     def kstpkper(self):
-        return self.hds.kstpkper
+        if self._kstpkper is None:
+            kstpkper = self.hds.kstpkper
+            self._kstpkper = kstpkper
+        return self._kstpkper
 
     def run_simulation(self):
         # Write the datasets
@@ -242,10 +324,10 @@ class SimulationBase:
             pickle.dump(self, file)
 
         # Run the simulation
-        success, buff = self.sim.run_simulation()
+        success, buff = self.sim.run_simulation(silent=False, report=True)
         print("\nSuccess is: ", success)
 
-    def plot_hds(self, kstpkper, zoom=13, plot_mounding=False, layer=0, zmin=None, zmax=None):
+    """def plot_hds(self, kstpkper, zoom=13, plot_mounding=False, layer=0, zmin=None, zmax=None):
         layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
         hover = {"": ["" for cell in range(self.vor.ncpl)]}
         hover.update({
@@ -263,7 +345,7 @@ class SimulationBase:
             layer=layer,
             zmax=zmax,
             zmin=zmin
-        )
+        )"""
 
 
 class OutputControl:
@@ -577,8 +659,59 @@ class LAK:
             tables=tables,
             outlets=outlets,
             perioddata=perioddata,
-            filename=f'{model.name}_lak',
+            filename=f'{model.name}.lak',
             pname='lak',
             maximum_iterations=10000,
             maximum_stage_change=0.001,
+        )
+
+
+class UZF:
+
+    def __init__(
+            self,
+            model: SimulationBase,
+            packagedata=None,
+            perioddata=None,
+            print_input=False,
+            print_flows=True,
+            save_flows=True,
+            mover=False,
+            simulate_et=False,
+            linear_gwet=False,
+            square_gwet=False,
+            simulate_gwseep=False,
+            unsat_etwc=False,
+            unsat_etae=False,
+            nuzfcells=None,
+            ntrailwaves=7,
+            nwavesets=40,
+    ):
+
+        if nuzfcells is None:
+            # sets num uzf cells to num model active cells
+            nuzfcells = int(np.bincount(model.modelgrid.idomain[0])[1])
+
+        self.uzf = flopy.mf6.ModflowGwfuzf(
+            model=model.gwf,
+            print_input=print_input,
+            print_flows=print_flows,
+            save_flows=save_flows,
+            budget_filerecord=f'{model.name}_budget.uzf',
+            budgetcsv_filerecord=f'{model.name}_uzf_budget.csv',
+            package_convergence_filerecord=f'{model.name}_uzf_package_convergence.csv',
+            mover=mover,
+            simulate_et=simulate_et,
+            linear_gwet=linear_gwet,
+            square_gwet=square_gwet,
+            simulate_gwseep=simulate_gwseep,
+            unsat_etwc=unsat_etwc,
+            unsat_etae=unsat_etae,
+            nuzfcells=nuzfcells,
+            ntrailwaves=ntrailwaves,
+            nwavesets=nwavesets,
+            packagedata=packagedata,
+            perioddata=perioddata,
+            filename=f'{model.name}.uzf',
+            pname='uzf',
         )
