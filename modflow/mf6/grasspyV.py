@@ -260,14 +260,14 @@ class SurfaceInterpFromShp:
 
 if __name__ == '__main__':
 
-    botm_aq = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\bottom_of_aq_FINAL_v5.gpkg").as_posix()
+    botm_aq = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\bottom_of_aq_FINAL_v6.gpkg").as_posix()
     region_raster = Path(r"C:\Users\lukem\mf6\Cumberland general\Surfaces\lidar_top_of_model_v3.tif").as_posix()
     interp = SurfaceInterpFromShp(
         shp_gpkg_path=botm_aq,
         region_dimensions_raster=region_raster,
         shp_attribute_for_z='Elev',
         output_resolution=20,
-        surf_out='botm_aq_Cumb_v5.tif',
+        surf_out='botm_aq_Cumb_v5f.tif',
         epsg='2926'
     )
     interp.write_surf()

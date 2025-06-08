@@ -37,6 +37,8 @@ class XSection:
             interpolator: str = None,
             section_name: str = None,
             clip: shp.Polygon = None,
+            show_model_top: bool = True,
+            show_model_btm: bool = False,
             **kwargs
     ):
         """
@@ -98,6 +100,10 @@ class XSection:
         self.section_name = model.name if section_name is None else section_name
         self._clip = clip
         self._kwargs = kwargs
+        self.show_model_top = show_model_top
+        self.show_model_btm = show_model_btm
+        self._overlapping_cells = None
+        self._xs = None
 
     @property
     def model(self):
@@ -191,6 +197,14 @@ class XSection:
     def num_points(self):
         return self._num_points
 
+    @property
+    def overlapping_cells(self):
+
+        if self._overlapping_cells is None:
+            ov = self.vor.get_vor_cells_as_series(self.xsect_linestring).to_list()
+            self._overlapping_cells = ov
+        return self._overlapping_cells
+
     @num_points.setter
     def num_points(self, num_points):
         assert isinstance(num_points, int), f'{num_points} is not an integer'
@@ -265,6 +279,28 @@ class XSection:
         return memfile
 
     @property
+    def xs(self):
+        """
+        Retrieves or calculates the xs property. This is derived based on the
+        intersection of the cross-section linestring and the centroidal points
+        of Voronoi polygons for the model's geometry. It sorts and filters the
+        values by overlapping cells.
+
+        :return: A Pandas Series containing xs values, which are calculated
+            by locating points along the cross-section line string with respect
+            to the Voronoi polygon centroids. These are filtered and sorted for
+            overlapping cells.
+        :rtype: pandas.Series
+        """
+        if self._xs is None:
+            vor = self.model.vor
+            linestring = self.xsect_linestring
+            xs = line_locate_point(
+                linestring, vor.gdf_vorPolys.centroid).loc[self.overlapping_cells].sort_values()
+            self._xs = xs
+        return self._xs
+
+    @property
     def xsect(self):
         """Opens a rasterio memfile to get points
         elevations at those points to draw a cross-section"""
@@ -281,10 +317,7 @@ class XSection:
 
         elif self.interpolate is False:
             # if no interpolation, just get head elevations of each overlapping cell
-            vor = self.model.vor
-            linestring = self.xsect_linestring
-            overlapcells = vor.get_vor_cells_as_series(linestring).to_list()
-            xs = line_locate_point(linestring, vor.gdf_vorPolys.centroid).loc[overlapcells].sort_values()
+            xs = self.xs
             ys = self.all_heads.loc[idxx[self.kstpkper, self.layer, xs.index.to_list()]]
 
             # return distance along xsection line for each cell centroid and head of each cell
@@ -318,6 +351,16 @@ class XSection:
         elif self.interpolate is False:
             fig.add_scatter(x=points, y=elevations, name=self.section_name)
 
+        if self.show_model_top:
+            xs = self.xs
+            ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
+            fig.add_scatter(x=xs, y=ys, mode='lines', name='model top')
+        if self.show_model_btm:
+            xs = self.xs
+            btm_layer = self.vor.gdf_topbtm.columns[-1]
+            ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), btm_layer].to_list()
+            fig.add_scatter(x=xs, y=ys, mode='lines', name='model bottom')
+
         return fig
 
     @property
@@ -334,9 +377,12 @@ class XSection:
 
         for per in self.model.kstpkper:
 
-            print(f'reading kstpkper {per}', end='\r')
-            self.kstpkper = per
-            points, elevations = self.xsect
+            try:
+                print(f'reading kstpkper {per}', end='\r')
+                self.kstpkper = per
+                points, elevations = self.xsect
+            except:
+                continue
 
             if np.max(elevations) > y_max:
                 y_max = np.max(elevations)
@@ -345,21 +391,38 @@ class XSection:
 
             # define frame for this stress period and append to the frames list
             if self.interpolate is True:
-                frame = go.Frame(data=go.Scatter(
-                    x=self.xs_as_length,
-                    y=elevations,
-                    name=f'{per}'
-                ), name=f'{per}')
+                frame = go.Frame(data=[
+                    go.Scatter(
+                        x=self.xs_as_length,
+                        y=elevations,
+                        name=f'{per}')
+                ],
+                    name=f'{per}')
             elif self.interpolate is False:
-                frame = go.Frame(data=go.Scatter(
-                    x=points,
-                    y=elevations,
-                    name=f'{per}'
-                ), name=f'{per}')
+                frame = go.Frame(data=[
+                    go.Scatter(
+                        x=points,
+                        y=elevations,
+                        name=f'{per}')
+                ],
+                    name=f'{per}')
+
+            if self.show_model_top:
+                xs = self.xs
+                ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
+                model_top = go.Scatter(x=xs, y=ys, mode='lines', name='model top')
+                frame.data = frame.data + (model_top,)
+                y_max = np.max(ys)
+
+            if self.show_model_btm:
+                xs = self.xs
+                btm_layer = self.vor.gdf_topbtm.columns[-1]
+                ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), btm_layer].to_list()
+                model_btm = go.Scatter(x=xs, y=ys, mode='lines', name='model bottom')
+                frame.data = frame.data + (model_btm,)
+                y_min = np.min(ys)
 
             frames.append(frame)
-
-        print(f'\ndone reading model {self.model.name}', end='\n')
 
         y_max = y_max + ((y_max - y_min) * 0.05)  # add a buffer of 5% of the total y-span to y max
 
@@ -433,6 +496,7 @@ class MultiModelXSection:
         :param interpolate: if True, interpolate between cells along cross section line
         :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
         :param interpolator: define interpolation method. See InterpolatedSurface class for options.
+        :param kwargs: additional keyword arguments to pass to XSection class
 
         Example usage: MultiModelXSection(models=[model7a, model7b, model7c], cells=[23444, 15525, 16264]).show()
         """

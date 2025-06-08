@@ -7,7 +7,17 @@ if TYPE_CHECKING:
 
 
 class Animation:
+    """
+    Represents an animation for a simulation model.
 
+    This class provides mechanisms to generate interactive animations using
+    update menus and sliders. It is designed to integrate with simulation
+    models and enable user interaction to play, pause, and navigate frames
+    of the animation.
+
+    :ivar model: The simulation model associated with the animation.
+    :type model: SimulationBase
+    """
     def __init__(self, model: SimulationBase):
         self.model = model
 

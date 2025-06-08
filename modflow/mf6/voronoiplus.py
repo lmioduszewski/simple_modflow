@@ -17,8 +17,6 @@ import shapely as shp
 from shapely.geometry import Polygon, MultiLineString, Point, LineString
 import json
 from pathlib import Path
-import simple_modflow.modflow.mf6.mf2Dplots as mf2Dplots
-from figs import create_hover, Fig
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 from simple_modflow.modflow.utils.datatypes.choros import Choro
 
@@ -1257,7 +1255,8 @@ class VoronoiGridPlus(VoronoiGrid):
         
         Args:
             shp_to_query: shapefile of points or polygons to query
-            gdf_to_query: GeoDataFrame with geometry to query; this will take precedence over shp_to_query if it is passed to the function
+            gdf_to_query: GeoDataFrame with geometry to query; this will take precedence
+            over shp_to_query if it is passed to the function
             crs (string): coordinate reference system for the shapefile
             crs_latlon (string): crs for lat/lon, EPSG:4326. Shouldn't need to change this
             name_col (string): string corresponding to the field name in the shapefile to be used
@@ -1267,14 +1266,14 @@ class VoronoiGridPlus(VoronoiGrid):
         """
 
         if shp_to_query:
-            gdf_query = gpd.read_file(shp_to_query).to_crs(crs)
+            gdf_query = read_shp_gpkg(shp_to_query).to_crs(crs)
         if gdf_to_query is not None:
             gdf_query = gdf_to_query.to_crs(crs)
 
-        """Create dictionary with Vornoi cell indices that contain/intersect each location"""
-        VorIdx_dict = {}
+        """Create dictionary with Voronoi cell indices that contain/intersect each location"""
+        vor_idx_dict = {}
         for idx in gdf_query.index:
-            thiswell = (
+            cell_intersecting_this_loc = (
                 gpd.GeoSeries(gdf_query.to_crs(crs_latlon).iloc[idx]["geometry"])
                 .sindex.query(
                     self.gdf_vorPolys["geometry"].to_crs(crs_latlon), predicate=predicate
@@ -1282,11 +1281,11 @@ class VoronoiGridPlus(VoronoiGrid):
                 .tolist()
             )
             if name_col is not None:
-                VorIdx_dict[gdf_query.iloc[idx][name_col]] = thiswell
+                vor_idx_dict[gdf_query.iloc[idx][name_col]] = cell_intersecting_this_loc
             elif name_col is None:
-                VorIdx_dict[idx] = thiswell
+                vor_idx_dict[idx] = cell_intersecting_this_loc
 
-        return VorIdx_dict
+        return vor_idx_dict
 
     def get_vor_idx_from_geometry_idx(
             self,

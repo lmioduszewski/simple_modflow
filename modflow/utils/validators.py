@@ -7,6 +7,8 @@ if TYPE_CHECKING:
 from pathlib import Path
 import pandas as pd
 from pandas import IndexSlice as idxx
+
+
 # from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 
 
@@ -33,3 +35,13 @@ def package_name_validator(model: SimulationBase, package: str):
     assert package in valid_names, \
         f'Package not valid, must be one of {valid_names}'
     return package
+
+
+def valid_list_of_cell_ints(model: SimulationBase = None, cells: list = None):
+
+    assert all(isinstance(loc, int) for loc in cells), 'cells must be a list of ints'
+    if model:
+        valid_cells = model.vor.gdf_vorPolys.index.to_list()
+        assert all(loc in valid_cells for loc in cells), 'Not valid cells'
+
+    return True

@@ -16,9 +16,9 @@ class ObservationLocations:
     def __init__(
             self,
             model: SimulationBase,
+            package: str = None,
             locs: Path | int | list = None,
             loc_name_field: str = 'ExploName',
-            package: str = None,
             names: str | list[str] = None
     ):
         """
@@ -39,6 +39,9 @@ class ObservationLocations:
 
         self.package = package
         self.locs = locs
+        self.names = names
+
+        self.valid_cells = list(range(self.model.vor.ncpl))
 
     @property
     def package(self):
@@ -57,18 +60,21 @@ class ObservationLocations:
         locs = self._validate_and_return_locs(locs)
         self._locs = locs
 
+    @property
+    def names(self):
+        return self._names
+
+    @names.setter
+    def names(self, names):
+        self._names = names
+
     def filter_cells_by_pkg(self, pkg: str, cells):
 
         filter_per = self.model.kstpkper[0]  # use first stress period as basis for filtering
         pkg_cells = self.model.bud(pkg).df.loc[idxx[:, filter_per], :].index.get_level_values(0).to_list()
         pkg_cells = [i - 1 for i in pkg_cells]
 
-
-
-
     def _validate_and_return_locs(self, locs):
-
-        valid_cells = list(range(self.model.vor.ncpl))
 
         if isinstance(locs, Path):
             try:
@@ -80,18 +86,24 @@ class ObservationLocations:
                 )
                 # remove dict entries where the loc was not contained in a cell (outside the grid)
                 locs_dict = {key: value for key, value in locs_dict.items() if len(value) > 0}
+                # create DataFrame with obs_locs as index and obs cell indices as the values
                 locs_df = pd.DataFrame.from_dict(locs_dict).transpose()
                 obs_locs = locs_df.index
                 return obs_locs
+
             except ValueError:
                 print('location path not readable')
+                return None
 
         elif isinstance(locs, int):
-            assert locs in valid_cells, 'location index out of range'
+            assert locs in self.valid_cells, 'location index out of range'
             obs_locs = [locs]
             return obs_locs
 
         elif isinstance(locs, list):
-            assert all(loc in valid_cells for loc in locs), 'at least one location index not a valid cell index'
+            assert all(loc in self.valid_cells for loc in locs), 'at least one location index not a valid cell index'
             obs_locs = locs
             return obs_locs
+
+        else:
+            return None

@@ -133,6 +133,53 @@ class OpenETtoVor:
 
         return self._vor_et
 
+    def avg_months(self, months: list = None):
+        """
+        Calculate monthly averages from a set of evapotranspiration data.
+
+        This function processes evapotranspiration data retrieved from the
+        OpenETtoVor instance and groups them by month. It averages the data
+        for each specified month and fills any missing or zero values in
+        columns with the column-wise mean. Finally, it outputs the monthly
+        averages in a dictionary, ordered from September to October.
+
+        :param months: List of integers representing the months for each raster file
+            for which to calculate the monthly averages. Each integer should correspond
+            to the month for a specific file, in order of the raster files in the directory.
+        :return: Dictionary with keys as months and values as Pandas Series
+            containing the average values for each grid cell.
+        :rtype: dict
+        """
+        vor_et = OpenETtoVor(self.vor, self.raster_dir).vor_et
+        # months = [int(list(vor_et.keys())[i].as_posix()[58:60]) for i in range(len(vor_et.keys()))]
+        keys = list(vor_et.keys())
+        et_dict = {}
+        for month in pd.Series(months).unique().tolist():
+            et_dict[month] = []
+        for i, month in enumerate(months):
+            ets = vor_et[keys[i]]
+            ets[ets < 0] = 0
+            et_dict[month].append(ets)
+        et_concat = {}
+        for month in months:
+            et_concat[month]: pd.DataFrame = pd.concat(et_dict[month], axis=1)
+
+        mon_avgs = {}
+        for month in pd.Series(months).unique().tolist():
+
+            mo = et_concat[month].reindex(list(range(self.vor.ncpl)), fill_value=0)
+            mo.columns = list(range(len(mo.columns)))
+            for column in mo.columns:
+                m_col = mo.loc[:, column]
+                col_mean = m_col[m_col != 0].mean()
+                m_col[m_col == 0] = col_mean
+            mon_avg = mo.mean(axis=1)
+            mon_avgs[month] = mon_avg
+        key_order = [10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        mon_avgs = {key: mon_avgs[key] for key in key_order if key in mon_avgs}
+
+        return mon_avgs
+
 
 if __name__ == "__main__":
 

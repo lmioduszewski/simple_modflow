@@ -36,6 +36,7 @@ class SFR:
             mover: bool = False,
             add_sfr=True
     ):
+
         """
 
         :param model: modflow model file, should be class SimulationBase

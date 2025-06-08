@@ -68,6 +68,8 @@ class SimulationBase:
         self.ims = flopy.mf6.modflow.mfims.ModflowIms(
             self.sim,
             print_option='ALL',
+            csv_inner_output_filerecord='ims_inner_convergence.csv',
+            csv_outer_output_filerecord='ims_outer_convergence.csv',
             pname="ims",
             complexity="COMPLEX",
             under_relaxation="DBD",
@@ -79,11 +81,11 @@ class SimulationBase:
             backtracking_tolerance=1.1,
             backtracking_reduction_factor=0.3,
             backtracking_residual_limit=75,
-            outer_maximum=200,
-            inner_maximum=200,
+            outer_maximum=300,
+            inner_maximum=300,
             outer_dvclose=0.3,
             inner_dvclose=0.2,
-            # rcloserecord=[300_000, 'strict'],
+            # rcloserecord=[0.5, 'strict'],
             relaxation_factor=0.97,
             linear_acceleration='BICGSTAB',
         )
@@ -239,7 +241,9 @@ class SimulationBase:
             num_points: int = 100,
             extrapolate_beyond_section_ends: bool = False,
             interpolate: bool = False,
-            use_rbf: bool = False
+            use_rbf: bool = False,
+            show_model_top = True,
+            show_model_btm = False,
     ):
         """
         Use to plot a cross-section of heads through a model. Can be used to create an animation
@@ -283,7 +287,9 @@ class SimulationBase:
             num_points=num_points,
             extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
             interpolate=interpolate,
-            use_rbf=use_rbf
+            use_rbf=use_rbf,
+            show_model_top=show_model_top,
+            show_model_btm=show_model_btm,
         )
 
     @property
@@ -326,6 +332,8 @@ class SimulationBase:
         # Run the simulation
         success, buff = self.sim.run_simulation(silent=False, report=True)
         print("\nSuccess is: ", success)
+
+
 
     """def plot_hds(self, kstpkper, zoom=13, plot_mounding=False, layer=0, zmin=None, zmax=None):
         layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()

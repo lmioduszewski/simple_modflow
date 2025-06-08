@@ -12,6 +12,7 @@ import geopandas as gpd
 from . import mf2Dplots
 import figs
 from simple_modflow.modflow.utils.datatypes.datalists import convert_nested_to_int
+from simple_modflow.modflow.utils.validators import valid_list_of_cell_ints
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 crs_latlon = "EPSG:4326"
@@ -160,18 +161,43 @@ class HeadsPlus(bf.HeadFile):
             obs_dict[obs] = cell_ids[0]
         return obs_dict
 
-    def get_obs_heads(self, locs: Path = None, crs: str = None, loc_name_field='ExploName'):
+    def get_obs_heads(
+            self, locs: Path | list[int] = None,
+            crs: str = None,
+            loc_name_field='ExploName',
+            long_format=False
+    ):
+        """
+        Retrieves and processes observation heads data for specific observation locations
+        and formats it based on user requirements. This function supports both wide and
+        long formats for returned data and allows users to specify locations via a file path
+        or a list of cell integers.
 
+        :param locs: Path to observation locations file or a list of integer cell indices.
+        :param crs: Coordinate reference system (CRS) to use for spatial data transformations.
+        :param loc_name_field: Field name in input data representing observation locations.
+        :param long_format: If True, returns data in long format; otherwise, wide format.
+        :return: A pandas DataFrame containing formatted observation head data.
+        :rtype: pandas.DataFrame
+        :raises ValueError: If no observation path is provided or no observation cells are given.
+        """
         crs = self.crs if crs is None else crs
-        if locs is not None:
-            new_obs = self.get_obs_cells(locs, crs, loc_name_field)
-            self._obs.update(new_obs)
-        if not self.obs:
+
+        if isinstance(locs, Path):
+            self.obs_path = locs
+
+        if isinstance(locs, list):
+            if valid_list_of_cell_ints(self.model, locs):
+                obs_cells = locs
+                self._obs = locs
+
+        elif not self.obs and self.obs_path is not None:
             d = self.get_obs_cells(self.obs_path, crs, loc_name_field)
             self._obs.update(d)
-        obs_cell_dict = self.obs
-        assert obs_cell_dict, 'no observations found'
-        obs_cells = list(obs_cell_dict.values())
+            obs_cells = list(self.obs.values())
+        else:
+            return ValueError('no obs path found or obs cells provided')
+
         all_heads = self.all_heads.copy()
         obs_heads = all_heads.loc[idxx[:, :, obs_cells], :]
         obs_reset_idx = obs_heads.reset_index()
@@ -184,10 +210,18 @@ class HeadsPlus(bf.HeadFile):
         new_cols = []
         # change cell nums to obs names based on obs dict
         for col in obs_heads.columns:
-            obs_name = next(k for k, v in self.obs.items() if v == col)
+            if isinstance(self.obs, dict):
+                obs_name = next(k for k, v in self.obs.items() if v == col)
+            else:
+                obs_name = col
             new_cols.append(obs_name)
         obs_heads.columns = new_cols
         obs_heads.sort_index(axis=1, inplace=True)
+        obs_heads = obs_heads[sorted(obs_heads.columns)]
+
+        if long_format:
+            obs_heads = obs_heads.melt(ignore_index=False, var_name='locs', value_name='elev'
+                           ).reset_index().set_index(['locs', 'layer', 'kstpkper'])
 
         return obs_heads
 
@@ -197,18 +231,34 @@ class HeadsPlus(bf.HeadFile):
             crs: str = None,
             layer: int = 0,
             loc_name_field='ExploName',
-            return_fig: bool = False
+            plot_fig: bool = True,
+            return_fig: bool = False,
+            show_dates: bool = False,
     ):
-        """Plots heads for specified locations in the model.
-            Locations should be specified as the model cell/node to 
-            plot
+        """
+        Plots head values at specified observation locations over the stress periods or
+        dates of a model simulation. The function supports plotting for individual
+        locations or multiple locations specified by input parameters. Results can be
+        visualized directly or returned for further use.
 
-            Args:
-                locs (Path, optional): Path to shapefile of points to plots heads. If int (or list of ints) is provided, it
-                corresponds to a cell idx Defaults to None.
-            Returns:
-                Returns the fig object and plots it
-            """
+        :param locs: Path to a file with observation locations, an integer representing
+            a single location index, or a list of location indices.
+        :param crs: Coordinate Reference System (CRS) as a string. Defaults to the
+            object's CRS if None.
+        :param layer: The specific layer of the model for which the heads should be
+            plotted. Defaults to 0.
+        :param loc_name_field: The field name in the input locs file that specifies
+            location names. Used when locs is provided as a file path.
+        :param plot_fig: Boolean flag to indicate whether the generated plot should be
+            displayed. Defaults to True.
+        :param return_fig: Boolean flag to indicate whether the generated plot object
+            should be returned. Defaults to False.
+        :param show_dates: Boolean flag to indicate whether to use actual model period
+            dates on the x-axis of the plot. If False, stress period indices are used.
+            Defaults to False.
+        :return: Returns the generated plot object if return_fig is True. Otherwise,
+            returns None.
+        """
         crs = self.crs if crs is None else crs
         if locs is not None:
             fig = figs.Fig()
@@ -234,17 +284,23 @@ class HeadsPlus(bf.HeadFile):
                 elif isinstance(locs, int | list):
                     obs_heads = heads.loc[idxx[:, layer, obs_loc], 'elev']
                 # plot actual period dates on x-axis if provided with model
-                xs = self.model.per_dates if self.model.per_dates is not None else list(range(len(self.kstpkper)))
+                if show_dates is False:
+                    xs = list(range(len(self.kstpkper)))
+                else:
+                    xs = self.model.per_dates if self.model.per_dates is not None else list(range(len(self.kstpkper)))
                 fig.add_scattergl(
                     x=xs,
                     y=obs_heads,
                     name=obs_loc
                 )
-            fig.show()
+
+            if plot_fig:
+                fig.show()
             if return_fig:
                 return fig
 
         return None
+
 
     def plot_choropleth(self, *args, **kwargs):
         """Plot heads for a specified time step and stress period on a

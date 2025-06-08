@@ -139,13 +139,21 @@ class UZFPackageData:
         and lists of values corresponding to UZF cells as values.
         """
         period_data = {per: [] for per in range(self.model.nper)}
-
+        bad_inf_cells = []
         for per in period_data.keys():
             for index in range(self.nuzfcells):
+
+                # check for bad finf entries for cells
+                finf_val = self.finf if isinstance(self.finf, (float, int)) else self.finf.get(
+                    per, [0] * self.nuzfcells)[index]
+                if isinstance(finf_val, float) and np.isnan(finf_val):
+                    if index not in bad_inf_cells:
+                        bad_inf_cells.append(index)
+                    finf_val = 0.0
+
                 period_data[per].append([
                     index,  # UZF cell index
-                    self.finf if isinstance(self.finf, (float, int)) else self.finf.get(per, [0] * self.nuzfcells)[
-                        index],
+                    finf_val,
                     self.pet if isinstance(self.pet, (float, int)) else self.pet.get(per, [0] * self.nuzfcells)[
                         index],
                     self.extdp if isinstance(self.extdp, (float, int)) else
@@ -159,6 +167,9 @@ class UZFPackageData:
                     self.rootact if isinstance(self.rootact, (float, int)) else
                     self.rootact.get(per, [0] * self.nuzfcells)[index]
                 ])
+        if len(bad_inf_cells) > 0:
+            print(f'some uzf cell data is nan. Made these cells zero finf. Check these cells....\n'
+                  f'{bad_inf_cells}')
         return period_data
 
     @property
@@ -198,8 +209,8 @@ class UZFPackageData:
             budget_filerecord=f'{self.model.name}_budget.uzf',
             budgetcsv_filerecord=f'{self.model.name}_uzf_budget.csv',
             package_convergence_filerecord=f'{self.model.name}_uzf_package_convergence.csv',
-            ntrailwaves=7,
-            nwavesets=40,
+            ntrailwaves=10,
+            nwavesets=50,
         )
         self.model._uzf_input = self
         return self.uzf
