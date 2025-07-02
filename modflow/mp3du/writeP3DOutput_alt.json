@@ -1,0 +1,15 @@
+{
+  "MP3DU_BIN" : "cumb_v6p_PATHLINE.bin",
+    "OUTPUTS" : [
+      { "SUMMARY" : {
+      } },
+
+      { "PATHLINE_WHOLE" : {
+        "FILE_NAME" : "NAME_01_OF_OUTPUT.shp"
+      } },
+
+      { "V100_PTL" : {
+        "FILE_NAME" : "NAME_OF_OUTPUT.ptl"
+      } }
+    ]
+}

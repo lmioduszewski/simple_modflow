@@ -12,6 +12,7 @@ import figs as f
 from pathlib import Path
 from pandas import IndexSlice as idxx
 import pandas as pd
+import itertools
 
 
 def calculate_calibration_statistics(observed, simulated):
@@ -28,6 +29,9 @@ def calculate_calibration_statistics(observed, simulated):
     if len(observed) != len(simulated):
         raise ValueError(f"Observed and simulated arrays must have the same length."
                          f"simulated length: {len(simulated)}, observed length: {len(observed)}")
+
+    observed = np.array(observed, dtype=float).flatten()
+    simulated = np.array(simulated, dtype=float).flatten()
 
     # Mean Error (ME)
     me = np.mean(simulated - observed)
@@ -69,10 +73,13 @@ class CalibrationPlot(f.Fig):
             model: SimulationBase = None,
             loc_cell_dict: dict = None,
             loc_shp_gpkg: Path = None,
+            lak_obs_dict: dict = None,
             cal_range: list | tuple = None,
             exploration_name_field: str = 'ExploName',
             crs=None,
-            obs_layers: int | list[int] = None
+            obs_layers: int | list[int] = None,
+            verbose: bool = False,
+            type: str = 'calibration'
     ):
         """
         Initializes an object to plot observed and simulated calibration data.
@@ -84,7 +91,8 @@ class CalibrationPlot(f.Fig):
         :param loc_cell_dict: Dictionary linking geospatial locations to cell mappings
             or identifiers.
         :param loc_shp_gpkg: Path to shapefile or GeoPackage used for geospatial
-            location definitions and data extraction.
+            location of point observations of heads (i.e. wells)
+        :param lak_obs_dict: Dictionary linking lake names to lake number ids.
         :param cal_range: List or tuple specifying the calibration range, typically as
             time steps or indices for calibration analysis.
         :param exploration_name_field: Field name in the geospatial file (e.g.,
@@ -102,32 +110,25 @@ class CalibrationPlot(f.Fig):
 
         self._loc_cell_dict = loc_cell_dict
         self._loc_shp_gpkg = None
+        self._lak_obs_dict = None
         self._exploration_name_field = exploration_name_field
         self._obs_layers = obs_layers
+        self._verbose = verbose
 
         self.model = model
+        self.lak_obs_dict = lak_obs_dict
         self.loc_shp_gpkg = loc_shp_gpkg
         self.simulated = simulated
         self.observed = observed
 
-        if self._loc_shp_gpkg is not None:
-            sim = self.model.hds.get_obs_heads(
-                locs=self._loc_shp_gpkg,
-                loc_name_field=self._exploration_name_field,
-                long_format=True
-            )
-            if self._simulated is not None:
-                print('replacing simulated data with obs heads based on'
-                      'the provided shapefile or geopackage')
-            self._simulated = sim
-
         if self.observed is not None and self.simulated is not None:
-            self.add_calib_scatter()
-            self.add_stats()
-        self.set_layout()
+            if type == 'calibration':
+                self.add_calib_scatter()
+                self.add_stats()
+                self.set_layout()
+            if type == 'heads':
+                self.add_heads()
 
-        """if self._observed is not None and self._simulated is not None:
-            self.add_calib_annotation(self._observed, self._simulated)"""
 
     @property
     def model(self):
@@ -151,21 +152,58 @@ class CalibrationPlot(f.Fig):
 
     @property
     def simulated(self):
+        """gets simulated data from model object if no simulated data is provided"""
         if self._simulated is None and self.loc_shp_gpkg and self.model:
-            print('generating simulated data using model object and spatial data provided')
+
+            if self._verbose:
+                print('generating simulated data using model object and spatial data provided')
             simulated = self.model.hds.get_obs_heads(locs=self.loc_shp_gpkg, long_format=True)
+
+            # add lake stage data to simulated data
+            if self.lak_obs_dict is not None:
+                lak_obs = {}
+                # get lake stage data for each lake
+                for k, v in self.lak_obs_dict.items():
+                    lak_obs[k] = self.model.lak.stage.get()[:, v].tolist()
+                # create a multi-index for lake stage data
+                lake_names = list(lak_obs.keys())
+                layers = [0]  # set layer to 0 for all lake observations
+                kstpkper = self.model.kstpkper
+                lak_idx = pd.MultiIndex.from_product(
+                    [lake_names, layers, kstpkper], names=['locs', 'layer', 'kstpkper'])
+                lake_data = list(itertools.chain.from_iterable(lak_obs.values()))
+                # create a DataFrame with lake stage data and append to simulated data
+                lak_df = pd.DataFrame(lake_data, index=lak_idx, columns=['elev'])
+                simulated = pd.concat([simulated, lak_df], axis=0)
+
+            simulated = simulated[sorted(simulated.columns)]
             self._simulated = simulated
+
         return self._simulated
 
     @simulated.setter
     def simulated(self, value):
         if self.loc_shp_gpkg is not None:
-            print('path to shapefile or geopackage provided, '
-                  'so provided simulated data is ignored, and'
-                  'will generate observed data using model'
-                  'object and spatial data provided')
+            if self._verbose:
+                print('path to shapefile or geopackage provided, '
+                      'so provided simulated data is ignored, and'
+                      'will generate observed data using model'
+                      'object and spatial data provided')
         else:
             self._simulated = value
+
+    @property
+    def lak_obs_dict(self):
+        return self._lak_obs_dict
+
+    @lak_obs_dict.setter
+    def lak_obs_dict(self, value):
+        if value is not None:
+            assert isinstance(value, dict), 'lak_obs_dict must be a dictionary'
+            for lak_id in value.values():
+                assert lak_id in range(self.model.lak.stage.nlakes), \
+                    'lak_id not found in lak package'
+        self._lak_obs_dict = value
 
     @property
     def observed(self):
@@ -176,14 +214,19 @@ class CalibrationPlot(f.Fig):
         if isinstance(value, Path):
             try:
                 obs_data = pd.read_excel(value)
+                assert len(obs_data) == self.model.nper, \
+                    'length of observed data does not match number of stress periods in model'
                 if self._obs_layers is None:
                     self._obs_layers = 0  # default to layer 1
-                col1 = obs_data.columns[0]
+                col1 = obs_data.columns[0]  # should be stress periods
+                obs_data['kstpkper'] = self.model.kstpkper
+                # drop stress period column in favor of model kstpkper to match simulated data
+                obs_data.drop(columns=col1, inplace=True)
                 obs_data = obs_data[sorted(obs_data.columns)]
                 obs_data['layer'] = self._obs_layers
-                obs_data = obs_data.set_index([col1, 'layer'])
+                obs_data = obs_data.set_index(['kstpkper', 'layer'])
                 obs_data = obs_data.melt(ignore_index=False, value_name='elev', var_name='locs')
-                obs_data = obs_data.reset_index().set_index(['locs', 'layer', col1])
+                obs_data = obs_data.reset_index().set_index(['locs', 'layer', 'kstpkper'])
                 value = obs_data
             except ValueError:
                 print('observed data path not readable, must be Excel file')
@@ -220,11 +263,12 @@ class CalibrationPlot(f.Fig):
 
         if all(isinstance(x, pd.DataFrame) for x in [observed, simulated]):
             print('observed and simulated data are provided as DataFrames')
-            obs = observed['elev'].to_list()
-            sim = simulated['elev'].to_list()
-            w = pd.concat([pd.Series(sim), pd.Series(obs)], axis=1).dropna()
-            simulated = w.loc[:, 0]
-            observed = w.loc[:, 1]
+            sim_obs = pd.concat([simulated, observed], axis=1).dropna()
+            sim_obs.columns = ['simulated', 'observed']
+            # drop nan rows so the calib stats are calculated correctly
+            sim_obs.dropna()
+            simulated = sim_obs.loc[:, 'simulated'].to_numpy()
+            observed = sim_obs.loc[:, 'observed'].to_numpy()
 
         stats = calculate_calibration_statistics(observed, simulated)
         calib_stats = [f'{k}: {v:.3f}' for k, v in stats.items()]
@@ -273,8 +317,9 @@ class CalibrationPlot(f.Fig):
         if self.loc_shp_gpkg is not None:
             data_min = None
             data_max = None
-            print('using observation data based on provided'
-                  'shapefile or geopackage for calibration plot')
+            if self._verbose:
+                print('using observation data based on provided'
+                      'shapefile or geopackage for calibration plot')
             assert isinstance(self.simulated, pd.DataFrame)
             loc_names = self.simulated.index.get_level_values(level=0).unique().to_list()
             layers = self.simulated.index.get_level_values(level=1).unique().to_list()
@@ -282,8 +327,11 @@ class CalibrationPlot(f.Fig):
             for loc_name in loc_names:
                 for layer in layers:
 
-                    sim_data = self.simulated.loc[idxx[loc_name, layer, :], 'elev']
-                    obs_data = self.observed.loc[idxx[loc_name, layer, :], 'elev']
+                    sim_data = pd.Series(self.simulated.loc[idxx[loc_name, layer, :], 'elev'].to_list())
+                    obs_data = pd.Series(self.observed.loc[idxx[loc_name, layer, :], 'elev'].to_list())
+                    sim_obs = pd.concat([sim_data, obs_data], axis=1)
+                    sim_obs.columns = ['simulated', 'observed']
+                    sim_obs = sim_obs.dropna()
 
                     # get max and min of obs data to draw cal line
                     if data_min is None:
@@ -296,8 +344,8 @@ class CalibrationPlot(f.Fig):
                         data_max = obs_data.max()
 
                     self.add_scattergl(
-                        x=sim_data,
-                        y=obs_data,
+                        x=sim_obs.loc[:, 'simulated'],
+                        y=sim_obs.loc[:, 'observed'],
                         mode='markers',
                         name=f'{loc_name} {layer}')
 
@@ -323,6 +371,43 @@ class CalibrationPlot(f.Fig):
             xaxis_title='Simulated',
             yaxis_title='Observed'
         )
+
+    def add_heads(self):
+
+        locs = list(self.observed.index.get_level_values(0).unique())
+        layers = list(self.observed.index.get_level_values(1).unique())
+
+        for loc in locs:
+            for layer in layers:
+
+                # get observed data for location and layer
+                loc_obs = self.observed.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
+                    ['locs', 'layer'], axis=1)
+                loc_obs.kstpkper = loc_obs.kstpkper.apply(lambda x: x[1])
+                loc_obs.set_index('kstpkper', inplace=True)
+                if len(loc_obs) == 0:
+                    continue
+
+                self.add_scattergl(
+                    name=f'{loc} observed',
+                    x=loc_obs.index,
+                    y=loc_obs.elev,
+                    line_color='blue'
+                )
+
+                # get simulated data for location and layer
+                sim_obs = self.simulated.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
+                    ['locs', 'layer'], axis=1)
+                sim_obs.kstpkper = sim_obs.kstpkper.apply(lambda x: x[1])
+                sim_obs.set_index('kstpkper', inplace=True)
+
+                self.add_scattergl(
+                    name=f'{loc} simulated',
+                    x=sim_obs.index,
+                    y=sim_obs.elev,
+                    line_color='red'
+                )
+
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ from simple_modflow.modflow.utils.outputs import LakOutputData, SFROutputData
 from simple_modflow.modflow.mf6.budget import Budget
 from simple_modflow.modflow.utils.datatypes.modelgrid import create_custom_modelgrid
 import numpy as np
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg, assign_voronoi_cells_to_layers
 
 
 class SimulationBase:
@@ -32,7 +33,8 @@ class SimulationBase:
             mf_folder_path: Path = Path().home().joinpath('mf6'),
             nper: int = 1,
             vor: Vor = None,
-            per_dates: list | pd.DatetimeIndex = None
+            per_dates: list | pd.DatetimeIndex = None,
+            idomain_path: Path = None
     ):
         self.name = name
         self.vor = vor
@@ -43,13 +45,19 @@ class SimulationBase:
         self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
         self._master_celld = {}
         self._hds = None
+        self._idomain_path = None
         self._bud = None
         self._sfr_input = None
         self._per_dates = None
-        self.per_dates = per_dates
+        self._idomain_gdf = None
+        self._inactive_cells = None
         self._node_to_lni = None
         self._lni_to_node = None
         self._kstpkper = None
+        self._idomain = None
+
+        self.per_dates = per_dates
+        self.idomain_path = idomain_path
 
         self.sim = flopy.mf6.MFSimulation(
             sim_name=self.name,
@@ -89,6 +97,68 @@ class SimulationBase:
             relaxation_factor=0.97,
             linear_acceleration='BICGSTAB',
         )
+
+    @property
+    def inactive_cells(self):
+        """returns a list of inactive cells in the model"""
+        if self._inactive_cells is None:
+
+            icells = self.vor.get_vor_cells_as_series(self.idomain_gdf.geometry).to_list()
+            self._inactive_cells = icells
+
+        return self._inactive_cells
+
+    @property
+    def idomain(self):
+        """
+        Property method that retrieves or computes the idomain array for the Voronoi grid. The idomain
+        represents the active/inactive cell status for each layer in the grid. This property constructs
+        the idomain by reading a GeoPackage or shapefile, assigning Voronoi cells to respective layers,
+        and determining inactive cells for each layer.
+
+        :rtype: list[list[int]]
+        :return: The idomain as a list of lists, where each sublist represents a layer and contains the
+                 activity status (1 for active, 0 for inactive) for each cell in that layer.
+        """
+        if self._idomain is None:
+
+            idomain = read_shp_gpkg(self.idomain_path)
+            idomain, col_names = assign_voronoi_cells_to_layers(
+                idomain, self.vor, return_col_names=True
+            )
+            self._idomain_gdf = idomain
+            idomain_by_layer_dict = {}
+            for col in col_names:
+                values = idomain[col].dropna()
+                cell_lists = values[values.apply(lambda x: isinstance(x, list))]
+                all_cells = sorted(set(cell for sublist in cell_lists for cell in sublist))
+                idomain_by_layer_dict[int(col)] = all_cells
+            nlay = self.vor.nlay
+            idomain = []
+            for k in range(nlay):
+                inactive_cells = idomain_by_layer_dict.get(k, set())
+                layer_idomain = [0 if i in inactive_cells else 1 for i in range(self.vor.ncpl)]
+                idomain.append(layer_idomain)
+
+            self._idomain = idomain
+
+        return self._idomain
+
+    @property
+    def idomain_path(self):
+        """returns the path to the idomain shapefile/geopackage"""
+        return self._idomain_path
+
+    @idomain_path.setter
+    def idomain_path(self, idomain_path):
+        if idomain_path is not None:
+            assert isinstance(idomain_path, Path), 'idomain_path must be a Path object'
+            self._idomain_path = idomain_path
+
+    """@property
+    def idom_vor(self):
+        return self.vor.gdf_vorPolys.loc[
+            self.modelgrid.idomain.T.flatten() == 1]"""
 
     @property
     def per_dates(self):
@@ -311,6 +381,14 @@ class SimulationBase:
             return Budget(self, package)
 
     @property
+    def budget_cumulative(self):
+        return pd.DataFrame(self.gwf.output.list().get_cumulative())
+
+    @property
+    def budget_incremental(self):
+        return pd.DataFrame(self.gwf.output.list().get_incremental())
+
+    @property
     def master_celld(self):
         return self._master_celld
 
@@ -517,6 +595,8 @@ class KFlow:
             perched=perched,
             k33=k33_vert,
             save_flows=True,
+            save_saturation=True,
+            save_specific_discharge=True,
             filename=f"{model.name}.npf",
             # perched=True,
         )
@@ -669,8 +749,8 @@ class LAK:
             perioddata=perioddata,
             filename=f'{model.name}.lak',
             pname='lak',
-            maximum_iterations=10000,
-            maximum_stage_change=0.001,
+            maximum_iterations=100,
+            maximum_stage_change=1e-6,
         )
 
 

@@ -102,8 +102,8 @@ class DRN(Boundaries):
             self,
             grid_type: str = 'disv',
             fields: dict = None,
-            edges_only = False,
-            top_drain = False,
+            edges_only: bool = False,
+            top_drain: bool = False,
             # top_minus = 0
     ) -> dict:
         """

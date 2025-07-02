@@ -7,6 +7,7 @@ import simple_modflow.modflow.mf6.mfsimbase as mf
 from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 import pickle
 from simple_modflow.modflow.mf6.boundaries import Boundaries
+from simple_modflow.modflow.utils.prism_ppt import PrismPrecipScaling
 
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
@@ -20,7 +21,6 @@ class RechargeFromShp(Boundaries):
             vor: Vor = None,
             shp_gpkg: Path = None,
             uid: str = None,
-            crs: int = 2927,
             rch_fields: list | slice = None,
             rch_fields_to_pers: list = None,
             xlsx_rch: Path = None,
@@ -40,7 +40,6 @@ class RechargeFromShp(Boundaries):
         :param vor: voronoi grid to which this boundary apples
         :param shp_gpkg: path to shapefile that holds the polygons for the boundary
         :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
-        :param crs: coordinate reference system for boundary, should be integer EPSG code.
         :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
         :param rch_fields_to_pers: list of indices of length nper that correspond to the fields in rch_fields. Defines which field should be used for each stress period.
         :param bound_type: arbitary identifier for this boundary type
@@ -54,7 +53,7 @@ class RechargeFromShp(Boundaries):
         :param limit_to_k33_by: if limit_to_k33 is True, k33 is multiplied by this to obtain max vertical recharge, defaults to 1
         :param verbose: be verbose or not, defaults to False
         """
-        super().__init__(model, vor, shp_gpkg, uid, crs)
+        super().__init__(model, vor, shp_gpkg, uid)
         self.bound_type = 'rch'
         self.fields = rch_fields
         self.rch_fields_to_pers = rch_fields_to_pers
@@ -219,3 +218,103 @@ class RechargeFromShp(Boundaries):
                 new_rch_dict[per][cell_num] = [cell_rch[0], new_cell_rch]
 
         return new_rch_dict
+
+
+class RechargeFromPrism(Boundaries):
+
+    def __init__(
+            self,
+            model: mf.SimulationBase = None,
+            vor: Vor = None,
+            prism_raster: Path = None,
+            weather_station_location: Path = None,
+            weather_station_precip: list | pd.Series = None,
+            et_dict: dict = None,
+            period_months: list = None,
+    ):
+
+        super().__init__(model, vor)
+        self.bound_type = 'rch'
+        self.prism_raster = prism_raster
+        self.weather_station_location = weather_station_location
+
+        self._prism_scaling = None
+        self._weather_station_precip = None
+        self._et_dict = None
+        self._scaled_precip = None
+        self._period_months = None
+
+        self.weather_station_precip = weather_station_precip
+        self.et_dict = et_dict
+        self.period_months = period_months
+
+    @property
+    def prism_scaling(self):
+        """returns a Pandas Series where the values are the scaling factors to
+        use for precipitation for each voronoi cell, listed by voronoi cell number index"""
+        if self._prism_scaling is None:
+            self._prism_scaling = PrismPrecipScaling(
+                self.vor,
+                self.prism_raster,
+                self.weather_station_location).scaling
+        return self._prism_scaling
+
+    @property
+    def weather_station_precip(self):
+        return self._weather_station_precip
+
+    @weather_station_precip.setter
+    def weather_station_precip(self, value):
+        assert len(value) == self.model.nper, \
+            'length of weather station precip must equal number of stress periods'
+        self._weather_station_precip = value
+
+    @property
+    def et_dict(self):
+        """dictionary of evapotranspiration values for each month for each cell
+        in the model. Keys are month integers between 1 and 12"""
+        return self._et_dict
+
+    @et_dict.setter
+    def et_dict(self, value):
+        assert isinstance(value, dict), 'et_dict must be a dict'
+        assert all(month in range(1, 13) for month in value.keys()), \
+            'keys of et_dict must be month integers between 1 and 12'
+        assert all(len(ets) == self.model.modelgrid.ncpl for ets in value.values()), \
+            'length of et_dict values must equal number of model cells'
+        self._et_dict = value
+
+    @property
+    def scaled_precip(self):
+        """scales the weather station precipitation for each voronoi cell
+        prism scaling factor"""
+        if self._scaled_precip is None:
+            scaled_precip = []
+            for per in range(self.model.nper):
+                scaled_precip.append(self.prism_scaling * self.weather_station_precip[per])
+            self._scaled_precip = scaled_precip
+        return self._scaled_precip
+
+    @property
+    def period_months(self):
+        """a list of the months (int), one int for each stress period"""
+        return self._period_months
+
+    @period_months.setter
+    def period_months(self, value):
+        assert len(value) == self.model.nper, \
+            'length of period_months must equal number of stress periods'
+        assert all(month in range(1, 13) for month in value), \
+            'values in period_months must be integers between 1 and 12'
+        self._period_months = value
+
+    @property
+    def rch_dict(self):
+        """returns a dictionary of recharge values for each stress period"""
+        rch_dict = {}
+        for per in range(self.model.nper):
+            rch_dict[per] = [
+                self.scaled_precip[per] - self.et_dict[self.period_months[per]]
+            ]
+        return rch_dict
+

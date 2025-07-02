@@ -388,6 +388,7 @@ class InterpolatedSurface:
         surface = self.surface if surface is None else surface
         if clip:
             surface = self.clip_raster_with_polygon()[0][0]
+            surface[surface == 0] = np.nan
         fig = go.Figure()
         fig.add_surface(
             z=surface,

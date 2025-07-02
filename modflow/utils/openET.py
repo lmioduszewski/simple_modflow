@@ -12,6 +12,34 @@ import pandas as pd
 import geopandas as gpd
 from shapely import Polygon
 from pathlib import Path
+import re
+
+
+def extract_dates_from_paths(paths) -> list[Path]:
+    """
+    Extracts dates in 'YYYY_MM_DD' format from a list of file paths.
+
+    This function iterates over a list of file paths, searches each path for
+    a date string in the format 'YYYY_MM_DD', and appends any matches to a
+    list. Dates are identified using a regular expression pattern.
+
+    :param paths: A list of file paths where the function will search for
+                  date strings.
+    :type paths: list[Path]
+
+    :return: A list of date strings in the 'YYYY_MM_DD' format extracted
+             from the input paths.
+    :rtype: list[str]
+    """
+    pattern = re.compile(r"\d{4}_\d{2}_\d{2}")
+    dates = []
+
+    for path in paths:
+        path_str = str(path)
+        match = pattern.search(path_str)
+        if match:
+            dates.append(match.group(0))
+    return dates
 
 
 class OpenETRequest:
@@ -92,11 +120,9 @@ class OpenETtoVor:
             et_per_vorcell = {}
 
             for i, path in enumerate(self.raster_paths):
-
                 print(f'working on {path}, number {i + 1} of {len(self.raster_paths)}', end='\r')
 
                 with rio.open(path) as src:
-
                     src: rio.DatasetReader
                     crs = src.crs
                     band = src.read(1)
@@ -151,7 +177,10 @@ class OpenETtoVor:
         :rtype: dict
         """
         vor_et = OpenETtoVor(self.vor, self.raster_dir).vor_et
-        # months = [int(list(vor_et.keys())[i].as_posix()[58:60]) for i in range(len(vor_et.keys()))]
+        # get month integers from file names
+        if months is None:
+            dates = extract_dates_from_paths(self.raster_paths)
+            months = [int(m[5:7]) for m in dates]
         keys = list(vor_et.keys())
         et_dict = {}
         for month in pd.Series(months).unique().tolist():
@@ -182,25 +211,25 @@ class OpenETtoVor:
 
 
 if __name__ == "__main__":
-
     import pickle
-    raster_dir = Path(r"C:\Users\lukem\mf6\Cumberland general\ET")
-    model_path = Path(r"C:\Users\lukem\mf6\cumb_v7b\cumb_v7b.model")
-    with open(model_path, 'rb') as file:
-        model = pickle.load(file)
-    vor = model.vor
-    et = OpenETtoVor(vor, raster_dir)
 
-    et_path = Path().home() / 'mf6' / 'et_per_cell_pits.et'
+    raster_dir = Path(r"C:\Users\lukem\mf6\Cumberland general\ET\alt")
+    vor_v7 = Path(r"C:\Users\lukem\mf6\Cumberland general\cumberland_pre-ex_v7.vor")
+    with open(vor_v7, 'rb') as file:
+        vor = pickle.load(file)
+    et = OpenETtoVor(vor, raster_dir).avg_months()
+
+    et_path = Path().home() / 'mf6' / 'et_new_v7.et'
     with open(et_path, 'wb') as file:
-        pickle.dump(et.vor_et, file)
+        pickle.dump(et, file)
 
     """api_key = '8n9LsycWsdg6EQ2RGgD8O3mBKQBRQNN1GBGXMK2JaMpUbMwBfCfohscxqevS'
-    date_range = ["2024-01-01", "2024-02-01"]
-    geometry = [-121.973571242, 47.326251526, -121.897909136, 47.327471047,
-                -121.897390248, 47.259707461, -121.970796765, 47.257356792]
+    date_range = ["2024-01-01", "2024-12-01"]
+    geometry = [-121.96498100745063, 47.263702752801436, -121.89545157703465, 47.263702752801436,
+                -121.89545157703465, 47.32354206806991, -121.96498100745063, 47.32354206806991, 
+                -121.96498100745063, 47.263702752801436]
 
     r = OpenETRequest(date_range=date_range, api_key=api_key, geometry=geometry)
     # r.request()
     print(r.dl_links())"""
-    pass
+

@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from geopandas import GeoDataFrame
+
 if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
     from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
@@ -12,7 +14,7 @@ import numpy as np
 # from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import geopandas as gpd
 import shapely as shp
-from simple_modflow import read_shp_gpkg
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 
 idxx = pd.IndexSlice
 # Conversion factors
@@ -67,13 +69,8 @@ class Boundaries:
         self.bound_type = bound_type
         self.uid = uid
         self.crs = crs
-        if shp_gpkg is not None:
-            self.gdf = gpd.read_file(shp_gpkg)
-            if self.uid is not None:
-                self.gdf = self.gdf.set_index(self.uid)
-            self.gdf.to_crs(inplace=True, epsg=crs)
-        else:
-            self.gdf: gpd.GeoDataFrame = None
+        self._gdf = None
+        self._shp_gpkg = shp_gpkg
         self._intersections = None
         self._edge_intersections = None
         self._intersections_no_duplicates = None
@@ -87,6 +84,18 @@ class Boundaries:
         self.limit_to_k33 = True
         self.limit_to_k33_by = 0.1
         self.verbose = False
+
+    @property
+    def gdf(self):
+        """gets a GeoDataFrame of the shapefile polygons"""
+        if self._gdf is None:
+            if self._shp_gpkg is not None:
+                gdf: GeoDataFrame = gpd.read_file(self._shp_gpkg)
+                if self.uid is not None:
+                    gdf = gdf.set_index(self.uid)
+                gdf.to_crs(inplace=True, epsg=self.crs)
+                self._gdf = gdf
+        return self._gdf
 
     @property
     def inactive_cells(self):
@@ -360,8 +369,34 @@ class Boundaries:
             grid_type: str = 'disv',
             fields: dict = None,
             nlay: int = 1,
-            return_array: bool = True
+            return_array: bool = True,
+            defaults: list = None
     ):
+        """
+        Retrieves hydraulic conductivity (K) data from a shapefile and maps it to a Voronoi grid.
+
+        This function reads spatial data from a shapefile file and associates the corresponding
+        hydraulic conductivity values with the Voronoi cells defined in the model grid. Depending
+        on the input parameters, the returned result can either be a numpy array or a pandas
+        DataFrame containing the K values.
+
+        :param shapefile_path: The path to the shapefile containing the data.
+            This must be a valid Path object.
+        :param grid_type: The type of grid being used. Defaults to 'disv'.
+        :param fields: Dictionary mapping field names in the shapefile to
+            specific attributes, such as 'name', 'k', and 'layer'. Defaults
+            to None, in which case a default mapping is used.
+        :param nlay: Number of vertical layers in the model grid. Defaults to 1.
+        :param return_array: Flag indicating whether to return the K data as a
+            numpy array (True) or pandas DataFrame (False). Defaults to True.
+        :param defaults: A list of default values to use for K data where it is
+            not defined. The list must have the same length as the number of layers.
+            Optional and defaults to None.
+
+        :return: If `return_array` is True, returns a numpy array containing the K
+            values for each layer and cell. If `return_array` is False, returns a
+            pandas DataFrame with a multi-index (layer, cell) and corresponding K values.
+        """
         if fields is None:
             fields = {
                 'name': 'name',
@@ -392,6 +427,10 @@ class Boundaries:
             for layer in range(nlay):
                 k_lists.append(k_df.loc[layer].squeeze().tolist())
             k_array = np.array(k_lists)
+            if defaults is not None:
+                assert len(defaults) == k_array.shape[0], 'defaults must be same length as layers'
+                # replaces any NaN values in array with default vals by layer if provided
+                k_array = np.where(np.isnan(k_array), np.array(defaults)[:, None], k_array)
             return k_array
         else:
             return k_df

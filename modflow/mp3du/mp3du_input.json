@@ -1,0 +1,53 @@
+{
+    "FLOW_MODEL_TYPE": {
+        "USGS_HFWK": {
+            "GRB_FILE": "cum8cNoET.disv.grb",
+            "TDIS_FILE": "cum8cNoET.tdis",
+            "PATH_FILE": "C:/Users/lukem/mf6/cum8cNoET/mp3du.p3d",
+            "HDS_FILE": "cum8cNoET.hds",
+            "CBB_FILE": "cum8cNoET.cbc",
+            "GSF_FILE": {
+                "TYPE": "GSF_V.1.1.0",
+                "FILE_NAME": "cum8cNoET.gsf"
+            },
+            "OUTPUT_PRECISION": "DOUBLE",
+            "IFACE": [
+                {
+                    "DRN": 7
+                }
+            ],
+            "THREAD_COUNT": 4
+        }
+    },
+    "SIMULATIONS": [
+        {
+            "PATHLINE": {
+                "NAME": "cum8cNoET",
+                "DIRECTION": "BACKWARD",
+                "THREAD_COUNT": 4,
+                "INITIAL_STEPSIZE": 0.1,
+                "EULER_DT": 1e-07,
+                "ADAPTIVE_STEP_ERROR": 0.0001,
+                "CAPTURE_RADIUS": 10.0,
+                "SIMULATION_END_TIME": 1000,
+                "OPTIONS": [
+			"TRACK_TO_TERMINATION",
+			"DOPRI"
+                ],
+                "PARTICLE_START_LOCATIONS": {
+                    "REPEAT" : 1,
+                    "REPEAT_DT" : 1.0e30,
+                    "SHAPEFILE": {
+                        "FILE_NAME": "C:/Users/lukem/mf6/Cumberland general/particles/edge_particles.shp",
+                        "CELLID_ATTR": "Node",
+                        "TIME_ATTR": "TimeRel",
+                        "ZLOC_ATTR": "ZLoc",
+                        "ADDTL_ATTR": [
+                            "LocName"
+                        ]
+                    }
+                }
+            }
+        }
+    ]
+}

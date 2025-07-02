@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
     from .voronoiplus import VoronoiGridPlus as Vor
+    from figs import Fig
 
 import pandas as pd
 import flopy.utils.binaryfile as bf
@@ -16,6 +17,24 @@ from simple_modflow.modflow.utils.validators import valid_list_of_cell_ints
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 crs_latlon = "EPSG:4326"
+
+
+def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | Path, **kwargs):
+    figs = []
+    for model in models:
+        fig = model.hds.plot_heads(locs=locs, plot_fig=False, return_fig=True, **kwargs)
+        for trc in fig.data:
+            trc.update(name=f'{model.name}-{trc["name"]}')
+        figs.append(fig)
+
+    multifig: Fig = figs[0]
+
+    for i, fig in enumerate(figs[1:]):
+        for trace in fig.data:
+            multifig.add_trace(trace)
+
+    return multifig.show()
+
 
 
 class HeadsPlus(bf.HeadFile):
@@ -234,6 +253,7 @@ class HeadsPlus(bf.HeadFile):
             plot_fig: bool = True,
             return_fig: bool = False,
             show_dates: bool = False,
+            start_period: int = 0,
     ):
         """
         Plots head values at specified observation locations over the stress periods or
@@ -241,6 +261,7 @@ class HeadsPlus(bf.HeadFile):
         locations or multiple locations specified by input parameters. Results can be
         visualized directly or returned for further use.
 
+        :param start_period: stress period index to start plotting from. Defaults to 0.
         :param locs: Path to a file with observation locations, an integer representing
             a single location index, or a list of location indices.
         :param crs: Coordinate Reference System (CRS) as a string. Defaults to the
@@ -263,6 +284,13 @@ class HeadsPlus(bf.HeadFile):
         if locs is not None:
             fig = figs.Fig()
             heads = self.all_heads
+
+            # drops stress periods less than start_period if it's greater than 0
+            if start_period > 0:
+                per_tuples = heads.index.get_level_values('kstpkper')
+                mask = [j >= start_period for (i, j) in per_tuples]
+                heads = heads[mask]
+
             if isinstance(locs, Path):
                 obs_dict = self.vor.get_vor_cells_as_dict(
                     locs=locs,

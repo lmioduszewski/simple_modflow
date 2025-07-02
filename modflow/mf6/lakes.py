@@ -224,21 +224,11 @@ class LakeConnectionData:
             alt_surface_df=None,
             min_sep=0.1,
             only_vertical: bool = False,
-            verbose: bool = False
+            verbose: bool = False,
+            lake_bathymetry: list[Path] = None
     ):
         """
-        Provide one or more Path objects that are shapefiles. Use property connection_data as an argument in the
-        LakePackageData class.
-        :param vor: VoronoiGridPlus voronoi grid object
-        :param paths: one or more Path objects, a geopackage, a shapefile, or a list of shapefiles.
-                      Not a list of geopackages.
-        :param bed_leakance: an integer defining the lakebed leakance, or a list of integers if multiple lakes.
-                             If only one value is provided for multiple lakes, it will be used for all lakes.
-        :param only_layer: if you only want the lake to be connected to one particular model layer. This is a zero index.
-        :param horizontal_connections: dict of lake numbers that have horizontal connections and top and bottom of those lakes.
-        :param alt_surface_df: can provide alternative model surface dataframes to define the lake surfaces
 
-                for example {0: [380, 370]} for a one lake model with a top of 380 and bottom of 370.
         """
 
         self.vor = vor
@@ -252,7 +242,10 @@ class LakeConnectionData:
         self.alt_surface_df = alt_surface_df
         self.min_sep = min_sep
         self.only_vertical = only_vertical
+        self.verbose = verbose
+        self._lake_bathymetry = None
 
+        self.lake_bathymetry = lake_bathymetry
         if paths:
             self.lakes = paths
         if bed_leakance:
@@ -261,6 +254,17 @@ class LakeConnectionData:
             self.horizontal_connections = horizontal_connections
 
         self.only_layer = only_layer
+
+    @property
+    def lake_bathymetry(self):
+        return self._lake_bathymetry
+
+    @lake_bathymetry.setter
+    def lake_bathymetry(self, value):
+        if value is not None:
+            assert all(isinstance(val, Path) for val in value), \
+                'lake bathymetry must be a list of Path objects'
+            self._lake_bathymetry = value
 
     @property
     def horizontal_connections(self) -> dict:
@@ -401,10 +405,7 @@ class LakeConnectionData:
 
         return cell_id, lak_idx_conn, only_layer, bed_leakance, connection_data, elev_df, start_index, lake_num
 
-    def get_connection_data(self):
-
-        """The meat...gets the connection data for the MODFLOW 6 LAK package based on the provided voronoi grid
-        and a shapefile of the lake footprint"""
+    """def get_connection_data(self):
 
         use_reconciled_surfaces = self.use_reconciled_surfaces
         alt_surface_df = self.alt_surface_df
@@ -472,7 +473,144 @@ class LakeConnectionData:
                         connection_data.append(horz_conn)
                         lak_idx_conn += 1
 
+        return connection_data"""
+
+    def get_connection_data(self):
+        """
+        Generates connection data for the MODFLOW 6 LAK package using:
+        - Voronoi grid geometry
+        - Raster-defined lake bathymetry
+        - Model layer surfaces (top/bottoms)
+
+        Horizontal connections now assume lake surface ≈ model top, and horizontal flow
+        is possible at or below the bathymetry depth if the adjacent cell has material at that depth.
+        """
+
+        # Get top and bottom elevations for each layer in each Voronoi cell
+        elev_df = self.alt_surface_df if self.alt_surface_df is not None else (
+            self.vor.reconcile_surfaces(df=self.vor.gdf_topbtm, min_sep=self.min_sep)
+            if self.use_reconciled_surfaces else self.vor.gdf_topbtm
+        )
+
+        # Bathymetry raster values at cell centroids (must be preprocessed)
+        labels = [f'lake {i}' for i in range(self.num_lakes)]
+        bathy_df = self.vor.get_centroid_elevations(
+            self.lake_bathymetry, labels)
+        connection_data = []
+
+        for lake_num, lake_cells in self.lakes_vor_cells.items():
+            print(f"Generating connections for lake {lake_num}")
+            lak_idx_conn = 0
+
+            for cell_id in lake_cells:
+                lake_elev = bathy_df.loc[cell_id, f'lake {lake_num}']
+                start_index = sum(self.vor.iac[:cell_id])
+                cell_layers = elev_df.loc[cell_id]
+
+                # Determine vertical connection
+                layer = self._find_layer_containing_elev(cell_layers, lake_elev)
+                if layer is not None:
+                    conn = self._build_vertical_connection(lake_num, lak_idx_conn, cell_id, layer, lake_elev)
+                    connection_data.append(conn)
+                    lak_idx_conn += 1
+
+                # Skip if only vertical connections are requested
+                if self.only_vertical:
+                    continue
+
+                # Get adjacent cells
+                adjacent_cells = self.vor.find_adjacent_cells(cell_id)
+
+                # Use custom horizontal connections if defined
+                if self.horizontal_connections and lake_num in self.horizontal_connections:
+                    (cell_id, lak_idx_conn, only_layer, bed_leakance,
+                     connection_data, elev_df, start_index, lake_num) = self.custom_horizontal_connections(
+                        cell_id, lak_idx_conn, only_layer, bed_leakance,
+                        connection_data, elev_df, start_index, lake_num, adjacent_cells)
+                    continue
+
+                # Otherwise, get horizontal connections
+                lak_idx_conn, connection_data = self._build_horizontal_connections(
+                    lake_num, cell_id, lak_idx_conn, elev_df,
+                    bathy_df, start_index, adjacent_cells, connection_data
+                )
+
         return connection_data
+
+    def _find_layer_containing_elev(self, layers: pd.Series, elev: float) -> int | None:
+        """
+        Return the index of the model layer that contains the specified elevation.
+        """
+        for layer in range(len(layers) - 1):
+            if self.only_layer is not None and layer != self.only_layer:
+                continue
+            if layers[layer] >= elev >= layers[layer + 1]:
+                return layer
+        return None
+
+    def _build_vertical_connection(self, lake_num, conn_idx, cell_id, layer, elev):
+        """
+        Construct a vertical LAK connection entry.
+        """
+        return [
+            lake_num, conn_idx, (layer, cell_id), 'VERTICAL',
+            self.bed_leakance[lake_num], elev, elev, 0.0, 0.0
+        ]
+
+    def _build_horizontal_connections(
+            self, lake_num, cell_id, conn_idx, elev_df, bathy_df,
+            start_index, adjacent_cells, connection_data
+    ):
+        """
+        Build horizontal lake connections under the assumption that lake surface ≈ model top.
+        Horizontal flow is only allowed if:
+          - the lake bottom falls within a valid layer in the lake cell,
+          - and the adjacent cell has material at or below that lake bottom elevation.
+        """
+        cell_lake_botm = bathy_df.loc[cell_id, f'lake {lake_num}']
+        cell_layers = elev_df.loc[cell_id]  # layer elevs for this lake cell
+
+        for idx, ja_cell in enumerate(adjacent_cells):
+            ja_lake_botm = bathy_df.loc[ja_cell, f'lake {lake_num}']
+            conn_len = self.vor.cl12[start_index + idx + 1]
+            conn_width = self.vor.hwva[start_index + idx + 1]
+
+            # if lake botm in adjacent cell is lower, then no horizontal connection
+            if cell_lake_botm >= ja_lake_botm:
+                continue
+
+            for layer in range(len(cell_layers) - 1):  # assumes elev_df has a geometry column (hence minus one)
+                # skip layer if horiz conn for only another layer is specified
+                if self.only_layer is not None and layer != self.only_layer:
+                    continue
+
+                cell_top = cell_layers[layer]
+                cell_botm = cell_layers[layer + 1]
+
+                # if cell layer top is greater than lake botm, then lake exists in cell
+                if cell_top >= cell_lake_botm:  # lake in cell
+
+                    # get horiz conn botm
+                    if cell_botm >= cell_lake_botm:  # if cell botm is greater or equal to lake botm
+                        botm = cell_botm  # then botm of horiz conn equals cell botm
+                    else:
+                        botm = cell_lake_botm  # else botm of horiz conn equals lake botm at cell
+
+                    # get horiz conn top
+                    if cell_top < ja_lake_botm:  # if cell top is below adjacent cell lake botm
+                        top = cell_top  # then top of horiz conn is cell top
+                    else:
+                        top = ja_lake_botm  # else top of horiz conn is the lake botm in adjacent cell
+
+                    conn = [
+                        lake_num, conn_idx, (layer, cell_id), 'HORIZONTAL',
+                        self.bed_leakance[lake_num], botm, top, conn_len, conn_width
+                    ]
+                    connection_data.append(conn)
+                    conn_idx += 1
+                    break  # One connection per layer per adjacent cell
+
+        return conn_idx, connection_data
 
 
 class LakePackageData:

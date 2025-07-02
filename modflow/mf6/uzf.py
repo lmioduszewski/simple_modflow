@@ -34,7 +34,8 @@ class UZFPackageData:
             nuzfcells: int = None,
             uzf_cells: list = None,
             aux: list[str] = None,
-            add_uzf: bool = True
+            add_uzf: bool = True,
+            mover: bool = False,
     ):
         """
         Initialize the UZF package class.
@@ -66,6 +67,7 @@ class UZFPackageData:
         self.boundnames = boundnames
         self._uzf_vks = None
         self.aux = aux if aux else []
+        self.mover = mover
 
         if uzf_cells is not None:
             self.uzf_cells = uzf_cells
@@ -199,7 +201,7 @@ class UZFPackageData:
             nuzfcells=self.nuzfcells,
             packagedata=self.packagedata,
             perioddata=self.perioddata,
-            mover=False,
+            mover=self.mover,
             simulate_et=False,
             linear_gwet=False,
             square_gwet=False,

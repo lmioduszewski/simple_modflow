@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 from simple_modflow.modflow.utils.datatypes.choros import Choro
-
+from shapely.prepared import prep
 
 def flatten(l):
     return [item for sublist in l for item in sublist]
@@ -65,7 +65,31 @@ class TriangleGrid(Triangle):
             return_only: bool = False,
             radians_step: int = 0.1
     ):
-        """Create a circular grid. Center coords must be a single (x,y) tuple."""
+        """
+        Generates a circular polygon based on specified parameters and adds it to the current geometrical
+        context if directed. The circular polygon is defined by its radius, center coordinates, and
+        resolution of angular steps in radians. Additionally, allows optional inclusion of other polygons
+        or points into the context.
+
+        :param radius: The radius of the circle to be generated.
+        :type radius: float
+        :param center_coords: The (x, y) tuple defining the center coordinates of the circle.
+        :type center_coords: tuple
+        :param polygon_to_add: Optionally, a polygon to be added to the geometrical context.
+        :type polygon_to_add: list or None
+        :param point_to_add: Optionally, a point to be added to a region in the geometrical context.
+        :type point_to_add: tuple or None
+        :param point_region_size_max: The maximum allowable region size for adding the optional point.
+        :type point_region_size_max: int
+        :param return_only: Specifies whether to only return the generated circle as a
+            Polygon object instead of adding it to the current context. Defaults to ``False``.
+        :type return_only: bool
+        :param radians_step: The angular step size (in radians) between each point on the circle.
+            Smaller steps yield a finer resolution. Defaults to ``0.1``.
+        :type radians_step: int
+        :return: The generated circular polygon as a shapely.geometry.Polygon object.
+        :rtype: shapely.geometry.Polygon
+        """
         theta = np.arange(0.0, 2 * np.pi, radians_step)
         x = radius * np.cos(theta) + center_coords[0]
         y = radius * np.sin(theta) + center_coords[1]
@@ -242,8 +266,7 @@ class VoronoiGridPlus(VoronoiGrid):
                  tri: Triangle,
                  crs: str = 'EPSG:2927',
                  rasters: list | Path = None,
-                 name: str = 'voronoi_grid',
-                 nlay: int = None
+                 name: str = 'voronoi_grid'
                  ):
 
         super().__init__(tri)
@@ -252,9 +275,10 @@ class VoronoiGridPlus(VoronoiGrid):
         self.verts = self.vor.verts
         self.iverts = self.vor.iverts
         self.tri = tri
-        self.nlay = nlay
+
         self.crs_latlon = "EPSG:4326"
         self._gdf_latlon = None
+        self._nlay = None
         self._latlon = None
         self.rasters = rasters
         self.crs = crs
@@ -267,6 +291,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self._nja = None
         self._gdf_topbtm = None
         self._adjacent_cells_idx = None
+        self._centroids = None
         self._ja, self._cl12, self._hwva = None, None, None
         self.centroids_x, self.centroids_y = self.get_centroids()
 
@@ -307,10 +332,6 @@ class VoronoiGridPlus(VoronoiGrid):
         self.j = [tri_idx[1] for tri_idx in self.iverts]
         self.k = [tri_idx[2] for tri_idx in self.iverts]
 
-
-        """if self.crs is not None:
-            print('getting lats and lons')
-            print('got lats and lons')"""
         self.grid_centroid = self.get_grid_centroid()
 
         self.vor_list = self.gdf_vorPolys.geometry.to_list()
@@ -318,6 +339,12 @@ class VoronoiGridPlus(VoronoiGrid):
         self.area_list = [cell.area for cell in self.vor_list]
         self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
         self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+
+    @property
+    def nlay(self):
+        if self._nlay is None:
+            self._nlay = len(self.gdf_topbtm.drop('geometry', axis=1).columns) - 1
+        return self._nlay
 
     @property
     def gdf_topbtm(self):
@@ -329,49 +356,79 @@ class VoronoiGridPlus(VoronoiGrid):
     def gdf_topbtm(self, value):
         self._gdf_topbtm = value
 
+    def get_disu_connectivity(self):
+        """
+        Efficiently calculate iac, ja, cl12, hwva, and nja for the DISU package.
+        """
+
+        df = self.gdf_vorPolys
+        geoms = df.geometry
+        centroids = df.geometry.centroid
+        coords = np.array([(pt.x, pt.y) for pt in centroids])
+
+        iac, ja, cl12, hwva = [], [], [], []
+
+        print('getting connectivity properties (iac, ja, cl12, hwva, nja)')
+        for i, neighbors in enumerate(self.adjacent_cells_idx):
+            sorted_neighbors = sorted(neighbors)
+
+            # iac is number of connections + 1 (self)
+            iac.append(len(sorted_neighbors) + 1)
+
+            # ja: self index followed by neighbors
+            ja.extend([i] + sorted_neighbors)
+
+            # cl12: 0 for self, then Euclidean distance to each neighbor
+            dists = np.linalg.norm(coords[sorted_neighbors] - coords[i], axis=1)
+            cl12.extend([0] + dists.tolist())
+
+            # hwva: 0 for self, then shared edge length
+            poly1 = geoms[i]
+            prep_poly1 = prep(poly1)
+            face_lengths = [
+                poly1.intersection(geoms[j]).length if prep_poly1.intersects(geoms[j]) else 0
+                for j in sorted_neighbors
+            ]
+            hwva.extend([0] + face_lengths)
+
+        nja = sum(iac)
+        self._iac = iac
+        self._ja = ja
+        self._cl12 = cl12
+        self._hwva = hwva
+        self._nja = nja
+
+        return iac, ja, cl12, hwva, nja
+
+    @property
+    def iac(self):
+        if self._iac is None:
+            self.get_disu_connectivity()
+        return self._iac
+
     @property
     def ja(self):
-        """ja (integer) is a list of cell number (n) followed by its connecting cell numbers (m)
-        for each of the m cells connected to cell n. The number of values to provide for cell n
-        is IAC(n). This list is sequentially provided for the first to the last cell. The first
-        value in the list must be cell n itself, and the remaining cells must be listed in an
-        increasing order (sorted from lowest number to highest). """
         if self._ja is None:
-            ja_cl12_hwva = self.get_ja_cl12_hwva()
-            self._ja = ja_cl12_hwva[0]
-            self._cl12 = ja_cl12_hwva[1]
-            self._hwva = ja_cl12_hwva[2]
+            self.get_disu_connectivity()
         return self._ja
 
     @property
     def cl12(self):
-        """cl12 (double) is the array containing connection lengths between the center
-        of cell n and the shared face with each adjacent m cell."""
         if self._cl12 is None:
-            ja_cl12_hwva = self.get_ja_cl12_hwva()
-            self._ja = ja_cl12_hwva[0]
-            self._cl12 = ja_cl12_hwva[1]
-            self._hwva = ja_cl12_hwva[2]
+            self.get_disu_connectivity()
         return self._cl12
 
     @property
     def hwva(self):
-        """hwva (double) is a symmetric array of size NJA. For horizontal connections,
-        entries in HWVA are the horizontal width perpendicular to flow. For vertical
-        connections, entries in HWVA are the vertical area for flow. Thus, values in the
-        HWVA array contain dimensions of both length and area. Entries in the HWVA array
-        have a one-to-one correspondence with the connections specified in the JA array.
-        Likewise, there is a one-to-one correspondence between entries in the HWVA array
-        and entries in the IHC array, which specifies the connection type (horizontal or
-        vertical). Entries in the HWVA array must be symmetric; the program will terminate
-        with an error if the value for HWVA for an n to m connection does not equal the
-        value for HWVA for the corresponding n to m connection."""
         if self._hwva is None:
-            ja_cl12_hwva = self.get_ja_cl12_hwva()
-            self._ja = ja_cl12_hwva[0]
-            self._cl12 = ja_cl12_hwva[1]
-            self._hwva = ja_cl12_hwva[2]
+            self.get_disu_connectivity()
         return self._hwva
+
+    @property
+    def nja(self):
+        if self._nja is None:
+            self.get_disu_connectivity()
+        return self._nja
 
     @property
     def gdf_vorPolys(self):
@@ -388,24 +445,6 @@ class VoronoiGridPlus(VoronoiGrid):
         if self._adjacent_cells_idx is None:
             self._adjacent_cells_idx = self.find_adjacent_polygons(self.gdf_vorPolys)
         return self._adjacent_cells_idx
-
-    @property
-    def iac(self):
-        """iac (integer) is the number of connections (plus 1) for each cell. The sum of all
-        the entries in IAC must be equal to NJA."""
-        if self._iac is None:
-            self._iac = self.get_iac()
-        return self._iac
-
-    @property
-    def nja(self):
-        """nja (integer) is the sum of the number of connections and NODES. When calculating the
-        total number of connections, the connection between cell n and cell m is considered to
-        be different from the connection between cell m and cell n. Thus, NJA is equal to the
-        total number of connections, including n to m and m to n, and the total number of cells."""
-        if self._nja is None:
-            self._nja = self.get_nja()
-        return self._nja
 
     def get_disu_props(self):
         self.iac
@@ -432,20 +471,6 @@ class VoronoiGridPlus(VoronoiGrid):
             polygons.append(polygon)
         return polygons
 
-    def get_iac(self):
-
-        # Initialize list of adjacent cell counts
-        adjacent_counts = [0] * len(self.iverts)
-
-        # Loop through each ridge and increment adjacent cell counts
-        for ridge in self.scipy_ridge_points:
-            if -1 not in ridge:
-                i, j = ridge
-                adjacent_counts[i] += 1
-                adjacent_counts[j] += 1
-
-        return adjacent_counts
-
     def mapit(self, crs='EPSG:2927'):
         """maps voronoi grid based on x,y coords
         and a defined crs projection
@@ -459,73 +484,6 @@ class VoronoiGridPlus(VoronoiGrid):
         poly = self.get_voronoi_polygons()
 
         return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
-
-    """def plot_choropleth(
-            self,
-            zmin=None,
-            zmax=None,
-            zoom=18,
-            hoverlabels=None,
-            hoverdata=None,
-            custom_z=None
-    ):
-
-        fig = self.choropleth(zmin, zmax, zoom, hoverlabels, hoverdata, custom_z)
-        return fig.show()"""
-
-    """def choropleth(
-            self,
-            zmin=None,
-            zmax=None,
-            zoom=18,
-            hoverlabels=None,
-            hoverdata=None,
-            custom_z=None
-    ):
-        if zmax is None:
-            zmax = len(self.latlon['features'])
-        if zmin is None:
-            zmin = 0
-
-        fig_mbox = mf2Dplots.ChoroplethPlot(vor=self, zoom=zoom)
-        hoverdict = {
-            'Cell No.': self.cell_list,
-            'Area': self.area_list,
-            'x': self.x_list,
-            'y': self.y_list
-        }
-        # if additional custom hover data is provided, add it
-        if self.nlay:
-            nlay = self.nlay
-            for lyr in range(nlay):
-                lyr_elevs = self.gdf_topbtm.loc[:, lyr].to_list()
-                hoverdict[f'Layer {lyr} Bottom Elev: '] = lyr_elevs
-        if hoverlabels is not None and hoverdata is not None:
-            datalen = len(hoverlabels)
-            for num in range(datalen):
-                hoverdict[hoverlabels[num]] = hoverdata[num]
-        custom_data, hover_template = create_hover(hoverdict)
-
-        # allow for a custom colorscale z-value
-        if custom_z is None:
-            zs = self.gdf_latlon.index.to_list()
-        else:
-            zs = custom_z
-        fig_mbox.add_choroplethmap(
-            geojson=self.latlon,
-            featureidkey="id",
-            locations=self.gdf_latlon.index.to_list(),
-            z=zs,
-            customdata=custom_data,
-            colorscale="earth",
-            zmax=zmax,
-            zmin=zmin,
-            hovertemplate=hover_template
-        )
-
-        return fig_mbox
-
-"""
 
     def choropleth(
             self,
@@ -733,6 +691,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :param idomain_path: provide to remove idomain cells from the returned grid edge cells
         :return:  list of grid edge cells
         """
+
         def is_edge(cell, idx):
             num_ja_cells = len(self.adjacent_cells_idx[idx])
             num_cell_faces = len(cell.geometry.exterior.coords) - 1
@@ -889,31 +848,31 @@ class VoronoiGridPlus(VoronoiGrid):
                 y_coords.append(y)
         return x_coords, y_coords
 
-    def get_centroids(self) -> list:
-        """Returns coordinates of centroids of each Voronoi
-        polygon.
+    @property
+    def centroids(self):
+        """
+        The `centroids` are internally calculated by invoking the `get_centroids()`
+        method if they are not already computed.
+
+        :return: The computed centroids of the voronoi grid cells.
+        :rtype: Same type as returned by `get_centroids()` method.
+        """
+        if self._centroids is None:
+            self._centroids = self.get_centroids()
+        return self._centroids
+
+    def get_centroids(self) -> tuple[list[float], list[float]]:
+        """
+        Returns coordinates of centroids of each Voronoi polygon.
 
         Returns:
-            list: lists of x-coords and y-coords
+            tuple: (list of x-coords, list of y-coords)
         """
-        vor_xverts_per_cells = []
-        vor_yverts_per_cells = []
-        vor_centroids_x = []
-        vor_centroids_y = []
+        if self._gdf_vorPolys is None:
+            self.get_gdf_vorPolys()
 
-        for cell in self.vor.iverts:
-            thiscellx = []
-            thiscelly = []
-            for idx in cell:
-                thiscellx += [self.vor.verts[idx][0]]
-                thiscelly += [self.vor.verts[idx][1]]
-                thiscell_centroidx = np.array(thiscellx).mean()
-                thiscell_centroidy = np.array(thiscelly).mean()
-            vor_xverts_per_cells.append(thiscellx)
-            vor_yverts_per_cells.append(thiscelly)
-            vor_centroids_x.append(thiscell_centroidx)
-            vor_centroids_y.append(thiscell_centroidy)
-        return vor_centroids_x, vor_centroids_y
+        centroids = self._gdf_vorPolys.geometry.centroid
+        return centroids.x.tolist(), centroids.y.tolist()
 
     def find_adjacent_polygons(self, gdf: gpd.GeoDataFrame) -> list:
         """Iterates though a GeoDataFrame of Voronoi polygons
@@ -1011,6 +970,8 @@ class VoronoiGridPlus(VoronoiGrid):
         return length
 
     def get_gdf_vorPolys(self, crs=None):
+
+        crs = self.crs if crs is None else crs
         vertices_by_cells = []
         xvertices_by_cells = []
         yvertices_by_cells = []
@@ -1073,54 +1034,136 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return gdf_topbtm
 
-    def get_centroid_elevations(self, elevations_files: list, labels: list) -> gpd.GeoDataFrame:
+    def get_centroid_elevations(
+            self,
+            elevations_files: Path | list[Path | int],
+            labels: str | list[str]
+    ) -> gpd.GeoDataFrame:
         """
-        Method to get centroid elevations of the voronoi grid for each elevation raster given in the
-        elevation_files list
-        :param elevations_files: list of elevation rasters
-        :param labels: list of names for each raster
-        :return: GeoDataFrame of the centroid elevs in the voronoi grid for each raster
+        Get centroid elevations of the Voronoi grid for each elevation raster.
+        Vectorized and optimized version.
+
+        :param elevations_files: Path or list of Paths to elevation raster(s)
+        :param labels: str or list of labels for each raster
+        :return: GeoDataFrame with elevation values at centroids
         """
+        if isinstance(elevations_files, Path):
+            elevations_files = [elevations_files]
+        if isinstance(labels, str):
+            labels = [labels]
+
+        if len(labels) != len(elevations_files):
+            raise ValueError("Labels length must match elevation files length")
+
+        # separate provided elevations by single values or Paths for processing below
+        is_int = [(i, obj) for i, obj in enumerate(elevations_files) if isinstance(obj, int | float)]
+        non_ints = [(i, obj) for i, obj in enumerate(elevations_files) if isinstance(obj, Path)]
+        int_idx, int_layers = zip(*is_int)
+        raster_idx, raster_layers = zip(*non_ints)
+
+        # Open raster files and store arrays and metadata
+        srcs = [rasterio.open(path) for path in raster_layers]
+        arrays = [src.read(1) for src in srcs]
+        transforms = [src.transform for src in srcs]
+        bounds = [src.bounds for src in srcs]
+
+        # Get centroid coordinates as NumPy arrays
+        centroids = self.gdf_vorPolys.geometry.centroid
+        xs, ys = centroids.x.to_numpy(), centroids.y.to_numpy()
+
+        centroid_elevs = self.gdf_vorPolys.copy()
+
+        # Create result GeoDataFrame and populate elevation values for RASTER layers
+        if len(raster_layers) > 0:
+
+            raster_labels = [labels[i] for i in raster_idx]
+            for i, (label, arr, tfm, bds) in enumerate(zip(raster_labels, arrays, transforms, bounds)):
+                # Convert x,y to raster row/col indices (float by default)
+                rows, cols = map(np.array, rasterio.transform.rowcol(tfm, xs, ys, op=np.floor))
+
+                # Identify valid points that fall within the raster bounds
+                valid = (
+                        (rows >= 0) & (cols >= 0) &
+                        (rows < arr.shape[0]) & (cols < arr.shape[1])
+                )
+
+                # Initialize elevation values with NaN, then assign only valid entries
+                values = np.full(xs.shape, np.nan)
+                valid_rows = rows[valid].astype(int)
+                valid_cols = cols[valid].astype(int)
+                values[valid] = arr[valid_rows, valid_cols]
+
+                # Add to the GeoDataFrame under the given label
+                centroid_elevs[label] = values.astype(float)
+
+        # Close all raster files
+        for src in srcs:
+            src.close()
+
+        # for layers where only int or float elevations provided, make all centroids that elev
+        if len(int_layers) > 0:
+            int_labels = [labels[i] for i in int_idx]
+            for i, (label, val) in enumerate(zip(int_labels, int_layers)):
+                centroid_elevs[label] = float(val)
+
+        # make sure layer columns are in correct order
+        labels = ['geometry'] + labels
+        centroid_elevs = centroid_elevs[labels]
+        centroid_elevs.geometry = centroid_elevs.centroid
+
+        return centroid_elevs
+
+    """def get_centroid_elevations(
+            self,
+            elevations_files: Path | list[Path],
+            labels: str | list[str]
+    ) -> gpd.GeoDataFrame:
+    
+        if isinstance(elevations_files, Path):
+            elevations_files = [elevations_files]
+        if isinstance(labels, str):
+            labels = [labels]
 
         n_rasters = len(elevations_files)
+        if len(labels) != n_rasters:
+            raise ValueError("Length of labels must match number of elevation files")
 
-        # Open the elevations raster files
-        srcs = []
-        for i in range(n_rasters):
-            srcs.append(rasterio.open(elevations_files[i]))
-        # Get the elevations for each raster file as a numpy array
-        elevations = []
-        for i in range(n_rasters):
-            elevations.append(srcs[i].read(1))
+        # Open rasters and read metadata
+        srcs = [rasterio.open(path) for path in elevations_files]
+        elevations = [src.read(1) for src in srcs]
+        shapes = [arr.shape for arr in elevations]  # (rows, cols)
 
-        # Create a function to get the elevation at a point for each raster file
-        def get_elevations(x, y, debug=False):
+        def get_elevations(x, y):
             elevs = []
             for i in range(n_rasters):
-                row, col = srcs[i].index(x, y)
-                if debug:
-                    print(f'x: {x}, y: {y}')
-                    print(i, f'row: {row}', f'col: {col}')
-                elev = elevations[i][row - 1, col - 1]  # subtract 1 so rows and cols start at zero, else Python error
+                try:
+                    row, col = srcs[i].index(x, y)
+                except ValueError:
+                    # x, y is outside raster bounds
+                    elevs.append(np.nan)
+                    continue
+
+                if 0 <= row < shapes[i][0] and 0 <= col < shapes[i][1]:
+                    elev = elevations[i][row, col]
+                else:
+                    elev = np.nan  # out of bounds
                 elevs.append(elev)
             return tuple(elevs)
 
-        # Get the centroids of the polygons as a geodataframe
+        # Copy centroid geometry
         centroids_gdf = self.gdf_vorPolys.copy()
         centroids_gdf.geometry = centroids_gdf.centroid
-        # Get the elevation at each centroid for each raster file
-        for i in range(n_rasters):
-            label = labels[i]
-            centroids_gdf[label] = centroids_gdf.apply(
-                lambda row: (get_elevations(
-                    row.geometry.x, row.geometry.y)[i]
-                ), axis=1
-            )
-        # Close the raster files
-        for i in range(n_rasters):
-            srcs[i].close()
 
-        return centroids_gdf
+        # Apply elevation sampling per raster
+        elev_data = centroids_gdf.geometry.apply(lambda pt: get_elevations(pt.x, pt.y))
+
+        for i, label in enumerate(labels):
+            centroids_gdf[label] = elev_data.apply(lambda t: t[i])
+
+        for src in srcs:
+            src.close()
+
+        return centroids_gdf"""
 
     def get_cell_areas(self):
         print('getting cell areas')
@@ -1129,55 +1172,6 @@ class VoronoiGridPlus(VoronoiGrid):
         for poly in self.gdf_vorPolys['geometry']:
             poly_area_list += [poly.area]
         return poly_area_list
-
-    def get_iac(self):
-        ### Find Parameter iac for DISU Package
-        print('getting iac')
-        num_adjacent_by_cell = [None for cell in self.adjacent_cells_idx]
-        for i, cell in enumerate(self.adjacent_cells_idx):
-            num_adjacent_by_cell[i] = len(cell) + 1
-        return num_adjacent_by_cell
-
-    def get_nja(self):
-        print('getting nja')
-        ### Find Parameter nja for DISU Package ###
-        sumiac = 0
-        for i, num in enumerate(self.iac):
-            sumiac += self.iac[i]
-        nja_for_disu = sumiac
-        return nja_for_disu
-
-    def get_ja_cl12_hwva(self):
-        print('getting ja, cl12, and hwva')
-        ### Find Parameter ja, cl12, and hwva for DISU Package ###
-        ja_for_disu = []
-        cl12_for_disu = []
-        hwva_for_disu = []
-        for i, cell in enumerate(self.adjacent_cells_idx):
-            """get a sorted list of the indices of adjacent cells to this cell"""
-            sortedcell = sorted(self.adjacent_cells_idx[i])
-            """get list of indices starting with the reference cell and then 
-            appending the indices of all cells adjacent to that reference cell"""
-            thisja = [i] + sortedcell
-            """get a list of distances between the centroid of the reference cell
-            and the shared face of each adjacent cell"""
-            thiscl12 = [0] + [self.calculate_distance(
-                gdf=self.gdf_vorPolys,
-                poly_idx1=i,
-                poly_idx2=j,
-            ) for j in sortedcell
-            ]
-            """get a list of the shared face lengths for each index in the 
-            thisja list"""
-            thishwva = [0] + [self.shared_face_length(
-                poly1=self.gdf_vorPolys.loc[i].geometry,
-                poly2=self.gdf_vorPolys.loc[j].geometry,
-            ) for j in sortedcell
-            ]
-            ja_for_disu += thisja
-            cl12_for_disu += thiscl12
-            hwva_for_disu += thishwva
-        return ja_for_disu, cl12_for_disu, hwva_for_disu
 
     def get_origin_xy(self):
         """Get the x,y coordinates for the origin of the 
@@ -1215,7 +1209,8 @@ class VoronoiGridPlus(VoronoiGrid):
         Returns:
             shp: returns Shapely representation of the grid centroid
         """
-        grid_centroid = shp.MultiPolygon(self.gdf_latlon['geometry'].to_list()).centroid
+        # grid_centroid = shp.MultiPolygon(self.gdf_latlon['geometry'].to_list()).centroid
+        grid_centroid = self.gdf_latlon.union_all().centroid
         return grid_centroid
 
     def get_overlapping_area(self, shp_gpkg=None, cell_list=None):
@@ -1330,7 +1325,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return k_vorcell_list
 
-    def get_raster_from_strike_dip(
+    """def get_raster_from_strike_dip(
             self,
             strike: int,
             dip: int,
@@ -1339,16 +1334,7 @@ class VoronoiGridPlus(VoronoiGrid):
             output_filename: Path = Path.cwd().joinpath('raster.tif')
     ):
         """
-        Generate a raster file representing elevations of a sloping plane.
-
-        Parameters:
-        - strike: The strike of the plane in degrees, measured from north.
-        - dip: The dip of the plane in degrees, measured from the horizontal.
-        - known_point: A tuple (x, y, elevation) for a known point on the plane.
-        - hull_bounds: A tuple (min_x, min_y, max_x, max_y) representing the bounds of the area.
-        - pixel_size: The size of each pixel in the same units as the hull_bounds.
-        - output_filename: The filename for the output raster.
-        """
+    """
 
         hull_bounds = shp.MultiPolygon(self.gdf_vorPolys.geometry.to_list()).convex_hull.bounds
         # Unpack the known point and hull bounds
@@ -1394,13 +1380,84 @@ class VoronoiGridPlus(VoronoiGrid):
                 width=width,
                 count=1,
                 dtype=rasterio.float32,
-                crs='EPSG:2927',
+                crs=self.crs,
                 transform=transform,
         ) as dst:
             dst.write(elevation_data, 1)
 
         centroids_gdf = self.get_centroid_elevations([output_filename], ['elev'])
 
+        return centroids_gdf"""
+
+    def get_raster_from_strike_dip(
+            self,
+            strike: int,
+            dip: int,
+            known_point: tuple,
+            pixel_size: int = 1,
+            output_filename: Path = Path.cwd().joinpath('raster.tif')
+    ):
+        """
+        Generate a raster file representing elevations of a sloping plane.
+
+        Parameters:
+        - strike: The strike of the plane in degrees, measured from north.
+        - dip: The dip of the plane in degrees, measured from the horizontal.
+        - known_point: A tuple (x, y, elevation) for a known point on the plane.
+        - pixel_size: The size of each pixel in spatial units.
+        - output_filename: The filename for the output raster.
+        """
+
+        # Get model extent from grid
+        domain = self.get_domain()
+        min_x, min_y, max_x, max_y = domain.bounds
+
+        # Align bounds to pixel grid to avoid misalignment and nan issues
+        min_x = np.floor(min_x / pixel_size) * pixel_size
+        max_x = np.ceil(max_x / pixel_size) * pixel_size
+        min_y = np.floor(min_y / pixel_size) * pixel_size
+        max_y = np.ceil(max_y / pixel_size) * pixel_size
+
+        width = int((max_x - min_x) / pixel_size)
+        height = int((max_y - min_y) / pixel_size)
+
+        # Convert dip to angle from horizontal
+        dip_rad = np.radians(90 - dip)
+        normal = self.get_normal_from_strike_and_dip(strike, dip)
+
+        # Create affine transform from upper-left corner
+        transform = from_origin(min_x, max_y, pixel_size, pixel_size)
+
+        # Create grid of x and y coordinates
+        x_coords = min_x + np.arange(width) * pixel_size
+        y_coords = max_y - np.arange(height) * pixel_size  # top to bottom
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+
+        # Compute elevation for each cell based on distance from known point
+        known_x, known_y, known_elevation = known_point
+        point_vectors = np.stack([x_grid - known_x, y_grid - known_y, np.zeros_like(x_grid)], axis=-1)
+
+        # Compute elevation using normal projection
+        norm_normal = np.linalg.norm(normal)
+        distance_along_normal = np.dot(point_vectors, normal) / norm_normal
+        elevation_data = known_elevation - distance_along_normal * np.cos(dip_rad)
+
+        # Write the raster
+        with rasterio.open(
+                output_filename,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=1,
+                dtype=rasterio.float32,
+                crs=self.crs,
+                transform=transform,
+        ) as dst:
+            dst.write(elevation_data.astype(np.float32), 1)
+
+        # Sample raster at centroids
+        centroids_gdf = self.get_centroid_elevations([output_filename], ['elev'])
         return centroids_gdf
 
     def to_shapefile(self, filepath: str | Path = 'vor_shp.shp'):
@@ -1523,7 +1580,7 @@ class VoronoiGridPlus(VoronoiGrid):
         :return: new dataframe with adjusted surface elevations
         """
 
-        df = self.gdf_topbtm if df is None else df
+        df = self.gdf_topbtm.copy() if df is None else df
         #  drop the geometry if needed, so we can force all values to be numeric
         if isinstance(df, gpd.GeoDataFrame):
             df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))

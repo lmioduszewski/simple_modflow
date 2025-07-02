@@ -16,17 +16,21 @@
 		{
 			"Elapsed" : 
 			{
-				"minutes" : 1.60146363e-001,
-				"seconds" : 9.60878180e+000
+				"minutes" : 5.39819500e-003,
+				"seconds" : 3.23891700e-001
 			},
-			"Finished" : "Wed Dec 18 09:16:05 2024\n",
-			"Started" : "Wed Dec 18 09:15:56 2024\n"
+			"Finished" : "Wed Jun 25 10:14:10 2025\n",
+			"Started" : "Wed Jun 25 10:14:10 2025\n"
 		}
 	},
 	{
 		"OUTPUTS" : 
 		{
-			"COUNT" : 6,
+			"ASCII_TABLE" : 
+			{
+				"FILE_NAME" : "NAME_OF_OUTPUT.dat"
+			},
+			"COUNT" : 8,
 			"DBF_TABLE" : 
 			{
 				"FILE_NAME" : "NAME_OF_OUTPUT.dbf"
@@ -48,7 +52,11 @@
 				"FILE_NAME" : "NAME_03_OF_OUTPUT.shp"
 			},
 			"SUMMARY" : null,
-			"TYPES" : [          "SUMMARY",        "DBF_TABLE",   "PATHLINE_WHOLE",   "PATHLINE_PARTS",   "POINTS_IN_TIME",         "ENDPOINT" ]
+			"TYPES" : [          "SUMMARY",      "ASCII_TABLE",        "DBF_TABLE",   "PATHLINE_WHOLE",   "PATHLINE_PARTS",   "POINTS_IN_TIME",         "ENDPOINT",         "V100_PTL" ],
+			"V100_PTL" : 
+			{
+				"FILE_NAME" : "NAME_OF_OUTPUT.ptl"
+			}
 		}
 	},
 	{
