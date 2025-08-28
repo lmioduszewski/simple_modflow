@@ -1,0 +1,2257 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+
+import numpy as np
+import plotly.graph_objects as go
+from scipy.spatial import Voronoi
+import pandas as pd
+import geopandas as gpd
+import figs as f
+from flopy.utils.voronoi import VoronoiGrid, tri2vor
+from flopy.discretization.vertexgrid import VertexGrid
+from flopy.plot.crosssection import PlotCrossSection
+from flopy.utils.triangle import Triangle
+from flopy.utils.geospatial_utils import GeoSpatialUtil
+import rasterio
+from rasterio.transform import from_origin
+import shapely as shp
+from shapely.geometry import Polygon, MultiLineString, Point, LineString
+import json
+from pathlib import Path
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
+from simple_modflow.modflow.utils.datatypes.choros import Choro
+from shapely.prepared import prep
+
+
+def flatten(l):
+    return [item for sublist in l for item in sublist]
+
+
+def densify_poly(polygon: shp.Polygon = None, distance_between: int | float = None) -> shp.Polygon:
+    """
+    adds points along the exterior of a polygon with at a specified distance between them
+    :param polygon: shapely polygon to densify
+    :param distance_between: distance between points to add
+    :return: densified polygon
+    """
+    exterior: shp.geometry.polygon.LinearRing = polygon.exterior
+    total_length = exterior.length
+    current_distance = 0.0
+    new_points = []
+
+    while current_distance < total_length:
+        point = exterior.interpolate(current_distance)
+        new_points.append(point)
+        current_distance += distance_between
+
+    # Add the last point to ensure the polygon is closed
+    new_points.append(exterior.interpolate(total_length))
+
+    new_poly = shp.Polygon(new_points)
+
+    return new_poly
+
+
+class TriangleGrid(Triangle):
+
+    def __init__(self, angle=32, *args, **kwargs):
+        super().__init__(angle=angle, *args, **kwargs)
+
+    def add_circle(
+            self,
+            radius: float = 100.0,
+            center_coords: tuple = (0, 0),
+            polygon_to_add=None,
+            point_to_add=None,
+            point_region_size_max=1,
+            return_only: bool = False,
+            radians_step: int = 0.1
+    ):
+        """
+        Generates a circular polygon based on specified parameters and adds it to the current geometrical
+        context if directed. The circular polygon is defined by its radius, center coordinates, and
+        resolution of angular steps in radians. Additionally, allows optional inclusion of other polygons
+        or points into the context.
+
+        :param radius: The radius of the circle to be generated.
+        :type radius: float
+        :param center_coords: The (x, y) tuple defining the center coordinates of the circle.
+        :type center_coords: tuple
+        :param polygon_to_add: Optionally, a polygon to be added to the geometrical context.
+        :type polygon_to_add: list or None
+        :param point_to_add: Optionally, a point to be added to a region in the geometrical context.
+        :type point_to_add: tuple or None
+        :param point_region_size_max: The maximum allowable region size for adding the optional point.
+        :type point_region_size_max: int
+        :param return_only: Specifies whether to only return the generated circle as a
+            Polygon object instead of adding it to the current context. Defaults to ``False``.
+        :type return_only: bool
+        :param radians_step: The angular step size (in radians) between each point on the circle.
+            Smaller steps yield a finer resolution. Defaults to ``0.1``.
+        :type radians_step: int
+        :return: The generated circular polygon as a shapely.geometry.Polygon object.
+        :rtype: shapely.geometry.Polygon
+        """
+        theta = np.arange(0.0, 2 * np.pi, radians_step)
+        x = radius * np.cos(theta) + center_coords[0]
+        y = radius * np.sin(theta) + center_coords[1]
+        circle_poly = [(x, y) for x, y in zip(x, y)]
+        if not return_only:
+            self.add_polygon(circle_poly)
+
+        if polygon_to_add:
+            polygon_to_add = Polygon(shell=polygon_to_add)
+            self.add_polygon(polygon=polygon_to_add)
+        if point_to_add:
+            self.add_region(point=point_to_add, maximum_area=point_region_size_max)
+
+        return shp.Polygon(circle_poly)
+
+    def add_rectangle(
+            self,
+            x_dist=100,
+            y_dist=100,
+            origin=(0, 0),
+            return_only=False,
+            max_area=None
+    ):
+        x_min, y_min = origin[0], origin[1]
+        x_max, y_max = x_min + x_dist, y_min + y_dist
+        polygon_coords = ((x_min, y_min), (x_min, y_max),
+                          (x_max, y_max), (x_max, y_min))
+        polygon = shp.Polygon(polygon_coords)
+        if not return_only:
+            self.add_polygon(polygon)
+            if max_area:
+                representative_point = polygon.representative_point().coords[0]
+                self.add_region(representative_point, maximum_area=max_area)
+
+        return polygon
+
+    def add_regions(self, points, attributes=None, maximum_areas=None):
+        """
+        Add points that will become regions with maximum areas, if
+        specified.
+
+        Parameters
+        ----------
+        points : tuples
+            (x, y)...
+
+        attributes : integer or float
+            integer values assigned to output elements
+
+        maximum_areas : float
+            maximum area of elements in regions
+
+        Returns
+        -------
+        None
+
+        """
+        if attributes is None:
+            attributes = [0 for _ in points]
+        if maximum_areas is None:
+            maximum_areas = [None for _ in points]
+
+        regions = zip(points, attributes, maximum_areas)
+        for region in regions:
+            self._regions.append(region)
+        return
+
+    def add_poly_regions(
+            self,
+            shp_gpkg: list | Path,
+            points: list | tuple = None,
+            use_representative_point: bool = True,
+            maximum_areas: list | int | float = None,
+            *args,
+            **kwargs
+    ):
+        if isinstance(shp_gpkg, Path):
+            shp_gpkg = [shp_gpkg]
+        polys = read_shp_gpkg(shp_gpkg).geometry
+        self.add_region(*args, **kwargs)
+        return NotImplementedError
+
+    def add_polygon(
+            self,
+            polygon: shp.Polygon | Path,
+            domain: shp.Polygon | Path = None,
+            buffer: int | float = 0,
+            simplify_tolerance=None,
+            ignore_holes=True,
+            max_area=None,
+            densify_dist: int = None,
+    ):
+        """
+        wrapper for flopy TriangleGrid.add_polygon. Allows for clipping to domain,
+        and will also define the max area of triangulation within polygon if max
+        area is given.
+        :param simplify_tolerance: distance value to constrain simplification.
+        :param densify_dist: if given, buffer vertex points will be added equidistant along polygon
+        :param polygon: polygon to add
+        :param domain: model domain polygon, used for clipping
+        :param buffer: negative buffer to give polygon after clipping
+        :param ignore_holes: defaults to True
+        :param max_area: max area of triangulation within polygon
+        :return:
+        """
+        if isinstance(polygon, Path):
+            polygon = read_shp_gpkg(polygon).union_all()
+            # assert isinstance(polygon, shp.Polygon), 'must be polygon'
+        if domain:
+            if isinstance(domain, Path):
+                domain = read_shp_gpkg(domain).union_all()
+            assert isinstance(domain, shp.Polygon), 'domain must be a shapely polygon'
+            if not domain.contains(polygon):
+                print('clipping to domain!')
+                if isinstance(polygon, shp.Polygon):
+                    polygon = gpd.GeoDataFrame(geometry=[polygon])
+                polygon = polygon.clip(domain).union_all()
+        if buffer != 0:
+            polygon = polygon.buffer(buffer)
+        if domain:
+            assert domain.contains(polygon), 'polygon not fully within domain, try adding a negative buffer'
+        if simplify_tolerance:
+            polygon = polygon.simplify(simplify_tolerance)
+        if densify_dist:
+            polygon = densify_poly(polygon, densify_dist)
+
+        super().add_polygon(polygon, ignore_holes=ignore_holes)
+
+        if max_area:
+            point = (polygon.representative_point().x, polygon.representative_point().y)
+            self.add_region(point, maximum_area=max_area)
+
+    def add_points(self, points: shp.MultiPoint):
+        """
+        Adds multiple points to the geometric collection for building a
+        voronoi grid.
+
+        :param points: A set of multiple points represented as a
+            `shp.MultiPoint` object or convertible input into it.
+        :type points: shp.MultiPoint
+        :return: None
+        """
+
+        if not isinstance(points, shp.MultiPoint):
+            try:
+                points = shp.MultiPoint(points)
+            except TypeError:
+                print('points must be of type shp.MultiPoint')
+
+        geom = GeoSpatialUtil(points).points
+        self._polygons.append(geom)
+
+    def add_line_buffer(
+            self,
+            line: Path,
+            buffer: int = 10,
+            simplify_tolerance: int = 10,
+            densify_dist: int = None,
+            domain: shp.Polygon | Path = None,
+            max_area: int = None,
+            negative_buffer_after_clipping: float | int = 0
+    ):
+        """
+        Add a line buffer polygon to the triangulation.
+        :param line: Path to line shape
+        :param buffer: buffer distance, defaults to 10
+        :param simplify_tolerance: distance value to constrain simplification.
+        :param densify_dist: if given, buffer vertex points will be added equidistant along buffer
+        :param domain: domain polygon, used for clipping
+        :param max_area: max area of triangulation within buffer polygon
+        :param negative_buffer_after_clipping: negative buffer to pass to add_polygon. Will apply this buffer after
+        clipping to the domain. Value must be negative
+        :return:
+        """
+        if negative_buffer_after_clipping:
+            assert negative_buffer_after_clipping <= 0, \
+                f'clipping buffer must be less than or equal to zero, not {negative_buffer_after_clipping}'
+        line_geom = read_shp_gpkg(line).union_all()
+        line_buffer = line_geom.buffer(buffer)
+        if simplify_tolerance:
+            line_buffer = line_buffer.simplify(simplify_tolerance)
+        if densify_dist:
+            line_buffer = densify_poly(line_buffer, densify_dist)
+        self.add_polygon(
+            line_buffer,
+            domain=domain,
+            max_area=max_area,
+            buffer=negative_buffer_after_clipping
+        )
+
+    @staticmethod
+    def generate_dissipating_point_cloud(
+            polygon: shp.Polygon | Path = None,
+            buffer_dist: int | float = 1000,
+            num_buffers: int = 5,
+            min_area: int | float = None,
+            max_area: int | float = None,
+            min_spacing: int | float = 200,
+            max_spacing: int | float = 1000,
+            method: str = 'power',
+            exponent: int | float = 2,
+    ):
+        """
+        Generate a dissipating point cloud with buffers around a given polygon based on specified parameters.
+
+        This function creates a set of buffered polygons with a dissipating density of points.
+        Buffers are generated using either an exponential or power method, with spaces between
+        points dependent on the min/max area or spacing inputs. Input validation and transformation
+        are performed prior to polygon processing.
+
+        :param polygon: Input polygon to generate buffer clouds from. Can also be a path to a shapefile.
+        :param buffer_dist: Maximum buffer distance to generate around the polygon.
+        :param num_buffers: Number of buffer zones to generate between the polygon and max buffer distance.
+        :param min_area: Minimum area for calculating spacing if `min_spacing` is not provided.
+        :param max_area: Maximum area for calculating spacing if `max_spacing` is not provided.
+        :param min_spacing: Minimum spacing between points in the polygon's buffers.
+        :param max_spacing: Maximum spacing between points in the polygon's buffers.
+        :param method: Method for calculating buffer density curve ('power' or 'exponential').
+        :param exponent: Exponent factor for the 'power' method curve calculation.
+        :return: A list of polygons representing the dissipating buffer zones.
+        """
+
+        if isinstance(polygon, Path):
+            polygon = read_shp_gpkg(polygon).union_all()
+        assert isinstance(polygon, shp.Polygon), 'provided argument cannot be converted to a polygon'
+
+        # if min and max areas given, assume point spacing is sqare-root of area
+        min_spacing = np.sqrt(min_area) if min_spacing is None else min_spacing
+        max_spacing = np.sqrt(max_area) if max_spacing is None else max_spacing
+
+        if method == 'exponential':
+            linear_space = np.linspace(0, 1, num_buffers)
+            curve = np.exp(linear_space) - 1
+            curve /= curve[-1]  # normalize to [0,1]
+        elif method == 'power':
+            linear_space = np.linspace(0, 1, num_buffers)
+            curve = linear_space ** exponent
+        else:
+            raise ValueError("Method must be 'exponential' or 'power'.")
+
+        buffer_distances = min_spacing + curve * (buffer_dist - min_spacing)
+
+        spacings = np.linspace(min_spacing, max_spacing, num_buffers)
+
+        # get polygons for each buffer distance
+        pols = [polygon]
+        for dist, spac in zip(buffer_distances, spacings):
+            pnts = []
+            for interp_len in np.arange(0, polygon.buffer(dist).exterior.length, spac):
+                pnts.append(polygon.buffer(dist).exterior.line_interpolate_point(interp_len))
+            pol = shp.Polygon(pnts)
+            pols.append(pol)
+
+        return pols
+
+    def add_dissipating_buffer_zones(
+            self,
+            max_area: int | float = 100,
+            **kwargs
+    ):
+        """
+        Adds dissipating buffer zones by creating polygons and including them within
+        a specified area limit. This method utilizes point clouds to gradually
+        create zones where coverage dissipates over the area.
+
+        :param max_area: The maximum allowed area (in suitable units, such as
+            square meters) for the initial polygon. Smaller values limit the
+            size of the primary buffer zone. Defaults to 100.
+        :param kwargs: Additional parameters passed to the
+            `generate_dissipating_point_cloud` method.
+        :return: None
+        """
+        polys = self.generate_dissipating_point_cloud(**kwargs)
+        for i, g in enumerate(polys):
+            if i == 0:
+                self.add_polygon(g, max_area=max_area)
+            else:
+                self.add_polygon(g)
+
+    def add_polygons_with_multiregions(
+            self: Triangle,
+            shp_gpkg,
+            buff_num=5,
+            buff_sep=200,
+            min_area=50,
+            max_area=5_000,
+    ):
+        """
+        Adds polygons with multiple regions based on a specified geospatial dataset. The function creates buffer polygons
+        and distributes these buffers spatially around the centroid of the input geometry. The method then assigns these
+        geometries as regions with associated maximum area constraints.
+
+        :param shp_gpkg: Geospatial data in a GeoPackage or shapefile format that defines the initial geometry.
+        :param buff_num: The number of buffer polygons to add around the geometry.
+        :param buff_sep: The spatial separation distance between each buffer polygon.
+        :param min_area: The minimum area constraint for buffer regions.
+        :param max_area: The maximum area constraint for buffer regions.
+        :return: None
+        """
+
+        poly = read_shp_gpkg(shp_gpkg).union_all()
+        rep = poly.representative_point().xy
+        rep = [rep[0][0], rep[1][0]]
+        y_center = poly.centroid.xy[1][0]
+        right_x_edge = poly.bounds[2]
+
+        buff_start = right_x_edge + (buff_sep / 2)
+        buff_end = buff_start + (buff_sep * (buff_num - 1))
+
+        # get points that will define the regions between the buffers
+        x_buffs = np.linspace(buff_start, buff_end, buff_num).tolist()
+        y_buffs = [y_center for _ in range(buff_num)]
+        buff_points = [rep] + list(zip(x_buffs, y_buffs))
+        buff_points = [shp.Point(p) for p in buff_points]
+
+        # get buffer polygons to add
+        pols = [poly] + [poly.buffer(buff_sep * mult) for mult in range(1, buff_num + 1)]
+        # get max areas for each buffer
+        buff_areas = np.linspace(min_area, max_area, buff_num + 1)
+
+        assert len(buff_areas) == len(buff_points) == len(pols)
+        for i, pol in enumerate(pols):
+            self.add_polygon(pol, simplify_tolerance=10, densify_dist=50)
+            self.add_region(buff_points[i], maximum_area=buff_areas[i])
+
+
+class VoronoiGridPlus(VoronoiGrid):
+    def __init__(self,
+                 tri: Triangle = None,
+                 crs: str = 'EPSG:2927',
+                 rasters: list | Path = None,
+                 name: str = 'voronoi_grid',
+                 qhull_options: str = None,
+                 idomain: list = None,
+                 idomain_path: Path = None,
+                 **kwargs
+                 ):
+        """
+        Initializes a Voronoi grid object with all necessary parameters and configurations.
+
+        The constructor sets up a Voronoi grid using the input triangulation and optional
+        arguments such as the coordinate reference system, raster inputs, and idomain. It
+        also initializes many attributes related to grid geometry, assigns centroids for
+        grid cells, and prepares configurations for visual representations.
+
+        :param tri: The triangulation instance used to create the Voronoi grid. Optional.
+        :param crs: A string representing the coordinate reference system. Default
+            is 'EPSG:2927'.
+        :param rasters: A list or Path instance pointing to raster file(s) that can
+            be associated with the Voronoi grid. Optional.
+        :param name: Name of the Voronoi grid instance. Default is 'voronoi_grid'.
+        :param qhull_options: Options for scipy's qhull algorithm, used for creating
+            the Voronoi grid. Optional.
+        :param idomain: A list used to define active and inactive areas in the grid.
+            Optional. Should be a list of cell indices that are inactive
+        :param idomain_path: A Path to an external input defining the idomain. Path
+                should be to a geometry (ex. shapefile) that overlaps inactive cells. Optional.
+        :param kwargs: Additional keyword arguments that may be passed to the parent
+            class or for extended functionality.
+        """
+
+        super().__init__(tri, qhull_options=qhull_options, **kwargs)
+        print("VoronoiGrid initializing.")
+        self.tri = tri
+
+        self.crs_latlon = "EPSG:4326"
+        self._gdf_latlon = None
+        self._nlay = None
+        self._latlon = None
+        self.rasters = rasters
+        self.crs = crs
+        self.name = name
+        self.x_coords_by_node = []
+        self.y_coords_by_node = []
+        self._gdf_vorPolys = None
+        self._iac = None
+        self._nja = None
+        self._idomain_path = None
+        self._idomain = None
+        self._gdf_topbtm = None
+        self._area_list = None
+        self._adjacent_cells_idx = None
+        self._centroids = None
+        self._ja, self._cl12, self._hwva = None, None, None
+        self.centroids_x, self.centroids_y = self.get_centroids()
+        self.idomain_path = idomain_path
+
+        """print('Getting SciPy voronoi grid')
+        self.vor_scipy = Voronoi(self.tri.verts)
+        self.scipy_points = self.vor_scipy.points
+        self.scipy_ridge_points = self.vor_scipy.ridge_points
+        self.scipy_ridge_vertices = self.vor_scipy.ridge_vertices
+        self.scipy_verts = self.vor_scipy.vertices
+        self.scipy_regions = self.vor_scipy.regions
+        print('Got SciPy voronoi grid')"""
+
+        self.config = {
+            'scrollZoom': True,
+        }
+        self.scatt_layout = {
+            'height': 1000,
+            'width': 1000,
+            'dragmode': 'pan'
+        }
+
+        """self.x_vor_regions = []
+        self.y_vor_regions = []
+        self.x_vor = self.verts[:, 0]
+        self.y_vor = self.verts[:, 1]
+        for region in self.iverts:
+            x_verts_in_region = [self.verts[region[i]][0] for i in range(len(region))] + [None]
+            y_verts_in_region = [self.verts[region[i]][1] for i in range(len(region))] + [None]
+            self.x_vor_regions.append(x_verts_in_region)
+            self.y_vor_regions.append(y_verts_in_region)
+
+        # x-coords and y-coords for voronoi regions, separated by None values
+        self.x_vor_regions = flatten(self.x_vor_regions)
+        self.y_vor_regions = flatten(self.y_vor_regions)
+
+        # i,j,k for each triangle in the triangulation (argument = tri)
+        self.i = [tri_idx[0] for tri_idx in self.iverts]
+        self.j = [tri_idx[1] for tri_idx in self.iverts]
+        self.k = [tri_idx[2] for tri_idx in self.iverts]"""
+
+        self.grid_centroid = self.get_grid_centroid()
+
+        """self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
+        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]"""
+
+        print('Voronoi grid initialized.')
+
+    @property
+    def vor_list(self):
+        """list of voronoi cell geometries"""
+        return self.gdf_vorPolys.geometry.to_list()
+
+    @property
+    def cell_list(self):
+        """list of cell indices in the voronoi grid"""
+        return self.gdf_vorPolys.index.to_list()
+
+    @property
+    def area_list(self):
+        """list of cell areas in the voronoi grid"""
+        if self._area_list is None:
+            self._area_list = [cell.area for cell in self.vor_list]
+        return self._area_list
+
+    @property
+    def idomain_path(self):
+        return self._idomain_path
+
+    @idomain_path.setter
+    def idomain_path(self, value):
+        if value is not None:
+            assert isinstance(value, Path), 'idomain path must be a Path instance'
+        self._idomain_path = value
+
+    @property
+    def idomain(self):
+        return self._idomain
+
+    @idomain.setter
+    def idomain(self, value):
+        if value is not None:
+            assert isinstance(value, list), 'idomain must be a list'
+            assert all(idx in self.cell_list for idx in value), 'idomain indices must be valid Voronoi grid cells'
+        self._idomain = value
+
+    @property
+    def nlay(self):
+        if self._nlay is None:
+            self._nlay = len(self.gdf_topbtm.drop('geometry', axis=1).columns) - 1
+        return self._nlay
+
+    @property
+    def gdf_topbtm(self):
+        if self._gdf_topbtm is None and self.rasters is not None:
+            self._gdf_topbtm = self.get_gdf_topbtm_multilyr(rasters=self.rasters)
+        return self._gdf_topbtm
+
+    @gdf_topbtm.setter
+    def gdf_topbtm(self, value):
+        self._gdf_topbtm = value
+
+    def get_disu_connectivity(self):
+        """
+        Efficiently calculate iac, ja, cl12, hwva, and nja for the DISU package.
+        """
+
+        df = self.gdf_vorPolys
+        geoms = df.geometry
+        centroids = df.geometry.centroid
+        coords = np.array([(pt.x, pt.y) for pt in centroids])
+
+        iac, ja, cl12, hwva = [], [], [], []
+
+        print('getting connectivity properties (iac, ja, cl12, hwva, nja)')
+        for i, neighbors in enumerate(self.adjacent_cells_idx):
+            sorted_neighbors = sorted(neighbors)
+
+            # iac is number of connections + 1 (self)
+            iac.append(len(sorted_neighbors) + 1)
+
+            # ja: self index followed by neighbors
+            ja.extend([i] + sorted_neighbors)
+
+            # cl12: 0 for self, then Euclidean distance to each neighbor
+            dists = np.linalg.norm(coords[sorted_neighbors] - coords[i], axis=1)
+            cl12.extend([0] + dists.tolist())
+
+            # hwva: 0 for self, then shared edge length
+            poly1 = geoms[i]
+            prep_poly1 = prep(poly1)
+            face_lengths = [
+                poly1.intersection(geoms[j]).length if prep_poly1.intersects(geoms[j]) else 0
+                for j in sorted_neighbors
+            ]
+            hwva.extend([0] + face_lengths)
+
+        nja = sum(iac)
+        self._iac = iac
+        self._ja = ja
+        self._cl12 = cl12
+        self._hwva = hwva
+        self._nja = nja
+
+        return iac, ja, cl12, hwva, nja
+
+    @property
+    def iac(self):
+        if self._iac is None:
+            self.get_disu_connectivity()
+        return self._iac
+
+    @property
+    def ja(self):
+        if self._ja is None:
+            self.get_disu_connectivity()
+        return self._ja
+
+    @property
+    def cl12(self):
+        if self._cl12 is None:
+            self.get_disu_connectivity()
+        return self._cl12
+
+    @property
+    def hwva(self):
+        if self._hwva is None:
+            self.get_disu_connectivity()
+        return self._hwva
+
+    @property
+    def nja(self):
+        if self._nja is None:
+            self.get_disu_connectivity()
+        return self._nja
+
+    @property
+    def gdf_vorPolys(self):
+        if self._gdf_vorPolys is None:
+            self._gdf_vorPolys = self.get_gdf_vorPolys(crs=self.crs)
+        return self._gdf_vorPolys
+
+    @gdf_vorPolys.setter
+    def gdf_vorPolys(self, value):
+        self._gdf_vorPolys = value
+
+    @property
+    def adjacent_cells_idx(self):
+        if self._adjacent_cells_idx is None:
+            self._adjacent_cells_idx = self.find_adjacent_polygons(self.gdf_vorPolys)
+        return self._adjacent_cells_idx
+
+    def get_disu_props(self):
+        self.iac
+        self.ja
+        self.nja
+        self.cl12
+        self.hwva
+
+    def get_voronoi_polygons(self):
+        """get polygons for each Voronoi cell, returns
+        a list of Shapely polygons objects
+
+        Args:
+            verts (list): list of vertices
+            iverts (list): list of lists of indices, each corresponding to a voronoi region
+
+        Returns:
+            list: list of Shapely polygon objects
+        """
+        polygons = []
+        for region in self.iverts:
+            vertices = [self.verts[j] for j in region]
+            polygon = Polygon(vertices)
+            polygons.append(polygon)
+        return polygons
+
+    def mapit(self, crs='EPSG:2927'):
+        """maps voronoi grid based on x,y coords
+        and a defined crs projection
+
+        Args:
+            crs (str, optional): string of coordinate reference system. Defaults to 'EPSG:2927'.
+
+        Returns:
+            geodataframe: returns a geodataframe explore method
+        """
+        poly = self.get_voronoi_polygons()
+
+        return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
+
+    def choropleth(
+            self,
+            model: SimulationBase = None,
+            kstpkper: tuple = None,
+            per: int = None,
+            layer: int = 0,
+            choro_type: str = 'hds',
+            custom_hover: dict = None,
+            custom_zs: list = None,
+            zmin: float | int = None,
+            zmax: float | int = None,
+            zoom: int = 13,
+            show_layer_elevs: bool = False,
+            show_mounding: bool = False,
+            hover_heads: bool = True,
+            hover_ks: bool = False,
+            locs: Path = None,
+
+    ):
+        choro = Choro(
+            vor=self,
+            model=model,
+            kstpkper=kstpkper,
+            per=per,
+            layer=layer,
+            choro_type=choro_type,
+            custom_hover=custom_hover,
+            custom_zs=custom_zs,
+            zmin=zmin,
+            zmax=zmax,
+            zoom=zoom,
+            show_layer_elevs=show_layer_elevs,
+            show_mounding=show_mounding,
+            hover_heads=hover_heads,
+            hover_ks=hover_ks,
+            locs=locs,
+        )
+        return choro
+
+    @property
+    def dash_selector(self):
+        return self.choropleth().dash_selector()
+
+    def show(self):
+        return self.choropleth().plot()
+
+    def map_nodes(self):
+
+        latlonselect = self.gdf_vorPolys.to_crs('EPSG:4326')
+        latlonselect['cellidx'] = latlonselect.index.astype(str)
+        geojsonselect = json.loads(latlonselect['geometry'].to_json())
+        centroid_grid = self.grid_centroid
+        fig_sel = go.Figure(go.Choroplethmap(
+            geojson=geojsonselect,
+            locations=latlonselect['cellidx'].to_list(),
+            featureidkey='id',
+            z=latlonselect['cellidx'].to_list(),
+            colorscale='earth'
+        ))
+
+        fig_sel.update_layout(
+            margin={"r": 0, "t": 20, "l": 0, "b": 0},
+            map_style="carto-positron",
+            map_zoom=15,
+            map_center={"lat": centroid_grid.y, "lon": centroid_grid.x},
+        )
+
+        return fig_sel
+
+    def get_vor_cells_as_series(
+            self,
+            overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries | Path = None,
+            predicate: str = 'intersects',
+            return_dict: bool = False,
+            name_field: str = 'ExploName'
+    ) -> pd.Series | dict:
+        """
+        Identify Voronoi cells matching a spatial predicate against provided geometries.
+
+        :param overlapping_geometry: Shapely geometry, GeoSeries, GeoDataFrame, or a file path.
+        :param predicate: Spatial query type (e.g., 'intersects', 'contains').
+        :param return_dict: If True, returns a dictionary keyed by geometry name_field or index.
+        :param name_field: Field name for geometry names when using GeoDataFrame or file input.
+        :return: Series of intersecting cell indices or a dictionary mapping names to cell indices.
+        """
+        names = None
+
+        if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString, shp.MultiPolygon)):
+            geometries = gpd.GeoSeries([overlapping_geometry])
+            names = geometries.name
+
+        elif isinstance(overlapping_geometry, (gpd.GeoDataFrame, gpd.GeoSeries)):
+            geometries = overlapping_geometry.geometry
+            if name_field in overlapping_geometry.columns:
+                names = overlapping_geometry[name_field]
+
+        elif isinstance(overlapping_geometry, Path):
+            geoms = gpd.read_file(overlapping_geometry)
+            geometries = geoms.geometry
+            if name_field in geoms.columns:
+                names = geoms[name_field]
+
+        else:
+            return ValueError('Unsupported data type for overlapping_geometry.')
+
+        if names is None:
+            names = list(range(len(geometries)))
+        assert len(names) == len(geometries), 'length of names must match length of geometries'
+
+        if geometries.crs is None:
+            geometries.crs = self.gdf_vorPolys.crs
+        elif geometries.crs != self.gdf_vorPolys.crs:
+            print('Warning: Provided geometries are not in the same CRS as the Voronoi cells. '
+                  'Reprojecting geometries to match Voronoi cells.')
+            geometries = geometries.to_crs(self.gdf_vorPolys.crs)
+
+        # Perform spatial join between Voronoi cells and input geometries
+        joined = gpd.sjoin(self.gdf_vorPolys, geometries.to_frame('geometry'), predicate=predicate, how='inner')
+        group_join = joined.groupby('index_right').apply(lambda x: x.index.to_list(), include_groups=False)
+        group_join.name = 'cells'
+        if not isinstance(names, list):
+            names_idx = names.loc[group_join.index]
+            group_join.index = names_idx
+
+        if return_dict:
+            result = group_join.to_dict()
+            return result
+
+        else:
+            return group_join
+
+    def get_vor_cells_as_dict(
+            self,
+            locs: Path,
+            crs: str = None,
+            predicate: str = 'intersects',
+            loc_name_field: str = None,
+            return_gdf: bool = False
+    ) -> dict:
+        """
+        Provide a shapefile (locs) and get back the voronoi cells that contains them, by default.
+        But you can change the predicate to search by something else, like 'intersects'.
+        :param locs: shapefile of features to check against the vornoi grid
+        :param crs: crs of method output. defaults to EPSG:2927
+        :param predicate: None, “contains”, “contains_properly”, “covered_by”, “covers”,
+        “crosses”, “intersects”, “intersects”, “touches”, “within”.
+        :param loc_name_field: field in the loc shapefile that will be the dict key
+        :return: dict of voronoi cells indices (values) that contain each location in locs (keys)
+        """
+        crs = self.crs if crs is None else crs
+        gdf_locs = gpd.read_file(locs).to_crs(crs)
+
+        loc_vor_cell_dict = {}
+        for idx in gdf_locs.index:
+            if loc_name_field is None:
+                location_name = idx
+            else:
+                location_name = gdf_locs.iloc[idx][loc_name_field]
+
+            vor_cells = (self.get_vor_cells_as_series(gdf_locs.geometry[idx], predicate).tolist())
+            loc_vor_cell_dict[location_name] = vor_cells
+
+        if return_gdf:
+            return loc_vor_cell_dict, gdf_locs
+        else:
+            return loc_vor_cell_dict
+
+    def show_selected_cells(
+            self,
+            cell_list: list = None,
+            **kwargs
+
+    ):
+        """Method to show selected cells of the voronoi grid.
+        Just provide a list of cell indices."""
+
+        choro = self.choropleth(**kwargs).choropleth
+        choro.data[0].selectedpoints = (tuple(cell_list))
+
+        return go.Figure(choro).show(renderer='browser')
+
+    def show_overlapping_geometry(self, shp_gpkg):
+        """convenience method to show overlapping geometries just by providing a shapefile or geopackage"""
+        cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        self.show_selected_cells(cells)
+
+    def get_model_boundary_polygons(self) -> dict:
+        """Returns a dict of the polygons that form the model domain boundary.
+        The keys of the dict are voronoi cell indices"""
+
+        print("Deprecated. Only works if the convex hull is equivalent to the actual grid boundary")
+        print("Use get_grid_edge")
+        grid = shp.MultiPolygon(self.gdf_vorPolys.geometry.to_list())
+        polygons = self.gdf_vorPolys.geometry.to_list()
+        convex_hull = grid.convex_hull
+        convex_hull_boundary = convex_hull.boundary
+
+        # This will hold the polygons that are on the boundary of the convex hull
+        boundary_polygons = []
+        boundary_polygons_idx = []
+
+        for idx, polygon in enumerate(polygons):
+            # Check if the polygon boundary intersects with the convex hull boundary
+            if convex_hull_boundary.dwithin(polygon, 0.01):
+                boundary_polygons.append(polygon)
+                boundary_polygons_idx.append(idx)
+        boundary_polygon_dict = dict(zip(boundary_polygons_idx, boundary_polygons))
+        return boundary_polygon_dict
+
+    def get_grid_edge(self, idomain: list = None, idomain_path: Path = None, include_interiors: bool = True) -> list:
+        """
+        get edge cells for the voronoi grid. If a shapefile or geopackage of the idomain
+        is provided, the returned edge cells are adjusted for the inactive cells
+        :param include_interiors: if True, will include interior holes when returning grid edge cells
+        :param idomain: provide list of cells NOT in the domain (inactive), instead of a geometry path - idomain_path
+        :param idomain_path: provide to remove idomain cells from the returned grid edge cells
+        :return:  list of grid edge cells
+        """
+
+        df = self.gdf_vorPolys
+        idomain_path = self.idomain_path if idomain_path is None else idomain_path
+
+        # Vectorized edge cell detection, edge cells are cells that have more faces than the
+        # number of adjacent cells
+        adj_lengths = np.fromiter((len(self.adjacent_cells_idx[idx]) for idx in df.index), dtype=int)
+        face_counts = df.geometry.exterior.apply(lambda x: len(x.coords) - 1).to_numpy()
+        edge_mask = face_counts > adj_lengths
+        edges = df.index[edge_mask].tolist()
+
+        # if idomain is provided, find edge cells excluding inactive cells
+        if idomain_path or idomain:
+            if idomain_path:
+                idomain_geom = read_shp_gpkg(idomain_path).union_all()
+                icells = self.get_vor_cells_as_series(idomain_geom)[0]
+            else:
+                icells = idomain
+
+            # icells are cell indices NOT in the model domain, i.e. inactive cells
+            icell_set = set(icells)  # inactive cells
+            remaining_cells = df.loc[~df.index.isin(icell_set)]  # active cells
+
+            # Use union_all() to merge geometries
+            union_geom = remaining_cells.geometry.union_all()
+
+            # Extract edge geometries
+            if isinstance(union_geom, Polygon):
+                edge_geoms = [union_geom.exterior]
+                interiors = union_geom.interiors if include_interiors else []
+            elif isinstance(union_geom, shp.MultiPolygon):
+                edge_geoms = [poly.exterior for poly in union_geom.geoms]
+                interiors = [ring for poly in union_geom.geoms for ring in poly.interiors] if include_interiors else []
+            else:
+                edge_geoms, interiors = [], []
+
+            edge_cells = [pd.Series(self.get_vor_cells_as_series(geom)[0]) for geom in edge_geoms]
+            if include_interiors and interiors:
+                edge_cells += [pd.Series(self.get_vor_cells_as_series(ring)[0]) for ring in interiors]
+
+            # Flatten and filter out idomain cells
+            flat = pd.concat(edge_cells)
+            flat.index = flat.values
+
+            print('getting grid edge cells excluding idomain cells')
+            return flat.loc[~flat.index.isin(icell_set)].index.tolist()
+
+        print('geting all edge cells')
+        return edges
+
+        """def is_edge(cell, idx):
+            num_ja_cells = len(self.adjacent_cells_idx[idx])
+            num_cell_faces = len(cell.geometry.exterior.coords) - 1
+            edge_bool = True if num_cell_faces > num_ja_cells else False
+            return edge_bool
+
+        df = self.gdf_vorPolys
+        edges = list(df[df.apply(lambda x: is_edge(x, x.name), axis=1)].index)
+
+        if idomain_path:  # if idomain, determine new edge cells after removing idomain cells
+            idomain = read_shp_gpkg(idomain_path)
+            icells = self.get_vor_cells_as_series(idomain.geometry).to_list()
+        elif idomain:
+            icells = idomain
+        if idomain_path or idomain:
+            all_cells = self.gdf_vorPolys.copy()
+            not_icells = [cell for cell in all_cells.index if cell not in icells]
+            new_cells = all_cells.loc[not_icells, :]
+            new_exterior = new_cells.union_all().exterior
+            new_edge_cells = self.get_vor_cells_as_series(new_exterior)
+            if include_interiors:
+                interiors = new_cells.union_all().interiors
+                interior_cells = []
+                for interior in interiors:
+                    interior_cells.append(self.get_vor_cells_as_series(interior))
+                interior_cells.append(new_edge_cells)
+                new_edge_cells = pd.concat(interior_cells)
+            new_edge_cells = [cell for cell in new_edge_cells if cell not in icells]
+            return new_edge_cells
+
+        return edges"""
+
+    def plot3d(self, z=None) -> go.Figure:
+        if z == None:
+            z = [0 for x in self.x_vor_regions]
+        else:
+            z = z
+        fig3d = go.Figure(
+            data=go.Scatter3d(
+                x=self.x_vor_regions,
+                y=self.y_vor_regions,
+                z=z,
+                opacity=0.5, mode='lines',
+                line_color='black',
+                # marker_size=2,
+            ),
+            layout={
+                'height': 1000,
+            },
+        )
+        fig3d.add_trace(
+            go.Mesh3d(
+                x=self.x_vor,
+                y=self.y_vor,
+                z=[0 for z in range(len(self.x_vor))],
+                i=self.i,
+                j=self.j,
+                k=self.k,
+                colorscale='Viridis',
+                intensity=self.x_vor
+
+            )
+        )
+        fig3d.update_layout(title='Voronoi Diagram',
+                            scene=dict(
+                                xaxis=dict(title='X'),
+                                yaxis=dict(title='Y'),
+                                zaxis=dict(title='')
+                            )
+                            )
+        return fig3d
+
+    def plot2d(self) -> go.Figure:
+
+        fig2d = go.Figure(layout=self.scatt_layout)
+        for cell in range(len(self.x_coords_by_node)):
+            fig2d.add_scattergl(
+                x=self.x_coords_by_node[cell],
+                y=self.y_coords_by_node[cell],
+                opacity=1,
+                mode='lines',
+                line_color='black',
+                line_width=1,
+                # fill='toself',
+                # fillcolor='gray',
+                # hoveron='points+fills'
+            )
+
+        self.fig2d = fig2d
+
+        return fig2d
+
+    def plottri(self) -> go.Figure:
+        """plot the triangulated mesh generated by the Triangle program
+
+        Returns:
+            plotly fig: plotly figure of triangulated mesh
+        """
+        df_tricells = pd.DataFrame(self.tri.get_cell2d(),
+                                   columns=[
+                                       'triidx',
+                                       'x',
+                                       'y',
+                                       'numverts',
+                                       'idx1',
+                                       'idx2',
+                                       'idx3'
+                                   ])
+        df_triverts = pd.DataFrame(self.tri.verts, columns=['x', 'y'])
+        ilist = df_tricells['idx1'].to_list()
+        jlist = df_tricells['idx2'].to_list()
+        klist = df_tricells['idx3'].to_list()
+        ijkzip = zip(ilist, jlist, klist)
+        xtriverts = df_triverts['x'].to_list()
+        ytriverts = df_triverts['y'].to_list()
+        xtricells = []
+        ytricells = []
+        for v in list(ijkzip):
+            i, j, k = v[0], v[1], v[2]
+            xtricur = [xtriverts[i]] + [xtriverts[j]] + [xtriverts[k]] + [None]
+            xtricells = xtricells + xtricur
+            ytricur = [ytriverts[i]] + [ytriverts[j]] + [ytriverts[k]] + [None]
+            ytricells = ytricells + ytricur
+        trifig2d = go.Figure(go.Scattergl(x=xtricells,
+                                          y=ytricells,
+                                          mode='lines',
+                                          line_color='black',
+                                          line_width=1, ),
+                             layout=self.scatt_layout,
+                             )
+        return trifig2d.show(config=self.config)
+
+    def generate_grid_coordinates(self, grid_spacing: int) -> list:
+        """Generates a grid of evenly spaced x- and y- coordinates
+        based on an unstructured grid passed as 'self'. Returns 
+        a list of x-coords and a list of y-coords. Grid will be
+        rectangular, regardless of the input grid.  
+
+        Args:
+            grid_spacing (int): spacing between points on the generated grid
+
+        Returns:
+            list: two lists - one of x-coords and one of y-coords
+        """
+        x_min = self.x_vor.min()
+        x_max = self.x_vor.max()
+        y_min = self.y_vor.min()
+        y_max = self.y_vor.max()
+        x_coords = []
+        y_coords = []
+        for x in range(int(x_min), int(x_max) + grid_spacing, grid_spacing):
+            for y in range(int(y_min), int(y_max) + grid_spacing, grid_spacing):
+                x_coords.append(x)
+                y_coords.append(y)
+        return x_coords, y_coords
+
+    @property
+    def centroids(self):
+        """
+        The `centroids` are internally calculated by invoking the `get_centroids()`
+        method if they are not already computed.
+
+        :return: The computed centroids of the voronoi grid cells.
+        :rtype: Same type as returned by `get_centroids()` method.
+        """
+        if self._centroids is None:
+            self._centroids = self.get_centroids()
+        return self._centroids
+
+    def get_centroids(self) -> tuple[list[float], list[float]]:
+        """
+        Returns coordinates of centroids of each Voronoi polygon.
+
+        Returns:
+            tuple: (list of x-coords, list of y-coords)
+        """
+        if self._gdf_vorPolys is None:
+            self.get_gdf_vorPolys()
+
+        centroids = self._gdf_vorPolys.geometry.centroid
+        return centroids.x.tolist(), centroids.y.tolist()
+
+    def find_adjacent_polygons(self, gdf: gpd.GeoDataFrame) -> list:
+        """Iterates though a GeoDataFrame of Voronoi polygons
+        and finds the adjacent Voronoi polygon for each polygon. Returns
+        a list of lists with the indices of all adjacent polygons for each
+        polygon
+
+        Args:
+            gdf (gpd.GeoDataFrame): GeoDataFrame of Voronoi polygons
+
+        Returns:
+            list: list of lists, each containing the indices of adjacent
+            polygons for each polygon
+        """
+
+        # Create a list to hold the adjacent polygon indices for each polygon
+        adjacent = [[] for _ in range(len(gdf))]
+
+        # Create a spatial index to speed up the search for adjacent polygons
+        gdf_sindex = gdf.sindex
+
+        # Iterate over each polygon in the GeoDataFrame
+        for i, poly in gdf.geometry.items():
+            # Get the indices of all polygons that intersect the bounding box of the current polygon
+            candidates = list(gdf_sindex.intersection(poly.bounds))
+
+            # Iterate over the candidate polygons and check for adjacency
+            for j in candidates:
+                # Skip the current polygon
+                if i == j:
+                    continue
+
+                # Check if the current polygon shares an edge with the candidate polygon
+                shared_edge = poly.intersection(gdf.iloc[j].geometry)
+                if isinstance(shared_edge, LineString):
+                    # Add the index of the adjacent polygon to the list for the current polygon
+                    adjacent[i].append(j)
+
+        return adjacent
+
+    def find_adjacent_cells(self, cell_id):
+
+        start_index = sum(self.iac[:cell_id])
+        num_connections = self.iac[cell_id]
+        connections = self.ja[start_index:start_index + num_connections]
+        adjacent_cells = [cell for cell in connections if cell != cell_id]
+        return adjacent_cells
+
+    def calculate_distance(self, gdf, poly_idx1, poly_idx2):
+        """Calculates the distance between the centroid of one polygon
+        and the shared face of an adjacent polygon
+
+        Args:
+            gdf (GeoDataFrame): GeoDataFrame of Voronoi Grid
+            poly_idx1 (int): index of polygon with centroid to measure from
+            poly_idx2 (int): index of adjacent polygon
+
+        Returns:
+            float: returns distance from the centroid to the shared face
+        """
+        # Get the Polygon objects for the two specified polygons
+        poly1 = gdf.iloc[poly_idx1].geometry
+        poly2 = gdf.iloc[poly_idx2].geometry
+
+        # Calculate the shared edge between the two polygons
+        shared_edge = poly1.intersection(poly2)
+
+        # Calculate the centroid of the first polygon
+        centroid = poly1.centroid
+
+        # Calculate the distance between the centroid and the shared edge
+        distance = centroid.distance(shared_edge)
+
+        return distance
+
+    def shared_face_length(self, poly1, poly2):
+        """Calculates the length of the shared face between
+        two adjacent polygons in a Voronoi grid
+
+        Args:
+            poly1 (Polygon): Polygon object from GeoDataFrame
+            poly2 (Polygon): Polygon object from GeoDataFrame
+
+        Returns:
+            float: length of shared face
+        """
+        # Calculate the intersection of the two polygons
+        intersection = poly1.intersection(poly2)
+        # If the intersection is not a LineString, return 0
+        if not isinstance(intersection, LineString):
+            return 0
+
+        # Calculate the length of the intersection
+        length = intersection.length
+        return length
+
+    def get_gdf_vorPolys(self, crs=None):
+
+        crs = self.crs if crs is None else crs
+        vertices_by_cells = []
+        xvertices_by_cells = []
+        yvertices_by_cells = []
+        polys_ListbyShapely = []
+
+        """find lists of cell vertices's x,y-coords, 
+        x-coords, and y-coords arranged by cell"""
+        for cell in self.iverts:
+            thiscell = []
+            thiscellx = []
+            thiscelly = []
+            for vidx in cell:
+                thisvertx = self.verts[vidx][0].tolist()
+                thisverty = self.verts[vidx][1].tolist()
+                thisvert = self.verts[vidx].tolist()
+                thiscellx += [thisvertx]
+                thiscelly += [thisverty]
+                thiscell += [thisvert]
+            xvertices_by_cells += [thiscellx]
+            yvertices_by_cells += [thiscelly]
+            vertices_by_cells += [thiscell]
+
+        """find list of Shapely Polygon objects for all cells"""
+        for cell in vertices_by_cells:
+            thispoly = shp.Polygon(cell)
+            polys_ListbyShapely += [thispoly]
+        """instantiate GeoDataFrame of Voronoi polygons"""
+        self.gdf_vorPolys = gpd.GeoDataFrame(geometry=polys_ListbyShapely, crs=crs)
+        #  self.gdf_vorPolys["cell"] = self.gdf_vorPolys.index.astype(str)
+        """set x and y list attributes"""
+        self.x_coords_by_node = xvertices_by_cells
+        self.y_coords_by_node = yvertices_by_cells
+
+        return self.gdf_vorPolys
+
+    def get_gdf_topbtm(self, rasters: list, labels: list = None):
+        """written for a one layer model with a top and bottom. More general funtion needed.
+        Use get_gdf_topbtm_multilyr"""
+
+        gdf_topbtm = self.get_gdf_topbtm_multilyr(rasters=rasters, labels=labels)
+
+        return gdf_topbtm
+
+    def get_raster_vals_at_centroids(
+            self,
+            raster_files: Path | list[Path | int] = None,
+            labels: str | list[str] = None
+    ) -> gpd.GeoDataFrame | None:
+        
+        """Get centroid elevations of the Voronoi grid for each elevation raster or constant value.
+
+        :param raster_files: Path or list of Paths to elevation raster(s) or constant values
+        :param labels: str or list of labels for each raster/value
+        :return: GeoDataFrame with elevation values at centroids"""
+        
+        if raster_files is None:
+            return print('No raster files provided')
+        if labels is None:
+            labels = list(range(len(raster_files)))
+        if isinstance(raster_files, Path):
+            raster_files = [raster_files]
+        if isinstance(labels, str):
+            labels = [labels]
+
+        if len(labels) != len(raster_files):
+            raise ValueError("Labels length must match raster_files length")
+
+        xs, ys = np.array(self.centroids[0]), np.array(self.centroids[1])
+        centroid_vals = self.gdf_vorPolys.copy()
+
+        # Separate numeric and raster paths
+        numeric_vals = {labels[i]: val for i, val in enumerate(raster_files) if isinstance(val, (int, float))}
+        raster_items = [(labels[i], path) for i, path in enumerate(raster_files) if isinstance(path, Path)]
+
+        # Process raster files
+        for label, raster_path in raster_items:
+            print(f'reading raster file {raster_path}')
+            with rasterio.open(raster_path) as src:
+                sampled = np.array(
+                    [val[0] if val is not None else np.nan for val in src.sample(zip(xs, ys))]
+                )
+                centroid_vals[label] = sampled
+
+        # Assign static numeric values
+        for label, val in numeric_vals.items():
+            centroid_vals[label] = float(val)
+
+        # Ensure ordered columns: geometry first, then labels
+        ordered_cols = ['geometry'] + labels
+        centroid_vals = centroid_vals[ordered_cols]
+        centroid_vals.geometry = centroid_vals.centroid
+
+        return centroid_vals
+
+    """def get_raster_vals_at_centroids(
+            self,
+            raster_files: Path | list[Path | int | float] = None,
+            labels: str | list[str] = None,
+            max_search_radius: int = 256  # pixels; increase if your gaps are wider
+    ) -> gpd.GeoDataFrame | None:
+        
+        if raster_files is None:
+            print('No raster files provided')
+            return None
+
+        if isinstance(raster_files, (int, float, Path, str)):  # allow single arg
+            raster_files = [raster_files]
+
+        if labels is None:
+            labels = list(range(len(raster_files)))
+        if isinstance(labels, str):
+            labels = [labels]
+
+        if len(labels) != len(raster_files):
+            raise ValueError("Labels length must match raster_files length")
+
+        xs, ys = np.asarray(self.centroids[0]), np.asarray(self.centroids[1])
+        centroid_vals = self.gdf_vorPolys.copy()
+
+        # Separate numeric constants vs raster paths
+        numeric_vals = {labels[i]: float(val)
+                        for i, val in enumerate(raster_files)
+                        if isinstance(val, (int, float))}
+        raster_items = [(labels[i], Path(path))
+                        for i, path in enumerate(raster_files)
+                        if isinstance(path, (str, Path))]
+
+        def nearest_valid_pixel_value(band, mask_valid, r0, c0, max_r):
+    
+            H, W = band.shape
+            if mask_valid[r0, c0]:
+                return float(band[r0, c0])
+
+            # Expand search window
+            for rad in range(1, max_r + 1):
+                rmin = max(0, r0 - rad);
+                rmax = min(H - 1, r0 + rad)
+                cmin = max(0, c0 - rad);
+                cmax = min(W - 1, c0 + rad)
+
+                # window of candidate valid pixels
+                win_mask = mask_valid[rmin:rmax + 1, cmin:cmax + 1]
+                if not win_mask.any():
+                    continue
+
+                # coordinates of valid pixels within window
+                rr, cc = np.nonzero(win_mask)
+                rr = rr + rmin
+                cc = cc + cmin
+
+                # choose nearest by Euclidean distance
+                d2 = (rr - r0) * (rr - r0) + (cc - c0) * (cc - c0)
+                k = np.argmin(d2)
+                return float(band[rr[k], cc[k]])
+
+            # none found
+            return np.nan
+
+        # Process rasters
+        for label, raster_path in raster_items:
+            print(f'reading raster file {raster_path}')
+            with rasterio.open(raster_path) as src:
+                # --- 1) Reproject centroids if CRS differs ---
+                xs_in, ys_in = xs, ys
+                try:
+                    crs_grid = getattr(self.gdf_vorPolys, "crs", None)
+                    if crs_grid is not None and crs_grid != src.crs:
+                        from pyproj import Transformer
+                        tfm = Transformer.from_crs(crs_grid, src.crs, always_xy=True)
+                        xs_in, ys_in = tfm.transform(xs_in, ys_in)
+                except Exception:
+                    # If transform fails, fall back to original coords (better to proceed)
+                    pass
+
+                # --- 2) Identify OOB centroids BEFORE clamping ---
+                left, bottom, right, top = src.bounds
+                eps = 1e-9
+                oob = (xs_in < left) | (xs_in > right) | (ys_in < bottom) | (ys_in > top)
+
+                # Clamp coords to bounds for indexing
+                xs_c = np.clip(xs_in, left, right - eps)
+                ys_c = np.clip(ys_in, bottom, top - eps)
+
+                # --- 3) Map to pixel indices (ensure integers) ---
+                rows, cols = rasterio.transform.rowcol(src.transform, xs_c, ys_c, op=np.floor)
+                rows = np.clip(np.asarray(rows, dtype=np.int64), 0, src.height - 1)
+                cols = np.clip(np.asarray(cols, dtype=np.int64), 0, src.width - 1)
+
+                band = src.read(1)
+                nodata = src.nodata
+                vals = band[rows, cols].astype(float)
+
+                # --- 4) Build validity masks ---
+                # Explicit nodata mask (covers numeric nodata and NaN nodata)
+                if nodata is None:
+                    is_nodata = np.zeros_like(vals, dtype=bool)
+                    band_valid_base = ~np.isnan(band) if np.issubdtype(band.dtype, np.floating) else np.ones_like(band,
+                                                                                                                  dtype=bool)
+                else:
+                    if np.isnan(nodata):
+                        is_nodata = np.isnan(vals)
+                        band_valid_base = ~np.isnan(band)
+                    else:
+                        is_nodata = (vals == nodata)
+                        band_valid_base = (band != nodata)
+
+                # --- 5) Only treat ZERO as invalid for OOB points (edge behavior) ---
+                zero_is_bad_for = oob  # boolean array, True only for OOB centroids
+                is_zero = (vals == 0)
+                need_zero_fix = is_zero & zero_is_bad_for
+
+                # Anything nodata anywhere also needs fixing
+                need_nodata_fix = is_nodata
+
+                need_search = need_zero_fix | need_nodata_fix
+
+                if np.any(need_search):
+                    # For the search, define "valid" pixels:
+                    # - Always exclude nodata
+                    # - Exclude zeros ONLY when searching for an OOB point
+                    # To avoid branching per-pixel, build two masks and pick per case.
+                    band_valid_nozero = band_valid_base & (band != 0)
+                    band_valid_allowzero = band_valid_base  # zeros allowed
+
+                    r_bad = rows[need_search]
+                    c_bad = cols[need_search]
+                    repaired = np.empty_like(r_bad, dtype=float)
+
+                    for i in range(r_bad.size):
+                        # Choose which validity mask to use for this pixel
+                        use_nozero = zero_is_bad_for[need_search][i]
+                        mask_valid = band_valid_nozero if use_nozero else band_valid_allowzero
+
+                        repaired[i] = nearest_valid_pixel_value(
+                            band, mask_valid, int(r_bad[i]), int(c_bad[i]), max_search_radius
+                        )
+
+                    vals[need_search] = repaired
+
+                # Normalize any remaining explicit nodata to NaN (numeric nodata only)
+                if (nodata is not None) and (not np.isnan(nodata)):
+                    vals = np.where(vals == nodata, np.nan, vals)
+
+                centroid_vals[label] = vals
+
+        # Assign static numeric values
+        for label, val in numeric_vals.items():
+            centroid_vals[label] = val
+
+        # Ensure ordered columns: geometry first, then labels
+        ordered_cols = ['geometry'] + labels
+        centroid_vals = centroid_vals[ordered_cols]
+
+        # Set geometry to centroids (points) for visualization/joins
+        centroid_vals.geometry = centroid_vals.centroid
+
+        return centroid_vals"""
+
+    def get_gdf_topbtm_multilyr(self, rasters: list):
+        """
+        Get a GeoDataFrame of top and bottom elevations for each model layer.
+
+        :param rasters: list of rasters or static values ordered from top to bottom.
+        :return: GeoDataFrame with layer elevations.
+        """
+        labels = list(range(len(rasters)))
+        gdf_topbtm = self.get_raster_vals_at_centroids(
+            raster_files=rasters,
+            labels=labels
+        )
+        return gdf_topbtm
+
+    """def get_gdf_topbtm_multilyr(self, rasters: list):
+        """
+    """get a GeoDataFrame that has the elevations for the top of the model and the bottom of evey model layer for
+    every voronoi cell in the model grid. For this to work as intended, the list of rasters need to be provided
+    in order of top to bottom.
+    :param rasters: this assumes that the list of raster is ordered from top to bottom
+    :return: GeoDataFrame of top of model and bottom of every layer. The DataFrame columns are labeled starting at
+    zero for the top of model, and all subsequent numbers correspond to elevations at the bottom of that numbered
+    layer, for example label number '1' refers to the bottom of layer 1."""
+    """
+    labels = list(range(0, len(rasters)))
+    gdf_topbtm = self.get_raster_vals_at_centroids(
+        raster_files=rasters,
+        labels=labels
+    )
+    #  TODO check difference between layers
+
+    return gdf_topbtm
+
+def get_raster_vals_at_centroids(
+        self,
+        raster_files: Path | list[Path | int],
+        labels: str | list[str]
+) -> gpd.GeoDataFrame:
+    """
+    """Get centroid elevations of the Voronoi grid for each elevation raster.
+    Vectorized and optimized version.
+
+    :param raster_files: Path or list of Paths to elevation raster(s)
+    :param labels: str or list of labels for each raster
+    :return: GeoDataFrame with elevation values at centroids"""
+    """
+    if isinstance(raster_files, Path):
+        raster_files = [raster_files]
+    if isinstance(labels, str):
+        labels = [labels]
+
+    if len(labels) != len(raster_files):
+        raise ValueError("Labels length must match elevation files length")
+
+    # separate provided elevations by single values or Paths for processing below
+    is_int = [(i, obj) for i, obj in enumerate(raster_files) if isinstance(obj, int | float)]
+    non_ints = [(i, obj) for i, obj in enumerate(raster_files) if isinstance(obj, Path)]
+    if len(is_int) > 0:
+        int_idx, int_layers = zip(*is_int)
+    else:
+        int_layers = []
+    if len(non_ints) > 0:
+        raster_idx, raster_layers = zip(*non_ints)
+    else:
+        raster_layers = []
+
+    # Open raster files and store arrays and metadata
+    srcs = [rasterio.open(path) for path in raster_layers]
+    arrays = [src.read(1) for src in srcs]
+    transforms = [src.transform for src in srcs]
+    bounds = [src.bounds for src in srcs]
+
+    # Get centroid coordinates as NumPy arrays
+    centroids = self.gdf_vorPolys.geometry.centroid
+    xs, ys = centroids.x.to_numpy(), centroids.y.to_numpy()
+
+    centroid_vals = self.gdf_vorPolys.copy()
+
+    # Create result GeoDataFrame and populate elevation values for RASTER layers
+    if len(raster_layers) > 0:
+
+        raster_labels = [labels[i] for i in raster_idx]
+        for i, (label, arr, tfm, bds) in enumerate(zip(raster_labels, arrays, transforms, bounds)):
+            # Convert x,y to raster row/col indices (float by default)
+            rows, cols = map(np.array, rasterio.transform.rowcol(tfm, xs, ys, op=np.floor))
+
+            # Identify valid points that fall within the raster bounds
+            valid = (
+                    (rows >= 0) & (cols >= 0) &
+                    (rows < arr.shape[0]) & (cols < arr.shape[1])
+            )
+
+            # Initialize elevation values with NaN, then assign only valid entries
+            values = np.full(xs.shape, np.nan)
+            valid_rows = rows[valid].astype(int)
+            valid_cols = cols[valid].astype(int)
+            values[valid] = arr[valid_rows, valid_cols]
+
+            # Add to the GeoDataFrame under the given label
+            centroid_vals[label] = values.astype(float)
+
+    # Close all raster files
+    for src in srcs:
+        src.close()
+
+    # for layers where only int or float elevations provided, make all centroids that elev
+    if len(int_layers) > 0:
+        int_labels = [labels[i] for i in int_idx]
+        for i, (label, val) in enumerate(zip(int_labels, int_layers)):
+            centroid_vals[label] = float(val)
+
+    # make sure layer columns are in correct order
+    labels = ['geometry'] + labels
+    centroid_vals = centroid_vals[labels]
+    centroid_vals.geometry = centroid_vals.centroid
+
+    return centroid_vals"""
+    """def get_centroid_elevations(
+            self,
+            elevations_files: Path | list[Path],
+            labels: str | list[str]
+    ) -> gpd.GeoDataFrame:
+    
+        if isinstance(elevations_files, Path):
+            elevations_files = [elevations_files]
+        if isinstance(labels, str):
+            labels = [labels]
+
+        n_rasters = len(elevations_files)
+        if len(labels) != n_rasters:
+            raise ValueError("Length of labels must match number of elevation files")
+
+        # Open rasters and read metadata
+        srcs = [rasterio.open(path) for path in elevations_files]
+        elevations = [src.read(1) for src in srcs]
+        shapes = [arr.shape for arr in elevations]  # (rows, cols)
+
+        def get_elevations(x, y):
+            elevs = []
+            for i in range(n_rasters):
+                try:
+                    row, col = srcs[i].index(x, y)
+                except ValueError:
+                    # x, y is outside raster bounds
+                    elevs.append(np.nan)
+                    continue
+
+                if 0 <= row < shapes[i][0] and 0 <= col < shapes[i][1]:
+                    elev = elevations[i][row, col]
+                else:
+                    elev = np.nan  # out of bounds
+                elevs.append(elev)
+            return tuple(elevs)
+
+        # Copy centroid geometry
+        centroids_gdf = self.gdf_vorPolys.copy()
+        centroids_gdf.geometry = centroids_gdf.centroid
+
+        # Apply elevation sampling per raster
+        elev_data = centroids_gdf.geometry.apply(lambda pt: get_elevations(pt.x, pt.y))
+
+        for i, label in enumerate(labels):
+            centroids_gdf[label] = elev_data.apply(lambda t: t[i])
+
+        for src in srcs:
+            src.close()
+
+        return centroids_gdf"""
+
+    def get_cell_areas(self):
+        print('getting cell areas')
+        ### Find cell areas for DISU Package
+        poly_area_list = []
+        for poly in self.gdf_vorPolys['geometry']:
+            poly_area_list += [poly.area]
+        return poly_area_list
+
+    def get_origin_xy(self):
+        """Get the x,y coordinates for the origin of the 
+        model grid.
+
+        Returns:
+            tuple: return a tuple of the form - (x,y) 
+        """
+
+        df_verts = pd.DataFrame(self.verts)
+        xmin = df_verts.iloc[:, 0].min()
+        ymin = df_verts[df_verts.iloc[:, 0] == xmin].iloc[:, 1].min()
+        origin_xy = (xmin, ymin)
+        self.origin_xy = origin_xy
+
+        return origin_xy
+
+    @property
+    def gdf_latlon(self):
+        if self._gdf_latlon is None:
+            gdf_ll = self.gdf_vorPolys.to_crs(self.crs_latlon)
+            self._gdf_latlon = gdf_ll
+        return self._gdf_latlon
+
+    @property
+    def latlon(self):
+        if self._latlon is None:
+            latlon = json.loads(self.gdf_latlon["geometry"].to_json())
+            self._latlon = latlon
+        return self._latlon
+
+    def get_grid_centroid(self):
+        """Gets the Shapley representation of the centroid of the defined voronoi grid
+
+        Returns:
+            shp: returns Shapely representation of the grid centroid
+        """
+        # grid_centroid = shp.MultiPolygon(self.gdf_latlon['geometry'].to_list()).centroid
+        grid_centroid = self.gdf_latlon.union_all().centroid
+        return grid_centroid
+
+    def get_overlapping_area(self, shp_gpkg=None, cell_list=None):
+        """
+        simple method to get the voronoi cell area of an overlapping geometry. Can provide
+        a shapefile or geopackage of the geometry. Function will determine what voronoi cells
+        the geometry overlaps and then calculate the area of those voronoi cells. Alternatively,
+        if you know the cell ids, you can provide a list of cell indices.
+        :param shp_gpkg: shapefile or geopackage of geometry to check
+        :param cell_list: list of cell ids. If both shp_gpkg and cell_list are provided, shp_gpkg takes precedence
+        :return:
+        """
+        if shp_gpkg is not None:
+            cells = self.get_vor_cells_as_series(shp_gpkg).to_list()
+        elif cell_list is not None:
+            cells = cell_list
+        else:
+            raise ValueError('You must provide a shp_gpkg or cell_list')
+        area = self.gdf_vorPolys.loc[cells].union_all().area
+        return area
+
+    def get_vor_idx_from_geometry(
+            self,
+            shp_to_query: shp = None,
+            gdf_to_query: gpd.GeoDataFrame = None,
+            crs: str = "EPSG:2927",
+            crs_latlon: str = "EPSG:4326",
+            name_col: str = None,
+            predicate: str = "intersects"
+    ) -> dict:
+        """Method to do a spatial query to determine the voronoi cells that intersect
+        the given geometries. Geometries should be a shapefile of points or polygons. This
+        function returns a dictionary with keys consisting of shapefile indices or names in
+        given name_col field and values consisting of the indices of the intersecting
+        voronoi cells for each key. The predicate corresponds to the sindex.query function
+        in the GeoPandas package.
+        
+        Args:
+            shp_to_query: shapefile of points or polygons to query
+            gdf_to_query: GeoDataFrame with geometry to query; this will take precedence
+            over shp_to_query if it is passed to the function
+            crs (string): coordinate reference system for the shapefile
+            crs_latlon (string): crs for lat/lon, EPSG:4326. Shouldn't need to change this
+            name_col (string): string corresponding to the field name in the shapefile to be used
+            as for the keys in the return dict.
+            predicate (string): method for query, defaults to intersects, but can use any predicate allowed
+            by GeoPandas sindex.query
+        """
+
+        if shp_to_query:
+            gdf_query = read_shp_gpkg(shp_to_query).to_crs(crs)
+        if gdf_to_query is not None:
+            gdf_query = gdf_to_query.to_crs(crs)
+
+        """Create dictionary with Voronoi cell indices that contain/intersect each location"""
+        vor_idx_dict = {}
+        for idx in gdf_query.index:
+            cell_intersecting_this_loc = (
+                gpd.GeoSeries(gdf_query.to_crs(crs_latlon).iloc[idx]["geometry"])
+                .sindex.query(
+                    self.gdf_vorPolys["geometry"].to_crs(crs_latlon), predicate=predicate
+                )[0]
+                .tolist()
+            )
+            if name_col is not None:
+                vor_idx_dict[gdf_query.iloc[idx][name_col]] = cell_intersecting_this_loc
+            elif name_col is None:
+                vor_idx_dict[idx] = cell_intersecting_this_loc
+
+        return vor_idx_dict
+
+    def get_vor_idx_from_geometry_idx(
+            self,
+            gdf_to_query: gpd.GeoDataFrame = None,
+            idx: int = 0,
+            predicate: str = "intersects"
+    ) -> list:
+        """Method to do a spatial query to determine the voronoi cells that intersect
+        the single geometry in a GeoDataFrame. Use get_vor_idx_from_geometry for multiple
+        geometries. This function returns a list consisting indices of the intersecting
+        voronoi cells for the given geometry. The predicate corresponds to the sindex.query function
+        in the GeoPandas package.
+        
+        Args:
+            gdf_to_query: GeoDataFrame with geometry to query
+            idx: GeoDataFrame index with geometry to query
+            predicate (string): method for query, defaults to intersects, but can use any predicate allowed
+            by GeoPandas sindex.query
+        """
+        this_idx = (
+            self.gdf_vorPolys["geometry"]).sindex.query(
+            gdf_to_query['geometry'].iloc[idx], predicate=predicate, sort=True).tolist()
+        return this_idx
+
+    def set_k_vor(
+            self,
+            k_dict: dict = None,
+            k_default=100
+    ) -> list:
+        """Method to set the hydraulic conductivity for all voronoi cells
+        in the model grid. k_dict should be generated using the get_vor_idx_from_geometry
+        method. The k_default is assigned to all cells prior to k_dict, in case some
+        cells are not in k_dict."""
+
+        """set initial default Kh"""
+        self.gdf_vorPolys["Kh"] = k_default
+        """set K values based on a dictionary of k values imported from shapefile"""
+        for key in k_dict.keys():
+            self.gdf_vorPolys.loc[self.gdf_vorPolys.index.isin(k_dict[key]), ["Kh"]] = key
+        """make list of K values for each Voronoi cell"""
+        k_vorcell_list = self.gdf_vorPolys["Kh"].to_list()
+
+        return k_vorcell_list
+
+    """def get_raster_from_strike_dip(
+            self,
+            strike: int,
+            dip: int,
+            known_point: tuple,
+            pixel_size: int = 1,
+            output_filename: Path = Path.cwd().joinpath('raster.tif')
+    ):
+        """
+    """
+
+        hull_bounds = shp.MultiPolygon(self.gdf_vorPolys.geometry.to_list()).convex_hull.bounds
+        # Unpack the known point and hull bounds
+        known_x, known_y, known_elevation = known_point
+        min_x, min_y, max_x, max_y = hull_bounds
+        # Calculate the dimensions of the raster
+        width = int((max_x - min_x) / pixel_size)
+        height = int((max_y - min_y) / pixel_size)
+        dip_rad = np.radians(90 - dip)
+
+        # Calculate the normal vector to the plane
+        normal = self.get_normal_from_strike_and_dip(strike, dip)
+        # Create an affine transform for the raster
+        transform = from_origin(min_x, max_y, pixel_size, pixel_size)
+        # Initialize the raster array
+        # elevation_data = np.zeros((height, width), dtype=rasterio.float32)
+
+        # Calculate the elevation values using vectorized operations
+        print('getting elevations for raster')
+
+        # Create a meshgrid of x and y coordinates
+        x_coords = min_x + np.arange(width) * pixel_size
+        y_coords = max_y - np.arange(height) * pixel_size
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+
+        # Calculate the position vectors of all pixels relative to the known point
+        point_vectors = np.stack([x_grid - known_x, y_grid - known_y, np.zeros_like(x_grid)], axis=-1)
+
+        # Calculate the dot product for all points
+        norm_normal = np.linalg.norm(normal)
+        distance_along_normal = np.dot(point_vectors, normal) / norm_normal
+
+        # Calculate the elevation for all points
+        elevation_data = known_elevation - distance_along_normal * np.cos(dip_rad)
+        print('got raster from strike and dip')
+
+        # Write the raster to a file
+        with rasterio.open(
+                output_filename,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=1,
+                dtype=rasterio.float32,
+                crs=self.crs,
+                transform=transform,
+        ) as dst:
+            dst.write(elevation_data, 1)
+
+        centroids_gdf = self.get_centroid_elevations([output_filename], ['elev'])
+
+        return centroids_gdf"""
+
+    def get_raster_from_strike_dip(
+            self,
+            strike: int,
+            dip: int,
+            known_point: tuple,
+            pixel_size: int = 1,
+            output_filename: Path = Path.cwd().joinpath('raster.tif')
+    ):
+        """
+        Generate a raster file representing elevations of a sloping plane.
+
+        Parameters:
+        - strike: The strike of the plane in degrees, measured from north.
+        - dip: The dip of the plane in degrees, measured from the horizontal.
+        - known_point: A tuple (x, y, elevation) for a known point on the plane.
+        - pixel_size: The size of each pixel in spatial units.
+        - output_filename: The filename for the output raster.
+        """
+
+        # Get model extent from grid
+        domain = self.get_domain()
+        min_x, min_y, max_x, max_y = domain.bounds
+
+        # Align bounds to pixel grid to avoid misalignment and nan issues
+        min_x = np.floor(min_x / pixel_size) * pixel_size
+        max_x = np.ceil(max_x / pixel_size) * pixel_size
+        min_y = np.floor(min_y / pixel_size) * pixel_size
+        max_y = np.ceil(max_y / pixel_size) * pixel_size
+
+        width = int((max_x - min_x) / pixel_size)
+        height = int((max_y - min_y) / pixel_size)
+
+        # Convert dip to angle from horizontal
+        dip_rad = np.radians(90 - dip)
+        normal = self.get_normal_from_strike_and_dip(strike, dip)
+
+        # Create affine transform from upper-left corner
+        transform = from_origin(min_x, max_y, pixel_size, pixel_size)
+
+        # Create grid of x and y coordinates
+        x_coords = min_x + np.arange(width) * pixel_size
+        y_coords = max_y - np.arange(height) * pixel_size  # top to bottom
+        x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+
+        # Compute elevation for each cell based on distance from known point
+        known_x, known_y, known_elevation = known_point
+        point_vectors = np.stack([x_grid - known_x, y_grid - known_y, np.zeros_like(x_grid)], axis=-1)
+
+        # Compute elevation using normal projection
+        norm_normal = np.linalg.norm(normal)
+        distance_along_normal = np.dot(point_vectors, normal) / norm_normal
+        elevation_data = known_elevation - distance_along_normal * np.cos(dip_rad)
+
+        # Write the raster
+        with rasterio.open(
+                output_filename,
+                'w',
+                driver='GTiff',
+                height=height,
+                width=width,
+                count=1,
+                dtype=rasterio.float32,
+                crs=self.crs,
+                transform=transform,
+        ) as dst:
+            dst.write(elevation_data.astype(np.float32), 1)
+
+        # Sample raster at centroids
+        centroids_gdf = self.get_raster_vals_at_centroids([output_filename], ['elev'])
+        return centroids_gdf
+
+    def to_shapefile(self, filepath: str | Path = 'vor_shp.shp'):
+        return self.gdf_vorPolys.to_file(filepath)
+
+    def get_domain(self):
+        return self.gdf_vorPolys.union_all()
+
+    @staticmethod
+    def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.array:
+        """
+        Returns the normal vector of a plane based on strike and dip
+        :param strike: strike in degrees
+        :param dip: dip in degrees
+        :return: normal vector
+        """
+        strike_rad = np.radians(strike)
+        dip_rad = np.radians(90 - dip)  # Convert dip into inclination from the vertical
+        normal = np.array([
+            np.sin(dip_rad) * np.sin(strike_rad),
+            np.sin(dip_rad) * np.cos(strike_rad),
+            np.cos(dip_rad)
+        ])
+        return normal
+
+    @staticmethod
+    def generate_grid_around_point(center_point: shp.Point, spacing: float, size: int, crs: str) -> gpd.GeoSeries:
+        """Generate a GeoPandas GeoSeries of points in a grid pattern.
+        
+        Args:
+            center_point (shapely.geometry.Point): The center point of the grid.
+            spacing (float): The spacing between grid points.
+            size (int): The number of points in one dimension of the grid.
+            crs (str): Set the crs of the generated points
+
+        Returns:
+            geopandas.GeoSeries: The GeoSeries of points.
+        """
+
+        # Create grid of points
+        minx, miny, maxx, maxy = (center_point.x - size / 2 * spacing, center_point.y - size / 2 * spacing,
+                                  center_point.x + size / 2 * spacing, center_point.y + size / 2 * spacing)
+
+        x_coords = list(range(int(minx), int(maxx) + 1, spacing))
+        y_coords = list(range(int(miny), int(maxy) + 1, spacing))
+
+        points = [shp.Point(x, y) for x in x_coords for y in y_coords]
+
+        # Convert to GeoSeries
+        geoseries = gpd.GeoSeries(points).set_crs(crs)
+
+        return geoseries
+
+    @staticmethod
+    def generate_grid_polygons(center_point, spacing, size, gap):
+        """Generate a MultiPolygon object with polygons in a grid pattern with a set spacing.
+        
+        Args:
+            center_point (shapely.geometry.Point): The center point of the grid.
+            spacing (float): The spacing between grid points.
+            size (int): The number of points in one dimension of the grid.
+            gap (float): The gap between polygons.
+
+        Returns:
+            shapely.geometry.MultiPolygon: The MultiPolygon of grid squares.
+        """
+
+        # Create grid of points
+        minx, miny, maxx, maxy = (center_point.x - size / 2 * spacing, center_point.y - size / 2 * spacing,
+                                  center_point.x + size / 2 * spacing, center_point.y + size / 2 * spacing)
+
+        x_coords = list(range(int(minx), int(maxx) + 1, spacing))
+        y_coords = list(range(int(miny), int(maxy) + 1, spacing))
+
+        polygons = []
+        for x in x_coords[:-1]:  # We exclude the last coordinate because we're creating boxes "between" the points
+            for y in y_coords[:-1]:
+                # Create a box (polygon) for each pair of coordinates
+                polygons.append(shp.box(x + gap / 2, y + gap / 2, x + spacing - gap / 2, y + spacing - gap / 2))
+
+        # Convert to MultiPolygon
+        multipolygon = shp.MultiPolygon(polygons)
+
+        return multipolygon
+
+    @staticmethod
+    def voronoi_refine_by_point(point: shp.Point, spacing: int, tri: Triangle) -> gpd.GeoDataFrame:
+
+        polypoints = [(point.x, point.y),
+                      (point.x + spacing, point.y),
+                      (point.x + spacing, point.y - spacing),
+                      (point.x, point.y - spacing)]
+        poly_main = shp.Polygon(polypoints)
+        transform_dist = spacing * 2
+
+        polyE = shp.transform(poly_main, lambda x: x + [transform_dist, 0])
+        polyW = shp.transform(poly_main, lambda x: x - [transform_dist, 0])
+        polyN = shp.transform(poly_main, lambda x: x + [0, transform_dist])
+        polyS = shp.transform(poly_main, lambda x: x - [0, transform_dist])
+        polyNE = shp.transform(poly_main, lambda x: x + [transform_dist, transform_dist])
+        polyNW = shp.transform(poly_main, lambda x: x + [-transform_dist, transform_dist])
+        polySE = shp.transform(poly_main, lambda x: x + [transform_dist, -transform_dist])
+        polySW = shp.transform(poly_main, lambda x: x + [-transform_dist, -transform_dist])
+        allPolys = [poly_main, polyE, polyW, polyN, polyS, polyNE, polyNW, polySE, polySW]
+
+        gdf_allPolys = gpd.GeoDataFrame(geometry=allPolys)
+        for poly in range(len(gdf_allPolys)):
+            tri.add_polygon(gdf_allPolys.loc[poly, 'geometry'])
+
+        return gdf_allPolys
+
+    def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
+        """
+        helper to iterate through surface elevations and check for layers that are above the overlying
+        layer, then adjust so they don't overlap.
+        :param which: 'bottom' or 'top'. If bottom, will adjust bottom layer to maintain min_sep. Same with top.
+        :param trigger_sep: trigger separation, if separation is less than this the layers will be adjusted
+        :param df: dataframe of surface elevations at each voronoi cell, column names are the surface names
+        :param min_sep: surfaces that are too high will be reduced below the overlying surface by this minimum separation
+        :return: new dataframe with adjusted surface elevations
+        """
+
+        df = self.gdf_topbtm.copy() if df is None else df
+        #  drop the geometry if needed, so we can force all values to be numeric
+        if isinstance(df, gpd.GeoDataFrame):
+            df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))
+        else:
+            df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
+        labels = list(df.columns)
+        df = df.loc[:, labels]
+        # find difference between cols of surfaces
+        for i, label in enumerate(labels):
+            #  skip first diff column since it will be all NaN
+            if i == 0:
+                continue
+            diffs = df.diff(axis=1)
+            #  create list of cells where the elevation of this column is higher than the previous
+            diff_list = list(diffs[diffs[label] >= -trigger_sep].index)
+            #  adjust the cells that are too high, based on the min_sep
+            if which == 'bottom':
+                df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+            elif which == 'top':
+                df.iloc[diff_list, (i - 1)] = df.iloc[diff_list, i] + min_sep
+            else:
+                raise ValueError(f'which arg {which} is not valid. Must be "top" or "bottom"')
+
+        return df
+
+    def adjust_cells_by_id(
+            self,
+            cell_ids: list,
+            adjustment: int | float,
+            df: pd.DataFrame = None,
+            layer: int = 0,
+            reconcile: bool = True
+    ):
+        """
+        method to adjust the elevations of provided cells by given adjustment amount
+        :param cell_ids: list of cell ids to adjust
+        :param adjustment: amount to adjust the cells by
+        :param df: DataFrame of layer elevations. Index are cell ids, columns are layers
+        :param layer: which layer to adjust, 0 = top of 1st layer, 1 = 1st layer botom, 2 = 2nd layer bottom, etc.
+        :param reconcile: boolean value to indicate if the adjusted surfaces df should be sent to self.reconciled_surfaces
+        :return: df
+        """
+
+        df = self.gdf_topbtm.copy() if df is None else df.copy()
+        df.loc[cell_ids, layer] = df.loc[cell_ids, layer] + adjustment
+        df = self.reconcile_surfaces(df) if reconcile else df
+        return df
+
+    def adjust_top_btm_overlaps(
+            self,
+            elev_df=None,
+            shp: Path = None, buffer=1,
+            layer_bottom_name=1,
+            min_sep=None
+    ) -> pd.DataFrame:
+        """
+        method to easily adjust the bottoms of certain voronoi cells so that the bottoms are not higher than any of
+        the tops of the adjacent cells. In order to have a continually overlapping layer of cells horiontally. This
+        is mostly an issue for steeply sloping surfaces with thinner layer thicknesses.
+        :param elev_df: DataFrame with cell elevations to adjust. Defaults to the return df of self.reconcile_surfaces()
+        :param shp: Path of shapefile that identifies cells to be adjusted
+        :param buffer: how much extra below the lowest adjacent cell top to lower each cell, defaults to 1
+        :param layer_bottom_name: name of the layer we are adjusting, defaults to layer 1
+        :return: returns a new dataframe of reconciled surfaces
+        """
+        elev_df = self.reconcile_surfaces(min_sep=min_sep) if elev_df is None else elev_df
+        cells_to_adjust = self.get_vor_cells_as_series(shp)
+        new_bottoms = {}
+
+        for cell_id in cells_to_adjust:
+            adjacent_cells = self.find_adjacent_cells(cell_id)
+            ja_cell_tops = elev_df[0].loc[adjacent_cells]
+            ja_min = ja_cell_tops.min()
+            new_bottoms[cell_id] = ja_min - buffer
+
+        new_bottoms = pd.Series(new_bottoms, name=layer_bottom_name)
+        elev_df[layer_bottom_name].update(new_bottoms)
+        new_surfaces = self.reconcile_surfaces(df=elev_df)
+
+        return new_surfaces
+
+    def cross_section(self, line: shp.LineString | Path):
+        """return a GridSetion object from provided line. can plot with the .show method"""
+        return GridSection(vor=self, line=line)
+
+
+class GridSection:
+    """
+    Represents a section of a grid and provides tools for creating and plotting
+    cross-sections.
+    """
+
+    def __init__(self, vor: VoronoiGrid, line: shp.LineString | Path):
+
+        self.vor = vor
+        props = vor.get_disv_gridprops()
+        self.grid = VertexGrid(
+            vertices=props['vertices'],
+            top=vor.gdf_topbtm[0].values,
+            botm=vor.gdf_topbtm.loc[:, 1:].values.T,
+            cell2d=props['cell2d'],
+            lenuni='feet',
+            ncpl=props['ncpl'],
+            crs=vor.crs,
+            nlay=vor.nlay
+        )
+
+        if isinstance(line, Path):
+            self.coords = read_shp_gpkg(line).union_all().coords
+        elif isinstance(line, shp.LineString):
+            self.coords = line.coords
+        else:
+            raise ValueError(f'line arg must be a Path or LineString, not {type(line)}')
+
+        self.xy = np.array([xy for xy in self.coords])
+
+    @property
+    def polys(self):
+        """polygons for the grid cross section. Each poly is a grid cell"""
+        polys = PlotCrossSection(
+            modelgrid=self.grid,
+            line={'line': self.xy},
+        ).polygons
+        return polys
+
+    @property
+    def poly_coords(self):
+        """returns coords of each section polygon"""
+        poly_coords = []
+        for poly in self.polys.values():
+            verts = poly[0].get_xy()  # Nx2 array of (x, y)
+            poly_coords.append(verts)
+        return poly_coords
+
+    @property
+    def figure(self):
+        """the cross section figure"""
+        fig = f.Fig()
+        for verts in self.poly_coords:
+            xs, ys = verts[:, 0], verts[:, 1]
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=ys,
+                    fill='toself',
+                    mode='lines',
+                    line=dict(color='black'),
+                    name='Polygon'
+                )
+            )
+        return fig
+
+    def plot(self):
+        """plots the cross section"""
+        self.figure.show()
