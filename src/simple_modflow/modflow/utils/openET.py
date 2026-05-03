@@ -2,8 +2,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 import requests
 import glob
@@ -13,6 +13,7 @@ import geopandas as gpd
 from shapely import Polygon
 from pathlib import Path
 import re
+import rasterio.features as features
 
 
 def extract_dates_from_paths(paths) -> list[Path]:
@@ -129,7 +130,7 @@ class OpenETtoVor:
                     band = band.astype('float32')
 
                     # get polygon equivalents of each raster pixel
-                    poged = [(p, v) for p, v in rio.features.shapes(band, transform=src.transform)]
+                    poged = [(p, v) for p, v in features.shapes(band, transform=src.transform)]
                     poged = [[Polygon(poged[i][0]['coordinates'][0]), poged[i][1]] for i in range(len(poged))]
 
                     # make DataFrames of polygonized raster and voronoi polygons
@@ -214,12 +215,12 @@ if __name__ == "__main__":
     import pickle
 
     raster_dir = Path(r"C:\Users\lukem\mf6\Cumberland general\ET\alt")
-    vor_v7 = Path(r"C:\Users\lukem\mf6\Cumberland general\cumberland_pre-ex_v7.vor")
-    with open(vor_v7, 'rb') as file:
+    vor_v12 = Path(r"C:\Users\lukem\mf6\Cumberland general\cumb_v14c_existing_algomesh_v2.1.vor")
+    with open(vor_v12, 'rb') as file:
         vor = pickle.load(file)
     et = OpenETtoVor(vor, raster_dir).avg_months()
 
-    et_path = Path().home() / 'mf6' / 'et_new_v7.et'
+    et_path = Path().home() / 'mf6' / 'et_new_v13.et'
     with open(et_path, 'wb') as file:
         pickle.dump(et, file)
 

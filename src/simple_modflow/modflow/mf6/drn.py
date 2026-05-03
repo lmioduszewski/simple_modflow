@@ -1,22 +1,36 @@
+"""Drain-boundary helpers built on polygon/line GIS inputs and Voronoi cells."""
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 import flopy.utils.binaryfile
 import shapely as shp
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
-import simple_modflow.modflow.mf6.mfsimbase as mf
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 import pickle
+from simple_modflow.modflow.mf6.boundary_support import (
+    build_cell_id,
+    coerce_values_by_cell,
+    filter_inactive_cells,
+    normalize_grid_type,
+)
 from simple_modflow.modflow.mf6.boundaries import Boundaries
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
 
 class DRN(Boundaries):
+    """Build drain stress-period data from polygons or explicit cell selections."""
 
     def __init__(
             self,
-            model: mf.SimulationBase = None,
+            model: SimulationBase = None,
             vor: Vor = None,
             shp_gpkg: Path = None,
             uid: str = None,
@@ -25,21 +39,26 @@ class DRN(Boundaries):
             idomain: list[int] | pd.Series = None,
             idomain_path: Path = None,
     ):
-        """
-
-        :param model: model to which this boundary applies
-        :param vor: voronoi grid to which this boundary apples, defaults to model grid if vor not given
-        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
-        :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon. required
-        :param crs: coordinate reference system for boundary, should be integer EPSG code.
-        :param grid_type: default to disv, can also be disu
-        :param idomain: list of integers (1 or 0), one for each cell in the grid. If 0, that cell index is inactive
-        :param idomain_path: path to shapefile that holds the polygons that are included
-        in idomain, alt to providing idomain
+        """Parameters
+        ----------
+        model
+            Model to which the boundary applies.
+        vor
+            Grid helper; defaults to the model grid if omitted.
+        shp_gpkg
+            Polygon/geometry file describing the drain features.
+        uid
+            Unique-id field in the geometry attributes.
+        crs
+            EPSG code for the boundary geometry.
+        grid_type
+            MODFLOW grid type, usually ``disv`` or ``disu``.
+        idomain, idomain_path
+            Optional active-domain definition used to filter inactive cells.
         """
         super().__init__(model, vor, shp_gpkg, uid, crs, idomain=idomain, idomain_path=idomain_path)
         self.bound_type = 'drn'
-        self.grid_type = grid_type.lower()
+        self.grid_type = normalize_grid_type(grid_type)
 
     def get_drn_stress_period_data(
             self,
@@ -49,6 +68,10 @@ class DRN(Boundaries):
             disMf: str = 'disv',
             bottoms: dict = None,
             layer: int = None,
+            region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            region_metadata: dict | None = None,
+            overwrite_region: bool = False,
     ) -> list:
         """Returns a list of lists. Each nested list corresponds to the DRN package
         boundary data for a particular voronoi cell in the grid, which includes cell
@@ -56,7 +79,7 @@ class DRN(Boundaries):
 
         Args:
             cells (list): list of cell IDs in this drain
-            bottoms (dict): dict of bottoms, keys are the cell indices, values are the bottom elevations
+            bottoms (dict): dict of bottoms, keys are the cell indices, values are the bottom elevations. If no bottom addition is provided, bottoms is just the elevation of the boundary.
             bottom_addition (float): height above the bottom of cell for the drain. This is added to the bottom of cell elevation derived from the Voronoi grid object.
             conductance (float | int | list): conductance for the cell of this DRN, can also provide a list
             of conductance values that is of equal length as the list of cells. Function will create a
@@ -67,56 +90,73 @@ class DRN(Boundaries):
         Returns:
             list: List of lists that contain the data for this drain and can be passed to the flopy DRN package
         """
-
         if self.vor is None:
-            return print("No voronoi grid defined")
+            raise ValueError("No voronoi grid defined")
+
+        grid_type = normalize_grid_type(disMf)
+        layer_idx = 0 if layer is None else int(layer)
+        conductance_by_cell = coerce_values_by_cell(cells, conductance, name="conductance")
+        active_cells = filter_inactive_cells(cells, self.inactive_cells)
         drn_values = []
 
-        # Set up conductance dict
-        if isinstance(conductance, int | float):
-            conductance = {cell: conductance for cell in cells}
-        elif isinstance(conductance, list):
-            assert len(conductance) == len(cells), 'conductance list length must equal number of cells in DRN'
-            conductance = dict(zip(cells, conductance))
-
         # generate list of lists for all DRN boundary cells
-        for cell in cells:
-            cell_id = cell if disMf == 'disu' else (layer, cell)
+        for cell in active_cells:
+            cell_id = build_cell_id(cell, grid_type=grid_type, layer=layer_idx)
             if bottoms:
-                thisdrn = [cell_id, (bottoms[cell] + bottom_addition), conductance[cell]]
+                drain_elevation = bottoms[cell] + bottom_addition
             elif self.vor.gdf_topbtm is not None:
                 try:
-                    #  need a better way
-                    thisdrn = [cell_id, (self.vor.gdf_topbtm.loc[cell, layer + 1] + bottom_addition), conductance [cell]]
-                except:
-                    print("can't get bottom elevations for drains. Assuming bottom elev is zero")
-                    thisdrn = [cell_id, bottom_addition, conductance[cell]]
+                    drain_elevation = self.vor.gdf_topbtm.loc[cell, layer_idx + 1] + bottom_addition
+                except Exception:
+                    drain_elevation = bottom_addition
             else:
-                thisdrn = [cell_id, bottom_addition, conductance[cell]]
-            """if disMf == "disv":
-                thisdrn = [0] + thisdrn  # add layer num for disv grid"""
-            drn_values.append(thisdrn)
+                drain_elevation = bottom_addition
+            drn_values.append([cell_id, drain_elevation, conductance_by_cell[cell]])
+
+        if region_name is not None and drn_values:
+            self._register_region(
+                region_name,
+                cellids=[row[0] for row in drn_values],
+                layer=layer_idx,
+                tags=region_tags,
+                metadata=region_metadata,
+                overwrite=overwrite_region,
+            )
         return drn_values
 
-    def get_drn_from_poly(
+    def from_polygons(
             self,
             grid_type: str = 'disv',
             fields: dict = None,
             edges_only: bool = False,
             top_drain: bool = False,
+            register_regions: bool = False,
+            region_name_prefix: str | None = None,
+            combined_region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
             # top_minus = 0
     ) -> dict:
+        """Build drain stress-period data from polygon features on the builder.
+
+        Parameters
+        ----------
+        grid_type
+            MODFLOW grid type, usually ``"disv"`` or ``"disu"``.
+        fields
+            Mapping of logical field names to geometry attribute names.
+        edges_only
+            When ``True``, only edge-cell intersections are used.
+        top_drain
+            When ``True``, interpret the height field relative to model top
+            instead of cell bottom.
+        register_regions, region_name_prefix, combined_region_name, region_tags,
+        overwrite_regions
+            Optional model-region registration settings.
         """
-        Get a drn data dict for a flopy model
-        :param grid_type: default is 'disv'
-        :param fields: a dict of custom field names in the geometry file, including 'name', 'height_over_btm',
-        'conductance', 'layer', and 'min_elev'
-        :param edges_only: if True, only grid edge intersections will be included in drain
-        :param top_drain: drain polys represent drains at top of model. In this case drain height wil be ignored
-        :param top_minus: if top drain, subtract this amount from top of model for drain
-        :return: a dict of drn data
-        """
+        vor = self._require_vor()
         nper = self.nper if self.nper is not None else 1
+        grid_type = normalize_grid_type(grid_type)
         if fields is None:
             fields = {
                 'name': 'name',
@@ -126,42 +166,65 @@ class DRN(Boundaries):
                 'min_elev': 'min_elev'
             }
         # get bottoms of model layers from voronoi grid
-        lyr_botms = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
+        lyr_botms = vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
         if top_drain:
-            model_top = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 0]
-        # check to see if the geodataframe index has already been set to the correct 'name' field
-        if self.gdf.index.name != fields['name']:
-            gdf_drn = self.gdf.set_index(fields['name'])
-        else:
-            gdf_drn = self.gdf
-        if edges_only:
-            drn_cells = self.edge_intersections.to_dict()
-        else:
-            drn_cells = self.intersections.to_dict()
+            model_top = vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 0]
+        region_cellids_by_name: dict[str, list] = {}
+        region_layers_by_name: dict[str, int] = {}
+        region_geometries_by_name: dict[str, object] = {}
+        region_metadata_by_name: dict[str, dict] = {}
         drn_dict = {}
         for per in range(nper):
             cell_list = []
-            for name, cell_nums in drn_cells.items():
-                boundary_height = gdf_drn.loc[name, fields['height_over_btm']]
-                conductance = gdf_drn.loc[name, fields['conductance']]
-                layer = gdf_drn.loc[name, fields['layer']]
-                min_elev = gdf_drn.loc[name, fields['min_elev']]
+            for name, row, active_cells in self.iter_polygon_boundary_features(
+                name_field=fields["name"],
+                edges_only=edges_only,
+            ):
+                boundary_height = row[fields['height_over_btm']]
+                conductance = row[fields['conductance']]
+                layer = row[fields['layer']]
+                min_elev = row[fields['min_elev']]
                 min_elev = min_elev if min_elev is not None else 0
                 # adjust layer number for zero-based indexing
                 layer_idx = layer - 1
-                for cell in cell_nums:
-                    if self.inactive_cells is not None and cell in self.inactive_cells:
-                        continue  # skip this if this cell is inactive
+                region_layers_by_name[name] = layer_idx
+                region_geometries_by_name[name] = row["geometry"]
+                region_metadata_by_name[name] = {"edges_only": edges_only, "top_drain": top_drain}
+                region_cellids_by_name.setdefault(name, [])
+                for cell in active_cells:
                     if top_drain:
                         boundary_elev = model_top.iloc[cell] + boundary_height
                     else:
                         boundary_elev = lyr_botms.iloc[cell, layer_idx] + boundary_height
                     if boundary_elev < min_elev:
                         boundary_elev = min_elev  # adjusts drn elev to minimum allowed if specified
-                    cell_id = cell if grid_type == 'disu' else (layer_idx, cell)
+                    cell_id = build_cell_id(cell, grid_type=grid_type, layer=layer_idx)
                     cell_list.append([cell_id, boundary_elev, conductance])
+                    region_cellids_by_name[name].append(cell_id)
             drn_dict[per] = cell_list
+
+        if register_regions and region_cellids_by_name:
+            self._register_boundary_groups(
+                cellids_by_name=region_cellids_by_name,
+                layers_by_name=region_layers_by_name,
+                geometries_by_name=region_geometries_by_name,
+                region_name_prefix=region_name_prefix or self.bound_type,
+                combined_region_name=combined_region_name,
+                tags=region_tags,
+                metadata_by_name=region_metadata_by_name,
+                overwrite=overwrite_regions,
+            )
         return drn_dict
+
+    def from_vector(self, **kwargs) -> dict:
+        """Alias for :meth:`from_polygons` for shapefile/geopackage workflows."""
+
+        return self.from_polygons(**kwargs)
+
+    def get_drn_from_poly(self, **kwargs) -> dict:
+        """Backward-compatible alias for :meth:`from_polygons`."""
+
+        return self.from_polygons(**kwargs)
 
     @staticmethod
     def update_drn_dict(drn_dict: dict, update_dict: dict, update_existing_only: bool = True):
@@ -180,3 +243,7 @@ class DRN(Boundaries):
             updated = updated.to_numpy().tolist()  # recreate list then update the dict
             drn_dict[key] = updated
         return drn_dict
+
+
+# Preferred alias for the vector-driven drain builder API.
+DRNFromVector = DRN

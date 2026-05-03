@@ -2,8 +2,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 from pandas import IndexSlice as idxx
 from figs import Fig, create_hover
@@ -35,7 +35,7 @@ class Choro:
             kstpkper: tuple = None,
             per: int = None,
             layer: int = 0,
-            choro_type: str = 'hds',
+            type: str = 'hds',
             custom_hover: dict = None,
             custom_zs: list = None,
             zmin: float | int = None,
@@ -49,29 +49,35 @@ class Choro:
             rch_scale: float = None,
             bgs: bool = False,
             hillshade_path: Path = None,
+            colorscale: str = None,
+            logscale: bool = False,
+            **kwargs
 
     ):
         """
         Class defining the basic choropleth plots generated from a modflow model.
-        :param model:
-        :param vor:
-        :param kstpkper:
+        :param model: a modflow simulation object. SimulationBase is the base class for all modflow simulations.
+        :param vor: a VoronoiGridPlus object.
+        :param kstpkper: tuple of stress period and time step to plot
         :param per: can just provide stress period. appropriate kstpkper tuple will be determined, will throw an
         error if more than one valid kstpkper in the model output exists with the provided per
         :param layer: what layer to plot, a zero-index. 0 equals layer 1.
-        :param choro_type:
-        :param custom_hover:
-        :param custom_zs:
-        :param zmin:
-        :param zmax:
-        :param zoom:
+        :param type: type of choropleth to plot - options are 'hds', 'ks', 'input_rch', 'output_rch'
+        :param custom_hover: custom dictionary of hover labels to use for choropleth.
+        Must be same length as no. of cells in model.
+        :param custom_zs: custom list of z values to use for choropleth. Must be same length as no. of cells in model.
+        :param zmin: minimum z value to use for choropleth colorscale.
+        :param zmax: maximum z value to use for choropleth colorscale.
+        :param zoom: zoom level for choropleth map. Default is 13.
         :param show_layer_elevs: Default is True. To show elevations of all layers on hover
         :param show_mounding: if True, colorscale will be mounding over given Layer
-        :param hover_heads:
-        :param hover_ks:
+        :param hover_heads: boolean to show heads on hover.
+        :param hover_ks: boolean to show Kh on hover.
         :param locs: specify the path of a shapefile or geopackage with location points to show on choropleth
         :param rch_scale: value to scale z-values in choropleth. For example to convert units in recharge to another L/T
         :param bgs: if True, will take precedence, and will plot water levels in given Layer relative to top of model
+        :param hillshade_path: path to hillshade raster.
+        :param colorscale: colorscale to use for choropleth. Default is 'earth'.
         """
 
         self._vor = None
@@ -84,7 +90,7 @@ class Choro:
         self._per = None
         self.per = per
         self._layer = layer
-        self.choro_type = choro_type
+        self.type = type
         self._custom_hover = custom_hover
         self._custom_zs = custom_zs
         self._zmin = zmin
@@ -99,6 +105,9 @@ class Choro:
         self.rch_scale = rch_scale
         self.bgs = bgs
         self._show_mounding_above_ground = False
+        self._colorscale = None
+        self.logscale = logscale
+        self.kwargs = kwargs
 
         self.fig = Fig()
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -113,6 +122,7 @@ class Choro:
         self._hover_dict = self.hover_dict_default
 
         self.hillshade_path = hillshade_path
+        self.colorscale = colorscale
 
     @property
     def per(self):
@@ -188,17 +198,17 @@ class Choro:
     def hover_dict(self):
 
         if self.model is not None:
-            if self.choro_type == 'hds' or self.hover_heads is True:
+            if self.type == 'hds' or self.hover_heads is True:
                 for lyr in range(self.nlay):
                     lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], 'elev'].to_list()
                     self._hover_dict[f'Layer {lyr + 1} Heads'] = lyr_heads
 
-            if self.choro_type == 'ks' or self.hover_ks is True:
+            if self.type == 'ks' or self.hover_ks is True:
                 for lyr in range(self.nlay):
                     lyr_ks = self.all_ks[lyr].tolist()
                     self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
 
-            if self.choro_type == 'rch':
+            if self.type == 'rch':
                 self._hover_dict['Recharge'] = self.output_rch_zs
 
         if self.show_layer_elevs:
@@ -207,7 +217,7 @@ class Choro:
                 botms = self.model.gwf.modelgrid.botm
                 top = self.model.gwf.modelgrid.top
             else:
-                botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1, 1).transpose()
+                botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1, self.vor.nlay).transpose()
                 top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1, 1).transpose()[
                     0]  # TODO why do i have to add [0]
             layer_nums = list(range(len(botms)))
@@ -287,7 +297,7 @@ class Choro:
         if self.custom_zs is not None:
             return self.custom_zs
 
-        if self.choro_type == 'hds' and self.model is not None:
+        if self.type == 'hds' and self.model is not None:
             if self.show_mounding is True:
                 # if layer is specified as -1, show mounding above ground
                 if self.layer == -1:
@@ -310,17 +320,20 @@ class Choro:
                 zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
                 zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
 
-        elif self.choro_type == 'ks' and self.model is not None:
+        elif self.type == 'ks' and self.model is not None:
             zs = self.all_ks[self.layer].tolist()
 
-        elif self.choro_type == 'output_rch' and self.model is not None:
+        elif self.type == 'output_rch' and self.model is not None:
             zs = self.output_rch_zs
 
-        elif self.choro_type == 'input_rch' and self.model is not None:
+        elif self.type == 'input_rch' and self.model is not None:
             zs = self.input_rch_zs
 
         else:
             zs = self.vor.gdf_vorPolys.index.to_list()
+
+        if self.logscale:
+            zs = np.log10(zs)
 
         return zs
 
@@ -359,14 +372,30 @@ class Choro:
 
     @property
     def colorscale(self):
-        if self.choro_type == 'hds':
-            return 'earth'
-        elif self.choro_type == 'ks':
-            return 'earth'
-        elif self.choro_type == 'rch':
-            return 'earth'
-        else:
-            return 'earth'
+        """
+        Gets the current colorscale used by an instance. If no colorscale
+        has been explicitly set, it defaults to 'earth'.
+
+        :return: The current colorscale.
+        :rtype: str
+        """
+        if self._colorscale is None:
+            self._colorscale = 'earth'
+        return self._colorscale
+
+    @colorscale.setter
+    def colorscale(self, colorscale):
+        valid_colorscales = [
+            'Blackbody', 'Bluered', 'Blues', 'Cividis', 'Earth', 'Electric',
+            'Greens', 'Greys', 'Hot', 'Jet', 'Picnic', 'Portland', 'Rainbow',
+            'RdBu', 'Reds', 'Viridis', 'YlGnBu', 'YlOrRd']
+        if isinstance(colorscale, str):
+            if colorscale.lower() in [scale.lower() for scale in valid_colorscales]:
+                self._colorscale = colorscale
+            else:
+                print(f'colorscale {colorscale} not recognized, using default: "earth".\n'
+                      f'colorscale options are: {valid_colorscales}')
+                self._colorscale = 'earth'
 
     @property
     def locs(self):
@@ -423,6 +452,7 @@ class Choro:
             colorscale=self.colorscale,
             zmax=self._zmax,
             zmin=self._zmin,
+            **self.kwargs,
         )
         return choropleth
 
@@ -454,6 +484,8 @@ class Choro:
         self.add_choropleth()
         if self.locs is not None:
             self.add_locs()
+        if self.hillshade_path is not None:
+            self.add_hillshade(self.hillshade_path)
         return self.fig
 
     def add_hillshade(
@@ -493,7 +525,6 @@ class Choro:
             frame.data[0]['zmin'] = zmin
             frame.data[0]['zmax'] = zmax
 
-
         self.fig = Fig(
             data=frames[0].data,
             frames=frames,
@@ -514,8 +545,8 @@ class Choro:
 
     def plot(self):
         fig = self.choropleth
-        if self.hillshade_path is not None:
-            self.add_hillshade(self.hillshade_path)
+        """if self.hillshade_path is not None:
+            self.add_hillshade(self.hillshade_path)"""
         self.fig.show()
 
     def dash_selector(self):

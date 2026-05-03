@@ -1,0 +1,1175 @@
+                                   MODFLOW 6
+                U.S. GEOLOGICAL SURVEY MODULAR HYDROLOGIC MODEL
+                          GROUNDWATER FLOW MODEL (GWF)
+                            VERSION 6.6.2 05/12/2025
+
+   MODFLOW 6 compiled May 24 2025 11:42:11 with Intel(R) Fortran Intel(R) 64
+   Compiler Classic for applications running on Intel(R) 64, Version 2021.7.0
+                             Build 20220726_000000
+
+This software has been approved for release by the U.S. Geological 
+Survey (USGS). Although the software has been subjected to rigorous 
+review, the USGS reserves the right to update the software as needed 
+pursuant to further analysis and review. No warranty, expressed or 
+implied, is made by the USGS or the U.S. Government as to the 
+functionality of the software and related material nor shall the 
+fact of release constitute any such warranty. Furthermore, the 
+software is released on condition that neither the USGS nor the U.S. 
+Government shall be held liable for any damages resulting from its 
+authorized or unauthorized use. Also refer to the USGS Water 
+Resources Software User Rights Notice for complete use, copyright, 
+and distribution information.
+
+
+As a work of the United States Government, this USGS product is 
+in the public domain within the United States. You can copy, 
+modify, distribute, and perform the work, even for commercial 
+purposes, all without asking permission. Additionally, USGS 
+waives copyright and related rights in the work worldwide 
+through CC0 1.0 Universal Public Domain Dedication 
+(https://creativecommons.org/publicdomain/zero/1.0/).
+
+The following GNU Lesser General Public License (LGPL) libraries
+are used in this USGS product:
+
+    SPARSKIT version 2.0
+      ilut, luson, and qsplit 
+      (https://www-users.cse.umn.edu/~saad/software/SPARSKIT/)
+
+    RCM - Reverse Cuthill McKee Ordering
+      (https://people.math.sc.edu/Burkardt/f_src/rcm/rcm.html)
+
+    BLAS - Basic Linear Algebra Subprograms Level 1
+      (https://people.math.sc.edu/Burkardt/f_src/blas1_d/blas1_d.html)
+
+    SPARSEKIT - Sparse Matrix Utility Package
+      amux, dperm, dvperm, rperm, and cperm
+      (https://people.sc.fsu.edu/~jburkardt/f77_src/sparsekit/sparsekit.html)
+
+The following BSD-3 License libraries are used in this USGS product:
+
+    Modern Fortran DAG Library
+      Copyright (c) 2018, Jacob Williams
+      All rights reserved.
+      (https://github.com/jacobwilliams/daglib)
+
+MODFLOW 6 compiler options: /O2 /heap-arrays:0 /fpe:0 /traceback /nologo /fpp
+/c /module:win64\mod_mf6\ /object:win64\obj_mf6\
+
+System command used to initiate simulation:
+C:\Users\lukem\Python\PATH\modflow_exe\mf6.exe
+
+MODFLOW was compiled using uniform precision.
+
+Real Variables
+  KIND: 8
+  TINY (smallest non-zero value):    2.225074-308
+  HUGE (largest value):    1.797693+308
+  PRECISION: 15
+  SIZE IN BITS: 64
+
+Integer Variables
+  KIND: 4
+  HUGE (largest value): 2147483647
+  SIZE IN BITS: 32
+
+Long Integer Variables
+  KIND: 8
+  HUGE (largest value): 9223372036854775807
+  SIZE IN BITS: 64
+
+Logical Variables
+  KIND: 4
+  SIZE IN BITS: 32
+ 
+ NAMEFILE OPTIONS:
+    NEWTON-RAPHSON method enabled for the model.
+    NEWTON-RAPHSON UNDER-RELAXATION based on the bottom elevation of the model will be applied to the model.
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+ END NAMEFILE OPTIONS:
+
+ DISV -- VERTEX GRID DISCRETIZATION PACKAGE, VERSION 1 : 12/23/2015 - INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/DISV                       
+
+
+ Setting Discretization Options
+    Model length unit [0=UND, 1=FEET, 2=METERS, 3=CENTIMETERS] set as 1
+ End Setting Discretization Options
+
+ Setting Discretization Dimensions
+    NLAY = 1
+    NCPL = 1220
+    NVERT = 2599
+ End Setting Discretization Dimensions
+
+ Setting Discretization Griddata
+    TOP set from input file
+    BOTM set from input file
+ End Setting Discretization Griddata
+
+ Discretization Vertex data loaded
+ Discretization Cell2d data loaded
+
+ NPF -- NODE PROPERTY FLOW PACKAGE, VERSION 1, 3/30/2015 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/NPF                        
+
+
+ IC -- Initial Conditions Package, Version 8, 3/28/2015 input read from mempath: __INPUT__/REFINED_DEMO/IC                         
+
+
+ Setting NPF Options
+    Cell-by-cell flow information will be saved to binary file whenever ICBCFL is not zero.
+    Saturation will be written to DATA-SAT in budget file when requested.
+ End Setting NPF Options
+
+ Setting NPF Griddata
+    ICELLTYPE set from input file
+    K set from input file
+    K33 set from input file
+    K22 not provided.  Setting K22 = K.
+ End Setting NPF Griddata
+
+
+ DRN   -- DRN PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/DRN                        
+
+ PROCESSING DRN BASE OPTIONS
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+ END OF DRN BASE OPTIONS
+
+ PROCESSING DRN OPTIONS
+ END OF DRN OPTIONS
+
+ PROCESSING DRN BASE DIMENSIONS
+    MAXBOUND =      20
+ END OF DRN BASE DIMENSIONS
+
+ GHB   -- GHB PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/GHB                        
+
+ PROCESSING GHB BASE OPTIONS
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+ END OF GHB BASE OPTIONS
+
+ PROCESSING GHB OPTIONS
+ END OF GHB OPTIONS
+
+ PROCESSING GHB BASE DIMENSIONS
+    MAXBOUND =       8
+ END OF GHB BASE DIMENSIONS
+
+ RCH   -- RCH PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/RCH                        
+
+ PROCESSING RCH BASE OPTIONS
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+ END OF RCH BASE OPTIONS
+
+ PROCESSING RCH OPTIONS
+ END OF RCH OPTIONS
+
+ PROCESSING RCH BASE DIMENSIONS
+    MAXBOUND =    1220
+ END OF RCH BASE DIMENSIONS
+
+ CHD   -- CHD PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/CHD                        
+
+ PROCESSING CHD BASE OPTIONS
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+ END OF CHD BASE OPTIONS
+
+ PROCESSING CHD BASE DIMENSIONS
+    MAXBOUND =     255
+ END OF CHD BASE DIMENSIONS
+
+ SFR   -- SFR PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM UNIT 1014
+ # File generated by Flopy version 3.9.5 on 04/29/2026 at 15:37:14.
+
+ PROCESSING SFR OPTIONS
+    LISTS OF SFR CELLS WILL BE PRINTED.
+    SFR FLOWS WILL BE PRINTED TO LISTING FILE.
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+
+ OPENED sfr_stage.sfr
+ FILE TYPE:DATA(BINARY)   UNIT 1019   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    SFR  STAGE  WILL BE SAVED TO FILE: sfr_stage.sfr
+    OPENED ON UNIT: 1019
+
+ OPENED sfr_budget.sfr
+ FILE TYPE:DATA(BINARY)   UNIT 1020   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    SFR  BUDGET  WILL BE SAVED TO FILE: sfr_budget.sfr
+    OPENED ON UNIT: 1020
+    MAXIMUM SFR PICARD ITERATION VALUE (1) SPECIFIED.
+    MAXIMUM SFR ITERATION VALUE (1000) SPECIFIED.
+    MAXIMUM DEPTH CHANGE VALUE (.1000000000000000E-01) SPECIFIED.
+    LENGTH CONVERSION VALUE (3.280810000000000) SPECIFIED.
+    TIME CONVERSION VALUE (86400.00000000000) SPECIFIED.
+ END OF SFR OPTIONS
+
+ PROCESSING SFR DIMENSIONS
+    NREACHES = 32
+ END OF SFR DIMENSIONS
+
+ PROCESSING SFR PACKAGEDATA
+ END OF SFR PACKAGEDATA
+
+ PROCESSING SFR CONNECTIONDATA
+ END OF SFR CONNECTIONDATA
+
+ LAK   -- LAK PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM UNIT 1015
+ # File generated by Flopy version 3.9.5 on 04/29/2026 at 15:37:14.
+
+ PROCESSING LAK OPTIONS
+    LAK STAGES WILL BE PRINTED TO LISTING FILE.
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+
+ OPENED refined_demo_stage.lak
+ FILE TYPE:DATA(BINARY)   UNIT 1021   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    LAK  STAGE  WILL BE SAVED TO FILE: refined_demo_stage.lak
+    OPENED ON UNIT: 1021
+
+ OPENED refined_demo_budget.lak
+ FILE TYPE:DATA(BINARY)   UNIT 1022   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    LAK  BUDGET  WILL BE SAVED TO FILE: refined_demo_budget.lak
+    OPENED ON UNIT: 1022
+
+ OPENED refined_demo_lake_budget.csv
+ FILE TYPE:CSV   UNIT 1023   STATUS:REPLACE             
+ FORMAT:FORMATTED              ACCESS:SEQUENTIAL          
+ ACTION:READWRITE           
+
+    LAK  BUDGET CSV  WILL BE SAVED TO FILE: refined_demo_lake_budget.csv
+    OPENED ON UNIT: 1023
+
+ OPENED refined_demo_lake_convergence.csv
+ FILE TYPE:CSV   UNIT 1024   STATUS:REPLACE             
+ FORMAT:FORMATTED              ACCESS:SEQUENTIAL          
+ ACTION:READWRITE           
+
+    LAK  PACKAGE_CONVERGENCE  WILL BE SAVED TO FILE: refined_demo_lake_convergence.csv
+    OPENED ON UNIT: 1024
+    LAKE SURFDEP VALUE (   0.000000    ) SPECIFIED.
+    MAXIMUM LAK ITERATION VALUE (100) SPECIFIED.
+    MAXIMUM STAGE CHANGE VALUE (.1000000000000000E-04) SPECIFIED.
+    TIME CONVERSION VALUE (   86400.00    ) SPECIFIED.
+    LENGTH CONVERSION VALUE (   3.280810    ) SPECIFIED.
+ END OF LAK OPTIONS
+
+ PROCESSING LAK DIMENSIONS
+    NLAKES =       1
+    NOUTLETS =       0
+    NTABLES =       0
+ END OF LAK DIMENSIONS
+
+ PROCESSING LAK PACKAGEDATA
+ END OF LAK PACKAGEDATA
+
+
+    MAXBOUND =     183
+
+ PROCESSING LAK LAKE_CONNECTIONS
+ END OF LAK CONNECTIONDATA
+
+ UZF   -- UZF CELLS PACKAGE, VERSION 8, 2/22/2014 INPUT READ FROM UNIT 1016
+ # File generated by Flopy version 3.9.5 on 04/29/2026 at 15:37:14.
+
+ PROCESSING UZF CELLS OPTIONS
+    FLOWS WILL BE SAVED TO BUDGET FILE SPECIFIED IN OUTPUT CONTROL
+
+ OPENED refined_demo_budget.uzf
+ FILE TYPE:DATA(BINARY)   UNIT 1025   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    UZF  BUDGET  WILL BE SAVED TO FILE: refined_demo_budget.uzf
+    OPENED ON UNIT: 1025
+
+ OPENED refined_demo_uzf_budget.csv
+ FILE TYPE:CSV   UNIT 1026   STATUS:REPLACE             
+ FORMAT:FORMATTED              ACCESS:SEQUENTIAL          
+ ACTION:READWRITE           
+
+    UZF  BUDGET CSV  WILL BE SAVED TO FILE: refined_demo_uzf_budget.csv
+    OPENED ON UNIT: 1026
+
+ OPENED refined_demo_uzf_package_convergence.csv
+ FILE TYPE:CSV   UNIT 1027   STATUS:REPLACE             
+ FORMAT:FORMATTED              ACCESS:SEQUENTIAL          
+ ACTION:READWRITE           
+
+    UZF  PACKAGE_CONVERGENCE  WILL BE SAVED TO FILE: refined_demo_uzf_package_convergence.csv
+    OPENED ON UNIT: 1027
+ END OF UZF CELLS OPTIONS
+
+ PROCESSING UZF CELLS DIMENSIONS
+    NUZFCELLS = 1220
+    NTRAILWAVES = 10
+    NTRAILSETS = 50
+ END OF UZF CELLS DIMENSIONS
+
+ PROCESSING UZF CELLS PACKAGEDATA
+ END OF UZF CELLS PACKAGEDATA
+    STRT set from input file
+
+ STO -- STORAGE PACKAGE, VERSION 1, 5/19/2014 INPUT READ FROM MEMPATH: __INPUT__/REFINED_DEMO/STO                        
+
+
+ PROCESSING STORAGE OPTIONS
+    CELL-BY-CELL FLOW INFORMATION WILL BE SAVED TO BINARY FILE WHENEVER ICBCFL IS NOT ZERO.
+ END OF STORAGE OPTIONS
+    BINARY GRID INFORMATION WILL BE WRITTEN TO:
+      UNIT NUMBER: 1028
+      FILE NAME: refined_demo.disv.grb
+
+ OPENED refined_demo.disv.grb
+ FILE TYPE:DATA(BINARY)   UNIT 1028   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+      THE LAST TIME STEP WILL BE PRINTED
+      THE LAST TIME STEP WILL BE PRINTED
+ # File generated by Flopy version 3.9.5 on 04/29/2026 at 15:37:14.
+
+ PROCESSING OC OPTIONS
+
+    BUDGET INFORMATION WILL BE WRITTEN TO:
+      UNIT NUMBER: 1029
+      FILE NAME: refined_demo.cbc
+
+ OPENED refined_demo.cbc
+ FILE TYPE:DATA(BINARY)   UNIT 1029   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+    HEAD INFORMATION WILL BE WRITTEN TO:
+      UNIT NUMBER: 1030
+      FILE NAME: refined_demo.hds
+
+ OPENED refined_demo.hds
+ FILE TYPE:DATA(BINARY)   UNIT 1030   STATUS:REPLACE             
+ FORMAT:UNFORMATTED            ACCESS:STREAM              
+ ACTION:READWRITE           
+
+ END OF OC OPTIONS
+ SFR PACKAGE (SFR) CONVERSION DATA
+    UNIT CONVERSION VALUE (128382.9751514183).
+
+
+ SFR PACKAGE (SFR) STATIC REACH DATA
+ ---------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                              UPSTREAM  
+   NUMBER   CELLID                  LENGTH       WIDTH        SLOPE         TOP       THICKNESS        HK       ROUGHNESS     FRACTION  
+ ---------------------------------------------------------------------------------------------------------------------------------------
+     1      (1,502)               2.9265       25.000       1.00000E-03  139.91       2.0000       3.0000       3.00000E-02  1.0000     
+     2      (1,526)               27.475       25.000       1.00000E-03  139.57       2.0000       3.0000       3.00000E-02  1.0000     
+     3      (1,928)               22.823       25.000       1.00000E-03  139.23       2.0000       3.0000       3.00000E-02  1.0000     
+     4      (1,734)               45.683       25.000       1.00000E-03  138.74       2.0000       3.0000       3.00000E-02  1.0000     
+     5      (1,878)               66.755       25.000       1.00000E-03  138.05       2.0000       3.0000       3.00000E-02  1.0000     
+     6      (1,1063)              84.388       25.000       1.00000E-03  137.00       2.0000       3.0000       3.00000E-02  1.0000     
+     7      (1,183)               14.132       25.000       1.00000E-03  136.61       2.0000       3.0000       3.00000E-02  1.0000     
+     8      (1,1084)              83.410       25.000       1.00000E-03  135.68       2.0000       3.0000       3.00000E-02  1.0000     
+     9      (1,1086)              75.343       25.000       1.00000E-03  134.61       2.0000       3.0000       3.00000E-02  1.0000     
+     10     (1,1062)              62.392       25.000       1.00000E-03  133.74       2.0000       3.0000       3.00000E-02  1.0000     
+     11     (1,1048)              10.913       25.000       1.00000E-03  133.23       2.0000       3.0000       3.00000E-02  1.0000     
+     12     (1,1027)              72.249       25.000       1.00000E-03  132.68       2.0000       3.0000       3.00000E-02  1.0000     
+     13     (1,1046)              14.188       25.000       1.00000E-03  132.02       2.0000       3.0000       3.00000E-02  1.0000     
+     14     (1,1055)              70.935       25.000       1.00000E-03  131.59       2.0000       3.0000       3.00000E-02  1.0000     
+     15     (1,1040)              37.544       25.000       1.00000E-03  130.71       2.0000       3.0000       3.00000E-02  1.0000     
+     16     (1,1019)              62.343       25.000       1.00000E-03  130.16       2.0000       3.0000       3.00000E-02  1.0000     
+     17     (1,1089)              52.934       25.000       1.00000E-03  129.45       2.0000       3.0000       3.00000E-02  1.0000     
+     18     (1,1074)              47.882       25.000       1.00000E-03  128.65       2.0000       3.0000       3.00000E-02  1.0000     
+     19     (1,1072)              75.116       25.000       1.00000E-03  127.88       2.0000       3.0000       3.00000E-02  1.0000     
+     20     (1,1088)              58.298       25.000       1.00000E-03  126.98       2.0000       3.0000       3.00000E-02  1.0000     
+     21     (1,1070)              69.081       25.000       1.00000E-03  126.16       2.0000       3.0000       3.00000E-02  1.0000     
+     22     (1,1114)              62.222       25.000       1.00000E-03  125.28       2.0000       3.0000       3.00000E-02  1.0000     
+     23     (1,1115)              72.677       25.000       1.00000E-03  124.37       2.0000       3.0000       3.00000E-02  1.0000     
+     24     (1,1132)              78.599       25.000       1.00000E-03  123.37       2.0000       3.0000       3.00000E-02  1.0000     
+     25     (1,1154)              52.488       25.000       1.00000E-03  122.59       2.0000       3.0000       3.00000E-02  1.0000     
+     26     (1,1156)              70.959       25.000       1.00000E-03  121.68       2.0000       3.0000       3.00000E-02  1.0000     
+     27     (1,1158)              85.421       25.000       1.00000E-03  120.63       2.0000       3.0000       3.00000E-02  1.0000     
+     28     (1,1028)              85.551       25.000       1.00000E-03  119.50       2.0000       3.0000       3.00000E-02  1.0000     
+     29     (1,978)               60.828       25.000       1.00000E-03  118.53       2.0000       3.0000       3.00000E-02  1.0000     
+     30     (1,969)               29.160       25.000       1.00000E-03  117.84       2.0000       3.0000       3.00000E-02  1.0000     
+     31     (1,950)               44.180       25.000       1.00000E-03  117.36       2.0000       3.0000       3.00000E-02  1.0000     
+     32     (1,900)               9.9716       25.000       1.00000E-03  116.96       2.0000       3.0000       3.00000E-02  1.0000     
+ ---------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+ SFR PACKAGE (SFR) STATIC REACH CONNECTION DATA
+ --------------------------------
+   REACH      CONN 1     CONN 2  
+ --------------------------------
+     1          2                
+     2          1          3     
+     3          2          4     
+     4          3          5     
+     5          4          6     
+     6          5          7     
+     7          6          8     
+     8          7          9     
+     9          8          10    
+     10         9          11    
+     11         10         12    
+     12         11         13    
+     13         12         14    
+     14         13         15    
+     15         14         16    
+     16         15         17    
+     17         16         18    
+     18         17         19    
+     19         18         20    
+     20         19         21    
+     21         20         22    
+     22         21         23    
+     23         22         24    
+     24         23         25    
+     25         24         26    
+     26         25         27    
+     27         26         28    
+     28         27         29    
+     29         28         30    
+     30         29         31    
+     31         30         32    
+     32         31               
+ --------------------------------
+
+
+
+ SFR PACKAGE (SFR) STATIC UPSTREAM REACH CONNECTION DATA
+ ---------------------
+             UPSTREAM 
+   REACH      CONN 1  
+ ---------------------
+     1                
+     2          1     
+     3          2     
+     4          3     
+     5          4     
+     6          5     
+     7          6     
+     8          7     
+     9          8     
+     10         9     
+     11         10    
+     12         11    
+     13         12    
+     14         13    
+     15         14    
+     16         15    
+     17         16    
+     18         17    
+     19         18    
+     20         19    
+     21         20    
+     22         21    
+     23         22    
+     24         23    
+     25         24    
+     26         25    
+     27         26    
+     28         27    
+     29         28    
+     30         29    
+     31         30    
+     32         31    
+ ---------------------
+
+
+
+ SFR PACKAGE (SFR) STATIC DOWNSTREAM REACH CONNECTION DATA
+ ---------------------
+            DOWNSTREAM
+   REACH      CONN 1  
+ ---------------------
+     1          2     
+     2          3     
+     3          4     
+     4          5     
+     5          6     
+     6          7     
+     7          8     
+     8          9     
+     9          10    
+     10         11    
+     11         12    
+     12         13    
+     13         14    
+     14         15    
+     15         16    
+     16         17    
+     17         18    
+     18         19    
+     19         20    
+     20         21    
+     21         22    
+     22         23    
+     23         24    
+     24         25    
+     25         26    
+     26         27    
+     27         28    
+     28         29    
+     29         30    
+     30         31    
+     31         32    
+     32               
+ ---------------------
+
+
+
+start timestep kper="1" kstp="1" mode="normal"
+
+
+ BEGIN READING OUTPUT CONTROL FOR STRESS PERIOD 1
+      THE LAST TIME STEP WILL BE SAVED
+      THE LAST TIME STEP WILL BE SAVED
+
+ END READING OUTPUT CONTROL FOR STRESS PERIOD 1
+
+
+ PROCESSING STORAGE PERIOD DATA
+ END PROCESSING STORAGE PERIOD DATA
+
+
+ STRESS PERIOD 1 IS STEADY-STATE
+
+ ---------------------------------------------------------------
+
+
+
+ SFR PACKAGE (SFR) CONNECTED REACH UPSTREAM FRACTION DATA
+ ----------------------------------
+            DOWNSTREAM             
+   REACH     REACH 1    FRACTION 1 
+ ----------------------------------
+     1          2       1.0000     
+     2          3       1.0000     
+     3          4       1.0000     
+     4          5       1.0000     
+     5          6       1.0000     
+     6          7       1.0000     
+     7          8       1.0000     
+     8          9       1.0000     
+     9          10      1.0000     
+     10         11      1.0000     
+     11         12      1.0000     
+     12         13      1.0000     
+     13         14      1.0000     
+     14         15      1.0000     
+     15         16      1.0000     
+     16         17      1.0000     
+     17         18      1.0000     
+     18         19      1.0000     
+     19         20      1.0000     
+     20         21      1.0000     
+     21         22      1.0000     
+     22         23      1.0000     
+     23         24      1.0000     
+     24         25      1.0000     
+     25         26      1.0000     
+     26         27      1.0000     
+     27         28      1.0000     
+     28         29      1.0000     
+     29         30      1.0000     
+     30         31      1.0000     
+     31         32      1.0000     
+     32                            
+ ----------------------------------
+
+
+ UBDSV1 SAVING           STO-SS ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV1 SAVING           STO-SY ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV1 SAVING     FLOW-JA-FACE ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING         DATA-SAT IN MODEL REFINED_DEMO     PACKAGE NPF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE NPF              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              DRN IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE DRN              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              GHB IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE GHB              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              RCH IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE RCH              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              CHD IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE CHD              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              SFR IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              LAK IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING        UZF-GWRCH IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING     FLOW-JA-FACE IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING         RAINFALL IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING      EVAPORATION IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING           RUNOFF IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING       EXT-INFLOW IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING      EXT-OUTFLOW IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING         RAINFALL IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING      EVAPORATION IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING           RUNOFF IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING       EXT-INFLOW IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING       WITHDRAWAL IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING      EXT-OUTFLOW IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING         CONSTANT IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING     INFILTRATION IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING          REJ-INF IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      1
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      1
+
+ SFR PACKAGE (SFR) FLOW RATES   PERIOD      1   STEP        1
+ -----------------------------------------------
+   NUMBER   CELLID                    RATE      
+ -----------------------------------------------
+     1      (1,502)               0.0000000     
+     2      (1,526)               0.0000000     
+     3      (1,928)               0.0000000     
+     4      (1,734)               0.0000000     
+     5      (1,878)               0.0000000     
+     6      (1,1063)              0.0000000     
+     7      (1,183)               0.0000000     
+     8      (1,1084)              0.0000000     
+     9      (1,1086)              0.0000000     
+     10     (1,1062)              0.0000000     
+     11     (1,1048)              0.0000000     
+     12     (1,1027)              0.0000000     
+     13     (1,1046)              0.0000000     
+     14     (1,1055)              0.0000000     
+     15     (1,1040)              0.0000000     
+     16     (1,1019)              0.0000000     
+     17     (1,1089)              0.0000000     
+     18     (1,1074)              0.0000000     
+     19     (1,1072)              0.0000000     
+     20     (1,1088)              0.0000000     
+     21     (1,1070)              0.0000000     
+     22     (1,1114)              0.0000000     
+     23     (1,1115)              0.0000000     
+     24     (1,1132)              0.0000000     
+     25     (1,1154)              0.0000000     
+     26     (1,1156)              0.0000000     
+     27     (1,1158)              0.0000000     
+     28     (1,1028)              0.0000000     
+     29     (1,978)               0.0000000     
+     30     (1,969)               0.0000000     
+     31     (1,950)               0.0000000     
+     32     (1,900)               0.0000000     
+ -----------------------------------------------
+
+
+
+
+ SFR PACKAGE - SUMMARY OF FLOWS FOR EACH CONTROL VOLUME   PERIOD      1   STEP        1
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                     PERCENT   
+   NUMBER   CELLID                  INFLOW      OUTFLOW        GWF        RAINFALL   EVAPORATION     RUNOFF     EXT INFLOW  EXT OUTFLOW    STORAGE      IN - OUT    DIFFERENCE 
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+     1      (1,502)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     2      (1,526)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     3      (1,928)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     4      (1,734)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     5      (1,878)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     6      (1,1063)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     7      (1,183)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     8      (1,1084)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     9      (1,1086)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     10     (1,1062)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     11     (1,1048)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     12     (1,1027)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     13     (1,1046)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     14     (1,1055)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     15     (1,1040)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     16     (1,1019)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     17     (1,1089)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     18     (1,1074)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     19     (1,1072)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     20     (1,1088)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     21     (1,1070)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     22     (1,1114)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     23     (1,1115)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     24     (1,1132)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     25     (1,1154)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     26     (1,1156)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     27     (1,1158)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     28     (1,1028)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     29     (1,978)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     30     (1,969)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     31     (1,950)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     32     (1,900)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+ LAK PACKAGE (LAK) STAGES FOR EACH CONTROL VOLUME   PERIOD      1   STEP        1
+ --------------------------------------------------------------
+   NUMBER      STAGE     SURFACE AREA WETTED AREA     VOLUME   
+ --------------------------------------------------------------
+     1       126.61       1646.8       1646.8       0.0000     
+ --------------------------------------------------------------
+
+
+
+ HEAD WILL BE SAVED ON UNIT 1030 AT END OF TIME STEP    1, STRESS PERIOD    1
+
+
+  SFR BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   1
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE SFR      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+            TOTAL IN =           0.0000              TOTAL IN =           0.0000
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+           TOTAL OUT =           0.0000             TOTAL OUT =           0.0000
+
+            IN - OUT =           0.0000              IN - OUT =           0.0000
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  LAK BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   1
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE LAK      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+          WITHDRAWAL =           0.0000            WITHDRAWAL =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+            CONSTANT =           0.0000              CONSTANT =           0.0000
+
+            TOTAL IN =           0.0000              TOTAL IN =           0.0000
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+          WITHDRAWAL =           0.0000            WITHDRAWAL =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+            CONSTANT =           0.0000              CONSTANT =           0.0000
+
+           TOTAL OUT =           0.0000             TOTAL OUT =           0.0000
+
+            IN - OUT =           0.0000              IN - OUT =           0.0000
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  UZF BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   1
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE UZF      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+        INFILTRATION =        8862.6898          INFILTRATION =        8862.6898
+             REJ-INF =           0.0000               REJ-INF =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+            TOTAL IN =        8862.6898              TOTAL IN =        8862.6898
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =        8862.6898                   GWF =        8862.6898
+        INFILTRATION =           0.0000          INFILTRATION =           0.0000
+             REJ-INF =           0.0000               REJ-INF =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+           TOTAL OUT =        8862.6898             TOTAL OUT =        8862.6898
+
+            IN - OUT =           0.0000              IN - OUT =           0.0000
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  VOLUME BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   1
+  ---------------------------------------------------------------------------------------------------
+
+     CUMULATIVE VOLUME      L**3       RATES FOR THIS TIME STEP      L**3/T          PACKAGE NAME    
+     ------------------                 ------------------------                     ----------------
+
+           IN:                                      IN:
+           ---                                      ---
+              STO-SS =           0.0000                STO-SS =           0.0000     STORAGE                          
+              STO-SY =           0.0000                STO-SY =           0.0000     STORAGE                          
+                 DRN =           0.0000                   DRN =           0.0000     DRN                              
+                 GHB =           0.0000                   GHB =           0.0000     GHB                              
+                 RCH =        8862.6898                   RCH =        8862.6898     RCH                              
+                 CHD =           0.0000                   CHD =           0.0000     CHD                              
+                 SFR =           0.0000                   SFR =           0.0000     SFR                              
+                 LAK =           0.0000                   LAK =           0.0000     LAK                              
+           UZF-GWRCH =        8862.6898             UZF-GWRCH =        8862.6898     UZF                              
+
+            TOTAL IN =       17725.3797              TOTAL IN =       17725.3797
+
+          OUT:                                     OUT:
+          ----                                     ----
+              STO-SS =           0.0000                STO-SS =           0.0000     STORAGE                          
+              STO-SY =           0.0000                STO-SY =           0.0000     STORAGE                          
+                 DRN =        7209.7634                   DRN =        7209.7634     DRN                              
+                 GHB =        6787.0029                   GHB =        6787.0029     GHB                              
+                 RCH =           0.0000                   RCH =           0.0000     RCH                              
+                 CHD =        3728.6391                   CHD =        3728.6391     CHD                              
+                 SFR =           0.0000                   SFR =           0.0000     SFR                              
+                 LAK =           0.0000                   LAK =           0.0000     LAK                              
+           UZF-GWRCH =           0.0000             UZF-GWRCH =           0.0000     UZF                              
+
+           TOTAL OUT =       17725.4054             TOTAL OUT =       17725.4054
+
+            IN - OUT =      -2.5727E-02              IN - OUT =      -2.5727E-02
+
+ PERCENT DISCREPANCY =          -0.00     PERCENT DISCREPANCY =          -0.00
+
+
+
+
+         TIME SUMMARY AT END OF TIME STEP    1 IN STRESS PERIOD    1
+                    SECONDS     MINUTES      HOURS       DAYS        YEARS
+                    -----------------------------------------------------------
+   TIME STEP LENGTH  86400.      1440.0      24.000      1.0000     2.73785E-03
+ STRESS PERIOD TIME  86400.      1440.0      24.000      1.0000     2.73785E-03
+         TOTAL TIME  86400.      1440.0      24.000      1.0000     2.73785E-03
+
+
+end timestep
+
+
+start timestep kper="2" kstp="1" mode="normal"
+
+
+ END OF FILE DETECTED IN OUTPUT CONTROL.
+ CURRENT OUTPUT CONTROL SETTINGS WILL BE 
+ REPEATED UNTIL THE END OF THE SIMULATION.
+
+ OUTPUT CONTROL FOR STRESS PERIOD 2 IS REPEATED USING SETTINGS FROM A PREVIOUS STRESS PERIOD.
+
+
+ PROCESSING STORAGE PERIOD DATA
+ END PROCESSING STORAGE PERIOD DATA
+
+
+ STRESS PERIOD 2 IS TRANSIENT
+
+ ---------------------------------------------------------------
+
+
+ UBDSV1 SAVING           STO-SS ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV1 SAVING           STO-SY ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV1 SAVING     FLOW-JA-FACE ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING         DATA-SAT IN MODEL REFINED_DEMO     PACKAGE NPF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE NPF              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              DRN IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE DRN              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              GHB IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE GHB              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              RCH IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE RCH              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              CHD IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE CHD              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              SFR IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              LAK IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING        UZF-GWRCH IN MODEL REFINED_DEMO     PACKAGE REFINED_DEMO    CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1029 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING     FLOW-JA-FACE IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING         RAINFALL IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING      EVAPORATION IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING           RUNOFF IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING       EXT-INFLOW IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING      EXT-OUTFLOW IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE SFR             CONNECTED TO MODEL REFINED_DEMO     PACKAGE SFR              ON UNIT   1020 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING         RAINFALL IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING      EVAPORATION IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING           RUNOFF IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING       EXT-INFLOW IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING       WITHDRAWAL IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING      EXT-OUTFLOW IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING         CONSTANT IN MODEL REFINED_DEMO     PACKAGE LAK             CONNECTED TO MODEL REFINED_DEMO     PACKAGE LAK              ON UNIT   1022 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING              GWF IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE REFINED_DEMO     ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING     INFILTRATION IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING          REJ-INF IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      2
+ UBDSV06 SAVING          STORAGE IN MODEL REFINED_DEMO     PACKAGE UZF             CONNECTED TO MODEL REFINED_DEMO     PACKAGE UZF              ON UNIT   1025 AT TIME STEP      1, STRESS PERIOD      2
+
+ SFR PACKAGE (SFR) FLOW RATES   PERIOD      2   STEP        1
+ -----------------------------------------------
+   NUMBER   CELLID                    RATE      
+ -----------------------------------------------
+     1      (1,502)               0.0000000     
+     2      (1,526)               0.0000000     
+     3      (1,928)               0.0000000     
+     4      (1,734)               0.0000000     
+     5      (1,878)               0.0000000     
+     6      (1,1063)              0.0000000     
+     7      (1,183)               0.0000000     
+     8      (1,1084)              0.0000000     
+     9      (1,1086)              0.0000000     
+     10     (1,1062)              0.0000000     
+     11     (1,1048)              0.0000000     
+     12     (1,1027)              0.0000000     
+     13     (1,1046)              0.0000000     
+     14     (1,1055)              0.0000000     
+     15     (1,1040)              0.0000000     
+     16     (1,1019)              0.0000000     
+     17     (1,1089)              0.0000000     
+     18     (1,1074)              0.0000000     
+     19     (1,1072)              0.0000000     
+     20     (1,1088)              0.0000000     
+     21     (1,1070)              0.0000000     
+     22     (1,1114)              0.0000000     
+     23     (1,1115)              0.0000000     
+     24     (1,1132)              0.0000000     
+     25     (1,1154)              0.0000000     
+     26     (1,1156)              0.0000000     
+     27     (1,1158)              0.0000000     
+     28     (1,1028)              0.0000000     
+     29     (1,978)               0.0000000     
+     30     (1,969)               0.0000000     
+     31     (1,950)               0.0000000     
+     32     (1,900)               0.0000000     
+ -----------------------------------------------
+
+
+
+
+ SFR PACKAGE - SUMMARY OF FLOWS FOR EACH CONTROL VOLUME   PERIOD      2   STEP        1
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                     PERCENT   
+   NUMBER   CELLID                  INFLOW      OUTFLOW        GWF        RAINFALL   EVAPORATION     RUNOFF     EXT INFLOW  EXT OUTFLOW    STORAGE      IN - OUT    DIFFERENCE 
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+     1      (1,502)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     2      (1,526)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     3      (1,928)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     4      (1,734)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     5      (1,878)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     6      (1,1063)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     7      (1,183)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     8      (1,1084)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     9      (1,1086)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     10     (1,1062)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     11     (1,1048)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     12     (1,1027)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     13     (1,1046)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     14     (1,1055)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     15     (1,1040)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     16     (1,1019)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     17     (1,1089)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     18     (1,1074)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     19     (1,1072)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     20     (1,1088)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     21     (1,1070)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     22     (1,1114)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     23     (1,1115)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     24     (1,1132)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     25     (1,1154)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     26     (1,1156)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     27     (1,1158)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     28     (1,1028)              0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     29     (1,978)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     30     (1,969)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     31     (1,950)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+     32     (1,900)               0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000       0.0000     
+ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+ LAK PACKAGE (LAK) STAGES FOR EACH CONTROL VOLUME   PERIOD      2   STEP        1
+ --------------------------------------------------------------
+   NUMBER      STAGE     SURFACE AREA WETTED AREA     VOLUME   
+ --------------------------------------------------------------
+     1       126.61       1646.8       1646.8       0.0000     
+ --------------------------------------------------------------
+
+
+
+ HEAD WILL BE SAVED ON UNIT 1030 AT END OF TIME STEP    1, STRESS PERIOD    2
+
+
+  SFR BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   2
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE SFR      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+            TOTAL IN =           0.0000              TOTAL IN =           0.0000
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+           TOTAL OUT =           0.0000             TOTAL OUT =           0.0000
+
+            IN - OUT =           0.0000              IN - OUT =           0.0000
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  LAK BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   2
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE LAK      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+          WITHDRAWAL =           0.0000            WITHDRAWAL =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+            CONSTANT =           0.0000              CONSTANT =           0.0000
+
+            TOTAL IN =           0.0000              TOTAL IN =           0.0000
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =           0.0000                   GWF =           0.0000
+            RAINFALL =           0.0000              RAINFALL =           0.0000
+         EVAPORATION =           0.0000           EVAPORATION =           0.0000
+              RUNOFF =           0.0000                RUNOFF =           0.0000
+          EXT-INFLOW =           0.0000            EXT-INFLOW =           0.0000
+          WITHDRAWAL =           0.0000            WITHDRAWAL =           0.0000
+         EXT-OUTFLOW =           0.0000           EXT-OUTFLOW =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+            CONSTANT =           0.0000              CONSTANT =           0.0000
+
+           TOTAL OUT =           0.0000             TOTAL OUT =           0.0000
+
+            IN - OUT =           0.0000              IN - OUT =           0.0000
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  UZF BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   2
+  ------------------------------------------------------------------------------
+
+     CUMULATIVE UZF      L**3       RATES FOR THIS TIME STEP      L**3/T
+     ------------------                 ------------------------
+
+           IN:                                      IN:
+           ---                                      ---
+                 GWF =           0.0000                   GWF =           0.0000
+        INFILTRATION =       19781.7254          INFILTRATION =       10919.0356
+             REJ-INF =           0.0000               REJ-INF =           0.0000
+             STORAGE =      222351.7076               STORAGE =      222351.7076
+
+            TOTAL IN =      242133.4330              TOTAL IN =      233270.7432
+
+          OUT:                                     OUT:
+          ----                                     ----
+                 GWF =      242133.4316                   GWF =      233270.7418
+        INFILTRATION =           0.0000          INFILTRATION =           0.0000
+             REJ-INF =           0.0000               REJ-INF =           0.0000
+             STORAGE =           0.0000               STORAGE =           0.0000
+
+           TOTAL OUT =      242133.4316             TOTAL OUT =      233270.7418
+
+            IN - OUT =       1.4071E-03              IN - OUT =       1.4071E-03
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+  VOLUME BUDGET FOR ENTIRE MODEL AT END OF TIME STEP    1, STRESS PERIOD   2
+  ---------------------------------------------------------------------------------------------------
+
+     CUMULATIVE VOLUME      L**3       RATES FOR THIS TIME STEP      L**3/T          PACKAGE NAME    
+     ------------------                 ------------------------                     ----------------
+
+           IN:                                      IN:
+           ---                                      ---
+              STO-SS =           6.6638                STO-SS =           6.6638     STORAGE                          
+              STO-SY =         404.3197                STO-SY =         404.3197     STORAGE                          
+                 DRN =           0.0000                   DRN =           0.0000     DRN                              
+                 GHB =           0.0000                   GHB =           0.0000     GHB                              
+                 RCH =       19781.7254                   RCH =       10919.0356     RCH                              
+                 CHD =           0.0000                   CHD =           0.0000     CHD                              
+                 SFR =           0.0000                   SFR =           0.0000     SFR                              
+                 LAK =           0.0000                   LAK =           0.0000     LAK                              
+           UZF-GWRCH =      242133.4316             UZF-GWRCH =      233270.7418     UZF                              
+
+            TOTAL IN =      262326.1406              TOTAL IN =      244600.7609
+
+          OUT:                                     OUT:
+          ----                                     ----
+              STO-SS =        2109.4531                STO-SS =        2109.4531     STORAGE                          
+              STO-SY =      214616.2462                STO-SY =      214616.2462     STORAGE                          
+                 DRN =       16755.0506                   DRN =        9545.2872     DRN                              
+                 GHB =       16309.0371                   GHB =        9522.0342     GHB                              
+                 RCH =           0.0000                   RCH =           0.0000     RCH                              
+                 CHD =       12535.2342                   CHD =        8806.5952     CHD                              
+                 SFR =           0.0000                   SFR =           0.0000     SFR                              
+                 LAK =           0.0000                   LAK =           0.0000     LAK                              
+           UZF-GWRCH =           0.0000             UZF-GWRCH =           0.0000     UZF                              
+
+           TOTAL OUT =      262325.0212             TOTAL OUT =      244599.6158
+
+            IN - OUT =           1.1194              IN - OUT =           1.1451
+
+ PERCENT DISCREPANCY =           0.00     PERCENT DISCREPANCY =           0.00
+
+
+
+
+         TIME SUMMARY AT END OF TIME STEP    1 IN STRESS PERIOD    2
+                    SECONDS     MINUTES      HOURS       DAYS        YEARS
+                    -----------------------------------------------------------
+   TIME STEP LENGTH  86400.      1440.0      24.000      1.0000     2.73785E-03
+ STRESS PERIOD TIME  86400.      1440.0      24.000      1.0000     2.73785E-03
+         TOTAL TIME 1.72800E+05  2880.0      48.000      2.0000     5.47570E-03
+
+
+end timestep
+

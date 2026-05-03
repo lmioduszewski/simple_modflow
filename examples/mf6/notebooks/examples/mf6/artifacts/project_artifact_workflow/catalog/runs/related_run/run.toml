@@ -1,0 +1,22 @@
+[run]
+id = "related_run"
+model_spec = "tiny_model"
+status = "registered"
+created_at = "2026-04-27T19:34:19.688727+00:00"
+workspace = "."
+tags = []
+
+[packages]
+ic = "baseline_ic"
+npf = "baseline_npf"
+chd = "baseline_chd"
+
+[paths]
+workspace = "."
+run_manifest = "run.toml"
+simulation_name_file = "mfsim.nam"
+listing_file = "mfsim.lst"
+model_name_file = "related_run.nam"
+model_object_file = "related_run.model"
+heads_file = "related_run.hds"
+budget_file = "related_run.cbc"

@@ -6,8 +6,67 @@ build-backend = "setuptools.build_meta"
 name = "simple_modflow"
 version = "0.1.0"
 description = "modflow helper package"
+readme = "README.md"
+requires-python = ">=3.10"
 authors = [
   { name="Luke Mioduszewski", email="luke.mioduszewski@gmail.com" }
 ]
-dependencies = []
+dependencies = [
+  "flopy>=3.9",
+  "geopandas>=0.14",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "Pillow>=10.0",
+  "plotly>=5.0",
+  "rasterio>=1.3",
+  "requests>=2.31",
+  "scikit-image>=0.22",
+  "scipy>=1.11",
+  "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+viz = [
+  "dash>=2.15",
+  "dash-bootstrap-components>=1.5",
+]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.exclude-package-data]
+"*" = [
+  "*.aux.xml",
+  "*.csv",
+  "*.dbc",
+  "*.dbf",
+  "*.edge",
+  "*.ele",
+  "*.gpkg",
+  "*.grb",
+  "*.hds",
+  "*.ipynb",
+  "*.log",
+  "*.neigh",
+  "*.node",
+  "*.pdf",
+  "*.png",
+  "*.poly",
+  "*.prj",
+  "*.shp",
+  "*.shx",
+  "*.svg",
+  "*.tif",
+  "*.xlsx",
+]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+testpaths = ["tests"]
 

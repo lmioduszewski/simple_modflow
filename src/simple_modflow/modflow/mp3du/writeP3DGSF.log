@@ -16,11 +16,11 @@
 		{
 			"Elapsed" : 
 			{
-				"minutes" : 6.13609583e-002,
-				"seconds" : 3.68165750e+000
+				"minutes" : 1.04039028e-001,
+				"seconds" : 6.24234170e+000
 			},
-			"Finished" : "Thu Jun 26 09:56:07 2025\n",
-			"Started" : "Thu Jun 26 09:56:03 2025\n"
+			"Finished" : "Wed Sep 17 14:22:28 2025\n",
+			"Started" : "Wed Sep 17 14:22:21 2025\n"
 		}
 	},
 	{
@@ -34,18 +34,18 @@
 	{
 		"Flow Model" : 
 		{
-			"GRB file" : "cum8cNoET.disv.grb",
+			"GRB file" : "ssb_temp.disv.grb",
 			"GSF" : 
 			[
 				{
-					"NVERT" : 82608
+					"NVERT" : 40035
 				}
 			],
 			"Grid" : 
 			{
-				"Last node-number in layer" : [              38141 ],
-				"Number of layers" : 1,
-				"Number of nodes" : 38141,
+				"Last node-number in layer" : [              19575,              39150,              58725,              78300,              97875,             117450,             137025 ],
+				"Number of layers" : 7,
+				"Number of nodes" : 137025,
 				"Type" : "Unstructured"
 			},
 			"Model type" : "USGS Hydrologic Framework",

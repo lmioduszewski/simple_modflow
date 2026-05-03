@@ -1,0 +1,27 @@
+[run]
+id = "silcrk_1217_pkfl"
+model_spec = "legacy_archive"
+status = "imported"
+created_at = "2026-04-25T19:26:27.288972+00:00"
+workspace = "C:/Users/lukem/mf6/silcrk_1217_pkfl"
+tags = ["silcrk"]
+
+[paths]
+workspace = "C:/Users/lukem/mf6/silcrk_1217_pkfl"
+run_manifest = "run.toml"
+simulation_name_file = "mfsim.nam"
+listing_file = "mfsim.lst"
+model_name_file = "silcrk_1217_pkfl.nam"
+model_object_file = "silcrk_1217_pkfl.model"
+heads_file = "silcrk_1217_pkfl.hds"
+budget_file = "silcrk_1217_pkfl.cbc"
+disv_file = "silcrk_1217_pkfl.disv"
+
+[metadata]
+source_root = "C:\\Users\\lukem\\mf6"
+relative_workspace = "silcrk_1217_pkfl"
+family = "silcrk"
+has_mfsim = true
+has_heads = true
+has_budget = true
+grid_type = "disv"

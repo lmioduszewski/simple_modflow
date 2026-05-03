@@ -1,0 +1,6 @@
+[project]
+name = "artifact_demo"
+runs_dir = "runs"
+model_specs_dir = "model_specs"
+run_records_dir = "run_records"
+package_artifacts_dir = "package_artifacts"

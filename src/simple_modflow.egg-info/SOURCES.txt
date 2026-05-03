@@ -4,11 +4,14 @@ src/simple_modflow/__init__.py
 src/simple_modflow.egg-info/PKG-INFO
 src/simple_modflow.egg-info/SOURCES.txt
 src/simple_modflow.egg-info/dependency_links.txt
+src/simple_modflow.egg-info/requires.txt
 src/simple_modflow.egg-info/top_level.txt
 src/simple_modflow/modflow/__init__.py
 src/simple_modflow/modflow/calcs/__init__.py
 src/simple_modflow/modflow/calcs/calibration.py
 src/simple_modflow/modflow/calcs/cj_approximation.py
+src/simple_modflow/modflow/gwt/__init__.py
+src/simple_modflow/modflow/gwt/gwt.py
 src/simple_modflow/modflow/mf6/__init__.py
 src/simple_modflow/modflow/mf6/_typechecking.py
 src/simple_modflow/modflow/mf6/boundaries.py
@@ -34,10 +37,24 @@ src/simple_modflow/modflow/mf6/voronoiplus.py
 src/simple_modflow/modflow/mf6/archive/__init__.py
 src/simple_modflow/modflow/mf6/archive/budgetplus.py
 src/simple_modflow/modflow/mf6/archive/lakes_BAK.py
+src/simple_modflow/modflow/mf6/grid/__init__.py
+src/simple_modflow/modflow/mf6/grid/connectivity.py
+src/simple_modflow/modflow/mf6/grid/geometry.py
+src/simple_modflow/modflow/mf6/grid/helpers.py
+src/simple_modflow/modflow/mf6/grid/plotting.py
+src/simple_modflow/modflow/mf6/grid/selection.py
+src/simple_modflow/modflow/mf6/grid/surfaces.py
+src/simple_modflow/modflow/mf6/grid/triangle.py
 src/simple_modflow/modflow/mf6/maybe junk/__init__.py
 src/simple_modflow/modflow/mf6/maybe junk/bokeh_draw.py
 src/simple_modflow/modflow/mf6/maybe junk/defs_mfHeads.py
 src/simple_modflow/modflow/mf6/maybe junk/pump_tun_time_calcs.py
+src/simple_modflow/modflow/mf6/simulation/__init__.py
+src/simple_modflow/modflow/mf6/simulation/accessors.py
+src/simple_modflow/modflow/mf6/simulation/discretization.py
+src/simple_modflow/modflow/mf6/simulation/indexing.py
+src/simple_modflow/modflow/mf6/simulation/packages.py
+src/simple_modflow/modflow/mf6/simulation/runtime.py
 src/simple_modflow/modflow/mp3du/__init__.py
 src/simple_modflow/modflow/mp3du/particles.py
 src/simple_modflow/modflow/utils/__init__.py
@@ -60,3 +77,4 @@ src/simple_modflow/modflow/utils/datatypes/modelgrid.py
 src/simple_modflow/modflow/utils/datatypes/readers.py
 src/simple_modflow/modflow/utils/datatypes/surface_data.py
 src/simple_modflow/modflow/utils/datatypes/xsections.py
+tests/test_mf6_refactor_smoke.py

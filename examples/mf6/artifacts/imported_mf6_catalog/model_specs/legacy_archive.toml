@@ -1,0 +1,8 @@
+[model_spec]
+name = "legacy_archive"
+description = "Imported legacy runs discovered under C:\\Users\\lukem\\mf6"
+grid_ref = "imported"
+tags = ["imported", "legacy"]
+
+[regions]
+default_regions = []

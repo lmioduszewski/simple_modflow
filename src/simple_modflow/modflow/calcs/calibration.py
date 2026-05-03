@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-from simple_modflow import SimulationBase
+from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -13,6 +13,7 @@ from pathlib import Path
 from pandas import IndexSlice as idxx
 import pandas as pd
 import itertools
+import traceback
 
 
 def calculate_calibration_statistics(observed, simulated):
@@ -87,6 +88,8 @@ class CalibrationPlot(f.Fig):
         :param observed: Observed data, provided as a pandas Series, a list, or a Path
             object pointing to the data.
         :param simulated: Simulated model data, provided as a pandas Series or a list.
+            if not provided, simulated data is generated using the model object and
+            and spatial data provided in loc_shp_gpkg.
         :param model: Simulation model object adhering to the SimulationBase class.
         :param loc_cell_dict: Dictionary linking geospatial locations to cell mappings
             or identifiers.
@@ -100,6 +103,7 @@ class CalibrationPlot(f.Fig):
         :param crs: Coordinate reference system used for geospatial data processing
             and mapping.
         :param obs_layers: Integer or list of integers representing observation layers
+        :param type: can be 'calibration' for cross plot or 'heads' to show actual heads as a plot.
         """
         super().__init__()
         self._observed = None
@@ -164,11 +168,14 @@ class CalibrationPlot(f.Fig):
                 lak_obs = {}
                 # get lake stage data for each lake
                 for k, v in self.lak_obs_dict.items():
-                    lak_obs[k] = self.model.lak.stage.get()[:, v].tolist()
+                    lak_obs[k] = self.model.outputs.lak.stage.get()[:, v].tolist()
+                print(len(lak_obs['Deep Lake']))
                 # create a multi-index for lake stage data
                 lake_names = list(lak_obs.keys())
                 layers = [0]  # set layer to 0 for all lake observations
-                kstpkper = self.model.kstpkper
+                kstpkper = self.model.gwf.output.head().get_kstpkper()
+                assert len(lak_obs[lake_names[0]]) == len(kstpkper), \
+                    f'length of lake stage data does not match number of stress periods in model'
                 lak_idx = pd.MultiIndex.from_product(
                     [lake_names, layers, kstpkper], names=['locs', 'layer', 'kstpkper'])
                 lake_data = list(itertools.chain.from_iterable(lak_obs.values()))
@@ -201,7 +208,7 @@ class CalibrationPlot(f.Fig):
         if value is not None:
             assert isinstance(value, dict), 'lak_obs_dict must be a dictionary'
             for lak_id in value.values():
-                assert lak_id in range(self.model.lak.stage.nlakes), \
+                assert lak_id in range(self.model.outputs.lak.stage.nlakes), \
                     'lak_id not found in lak package'
         self._lak_obs_dict = value
 
@@ -212,24 +219,28 @@ class CalibrationPlot(f.Fig):
     @observed.setter
     def observed(self, value):
         if isinstance(value, Path):
-            try:
-                obs_data = pd.read_excel(value)
-                assert len(obs_data) == self.model.nper, \
-                    'length of observed data does not match number of stress periods in model'
-                if self._obs_layers is None:
-                    self._obs_layers = 0  # default to layer 1
-                col1 = obs_data.columns[0]  # should be stress periods
-                obs_data['kstpkper'] = self.model.kstpkper
-                # drop stress period column in favor of model kstpkper to match simulated data
-                obs_data.drop(columns=col1, inplace=True)
-                obs_data = obs_data[sorted(obs_data.columns)]
-                obs_data['layer'] = self._obs_layers
-                obs_data = obs_data.set_index(['kstpkper', 'layer'])
-                obs_data = obs_data.melt(ignore_index=False, value_name='elev', var_name='locs')
-                obs_data = obs_data.reset_index().set_index(['locs', 'layer', 'kstpkper'])
-                value = obs_data
-            except ValueError:
+            obs_data = pd.read_excel(value)
+            assert len(obs_data) == self.model.nper, \
+                'length of observed data does not match number of stress periods in model'
+            if self._obs_layers is None:
+                self._obs_layers = 0  # default to layer 1
+            col1 = obs_data.columns[0]  # should be stress periods
+            if len(obs_data) != len(self.model.kstpkper):
+                print(f'model kstpkper {len(self.model.kstpkper)} does not match length of observed data,'
+                      f'{len(obs_data)}, trimming observed data to match model kstpkper')
+                obs_data = obs_data.iloc[:len(self.model.kstpkper), :]
+            obs_data['kstpkper'] = self.model.kstpkper
+            # drop stress period column in favor of model kstpkper to match simulated data
+            obs_data.drop(columns=col1, inplace=True)
+            obs_data = obs_data[sorted(obs_data.columns)]
+            obs_data['layer'] = self._obs_layers
+            obs_data = obs_data.set_index(['kstpkper', 'layer'])
+            obs_data = obs_data.melt(ignore_index=False, value_name='elev', var_name='locs')
+            obs_data = obs_data.reset_index().set_index(['locs', 'layer', 'kstpkper'])
+            value = obs_data
+            """except ValueError as e:
                 print('observed data path not readable, must be Excel file')
+                traceback.print_exc()"""
         self._observed = value
 
     def add_stats(

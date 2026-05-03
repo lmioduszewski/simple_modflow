@@ -2,7 +2,7 @@ import plotly.graph_objs as go
 import pandas as pd
 import numpy as np
 from figs import Fig
-from simple_modflow.mf6.voronoiplus import VoronoiGridPlus
+from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
 
 class SurfacePlot(Fig):

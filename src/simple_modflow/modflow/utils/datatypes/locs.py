@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 from pathlib import Path
 import pandas as pd

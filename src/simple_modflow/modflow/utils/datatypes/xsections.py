@@ -1,9 +1,11 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import pandas as pd
+
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 from pandas import IndexSlice as idxx
 from figs import Fig, create_hover
@@ -16,6 +18,7 @@ import numpy as np
 from shapely import line_locate_point
 from simple_modflow.modflow.utils.animations import Animation
 import shapely as shp
+from flopy.mf6 import MFSimulation
 
 
 class XSection:
@@ -25,7 +28,7 @@ class XSection:
             model: SimulationBase = None,
             per: int = None,
             kstpkper: tuple = None,
-            layer: int = 0,
+            layer: int | list[int] = 0,
             cells: int | list[int] = None,
             x_or_y: str = 'x',
             spacing: int = 10,
@@ -82,7 +85,7 @@ class XSection:
         self._vor = None
         self._kstpkper = self.model.kstpkper[per] if per is not None else kstpkper
         self.interpolator = interpolator
-        self._layer = layer
+        self._layer = None
         self._cells = cells
         self._x_or_y = x_or_y
         self.spacing = spacing
@@ -104,6 +107,9 @@ class XSection:
         self.show_model_btm = show_model_btm
         self._overlapping_cells = None
         self._xs = None
+        self._model_top = None
+
+        self.layer = layer
 
     @property
     def model(self):
@@ -114,6 +120,18 @@ class XSection:
         if self._all_heads is None:
             self._all_heads = self.model.hds.all_heads
         return self._all_heads
+
+    @property
+    def model_top(self):
+        if self._model_top is None:
+            sim = MFSimulation.load(
+                sim_name=self.model.sim.name_file.filename[:-4],
+                sim_ws=self.model.model_output_folder_path,
+                load_only=['disv']
+            )
+            top = pd.Series(sim.gwf[0].disv.top.data)
+            self._model_top = top
+        return self._model_top
 
     @property
     def vor(self):
@@ -144,7 +162,11 @@ class XSection:
 
     @layer.setter
     def layer(self, layer):
-        assert layer in list(range(self.model.gwf.modelgrid.nlay)), f'{layer} is not a valid layer'
+        if isinstance(layer, int):
+            layer = [layer]
+        assert isinstance(layer, list), f'{layer} is not a integer or list'
+        assert all(lyr in list(range(self.model.gwf.modelgrid.nlay)) for lyr in layer), \
+            f'one of {layer} is not a valid layer'
         self._layer = layer
 
     @property
@@ -264,9 +286,10 @@ class XSection:
     def memfile(self):
         """Returns a rasterio memfile of an interpolated surface
         at a particular stress period and layer for the given model"""
+        lyr = self.layer[0]
         interp = InterpolatedSurface(
             model=self.model,
-            layer=self.layer,
+            layer=lyr,
             kstpkper=self.kstpkper,
             surf_type=self.surf_type,
             use_rbf=self.use_rbf,
@@ -302,10 +325,23 @@ class XSection:
 
     @property
     def xsect(self):
-        """Opens a rasterio memfile to get points
-        elevations at those points to draw a cross-section"""
+        """
+        Provides the cross-section data for a given profile line.
+
+        This property calculates and returns the cross-section coordinates and
+        their corresponding elevations based on whether interpolation is enabled
+        or not. When interpolation is enabled, it interpolates elevations along
+        the profile line. Otherwise, it retrieves the elevations of overlapping
+        cells in the dataset.
+
+        :return: A tuple containing two lists:
+            1. The list of coordinates (x, y) along the cross-section line
+            2. Corresponding elevation values for those coordinates
+        :rtype: tuple[list[tuple[float, float]], list[float]] or None
+        """
 
         if self.interpolate is True:
+            # TODO make work for multiple layers
             with self.memfile.open() as dataset:
                 # Use the sample method to extract the elevation along the profile line
                 points = [(point.x, point.y) for point in self.points]
@@ -318,10 +354,14 @@ class XSection:
         elif self.interpolate is False:
             # if no interpolation, just get head elevations of each overlapping cell
             xs = self.xs
-            ys = self.all_heads.loc[idxx[self.kstpkper, self.layer, xs.index.to_list()]]
-
+            ys = [self.all_heads.loc[idxx[self.kstpkper, lyr, xs.index.to_list()]] for lyr in self.layer]
+            ys_layers = []
+            # get head elevations for each layer for each overlapping cell
+            for y_lyr in ys:
+                ylist = [y[0] for y in y_lyr.values]
+                ys_layers.append(ylist)
             # return distance along xsection line for each cell centroid and head of each cell
-            return xs.values, [y[0] for y in ys.values]
+            return xs.values, ys_layers
         else:
             return None
 
@@ -349,17 +389,25 @@ class XSection:
             fig.add_scatter(x=self.xs_as_length, y=elevations, name=self.section_name)
 
         elif self.interpolate is False:
-            fig.add_scatter(x=points, y=elevations, name=self.section_name)
+            for i, lyr in enumerate(self.layer):
+                fig.add_scatter(x=points, y=elevations[i], name=f'Lyr {lyr} hds - {self.section_name}')
 
         if self.show_model_top:
             xs = self.xs
-            ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
+            # ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
+            ys = self.model_top.loc[self.xs.index.to_list()].to_list()
             fig.add_scatter(x=xs, y=ys, mode='lines', name='model top')
         if self.show_model_btm:
             xs = self.xs
-            btm_layer = self.vor.gdf_topbtm.columns[-1]
-            ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), btm_layer].to_list()
-            fig.add_scatter(x=xs, y=ys, mode='lines', name='model bottom')
+            btm_layers = pd.DataFrame(self.model.gwf.modelgrid.botm.T)
+            for lyr in btm_layers.columns:
+                if lyr in self.layer:
+                    ys = btm_layers.loc[xs.index.to_list(), lyr].to_list()
+                    fig.add_scatter(
+                        x=xs, y=ys, mode='lines',
+                        name=f'Lyr {lyr} Btm',
+                        line=dict(color='black', width=1, dash='dash')
+                    )
 
         return fig
 
@@ -377,20 +425,24 @@ class XSection:
 
         for per in self.model.kstpkper:
 
+            print(f'reading kstpkper {per}', end='\r')
             try:
-                print(f'reading kstpkper {per}', end='\r')
+                # print(f'reading kstpkper {per}', end='\r')
                 self.kstpkper = per
                 points, elevations = self.xsect
             except:
                 continue
 
-            if np.max(elevations) > y_max:
-                y_max = np.max(elevations)
-            if np.min(elevations) < y_min:
-                y_min = np.min(elevations)
+            # if minimum and max y-values for this period are greater than the previous max and min,
+            # then update the max and min values for the animation
+            per_y_max = np.array([float(np.max(elev)) for elev in elevations]).max()
+            y_max = per_y_max if per_y_max > y_max else y_max
+            per_y_min = np.array([float(np.min(elev)) for elev in elevations]).min()
+            y_min = per_y_min if per_y_min < y_min else y_min
 
             # define frame for this stress period and append to the frames list
             if self.interpolate is True:
+                # TODO make work for multiple layers
                 frame = go.Frame(data=[
                     go.Scatter(
                         x=self.xs_as_length,
@@ -399,28 +451,34 @@ class XSection:
                 ],
                     name=f'{per}')
             elif self.interpolate is False:
-                frame = go.Frame(data=[
-                    go.Scatter(
-                        x=points,
-                        y=elevations,
-                        name=f'{per}')
-                ],
-                    name=f'{per}')
+                frame = go.Frame(data=[], name=f'{per}')
+                for i, lyr in enumerate(self.layer):
+                    tr = go.Scatter(
+                        x=points, y=elevations[i],
+                        name=f'Lyr {lyr} hds - {self.section_name}'
+                    )
+                    frame.data += (tr,)  # added comma so tr is treated as a tuple
 
             if self.show_model_top:
+                ys = self.model_top.loc[self.xs.index.to_list()].to_list()
                 xs = self.xs
-                ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
+                # ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), 0].to_list()
                 model_top = go.Scatter(x=xs, y=ys, mode='lines', name='model top')
-                frame.data += model_top
-                y_max = np.max(ys)
+                frame.data += (model_top,)
+                y_max = np.max(ys)  # y_max is top of model if show_model_top is True
 
             if self.show_model_btm:
                 xs = self.xs
-                btm_layer = self.vor.gdf_topbtm.columns[-1]
-                ys = self.vor.gdf_topbtm.loc[xs.index.to_list(), btm_layer].to_list()
-                model_btm = go.Scatter(x=xs, y=ys, mode='lines', name='model bottom')
-                frame.data += model_btm
-                y_min = np.min(ys)
+                btm_layers = pd.DataFrame(self.model.gwf.modelgrid.botm.T)
+                for lyr in btm_layers.columns:
+                    ys = btm_layers.loc[xs.index.to_list(), lyr].to_list()
+                    y_min = np.min(ys) if np.min(ys) < y_min else y_min
+                    model_btm = go.Scatter(
+                        x=xs, y=ys, mode='lines',
+                        name=f'Lyr {lyr} Btm',
+                        line=dict(color='black', width=1, dash='dash')
+                    )
+                    frame.data += (model_btm,)
 
             frames.append(frame)
 
@@ -446,7 +504,9 @@ class XSection:
             },
             updatemenus=Animation(self.model).updatemenus)
         fig.update_layout(
-            sliders=Animation(self.model).sliders
+            sliders=Animation(self.model).sliders,
+            xaxis=dict(uirevision="lock"),
+            yaxis=dict(uirevision="lock"),
         )
         return fig
 

@@ -1,9 +1,10 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 import os
 import json
 import subprocess
 import flopy
-from simple_modflow import VoronoiGridPlus
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 import pandas as pd
 from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 from pathlib import Path
@@ -12,6 +13,10 @@ import shutil
 from flopy.utils import CellBudgetFile
 from collections import OrderedDict
 import numpy as np
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 
 class ParticleTrackingInput:
@@ -26,8 +31,10 @@ class ParticleTrackingInput:
             particle_shp: Path = None
     ):
         self.model = model
-        mp3du_default = Path(r"C:\Users\lukem\Python\Projects\simple_modflow\modflow\mp3du\bin\mp3du.exe")
-        writegsf_default = Path(r"C:\Users\lukem\Python\Projects\simple_modflow\modflow\mp3du\bin\writep3dgsf.exe")
+        mp3du_default = Path(
+            r"C:\Users\lukem\Python\Projects\simple_modflow\src\simple_modflow\modflow\mp3du\mp3du.exe")
+        writegsf_default = Path(
+            r"C:\Users\lukem\Python\Projects\simple_modflow\src\simple_modflow\modflow\mp3du\writep3dgsf.exe")
         self.writep3dgsf_path = writegsf_default if writep3dgsf_path is None else writep3dgsf_path
         self.mp3du_path = mp3du_default if mp3du_path is None else mp3du_path
         self._model_output_files = model_output_files
@@ -174,26 +181,26 @@ class ParticleTrackingInput:
                         "FILE_NAME": self.model_output_files['gsf']
                     },
                     "OUTPUT_PRECISION": "DOUBLE",
-                    "IFACE": [{"RCH": 6}, {"DRN": 7}, {"SFR": 6}],
-                    "THREAD_COUNT": 4
+                    "IFACE": [{"DRN": 7}, {"RCH": 6}],
+                    "THREAD_COUNT": 10
                 }
             },
             "SIMULATIONS": [
                 {
                     "PATHLINE": {
                         "NAME": self.model.name,
-                        "DIRECTION": "BACKWARD",
+                        "DIRECTION": "FORWARD",
                         "THREAD_COUNT": 4,
                         "INITIAL_STEPSIZE": 0.1,
-                        "EULER_DT": 1.0e-7,
-                        "ADAPTIVE_STEP_ERROR": 1.000000e-04,
-                        "CAPTURE_RADIUS": 10.000000,
-                        "SIMULATION_END_TIME": 0,
+                        "EULER_DT": 1.0e-4,
+                        "ADAPTIVE_STEP_ERROR": 1.0e-06,
+                        "CAPTURE_RADIUS": 10,
+                        "SIMULATION_END_TIME": 500,
                         "OPTIONS": ["TRACK_TO_TERMINATION"],
                         "PARTICLE_START_LOCATIONS": {
                             "SHAPEFILE": {
                                 "FILE_NAME": self.particle_shp.as_posix(),
-                                "CELLID_ATTR": "Node",
+                                "CELLID_ATTR": "cells",
                                 "TIME_ATTR": "TimeRel",
                                 "ZLOC_ATTR": "ZLoc",
                                 "ADDTL_ATTR": ["LocName"]
@@ -216,12 +223,12 @@ class ParticleTrackingInput:
         self.create_gsf_file()
         path_file_path = self.create_path_file()
         json_file_path = self.create_json_file().as_posix()
-        self.run_mp3du(json_file_path)
+        # self.run_mp3du(json_file_path)
 
     def get_output_json(self):
 
         output_json = {
-            "MP3DU_BIN": "cumb_v2b_PATHLINE.bin",
+            "MP3DU_BIN": f"{self.model.name}_PATHLINE.bin",
             "OUTPUTS": [
                 {"SUMMARY": {
                 }},
@@ -345,9 +352,6 @@ class PRT:
         return perioddata
 
 
-
-
-
 class PrtMip:
 
     def __init__(
@@ -399,7 +403,6 @@ class PrtPrp:
             vor: VoronoiGridPlus = None,
             local_z=0.5
     ):
-
         particle_data = read_shp_gpkg(shp_gpkg_path).geometry
         pnts_vor = vor.get_vor_cells_as_series(particle_data).to_list()
         pnt_cells = vor.gdf_vorPolys.loc[pnts_vor].geometry
@@ -465,7 +468,6 @@ class PrtFmi:
             prt_model: PRT = None,
             gwf_model: SimulationBase = None,
     ):
-
         self.prt_fmi = flopy.mf6.modflow.ModflowPrtfmi(
             save_flows=True,
             model=prt_model.prt,
@@ -479,12 +481,12 @@ class PrtFmi:
 
 
 if __name__ == "__main__":
-    with open(Path(r"C:\Users\lukem\mf6\cum8cNoET\cum8cNoET.model"), 'rb') as file:
+    with open(Path(r"C:\Users\lukem\mf6\ssb_temp\ssb_temp.model"), 'rb') as file:
         model: SimulationBase = pickle.load(file)
-    particles = Path(r"C:\Users\lukem\mf6\Cumberland general\particles\edge_particles.shp")
+    particles = Path(r"C:\Users\lukem\mf6\SSB data\shp\prt\ssb_particles_v3.shp")
     pti = ParticleTrackingInput(
         model=model,
-        porosities_by_layer=[0.25],
+        porosities_by_layer=[0.2 for _ in range(model.gwf.modelgrid.nlay)],
         particle_shp=particles
     )
     pti.run()

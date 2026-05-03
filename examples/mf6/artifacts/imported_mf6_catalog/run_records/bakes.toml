@@ -1,0 +1,27 @@
+[run]
+id = "bakes"
+model_spec = "legacy_archive"
+status = "imported"
+created_at = "2026-04-25T19:26:27.200842+00:00"
+workspace = "C:/Users/lukem/mf6/bakes"
+tags = ["bakes"]
+
+[paths]
+workspace = "C:/Users/lukem/mf6/bakes"
+run_manifest = "run.toml"
+simulation_name_file = "mfsim.nam"
+listing_file = "mfsim.lst"
+model_name_file = "bakes.nam"
+model_object_file = "bakes.model"
+heads_file = "bakes.hds"
+budget_file = "bakes.cbc"
+disv_file = "bakes.disv"
+
+[metadata]
+source_root = "C:\\Users\\lukem\\mf6"
+relative_workspace = "bakes"
+family = "bakes"
+has_mfsim = true
+has_heads = true
+has_budget = true
+grid_type = "disv"

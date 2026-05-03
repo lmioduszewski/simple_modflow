@@ -1,167 +1,392 @@
+"""Convenience helpers for assembling small MF6 models from a compact config."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
-import flopy
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
-from simple_modflow.modflow.mf6.voronoiplus import TriangleGrid as Triangle
-from simple_modflow.modflow.mf6.boundaries import Boundaries
-import numpy as np
-from shapely import Polygon
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
-import shapely as shp
-from simple_modflow.modflow.mf6 import mfsimbase as mf
-import pickle
+from typing import TYPE_CHECKING, Any
+
 from simple_modflow.modflow.mf6.drn import DRN
+from simple_modflow.modflow.mf6.simulation.base import SimulationBase
+from simple_modflow.modflow.mf6.simulation.discretization import (
+    DisuGrid,
+    DisvGrid,
+    TemporalDiscretization,
+)
+from simple_modflow.modflow.mf6.simulation.packages import (
+    CHD,
+    Drains,
+    InitialConditions,
+    KFlow,
+    OutputControl,
+    Recharge,
+    Storage,
+)
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
 
 
-class SimpleModel(mf.SimulationBase):
-    """Class for a simple modflow model for quick results and analysis."""
+def _is_sequence(value: Any) -> bool:
+    return isinstance(value, (list, tuple))
+
+
+def _coerce_cell_values(values: Any, expected_len: int, name: str) -> list:
+    if _is_sequence(values):
+        result = list(values)
+        if len(result) != expected_len:
+            raise ValueError(f"{name} must have {expected_len} values, got {len(result)}")
+        return result
+    return [values for _ in range(expected_len)]
+
+
+def _coerce_layer_offsets(values: Any, nlay: int) -> list[float]:
+    if _is_sequence(values):
+        result = list(values)
+        if len(result) != nlay:
+            raise ValueError(f"drain_bottom_addition must have {nlay} values, got {len(result)}")
+        return result
+    return [values for _ in range(nlay)]
+
+
+def _surface_columns(vor: "Vor") -> list:
+    if getattr(vor, "gdf_topbtm", None) is None:
+        return []
+    return [column for column in vor.gdf_topbtm.columns if column != "geometry"]
+
+
+def _resolve_top_and_bottom(config: "SimpleModelConfig") -> tuple[list, list | list[list]]:
+    top = config.top
+    bottom = config.bottom
+    surface_columns = _surface_columns(config.vor)
+
+    if top is None:
+        if not surface_columns:
+            raise ValueError("top must be provided when vor.gdf_topbtm is unavailable")
+        top = config.vor.gdf_topbtm.loc[:, surface_columns[0]].to_list()
+
+    if bottom is None:
+        required_columns = config.nlay + 1
+        if len(surface_columns) < required_columns:
+            raise ValueError(
+                "bottom must be provided when vor.gdf_topbtm does not include enough layer surfaces"
+            )
+        if config.grid_type == "disu":
+            if config.nlay != 1:
+                raise ValueError("DISU simple models currently support nlay=1 only")
+            bottom = config.vor.gdf_topbtm.loc[:, surface_columns[1]].to_list()
+        else:
+            bottom = [
+                config.vor.gdf_topbtm.loc[:, surface_columns[layer + 1]].to_list()
+                for layer in range(config.nlay)
+            ]
+
+    top = _coerce_cell_values(top, config.vor.ncpl, "top")
+
+    if config.grid_type == "disu":
+        if config.nlay != 1:
+            raise ValueError("DISU simple models currently support nlay=1 only")
+        bottom = _coerce_cell_values(bottom, config.vor.ncpl, "bottom")
+    else:
+        if not _is_sequence(bottom):
+            raise ValueError("bottom must be a list of layer arrays for DISV models")
+        bottom_layers = list(bottom)
+        if len(bottom_layers) != config.nlay:
+            raise ValueError(f"bottom must include {config.nlay} layers, got {len(bottom_layers)}")
+        bottom = [
+            _coerce_cell_values(layer_values, config.vor.ncpl, f"bottom[{layer_idx}]")
+            for layer_idx, layer_values in enumerate(bottom_layers)
+        ]
+
+    return top, bottom
+
+
+def _flatten_bottom_cells(bottom: list | list[list], *, grid_type: str) -> list:
+    if grid_type == "disu":
+        return list(bottom)
+    return [cell for layer_values in bottom for cell in layer_values]
+
+
+def _resolve_initial_heads(config: "SimpleModelConfig", bottom: list | list[list]):
+    if config.initial_heads is not None:
+        return config.initial_heads
+
+    botm_cells = _flatten_bottom_cells(bottom, grid_type=config.grid_type)
+    return [cell_elev + config.initial_sat_thickness for cell_elev in botm_cells]
+
+
+def _resolve_boundary_cells(config: "SimpleModelConfig") -> list[int]:
+    if config.boundary_cells is not None:
+        return list(config.boundary_cells)
+    return list(config.vor.get_grid_edge())
+
+
+def _resolve_boundary_heads(
+    config: "SimpleModelConfig",
+    cells: list[int],
+    top: list[float],
+    layer_idx: int,
+) -> list[float]:
+    boundary_head = config.boundary_head
+
+    if boundary_head is None:
+        return [top[cell] for cell in cells]
+
+    if _is_sequence(boundary_head) and len(boundary_head) == config.nlay:
+        layer_values = list(boundary_head)[layer_idx]
+        if _is_sequence(layer_values):
+            return _coerce_cell_values(layer_values, len(cells), f"boundary_head[{layer_idx}]")
+        return [layer_values for _ in cells]
+
+    return _coerce_cell_values(boundary_head, len(cells), "boundary_head")
+
+
+def build_edge_drain_stress_period_data(
+    model: SimulationBase,
+    config: "SimpleModelConfig",
+) -> list[list]:
+    """Build edge-drain stress-period rows from a :class:`SimpleModelConfig`."""
+
+    boundary_cells = _resolve_boundary_cells(config)
+    layer_offsets = _coerce_layer_offsets(config.drain_bottom_addition, config.nlay)
+    drain_builder = DRN(model=model, vor=model.vor)
+    stress_period_data = []
+
+    for layer_idx, bottom_addition in enumerate(layer_offsets):
+        stress_period_data.extend(
+            drain_builder.get_drn_stress_period_data(
+                cells=boundary_cells,
+                bottom_addition=bottom_addition,
+                conductance=config.boundary_conductance,
+                disMf=config.grid_type,
+                layer=layer_idx,
+            )
+        )
+
+    return stress_period_data
+
+
+def build_constant_head_stress_period_data(
+    model: SimulationBase,
+    config: "SimpleModelConfig",
+    top: list[float],
+) -> dict[int, list[list]]:
+    """Build constant-head stress-period data from a :class:`SimpleModelConfig`."""
+
+    boundary_cells = _resolve_boundary_cells(config)
+    stress_period_data: dict[int, list[list]] = {}
+
+    for per in range(config.nper):
+        period_rows = []
+        for layer_idx in range(config.nlay):
+            layer_heads = _resolve_boundary_heads(config, boundary_cells, top, layer_idx)
+            for cell, head in zip(boundary_cells, layer_heads):
+                cell_id = cell if config.grid_type == "disu" else (layer_idx, cell)
+                period_rows.append([cell_id, head])
+        stress_period_data[per] = period_rows
+
+    return stress_period_data
+
+
+def _default_sto_steady(config: "SimpleModelConfig") -> dict[int, bool]:
+    return {0: True}
+
+
+def _default_sto_transient(config: "SimpleModelConfig") -> dict[int, bool]:
+    return {} if config.nper <= 1 else {per: True for per in range(1, config.nper)}
+
+
+@dataclass(slots=True)
+class SimpleModelConfig:
+    """Compact configuration for the legacy quick-start simple-model workflow."""
+    vor: "Vor"
+    name: str = "simplemodel"
+    mf_folder_path: Path = Path().home() / "mf6"
+    nper: int = 1
+    nlay: int = 1
+    grid_type: str = "disv"
+    top: Any = None
+    bottom: Any = None
+    idomain: Any = None
+    initial_heads: Any = None
+    initial_sat_thickness: float = 1.0
+    per_len: int = 30
+    num_steps: int = 1
+    multiplier: float = 1.0
+    time_units: str = "DAYS"
+    k: Any = 100
+    k33_vert: Any = None
+    perched: bool = False
+    save_specific_discharge: bool = True
+    specific_storage: float = 0.0001
+    specific_yield: float = 0.2
+    sto_steady: dict[int, bool] | None = None
+    sto_transient: dict[int, bool] | None = None
+    boundary_mode: str | None = None
+    boundary_cells: list[int] | None = None
+    boundary_conductance: float | int | list = 1000
+    boundary_head: Any = None
+    drain_bottom_addition: float | int | list = 0.1
+    rch_dict: dict | None = None
+    per_dates: list | None = None
+    idomain_path: Path | None = None
+    newton: bool = True
+    complexity: str = "MODERATE"
+    output_save_record: tuple = (("HEAD", "LAST"), ("BUDGET", "LAST"))
+    output_print_record: tuple | None = None
+
+    def __post_init__(self):
+        self.grid_type = str(self.grid_type).lower()
+        if self.grid_type not in {"disu", "disv"}:
+            raise ValueError("grid_type must be either 'disu' or 'disv'")
+        if len(self.name) > 16:
+            raise ValueError("name must be 16 characters or fewer for MODFLOW 6")
+        if self.nlay < 1:
+            raise ValueError("nlay must be at least 1")
+        if self.nper < 1:
+            raise ValueError("nper must be at least 1")
+        self.mf_folder_path = Path(self.mf_folder_path)
+        if self.grid_type == "disu" and self.nlay != 1:
+            raise ValueError("DISU simple models currently support nlay=1 only")
+
+
+def _configure_simple_model(
+    model: SimulationBase,
+    config: SimpleModelConfig,
+) -> SimulationBase:
+    top, bottom = _resolve_top_and_bottom(config)
+    initial_heads = _resolve_initial_heads(config, bottom)
+
+    model.simple_model_config = config
+    model.vor = config.vor
+    model.name = config.name
+    model.nper = config.nper
+    model.nlay = config.nlay
+    model.top = top
+    model.bottom = bottom
+    model.grid_type = config.grid_type
+    model.boundary_mode = config.boundary_mode
+    model.boundary_cells = _resolve_boundary_cells(config)
+    model.rch_dict = config.rch_dict
+    model.initial_sat_thickness = config.initial_sat_thickness
+    model.initial_heads = initial_heads
+    model.iheads = initial_heads
+    model.k_input = config.k
+    model.k33_vert_input = config.k33_vert
+
+    model.tdis = TemporalDiscretization(
+        model=model,
+        time_units=config.time_units,
+        per_len=config.per_len,
+        num_steps=config.num_steps,
+        multiplier=config.multiplier,
+    )
+
+    if config.grid_type == "disu":
+        model.disu = DisuGrid(vor=config.vor, model=model, top=top, bottom=bottom)
+    else:
+        model.disv = DisvGrid(
+            vor=config.vor,
+            model=model,
+            top=top,
+            bottom=bottom,
+            nlay=config.nlay,
+            idomain=config.idomain,
+        )
+
+    model.ic = InitialConditions(
+        model=model,
+        vor=config.vor,
+        botm_cells=_flatten_bottom_cells(bottom, grid_type=config.grid_type),
+        initial_sat_thickness=config.initial_sat_thickness,
+        nlay=config.nlay,
+        strt=initial_heads,
+    )
+    model.k = KFlow(
+        model=model,
+        k=config.k,
+        k33_vert=config.k33_vert,
+        perched=config.perched,
+        save_specific_discharge=config.save_specific_discharge,
+    )
+    model.oc = OutputControl(
+        model=model,
+        save_record=config.output_save_record,
+        print_record=config.output_print_record,
+    )
+    model.sto = Storage(
+        model=model,
+        specific_yield=config.specific_yield,
+        specific_storage=config.specific_storage,
+        sto_steady=config.sto_steady or _default_sto_steady(config),
+        sto_transient=(
+            config.sto_transient
+            if config.sto_transient is not None
+            else _default_sto_transient(config)
+        ),
+    )
+
+    if config.boundary_mode == "drain":
+        model.drain_stress_period_data = build_edge_drain_stress_period_data(model, config)
+        model.drn = Drains(model=model, stress_period_data=model.drain_stress_period_data)
+    elif config.boundary_mode == "chd":
+        model.chd_stress_period_data = build_constant_head_stress_period_data(model, config, top)
+        model.chd = CHD(model=model, stress_period_data=model.chd_stress_period_data)
+
+    if config.rch_dict is not None:
+        model.rch = Recharge(model=model, vor=config.vor, rch_dict=config.rch_dict)
+
+    return model
+
+
+def build_simple_model(config: SimpleModelConfig) -> SimulationBase:
+    """Construct and return a runnable ``SimulationBase`` from a simple config."""
+
+    model = SimulationBase(
+        name=config.name,
+        mf_folder_path=config.mf_folder_path,
+        nper=config.nper,
+        vor=config.vor,
+        per_dates=config.per_dates,
+        idomain_path=config.idomain_path,
+        newton=config.newton,
+        complexity=config.complexity,
+    )
+    return _configure_simple_model(model, config)
+
+
+class SimpleModel(SimulationBase):
+    """Config-driven convenience class for building a small MF6 model."""
 
     def __init__(
-            self,
-            vor: Vor,
-            name: str = 'simplemodel',
-            nper: int = 1,
-            initial_sat_thickness: float = 1,
-            iheads=None,
-            k: int | float | list = 100,
-            k33_vert: int | float | list = None,
-            top=None,
-            bottom=None,
-            rch_dict: dict = None,
-            boundary_conductance: int = 1000,
-            nlay=1,
-            disv_disu='disv'
+        self,
+        config: SimpleModelConfig | None = None,
+        **config_kwargs,
     ):
-        super().__init__(nper=nper, name=name, vor=vor)
-        self.vor = vor
-        self.nper = nper
-        self.name = name
-        self.k = k
-        self.iheads = iheads
-        self.nlay = nlay
-        self.top = top
-        self.bottom = bottom
-        self.rch_dict = rch_dict
-        self.initial_sat_thickness = initial_sat_thickness
-        self.boundary_cells = self.vor.get_grid_edge()
-        self.tdis = mf.TemporalDiscretization(model=self, per_len=30)
-        if disv_disu == 'disu':
-            self.disu = mf.DisuGrid(vor=self.vor, model=self, top=self.top, bottom=self.bottom)
-        if disv_disu == 'disv':
-            self.disv = mf.DisvGrid(vor=self.vor, model=self, nlay=nlay, top=self.top, bottom=self.bottom)
-        self.drain_stress_period_data = []
-        for layer in range(self.nlay):
-            bottom_addition = 20 if layer == 2 else 0.1
-            self.drain_stress_period_data += DRN(model=self, vor=self.vor).get_drn_stress_period_data(
-                cells=self.boundary_cells,
-                bottom_addition=bottom_addition,
-                conductance=boundary_conductance,
-                disMf=disv_disu,
-                layer=layer
-            )
-        self.ic = mf.InitialConditions(model=self, vor=self.vor, initial_sat_thickness=self.initial_sat_thickness,
-                                       nlay=self.nlay, strt=self.iheads)
-        self.k = mf.KFlow(model=self, k=self.k, k33_vert=k33_vert)
-        self.oc = mf.OutputControl(model=self)
-        self.drn = mf.Drains(model=self, stress_period_data=self.drain_stress_period_data)
-        self.sto = mf.Storage(model=self, specific_yield=0.2, specific_storage=0.0001,
-                              sto_transient={1: True}, sto_steady={0: True})
-        if rch_dict:
-            self.rch = mf.Recharge(model=self, vor=self.vor, rch_dict=self.rch_dict)
+        if config is None:
+            if not config_kwargs:
+                raise ValueError("Provide either a SimpleModelConfig or keyword arguments for SimpleModelConfig")
+            config = SimpleModelConfig(**config_kwargs)
+        elif config_kwargs:
+            raise ValueError("Pass either config or keyword arguments, not both")
+
+        super().__init__(
+            name=config.name,
+            mf_folder_path=config.mf_folder_path,
+            nper=config.nper,
+            vor=config.vor,
+            per_dates=config.per_dates,
+            idomain_path=config.idomain_path,
+            newton=config.newton,
+            complexity=config.complexity,
+        )
+        _configure_simple_model(self, config)
 
 
-if __name__ == "__main__":
-    """Example simple model"""
-    tri = Triangle(
-        model_ws=Path.cwd(),
-        angle=30
-    )
-    tri.add_circle(radius=10_000, center_coords=(0, 0))
-    # tri.add_circle(radius=1000, center_coords=(0, 0))
-    """ssb = tri.add_circle(2, (0, 0))
-    ssb2 = tri.add_circle(2, (50, 0))
-    ssb3 = tri.add_circle(2, (0, 50))
-    ssb4 = tri.add_circle(2, (50, 50))"""
-    outer_circle = tri.add_circle(50, (0, 0))
-
-    # xs = np.arange(-150, 250, 100)
-    """xs = np.arange(-50, 50, 50)
-    xx, yy = np.meshgrid(xs, xs)
-    coords = list(zip(xx.ravel(), yy.ravel()))
-    uics = []
-    for coord in coords:
-        uics.append(tri.add_circle(10, coord))"""
-
-
-    #ssb2 = tri.add_rectangle(10, 300, origin=(150, -150), max_area=50)
-    #ssb3 = tri.add_rectangle(10, 300, origin=(0, -150), max_area=50)
-    tri.add_region(point=(-400, -400), maximum_area=10_000)
-    #tri.add_region(point=(-2000, -2000), maximum_area=8000)
-    tri.add_region(point=(-10, 0), maximum_area=1000)
-    tri.model_ws = Path.cwd().joinpath('sample_model_output')
-    tri.build()
-
-    # get bottom elevs
-    pixel_size = 1000  # Pixel size
-    l1_botm = Path.cwd().joinpath('sample_model_output', 'l1_botm.tif')
-    l2_botm = Path.cwd().joinpath('sample_model_output', 'l2_botm.tif')
-    l3_botm = Path.cwd().joinpath('sample_model_output', 'l3_botm.tif')
-    top_raster_path = Path.cwd().joinpath('sample_model_output', 'top_raster.tif')
-    vor = Vor(tri)
-    vor.get_disu_connectivity()
-    top_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 660), pixel_size, top_raster_path)
-    l1_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 640), pixel_size, l1_botm)
-    l2_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 550), pixel_size, l2_botm)
-    l3_bottom_elevs = vor.get_raster_from_strike_dip(0, 0, (0, 0, 420), pixel_size, l3_botm)
-
-    #with open(Path(r"C:\Users\lukem\mf6\simplemodel\iheads.hds"), 'rb') as file:
-        #iheads = pickle.load(file)  # initial heads import
-
-    vor = Vor(tri, rasters=[top_raster_path, l1_botm, l2_botm, l3_botm])
-    surface_elevs = vor.reconcile_surfaces()
-    vor.gdf_topbtm.loc[:, 0:] = surface_elevs
-    nper = 1
-
-    rch_dict = {per: [] for per in range(nper)}
-    c = vor.get_vor_cells_as_series(outer_circle).to_list()
-    ssb_cells = c
-
-    facility_area = vor.get_overlapping_area(cell_list=ssb_cells)
-    rch_trans = [(2_000 * 1) / facility_area for i in range(nper)]  # 100 gpm for one UIC
-
-    for per in range(nper):
-        cell_list = []
-        for cell in range(vor.ncpl):
-            if cell in ssb_cells:
-                cell_list.append([(2, cell), rch_trans[per]])
-            else:
-                # cell_list.append([(0, cell), 0.001])
-                pass
-
-        rch_dict[per] += cell_list
-
-    botm1 = surface_elevs.loc[:, 1].values
-    botm2 = surface_elevs.loc[:, 2].values
-    botm3 = surface_elevs.loc[:, 3].values
-    botms = [botm1, botm2, botm3]
-
-    model = SimpleModel(
-        name='ssb_flat',
-        vor=vor,
-        k=[1000, 40, 40],
-        bottom=botms,
-        top=vor.gdf_topbtm.loc[:, 0].to_list(),
-        nper=nper,
-        rch_dict=rch_dict,
-        nlay=3,
-        boundary_conductance=5000,
-    )
-
-    model_file_path = model.model_output_folder_path / f'{model.name}.model'
-    with open(model_file_path, 'wb') as file:
-        pickle.dump(model, file)
-    # print(rch_dict)
-    model.run_simulation()
-    vor.show()
-    # model.choro(kstpkper=(9, 0)).plot()
-    # model.xsect(cells=[2247, 2245], spacing=1).show()
-    # model.surf.hds(per=0).plot()
+__all__ = [
+    "SimpleModel",
+    "SimpleModelConfig",
+    "build_constant_head_stress_period_data",
+    "build_edge_drain_stress_period_data",
+    "build_simple_model",
+]

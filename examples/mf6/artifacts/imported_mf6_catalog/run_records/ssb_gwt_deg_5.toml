@@ -1,0 +1,27 @@
+[run]
+id = "ssb_gwt_deg_5"
+model_spec = "legacy_archive"
+status = "imported"
+created_at = "2026-04-25T19:26:27.297266+00:00"
+workspace = "C:/Users/lukem/mf6/ssb_gwt_deg_5"
+tags = ["ssb"]
+
+[paths]
+workspace = "C:/Users/lukem/mf6/ssb_gwt_deg_5"
+run_manifest = "run.toml"
+simulation_name_file = "mfsim.nam"
+listing_file = "mfsim.lst"
+model_name_file = "ssb_gwt_deg_5.nam"
+model_object_file = "ssb_gwt_deg_5.model"
+heads_file = "ssb_gwt_deg_5.hds"
+budget_file = "ssb_gwt_deg_5.cbc"
+disv_file = "ssb_gwt_deg_5.disv"
+
+[metadata]
+source_root = "C:\\Users\\lukem\\mf6"
+relative_workspace = "ssb_gwt_deg_5"
+family = "ssb"
+has_mfsim = true
+has_heads = true
+has_budget = true
+grid_type = "disv"

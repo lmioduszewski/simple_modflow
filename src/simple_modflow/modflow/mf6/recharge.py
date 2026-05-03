@@ -1,23 +1,37 @@
+"""Recharge helpers that translate GIS/tabular sources into MF6 recharge inputs."""
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 import flopy.utils.binaryfile
 import shapely as shp
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
-import simple_modflow.modflow.mf6.mfsimbase as mf
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 import pickle
+from simple_modflow.modflow.mf6.boundary_support import (
+    build_cell_id,
+    filter_inactive_cells,
+    merge_stress_period_data,
+    normalize_grid_type,
+)
 from simple_modflow.modflow.mf6.boundaries import Boundaries
 from simple_modflow.modflow.utils.prism_ppt import PrismPrecipScaling
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
 
 class RechargeFromShp(Boundaries):
+    """Build recharge stress-period data from polygon GIS inputs."""
 
     def __init__(
             self,
-            model: mf.SimulationBase = None,
+            model: SimulationBase = None,
             vor: Vor = None,
             shp_gpkg: Path = None,
             uid: str = None,
@@ -35,25 +49,36 @@ class RechargeFromShp(Boundaries):
             **kwargs
 
     ):
-        """
-        class to set up recharge for a modflow 6 model
-        :param model: model to which this boundary applies
-        :param vor: voronoi grid to which this boundary apples
-        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
-        :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
-        :param rch_fields: field names corresponding to the recharge data in the shapefile attribute table
-        :param rch_fields_to_pers: list of indices of length nper that correspond to the fields in rch_fields. Defines which field should be used for each stress period.
-        :param bound_type: arbitary identifier for this boundary type
-        :param xlsx_rch: path to an excel file which contains the recharge data for each uid polygon. optional, otherwise data will be taken froim the shapefile attribute table. if excel is provided, it will be prioritized over the shapefile
-        :param background_rch: background recharge to apply if there are more stress periods than rch_fields_to_pers and apply_background_rch is True. Default is 0.0
-        :param apply_background_rch:if True, and there are more stress periods than given in rch_fields_to_pers, then the remaining stress periods will be assigned the background recharge
-        :param rch_in_vol: if True, data is assumed to be in volume and will be divided by area of recharge polygons
-        :param multiplier: a value to multiply the recharge data, optional. Otherwise, a value of 1 is used.
-        :param grid_type: string identifying grid type - 'disv' or 'disu'
-        :param limit_to_k33: whether to limit the vertical recharge to the vertical K of each cell, default True
-        :param limit_to_k33_by: if limit_to_k33 is True, k33 is multiplied by this to obtain max vertical recharge, defaults to 1
-        :param verbose: be verbose or not, defaults to False
-        :param kwargs: additional keyword arguments to pass to Boundaries class
+        """Parameters
+        ----------
+        model
+            Model to which the recharge applies.
+        vor
+            Grid helper used to intersect polygons with model cells.
+        shp_gpkg
+            Polygon geometry source for recharge zones.
+        uid
+            Unique-id field in the geometry attributes.
+        rch_fields, rch_fields_to_pers
+            Attribute fields containing recharge values and their per-period mapping.
+        xlsx_rch
+            Optional spreadsheet overriding recharge attribute values.
+        background_rch
+            Background recharge value used when requested.
+        apply_background_rch
+            Whether unspecified periods should receive ``background_rch``.
+        rch_in_vol
+            Whether source values are volumes that should be converted to rates.
+        multiplier
+            Scalar applied to the source recharge values.
+        grid_type
+            MODFLOW grid type, usually ``disv`` or ``disu``.
+        limit_to_k33, limit_to_k33_by
+            Optional vertical-conductivity-based cap on recharge values.
+        verbose
+            Whether to emit extra progress/details while building data.
+        kwargs
+            Additional arguments passed through to :class:`Boundaries`.
         """
         super().__init__(model, vor, shp_gpkg, uid, **kwargs)
         self.bound_type = 'rch'
@@ -71,7 +96,7 @@ class RechargeFromShp(Boundaries):
         self.multiplier = multiplier
         self.limit_to_k33 = limit_to_k33
         self.limit_to_k33_by = limit_to_k33_by
-        self.grid_type = grid_type.lower()
+        self.grid_type = normalize_grid_type(grid_type)
         self.verbose = verbose
 
     @property
@@ -150,41 +175,47 @@ class RechargeFromShp(Boundaries):
             self._recharges = recharges
         return self._recharges
 
-    def get_rch(
+    def from_polygons(
             self,
             cell_ids: dict = None,
             recharges: dict = None,
             background_rch: int | float = None,
+            register_regions: bool = False,
+            region_name_prefix: str | None = None,
+            combined_region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
     ) -> dict:
-        """
-        get a recharge dictionary to pass to flopy in setting of a recharge package. Assumes recharge only applied to
-        top layer
-        :param cell_ids: dictionary where each key is an arbitrary name given each recharge area and the values
-        are a list of cell ids in that area where recharge will be applied. Cell id is the cell2d number.
-        :param recharges: dictionary where each key is an arbitrary name for each recharge area. Must match the keys
-        in the cell_ids dict. The dictionary values are each a list of recharge. Length of the list must equal to the
-        number of stress periods.
-        :param background_rch: adds a background recharge to all cells that don't have recharge in the model, optional
-        :return: recharge dictionary of stress period data to pass to flopy
-        """
+        """Build recharge stress-period data from polygon features on the builder."""
         rch_dict = {}
-        grid_type = self.grid_type
+        grid_type = normalize_grid_type(self.grid_type)
         cell_ids = self.cell_ids if cell_ids is None else cell_ids
         recharges = self.recharges if recharges is None else recharges
         background_rch = self.background_rch if background_rch is None else background_rch
         k33 = self.model.gwf.npf.k33.data[0] if self.limit_to_k33 else None
         nper = self.nper
         assert nper == len(list(recharges.values())[0]), 'Number of periods and length of recharge values must match'
+        region_cellids_by_name: dict[str, list] = {}
+        region_layers_by_name: dict[str, int] = {}
+        region_geometries_by_name: dict[str, object] = {}
+        region_metadata_by_name: dict[str, dict] = {}
 
         for per in range(nper):
             cell_list = []
             all_rch_cells = set()
 
             for name, cell_nums in cell_ids.items():
+                active_cells = filter_inactive_cells(cell_nums, self.inactive_cells)
                 recharge = recharges[name][per]
-                for cell in cell_nums:
+                if register_regions:
+                    region_layers_by_name[name] = 0
+                    if self.gdf is not None and name in self.gdf.index:
+                        region_geometries_by_name[name] = self.gdf.loc[name, "geometry"]
+                    region_metadata_by_name.setdefault(name, {"background_rch": background_rch})
+                    region_cellids_by_name.setdefault(name, [])
+                for cell in active_cells:
                     all_rch_cells.add(cell)
-                    cell_id = cell if grid_type == 'disu' else (0, cell)
+                    cell_id = build_cell_id(cell, grid_type=grid_type, layer=0)
                     if self.limit_to_k33 and k33[cell] < recharge:
                         limited_recharge = k33[cell] * self.limit_to_k33_by
                         if self.verbose:
@@ -195,38 +226,51 @@ class RechargeFromShp(Boundaries):
                         cell_list.append([cell_id, limited_recharge])
                     else:
                         cell_list.append([cell_id, recharge])
+                    if register_regions:
+                        region_cellids_by_name[name].append(cell_id)
 
             if background_rch is not None:
-                for cell in range(self.vor.ncpl):
+                for cell in filter_inactive_cells(range(self.vor.ncpl), self.inactive_cells):
                     if cell not in all_rch_cells:
-                        cell_id = cell if grid_type == 'disu' else (0, cell)
+                        cell_id = build_cell_id(cell, grid_type=grid_type, layer=0)
                         cell_list.append([cell_id, background_rch])
 
             rch_dict[per] = cell_list
 
+        if register_regions and region_cellids_by_name:
+            self._register_boundary_groups(
+                cellids_by_name=region_cellids_by_name,
+                layers_by_name=region_layers_by_name,
+                geometries_by_name=region_geometries_by_name,
+                region_name_prefix=region_name_prefix or self.bound_type,
+                combined_region_name=combined_region_name,
+                tags=region_tags,
+                metadata_by_name=region_metadata_by_name,
+                overwrite=overwrite_regions,
+            )
+
         return rch_dict
+
+    def from_vector(self, **kwargs) -> dict:
+        """Alias for :meth:`from_polygons` for shapefile/geopackage workflows."""
+
+        return self.from_polygons(**kwargs)
+
+    def get_rch(self, **kwargs) -> dict:
+        """Backward-compatible alias for :meth:`from_polygons`."""
+
+        return self.from_polygons(**kwargs)
 
     @staticmethod
     def add_to_rch_dict(rch_dict: dict, rch_to_add: dict, replace: bool = True) -> dict:
-
-        pers = rch_to_add.keys()
-        new_rch_dict = rch_dict.copy()
-        for per in pers:
-            for cell_data in rch_to_add[per]:
-                cell_num = cell_data[0]
-                cell_recharge = cell_data[1]
-                cell_rch = new_rch_dict[per][cell_num].copy()
-                new_cell_rch = cell_rch[1] + cell_recharge if not replace else cell_recharge
-                new_rch_dict[per][cell_num] = [cell_rch[0], new_cell_rch]
-
-        return new_rch_dict
+        return merge_stress_period_data(rch_dict, rch_to_add, replace=replace)
 
 
 class RechargeFromPrism(Boundaries):
 
     def __init__(
             self,
-            model: mf.SimulationBase = None,
+            model: SimulationBase = None,
             vor: Vor = None,
             prism_raster: Path = None,
             weather_station_location: Path = None,
@@ -319,4 +363,8 @@ class RechargeFromPrism(Boundaries):
                 self.scaled_precip[per] - self.et_dict[self.period_months[per]]
             ]
         return rch_dict
+
+
+# Preferred alias for the vector-driven recharge builder API.
+RCHFromVector = RechargeFromShp
 

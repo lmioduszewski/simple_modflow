@@ -1,19 +1,25 @@
+"""Unsaturated-zone-flow helpers for building MF6 UZF package inputs."""
+
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from .voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 import flopy
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import pickle
+from simple_modflow.modflow.mf6.boundary_support import build_cell_id, expand_periodic_cell_input
 from simple_modflow.modflow.mf6.recharge import RechargeFromShp
+from simple_modflow.modflow.mf6.simulation.packages import _maybe_create_package_artifact
 
 
 class UZFPackageData:
+    """Build UZF packagedata/perioddata and optionally attach the MF6 UZF package."""
+
     def __init__(
             self,
             model: SimulationBase = None,
@@ -38,6 +44,16 @@ class UZFPackageData:
             add_uzf: bool = True,
             mover: bool = False,
             rch_from_shp: RechargeFromShp = None,
+            register_regions: bool = False,
+            region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
+            artifact_id: str | None = None,
+            artifact_catalog=None,
+            artifact_description: str | None = None,
+            artifact_tags: list[str] | None = None,
+            artifact_metadata: dict | None = None,
+            artifact_overwrite: bool = False,
     ):
         """
         Initialize and manage the UZF (Unsaturated Zone Flow) package for the model. This
@@ -85,8 +101,6 @@ class UZFPackageData:
             simulation (default is False).
         :param rch_from_shp: RechargeFromShp instance defining recharge rate from a shapefile.
         """
-        print('Initializing UZF package')
-
         self.model = model
         if self.model is not None:
             self.vor = model.vor if vor is None else vor
@@ -111,22 +125,22 @@ class UZFPackageData:
         self.mover = mover
 
         if uzf_cells is not None:
-            self.uzf_cells = uzf_cells
+            self.uzf_cells = self._coerce_uzf_cells(uzf_cells)
         elif self.idomain is None and self.model is not None:
             try:
                 idom = model.modelgrid.idomain[0]
                 active_cell_indices = pd.Series(idom).loc[idom == 1].index.to_list()
                 # assumes all active cells in layer 1 are uzf cells
-                self.uzf_cells = list(zip([0 for _ in active_cell_indices], active_cell_indices))
+                self.uzf_cells = self._coerce_uzf_cells(active_cell_indices)
             except ValueError:
-                print('cannot get uzf cells from model idomain')
+                self.uzf_cells = None
         elif self.idomain is not None:
             active_cell_indices = pd.Series(self.idomain).loc[self.idomain == 1].index.tolist()
             # assumes all active cells in layer 1 are uzf cells
-            self.uzf_cells = list(zip([0 for _ in active_cell_indices], active_cell_indices))
+            self.uzf_cells = self._coerce_uzf_cells(active_cell_indices)
         elif self.model is not None:
             # assumes all model cells are uzf cells
-            self.uzf_cells = model.cellids
+            self.uzf_cells = self._coerce_uzf_cells(model.cellids)
         else:
             self.uzf_cells = None
 
@@ -135,15 +149,47 @@ class UZFPackageData:
         self._rch_dict = None
         self._uzf_packagedata = None
         self._uzf_perioddata = None
+        self.register_regions = register_regions
+        self.region_name = region_name
+        self.region_tags = [] if region_tags is None else list(region_tags)
+        self.overwrite_regions = overwrite_regions
+        self.artifact_id = artifact_id
+        self.artifact_catalog = artifact_catalog
+        self.artifact_description = artifact_description
+        self.artifact_tags = artifact_tags
+        self.artifact_metadata = artifact_metadata
+        self.artifact_overwrite = artifact_overwrite
 
         self.rch_from_shp = rch_from_shp
         self.uzf = None
+        self.package_artifact = None
 
         if self.model is None:
             add_uzf = False
         if add_uzf:
-            print('Adding UZF package')
             self.add_uzf()
+
+    @staticmethod
+    def _coerce_uzf_cells(cells: list) -> list[tuple[int, int]]:
+        normalized = []
+        for cell in cells:
+            if isinstance(cell, tuple):
+                normalized.append((int(cell[0]), int(cell[1])))
+            else:
+                normalized.append(build_cell_id(cell, grid_type="disv", layer=0))
+        return normalized
+
+    def _coerce_cell_parameter(self, value, *, name: str):
+        if isinstance(value, (float, int)):
+            return [value] * self.nuzfcells
+        if isinstance(value, list):
+            if len(value) != self.nuzfcells:
+                raise ValueError(f"{name} must have {self.nuzfcells} values, got {len(value)}")
+            return value
+        raise TypeError(f"{name} must be a scalar or list")
+
+    def _period_parameter(self, value, *, default=0.0) -> dict[int, list]:
+        return expand_periodic_cell_input(value, nper=self.model.nper, nitems=self.nuzfcells, default=default)
 
     @property
     def rch_from_shp(self):
@@ -166,10 +212,12 @@ class UZFPackageData:
     def finf(self):
         if self._finf is None:
             if self.rch_dict is not None:
-                pass
+                uzfdata = {}
+                for per, rows in self.rch_dict.items():
+                    by_cell = {row[0]: row[1] for row in rows}
+                    uzfdata[per] = [by_cell.get(cell_id, 0.0) for cell_id in self.uzf_cells]
+                self._finf = uzfdata
         return self._finf
-
-
 
     @property
     def uzf_vks(self):
@@ -179,7 +227,7 @@ class UZFPackageData:
     def uzf_vks(self, val):
         assert isinstance(val, list), 'uzf_vks must be a list of length number of uzf cells'
         assert len(val) == self.nuzfcells, 'uzf_vks must be a list of length number of uzf cells'
-        self._uzf_vks = vks
+        self._uzf_vks = val
 
     def get_packagedata(self):
         """Generate UZF packagedata list.
@@ -187,6 +235,10 @@ class UZFPackageData:
         If vks, thtr, thts, and thti are provided as floats, they are applied uniformly to all UZF cells.
         If provided as lists, they must contain values for each UZF cell.
         """
+        vks = self._coerce_cell_parameter(self.vks, name="vks")
+        thtr = self._coerce_cell_parameter(self.thtr, name="thtr")
+        thts = self._coerce_cell_parameter(self.thts, name="thts")
+        thti = self._coerce_cell_parameter(self.thti, name="thti")
         uzf_data = []
         for index, cellid in enumerate(self.uzf_cells):
             uzf_data.append([
@@ -195,11 +247,11 @@ class UZFPackageData:
                 1,  # Land flag (1 for surface cells)
                 -1,  # Vertical connection index (0 = no connection)
                 0.001,  # Surface depression depth
-                self.vks if isinstance(self.vks, (float, int)) else self.vks[index],
+                vks[index],
                 # Saturated vertical hydraulic conductivity
-                self.thtr if isinstance(self.thtr, (float, int)) else self.thtr[index],  # Residual water content
-                self.thts if isinstance(self.thts, (float, int)) else self.thts[index],  # Saturated water content
-                self.thti if isinstance(self.thti, (float, int)) else self.thti[index],  # Initial water content
+                thtr[index],  # Residual water content
+                thts[index],  # Saturated water content
+                thti[index],  # Initial water content
                 self.eps,  # Brooks-Corey exponent
                 # None if not self.boundnames else f'UZF_{index}'
             ])
@@ -211,14 +263,20 @@ class UZFPackageData:
         If an argument is provided as a dictionary, it is expected to contain stress periods as keys,
         and lists of values corresponding to UZF cells as values.
         """
+        finf = self._period_parameter(self.finf, default=0.0)
+        pet = self._period_parameter(self.pet, default=0.0)
+        extdp = self._period_parameter(self.extdp, default=0.0)
+        extwc = self._period_parameter(self.extwc, default=0.0)
+        ha = self._period_parameter(self.ha, default=0.0)
+        hroot = self._period_parameter(self.hroot, default=0.0)
+        rootact = self._period_parameter(self.rootact, default=0.0)
         period_data = {per: [] for per in range(self.model.nper)}
         bad_inf_cells = []
         for per in period_data.keys():
             for index in range(self.nuzfcells):
 
                 # check for bad finf entries for cells
-                finf_val = self.finf if isinstance(self.finf, (float, int)) else self.finf.get(
-                    per, [0] * self.nuzfcells)[index]
+                finf_val = finf[per][index]
                 if isinstance(finf_val, float) and np.isnan(finf_val):
                     if index not in bad_inf_cells:
                         bad_inf_cells.append(index)
@@ -227,42 +285,30 @@ class UZFPackageData:
                 period_data[per].append([
                     index,  # UZF cell index
                     finf_val,
-                    self.pet if isinstance(self.pet, (float, int)) else self.pet.get(per, [0] * self.nuzfcells)[
-                        index],
-                    self.extdp if isinstance(self.extdp, (float, int)) else
-                    self.extdp.get(per, [0] * self.nuzfcells)[index],
-                    self.extwc if isinstance(self.extwc, (float, int)) else
-                    self.extwc.get(per, [0] * self.nuzfcells)[index],
-                    self.ha if isinstance(self.ha, (float, int)) else self.ha.get(per, [0] * self.nuzfcells)[
-                        index],
-                    self.hroot if isinstance(self.hroot, (float, int)) else
-                    self.hroot.get(per, [0] * self.nuzfcells)[index],
-                    self.rootact if isinstance(self.rootact, (float, int)) else
-                    self.rootact.get(per, [0] * self.nuzfcells)[index]
+                    pet[per][index],
+                    extdp[per][index],
+                    extwc[per][index],
+                    ha[per][index],
+                    hroot[per][index],
+                    rootact[per][index],
                 ])
-        if len(bad_inf_cells) > 0:
-            print(f'some uzf cell data is nan. Made these cells zero finf. Check these cells....\n'
-                  f'{bad_inf_cells}')
         return period_data
 
     @property
     def perioddata(self):
         if self._uzf_perioddata is None:
-            print('Generating UZF perioddata')
             self._uzf_perioddata = self.get_perioddata()
         return self._uzf_perioddata
 
     @property
     def packagedata(self):
         if self._uzf_packagedata is None:
-            print('Generating UZF packagedata')
             self._uzf_packagedata = self.get_packagedata()
         return self._uzf_packagedata
 
     def add_uzf(self):
         """Add UZF package to MODFLOW 6 model."""
         simulate_et = self.pet is not None or self.extdp is not None or self.extwc is not None
-        simulate_et = False
 
         self.uzf = flopy.mf6.ModflowGwfuzf(
             self.model.gwf,
@@ -273,7 +319,7 @@ class UZFPackageData:
             packagedata=self.packagedata,
             perioddata=self.perioddata,
             mover=self.mover,
-            simulate_et=False,
+            simulate_et=simulate_et,
             linear_gwet=False,
             square_gwet=False,
             simulate_gwseep=False,
@@ -286,6 +332,27 @@ class UZFPackageData:
             nwavesets=50,
         )
         self.model._uzf_input = self
+        if self.register_regions and self.model is not None:
+            region_name = self.region_name or "uzf_cells"
+            self.model.add_region_from_cells(
+                region_name,
+                cellids=self.uzf_cells,
+                category="boundary",
+                package="uzf",
+                tags=self.region_tags or ["uzf"],
+                metadata={"nuzfcells": self.nuzfcells},
+                overwrite=self.overwrite_regions,
+            )
+        self.package_artifact = _maybe_create_package_artifact(
+            self.model,
+            "uzf",
+            artifact_id=self.artifact_id,
+            artifact_catalog=self.artifact_catalog,
+            artifact_description=self.artifact_description,
+            artifact_tags=self.artifact_tags,
+            artifact_metadata=self.artifact_metadata,
+            artifact_overwrite=self.artifact_overwrite,
+        )
         return self.uzf
 
 

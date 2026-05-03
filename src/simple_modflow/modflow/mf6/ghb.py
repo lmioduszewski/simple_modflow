@@ -1,25 +1,36 @@
+"""General-head-boundary helpers built from polygons, lines, and tabular inputs."""
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 import flopy.utils.binaryfile
 import shapely as shp
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
-import simple_modflow.modflow.mf6.mfsimbase as mf
-from simple_modflow.modflow.mf6.headsplus import HeadsPlus as hp
+from simple_modflow.modflow.mf6.boundary_support import (
+    build_cell_id,
+    filter_inactive_cells,
+    merge_stress_period_data,
+    normalize_grid_type,
+)
 from simple_modflow.modflow.mf6.boundaries import Boundaries
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
 import pickle
-from simple_modflow.modflow.mf6.boundaries import Boundaries
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
 
 class GHB(Boundaries):
+    """Build MF6 GHB stress-period data from GIS features and per-period values."""
 
     def __init__(
             self,
-            model: mf.SimulationBase = None,
+            model: SimulationBase = None,
             vor: Vor = None,
             shp_gpkg: Path = None,
             line_shp: Path = None,
@@ -32,29 +43,37 @@ class GHB(Boundaries):
             idomain_path: Path = None,
             verbose: bool = False,
     ):
-        """
-        class to set up general head boundaries for a modflow 6 model
-        :param model: model to which this boundary applies
-        :param vor: voronoi grid to which this boundary apples
-        :param shp_gpkg: path to shapefile that holds the polygons for the boundary
-        :param uid: the field name in the shapefile attribute table that holds the unique ids, one for each polygon
-        :param crs: coordinate reference system for boundary, should be integer EPSG code.
-        :param fields: field names corresponding to the data in the shapefile attribute table or Excel file
-        :param fields_to_pers: list of indices of length nper that correspond to the fields in fields.
-        Defines which field should be used for each stress period.
-        :param xlsx: path to an Excel file which contains the recharge data for each uid polygon.
-        optional, otherwise data will be taken from the shapefile attribute table. if excel is provided,
-        it will be prioritized over the shapefile
+        """Parameters
+        ----------
+        model
+            Model to which the boundary applies.
+        vor
+            Grid helper used to intersect geometry with model cells.
+        shp_gpkg
+            Polygon geometry source for the GHB features.
+        line_shp
+            Optional line geometry source for line-based GHB segments.
+        uid
+            Unique-id field in the geometry attributes.
+        crs
+            EPSG code for the geometry inputs.
+        fields, fields_to_pers
+            Attribute fields and period mapping for time-varying values.
+        xlsx
+            Optional spreadsheet overriding geometry-attribute values.
+        idomain, idomain_path
+            Optional active-domain definition used to filter inactive cells.
+        verbose
+            Whether to emit extra progress/details while building data.
         """
         super().__init__(model, vor, shp_gpkg, uid, crs, idomain=idomain, idomain_path=idomain_path)
-        self.bound_type = 'rch'
-        self._fields = fields
-        # self.fields_to_pers = fields_to_pers
+        self.bound_type = 'ghb'
+        self._field_names = fields
         self.xlsx = xlsx
         self._cell_ids = None
         self._fields = None
         self.uid = uid
-        self._fields_to_pers = None
+        self._fields_to_pers = fields_to_pers
         self._recharges = None
         self.line_shp = line_shp
         self._line_ghb = None
@@ -82,7 +101,7 @@ class GHB(Boundaries):
                 assert len(fields) == len(
                     self.gdf), 'number of rows in excel file and number of shapefile polys must be the equal'
             else:
-                fields = self.gdf.loc[:, self._fields]
+                fields = self.gdf.loc[:, self._field_names]
             self._fields = fields
         return self._fields
 
@@ -92,12 +111,12 @@ class GHB(Boundaries):
         In the case that the length of the fields is not long enough, -1 is added which tells the class to fill the
         remaining stress periods with the last field value given"""
         if self._fields_to_pers is None:
-            fields_to_pers = self.fields_to_pers.copy()
-            fields_to_pers: list = [] if fields_to_pers is None else fields_to_pers
-            for per in range(self.nper):
-                if len(fields_to_pers) <= per:
-                    fields_to_pers.append(-1)
-            self._fields_to_pers = fields_to_pers
+            self._fields_to_pers = []
+        fields_to_pers = list(self._fields_to_pers)
+        for per in range(self.nper):
+            if len(fields_to_pers) <= per:
+                fields_to_pers.append(-1)
+        self._fields_to_pers = fields_to_pers
         return self._fields_to_pers
 
     @property
@@ -162,20 +181,21 @@ class GHB(Boundaries):
         updated_ghb_dict = self.add_to_dict(existing_ghb_dict, to_add)
         return updated_ghb_dict
 
-    def get_from_poly(
+    def from_polygons(
             self,
             grid_type: str = 'disv',
             fields: dict = None,
             elev_reference: dict = None,
-            reference_offset: float | int = 0
+            reference_offset: float | int = 0,
+            register_regions: bool = False,
+            region_name_prefix: str | None = None,
+            combined_region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
     ) -> dict:
-        """
-        Get a data dict for a flopy model from a polygon file (shapefile or geopackage)
-        :param grid_type: default is 'disv'
-        :param fields: a dict of custom field names in the geometry file, including 'name', 'height_over_btm',
-        'conductance', 'layer', elevation', and 'min_elev'
-        :return: a dict of drn data
-        """
+        """Build GHB stress-period data from polygon features on the builder."""
+        elev_reference = {} if elev_reference is None else elev_reference
+        grid_type = normalize_grid_type(grid_type)
         nper = self.nper if self.nper is not None else 1
         if fields is None:
             fields = {
@@ -187,34 +207,38 @@ class GHB(Boundaries):
                 'min_elev': 'min_elev',
             }
         # get bottoms of model layers from voronoi grid
-        if self.vor is not None:
-            lyr_botms = self.vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
-        else:
-            lyr_botms = None
-        # check to see if the geodataframe index has already been set to the correct 'name' field
-        if self.gdf.index.name != fields['name']:
-            gdf = self.gdf.set_index(fields['name'])
-        else:
-            gdf = self.gdf
-        cells = self.edge_intersections.to_dict()
+        vor = self._require_vor()
+        lyr_botms = vor.gdf_topbtm.drop('geometry', axis='columns').iloc[:, 1:]
+        region_cellids_by_name: dict[str, list] = {}
+        region_layers_by_name: dict[str, int] = {}
+        region_geometries_by_name: dict[str, object] = {}
+        region_metadata_by_name: dict[str, dict] = {}
         boundary_dict = {}
 
         for per in range(nper):  # FOR EACH STRESS PERIOD
             cell_list = []
 
-            for name, cell_nums in cells.items():  # FOR EACH GHB BOUDARY
-                boundary_height = gdf.loc[name, fields['height_over_btm']]
-                conductance = gdf.loc[name, fields['conductance']]
-                layer = gdf.loc[name, fields['layer']]
-                min_elev = gdf.loc[name, fields['min_elev']]
-                elev = gdf.loc[name, fields['elevation']]
+            for name, row, active_cells in self.iter_polygon_boundary_features(
+                name_field=fields["name"],
+                edges_only=True,
+            ):  # FOR EACH GHB BOUDARY
+                boundary_height = row[fields['height_over_btm']]
+                conductance = row[fields['conductance']]
+                layer = row[fields['layer']]
+                min_elev = row[fields['min_elev']]
+                elev = row[fields['elevation']]
                 min_elev = min_elev if min_elev is not None else 0
                 # adjust layer number for zero-based indexing
                 layer_idx = layer - 1
+                region_layers_by_name[name] = layer_idx
+                region_geometries_by_name[name] = row['geometry']
+                region_metadata_by_name[name] = {
+                    "reference_offset": reference_offset,
+                    "uses_elev_reference": name in elev_reference,
+                }
+                region_cellids_by_name.setdefault(name, [])
 
-                for cell in cell_nums:  # FOR EACH CELL IN THIS GHB BOUNDARY
-                    if self.inactive_cells is not None and cell in self.inactive_cells:
-                        continue  # skip this if this cell is inactive
+                for cell in active_cells:  # FOR EACH CELL IN THIS GHB BOUNDARY
                     if elev is not None:
                         if name in elev_reference.keys():
                             try:
@@ -236,34 +260,41 @@ class GHB(Boundaries):
                         boundary_elev = lyr_botms.iloc[cell, layer_idx]
                     if boundary_elev < min_elev:
                         boundary_elev = min_elev  # adjusts drn elev to minimum allowed if specified
-                    cell_id = cell if grid_type == 'disu' else (layer_idx, cell)
+                    cell_id = build_cell_id(cell, grid_type=grid_type, layer=layer_idx)
                     cell_list.append([cell_id, boundary_elev, conductance])
+                    region_cellids_by_name[name].append(cell_id)
 
             boundary_dict[per] = cell_list
 
+        if register_regions and region_cellids_by_name:
+            self._register_boundary_groups(
+                cellids_by_name=region_cellids_by_name,
+                layers_by_name=region_layers_by_name,
+                geometries_by_name=region_geometries_by_name,
+                region_name_prefix=region_name_prefix or self.bound_type,
+                combined_region_name=combined_region_name,
+                tags=region_tags,
+                metadata_by_name=region_metadata_by_name,
+                overwrite=overwrite_regions,
+            )
+
         return boundary_dict
+
+    def from_vector(self, **kwargs) -> dict:
+        """Alias for :meth:`from_polygons` for shapefile/geopackage workflows."""
+
+        return self.from_polygons(**kwargs)
+
+    def get_from_poly(self, **kwargs) -> dict:
+        """Backward-compatible alias for :meth:`from_polygons`."""
+
+        return self.from_polygons(**kwargs)
 
     def add_to_dict(self, existing_dict: dict = None, dict_to_add: dict = None):
         assert self._verify_boundary_dict_structure(dict_to_add), 'dict to add not valid or missing'
-        if existing_dict is not None:
-            # 'period_list' is a list of list. Each list starts with a cellid and then the boundary data for that cellid
-            for per, period_list in dict_to_add.items():
-                # dict where cellids are the keys and boundary data are the values
-                cell_dict = {cell_list[0]: cell_list[1:] for cell_list in period_list}
-                ex_cell_dict = {ex_cell_list[0]: ex_cell_list[1:] for ex_cell_list in existing_dict[per]}
-                # check if existing boundary dict already contains the cells to add/update
-                for cell_id, vals in cell_dict.items():
-                    if cell_id in ex_cell_dict.keys():
-                        # if so, warns about overwrite, then overwrites
-                        print(f'{cell_id} already in dict. Overwriting to {vals}.')
-                    ex_cell_dict[cell_id] = vals
-                # convert dict back to a nested list for this period in the loop
-                existing_dict[per] = [[k] + v for k, v in ex_cell_dict.items()]
-
-        else:
-            existing_dict = dict_to_add
-        # existing_dict has now been updated...so return
-        return existing_dict
+        if existing_dict is None:
+            return dict_to_add
+        return merge_stress_period_data(existing_dict, dict_to_add, replace=True)
 
     def _verify_boundary_dict_structure(self, dict_to_check: dict = None):
         if dict_to_check is None:
@@ -276,6 +307,10 @@ class GHB(Boundaries):
                 assert k[1] in range(self.model.modelgrid.ncpl), f'cell {k} not a valid model cell id'
             # TODO check cell_dict values based on type of boundary
         return True
+
+
+# Preferred alias for the vector-driven general-head-boundary builder API.
+GHBFromVector = GHB
 
 
 if __name__ == '__main__':

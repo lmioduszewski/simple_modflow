@@ -15,4 +15,6 @@ __pycache__/
 *.vor
 
 bak/
-tests/
+.pytest_cache/
+.pytest-tmp/
+.pytest-work/

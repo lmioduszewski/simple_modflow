@@ -1,9 +1,11 @@
+"""Streamflow-routing helpers for building MF6 SFR packages from geometries."""
+
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from .voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 import flopy
 import geopandas as gpd
@@ -11,12 +13,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pickle
-
-"""def flatten(l):
-    return [item for sublist in l for item in sublist]"""
+from simple_modflow.modflow.mf6.simulation.packages import _maybe_create_package_artifact
+from simple_modflow.modflow.mf6.surface_water_validation import validate_sfr_configuration
 
 
 class SFR:
+    """Build SFR reach, connection, and period data from stream geometries."""
 
     def __init__(
             self,
@@ -34,37 +36,62 @@ class SFR:
             stream_end_conn: dict = None,
             div_prioritization='FRACTION',
             mover: bool = False,
-            add_sfr=True
+            add_sfr=True,
+            validate: bool = True,
+            nper=None,
+            register_regions: bool = False,
+            region_name_prefix: str | None = None,
+            combined_region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
+            artifact_id: str | None = None,
+            artifact_catalog=None,
+            artifact_description: str | None = None,
+            artifact_tags: list[str] | None = None,
+            artifact_metadata: dict | None = None,
+            artifact_overwrite: bool = False,
     ):
-
+        """Parameters
+        ----------
+        model
+            Target model that will receive the SFR package.
+        vor
+            Grid helper used to map stream geometries to cells.
+        stream_paths
+            Path(s) to line geometries describing stream centerlines.
+        reverse_streams
+            Optional per-stream flags indicating whether stream ordering should be reversed.
+        inflows
+            Optional stress-period inflow data by reach.
+        diversion_perioddata
+            Optional explicit diversion period records.
+        widths, gradients, mannings, streambed_k, streambed_thickness
+            Per-reach or scalar hydraulic properties.
+        stream_end_conn
+            Optional rules describing how stream endpoints connect/divert.
+        div_prioritization
+            Diversion prioritization mode such as ``FRACTION``.
+        mover
+            Whether the resulting SFR package should be MVR-compatible.
+        add_sfr
+            Whether to build and attach the SFR package immediately.
+        validate
+            Whether to validate the derived SFR reach and connection inputs
+            before attaching the package.
+        nper
+            Optional explicit number of stress periods.
+        register_regions, region_name_prefix, combined_region_name, region_tags,
+        overwrite_regions
+            Optional region-registration behavior for stream footprints/reaches.
+        artifact_id, artifact_catalog, artifact_description, artifact_tags,
+        artifact_metadata, artifact_overwrite
+            Optional reusable-artifact capture settings.
         """
-
-        :param model: modflow model file, should be class SimulationBase
-        :param vor: voronoi grid file, should be class Vor
-        :param stream_paths:
-        :param reverse_streams:
-        :param inflows: dict where keys are all stress periods and each value is a list of tuples with len 2. Each tuple = (reach id, inflow)
-        :param widths: list of reach widths for the stream. List length must be equal to the number of reaches. Or may provide single value (int or float) for all reaches
-        :param gradients: list of reach gradients. List length must be equal to the number of reaches or may provide single float to apply to all reaches
-        :param mannings: list of reach manning's coefficients, or a float to apply to all reaches
-        :param streambed_k:
-        :param streambed_thickness:
-        :param stream_end_conn: dict of sfr connections. Keys are stream indexes with an end point connection, values
-        are tuples of length three. First tuple values are the stream indexes that connect to that end point. Second
-        tuple values indicate which end of the key stream connects to the value stream, +1 for the start of the stream,
-        -1 for the end of the stream. Thirds tuple values indicates whether the stream end upstream or downstream of
-        the connecting stream, +1 for downstream and -1 for upstream, e.g. {0: (1, -1, 1)} means the 'end' end of
-        stream 0 connects to and is downstream of stream 1.
-        :param mover: boolean value to indicate that this SFR package can be used with the water mover (MVR) package
-        :param div_prioritization: Defines how the diversion splits water, defaults to 'FRACTION'.
-        :param add_sfr: boolean. True adds sfr package to model on sfr class init.
-        """
-        print('initing sfr')
-
         self.valid_packagedata_names = ['rlen', 'rwid', 'rgrd', 'rtp', 'rbth', 'rhk',
                                         'man', 'ncon', 'ustrf', 'ndv', 'aux', 'boundname']
         self.model = model
         self.vor = model.vor if vor is None else vor
+        self.nper = nper if model is None else model.nper
         self.stream_paths = stream_paths
         self.reverse_streams = reverse_streams if reverse_streams else [False] * len(stream_paths)
         self._stream_cells = None
@@ -88,6 +115,19 @@ class SFR:
         self.mover = mover
         self._rno_to_cell_dict = None
         self._diversions = None
+        self.register_regions = register_regions
+        self.region_name_prefix = region_name_prefix
+        self.combined_region_name = combined_region_name
+        self.region_tags = [] if region_tags is None else list(region_tags)
+        self.overwrite_regions = overwrite_regions
+        self.artifact_id = artifact_id
+        self.artifact_catalog = artifact_catalog
+        self.artifact_description = artifact_description
+        self.artifact_tags = artifact_tags
+        self.artifact_metadata = artifact_metadata
+        self.artifact_overwrite = artifact_overwrite
+        self.package_artifact = None
+        self.validation_report = None
 
         self.inflows = inflows
         self.widths = widths
@@ -100,8 +140,9 @@ class SFR:
         self.diversion_perioddata = diversion_perioddata
 
         if add_sfr:
-            print('Adding SFR package')
-            self.add_sfr()
+            self.add_sfr(validate=validate)
+        elif self.register_regions and self.model is not None:
+            self.register_model_regions()
 
     @property
     def stream_geoms(self):
@@ -288,7 +329,7 @@ class SFR:
     def perioddata(self):
         """builds perioddata for input to flopy sfr class"""
         perioddata = {}
-        for per in range(self.model.nper):
+        for per in range(self.nper):
             perioddata[per] = []
         if self.inflows is not None:
             for per in perioddata.keys():
@@ -309,7 +350,7 @@ class SFR:
             return data
         assert isinstance(data, dict), f'data must be dict type'
         assert name.upper() in allowed_settings, f'Perioddata {name} must be one of {allowed_settings}'
-        assert all(per in data.keys() for per in list(range(self.model.nper))), 'data keys must be valid stress periods'
+        assert all(per in data.keys() for per in list(range(self.nper))), 'data keys must be valid stress periods'
         for per, settings in data.items():
             assert isinstance(settings, list), f'setting for {name} must be a list of tuples or lists'
             new_settings = []
@@ -318,7 +359,7 @@ class SFR:
                 new_data = (setting[0], name.upper(), *setting[1:])
                 new_settings.append(new_data)
             data[per] = new_settings
-        assert len(data) >= self.model.nper
+        assert len(data) >= self.nper
         return data
 
     def package_data_validator(
@@ -336,7 +377,6 @@ class SFR:
             assert len(data) == self.num_streams, f'length of {name} list must be equal to number of streams'
             for stream_idx in range(self.num_streams):
                 if isinstance(data[stream_idx], int | float):
-                    print(f'Stream {stream_idx}: applying {data[stream_idx]} for {name} to all reaches')
                     data[stream_idx] = [data[stream_idx] for _ in range(self.num_reach_cells_per_stream[stream_idx])]
                 assert self.num_reach_cells_per_stream[stream_idx] == len(data[stream_idx]), \
                     (f'length of {name} data for stream {stream_idx} must be equal to number of stream cells:'
@@ -496,7 +536,12 @@ class SFR:
     def packagedata(self):
         return self.get_reach_data()
 
-    def add_sfr(self):
+    def add_sfr(self, validate: bool = True):
+        """Build and optionally validate the MF6 SFR package before attaching it."""
+
+        self.validation_report = validate_sfr_configuration(self)
+        if validate:
+            self.validation_report.raise_for_errors("SFR validation failed.")
         # Create the SFR package
         self.sfr = flopy.mf6.ModflowGwfsfr(
             self.model.gwf,
@@ -519,7 +564,66 @@ class SFR:
             diversions=self.diversions
         )
         self.model._sfr_input = self
+        if self.register_regions and self.model is not None:
+            self.register_model_regions()
+        self.package_artifact = _maybe_create_package_artifact(
+            self.model,
+            "sfr",
+            artifact_id=self.artifact_id,
+            artifact_catalog=self.artifact_catalog,
+            artifact_description=self.artifact_description,
+            artifact_tags=self.artifact_tags,
+            artifact_metadata=self.artifact_metadata,
+            artifact_overwrite=self.artifact_overwrite,
+        )
         return self.sfr
+
+    def register_model_regions(self):
+        if self.model is None:
+            return {}
+
+        registered = {}
+        combined_cellids = []
+        for stream_idx, stream_cells in enumerate(self.stream_cells):
+            if not stream_cells:
+                continue
+            base_name = None
+            if self.stream_paths is not None and stream_idx < len(self.stream_paths):
+                base_name = Path(self.stream_paths[stream_idx]).stem
+            if base_name is None:
+                base_name = f"stream_{stream_idx}"
+            region_name = (
+                f"{self.region_name_prefix}_{base_name}"
+                if self.region_name_prefix is not None
+                else base_name
+            )
+            cellids = [(0, cell) for cell in stream_cells]
+            geometry = self.stream_geoms[stream_idx]
+            metadata = {"stream_index": stream_idx, "num_reaches": len(stream_cells)}
+            registered[base_name] = self.model.add_region_from_cells(
+                region_name,
+                cellids=cellids,
+                category="boundary",
+                package="sfr",
+                tags=self.region_tags or ["sfr"],
+                geometry=geometry,
+                metadata=metadata,
+                overwrite=self.overwrite_regions,
+            )
+            combined_cellids.extend(cellids)
+
+        if self.combined_region_name is not None and combined_cellids:
+            registered["__combined__"] = self.model.add_region_from_cells(
+                self.combined_region_name,
+                cellids=combined_cellids,
+                category="boundary",
+                package="sfr",
+                tags=self.region_tags or ["sfr"],
+                metadata={"num_streams": self.num_streams},
+                overwrite=self.overwrite_regions,
+            )
+
+        return registered
 
     def get_reach_lens(self):
         # vor_idxs = [sorted(cells) for cells in self.stream_cells]

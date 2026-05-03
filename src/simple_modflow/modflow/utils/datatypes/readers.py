@@ -2,44 +2,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
-    from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 import pandas as pd
 from pathlib import Path
 import shapely as shp
 import geopandas as gpd
-
-"""def read_gpkg(filepath: Path, crs="EPSG:2927"):
-    layer = True
-    layer_num = 0
-    layers = []
-    num_features = 0
-
-    while layer:
-        try:
-            f = gpd.read_file(filepath, layer=layer_num)
-            for g in f.geometry:
-                if isinstance(g, shp.Polygon):
-                    layers.append(g)
-                    num_features += 1
-                elif isinstance(g, shp.MultiPolygon):
-                    for geom in g.geoms:
-                        layers.append(geom)
-                        num_features += 1
-                else:
-                    raise TypeError(f'Unexpected geometry type: {type(g)}')
-            layer_num += 1
-        # if layer number is not valid, end the while loop by setting layer to False
-        except:
-            layer = False
-            if layer_num == 0:
-                raise ValueError('Could not read gpkg file')
-
-    print(f'Imported {num_features} features from {filepath}')
-    gdf = gpd.GeoDataFrame(geometry=layers, crs=crs)
-
-    return gdf"""
 
 
 def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
@@ -221,3 +190,33 @@ def assign_voronoi_cells_to_layers(
         return gdf, layer_columns
     else:
         return gdf
+
+
+def explode_dxf_polygons(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Take a GeoDataFrame of CAD-imported geometries (often GeometryCollections /
+    invalid multipolygons) and return a cleaned GeoDataFrame of single-part polygons.
+    """
+
+    # 0) Drop Z/M values (DXF often has 3D coords)
+    gdf = gdf.copy()
+    gdf.geometry = gdf.geometry.map(shp.force_2d)
+
+    # 1) Fix invalid geometries (splits weird rings into valid Polygons/MultiPolygons)
+    gdf.geometry = gdf.geometry.map(shp.make_valid)
+
+    # 2) Extract polygonal parts from GeometryCollections or MultiPolygons
+    parts, rows = [], []
+    for row in gdf.itertuples(index=False):
+        geom = row.geometry
+        for part in shp.get_parts(geom):
+            if part.geom_type in ("Polygon", "MultiPolygon"):
+                parts.append(part)
+                rows.append(row)
+
+    poly_gdf = gpd.GeoDataFrame(rows, geometry=parts, crs=gdf.crs)
+
+    # 3) Explode multipolygons into single polygons
+    poly_gdf = poly_gdf.explode(index_parts=False, ignore_index=True)
+
+    return poly_gdf

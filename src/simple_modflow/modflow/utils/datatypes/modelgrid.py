@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 
 def create_custom_modelgrid(model: SimulationBase, BaseGridClass):

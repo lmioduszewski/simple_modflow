@@ -1,0 +1,7 @@
+[model_spec]
+name = "small_feature_model"
+grid_ref = "optimized_small_voronoi"
+tags = []
+
+[regions]
+default_regions = []

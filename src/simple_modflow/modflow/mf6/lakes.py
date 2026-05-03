@@ -1,3 +1,8 @@
+"""Lake-related helpers for MF6 LAK package setup and lake-table generation."""
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
 import geopandas as gpd
 from shapely.geometry import Polygon
 import rasterio
@@ -6,12 +11,14 @@ from rasterio.mask import mask
 from skimage.measure import find_contours
 from rasterio.features import geometry_mask
 from pathlib import Path
-from simple_modflow.modflow.mf6.voronoiplus import VoronoiGridPlus as Vor
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase
 from flopy.mf6.modflow.mfutllaktab import ModflowUtllaktab
 from simple_modflow import read_gpkg, read_shp_gpkg
 import pandas as pd
 from simple_modflow.modflow.utils.gdal import get_contours_as_polygons
+
+if TYPE_CHECKING:
+    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+    from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 
 class LakeAreaVolumeRelationship:
@@ -212,10 +219,12 @@ class LakeAreaVolumeRelationship:
 
 
 class LakeConnectionData:
+    """Build LAK connection data from lake polygons and a model grid."""
 
     def __init__(
             self,
             vor: Vor,
+            model: SimulationBase = None,
             paths: Path | list = None,
             bed_leakance: list | int = 1,
             only_layer=None,
@@ -225,13 +234,39 @@ class LakeConnectionData:
             min_sep=0.1,
             only_vertical: bool = False,
             verbose: bool = False,
-            lake_bathymetry: list[Path] = None
+            lake_bathymetry: list[Path] = None,
+            register_regions: bool = False,
+            region_name_prefix: str | None = None,
+            combined_region_name: str | None = None,
+            region_tags: list[str] | None = None,
+            overwrite_regions: bool = False,
     ):
+        """Parameters
+        ----------
+        vor
+            Grid helper used to intersect lake polygons with cells.
+        model
+            Optional parent model used for region registration and metadata.
+        paths
+            Lake polygon paths or a list of them.
+        bed_leakance
+            Bed leakance per lake or scalar value.
+        only_layer
+            Optional layer restriction for lake connections.
+        horizontal_connections
+            Optional extra horizontal connection rules by lake.
+        use_reconciled_surfaces, alt_surface_df, min_sep, only_vertical
+            Controls for how connection elevations are derived and filtered.
+        verbose
+            Whether to emit extra progress/details.
+        lake_bathymetry
+            Optional list of bathymetry geometry/data paths.
+        register_regions, region_name_prefix, combined_region_name, region_tags,
+        overwrite_regions
+            Optional region-registration behavior for lake footprints.
         """
-
-        """
-
         self.vor = vor
+        self.model = model
         self._lakes = None
         self._num_lakes = None
         self._bed_leakance = None
@@ -244,6 +279,11 @@ class LakeConnectionData:
         self.only_vertical = only_vertical
         self.verbose = verbose
         self._lake_bathymetry = None
+        self.register_regions = register_regions
+        self.region_name_prefix = region_name_prefix
+        self.combined_region_name = combined_region_name
+        self.region_tags = [] if region_tags is None else list(region_tags)
+        self.overwrite_regions = overwrite_regions
 
         self.lake_bathymetry = lake_bathymetry
         if paths:
@@ -326,9 +366,7 @@ class LakeConnectionData:
 
     @bed_leakance.setter
     def bed_leakance(self, val) -> list:
-        if isinstance(val, int):
-            if self.num_lakes > 1:
-                print(f'applying bed leakance {val} to all {self.num_lakes} lakes')
+        if isinstance(val, (int, float)):
             self._bed_leakance = [val] * self.num_lakes
         elif isinstance(val, list):
             assert len(val) == self.num_lakes, f'list must have {self.num_lakes} leakance values, one for each lake'
@@ -475,16 +513,7 @@ class LakeConnectionData:
 
         return connection_data"""
 
-    def get_connection_data(self):
-        """
-        Generates connection data for the MODFLOW 6 LAK package using:
-        - Voronoi grid geometry
-        - Raster-defined lake bathymetry
-        - Model layer surfaces (top/bottoms)
-
-        Horizontal connections now assume lake surface ≈ model top, and horizontal flow
-        is possible at or below the bathymetry depth if the adjacent cell has material at that depth.
-        """
+    """def get_connection_data(self):
 
         # Get top and bottom elevations for each layer in each Voronoi cell
         elev_df = self.alt_surface_df if self.alt_surface_df is not None else (
@@ -535,17 +564,273 @@ class LakeConnectionData:
                     bathy_df, start_index, adjacent_cells, connection_data
                 )
 
+        return connection_data"""
+
+    def get_connection_data(self):
+        """
+        Generates connection data for the MODFLOW 6 LAK package.
+
+        Modes:
+          1. Bathymetry mode:
+             - self.lake_bathymetry is provided (list[Path]).
+             - Uses raster bathymetry per cell.
+
+          2. Rectangular facility mode:
+             - self.lake_bathymetry is None
+             - self.horizontal_connections is provided as {lake_num: [top, btm]}.
+             - Represents a box-shaped infiltration facility (vault, trench, etc.).
+
+        If neither bathymetry nor horizontal_connections is provided, raises an error.
+        """
+
+        # Get reconciled or raw top/bottom surfaces per cell
+        elev_df = self.alt_surface_df if self.alt_surface_df is not None else (
+            self.vor.reconcile_surfaces(df=self.vor.gdf_topbtm, min_sep=self.min_sep)
+            if self.use_reconciled_surfaces else self.vor.gdf_topbtm
+        )
+
+        # Mode 1: bathymetry raster(s) provided
+        if self.lake_bathymetry is not None:
+            connection_data = self._get_connection_data_with_bathy(elev_df)
+            self._register_model_regions()
+            return connection_data
+
+        # Mode 2: rectangular facility with constant top/btm per lake
+        if self.horizontal_connections is not None:
+            connection_data = self._get_connection_data_rectangular(elev_df)
+            self._register_model_regions()
+            return connection_data
+
+        raise ValueError(
+            "LakeConnectionData requires either `lake_bathymetry` (bathymetry mode) "
+            "or `horizontal_connections={lake_num: [top, btm]}` (rectangular mode)."
+        )
+
+    def _register_model_regions(self):
+        if not self.register_regions or self.model is None:
+            return {}
+        if self.lakes_vor_cells is None:
+            return {}
+
+        registered = {}
+        combined_cellids = []
+        lake_geometries = list(self.lakes.geometry)
+        for lake_num, lake_cells in self.lakes_vor_cells.items():
+            base_name = f"lake_{lake_num}"
+            region_name = (
+                f"{self.region_name_prefix}_{base_name}"
+                if self.region_name_prefix is not None
+                else base_name
+            )
+            cellids = [(0, cell) for cell in lake_cells]
+            geometry = lake_geometries[lake_num] if lake_num < len(lake_geometries) else None
+            metadata = {"lake_num": lake_num, "num_cells": len(lake_cells)}
+            registered[base_name] = self.model.add_region_from_cells(
+                region_name,
+                cellids=cellids,
+                category="boundary",
+                package="lak",
+                tags=self.region_tags or ["lak"],
+                geometry=geometry,
+                metadata=metadata,
+                overwrite=self.overwrite_regions,
+            )
+            combined_cellids.extend(cellids)
+
+        if self.combined_region_name is not None and combined_cellids:
+            registered["__combined__"] = self.model.add_region_from_cells(
+                self.combined_region_name,
+                cellids=combined_cellids,
+                category="boundary",
+                package="lak",
+                tags=self.region_tags or ["lak"],
+                metadata={"num_lakes": self.num_lakes},
+                overwrite=self.overwrite_regions,
+            )
+
+        return registered
+
+    def _get_connection_data_with_bathy(self, elev_df: pd.DataFrame):
+        """
+        Bathymetry-based connection data.
+
+        Uses:
+          - lake_bathymetry rasters sampled at Voronoi centroids
+          - reconciled (or raw) layer surfaces in elev_df
+        """
+
+        labels = [f'lake {i}' for i in range(self.num_lakes)]
+        bathy_df = self.vor.get_raster_vals_at_centroids(
+            self.lake_bathymetry, labels
+        )
+
+        connection_data = []
+
+        for lake_num, lake_cells in self.lakes_vor_cells.items():
+            print(f"Generating connections (bathy mode) for lake {lake_num}")
+            lak_idx_conn = 0
+
+            for cell_id in lake_cells:
+                lake_elev = bathy_df.loc[cell_id, f'lake {lake_num}']
+                start_index = sum(self.vor.iac[:cell_id])
+                cell_layers = elev_df.loc[cell_id]
+
+                # Vertical connection: layer that contains the bathymetry elevation
+                layer = self._find_layer_containing_elev(cell_layers, lake_elev)
+                if layer is not None:
+                    conn = self._build_vertical_connection(
+                        lake_num, lak_idx_conn, cell_id, layer, lake_elev
+                    )
+                    connection_data.append(conn)
+                    lak_idx_conn += 1
+
+                if self.only_vertical:
+                    continue
+
+                adjacent_cells = self.vor.find_adjacent_cells(cell_id)
+
+                # Optional custom horizontals override bathymetry-generated horizontals
+                if self.horizontal_connections and lake_num in self.horizontal_connections:
+                    (cell_id, lak_idx_conn, only_layer, bed_leakance,
+                     connection_data, elev_df, start_index, lake_num) = self.custom_horizontal_connections(
+                        cell_id, lak_idx_conn, self.only_layer, self.bed_leakance,
+                        connection_data, elev_df, start_index, lake_num, adjacent_cells
+                    )
+                    continue
+
+                # Default horizontal connections using bathymetry
+                lak_idx_conn, connection_data = self._build_horizontal_connections(
+                    lake_num, cell_id, lak_idx_conn, elev_df,
+                    bathy_df, start_index, adjacent_cells, connection_data
+                )
+
         return connection_data
+
+    def _get_connection_data_rectangular(self, elev_df: pd.DataFrame):
+        """
+        Rectangular infiltration facility mode.
+
+        Uses self.horizontal_connections[lake_num] == [top, btm]
+        as a constant vertical extent for the lake in all intersecting Voronoi cells.
+
+        No bathymetry raster is required.
+        """
+
+        connection_data = []
+
+        for lake_num, lake_cells in self.lakes_vor_cells.items():
+            print(f"Generating connections (rectangular mode) for lake {lake_num}")
+
+            lake_top, lake_botm = self.horizontal_connections[lake_num]
+            lak_idx_conn = 0
+
+            for cell_id in lake_cells:
+                start_index = sum(self.vor.iac[:cell_id])
+                cell_layers = elev_df.loc[cell_id]
+
+                # Choose layer containing the middle of the facility
+                mid_elev = 0.5 * (lake_top + lake_botm)
+                layer = self._find_layer_containing_elev(cell_layers, mid_elev)
+
+                if layer is not None:
+                    # Vertical connection spans full facility thickness (within that layer interval)
+                    vconn = [
+                        lake_num, lak_idx_conn, (layer, cell_id), 'VERTICAL',
+                        self.bed_leakance[lake_num],
+                        lake_botm,   # bottom of vertical connection
+                        lake_top,    # top of vertical connection
+                        0.0, 0.0
+                    ]
+                    connection_data.append(vconn)
+                    lak_idx_conn += 1
+
+                if self.only_vertical:
+                    continue
+
+                adjacent_cells = self.vor.find_adjacent_cells(cell_id)
+
+                lak_idx_conn, connection_data = self._build_horizontal_connections_rectangular(
+                    lake_num, cell_id, lak_idx_conn, elev_df,
+                    start_index, adjacent_cells, connection_data,
+                    lake_top, lake_botm
+                )
+
+        return connection_data
+
+    def _build_horizontal_connections_rectangular(
+            self, lake_num, cell_id, conn_idx, elev_df,
+            start_index, adjacent_cells, connection_data,
+            lake_top, lake_botm
+    ):
+        """
+        Horizontal connections for a rectangular facility with constant [lake_top, lake_botm].
+
+        Intersects the facility interval [lake_botm, lake_top] with
+        the model layer intervals in the lake cell.
+
+        One horizontal connection per (adjacent cell × layer) where there is overlap.
+        """
+
+        cell_layers = self._clean_layer_series(elev_df.loc[cell_id])
+
+        for idx, ja_cell in enumerate(adjacent_cells):
+            conn_len = self.vor.cl12[start_index + idx + 1]
+            conn_width = self.vor.hwva[start_index + idx + 1]
+
+            for k in range(len(cell_layers) - 1):
+                if self.only_layer is not None and k != self.only_layer:
+                    continue
+
+                cell_top = cell_layers.iloc[k]
+                cell_botm = cell_layers.iloc[k + 1]
+
+                # Overlap of [cell_botm, cell_top] with [lake_botm, lake_top]
+                botm = max(cell_botm, lake_botm)
+                top = min(cell_top, lake_top)
+
+                if top <= botm:
+                    # No vertical overlap of facility with this layer in this cell
+                    continue
+
+                hconn = [
+                    lake_num, conn_idx, (k, cell_id), 'HORIZONTAL',
+                    self.bed_leakance[lake_num], botm, top, conn_len, conn_width
+                ]
+                connection_data.append(hconn)
+                conn_idx += 1
+
+                # Uncomment this if you want only the first intersecting layer per adjacent cell:
+                # break
+
+        return conn_idx, connection_data
+
+    def _clean_layer_series(self, layers: pd.Series) -> pd.Series:
+        """
+        Drop non-layer entries (e.g., 'geometry') and return a Series
+        where positional indices correspond to layer surfaces.
+        """
+        if 'geometry' in layers.index:
+            layers = layers.drop(labels='geometry')
+        return layers
 
     def _find_layer_containing_elev(self, layers: pd.Series, elev: float) -> int | None:
         """
         Return the index of the model layer that contains the specified elevation.
+
+        Uses positional indexing and drops 'geometry' if present.
         """
-        for layer in range(len(layers) - 1):
-            if self.only_layer is not None and layer != self.only_layer:
+        layers = self._clean_layer_series(layers)
+
+        for k in range(len(layers) - 1):
+            if self.only_layer is not None and k != self.only_layer:
                 continue
-            if layers[layer] >= elev >= layers[layer + 1]:
-                return layer
+
+            top_k = layers.iloc[k]
+            bot_k = layers.iloc[k + 1]
+
+            if top_k >= elev >= bot_k:
+                return k
+
         return None
 
     def _build_vertical_connection(self, lake_num, conn_idx, cell_id, layer, elev):
@@ -562,13 +847,11 @@ class LakeConnectionData:
             start_index, adjacent_cells, connection_data
     ):
         """
-        Build horizontal lake connections under the assumption that lake surface ≈ model top.
-        Horizontal flow is only allowed if:
-          - the lake bottom falls within a valid layer in the lake cell,
-          - and the adjacent cell has material at or below that lake bottom elevation.
+        Bathymetry-based horizontal connections.
         """
+
+        cell_layers = self._clean_layer_series(elev_df.loc[cell_id])
         cell_lake_botm = bathy_df.loc[cell_id, f'lake {lake_num}']
-        cell_layers = elev_df.loc[cell_id]  # layer elevs for this lake cell
 
         for idx, ja_cell in enumerate(adjacent_cells):
             ja_lake_botm = bathy_df.loc[ja_cell, f'lake {lake_num}']
@@ -579,36 +862,34 @@ class LakeConnectionData:
             if cell_lake_botm >= ja_lake_botm:
                 continue
 
-            for layer in range(len(cell_layers) - 1):  # assumes elev_df has a geometry column (hence minus one)
-                # skip layer if horiz conn for only another layer is specified
-                if self.only_layer is not None and layer != self.only_layer:
+            for k in range(len(cell_layers) - 1):
+                if self.only_layer is not None and k != self.only_layer:
                     continue
 
-                cell_top = cell_layers[layer]
-                cell_botm = cell_layers[layer + 1]
+                cell_top = cell_layers.iloc[k]
+                cell_botm = cell_layers.iloc[k + 1]
 
-                # if cell layer top is greater than lake botm, then lake exists in cell
                 if cell_top >= cell_lake_botm:  # lake in cell
 
-                    # get horiz conn botm
-                    if cell_botm >= cell_lake_botm:  # if cell botm is greater or equal to lake botm
-                        botm = cell_botm  # then botm of horiz conn equals cell botm
+                    # horiz conn botm
+                    if cell_botm >= cell_lake_botm:
+                        botm = cell_botm
                     else:
-                        botm = cell_lake_botm  # else botm of horiz conn equals lake botm at cell
+                        botm = cell_lake_botm
 
-                    # get horiz conn top
-                    if cell_top < ja_lake_botm:  # if cell top is below adjacent cell lake botm
-                        top = cell_top  # then top of horiz conn is cell top
+                    # horiz conn top
+                    if cell_top < ja_lake_botm:
+                        top = cell_top
                     else:
-                        top = ja_lake_botm  # else top of horiz conn is the lake botm in adjacent cell
+                        top = ja_lake_botm
 
                     conn = [
-                        lake_num, conn_idx, (layer, cell_id), 'HORIZONTAL',
+                        lake_num, conn_idx, (k, cell_id), 'HORIZONTAL',
                         self.bed_leakance[lake_num], botm, top, conn_len, conn_width
                     ]
                     connection_data.append(conn)
                     conn_idx += 1
-                    break  # One connection per layer per adjacent cell
+                    break  # one connection per layer per adjacent cell
 
         return conn_idx, connection_data
 
@@ -635,21 +916,37 @@ class LakePackageData:
             self._packagedata = self.get_packagedata()
         return self._packagedata
 
+    @staticmethod
+    def _normalize_connection_rows(connectiondata):
+        """
+        Accept either:
+        - a flat list of LAK connection rows, or
+        - the legacy extra-nested form: [connection_rows]
+        """
+        if connectiondata is None:
+            return []
+        if len(connectiondata) == 1 and isinstance(connectiondata[0], list):
+            first = connectiondata[0]
+            if len(first) > 0 and isinstance(first[0], list):
+                return first
+        return connectiondata
+
     def get_packagedata(self):
 
         nlakes = self.nlakes
         starting_stage = self.starting_stage
-        connectiondata = self.connectiondata
+        connectiondata = self._normalize_connection_rows(self.connectiondata)
         boundnames = self.boundnames
         packagedata = []
 
         # get the number of connections for each lake
-        length_conns = pd.DataFrame(connectiondata[0]).loc[:, 0].value_counts()
+        length_conns = pd.DataFrame(connectiondata).loc[:, 0].value_counts()
 
-        print(f'Getting package data for {nlakes} lakes')
         for lake in range(nlakes):
             lak_starting_stage = starting_stage[lake]
             lak_packagedata = [lake, lak_starting_stage, length_conns[lake]]
+            if boundnames is not None:
+                lak_packagedata.append(boundnames[lake])
             packagedata.append(lak_packagedata)
 
         return packagedata
@@ -669,6 +966,31 @@ class LakePeriodData:
             status=None,
             nper=1
     ):
+        """
+        Initializes the instance with simulation parameters for a lake management model.
+        This allows configuration of lakes, their water stages, and impacts from rainfall,
+        evaporation, and human activities such as water withdrawals or inflows.
+
+        :param model: Simulates the base model. Default is None.
+        :type model: SimulationBase, optional
+        :param lake_ids: List of IDs representing individual lakes. Default is [0].
+        :type lake_ids: list, optional
+        :param lake_stages: Initial water stages for the lakes. Default is None.
+        :type lake_stages: list, optional
+        :param rainfall_rates: Rates of rainfall affecting the lakes. Default is None.
+        :type rainfall_rates: list, optional
+        :param evaporation_rates: Rates of evaporation affecting the lake water. Default is None.
+        :type evaporation_rates: list, optional
+        :param withdrawals: Amounts of water withdrawn from each lake. Default is None.
+        :type withdrawals: list, optional
+        :param inflow: External water inputs into the lakes. Default is None.
+        :type inflow: list, optional
+        :param status: Operational status or metadata for the lakes. Default is None.
+        :type status: list, optional
+        :param nper: Number of periods for simulation. Defaults to the model's `nper` if
+            model is not None; otherwise, defaults to 1.
+        :type nper: int, optional
+        """
         self.model = model
         self.lake_ids = lake_ids
         self.lake_stages = lake_stages
@@ -741,7 +1063,7 @@ class LakePeriodData:
                         laksetting.extend(['evaporation', evaporation_rates[period]])
                     if withdrawals is not None:
                         laksetting.extend(['withdrawal', withdrawals[period]])
-                    if inflow is not None:
+                    if inflow is not None and len(inflow) >= period + 1:
                         laksetting.extend(['inflow', inflow[period]])
                     if status is not None:
                         laksetting.extend(['status', status[period]])
