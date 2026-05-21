@@ -556,8 +556,14 @@ def build_lak_budget_result_table(
     Notes
     -----
     The returned table carries one row per LAK budget record together with the
-    matching LAK connection metadata. When ``value_name == "q"``, the helper
-    also computes:
+    matching LAK connection metadata. Per the MF6 I/O specification, the LAK
+    package-output ``GWF`` budget rows do not include the input-file ``iconn``
+    identifier. They only carry the lake id, the connected GWF cell/node id, the
+    simulated flow ``q``, and the auxiliary ``FLOW-AREA`` value. The helper
+    therefore reconstructs connection-specific metadata by matching repeated
+    LAK budget rows back to ``lak.connectiondata`` in the written within-cell
+    connection order for each stress period. When ``value_name == "q"``, the
+    helper also computes:
 
     - ``flow_area``: the physical lake-groundwater exchange area
     - ``q_per_area``: ``q / flow_area`` with units of length per time
@@ -606,14 +612,80 @@ def build_lak_budget_result_table(
     connectiondata["cell"] = pd.to_numeric(connectiondata["cell"], errors="coerce").astype(int)
     if "claktype" in connectiondata.columns:
         connectiondata["claktype"] = connectiondata["claktype"].astype("string").str.upper()
-    connectiondata["row_order"] = connectiondata.groupby(["lake", "layer", "cell"]).cumcount()
-    frame["row_order"] = frame.groupby(["lake", "layer", "cell"]).cumcount()
-    frame = frame.merge(
-        connectiondata,
-        on=["lake", "layer", "cell", "row_order"],
-        how="left",
-        suffixes=("", "_conn"),
-    )
+    raw_iconn_column = next((column for column in frame.columns if str(column).lower() == "iconn"), None)
+    use_raw_iconn = False
+    if raw_iconn_column is not None and "iconn" in connectiondata.columns:
+        if raw_iconn_column != "iconn":
+            frame = frame.rename(columns={raw_iconn_column: "iconn"})
+        frame["iconn"] = pd.to_numeric(frame["iconn"], errors="coerce").astype("Int64")
+        grouped_iconn = frame.groupby(["lake", "layer", "cell"], dropna=False)["iconn"]
+        ambiguous_groups = (grouped_iconn.size() > 1) & (grouped_iconn.nunique(dropna=False) <= 1)
+        use_raw_iconn = not bool(ambiguous_groups.any())
+
+    if use_raw_iconn:
+        frame = frame.merge(
+            connectiondata,
+            on=["lake", "iconn"],
+            how="left",
+            suffixes=("", "_conn"),
+        )
+        for column in ("layer", "cell"):
+            connection_column = f"{column}_conn"
+            if connection_column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("Int64").combine_first(
+                    pd.to_numeric(frame[connection_column], errors="coerce").astype("Int64")
+                )
+                frame = frame.drop(columns=[connection_column])
+        if "lake_conn" in frame.columns:
+            frame = frame.drop(columns=["lake_conn"])
+    else:
+        connectiondata["_connection_row_order"] = connectiondata.groupby(["lake", "layer", "cell"]).cumcount()
+        frame_group_keys = ["lake", "layer", "cell"]
+        if "kstpkper" in frame.columns:
+            # LAK package-output budgets repeat the same lake-cell connection rows
+            # every time step, so the within-cell row order must reset each period.
+            frame_group_keys = ["kstpkper", *frame_group_keys]
+        frame["_connection_row_order"] = frame.groupby(frame_group_keys).cumcount()
+        frame = frame.merge(
+            connectiondata,
+            on=["lake", "layer", "cell", "_connection_row_order"],
+            how="left",
+            suffixes=("", "_conn"),
+        )
+        frame = frame.drop(columns=["_connection_row_order"], errors="ignore")
+
+    fallback_columns = [
+        column
+        for column in ("iconn", "claktype", "bedleak", "belev", "telev", "connlen", "connwidth")
+        if column in connectiondata.columns
+    ]
+    if fallback_columns:
+        fallback_source = connectiondata.loc[:, ["lake", "layer", "cell", *fallback_columns]].copy()
+
+        def _first_non_null(series: pd.Series):
+            values = series.dropna()
+            if values.empty:
+                return np.nan
+            return values.iloc[0]
+
+        fallback_agg: dict[str, object] = {}
+        for column in fallback_columns:
+            if column == "claktype":
+                fallback_agg[column] = _aggregate_hover_strings
+            else:
+                fallback_agg[column] = _first_non_null
+        fallback = (
+            fallback_source.groupby(["lake", "layer", "cell"], dropna=False, as_index=False)
+            .agg(fallback_agg)
+            .rename(columns={column: f"{column}_fallback" for column in fallback_columns})
+        )
+        frame = frame.merge(fallback, on=["lake", "layer", "cell"], how="left")
+        for column in fallback_columns:
+            fallback_column = f"{column}_fallback"
+            if column in frame.columns and fallback_column in frame.columns:
+                missing_mask = frame[column].isna()
+                frame.loc[missing_mask, column] = frame.loc[missing_mask, fallback_column]
+                frame = frame.drop(columns=[fallback_column])
 
     if value_name == "q":
         flow_area = pd.to_numeric(frame.get("FLOW-AREA"), errors="coerce")
@@ -705,6 +777,367 @@ def build_lak_q_map_payload(
     return values.tolist(), hover
 
 
+def _normalize_term_filter(term: str | Iterable[str] | None) -> list[str] | None:
+    """Normalize an optional package-budget term filter to uppercase strings."""
+
+    if term is None:
+        return None
+    if isinstance(term, str):
+        return [str(term).strip().upper()]
+    return [str(value).strip().upper() for value in term]
+
+
+def build_lak_budget_term_table(
+    model: "SimulationBase",
+    *,
+    term: str | Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Return one canonical long dataframe of LAK package-output budget terms.
+
+    Parameters
+    ----------
+    model
+        Live or file-backed model object exposing ``model.outputs.lak.bud``.
+    term
+        Optional single term or iterable of terms to include. Terms follow the
+        MF6 package-output identifiers such as ``"GWF"``, ``"STORAGE"``, or
+        ``"TO-MVR"``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One normalized long table containing a ``term`` column and common
+        metadata columns such as ``model``, ``package``, ``kstpkper``, ``per``,
+        ``lake``, and ``q``. Term-specific columns, including ``layer``,
+        ``cell``, ``iconn``, ``FLOW-AREA``, ``flow_area``, ``q_per_area``, and
+        ``VOLUME``, are preserved when applicable.
+    """
+
+    requested_terms = _normalize_term_filter(term)
+    available_terms = [str(value).strip().upper() for value in model.outputs.lak.bud.types]
+    selected_terms = available_terms if requested_terms is None else [value for value in available_terms if value in requested_terms]
+
+    frames: list[pd.DataFrame] = []
+    for current_term in selected_terms:
+        if current_term == "GWF":
+            frame = build_lak_budget_result_table(model, budget_text=current_term, value_name="q").copy()
+            if frame.empty:
+                continue
+            frame["term"] = current_term
+            frame["node"] = pd.to_numeric(frame.get("lake"), errors="coerce")
+            frames.append(frame)
+            continue
+
+        raw = model.outputs.lak.bud.get(current_term)
+        if not isinstance(raw, pd.DataFrame):
+            continue
+        frame = raw.copy()
+        if frame.empty:
+            continue
+        frame = _normalize_budget_nodes(frame)
+        frame["model"] = model.name
+        frame["package"] = "lak"
+        frame["term"] = current_term
+        if "kstpkper" in frame.columns:
+            frame["kstpkper"] = frame["kstpkper"].apply(lambda values: tuple(int(value) for value in values))
+            frame["per"] = frame["kstpkper"].apply(lambda values: int(values[1]))
+        else:
+            frame["kstpkper"] = [(0, 0)] * len(frame)
+            frame["per"] = 0
+        if "node" in frame.columns:
+            frame["lake"] = pd.to_numeric(frame["node"], errors="coerce").astype("Int64")
+        if current_term == "FLOW-JA-FACE" and "node2" in frame.columns:
+            frame["lake_to"] = pd.to_numeric(frame["node2"], errors="coerce").astype("Int64")
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "package",
+                "term",
+                "kstpkper",
+                "per",
+                "lake",
+                "q",
+            ]
+        )
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    ordered = [
+        "model",
+        "package",
+        "term",
+        "kstpkper",
+        "per",
+        "lake",
+        "lake_to",
+        "layer",
+        "cell",
+        "iconn",
+        "claktype",
+        "q",
+        "FLOW-AREA",
+        "flow_area",
+        "q_per_area",
+        "VOLUME",
+        "node",
+        "node2",
+    ]
+    remaining = [column for column in combined.columns if column not in ordered]
+    return combined[[column for column in ordered if column in combined.columns] + remaining]
+
+
+def build_sfr_budget_term_table(
+    model: "SimulationBase",
+    *,
+    term: str | Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Return one canonical long dataframe of SFR package-output budget terms."""
+
+    requested_terms = _normalize_term_filter(term)
+    available_terms = [str(value).strip().upper() for value in model.outputs.sfr.bud.types]
+    selected_terms = available_terms if requested_terms is None else [value for value in available_terms if value in requested_terms]
+    reach_table = build_sfr_reach_table(model)
+
+    frames: list[pd.DataFrame] = []
+    for current_term in selected_terms:
+        raw = model.outputs.sfr.bud.get(current_term)
+        if not isinstance(raw, pd.DataFrame):
+            continue
+        frame = raw.copy()
+        if frame.empty:
+            continue
+        frame = _normalize_budget_nodes(frame)
+        frame["model"] = model.name
+        frame["package"] = "sfr"
+        frame["term"] = current_term
+        if "kstpkper" in frame.columns:
+            frame["kstpkper"] = frame["kstpkper"].apply(lambda values: tuple(int(value) for value in values))
+            frame["per"] = frame["kstpkper"].apply(lambda values: int(values[1]))
+        else:
+            frame["kstpkper"] = [(0, 0)] * len(frame)
+            frame["per"] = 0
+        if "node" in frame.columns:
+            frame["reach"] = pd.to_numeric(frame["node"], errors="coerce").astype("Int64")
+        if "reach" in frame.columns:
+            frame = frame.merge(reach_table, on="reach", how="left", suffixes=("", "_pkg"))
+        if current_term == "GWF" and "node2" in frame.columns:
+            node2_numeric = pd.to_numeric(frame["node2"], errors="coerce")
+            layers: list[int | None] = []
+            cells: list[int | None] = []
+            for node_value in node2_numeric.tolist():
+                if pd.isna(node_value):
+                    layers.append(None)
+                    cells.append(None)
+                    continue
+                layer_id, cell_id = model.node_to_lni[int(node_value)]
+                layers.append(int(layer_id))
+                cells.append(int(cell_id))
+            frame["layer"] = layers
+            frame["cell"] = cells
+            q_series = pd.to_numeric(frame.get("q"), errors="coerce")
+            rlen_series = pd.to_numeric(frame.get("rlen"), errors="coerce")
+            frame["q_per_length"] = np.where(rlen_series > 0.0, q_series / rlen_series, np.nan)
+        elif current_term == "FLOW-JA-FACE" and "node2" in frame.columns:
+            frame["reach_to"] = pd.to_numeric(frame["node2"], errors="coerce").astype("Int64")
+        else:
+            if "q" in frame.columns and "rlen" in frame.columns:
+                q_series = pd.to_numeric(frame.get("q"), errors="coerce")
+                rlen_series = pd.to_numeric(frame.get("rlen"), errors="coerce")
+                frame["q_per_length"] = np.where(rlen_series > 0.0, q_series / rlen_series, np.nan)
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "package",
+                "term",
+                "kstpkper",
+                "per",
+                "reach",
+                "q",
+            ]
+        )
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    ordered = [
+        "model",
+        "package",
+        "term",
+        "kstpkper",
+        "per",
+        "reach",
+        "reach_to",
+        "layer",
+        "cell",
+        "rlen",
+        "distance_start",
+        "distance_mid",
+        "distance_end",
+        "q",
+        "FLOW-AREA",
+        "q_per_length",
+        "VOLUME",
+        "node",
+        "node2",
+    ]
+    remaining = [column for column in combined.columns if column not in ordered]
+    return combined[[column for column in ordered if column in combined.columns] + remaining]
+
+
+def build_surface_water_exchange_cell_table(
+    model: "SimulationBase",
+    *,
+    per: int | None = None,
+    layer: int | Iterable[int] | None = None,
+    include: str | Iterable[str] | None = None,
+    lak_connection_type: str | Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Return a normalized cell table combining SFR and LAK exchange intensity.
+
+    Notes
+    -----
+    The returned ``exchange_intensity`` field uses one unified physical sign
+    convention across packages:
+
+    - positive = groundwater gaining into the surface-water feature
+    - negative = surface-water losing to groundwater
+
+    LAK already follows that convention in its raw ``q`` sign, so
+    ``exchange_intensity = q_per_area``. SFR reports ``GWF`` exchange from the
+    stream to groundwater, so its sign is inverted here and
+    ``exchange_intensity = -q_per_length``.
+    """
+
+    include_packages = _normalize_surface_water_include(include)
+    frames: list[pd.DataFrame] = []
+
+    if "sfr" in include_packages:
+        sfr_frame = build_sfr_budget_result_table(model, budget_text="SFR", value_name="q")
+        sfr_frame = _filter_normalized_table(sfr_frame, per=per, layer=layer, cells=None)
+        if not sfr_frame.empty:
+            grouped = (
+                sfr_frame.groupby(["model", "package", "per", "layer", "cell"], as_index=False)
+                .agg(q=("q", "sum"), rlen=("rlen", "sum"))
+            )
+            grouped["q_per_length"] = np.where(
+                pd.to_numeric(grouped["rlen"], errors="coerce") > 0.0,
+                pd.to_numeric(grouped["q"], errors="coerce") / pd.to_numeric(grouped["rlen"], errors="coerce"),
+                np.nan,
+            )
+            grouped["exchange_intensity"] = -pd.to_numeric(grouped["q_per_length"], errors="coerce")
+            grouped["source"] = "sfr"
+            frames.append(grouped)
+
+    if "lak" in include_packages:
+        lak_frame = build_lak_budget_result_table(model, budget_text="GWF", value_name="q")
+        lak_frame = _filter_normalized_table(lak_frame, per=per, layer=layer, cells=None)
+        connection_types = _normalize_connection_type_filter(lak_connection_type)
+        if connection_types is not None and "claktype" in lak_frame.columns:
+            lak_frame = lak_frame.loc[
+                lak_frame["claktype"].astype("string").str.upper().isin(connection_types)
+            ].copy()
+        if not lak_frame.empty:
+            grouped = (
+                lak_frame.groupby(["model", "package", "per", "layer", "cell"], as_index=False)
+                .agg(q=("q", "sum"), flow_area=("flow_area", "sum"))
+            )
+            grouped["q_per_area"] = np.where(
+                pd.to_numeric(grouped["flow_area"], errors="coerce") > 0.0,
+                pd.to_numeric(grouped["q"], errors="coerce") / pd.to_numeric(grouped["flow_area"], errors="coerce"),
+                np.nan,
+            )
+            grouped["exchange_intensity"] = pd.to_numeric(grouped["q_per_area"], errors="coerce")
+            grouped["source"] = "lak"
+            frames.append(grouped)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "package",
+                "per",
+                "layer",
+                "cell",
+                "source",
+                "exchange_intensity",
+            ]
+        )
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    for column in ("per", "layer", "cell"):
+        if column in combined.columns:
+            combined[column] = pd.to_numeric(combined[column], errors="coerce").astype(int)
+    return combined.reset_index(drop=True)
+
+
+def build_surface_water_q_map_payload(
+    frame: pd.DataFrame,
+    *,
+    ncpl: int,
+    per: int | None,
+    layer: int | None,
+    multiplier: float = 1.0,
+    fill_value: float = 0.0,
+) -> tuple[list[float], dict[str, list]]:
+    """Convert combined SFR/LAK exchange rows into one shared cell map payload."""
+
+    full_index = pd.Index(range(int(ncpl)), name="cell")
+    if frame.empty:
+        values = pd.Series(float(fill_value), index=full_index, name="exchange_intensity")
+        hover = {
+            "Package": ["" for _ in full_index],
+            "Period": [per for _ in full_index],
+            "Layer": [layer for _ in full_index],
+            "Cell": full_index.to_list(),
+            "surface_water_exchange": values.tolist(),
+            "sfr_exchange": [0.0 for _ in full_index],
+            "lak_exchange": [0.0 for _ in full_index],
+        }
+        return values.tolist(), hover
+
+    selected = frame.copy()
+    selected["exchange_intensity"] = pd.to_numeric(selected["exchange_intensity"], errors="coerce")
+    grouped = selected.groupby("cell", dropna=False)
+    values = grouped["exchange_intensity"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
+    values = values.fillna(float(fill_value)).astype(float) * float(multiplier)
+
+    sfr_component = (
+        selected.loc[selected["source"] == "sfr"]
+        .groupby("cell", dropna=False)["exchange_intensity"]
+        .sum(min_count=1)
+        .reindex(full_index, fill_value=0.0)
+        .astype(float)
+        * float(multiplier)
+    )
+    lak_component = (
+        selected.loc[selected["source"] == "lak"]
+        .groupby("cell", dropna=False)["exchange_intensity"]
+        .sum(min_count=1)
+        .reindex(full_index, fill_value=0.0)
+        .astype(float)
+        * float(multiplier)
+    )
+
+    hover: dict[str, list] = {
+        "Package": grouped["package"].agg(_aggregate_hover_strings).reindex(full_index, fill_value="").tolist()
+        if "package" in selected.columns
+        else ["" for _ in full_index],
+        "Period": [per for _ in full_index],
+        "Layer": [layer for _ in full_index],
+        "Cell": full_index.to_list(),
+        "Record Count": grouped.size().reindex(full_index, fill_value=0).astype(int).tolist(),
+        "surface_water_exchange": values.tolist(),
+        "sfr_exchange": sfr_component.tolist(),
+        "lak_exchange": lak_component.tolist(),
+    }
+    if "source" in selected.columns:
+        hover["source"] = grouped["source"].agg(_aggregate_hover_strings).reindex(full_index, fill_value="").tolist()
+    return values.tolist(), hover
+
+
 def build_lak_connection_table(model: "SimulationBase") -> pd.DataFrame:
     """Return a normalized table of LAK connection geometry by cell.
 
@@ -786,6 +1219,46 @@ def build_lak_connection_table(model: "SimulationBase") -> pd.DataFrame:
     return connectiondata[ordered + remaining]
 
 
+def build_lak_stage_change_table(model: "SimulationBase") -> pd.DataFrame:
+    """Return per-transition lake-stage changes for one model.
+
+    The resulting table carries one row per lake and stress-period transition,
+    with ``stage_change = stage_1 - stage_0``.
+    """
+
+    stage_table = build_lak_stage_result_table(model)
+    if stage_table.empty:
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "package",
+                "lake",
+                "per0",
+                "per1",
+                "stage0",
+                "stage1",
+                "stage_change",
+            ]
+        )
+
+    base = (
+        stage_table.sort_values(["lake", "per", "cell"])
+        .drop_duplicates(["lake", "per"])
+        .loc[:, ["model", "package", "lake", "per", "stage"]]
+        .reset_index(drop=True)
+    )
+    shifted = base.copy()
+    shifted["per0"] = shifted["per"]
+    shifted["stage0"] = shifted["stage"]
+    shifted["per1"] = shifted.groupby("lake")["per0"].shift(-1)
+    shifted["stage1"] = shifted.groupby("lake")["stage0"].shift(-1)
+    shifted = shifted.dropna(subset=["per1", "stage1"]).copy()
+    shifted["per0"] = shifted["per0"].astype(int)
+    shifted["per1"] = shifted["per1"].astype(int)
+    shifted["stage_change"] = shifted["stage1"].astype(float) - shifted["stage0"].astype(float)
+    return shifted[["model", "package", "lake", "per0", "per1", "stage0", "stage1", "stage_change"]]
+
+
 def summarize_input_table(frame: pd.DataFrame, *, label: str, value_columns: list[str]) -> pd.DataFrame:
     """Build a compact one-row summary for a normalized input table."""
 
@@ -851,6 +1324,49 @@ def _symmetric_color_limit(values: Iterable[float]) -> float:
     if finite.size == 0:
         return 0.0
     return float(np.max(np.abs(finite)))
+
+
+def _blue_white_red_diverging_colorscale() -> list[list[object]]:
+    """Return a blue-white-red diverging colorscale for signed maps."""
+
+    return [
+        [0.0, "#1f77b4"],
+        [0.5, "#ffffff"],
+        [1.0, "#d62728"],
+    ]
+
+
+def _normalize_connection_type_filter(connection_type: str | Iterable[str] | None) -> list[str] | None:
+    """Normalize optional connection-type filters to uppercase labels."""
+
+    if connection_type is None:
+        return None
+    if isinstance(connection_type, str):
+        return [connection_type.upper()]
+    normalized: list[str] = []
+    for value in connection_type:
+        normalized.append(str(value).upper())
+    return normalized
+
+
+def _normalize_surface_water_include(include: str | Iterable[str] | None) -> list[str]:
+    """Normalize selected surface-water package names."""
+
+    if include is None:
+        normalized = ["sfr", "lak"]
+    elif isinstance(include, str):
+        normalized = [include.lower()]
+    else:
+        normalized = [str(value).lower() for value in include]
+    allowed = {"sfr", "lak"}
+    invalid = sorted(set(normalized) - allowed)
+    if invalid:
+        raise ValueError(f"Unsupported surface-water packages: {invalid!r}. Allowed values are 'sfr' and 'lak'.")
+    ordered: list[str] = []
+    for package_name in ("sfr", "lak"):
+        if package_name in normalized:
+            ordered.append(package_name)
+    return ordered
 
 
 def _infer_default_value_column(frame: pd.DataFrame, *, fallback: str | None = None) -> str:
@@ -1422,6 +1938,12 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         accepted for API compatibility but is not used because the
         normalization is computed explicitly from total exchange and total
         length per cell.
+
+        MF6 reports the SFR ``GWF`` budget term as flow from the stream reach
+        to the groundwater cell. Positive values therefore indicate losing
+        reaches, while negative values indicate gaining reaches. The default
+        diverging colorscale is defined explicitly so gaining reaches plot blue
+        and losing reaches plot red.
         """
 
         del agg
@@ -1447,7 +1969,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "RdBu",
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
 
@@ -1522,6 +2044,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         per: int | None = None,
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
+        connection_type: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
         """Return the normalized LAK budget-result table for selected rows."""
 
@@ -1530,13 +2053,18 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             budget_text=self.budget_text,
             value_name=self.value_name,
         )
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        frame = _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        connection_types = _normalize_connection_type_filter(connection_type)
+        if connection_types is not None and "claktype" in frame.columns:
+            frame = frame.loc[frame["claktype"].astype("string").str.upper().isin(connection_types)].copy()
+        return frame.reset_index(drop=True)
 
     def map(
         self,
         *,
         per: int = 0,
         layer: int = 0,
+        connection_type: str | Iterable[str] | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
@@ -1554,7 +2082,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         """
 
         del agg
-        selected = self.get(per=per, layer=layer)
+        selected = self.get(per=per, layer=layer, connection_type=connection_type)
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_lak_q_map_payload(
             selected,
@@ -1580,7 +2108,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             **kwargs,
         )
 
-    def budget_summary(self, *, per: int | None = None) -> pd.DataFrame:
+    def budget_summary(
+        self,
+        *,
+        per: int | None = None,
+        connection_type: str | Iterable[str] | None = None,
+    ) -> pd.DataFrame:
         """Summarize lake-groundwater exchange by period, lake, and connection type.
 
         Parameters
@@ -1597,7 +2130,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             and connection type.
         """
 
-        frame = self.get(per=per)
+        frame = self.get(per=per, connection_type=connection_type)
         if frame.empty:
             return pd.DataFrame(
                 columns=[
@@ -1631,6 +2164,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         self,
         *,
         per: int = 0,
+        connection_type: str | Iterable[str] | None = None,
         value: str = "q_per_area",
         ax=None,
         return_fig: bool = True,
@@ -1650,7 +2184,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             If ``True``, return the created figure.
         """
 
-        summary = self.budget_summary(per=per)
+        summary = self.budget_summary(per=per, connection_type=connection_type)
         if value not in {"q", "flow_area", "q_per_area"}:
             raise ValueError("value must be one of: 'q', 'flow_area', 'q_per_area'")
         if ax is None:
@@ -1808,6 +2342,98 @@ class LakStageResultsExplorer(StageResultsExplorer):
         ax.set_title("LAK stage by stress period")
         ax.set_xlabel("Stress Period")
         ax.set_ylabel("Stage")
+        ax.legend()
+        fig.tight_layout()
+        if return_fig:
+            return fig
+        return None
+
+
+class LakStageChangeExplorer:
+    """Explorer for lake-stage changes between stress periods."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    def get(
+        self,
+        *,
+        lake: int | None = None,
+        per0: int | None = None,
+        per1: int | None = None,
+    ) -> pd.DataFrame:
+        """Return stage-change rows for one lake and/or one period transition."""
+
+        frame = build_lak_stage_change_table(self.model)
+        if lake is not None:
+            frame = frame.loc[frame["lake"] == int(lake)].copy()
+        if per0 is not None:
+            frame = frame.loc[frame["per0"] == int(per0)].copy()
+        if per1 is not None:
+            frame = frame.loc[frame["per1"] == int(per1)].copy()
+        return frame.reset_index(drop=True)
+
+    def summary(self) -> pd.DataFrame:
+        """Return a compact summary of available lake-stage transitions."""
+
+        frame = self.get()
+        if frame.empty:
+            return pd.DataFrame(
+                [
+                    {
+                        "label": "lak.results.stage_change",
+                        "records": 0,
+                        "lakes": 0,
+                        "transitions": 0,
+                    }
+                ]
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "label": "lak.results.stage_change",
+                    "records": int(len(frame)),
+                    "lakes": int(frame["lake"].nunique()),
+                    "transitions": int(frame[["per0", "per1"]].drop_duplicates().shape[0]),
+                }
+            ]
+        )
+
+    def plot_timeseries(
+        self,
+        *,
+        lake: int | None = None,
+        ax=None,
+        return_fig: bool = True,
+    ):
+        """Plot stage changes by stress-period transition."""
+
+        frame = self.get(lake=lake)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4))
+        else:
+            fig = ax.figure
+        if frame.empty:
+            ax.set_title("LAK stage change by transition")
+            ax.set_xlabel("Stress-Period Transition")
+            ax.set_ylabel("Stage Change")
+            if return_fig:
+                return fig
+            return None
+
+        for lake_id, group in frame.groupby("lake", dropna=False):
+            labels = [f"{int(start)}->{int(end)}" for start, end in zip(group["per0"], group["per1"], strict=False)]
+            ax.plot(
+                labels,
+                group["stage_change"].astype(float).to_numpy(),
+                marker="o",
+                linewidth=2.0,
+                label=f"Lake {int(lake_id)}",
+            )
+        ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
+        ax.set_title("LAK stage change by transition")
+        ax.set_xlabel("Stress-Period Transition")
+        ax.set_ylabel("Stage Change")
         ax.legend()
         fig.tight_layout()
         if return_fig:
@@ -2035,6 +2661,12 @@ class LakResultsNamespace:
         return LakStageResultsExplorer(self.model)
 
     @property
+    def stage_change(self) -> LakStageChangeExplorer:
+        """Return the lake-stage change explorer."""
+
+        return LakStageChangeExplorer(self.model)
+
+    @property
     def q(self) -> LakBudgetResultsExplorer:
         """Return the lake-groundwater exchange result explorer.
 
@@ -2044,6 +2676,475 @@ class LakResultsNamespace:
 
         budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q")
         return LakBudgetResultsExplorer(self.model, budget_text=budget_text, value_name=value_name)
+
+
+class LakBudgetNamespace:
+    """Namespace for all MF6-defined LAK package-output budget terms."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    @property
+    def types(self) -> list[str]:
+        """Return the LAK package-output budget term names available for the model."""
+
+        return [str(value).strip().upper() for value in self.model.outputs.lak.bud.types]
+
+    def get(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        lakes: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return a canonical long dataframe of LAK package-output budget terms.
+
+        Parameters
+        ----------
+        term
+            Optional LAK budget term filter such as ``"GWF"`` or
+            ``["GWF", "STORAGE"]``.
+        per
+            Optional zero-based stress period filter.
+        lakes
+            Optional iterable of zero-based lake ids to keep.
+        """
+
+        frame = build_lak_budget_term_table(self.model, term=term)
+        if per is not None:
+            if isinstance(per, Iterable) and not isinstance(per, (str, bytes)):
+                periods = {int(value) for value in per}
+                frame = frame.loc[frame["per"].isin(periods)].copy()
+            else:
+                frame = frame.loc[frame["per"] == int(per)].copy()
+        if lakes is not None and "lake" in frame.columns:
+            if isinstance(lakes, Iterable) and not isinstance(lakes, (str, bytes)):
+                lake_ids = {int(value) for value in lakes}
+            else:
+                lake_ids = {int(lakes)}
+            frame = frame.loc[pd.to_numeric(frame["lake"], errors="coerce").isin(lake_ids)].copy()
+        return frame.reset_index(drop=True)
+
+    def summary(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        lakes: Iterable[int] | None = None,
+        by: list[str] | tuple[str, ...] | None = None,
+    ) -> pd.DataFrame:
+        """Summarize LAK budget terms by selected grouping columns."""
+
+        frame = self.get(term=term, per=per, lakes=lakes)
+        group_columns = list(by) if by is not None else ["per", "lake", "term"]
+        if frame.empty:
+            columns = [*group_columns, "record_count", "q"]
+            return pd.DataFrame(columns=columns)
+
+        agg_map: dict[str, tuple[str, str]] = {
+            "record_count": ("q", "size"),
+            "q": ("q", "sum"),
+        }
+        for column in ("FLOW-AREA", "flow_area", "VOLUME"):
+            if column in frame.columns:
+                agg_map[column] = (column, "sum")
+        summary = (
+            frame.groupby(group_columns, dropna=False, as_index=False)
+            .agg(**agg_map)
+            .sort_values(group_columns)
+            .reset_index(drop=True)
+        )
+        if "flow_area" in summary.columns:
+            summary["q_per_area"] = np.where(
+                pd.to_numeric(summary["flow_area"], errors="coerce") > 0.0,
+                pd.to_numeric(summary["q"], errors="coerce") / pd.to_numeric(summary["flow_area"], errors="coerce"),
+                np.nan,
+            )
+        return summary
+
+    def wide(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        lakes: Iterable[int] | None = None,
+        index: list[str] | tuple[str, ...] = ("per", "lake"),
+        values: str = "q",
+    ) -> pd.DataFrame:
+        """Pivot the long LAK budget table to one wide table by term."""
+
+        frame = self.get(term=term, per=per, lakes=lakes)
+        if frame.empty:
+            return pd.DataFrame()
+        if values not in frame.columns:
+            raise KeyError(f"LAK budget column {values!r} was not found.")
+        wide = (
+            frame.pivot_table(
+                index=list(index),
+                columns="term",
+                values=values,
+                aggfunc="sum",
+            )
+            .sort_index()
+        )
+        if isinstance(wide.columns, pd.Index):
+            wide.columns.name = None
+        return wide.reset_index()
+
+    @property
+    def gwf(self) -> "PackageBudgetTermExplorer":
+        """Lake-groundwater exchange term helper."""
+
+        return PackageBudgetTermExplorer(self, term="GWF", label="lak.budget.gwf")
+
+    @property
+    def storage(self) -> "PackageBudgetTermExplorer":
+        """Lake storage term helper."""
+
+        return PackageBudgetTermExplorer(self, term="STORAGE", label="lak.budget.storage")
+
+    @property
+    def runoff(self) -> "PackageBudgetTermExplorer":
+        """Lake runoff term helper."""
+
+        return PackageBudgetTermExplorer(self, term="RUNOFF", label="lak.budget.runoff")
+
+    @property
+    def rainfall(self) -> "PackageBudgetTermExplorer":
+        """Lake rainfall term helper."""
+
+        return PackageBudgetTermExplorer(self, term="RAINFALL", label="lak.budget.rainfall")
+
+    @property
+    def evaporation(self) -> "PackageBudgetTermExplorer":
+        """Lake evaporation term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EVAPORATION", label="lak.budget.evaporation")
+
+    @property
+    def withdrawal(self) -> "PackageBudgetTermExplorer":
+        """Lake withdrawal term helper."""
+
+        return PackageBudgetTermExplorer(self, term="WITHDRAWAL", label="lak.budget.withdrawal")
+
+    @property
+    def constant(self) -> "PackageBudgetTermExplorer":
+        """Lake constant-stage balancing flow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="CONSTANT", label="lak.budget.constant")
+
+    @property
+    def ext_inflow(self) -> "PackageBudgetTermExplorer":
+        """External inflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EXT-INFLOW", label="lak.budget.ext_inflow")
+
+    @property
+    def ext_outflow(self) -> "PackageBudgetTermExplorer":
+        """External outflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EXT-OUTFLOW", label="lak.budget.ext_outflow")
+
+    @property
+    def from_mvr(self) -> "PackageBudgetTermExplorer":
+        """Mover inflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="FROM-MVR", label="lak.budget.from_mvr")
+
+    @property
+    def to_mvr(self) -> "PackageBudgetTermExplorer":
+        """Mover outflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="TO-MVR", label="lak.budget.to_mvr")
+
+    @property
+    def flow_ja_face(self) -> "PackageBudgetTermExplorer":
+        """Lake-to-lake outlet/routing connection term helper."""
+
+        return PackageBudgetTermExplorer(self, term="FLOW-JA-FACE", label="lak.budget.flow_ja_face")
+
+    @property
+    def auxiliary(self) -> "PackageBudgetTermExplorer":
+        """Auxiliary term helper."""
+
+        return PackageBudgetTermExplorer(self, term="AUXILIARY", label="lak.budget.auxiliary")
+
+    @property
+    def mvr(self) -> "PackageBudgetTermExplorer":
+        """Combined mover-related LAK budget term helper."""
+
+        return PackageBudgetTermExplorer(self, term=["FROM-MVR", "TO-MVR"], label="lak.budget.mvr")
+
+    @property
+    def lake_fluxes(self) -> "PackageBudgetTermExplorer":
+        """Combined lake-level flux term helper excluding connection-level GWF rows."""
+
+        return PackageBudgetTermExplorer(
+            self,
+            term=[
+                "EXT-INFLOW",
+                "RUNOFF",
+                "RAINFALL",
+                "EVAPORATION",
+                "WITHDRAWAL",
+                "STORAGE",
+                "CONSTANT",
+                "EXT-OUTFLOW",
+                "FROM-MVR",
+                "TO-MVR",
+            ],
+            label="lak.budget.lake_fluxes",
+        )
+
+
+class SfrBudgetNamespace:
+    """Namespace for all MF6-defined SFR package-output budget terms."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    @property
+    def types(self) -> list[str]:
+        """Return the SFR package-output budget term names available for the model."""
+
+        return [str(value).strip().upper() for value in self.model.outputs.sfr.bud.types]
+
+    def get(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        reaches: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return a canonical long dataframe of SFR package-output budget terms."""
+
+        frame = build_sfr_budget_term_table(self.model, term=term)
+        if per is not None:
+            if isinstance(per, Iterable) and not isinstance(per, (str, bytes)):
+                periods = {int(value) for value in per}
+                frame = frame.loc[frame["per"].isin(periods)].copy()
+            else:
+                frame = frame.loc[frame["per"] == int(per)].copy()
+        if reaches is not None and "reach" in frame.columns:
+            if isinstance(reaches, Iterable) and not isinstance(reaches, (str, bytes)):
+                reach_ids = {int(value) for value in reaches}
+            else:
+                reach_ids = {int(reaches)}
+            frame = frame.loc[pd.to_numeric(frame["reach"], errors="coerce").isin(reach_ids)].copy()
+        return frame.reset_index(drop=True)
+
+    def summary(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        reaches: Iterable[int] | None = None,
+        by: list[str] | tuple[str, ...] | None = None,
+    ) -> pd.DataFrame:
+        """Summarize SFR budget terms by selected grouping columns."""
+
+        frame = self.get(term=term, per=per, reaches=reaches)
+        group_columns = list(by) if by is not None else ["per", "reach", "term"]
+        if frame.empty:
+            columns = [*group_columns, "record_count", "q"]
+            return pd.DataFrame(columns=columns)
+
+        agg_map: dict[str, tuple[str, str]] = {
+            "record_count": ("q", "size"),
+            "q": ("q", "sum"),
+        }
+        if "rlen" in frame.columns and "reach" in group_columns:
+            agg_map["rlen"] = ("rlen", "first")
+        for column in ("FLOW-AREA", "VOLUME"):
+            if column in frame.columns:
+                agg_map[column] = (column, "sum")
+        summary = (
+            frame.groupby(group_columns, dropna=False, as_index=False)
+            .agg(**agg_map)
+            .sort_values(group_columns)
+            .reset_index(drop=True)
+        )
+        if "rlen" in summary.columns:
+            summary["q_per_length"] = np.where(
+                pd.to_numeric(summary["rlen"], errors="coerce") > 0.0,
+                pd.to_numeric(summary["q"], errors="coerce") / pd.to_numeric(summary["rlen"], errors="coerce"),
+                np.nan,
+            )
+        return summary
+
+    def wide(
+        self,
+        *,
+        term: str | Iterable[str] | None = None,
+        per: int | Iterable[int] | None = None,
+        reaches: Iterable[int] | None = None,
+        index: list[str] | tuple[str, ...] = ("per", "reach"),
+        values: str = "q",
+    ) -> pd.DataFrame:
+        """Pivot the long SFR budget table to one wide table by term."""
+
+        frame = self.get(term=term, per=per, reaches=reaches)
+        if frame.empty:
+            return pd.DataFrame()
+        if values not in frame.columns:
+            raise KeyError(f"SFR budget column {values!r} was not found.")
+        wide = (
+            frame.pivot_table(
+                index=list(index),
+                columns="term",
+                values=values,
+                aggfunc="sum",
+            )
+            .sort_index()
+        )
+        if isinstance(wide.columns, pd.Index):
+            wide.columns.name = None
+        return wide.reset_index()
+
+    @property
+    def gwf(self) -> "PackageBudgetTermExplorer":
+        """Stream-groundwater exchange term helper."""
+
+        return PackageBudgetTermExplorer(self, term="GWF", label="sfr.budget.gwf")
+
+    @property
+    def flow_ja_face(self) -> "PackageBudgetTermExplorer":
+        """Reach-to-reach routing connection term helper."""
+
+        return PackageBudgetTermExplorer(self, term="FLOW-JA-FACE", label="sfr.budget.flow_ja_face")
+
+    @property
+    def ext_inflow(self) -> "PackageBudgetTermExplorer":
+        """External inflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EXT-INFLOW", label="sfr.budget.ext_inflow")
+
+    @property
+    def runoff(self) -> "PackageBudgetTermExplorer":
+        """Runoff term helper."""
+
+        return PackageBudgetTermExplorer(self, term="RUNOFF", label="sfr.budget.runoff")
+
+    @property
+    def rain(self) -> "PackageBudgetTermExplorer":
+        """Rainfall term helper."""
+
+        return PackageBudgetTermExplorer(self, term="RAIN", label="sfr.budget.rain")
+
+    @property
+    def evaporation(self) -> "PackageBudgetTermExplorer":
+        """Evaporation term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EVAPORATION", label="sfr.budget.evaporation")
+
+    @property
+    def ext_outflow(self) -> "PackageBudgetTermExplorer":
+        """External outflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="EXT-OUTFLOW", label="sfr.budget.ext_outflow")
+
+    @property
+    def storage(self) -> "PackageBudgetTermExplorer":
+        """Storage term helper."""
+
+        return PackageBudgetTermExplorer(self, term="STORAGE", label="sfr.budget.storage")
+
+    @property
+    def from_mvr(self) -> "PackageBudgetTermExplorer":
+        """Mover inflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="FROM-MVR", label="sfr.budget.from_mvr")
+
+    @property
+    def to_mvr(self) -> "PackageBudgetTermExplorer":
+        """Mover outflow term helper."""
+
+        return PackageBudgetTermExplorer(self, term="TO-MVR", label="sfr.budget.to_mvr")
+
+    @property
+    def auxiliary(self) -> "PackageBudgetTermExplorer":
+        """Auxiliary term helper."""
+
+        return PackageBudgetTermExplorer(self, term="AUXILIARY", label="sfr.budget.auxiliary")
+
+    @property
+    def mvr(self) -> "PackageBudgetTermExplorer":
+        """Combined mover-related SFR budget term helper."""
+
+        return PackageBudgetTermExplorer(self, term=["FROM-MVR", "TO-MVR"], label="sfr.budget.mvr")
+
+    @property
+    def stream_fluxes(self) -> "PackageBudgetTermExplorer":
+        """Combined reach-level flux term helper excluding GWF and routing rows."""
+
+        return PackageBudgetTermExplorer(
+            self,
+            term=[
+                "EXT-INFLOW",
+                "RUNOFF",
+                "RAIN",
+                "EVAPORATION",
+                "EXT-OUTFLOW",
+                "STORAGE",
+                "FROM-MVR",
+                "TO-MVR",
+            ],
+            label="sfr.budget.stream_fluxes",
+        )
+
+
+class PackageBudgetTermExplorer:
+    """Filtered helper for one package budget term or a small term family."""
+
+    def __init__(
+        self,
+        namespace,
+        *,
+        term: str | Iterable[str],
+        label: str,
+    ):
+        self._namespace = namespace
+        self.term = term
+        self.label = label
+
+    @property
+    def types(self) -> list[str]:
+        """Return the normalized MF6 LAK term names covered by this helper."""
+
+        return _normalize_term_filter(self.term) or []
+
+    def get(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        **filters,
+    ) -> pd.DataFrame:
+        """Return the filtered package budget-term dataframe."""
+
+        return self._namespace.get(term=self.term, per=per, **filters)
+
+    def summary(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        by: list[str] | tuple[str, ...] | None = None,
+        **filters,
+    ) -> pd.DataFrame:
+        """Summarize the filtered package budget terms."""
+
+        return self._namespace.summary(term=self.term, per=per, by=by, **filters)
+
+    def wide(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        index: list[str] | tuple[str, ...] = ("per", "lake"),
+        values: str = "q",
+        **filters,
+    ) -> pd.DataFrame:
+        """Pivot the filtered package budget terms to a wide dataframe."""
+
+        return self._namespace.wide(term=self.term, per=per, index=index, values=values, **filters)
 
 
 class SfrResultsNamespace:
@@ -2202,6 +3303,108 @@ class SfrResultsNamespace:
         return None
 
 
+class SurfaceWaterExchangeResultsExplorer:
+    """Combined SFR/LAK exchange explorer with one shared physical sign scale."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    def get(
+        self,
+        *,
+        per: int | None = None,
+        layer: int | Iterable[int] | None = None,
+        include: str | Iterable[str] | None = None,
+        lak_connection_type: str | Iterable[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return combined SFR/LAK exchange rows in a unified L/T convention."""
+
+        return build_surface_water_exchange_cell_table(
+            self.model,
+            per=per,
+            layer=layer,
+            include=include,
+            lak_connection_type=lak_connection_type,
+        )
+
+    def summary(self) -> pd.DataFrame:
+        """Return a compact summary of combined surface-water exchange rows."""
+
+        frame = self.get()
+        return summarize_input_table(
+            frame,
+            label="surface_water.results.q",
+            value_columns=["exchange_intensity"],
+        )
+
+    def map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        include: str | Iterable[str] | None = None,
+        lak_connection_type: str | Iterable[str] | None = None,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Build one combined SFR/LAK exchange map with a shared L/T scale.
+
+        Notes
+        -----
+        The mapped value uses a unified physical sign convention across SFR and
+        LAK:
+
+        - positive = groundwater gaining into the surface-water feature
+        - negative = surface-water losing to groundwater
+        """
+
+        selected = self.get(
+            per=per,
+            layer=layer,
+            include=include,
+            lak_connection_type=lak_connection_type,
+        )
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
+        values, hover = build_surface_water_q_map_payload(
+            selected,
+            ncpl=self.model.vor.ncpl,
+            per=per,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+        )
+        absmax = _symmetric_color_limit(values)
+        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
+        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("zmid", 0.0)
+        return self.model.cor(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or "RdBu",
+            **kwargs,
+        )
+
+
+class SurfaceWaterResultsNamespace:
+    """Namespace for combined surface-water result explorers."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    @property
+    def q(self) -> SurfaceWaterExchangeResultsExplorer:
+        """Return one shared SFR/LAK exchange explorer."""
+
+        return SurfaceWaterExchangeResultsExplorer(self.model)
+
+
 class PackageExplorer:
     """Namespace for one package's preferred exploration helpers."""
 
@@ -2280,6 +3483,12 @@ class ModelPackages:
 
         return SfrPackageExplorer(self.model)
 
+    @property
+    def surface_water(self) -> "SurfaceWaterPackageExplorer":
+        """Combined SFR/LAK exploration helpers."""
+
+        return SurfaceWaterPackageExplorer(self.model)
+
 
 class UzfPackageExplorer:
     """Top-level UZF package explorer namespace."""
@@ -2313,6 +3522,12 @@ class LakPackageExplorer:
         return LakConnectionsExplorer(self.model)
 
     @property
+    def budget(self) -> LakBudgetNamespace:
+        """Return LAK package-output budget helpers for all MF6-defined terms."""
+
+        return LakBudgetNamespace(self.model)
+
+    @property
     def results(self) -> LakResultsNamespace:
         """Return the LAK result exploration namespace."""
 
@@ -2326,7 +3541,26 @@ class SfrPackageExplorer:
         self.model = model
 
     @property
+    def budget(self) -> SfrBudgetNamespace:
+        """Return SFR package-output budget helpers for all MF6-defined terms."""
+
+        return SfrBudgetNamespace(self.model)
+
+    @property
     def results(self) -> SfrResultsNamespace:
         """Return the SFR result exploration namespace."""
 
         return SfrResultsNamespace(self.model)
+
+
+class SurfaceWaterPackageExplorer:
+    """Top-level combined surface-water explorer namespace."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    @property
+    def results(self) -> SurfaceWaterResultsNamespace:
+        """Return combined SFR/LAK result explorers."""
+
+        return SurfaceWaterResultsNamespace(self.model)

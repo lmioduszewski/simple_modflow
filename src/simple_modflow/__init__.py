@@ -14,6 +14,20 @@ if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from simple_modflow.modflow.mf6.chd import CHDFromVector
     from simple_modflow.modflow.mf6.kflow import KFromVector
+    from simple_modflow.modflow.mf6.observations import HeadTargets, LakeStageTargets
+    from simple_modflow.modflow.mf6.pest import (
+        DrainConductanceParameter,
+        DrainElevationParameter,
+        ExpGeoStruct,
+        HeadTargetObservationSpec,
+        KPilotPointParameter,
+        LakeStageObservationSpec,
+        PestProject,
+        PestRunResults,
+        PestRunReview,
+        VectorParameterSource,
+        open_pest_run,
+    )
     from simple_modflow.modflow.mf6.recharge import RCHFromVector
     from simple_modflow.modflow.mf6.surface_water_validation import (
         SurfaceWaterValidationIssue,
@@ -73,8 +87,19 @@ _EXPORTS = {
     "CHDFromVector": ("simple_modflow.modflow.mf6.chd", "CHDFromVector"),
     "DRNFromVector": ("simple_modflow.modflow.mf6.drn", "DRNFromVector"),
     "GHBFromVector": ("simple_modflow.modflow.mf6.ghb", "GHBFromVector"),
+    "HeadTargets": ("simple_modflow.modflow.mf6.observations", "HeadTargets"),
+    "LakeStageTargets": ("simple_modflow.modflow.mf6.observations", "LakeStageTargets"),
     "KFromVector": ("simple_modflow.modflow.mf6.kflow", "KFromVector"),
+    "KPilotPointParameter": ("simple_modflow.modflow.mf6.pest", "KPilotPointParameter"),
     "patch_simulation_plot": ("simple_modflow.project", "patch_simulation_plot"),
+    "DrainConductanceParameter": ("simple_modflow.modflow.mf6.pest", "DrainConductanceParameter"),
+    "DrainElevationParameter": ("simple_modflow.modflow.mf6.pest", "DrainElevationParameter"),
+    "ExpGeoStruct": ("simple_modflow.modflow.mf6.pest", "ExpGeoStruct"),
+    "HeadTargetObservationSpec": ("simple_modflow.modflow.mf6.pest", "HeadTargetObservationSpec"),
+    "LakeStageObservationSpec": ("simple_modflow.modflow.mf6.pest", "LakeStageObservationSpec"),
+    "PestProject": ("simple_modflow.modflow.mf6.pest", "PestProject"),
+    "PestRunReview": ("simple_modflow.modflow.mf6.pest", "PestRunReview"),
+    "PestRunResults": ("simple_modflow.modflow.mf6.pest", "PestRunResults"),
     "RCHFromVector": ("simple_modflow.modflow.mf6.recharge", "RCHFromVector"),
     "SimpleModel": ("simple_modflow.modflow.mf6.simplemodel", "SimpleModel"),
     "SimpleModelConfig": ("simple_modflow.modflow.mf6.simplemodel", "SimpleModelConfig"),
@@ -88,6 +113,8 @@ _EXPORTS = {
         "SurfaceWaterValidationReport",
     ),
     "TriangleGrid": ("simple_modflow.modflow.mf6.grid.triangle", "TriangleGrid"),
+    "VectorParameterSource": ("simple_modflow.modflow.mf6.pest", "VectorParameterSource"),
+    "open_pest_run": ("simple_modflow.modflow.mf6.pest", "open_pest_run"),
     "VoronoiGridPlus": ("simple_modflow.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
     "build_simple_model": ("simple_modflow.modflow.mf6.simplemodel", "build_simple_model"),
     "modflow": ("simple_modflow", "modflow"),

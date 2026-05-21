@@ -18,3 +18,51 @@ bak/
 .pytest_cache/
 .pytest-tmp/
 .pytest-work/
+
+# Local editor / IDE files
+.idea/
+
+# Local build scratch space
+.build-tmp/
+pytest-cache-files*/
+
+# Generated logs
+PstFrom.log
+*.log
+
+# Generated MF6 / PEST workspaces and review artifacts
+examples/mf6/artifacts/
+examples/mf6/*_latest.txt
+
+# MODFLOW / PEST binary and run outputs
+*.cbc
+*.hds
+*.grb
+*.lst
+*.ims
+*.bud
+*.ucn
+*.par
+*.rei
+*.rec
+*.jcb
+*.vec
+*.ins
+*.tpl
+*.pst
+*.ob_gw
+*.obs
+
+# Common generated package / control files from example runs
+*.tdis
+*.sto
+*.oc
+*.ic
+*.rch
+*.drn
+*.npf
+*.nam
+*.model
+
+# Solver diagnostics
+*convergence.csv

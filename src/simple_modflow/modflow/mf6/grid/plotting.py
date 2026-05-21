@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import figs as f
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import shapely as shp
 from flopy.discretization.vertexgrid import VertexGrid
@@ -237,13 +238,34 @@ def build_grid_section(vor: VoronoiGridPlus, line: shp.LineString | Path):
     return GridSection(vor=vor, line=line)
 
 
+def _as_linestring(geometry) -> shp.LineString:
+    if isinstance(geometry, shp.LineString):
+        return geometry
+
+    if isinstance(geometry, shp.MultiLineString):
+        merged = shp.line_merge(geometry)
+        if isinstance(merged, shp.LineString):
+            return merged
+
+        coords = []
+        for line in geometry.geoms:
+            line_coords = list(line.coords)
+            if coords and coords[-1] == line_coords[0]:
+                coords.extend(line_coords[1:])
+            else:
+                coords.extend(line_coords)
+        return shp.LineString(coords)
+
+    raise ValueError(f'line arg must resolve to a LineString, not {type(geometry)}')
+
+
 class GridSection:
     """
     Represents a section of a grid and provides tools for creating and plotting
     cross-sections.
     """
 
-    def __init__(self, vor, line: shp.LineString | Path):
+    def __init__(self, vor, line: shp.LineString | shp.MultiLineString | Path):
         self.vor = vor
         props = vor.get_disv_gridprops()
         self.grid = VertexGrid(
@@ -258,9 +280,10 @@ class GridSection:
         )
 
         if isinstance(line, Path):
-            self.coords = read_shp_gpkg(line).union_all().coords
-        elif isinstance(line, shp.LineString):
-            self.coords = line.coords
+            geometry = read_shp_gpkg(line).union_all()
+            self.coords = _as_linestring(geometry).coords
+        elif isinstance(line, (shp.LineString, shp.MultiLineString)):
+            self.coords = _as_linestring(line).coords
         else:
             raise ValueError(f'line arg must be a Path or LineString, not {type(line)}')
 
@@ -283,6 +306,40 @@ class GridSection:
             verts = poly[0].get_xy()
             poly_coords.append(verts)
         return poly_coords
+
+    def to_frame(self) -> pd.DataFrame:
+        """
+        Return section polygon outlines as a long-form DataFrame.
+        """
+        rows = []
+        for i, verts in enumerate(self.poly_coords):
+            series_name = f"polygon_{i}"
+            for distance, elevation in verts:
+                rows.append(
+                    {
+                        "distance": float(distance),
+                        "elevation": float(elevation),
+                        "series": series_name,
+                        "polygon_id": i,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def plot_mpl(self, **kwargs):
+        """
+        Plot the grid cross-section with the figs matplotlib cross-section helper.
+        """
+        from figs.mpl import plot_cross_section
+
+        data = self.to_frame()
+        kwargs.setdefault("show_legend", False)
+        return plot_cross_section(
+            data=data,
+            x="distance",
+            y="elevation",
+            series_col="series",
+            **kwargs,
+        )
 
     @property
     def figure(self):

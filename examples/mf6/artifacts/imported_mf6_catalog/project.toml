@@ -1,5 +1,0 @@
-[project]
-name = "mf6_archive_catalog"
-runs_dir = "runs"
-model_specs_dir = "model_specs"
-run_records_dir = "run_records"

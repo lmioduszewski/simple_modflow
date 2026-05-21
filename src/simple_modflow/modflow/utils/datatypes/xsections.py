@@ -378,6 +378,94 @@ class XSection:
 
         return self._xs_as_length
 
+    def to_frame(
+            self,
+            include_model_top: bool | None = None,
+            include_model_btm: bool | None = None,
+    ) -> pd.DataFrame:
+        """
+        Return the cross-section as a long-form DataFrame for external plotting.
+        """
+        include_model_top = self.show_model_top if include_model_top is None else include_model_top
+        include_model_btm = self.show_model_btm if include_model_btm is None else include_model_btm
+
+        rows = []
+        points, elevations = self.xsect
+
+        if self.interpolate is True:
+            for distance, elevation in zip(self.xs_as_length, elevations):
+                rows.append(
+                    {
+                        "distance": float(distance),
+                        "elevation": float(elevation),
+                        "series": self.section_name,
+                        "kind": "profile",
+                    }
+                )
+        else:
+            for i, lyr in enumerate(self.layer):
+                series_name = f"Lyr {lyr} hds - {self.section_name}"
+                for distance, elevation in zip(points, elevations[i]):
+                    rows.append(
+                        {
+                            "distance": float(distance),
+                            "elevation": float(elevation),
+                            "series": series_name,
+                            "kind": "profile",
+                            "layer": lyr,
+                        }
+                    )
+
+        if include_model_top:
+            xs = self.xs
+            ys = self.model_top.loc[self.xs.index.to_list()].to_list()
+            for distance, elevation in zip(xs, ys):
+                rows.append(
+                    {
+                        "distance": float(distance),
+                        "elevation": float(elevation),
+                        "series": "model top",
+                        "kind": "model_top",
+                    }
+                )
+
+        if include_model_btm:
+            xs = self.xs
+            btm_layers = pd.DataFrame(self.model.gwf.modelgrid.botm.T)
+            for lyr in btm_layers.columns:
+                if lyr not in self.layer:
+                    continue
+                ys = btm_layers.loc[xs.index.to_list(), lyr].to_list()
+                for distance, elevation in zip(xs, ys):
+                    rows.append(
+                        {
+                            "distance": float(distance),
+                            "elevation": float(elevation),
+                            "series": f"Lyr {lyr} Btm",
+                            "kind": "model_bottom",
+                            "layer": lyr,
+                        }
+                    )
+
+        return pd.DataFrame(rows)
+
+    def plot_mpl(self, **kwargs):
+        """
+        Plot the cross-section with the figs matplotlib cross-section helper.
+        """
+        from figs.mpl import plot_cross_section
+
+        data = self.to_frame()
+        kwargs.setdefault("title", self.section_name)
+        kwargs.setdefault("ylabel", "Elevation (ft)")
+        return plot_cross_section(
+            data=data,
+            x="distance",
+            y="elevation",
+            series_col="series",
+            **kwargs,
+        )
+
     @property
     def fig(self):
         """returns figure of the cross-section"""

@@ -22,6 +22,9 @@ working on it.
   This structure guide.
 - [docs/preferred_api.md](C:/Users/lukem/Python/Projects/simple_modflow/docs/preferred_api.md)
   Preferred usage guide for the modern public API.
+- [docs/mf6io_reference.md](C:/Users/lukem/Python/Projects/simple_modflow/docs/mf6io_reference.md)
+  Internal summary of the external `mf6io.pdf` reference, especially the MF6
+  package-output budget semantics that `simple_modflow` relies on.
 - [src](C:/Users/lukem/Python/Projects/simple_modflow/src)
   All importable library code.
 - [tests](C:/Users/lukem/Python/Projects/simple_modflow/tests)
@@ -95,6 +98,9 @@ This is the main MF6 implementation area.
   Observation lookup and observation-head table shaping for `HeadsPlus`.
 - [src/simple_modflow/modflow/mf6/heads_plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/heads_plotting.py)
   Heads plotting and choropleth presentation helpers for `HeadsPlus`.
+- [src/simple_modflow/modflow/mf6/observations.py](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/observations.py)
+  Reusable observation-target layer, currently centered on `HeadTargets` so the
+  same target dataset can drive plotting, residual statistics, and PEST setup.
 - [src/simple_modflow/modflow/mf6/headsplus.py](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/headsplus.py)
   Backward-compatible entry point for the heads API.
 - [src/simple_modflow/modflow/mf6/archive](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/archive)
@@ -146,6 +152,10 @@ Shared model-building and model-access infrastructure.
   Region and region-group registry support.
 - [src/simple_modflow/modflow/mf6/simulation/runtime.py](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/simulation/runtime.py)
   Shared model write/run execution helper.
+- [src/simple_modflow/modflow/mf6/pest](C:/Users/lukem/Python/Projects/simple_modflow/src/simple_modflow/modflow/mf6/pest)
+  The first reusable pyEMU/PEST layer. This is where `PestProject`,
+  calibration parameter specs, support-file builders, and forward-run helpers
+  now live.
 
 #### `modflow/utils`
 
@@ -195,6 +205,7 @@ and grouped-model comparison live here.
 - [examples/mf6/notebooks](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks)
   Practical workflow notebooks, including:
   - Cumberland grid workflows
+  - first-slice PEST/pyEMU calibration workflows
   - run explorer workflows
   - package artifact workflows
   - optimized related-run workflows
@@ -209,6 +220,9 @@ and grouped-model comparison live here.
   workflow tests.
 - [tests/test_mesh_optimization.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mesh_optimization.py)
   Mesh cleanup, quality reporting, and optimization regression coverage.
+- [tests/test_mf6_pest.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mf6_pest.py)
+  First-slice calibration coverage for `HeadTargets`, bounds logic,
+  `PestProject`, and forward-run reapplication of `K` and `DRN` parameters.
 
 ## How To Find Code Quickly
 

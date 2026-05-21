@@ -53,6 +53,10 @@ from simple_modflow.modflow.mf6.grid.connectivity import build_disu_connectivity
 from simple_modflow.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
 from simple_modflow.modflow.mf6.grid.plotting import GridSection  # noqa: E402
 from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as GridVoronoiGridPlus  # noqa: E402
+from simple_modflow.modflow.mf6.cross_section_plotting import (  # noqa: E402
+    ModelCrossSectionStyle,
+    plot_model_cross_section,
+)
 from simple_modflow.modflow.mf6.grid.selection import (  # noqa: E402
     get_grid_edge_cells,
     get_vor_cells_as_series,
@@ -90,6 +94,7 @@ from simple_modflow.modflow.mf6.simulation.regions import (  # noqa: E402
     RegionGroup,
     RegionRegistry,
 )
+from simple_modflow.modflow.utils.datatypes.xsections import XSection  # noqa: E402
 from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
@@ -647,6 +652,11 @@ def test_direct_voronoi_grid_smoke():
     assert isinstance(section, GridSection)
     assert len(section.poly_coords) >= 1
     assert len(section.figure.data) >= 1
+    section_df = section.to_frame()
+    assert {"distance", "elevation", "series", "polygon_id"}.issubset(section_df.columns)
+    mpl_fig, mpl_ax = section.plot_mpl()
+    assert mpl_fig is not None
+    assert len(mpl_ax.lines) >= 1
 
     iac, ja, cl12, hwva, nja = vor.get_disu_connectivity(validate=True)
     assert iac.tolist() == [2, 2]
@@ -654,6 +664,56 @@ def test_direct_voronoi_grid_smoke():
     assert nja == 4
     assert np.allclose(cl12[[1, 3]], [1.0, 1.0])
     assert np.allclose(hwva[[1, 3]], [1.0, 1.0])
+
+
+def test_xsection_mpl_adapter_smoke():
+    class DummyXSection(XSection):
+        def __init__(self):
+            self.interpolate = False
+            self.section_name = "dummy"
+            self._layer = [0]
+            self.show_model_top = False
+            self.show_model_btm = False
+
+        @property
+        def xsect(self):
+            return [0.0, 10.0], [[100.0, 95.0]]
+
+    section = DummyXSection()
+    section_df = section.to_frame()
+
+    assert {"distance", "elevation", "series", "kind", "layer"}.issubset(section_df.columns)
+
+    mpl_fig, mpl_ax = section.plot_mpl(show_legend=False)
+    assert mpl_fig is not None
+    assert len(mpl_ax.lines) == 1
+
+
+def test_model_cross_section_plotting_smoke():
+    workspace = _project_temp_dir("cross_section_plotting")
+    try:
+        model, _ = _two_cell_model("cross_section_plotting", workspace, nper=1)
+        head_data = np.array([[8.0, 9.5]])
+        style = ModelCrossSectionStyle(
+            title="Smoke Cross Section",
+            use_figs_theme=True,
+        )
+        fig, ax = plot_model_cross_section(
+            model,
+            LineString([(0.5, -0.5), (0.5, 1.5)]),
+            head_data=head_data,
+            head_layer=0,
+            style=style,
+            ylim=(0.0, 12.0),
+            layer_colors=["#fff6cc"],
+            layer_labels=["Layer 1"],
+        )
+
+        assert fig is not None
+        assert ax.get_title() == "Smoke Cross Section"
+        assert len(ax.lines) >= 1
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def test_minimal_model_can_write_inputs():

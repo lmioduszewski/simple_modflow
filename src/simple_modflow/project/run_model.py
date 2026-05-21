@@ -297,6 +297,7 @@ class LoadedMf6Run(SimulationBase):
         self._kstpkper = None
         self._idomain = None
         self._grid_type_override = grid_type if grid_type != "unknown" else None
+        self._targets = None
         self.regions = RegionRegistry(self)
         self.source = "mf6_files"
         self._model_name = model_name

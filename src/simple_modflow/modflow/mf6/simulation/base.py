@@ -188,6 +188,7 @@ class SimulationBase:
         self.model_spec = model_spec
         self.auto_apply_package_artifacts = bool(auto_apply_package_artifacts)
         self.regions = RegionRegistry(self)
+        self._targets = None
 
         self.per_dates = per_dates
         self.idomain_path = idomain_path
@@ -251,6 +252,16 @@ class SimulationBase:
         """Sorted list of package names currently attached to the groundwater model."""
 
         return sorted(self.gwf.get_package_list())
+
+    @property
+    def targets(self):
+        """Model-bound registry for reusable calibration target sets."""
+
+        if self._targets is None:
+            from simple_modflow.modflow.mf6.observations import TargetRegistry
+
+            self._targets = TargetRegistry(self)
+        return self._targets
 
     @property
     def grid_type(self) -> str:

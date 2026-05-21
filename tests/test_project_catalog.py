@@ -55,7 +55,10 @@ from simple_modflow.modflow.mf6.sfr import SFR  # noqa: E402
 from simple_modflow.modflow.mf6.budget import DRNBudget  # noqa: E402
 from simple_modflow.modflow.mf6.budget import LakStage, SFRStage  # noqa: E402
 from simple_modflow.modflow.mf6 import budget as budget_module  # noqa: E402
-from simple_modflow.modflow.mf6.package_explorer import build_lak_q_map_payload  # noqa: E402
+from simple_modflow.modflow.mf6.package_explorer import (  # noqa: E402
+    build_lak_budget_result_table,
+    build_lak_q_map_payload,
+)
 from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
 from simple_modflow.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisuGrid,
@@ -310,8 +313,70 @@ def _build_and_run_four_cell_lake_model(
     lake_perioddata = LakePeriodData(
         model=model,
         lake_ids=[0],
-        lake_stages=[starting_stage],
-        status=["ACTIVE"],
+        lake_stages=[starting_stage, starting_stage],
+        status=["ACTIVE", "ACTIVE"],
+    )
+    LAKPackage(
+        model=model,
+        nlakes=1,
+        noutlets=0,
+        ntables=0,
+        packagedata=lake_packagedata.packagedata,
+        connectiondata=connectiondata,
+        perioddata=lake_perioddata.perioddata,
+        mover=False,
+    )
+    success, _ = model.run_simulation()
+    assert success is True
+    return model
+
+
+def _build_and_run_four_cell_lake_transient_model(
+    record: RunRecord,
+    workspace: Path,
+    *,
+    starting_stage: float = 10.5,
+) -> SimulationBase:
+    vor = _four_cell_vor_clockwise()
+    model = SimulationBase(vor=vor, nper=2, **record.simulation_kwargs())
+    DisvGrid(vor=vor, model=model, top=[12.0] * 4, bottom=[[0.0] * 4], nlay=1)
+    TemporalDiscretization(model=model, per_len=1, num_steps=1, multiplier=1.0)
+    InitialConditions(model=model, vor=vor, nlay=1, strt=[11.9, 10.1, 11.7, 9.9])
+    KFlow(model=model, k=[1.0] * 4, save_specific_discharge=False)
+    Storage(model=model, sto_steady={0: True}, sto_transient={1: True})
+    OutputControl(model=model)
+    CHD(
+        model=model,
+        stress_period_data={
+            0: [[(0, 1), 12.0], [(0, 3), 10.0]],
+            1: [[(0, 1), 12.6], [(0, 3), 10.4]],
+        },
+    )
+
+    lake_path = _write_gpkg(
+        workspace / f"{record.run_id}_lake.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["lake_0"]},
+            geometry=[Polygon([(0.0, 0.0), (0.95, 0.0), (0.95, 1.95), (0.0, 1.95)])],
+            crs=vor.crs,
+        ),
+    )
+    lake_connections = LakeConnectionData(
+        model=model,
+        vor=vor,
+        paths=[lake_path],
+        bed_leakance=1.0,
+        horizontal_connections={0: [11.5, 9.0]},
+        use_reconciled_surfaces=False,
+        only_vertical=False,
+    )
+    connectiondata = lake_connections.connection_data
+    lake_packagedata = LakePackageData(nlakes=1, starting_stage=[starting_stage], connectiondata=connectiondata)
+    lake_perioddata = LakePeriodData(
+        model=model,
+        lake_ids=[0],
+        lake_stages=[starting_stage, starting_stage],
+        status=["ACTIVE", "ACTIVE"],
     )
     LAKPackage(
         model=model,
@@ -2712,10 +2777,26 @@ def test_model_group_outputs_lak_stage_returns_all_models():
         )
 
         stages = group.outputs.lak.stage()
+        package_stages = group.packages.lak.results.stage.get()
+        stage_compare = group.packages.lak.results.stage.compare(model_name="lake_b")
+        stage_fig = group.packages.lak.results.stage.plot_timeseries()
+        lake_connections = group.packages.lak.connections.get(model_name="lake_a")
+        lake_connections_map = group.packages.lak.connections.map(model_name="lake_a")
 
         assert set(stages["model"]) == {"lake_a", "lake_b"}
         assert set(stages["lake"]) == {0}
         assert stages["kstpkper"].tolist() == [(0, 0), (0, 0)]
+        assert set(package_stages["model"]) == {"lake_a", "lake_b"}
+        assert set(package_stages["lake"]) == {0}
+        assert set(package_stages["per"]) == {0}
+        assert set(stage_compare["model"]) == {"lake_b"}
+        assert set(stage_compare["reference_model"]) == {"lake_a"}
+        assert "stage_diff" in stage_compare.columns
+        assert lake_connections.empty is False
+        assert {"lake", "cell", "claktype", "connection_area"}.issubset(lake_connections.columns)
+        assert len(lake_connections_map.zs) == group.models["lake_a"].vor.ncpl
+        assert len(stage_fig.axes) == 1
+        assert len(stage_fig.axes[0].lines) >= 2
         pivot = stages.pivot(index="lake", columns="model", values="stage")
         expected_a = float(group.models["lake_a"].outputs.lak.stage.get()[0, 0])
         expected_b = float(group.models["lake_b"].outputs.lak.stage.get()[0, 0])
@@ -2746,6 +2827,64 @@ def test_tiny_lake_fixture_has_gaining_and_losing_exchange():
         assert set(cell_exchange["cell"]) == {0, 2}
         assert (cell_exchange["q"] > 0.0).any()
         assert (cell_exchange["q"] < 0.0).any()
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_sfr_exchange_map_uses_gaining_blue_losing_red_colorscale(monkeypatch):
+    workspace = _project_temp_dir("project_catalog_sfr_colorscale")
+    try:
+        record = RunRecord(
+            run_id="sfr_colorscale",
+            model_spec="sfr_model",
+            workspace=workspace / "sfr_colorscale",
+            status="completed",
+        )
+        model = _build_and_run_four_cell_lak_sfr_model(record, workspace)
+
+        captured: dict[str, object] = {}
+
+        def _fake_cor(*args, **kwargs):
+            captured.update(kwargs)
+            return kwargs
+
+        monkeypatch.setattr(model, "cor", _fake_cor)
+        model.packages.sfr.results.q.map(per=0)
+
+        assert captured["colorscale"] == [
+            [0.0, "#1f77b4"],
+            [0.5, "#ffffff"],
+            [1.0, "#d62728"],
+        ]
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_lake_stage_change_explorer_uses_real_transient_results():
+    workspace = _project_temp_dir("project_catalog_lake_stage_change")
+    try:
+        record = RunRecord(
+            run_id="transient_lake",
+            model_spec="lake_model",
+            workspace=workspace / "transient_lake",
+            status="completed",
+        )
+        model = _build_and_run_four_cell_lake_transient_model(record, workspace)
+
+        stage = model.packages.lak.results.stage.get()
+        stage_change = model.packages.lak.results.stage_change.get()
+        stage_change_fig = model.packages.lak.results.stage_change.plot_timeseries()
+
+        assert set(stage["per"]) == {0, 1}
+        assert stage_change.empty is False
+        assert {"model", "package", "lake", "per0", "per1", "stage0", "stage1", "stage_change"}.issubset(
+            stage_change.columns
+        )
+        assert set(stage_change["per0"]) == {0}
+        assert set(stage_change["per1"]) == {1}
+        assert np.any(np.abs(stage_change["stage_change"].astype(float).to_numpy()) > 0.0)
+        assert len(stage_change_fig.axes) == 1
+        assert len(stage_change_fig.axes[0].lines) >= 1
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -3135,17 +3274,43 @@ def test_model_packages_results_support_budget_and_stage_exploration():
         lak_connections = routed_model.packages.lak.connections.get()
         lak_connections_summary = routed_model.packages.lak.connections.summary()
         lak_connections_map = routed_model.packages.lak.connections.map()
+        lak_budget_types = routed_model.packages.lak.budget.types
+        lak_budget_all = routed_model.packages.lak.budget.get()
+        lak_budget_gwf = routed_model.packages.lak.budget.get(term="GWF", per=0)
+        lak_budget_summary = routed_model.packages.lak.budget.summary()
+        lak_budget_wide = routed_model.packages.lak.budget.wide()
+        lak_budget_gwf_helper = routed_model.packages.lak.budget.gwf.get(per=0)
+        lak_budget_storage_helper = routed_model.packages.lak.budget.storage.get()
+        lak_budget_mvr_helper = routed_model.packages.lak.budget.mvr.get()
+        lak_budget_lake_fluxes_helper = routed_model.packages.lak.budget.lake_fluxes.get()
+        lak_budget_gwf_wide = routed_model.packages.lak.budget.gwf.wide(values="q_per_area")
         lak_stage = routed_model.packages.lak.results.stage.get(per=0)
         lak_stage_map = routed_model.packages.lak.results.stage.map(per=0)
         lak_stage_fig = routed_model.packages.lak.results.stage.plot_timeseries()
         lak_q = routed_model.packages.lak.results.q.get(per=0)
+        lak_q_vertical = routed_model.packages.lak.results.q.get(per=0, connection_type="VERTICAL")
+        lak_q_horizontal = routed_model.packages.lak.results.q.get(per=0, connection_type="HORIZONTAL")
         lak_q_summary = routed_model.packages.lak.results.q.budget_summary(per=0)
+        lak_q_horizontal_summary = routed_model.packages.lak.results.q.budget_summary(per=0, connection_type="HORIZONTAL")
         lak_q_map = routed_model.packages.lak.results.q.map(per=0)
+        lak_q_vertical_map = routed_model.packages.lak.results.q.map(per=0, connection_type="VERTICAL")
+        lak_q_horizontal_map = routed_model.packages.lak.results.q.map(per=0, connection_type="HORIZONTAL")
         lak_q_fig = routed_model.packages.lak.results.q.plot_budget(per=0)
         sfr_stage = routed_model.packages.sfr.results.stage.get(per=0)
         sfr_stage_map = routed_model.packages.sfr.results.stage.map(per=0)
+        sfr_budget_types = routed_model.packages.sfr.budget.types
+        sfr_budget_all = routed_model.packages.sfr.budget.get()
+        sfr_budget_gwf = routed_model.packages.sfr.budget.get(term="GWF", per=0)
+        sfr_budget_summary = routed_model.packages.sfr.budget.summary()
+        sfr_budget_wide = routed_model.packages.sfr.budget.wide()
+        sfr_budget_gwf_helper = routed_model.packages.sfr.budget.gwf.get(per=0)
+        sfr_budget_storage_helper = routed_model.packages.sfr.budget.storage.get()
+        sfr_budget_mvr_helper = routed_model.packages.sfr.budget.mvr.get()
+        sfr_budget_stream_fluxes_helper = routed_model.packages.sfr.budget.stream_fluxes.get()
         sfr_q = routed_model.packages.sfr.results.q.get(per=0)
         sfr_q_map = routed_model.packages.sfr.results.q.map(per=0)
+        surface_water_q = routed_model.packages.surface_water.results.q.get(per=0)
+        surface_water_q_map = routed_model.packages.surface_water.results.q.map(per=0)
         sfr_q_profile = routed_model.packages.sfr.results.q.profile(per=0)
         sfr_q_profile_fig = routed_model.packages.sfr.results.q.plot_profile(per=0)
         sfr_q_profile_by_reach_fig = routed_model.packages.sfr.results.q.plot_profile(per=0, x="reach")
@@ -3164,25 +3329,76 @@ def test_model_packages_results_support_budget_and_stage_exploration():
             lak_connections.columns
         )
         assert float(lak_connections_summary.loc[0, "total_connection_area"]) > 0.0
+        assert "GWF" in lak_budget_types
+        assert lak_budget_all.empty is False
+        assert {"model", "package", "term", "kstpkper", "per", "lake", "q"}.issubset(lak_budget_all.columns)
+        assert set(lak_budget_all["term"]).issubset(set(lak_budget_types))
+        assert lak_budget_gwf.empty is False
+        assert set(lak_budget_gwf["term"]) == {"GWF"}
+        assert {"per", "lake", "term", "record_count", "q"}.issubset(lak_budget_summary.columns)
+        assert lak_budget_wide.empty is False
+        assert {"per", "lake", "GWF"}.issubset(lak_budget_wide.columns)
+        pd.testing.assert_frame_equal(lak_budget_gwf.reset_index(drop=True), lak_budget_gwf_helper.reset_index(drop=True))
+        assert set(lak_budget_storage_helper["term"]) == {"STORAGE"}
+        assert lak_budget_mvr_helper.empty is True
+        assert "GWF" not in set(lak_budget_lake_fluxes_helper["term"])
+        assert lak_budget_lake_fluxes_helper.empty is False
+        assert lak_budget_gwf_wide.empty is False
+        assert {"per", "lake", "GWF"}.issubset(lak_budget_gwf_wide.columns)
         assert lak_stage.empty is False
         assert {"model", "package", "per", "lake", "layer", "cell", "stage"}.issubset(lak_stage.columns)
         assert lak_q.empty is False
         assert {"q", "q_per_area", "flow_area", "claktype", "lake", "cell"}.issubset(lak_q.columns)
+        assert set(lak_q_vertical["claktype"].astype(str).str.upper()) <= {"VERTICAL"}
+        assert set(lak_q_horizontal["claktype"].astype(str).str.upper()) <= {"HORIZONTAL"}
+        lak_total_by_cell = lak_q.groupby("cell", as_index=False)["q"].sum().set_index("cell")["q"].astype(float)
+        lak_vertical_by_cell = (
+            lak_q_vertical.groupby("cell", as_index=False)["q"].sum().set_index("cell")["q"].astype(float)
+        )
+        lak_horizontal_by_cell = (
+            lak_q_horizontal.groupby("cell", as_index=False)["q"].sum().set_index("cell")["q"].astype(float)
+        )
+        combined_connection_q = lak_vertical_by_cell.add(lak_horizontal_by_cell, fill_value=0.0)
+        pd.testing.assert_series_equal(
+            lak_total_by_cell.sort_index(),
+            combined_connection_q.reindex(lak_total_by_cell.index, fill_value=0.0).sort_index(),
+            check_names=False,
+            atol=1.0e-12,
+            rtol=1.0e-12,
+        )
         assert lak_q_summary.empty is False
         assert {"per", "lake", "claktype", "record_count", "q", "flow_area", "q_per_area"}.issubset(
             lak_q_summary.columns
         )
+        assert set(lak_q_horizontal_summary["claktype"].astype(str).str.upper()) <= {"HORIZONTAL"}
         lak_q_by_cell = lak_q.groupby("cell", as_index=False)["q"].sum()
         assert (lak_q_by_cell["q"] > 0.0).any()
         assert (lak_q_by_cell["q"] < 0.0).any()
         assert sfr_stage.empty is False
         assert {"model", "package", "per", "reach", "layer", "cell", "stage"}.issubset(sfr_stage.columns)
+        assert "GWF" in sfr_budget_types
+        assert sfr_budget_all.empty is False
+        assert {"model", "package", "term", "kstpkper", "per", "reach", "q"}.issubset(sfr_budget_all.columns)
+        assert set(sfr_budget_all["term"]).issubset(set(sfr_budget_types))
+        assert sfr_budget_gwf.empty is False
+        assert set(sfr_budget_gwf["term"]) == {"GWF"}
+        pd.testing.assert_frame_equal(sfr_budget_gwf.reset_index(drop=True), sfr_budget_gwf_helper.reset_index(drop=True))
+        assert {"per", "reach", "term", "record_count", "q"}.issubset(sfr_budget_summary.columns)
+        assert sfr_budget_wide.empty is False
+        assert {"per", "reach", "GWF"}.issubset(sfr_budget_wide.columns)
+        assert set(sfr_budget_storage_helper["term"]) == {"STORAGE"}
+        assert sfr_budget_mvr_helper.empty is True
+        assert "GWF" not in set(sfr_budget_stream_fluxes_helper["term"])
         assert {"q", "q_per_length", "reach", "cell", "rlen"}.issubset(sfr_q.columns)
+        assert {"source", "exchange_intensity", "cell", "layer", "per"}.issubset(surface_water_q.columns)
         assert len(lak_connections_map.zs) == routed_model.vor.ncpl
         assert len(lak_stage_map.zs) == routed_model.vor.ncpl
         assert len(lak_q_map.zs) == routed_model.vor.ncpl
+        assert len(lak_q_vertical_map.zs) == routed_model.vor.ncpl
+        assert len(lak_q_horizontal_map.zs) == routed_model.vor.ncpl
         assert len(sfr_stage_map.zs) == routed_model.vor.ncpl
         assert len(sfr_q_map.zs) == routed_model.vor.ncpl
+        assert len(surface_water_q_map.zs) == routed_model.vor.ncpl
         assert {"distance_start", "distance_mid", "distance_end", "rlen"}.issubset(sfr_q_profile.columns)
         assert {"distance_start", "distance_mid", "distance_end", "rlen"}.issubset(sfr_stage_profile.columns)
         assert {
@@ -3208,13 +3424,44 @@ def test_model_packages_results_support_budget_and_stage_exploration():
                 strict=False,
             )
         )
-        for cell, normalized_q in expected_sfr_q_map.items():
-            assert sfr_q_map.zs[int(cell)] == pytest.approx(normalized_q)
         expected_lak_q_map_frame = lak_q.groupby("cell", as_index=False).agg({"q": "sum", "flow_area": "sum"})
         expected_lak_q_map = dict(
             zip(
                 expected_lak_q_map_frame["cell"].astype(int),
                 expected_lak_q_map_frame["q"].astype(float) / expected_lak_q_map_frame["flow_area"].astype(float),
+                strict=False,
+            )
+        )
+        for cell, normalized_q in expected_sfr_q_map.items():
+            assert sfr_q_map.zs[int(cell)] == pytest.approx(normalized_q)
+        expected_surface_water_map = {}
+        for cell in range(routed_model.vor.ncpl):
+            sfr_component = -float(expected_sfr_q_map.get(cell, 0.0))
+            lak_component = float(expected_lak_q_map.get(cell, 0.0))
+            expected_surface_water_map[cell] = sfr_component + lak_component
+        expected_lak_vertical_map_frame = lak_q_vertical.groupby("cell", as_index=False).agg({"q": "sum", "flow_area": "sum"})
+        expected_lak_vertical_map = dict(
+            zip(
+                expected_lak_vertical_map_frame["cell"].astype(int),
+                np.where(
+                    expected_lak_vertical_map_frame["flow_area"].astype(float) > 0.0,
+                    expected_lak_vertical_map_frame["q"].astype(float)
+                    / expected_lak_vertical_map_frame["flow_area"].astype(float),
+                    np.nan,
+                ),
+                strict=False,
+            )
+        )
+        expected_lak_horizontal_map_frame = lak_q_horizontal.groupby("cell", as_index=False).agg({"q": "sum", "flow_area": "sum"})
+        expected_lak_horizontal_map = dict(
+            zip(
+                expected_lak_horizontal_map_frame["cell"].astype(int),
+                np.where(
+                    expected_lak_horizontal_map_frame["flow_area"].astype(float) > 0.0,
+                    expected_lak_horizontal_map_frame["q"].astype(float)
+                    / expected_lak_horizontal_map_frame["flow_area"].astype(float),
+                    np.nan,
+                ),
                 strict=False,
             )
         )
@@ -3229,6 +3476,18 @@ def test_model_packages_results_support_budget_and_stage_exploration():
             assert lak_connections_map.zs[int(cell)] == pytest.approx(connection_area)
         for cell, normalized_q in expected_lak_q_map.items():
             assert lak_q_map.zs[int(cell)] == pytest.approx(normalized_q)
+        for cell, normalized_q in expected_lak_vertical_map.items():
+            if np.isnan(normalized_q):
+                assert lak_q_vertical_map.zs[int(cell)] == pytest.approx(0.0)
+            else:
+                assert lak_q_vertical_map.zs[int(cell)] == pytest.approx(normalized_q)
+        for cell, normalized_q in expected_lak_horizontal_map.items():
+            if np.isnan(normalized_q):
+                assert lak_q_horizontal_map.zs[int(cell)] == pytest.approx(0.0)
+            else:
+                assert lak_q_horizontal_map.zs[int(cell)] == pytest.approx(normalized_q)
+        for cell, normalized_q in expected_surface_water_map.items():
+            assert surface_water_q_map.zs[int(cell)] == pytest.approx(normalized_q)
         assert len(lak_stage_fig.axes) == 1
         assert len(lak_stage_fig.axes[0].lines) >= 1
         assert len(lak_q_fig.axes) == 1
@@ -3380,6 +3639,8 @@ def test_model_group_package_results_support_get_compare_and_maps():
         sfr_q = sfr_group.packages.sfr.results.q.get()
         sfr_q_diff = sfr_group.packages.sfr.results.q.compare(model_name="sfr_b")
         sfr_q_map = sfr_group.packages.sfr.results.q.compare_map(model_name="sfr_b", per=0)
+        sfr_q_subplot = sfr_group.packages.sfr.results.q.subplot_map(per=0)
+        surface_water_subplot = sfr_group.packages.surface_water.results.q.subplot_map(per=0)
         assert sfr_q.empty is False
         assert sfr_q_diff.empty is False
         assert {"q_per_length", "q_per_length_diff"}.issubset(sfr_q_diff.columns)
@@ -3411,6 +3672,24 @@ def test_model_group_package_results_support_get_compare_and_maps():
         for cell, base_value in base_norm.items():
             diff = variant_norm.get(cell, 0.0) - base_value
             assert sfr_q_map.zs[int(cell)] == pytest.approx(diff)
+        np.testing.assert_allclose(
+            np.asarray(sfr_q_subplot._simple_modflow_panel_values["sfr_a"], dtype=float),
+            np.asarray(sfr_group.models["sfr_a"].packages.sfr.results.q.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(sfr_q_subplot._simple_modflow_panel_values["sfr_b"], dtype=float),
+            np.asarray(sfr_group.models["sfr_b"].packages.sfr.results.q.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(surface_water_subplot._simple_modflow_panel_values["sfr_a"], dtype=float),
+            np.asarray(sfr_group.models["sfr_a"].packages.surface_water.results.q.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(surface_water_subplot._simple_modflow_panel_values["sfr_b"], dtype=float),
+            np.asarray(sfr_group.models["sfr_b"].packages.surface_water.results.q.map(per=0).zs, dtype=float),
+        )
+        assert [ax.get_title() for ax in sfr_q_subplot.axes[:2]] == ["sfr_a", "sfr_b"]
+        assert [ax.get_title() for ax in surface_water_subplot.axes[:2]] == ["sfr_a", "sfr_b"]
 
         lak_catalog = ProjectCatalog(workspace / "lak_group_project", name="lak_group_project")
         lak_catalog.register_model_spec(ModelSpec(name="lak_model", grid_ref="four_cell_grid"))
@@ -3428,10 +3707,31 @@ def test_model_group_package_results_support_get_compare_and_maps():
         lak_q = lak_group.packages.lak.results.q.get()
         lak_q_diff = lak_group.packages.lak.results.q.compare(model_name="lak_b")
         lak_q_map = lak_group.packages.lak.results.q.compare_map(model_name="lak_b", per=0)
+        lak_q_horizontal = lak_group.packages.lak.results.q.get(connection_type="HORIZONTAL")
+        lak_q_horizontal_diff = lak_group.packages.lak.results.q.compare(model_name="lak_b", connection_type="HORIZONTAL")
+        lak_q_horizontal_map = lak_group.packages.lak.results.q.compare_map(
+            model_name="lak_b",
+            per=0,
+            connection_type="HORIZONTAL",
+        )
+        lak_q_subplot = lak_group.packages.lak.results.q.subplot_map(per=0)
         assert lak_q.empty is False
         assert lak_q_diff.empty is False
+        assert lak_q_horizontal.empty is False
+        assert lak_q_horizontal_diff.empty is False
+        assert set(lak_q_horizontal["claktype"].astype(str).str.upper()) <= {"HORIZONTAL"}
         assert {"q_per_area", "q_per_area_diff"}.issubset(lak_q_diff.columns)
         assert len(lak_q_map.zs) == lak_group.models["lak_a"].vor.ncpl
+        assert len(lak_q_horizontal_map.zs) == lak_group.models["lak_a"].vor.ncpl
+        np.testing.assert_allclose(
+            np.asarray(lak_q_subplot._simple_modflow_panel_values["lak_a"], dtype=float),
+            np.asarray(lak_group.models["lak_a"].packages.lak.results.q.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(lak_q_subplot._simple_modflow_panel_values["lak_b"], dtype=float),
+            np.asarray(lak_group.models["lak_b"].packages.lak.results.q.map(per=0).zs, dtype=float),
+        )
+        assert [ax.get_title() for ax in lak_q_subplot.axes[:2]] == ["lak_a", "lak_b"]
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -3458,6 +3758,222 @@ def test_build_lak_q_map_payload_normalizes_exchange_by_area():
     assert hover["q"][0] == pytest.approx(6.0)
     assert hover["flow_area"][0] == pytest.approx(4.0)
     assert hover["q_per_area"][0] == pytest.approx(1.5)
+
+
+def test_build_lak_budget_result_table_fills_connection_metadata_when_row_order_mismatch():
+    class _DummyLakConnectionData:
+        def get_data(self):
+            return [
+                {
+                    "lake": 0,
+                    "iconn": 468,
+                    "cellid": (0, 0),
+                    "claktype": "horizontal",
+                    "bedleak": 0.05,
+                    "belev": 9.0,
+                    "telev": 10.0,
+                    "connlen": 25.0,
+                    "connwidth": 12.0,
+                },
+                {
+                    "lake": 0,
+                    "iconn": 469,
+                    "cellid": (0, 0),
+                    "claktype": "vertical",
+                    "bedleak": 0.2,
+                    "belev": 7.5,
+                    "telev": 10.5,
+                    "connlen": 0.0,
+                    "connwidth": 0.0,
+                },
+            ]
+
+    class _DummyLakBudgetAccessor:
+        def get(self, _budget_type):
+            return pd.DataFrame(
+                {
+                    "node": [1, 1],
+                    "node2": [1, 1],
+                    "iconn": [469, 468],
+                    "q": [2.0, -1.5],
+                    "FLOW-AREA": [300.0, 300.0],
+                    "kstpkper": [(0, 0), (0, 0)],
+                }
+            )
+
+    class _DummyLakOutputs:
+        def __init__(self):
+            self.bud = _DummyLakBudgetAccessor()
+
+    class _DummyLakOutputsNamespace:
+        def __init__(self):
+            self.lak = _DummyLakOutputs()
+
+    class _DummyLakPackage:
+        def __init__(self):
+            self.connectiondata = _DummyLakConnectionData()
+
+    class _DummyModel:
+        def __init__(self):
+            self.name = "dummy_lak_model"
+            self.outputs = _DummyLakOutputsNamespace()
+            self.lak = _DummyLakPackage()
+            self.node_to_lni = {0: (0, 0)}
+
+    frame = build_lak_budget_result_table(_DummyModel(), budget_text="GWF", value_name="q")
+
+    assert len(frame) == 2
+    assert frame["belev"].notna().all()
+    assert frame["telev"].notna().all()
+    assert frame["bedleak"].notna().all()
+    assert frame["connlen"].notna().all()
+    assert frame["connwidth"].notna().all()
+    assert set(frame["claktype"].astype(str).str.upper()) == {"HORIZONTAL", "VERTICAL"}
+    by_iconn = frame.set_index("iconn")
+    assert by_iconn.loc[468, "belev"] == pytest.approx(9.0)
+    assert by_iconn.loc[468, "telev"] == pytest.approx(10.0)
+    assert by_iconn.loc[468, "connlen"] == pytest.approx(25.0)
+    assert by_iconn.loc[468, "connwidth"] == pytest.approx(12.0)
+    assert by_iconn.loc[469, "belev"] == pytest.approx(7.5)
+    assert by_iconn.loc[469, "telev"] == pytest.approx(10.5)
+    assert by_iconn.loc[469, "bedleak"] == pytest.approx(0.2)
+    assert np.allclose(frame["flow_area"].astype(float).to_numpy(), [300.0, 300.0])
+
+
+def test_build_lak_budget_result_table_ignores_ambiguous_raw_iconn_and_uses_cell_order():
+    class _DummyLakConnectionData:
+        def get_data(self):
+            return [
+                {
+                    "lake": 0,
+                    "iconn": 0,
+                    "cellid": (0, 0),
+                    "claktype": "vertical",
+                    "bedleak": 0.2,
+                    "belev": 7.5,
+                    "telev": 10.5,
+                    "connlen": 0.0,
+                    "connwidth": 0.0,
+                },
+                {
+                    "lake": 0,
+                    "iconn": 1,
+                    "cellid": (0, 0),
+                    "claktype": "horizontal",
+                    "bedleak": 0.05,
+                    "belev": 9.0,
+                    "telev": 10.0,
+                    "connlen": 25.0,
+                    "connwidth": 12.0,
+                },
+            ]
+
+    class _DummyLakBudgetAccessor:
+        def get(self, _budget_type):
+            return pd.DataFrame(
+                {
+                    "node": [1, 1],
+                    "node2": [1, 1],
+                    "iconn": [0, 0],
+                    "q": [0.0, -1.5],
+                    "FLOW-AREA": [0.0, 300.0],
+                    "kstpkper": [(0, 0), (0, 0)],
+                }
+            )
+
+    class _DummyLakOutputs:
+        def __init__(self):
+            self.bud = _DummyLakBudgetAccessor()
+
+    class _DummyLakOutputsNamespace:
+        def __init__(self):
+            self.lak = _DummyLakOutputs()
+
+    class _DummyLakPackage:
+        def __init__(self):
+            self.connectiondata = _DummyLakConnectionData()
+
+    class _DummyModel:
+        def __init__(self):
+            self.name = "dummy_lak_model"
+            self.outputs = _DummyLakOutputsNamespace()
+            self.lak = _DummyLakPackage()
+            self.node_to_lni = {0: (0, 0)}
+
+    frame = build_lak_budget_result_table(_DummyModel(), budget_text="GWF", value_name="q")
+
+    assert len(frame) == 2
+    assert frame.loc[0, "claktype"] == "VERTICAL"
+    assert frame.loc[1, "claktype"] == "HORIZONTAL"
+    assert frame.loc[0, "telev"] == pytest.approx(10.5)
+    assert frame.loc[1, "connwidth"] == pytest.approx(12.0)
+
+
+def test_build_lak_budget_result_table_resets_connection_order_each_period():
+    class _DummyLakConnectionData:
+        def get_data(self):
+            return [
+                {
+                    "lake": 0,
+                    "iconn": 0,
+                    "cellid": (0, 0),
+                    "claktype": "vertical",
+                    "bedleak": 0.2,
+                    "belev": 7.5,
+                    "telev": 10.5,
+                    "connlen": 0.0,
+                    "connwidth": 0.0,
+                },
+                {
+                    "lake": 0,
+                    "iconn": 1,
+                    "cellid": (0, 0),
+                    "claktype": "horizontal",
+                    "bedleak": 0.05,
+                    "belev": 9.0,
+                    "telev": 10.0,
+                    "connlen": 25.0,
+                    "connwidth": 12.0,
+                },
+            ]
+
+    class _DummyLakBudgetAccessor:
+        def get(self, _budget_type):
+            return pd.DataFrame(
+                {
+                    "node": [1, 1, 1, 1],
+                    "node2": [1, 1, 1, 1],
+                    "q": [0.0, -1.5, 0.25, -2.0],
+                    "FLOW-AREA": [0.0, 300.0, 0.0, 300.0],
+                    "kstpkper": [(0, 0), (0, 0), (0, 1), (0, 1)],
+                }
+            )
+
+    class _DummyLakOutputs:
+        def __init__(self):
+            self.bud = _DummyLakBudgetAccessor()
+
+    class _DummyLakOutputsNamespace:
+        def __init__(self):
+            self.lak = _DummyLakOutputs()
+
+    class _DummyLakPackage:
+        def __init__(self):
+            self.connectiondata = _DummyLakConnectionData()
+
+    class _DummyModel:
+        def __init__(self):
+            self.name = "dummy_lak_model"
+            self.outputs = _DummyLakOutputsNamespace()
+            self.lak = _DummyLakPackage()
+            self.node_to_lni = {0: (0, 0)}
+
+    frame = build_lak_budget_result_table(_DummyModel(), budget_text="GWF", value_name="q")
+
+    assert len(frame) == 4
+    assert frame["iconn"].tolist() == [0, 1, 0, 1]
+    assert frame["claktype"].tolist() == ["VERTICAL", "HORIZONTAL", "VERTICAL", "HORIZONTAL"]
+    assert frame["connwidth"].tolist() == [0.0, 12.0, 0.0, 12.0]
 
 
 def test_model_group_packages_namespace_matches_existing_group_accessors():

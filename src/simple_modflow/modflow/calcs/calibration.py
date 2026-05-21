@@ -67,6 +67,57 @@ def calculate_calibration_statistics(observed, simulated):
 
 class CalibrationPlot(f.Fig):
 
+    @classmethod
+    def from_compare(cls, compare: pd.DataFrame, *, type: str = "calibration"):
+        """Build a calibration plot directly from a compare/residual DataFrame."""
+
+        frame = compare.copy()
+        required = {"head_target", "sim_head"}
+        missing = required - set(frame.columns)
+        if missing:
+            raise ValueError(
+                "CalibrationPlot.from_compare(...) requires columns: "
+                + ", ".join(sorted(missing))
+            )
+
+        if type == "heads":
+            per = pd.to_numeric(frame["per"] if "per" in frame.columns else frame["time"], errors="coerce")
+            if per.isna().any():
+                raise ValueError(
+                    "CalibrationPlot.from_compare(type='heads') requires numeric per/time values."
+                )
+            tuples = list(
+                zip(
+                    frame["name"].astype(str),
+                    pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int),
+                    [(0, int(value)) for value in per],
+                )
+            )
+            index = pd.MultiIndex.from_tuples(tuples, names=["locs", "layer", "kstpkper"])
+            observed = pd.DataFrame({"elev": frame["head_target"].to_numpy()}, index=index)
+            simulated = pd.DataFrame({"elev": frame["sim_head"].to_numpy()}, index=index)
+            return cls(observed=observed, simulated=simulated, type=type)
+
+        return cls(
+            observed=pd.Series(frame["head_target"].to_numpy()),
+            simulated=pd.Series(frame["sim_head"].to_numpy()),
+            type=type,
+        )
+
+    @classmethod
+    def from_targets(cls, targets, *, model=None, type: str = "calibration"):
+        """Build a calibration plot from ``HeadTargets`` or a bound target helper."""
+
+        if hasattr(targets, "targets") and model is None:
+            compare = targets.compare()
+        else:
+            if model is None:
+                raise ValueError(
+                    "CalibrationPlot.from_targets(...) requires model= when given raw HeadTargets."
+                )
+            compare = targets.compare(model)
+        return cls.from_compare(compare, type=type)
+
     def __init__(
             self,
             observed: pd.Series | list | Path = None,

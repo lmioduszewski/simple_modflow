@@ -10,6 +10,13 @@ The package still carries some compatibility surfaces from older workflows. Thos
 older names are not necessarily wrong, but new code should prefer the patterns
 described here.
 
+## Quick Resources
+
+- [simple_modflow_api_pamphlet.pdf](C:/Users/lukem/Python/Projects/simple_modflow/docs/simple_modflow_api_pamphlet.pdf)
+  A short visually organized workflow summary, arranged one topic per page.
+- [targets_api_quickstart.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/targets_api_quickstart.ipynb)
+  A short notebook focused on the flexible target API, model-bound target registry, FloPy observation generation, and PEST touchpoints.
+
 ## Cheat Sheet
 
 ### Import
@@ -104,6 +111,71 @@ MVR(model=model, maxmvr=1, maxpackages=2, packages=[["sfr"], ["lak"]], perioddat
 success, buff = model.run_simulation()
 ```
 
+### Calibration / PEST first slice
+
+```python
+targets = mf.HeadTargets(
+    locations=head_points_gpkg,
+    values=head_targets_csv,
+    name_column="name",
+    layer_column="layer",
+    time_column="per",
+)
+
+pest = mf.PestProject(
+    model=model,
+    name="cumberland_pest",
+    workspace=model.workspace / "pest",
+    start_datetime="2024-01-01",
+)
+
+pest.add_parameter(
+    mf.KPilotPointParameter(
+        name="hk",
+        source=mf.VectorParameterSource(path=hk_gpkg, value_column="k", zone_column="unit"),
+        bounds=(0.25, 4.0),
+        bounds_mode="multiplier",
+        transform="log",
+        pp_spacing=1500.0,
+        geostruct=mf.ExpGeoStruct(range=3000.0, transform="log"),
+    )
+)
+
+pest.add_parameter(
+    mf.DrainElevationParameter(
+        name="drn_elev",
+        source=mf.VectorParameterSource(
+            path=drn_gpkg,
+            value_column="elev",
+            feature_id_column="name",
+            group_column="group",
+            layer_column="layer",
+        ),
+        bounds=(-10.0, 10.0),
+        bounds_mode="absolute",
+    )
+)
+
+pest.add_parameter(
+    mf.DrainConductanceParameter(
+        name="drn_cond",
+        source=mf.VectorParameterSource(
+            path=drn_gpkg,
+            value_column="cond",
+            feature_id_column="name",
+            group_column="group",
+            layer_column="layer",
+        ),
+        bounds=(0.25, 4.0),
+        bounds_mode="multiplier",
+        transform="log",
+    )
+)
+
+pest.add_observation(mf.HeadTargetObservationSpec(targets=targets))
+pst = pest.build_pst("first_slice.pst")
+```
+
 ### Outputs
 
 ```python
@@ -121,13 +193,55 @@ model.packages.uzf.results.sat.get()
 model.packages.uzf.results.sat.map(per=0)
 model.packages.lak.connections.get()
 model.packages.lak.connections.map()
+model.packages.lak.budget.types
+model.packages.lak.budget.get()
+model.packages.lak.budget.get(term="GWF", per=0)
+model.packages.lak.budget.summary()
+model.packages.lak.budget.wide(index=["per", "lake"])
+model.packages.lak.budget.gwf.get(per=0)
+model.packages.lak.budget.storage.get()
+model.packages.lak.budget.runoff.get()
+model.packages.lak.budget.rainfall.get()
+model.packages.lak.budget.evaporation.get()
+model.packages.lak.budget.withdrawal.get()
+model.packages.lak.budget.constant.get()
+model.packages.lak.budget.ext_inflow.get()
+model.packages.lak.budget.ext_outflow.get()
+model.packages.lak.budget.from_mvr.get()
+model.packages.lak.budget.to_mvr.get()
+model.packages.lak.budget.flow_ja_face.get()
+model.packages.lak.budget.mvr.get()
+model.packages.lak.budget.lake_fluxes.get()
 model.packages.lak.results.stage.get()
 model.packages.lak.results.stage.map(per=0)
 model.packages.lak.results.stage.plot_timeseries()
+model.packages.lak.results.stage_change.get()
+model.packages.lak.results.stage_change.plot_timeseries()
 model.packages.lak.results.q.get()
 model.packages.lak.results.q.map(per=0)
+model.packages.lak.results.q.map(per=0, connection_type="VERTICAL")
+model.packages.lak.results.q.map(per=0, connection_type="HORIZONTAL")
 model.packages.lak.results.q.budget_summary(per=0)
 model.packages.lak.results.q.plot_budget(per=0)
+model.packages.surface_water.results.q.get()
+model.packages.surface_water.results.q.map(per=0)
+model.packages.sfr.budget.types
+model.packages.sfr.budget.get()
+model.packages.sfr.budget.get(term="GWF", per=0)
+model.packages.sfr.budget.summary()
+model.packages.sfr.budget.wide(index=["per", "reach"])
+model.packages.sfr.budget.gwf.get(per=0)
+model.packages.sfr.budget.flow_ja_face.get()
+model.packages.sfr.budget.ext_inflow.get()
+model.packages.sfr.budget.runoff.get()
+model.packages.sfr.budget.rain.get()
+model.packages.sfr.budget.evaporation.get()
+model.packages.sfr.budget.ext_outflow.get()
+model.packages.sfr.budget.storage.get()
+model.packages.sfr.budget.from_mvr.get()
+model.packages.sfr.budget.to_mvr.get()
+model.packages.sfr.budget.mvr.get()
+model.packages.sfr.budget.stream_fluxes.get()
 model.packages.sfr.results.stage.get()
 model.packages.sfr.results.stage.map(per=0)
 model.packages.sfr.results.stage.profile(per=0)
@@ -211,12 +325,21 @@ group.packages.chd.results.q.compare_map(model_name="postdev", per=0)
 group.packages.uzf.results.gwrch.get()
 group.packages.uzf.results.gwrch.compare()
 group.packages.uzf.results.sat.get()
+group.packages.lak.connections.get()
+group.packages.lak.connections.map(model_name="postdev")
+group.packages.lak.results.stage.get()
+group.packages.lak.results.stage.compare()
+group.packages.lak.results.stage.plot_timeseries()
 group.packages.lak.results.q.get()
 group.packages.lak.results.q.compare()
 group.packages.lak.results.q.compare_map(model_name="postdev", per=0)
+group.packages.lak.results.q.compare_map(model_name="postdev", per=0, connection_type="HORIZONTAL")
+group.packages.lak.results.q.subplot_map(per=0)
 group.packages.sfr.results.q.get()
 group.packages.sfr.results.q.compare()
 group.packages.sfr.results.q.compare_map(model_name="postdev", per=0)
+group.packages.sfr.results.q.subplot_map(per=0)
+group.packages.surface_water.results.q.subplot_map(per=0)
 group.rch.get()
 group.rch.compare()
 group.outputs.lak.stage()
@@ -733,6 +856,26 @@ The most useful notebooks for the preferred API are:
 - [refined_end_to_end_preferred_api_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/refined_end_to_end_preferred_api_workflow.ipynb)
   Refined single-model workflow with preferred vector builders plus validated
   `UZF/LAK/SFR/MVR`.
+- [pest_first_slice_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/pest_first_slice_workflow.ipynb)
+  First reusable PEST/pyEMU workflow with GIS-defined `K`, GIS-defined drains,
+  `HeadTargets`, and forward-run parameter application.
+- [cumberland_predev_pest_first_slice_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/cumberland_predev_pest_first_slice_workflow.ipynb)
+  Cumberland-specific first-slice calibration example using the current
+  pre-development `K` and drain GIS inputs on one steady-state stress period.
+- [cumberland_observed_snapshot_pest_first_slice_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/cumberland_observed_snapshot_pest_first_slice_workflow.ipynb)
+  Cumberland-specific first-slice calibration example that uses a real
+  observed-head snapshot from `calib_observations.xlsx` instead of synthetic
+  pseudo-targets.
+- [cumberland_steady_snapshot_pest_first_slice.py](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/cumberland_steady_snapshot_pest_first_slice.py)
+  Command-line Cumberland steady-state snapshot calibration example using the
+  current first-slice `PestProject` API with one steady-state stress period, a
+  representative observed-head snapshot, low-weight supplemental wells,
+  timestamped artifact workspaces, and optional fast/parallel run modes.
+- [cumberland_transient_observed_pest_first_slice.py](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/cumberland_transient_observed_pest_first_slice.py)
+  Command-line Cumberland transient calibration example using the current
+  first-slice `PestProject` API with one initial steady-state period, 12 monthly
+  transient periods, real observed heads, low-weight one-time supplemental
+  wells, timestamped artifact workspaces, and optional fast/parallel run modes.
 - [import_existing_runs_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/import_existing_runs_workflow.ipynb)
   Lazy run reopening and archive browsing.
 
@@ -743,11 +886,42 @@ The most useful notebooks for the preferred API are:
 `model.packages.lak.results.q.map(...)` uses lake-groundwater exchange normalized by
 total lake connection flow area in each cell, so the mapped quantity is a
 signed length-per-time exchange intensity instead of raw volumetric `q`.
+By default it sums both vertical and horizontal lake connections within each
+model cell. Pass `connection_type="VERTICAL"` or `connection_type="HORIZONTAL"`
+to isolate one connection family.
+
+`model.packages.surface_water.results.q.map(...)` combines SFR and LAK on one
+shared map. It converts both packages to one physical sign convention before
+plotting:
+
+- positive = groundwater gaining into the surface-water feature
+- negative = surface-water losing to groundwater
+
+This means SFR exchange is internally sign-flipped relative to the raw MF6
+`SFR/GWF` budget term so the combined map can share one `L/T` color scale with
+LAK.
 
 Grouped LAK exchange comparison maps use the same area-normalized quantity, and
 diverging signed maps keep `0` centered in white with symmetric color limits.
 
+For grouped scenario review, the preferred quick-look panels are:
+
+- `group.packages.lak.results.q.subplot_map(...)`
+- `group.packages.sfr.results.q.subplot_map(...)`
+- `group.packages.surface_water.results.q.subplot_map(...)`
+
+These draw one map per model and keep a shared symmetric `L/T` color range
+across all panels.
+
 `model.packages.lak.connections.map(...)` maps connection geometry such as total
-connection area by cell, while `model.packages.lak.results.stage.plot_timeseries()`
-and `model.packages.lak.results.q.plot_budget(...)` provide quick lake-centric
-views that complement the choropleths.
+connection area by cell, while `model.packages.lak.results.stage.plot_timeseries()`,
+`model.packages.lak.results.stage_change.plot_timeseries()`, and
+`model.packages.lak.results.q.plot_budget(...)` provide quick lake-centric
+views that complement the choropleths. For grouped workflows,
+`group.packages.lak.results.stage.plot_timeseries()` is the preferred way to
+compare lake stage trajectories across scenarios.
+
+`model.packages.sfr.results.q.map(...)` uses MF6 `GWF` exchange directly, where
+positive values mean flow from the stream reach to groundwater. The default map
+colors are therefore reversed so gaining reaches plot blue and losing reaches
+plot red.

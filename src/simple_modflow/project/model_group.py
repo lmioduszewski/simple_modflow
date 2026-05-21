@@ -5,13 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib
 from pathlib import Path
+from typing import Generic, TypeVar
 
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
 from simple_modflow.modflow.mf6.package_explorer import (
+    _blue_white_red_diverging_colorscale,
+    _normalize_connection_type_filter,
+    build_surface_water_exchange_cell_table,
+    build_surface_water_q_map_payload,
     build_cell_package_input_table,
     build_cell_input_map_payload,
     build_budget_result_table,
+    build_lak_connection_table,
     build_lak_budget_result_table,
     build_lak_q_map_payload,
     build_sfr_budget_result_table,
@@ -24,6 +33,8 @@ from simple_modflow.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     _symmetric_color_limit,
 )
+
+TResultsNamespace = TypeVar("TResultsNamespace")
 
 
 def _coerce_kstpkper(model, per: int | None = None, kstpkper: tuple[int, int] | None = None):
@@ -44,6 +55,98 @@ def _normalize_iterable_filter(values) -> list[int] | None:
     if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
         return [int(value) for value in values]
     return [int(values)]
+
+
+def _coerce_panel_model_names(group: "ModelGroup", model_names: Sequence[str] | None = None) -> list[str]:
+    """Normalize optional subplot model ordering to a validated name list."""
+
+    if model_names is None:
+        return list(group.models.keys())
+    normalized = [str(name) for name in model_names]
+    missing = [name for name in normalized if name not in group.models]
+    if missing:
+        raise KeyError(f"Models not found in group: {missing!r}")
+    return normalized
+
+
+def _coerce_matplotlib_colormap(colorscale) -> mcolors.Colormap:
+    """Convert a package-explorer colorscale into a Matplotlib colormap."""
+
+    if colorscale is None:
+        return plt.get_cmap("RdBu")
+    if isinstance(colorscale, str):
+        return plt.get_cmap(colorscale)
+    if isinstance(colorscale, Sequence):
+        color_values = []
+        for entry in colorscale:
+            if isinstance(entry, Sequence) and len(entry) >= 2:
+                color_values.append(entry[1])
+            else:
+                color_values.append(entry)
+        return mcolors.LinearSegmentedColormap.from_list("simple_modflow_surface_water", color_values)
+    raise TypeError("colorscale must be None, a Matplotlib colormap name, or a Plotly-style colorscale list.")
+
+
+def _plot_group_choropleth_subplots(
+    group: "ModelGroup",
+    panel_values: dict[str, np.ndarray],
+    *,
+    colorbar_label: str,
+    title_prefix: str,
+    colorscale,
+    model_names: Sequence[str] | None = None,
+    ncols: int | None = None,
+    figsize: tuple[float, float] | None = None,
+):
+    """Plot one shared-scale choropleth panel per model and return the figure."""
+
+    ordered_names = _coerce_panel_model_names(group, model_names)
+    if not ordered_names:
+        raise ValueError("At least one model must be selected for subplot_map().")
+
+    ncols = int(ncols) if ncols is not None else min(3, max(1, len(ordered_names)))
+    nrows = int(np.ceil(len(ordered_names) / ncols))
+    if figsize is None:
+        figsize = (5.0 * ncols, 4.75 * nrows)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    axes_array = np.atleast_1d(axes).ravel()
+
+    all_values = np.concatenate([np.asarray(panel_values[name], dtype=float) for name in ordered_names])
+    finite = all_values[np.isfinite(all_values)]
+    absmax = float(np.max(np.abs(finite))) if finite.size else 0.0
+    if absmax <= 0.0:
+        absmax = 1.0
+    cmap = _coerce_matplotlib_colormap(colorscale)
+    norm = mcolors.Normalize(vmin=-absmax, vmax=absmax)
+
+    for axis, model_name in zip(axes_array, ordered_names, strict=False):
+        model = group.models[model_name]
+        gdf = model.vor.gdf_vorPolys.copy()
+        gdf["value"] = np.asarray(panel_values[model_name], dtype=float)
+        gdf.plot(
+            column="value",
+            ax=axis,
+            cmap=cmap,
+            vmin=-absmax,
+            vmax=absmax,
+            linewidth=0.3,
+            edgecolor="#666666",
+        )
+        axis.set_title(str(model_name))
+        axis.set_axis_off()
+        axis.set_aspect("equal")
+
+    for axis in axes_array[len(ordered_names):]:
+        axis.set_visible(False)
+
+    scalar_mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
+    scalar_mappable.set_array([])
+    colorbar = fig.colorbar(scalar_mappable, ax=axes_array[: len(ordered_names)], shrink=0.9)
+    colorbar.set_label(colorbar_label)
+    fig.suptitle(title_prefix, y=0.98)
+    fig.subplots_adjust(top=0.9, wspace=0.08, hspace=0.12)
+    fig._simple_modflow_panel_values = {name: np.asarray(panel_values[name], dtype=float) for name in ordered_names}
+    return fig
 
 
 def _filter_group_input_table(
@@ -895,7 +998,12 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped SFR map normalized by total reach length per cell."""
+        """Build a grouped SFR map normalized by total reach length per cell.
+
+        Positive MF6 ``SFR``/``GWF`` exchange means flow from the stream to
+        groundwater, so the default diverging colorscale is defined explicitly
+        to render gaining reaches blue and losing reaches red.
+        """
 
         del agg
         target_name = self.group.reference if model_name is None else str(model_name)
@@ -924,7 +1032,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "RdBu",
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
 
@@ -999,6 +1107,45 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             **kwargs,
         )
 
+    def subplot_map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        model_names: Sequence[str] | None = None,
+        ncols: int | None = None,
+        figsize: tuple[float, float] | None = None,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale=None,
+    ):
+        """Plot one SFR exchange choropleth panel per model with a shared scale."""
+
+        ordered_names = _coerce_panel_model_names(self.group, model_names)
+        panel_values: dict[str, np.ndarray] = {}
+        for current_model_name in ordered_names:
+            model = self.group.models[current_model_name]
+            selected = self.get(model_name=current_model_name, per=per, layer=layer)
+            values, _hover = build_sfr_q_map_payload(
+                selected,
+                ncpl=model.vor.ncpl,
+                per=per,
+                layer=layer,
+                multiplier=multiplier,
+                fill_value=fill_value,
+            )
+            panel_values[current_model_name] = np.asarray(values, dtype=float)
+        return _plot_group_choropleth_subplots(
+            self.group,
+            panel_values,
+            colorbar_label="SFR exchange per reach length",
+            title_prefix=f"Grouped SFR exchange (per={per}, layer={layer})",
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            model_names=ordered_names,
+            ncols=ncols,
+            figsize=figsize,
+        )
+
 
 class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
@@ -1013,6 +1160,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         per: int | None = None,
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
+        connection_type: str | Sequence[str] | None = None,
     ) -> pd.DataFrame:
         """Return aligned LAK exchange rows, including ``q_per_area``."""
 
@@ -1029,13 +1177,17 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         if not frames:
             return pd.DataFrame()
         combined = pd.concat(frames, ignore_index=True)
-        return _filter_group_input_table(
+        combined = _filter_group_input_table(
             combined,
             model_name=model_name,
             per=per,
             layer=layer,
             cells=cells,
         )
+        connection_types = _normalize_connection_type_filter(connection_type)
+        if connection_types is not None and "claktype" in combined.columns:
+            combined = combined.loc[combined["claktype"].astype("string").str.upper().isin(connection_types)].copy()
+        return combined.reset_index(drop=True)
 
     def compare(
         self,
@@ -1044,10 +1196,11 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         per: int | None = None,
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
+        connection_type: str | Sequence[str] | None = None,
     ) -> pd.DataFrame:
         """Compare grouped LAK exchange rows against the reference model."""
 
-        data = self.get(per=per, layer=layer, cells=cells)
+        data = self.get(per=per, layer=layer, cells=cells, connection_type=connection_type)
         if data.empty:
             return pd.DataFrame()
 
@@ -1080,6 +1233,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        connection_type: str | Sequence[str] | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
@@ -1093,7 +1247,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         if target_name not in self.group.models:
             raise KeyError(f"Model {target_name!r} is not in the group.")
         target_model = self.group.models[target_name]
-        selected = self.get(model_name=target_name, per=per, layer=layer)
+        selected = self.get(model_name=target_name, per=per, layer=layer, connection_type=connection_type)
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_lak_q_map_payload(
             selected,
@@ -1125,6 +1279,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        connection_type: str | Sequence[str] | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
@@ -1137,7 +1292,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)
         reference_model = self.group.models[self.group.reference]
-        data = self.get(per=per, layer=layer)
+        data = self.get(per=per, layer=layer, connection_type=connection_type)
 
         def _normalized_by_cell(frame: pd.DataFrame, current_model_name: str) -> pd.DataFrame:
             selected = frame[frame["model"] == current_model_name].copy()
@@ -1188,6 +1343,51 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             hover_ks=False,
             colorscale=colorscale or get_default_group_compare_colorscale(),
             **kwargs,
+        )
+
+    def subplot_map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        connection_type: str | Sequence[str] | None = None,
+        model_names: Sequence[str] | None = None,
+        ncols: int | None = None,
+        figsize: tuple[float, float] | None = None,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale=None,
+    ):
+        """Plot one LAK exchange choropleth panel per model with a shared scale."""
+
+        ordered_names = _coerce_panel_model_names(self.group, model_names)
+        panel_values: dict[str, np.ndarray] = {}
+        for current_model_name in ordered_names:
+            model = self.group.models[current_model_name]
+            selected = self.get(
+                model_name=current_model_name,
+                per=per,
+                layer=layer,
+                connection_type=connection_type,
+            )
+            values, _hover = build_lak_q_map_payload(
+                selected,
+                ncpl=model.vor.ncpl,
+                per=per,
+                layer=layer,
+                multiplier=multiplier,
+                fill_value=fill_value,
+            )
+            panel_values[current_model_name] = np.asarray(values, dtype=float)
+        return _plot_group_choropleth_subplots(
+            self.group,
+            panel_values,
+            colorbar_label="LAK exchange per flow area",
+            title_prefix=f"Grouped LAK exchange (per={per}, layer={layer})",
+            colorscale=colorscale or "RdBu",
+            model_names=ordered_names,
+            ncols=ncols,
+            figsize=figsize,
         )
 
 
@@ -1408,6 +1608,193 @@ class GroupLakOutputs:
         return pd.concat(rows, ignore_index=True)[["model", "kstpkper", "lake", "stage"]]
 
 
+class GroupLakStageResults:
+    """Grouped accessor for lake stages and stage comparisons."""
+
+    def __init__(self, group: "ModelGroup"):
+        self.group = group
+
+    def get(
+        self,
+        *,
+        model_name: str | None = None,
+        lake: int | None = None,
+        per: int | None = None,
+    ) -> pd.DataFrame:
+        """Return aligned lake stages for all models."""
+
+        rows: list[pd.DataFrame] = []
+        for current_model_name, model in self.group.models.items():
+            stage_data = np.asarray(model.outputs.lak.stage.get(), dtype=float)
+            if stage_data.ndim == 1:
+                stage_data = stage_data.reshape(-1, 1)
+            periods = pd.DataFrame(stage_data, columns=list(range(stage_data.shape[1])))
+            periods["per"] = periods.index.astype(int)
+            frame = periods.melt(id_vars="per", var_name="lake", value_name="stage")
+            frame["lake"] = frame["lake"].astype(int)
+            frame["model"] = current_model_name
+            rows.append(frame[["model", "per", "lake", "stage"]])
+
+        if not rows:
+            return pd.DataFrame(columns=["model", "per", "lake", "stage"])
+        combined = pd.concat(rows, ignore_index=True)
+        if model_name is not None:
+            combined = combined.loc[combined["model"] == str(model_name)].copy()
+        if lake is not None:
+            combined = combined.loc[combined["lake"] == int(lake)].copy()
+        if per is not None:
+            combined = combined.loc[combined["per"] == int(per)].copy()
+        return combined.reset_index(drop=True)
+
+    def compare(
+        self,
+        *,
+        model_name: str | None = None,
+        lake: int | None = None,
+        per: int | None = None,
+    ) -> pd.DataFrame:
+        """Compare lake stages against the reference model."""
+
+        data = self.get(lake=lake, per=per)
+        if data.empty:
+            return pd.DataFrame(columns=["model", "reference_model", "per", "lake", "stage", "reference_stage", "stage_diff"])
+
+        reference = self.group.reference
+        ref = (
+            data.loc[data["model"] == reference, ["per", "lake", "stage"]]
+            .rename(columns={"stage": "reference_stage"})
+            .copy()
+        )
+        comp = data.loc[data["model"] != reference].merge(ref, on=["per", "lake"], how="inner")
+        comp["reference_model"] = reference
+        comp["stage_diff"] = comp["stage"].astype(float) - comp["reference_stage"].astype(float)
+        if model_name is not None:
+            comp = comp.loc[comp["model"] == str(model_name)].copy()
+        return comp[["model", "reference_model", "per", "lake", "stage", "reference_stage", "stage_diff"]]
+
+    def plot_timeseries(
+        self,
+        *,
+        lake: int | None = None,
+        ax=None,
+        return_fig: bool = True,
+    ):
+        """Plot lake stage over stress periods for every model in the group."""
+
+        frame = self.get(lake=lake)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4))
+        else:
+            fig = ax.figure
+        if frame.empty:
+            ax.set_title("Grouped LAK stage by stress period")
+            ax.set_xlabel("Stress Period")
+            ax.set_ylabel("Stage")
+            if return_fig:
+                return fig
+            return None
+
+        for (model_name, lake_id), group in frame.groupby(["model", "lake"], dropna=False):
+            group = group.sort_values("per")
+            ax.plot(
+                group["per"].astype(int).to_numpy(),
+                group["stage"].astype(float).to_numpy(),
+                marker="o",
+                linewidth=2.0,
+                label=f"{model_name} / Lake {int(lake_id)}",
+            )
+        ax.set_title("Grouped LAK stage by stress period")
+        ax.set_xlabel("Stress Period")
+        ax.set_ylabel("Stage")
+        ax.legend()
+        fig.tight_layout()
+        if return_fig:
+            return fig
+        return None
+
+
+class GroupLakConnections:
+    """Grouped accessor for lake-connection geometry."""
+
+    def __init__(self, group: "ModelGroup"):
+        self.group = group
+
+    def get(
+        self,
+        *,
+        model_name: str | None = None,
+        lake: int | None = None,
+        layer: int | Sequence[int] | None = None,
+        cells: Sequence[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return aligned LAK connection rows for all models."""
+
+        frames = []
+        for current_model_name, model in self.group.models.items():
+            frame = build_lak_connection_table(model)
+            frame["model"] = current_model_name
+            frames.append(frame)
+
+        if not frames:
+            return pd.DataFrame()
+        combined = pd.concat(frames, ignore_index=True)
+        combined = _filter_group_input_table(
+            combined,
+            model_name=model_name,
+            per=None,
+            layer=layer,
+            cells=cells,
+        )
+        if lake is not None and "lake" in combined.columns:
+            combined = combined.loc[combined["lake"] == int(lake)].copy()
+        return combined.reset_index(drop=True)
+
+    def map(
+        self,
+        *,
+        model_name: str | None = None,
+        lake: int | None = None,
+        layer: int = 0,
+        value_column: str = "connection_area",
+        agg: str = "sum",
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Build a grouped LAK connection-geometry map for one selected model."""
+
+        target_name = self.group.reference if model_name is None else str(model_name)
+        if target_name not in self.group.models:
+            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_model = self.group.models[target_name]
+        selected = self.get(model_name=target_name, lake=lake, layer=layer)
+        if value_column not in selected.columns:
+            raise KeyError(f"LAK connection column {value_column!r} was not found.")
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
+        values, hover = build_cell_input_map_payload(
+            selected,
+            ncpl=target_model.vor.ncpl,
+            value_column=value_column,
+            per=None,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+            agg=agg,
+        )
+        return target_model.cor(
+            per=0,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or "Blues",
+            **kwargs,
+        )
+
+
 class GroupOutputs:
     """Namespace for grouped package-specific output accessors."""
 
@@ -1445,14 +1832,14 @@ class GroupPackageAccessor:
         )
 
 
-class GroupResultsOnlyPackageAccessor:
+class GroupResultsOnlyPackageAccessor(Generic[TResultsNamespace]):
     """Namespace for grouped packages that currently expose results only."""
 
-    def __init__(self, results_namespace):
+    def __init__(self, results_namespace: TResultsNamespace):
         self._results_namespace = results_namespace
 
     @property
-    def results(self):
+    def results(self) -> TResultsNamespace:
         """Return grouped result helpers for this package."""
 
         return self._results_namespace
@@ -1534,10 +1921,132 @@ class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):
     """Namespace for grouped LAK result accessors."""
 
     @property
+    def stage(self) -> GroupLakStageResults:
+        """Return grouped LAK stage helpers."""
+
+        return GroupLakStageResults(self._result_accessor.group)
+
+    @property
     def q(self) -> GroupLakBudgetResults:
         """Return grouped LAK exchange helpers with area-normalized map behavior."""
 
         return self._result_accessor
+
+
+class GroupLakPackageAccessor:
+    """Namespace for grouped LAK geometry and result helpers."""
+
+    def __init__(self, group: "ModelGroup", results_namespace: GroupLakResultsNamespace):
+        self.group = group
+        self._results_namespace = results_namespace
+
+    @property
+    def connections(self) -> GroupLakConnections:
+        """Return grouped LAK connection-geometry helpers."""
+
+        return GroupLakConnections(self.group)
+
+    @property
+    def results(self) -> GroupLakResultsNamespace:
+        """Return grouped LAK result helpers."""
+
+        return self._results_namespace
+
+
+class GroupSurfaceWaterExchangeResults:
+    """Grouped combined SFR/LAK exchange accessor with shared L/T subplots."""
+
+    def __init__(self, group: "ModelGroup"):
+        self.group = group
+
+    def get(
+        self,
+        *,
+        model_name: str | None = None,
+        per: int | None = None,
+        layer: int | Sequence[int] | None = None,
+        include: str | Sequence[str] | None = None,
+        lak_connection_type: str | Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return combined surface-water exchange rows for all selected models."""
+
+        frames = []
+        for current_model_name, model in self.group.models.items():
+            frame = build_surface_water_exchange_cell_table(
+                model,
+                per=per,
+                layer=layer,
+                include=include,
+                lak_connection_type=lak_connection_type,
+            )
+            if frame.empty:
+                continue
+            frame["model"] = current_model_name
+            frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        combined = pd.concat(frames, ignore_index=True)
+        return _filter_group_input_table(combined, model_name=model_name, per=per, layer=layer, cells=None)
+
+    def subplot_map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        include: str | Sequence[str] | None = None,
+        lak_connection_type: str | Sequence[str] | None = None,
+        model_names: Sequence[str] | None = None,
+        ncols: int | None = None,
+        figsize: tuple[float, float] | None = None,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale=None,
+    ):
+        """Plot one combined SFR/LAK exchange panel per model with a shared scale."""
+
+        ordered_names = _coerce_panel_model_names(self.group, model_names)
+        panel_values: dict[str, np.ndarray] = {}
+        for current_model_name in ordered_names:
+            model = self.group.models[current_model_name]
+            selected = self.get(
+                model_name=current_model_name,
+                per=per,
+                layer=layer,
+                include=include,
+                lak_connection_type=lak_connection_type,
+            )
+            values, _hover = build_surface_water_q_map_payload(
+                selected,
+                ncpl=model.vor.ncpl,
+                per=per,
+                layer=layer,
+                multiplier=multiplier,
+                fill_value=fill_value,
+            )
+            panel_values[current_model_name] = np.asarray(values, dtype=float)
+        return _plot_group_choropleth_subplots(
+            self.group,
+            panel_values,
+            colorbar_label="Surface-water exchange intensity",
+            title_prefix=f"Grouped surface-water exchange (per={per}, layer={layer})",
+            colorscale=colorscale or "RdBu",
+            model_names=ordered_names,
+            ncols=ncols,
+            figsize=figsize,
+        )
+
+
+class GroupSurfaceWaterResultsNamespace:
+    """Namespace for grouped combined surface-water result helpers."""
+
+    def __init__(self, group: "ModelGroup"):
+        self.group = group
+
+    @property
+    def q(self) -> GroupSurfaceWaterExchangeResults:
+        """Return grouped combined SFR/LAK exchange helpers."""
+
+        return GroupSurfaceWaterExchangeResults(self.group)
 
 
 class GroupPackages:
@@ -1581,7 +2090,7 @@ class GroupPackages:
         return GroupUzfPackageAccessor(self.group.uzf)
 
     @property
-    def sfr(self) -> GroupResultsOnlyPackageAccessor:
+    def sfr(self) -> GroupResultsOnlyPackageAccessor[GroupSfrResultsNamespace]:
         """Grouped SFR result helpers."""
 
         budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q")
@@ -1596,19 +2105,24 @@ class GroupPackages:
         )
 
     @property
-    def lak(self) -> GroupResultsOnlyPackageAccessor:
-        """Grouped LAK result helpers."""
+    def lak(self) -> GroupLakPackageAccessor:
+        """Grouped LAK geometry and result helpers."""
 
         budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q")
-        return GroupResultsOnlyPackageAccessor(
-            GroupLakResultsNamespace(
-                GroupLakBudgetResults(
-                    self.group,
-                    budget_text=budget_text,
-                    value_name=value_name,
-                )
+        results_namespace = GroupLakResultsNamespace(
+            GroupLakBudgetResults(
+                self.group,
+                budget_text=budget_text,
+                value_name=value_name,
             )
         )
+        return GroupLakPackageAccessor(self.group, results_namespace)
+
+    @property
+    def surface_water(self) -> GroupResultsOnlyPackageAccessor[GroupSurfaceWaterResultsNamespace]:
+        """Grouped combined surface-water result helpers."""
+
+        return GroupResultsOnlyPackageAccessor(GroupSurfaceWaterResultsNamespace(self.group))
 
 
 class ModelGroup:
