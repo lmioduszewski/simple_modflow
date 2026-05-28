@@ -14,10 +14,17 @@ if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from simple_modflow.modflow.mf6.chd import CHDFromVector
     from simple_modflow.modflow.mf6.kflow import KFromVector
-    from simple_modflow.modflow.mf6.observations import HeadTargets, LakeStageTargets
+    from simple_modflow.modflow.mf6.observations import (
+        DrnFlowTargets,
+        HeadTargets,
+        LakeStageTargets,
+        SfrFlowTargets,
+        SfrStageTargets,
+    )
     from simple_modflow.modflow.mf6.pest import (
         DrainConductanceParameter,
         DrainElevationParameter,
+        DrnFlowObservationSpec,
         ExpGeoStruct,
         HeadTargetObservationSpec,
         KPilotPointParameter,
@@ -25,6 +32,8 @@ if TYPE_CHECKING:
         PestProject,
         PestRunResults,
         PestRunReview,
+        SfrFlowObservationSpec,
+        SfrStageObservationSpec,
         VectorParameterSource,
         open_pest_run,
     )
@@ -35,6 +44,7 @@ if TYPE_CHECKING:
         validate_surface_water_configuration,
     )
     from simple_modflow.modflow.mf6.simplemodel import SimpleModel, SimpleModelConfig, build_simple_model
+    from simple_modflow.modflow.mp3du import ParticleTrackingInput, prepare_particle_tracking, run_particle_tracking
     from simple_modflow.modflow.mf6.simulation.base import SimulationBase
     from simple_modflow.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
     from simple_modflow.project import (
@@ -86,17 +96,23 @@ _EXPORTS = {
     "MeshBuildProfile": ("simple_modflow.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "CHDFromVector": ("simple_modflow.modflow.mf6.chd", "CHDFromVector"),
     "DRNFromVector": ("simple_modflow.modflow.mf6.drn", "DRNFromVector"),
+    "DrnFlowTargets": ("simple_modflow.modflow.mf6.observations", "DrnFlowTargets"),
     "GHBFromVector": ("simple_modflow.modflow.mf6.ghb", "GHBFromVector"),
     "HeadTargets": ("simple_modflow.modflow.mf6.observations", "HeadTargets"),
     "LakeStageTargets": ("simple_modflow.modflow.mf6.observations", "LakeStageTargets"),
+    "SfrStageTargets": ("simple_modflow.modflow.mf6.observations", "SfrStageTargets"),
+    "SfrFlowTargets": ("simple_modflow.modflow.mf6.observations", "SfrFlowTargets"),
     "KFromVector": ("simple_modflow.modflow.mf6.kflow", "KFromVector"),
     "KPilotPointParameter": ("simple_modflow.modflow.mf6.pest", "KPilotPointParameter"),
     "patch_simulation_plot": ("simple_modflow.project", "patch_simulation_plot"),
     "DrainConductanceParameter": ("simple_modflow.modflow.mf6.pest", "DrainConductanceParameter"),
     "DrainElevationParameter": ("simple_modflow.modflow.mf6.pest", "DrainElevationParameter"),
+    "DrnFlowObservationSpec": ("simple_modflow.modflow.mf6.pest", "DrnFlowObservationSpec"),
     "ExpGeoStruct": ("simple_modflow.modflow.mf6.pest", "ExpGeoStruct"),
     "HeadTargetObservationSpec": ("simple_modflow.modflow.mf6.pest", "HeadTargetObservationSpec"),
     "LakeStageObservationSpec": ("simple_modflow.modflow.mf6.pest", "LakeStageObservationSpec"),
+    "SfrStageObservationSpec": ("simple_modflow.modflow.mf6.pest", "SfrStageObservationSpec"),
+    "SfrFlowObservationSpec": ("simple_modflow.modflow.mf6.pest", "SfrFlowObservationSpec"),
     "PestProject": ("simple_modflow.modflow.mf6.pest", "PestProject"),
     "PestRunReview": ("simple_modflow.modflow.mf6.pest", "PestRunReview"),
     "PestRunResults": ("simple_modflow.modflow.mf6.pest", "PestRunResults"),
@@ -117,6 +133,9 @@ _EXPORTS = {
     "open_pest_run": ("simple_modflow.modflow.mf6.pest", "open_pest_run"),
     "VoronoiGridPlus": ("simple_modflow.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
     "build_simple_model": ("simple_modflow.modflow.mf6.simplemodel", "build_simple_model"),
+    "ParticleTrackingInput": ("simple_modflow.modflow.mp3du", "ParticleTrackingInput"),
+    "prepare_particle_tracking": ("simple_modflow.modflow.mp3du", "prepare_particle_tracking"),
+    "run_particle_tracking": ("simple_modflow.modflow.mp3du", "run_particle_tracking"),
     "modflow": ("simple_modflow", "modflow"),
     "project": ("simple_modflow", "project"),
     "read_gpkg": ("simple_modflow.modflow.utils.datatypes.readers", "read_gpkg"),

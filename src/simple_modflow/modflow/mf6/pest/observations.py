@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 
 from simple_modflow.modflow.mf6.observations import _normalize_row_labels
-from simple_modflow.modflow.mf6.pest.specs import HeadTargetObservationSpec, LakeStageObservationSpec
+from simple_modflow.modflow.mf6.pest.specs import (
+    DrnFlowObservationSpec,
+    HeadTargetObservationSpec,
+    LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+    SfrStageObservationSpec,
+)
 
 
 def _load_values_table(values, *, time_column: str, value_column: str) -> pd.DataFrame:
@@ -92,6 +98,70 @@ def _write_locations_snapshot(gdf, path: Path):
     return path
 
 
+def _prepare_named_series_observations(
+    project,
+    *,
+    targets,
+    prefix: str,
+    value_column: str,
+    simulated_wide: pd.DataFrame,
+    metadata_kind: str,
+    locations_snapshot: pd.DataFrame | gpd.GeoDataFrame | None = None,
+):
+    """Create one pyEMU list-style observation source from a named-series target set."""
+
+    simulated_path = project.template_workspace / f"{prefix}_simulated_{metadata_kind}.csv"
+    _write_frame(simulated_wide, simulated_path)
+    use_cols = [column for column in simulated_wide.columns if column != simulated_wide.columns[0]]
+    project.pf.add_observations(
+        simulated_path.name,
+        insfile=f"{simulated_path.name}.ins",
+        index_cols=simulated_wide.columns[0],
+        use_cols=use_cols,
+        prefix=prefix,
+    )
+
+    target_frame = targets.to_long().copy()
+    if not target_frame.empty:
+        target_frame["col_label"] = target_frame["name"].astype(str).str.strip().str.lower()
+        target_frame["row_label"] = _build_index_row_labels(target_frame["time"], simulated_wide.columns[0])
+        values_path = project.template_workspace / f"{prefix}_target_values.csv"
+        values_snapshot = target_frame.loc[:, ["time", "name", value_column]].rename(columns={value_column: "value"})
+        _write_frame(values_snapshot.rename(columns={"value": value_column}), values_path)
+    else:
+        values_path = None
+
+    metadata = {
+        "kind": metadata_kind,
+        "prefix": prefix,
+        "time_column": "time",
+        "value_column": value_column,
+        "n_locations": int(len(use_cols)),
+        "n_rows": int(len(target_frame)),
+    }
+    if values_path is not None:
+        metadata["values_file"] = values_path.name
+    if locations_snapshot is not None:
+        if isinstance(locations_snapshot, gpd.GeoDataFrame):
+            locations_path = project.template_workspace / f"{prefix}_target_locations.gpkg"
+            _write_locations_snapshot(locations_snapshot, locations_path)
+        else:
+            locations_path = project.template_workspace / f"{prefix}_target_locations.csv"
+            _write_frame(pd.DataFrame(locations_snapshot), locations_path)
+        metadata["locations_file"] = locations_path.name
+
+    return {
+        "prefix": prefix,
+        "target_frame": target_frame.rename(columns={value_column: "value"}),
+        "named_series_forward_run_config": {
+            "kind": metadata_kind,
+            "locations_file": locations_path.name if locations_snapshot is not None else None,
+            "output_csv": simulated_path.name,
+        },
+        "metadata": metadata,
+    }
+
+
 def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
     """Create simulated-head CSVs and register pyEMU observations."""
 
@@ -169,54 +239,84 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
 def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
     """Create simulated lake-stage CSVs and register pyEMU observations."""
 
-    stage = project.model.packages.lak.results.stage.get().copy()
-    if stage.empty:
-        raise ValueError("No LAK stage results are available for the model.")
-    if "per" in stage.columns:
-        stage = stage.rename(columns={"per": spec.time_column})
-    name_column = "lake_name" if "lake_name" in stage.columns else "name"
-    if name_column not in stage.columns:
-        stage[name_column] = stage["lake"].astype(str)
-    pivot = stage.pivot_table(
-        index=spec.time_column,
-        columns=name_column,
-        values="stage",
-        aggfunc="first",
-    ).reset_index()
-    pivot.columns.name = None
-    simulated_path = project.template_workspace / f"{spec.prefix}_simulated_lake_stage.csv"
-    _write_frame(pivot, simulated_path)
-    use_cols = [column for column in pivot.columns if column != pivot.columns[0]]
-    project.pf.add_observations(
-        simulated_path.name,
-        insfile=f"{simulated_path.name}.ins",
-        index_cols=pivot.columns[0],
-        use_cols=use_cols,
-        prefix=spec.prefix,
-    )
-    target_frame = _load_values_table(
-        spec.values,
-        time_column=spec.time_column,
-        value_column=spec.value_column,
-    )
-    metadata = {
-        "kind": "lake_stage",
-        "prefix": spec.prefix,
-        "time_column": "time",
-        "value_column": "stage",
-        "weight": spec.weight,
-    }
-    if not target_frame.empty:
-        target_frame["row_label"] = _build_index_row_labels(
-            target_frame["time"],
-            pivot.columns[0],
+    targets = spec.targets
+    if targets is None:
+        raise ValueError(
+            "LakeStageObservationSpec now expects targets=LakeStageTargets(...) "
+            "as the canonical workflow."
         )
-        values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
-        values_snapshot = target_frame.loc[:, ["time", "name", "value"]].rename(columns={"value": "stage"})
-        _write_frame(values_snapshot, values_path)
-        metadata["values_file"] = values_path.name
-        metadata["n_rows"] = int(len(values_snapshot))
-    return {"prefix": spec.prefix, "target_frame": target_frame, "weight": spec.weight, "metadata": metadata}
+
+    pivot = targets.simulated_series(project.model)
+    locations_snapshot = targets.get().loc[:, ["name", "lake"]].drop_duplicates()
+    prepared = _prepare_named_series_observations(
+        project,
+        targets=targets,
+        prefix=spec.prefix,
+        value_column="stage",
+        simulated_wide=pivot,
+        metadata_kind="lake_stage",
+        locations_snapshot=locations_snapshot,
+    )
+    if spec.weight is not None and not prepared["target_frame"].empty:
+        prepared["target_frame"]["weight"] = float(spec.weight)
+    return prepared
+
+
+def prepare_sfr_stage_observations(project, spec: SfrStageObservationSpec):
+    """Create simulated SFR-stage CSVs and register pyEMU observations."""
+
+    targets = spec.targets
+    pivot = targets.simulated_series(project.model)
+    locations_snapshot = targets.get().loc[:, ["name", "reach"]].drop_duplicates()
+    return _prepare_named_series_observations(
+        project,
+        targets=targets,
+        prefix=spec.prefix,
+        value_column="stage_target",
+        simulated_wide=pivot,
+        metadata_kind="sfr_stage",
+        locations_snapshot=locations_snapshot,
+    )
+
+
+def prepare_sfr_flow_observations(project, spec: SfrFlowObservationSpec):
+    """Create simulated SFR-flow CSVs and register pyEMU observations."""
+
+    targets = spec.targets
+    pivot = targets.simulated_series(project.model)
+    locations_snapshot = targets.get().loc[:, ["name", "reach"]].drop_duplicates()
+    return _prepare_named_series_observations(
+        project,
+        targets=targets,
+        prefix=spec.prefix,
+        value_column="flow_target",
+        simulated_wide=pivot,
+        metadata_kind="sfr_flow",
+        locations_snapshot=locations_snapshot,
+    )
+
+
+def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
+    """Create simulated DRN-zone seepage CSVs and register pyEMU observations."""
+
+    targets = spec.targets
+    pivot = targets.simulated_series(project.model)
+    locations_snapshot = targets.zone_definitions(project.model)
+    if isinstance(locations_snapshot, gpd.GeoDataFrame):
+        snapshot = locations_snapshot.loc[:, ["name", "group", "weight", "cells", locations_snapshot.geometry.name]].copy()
+    else:
+        snapshot = locations_snapshot.loc[:, [column for column in ["name", "group", "weight", "cells"] if column in locations_snapshot.columns]].copy()
+    if "cells" in snapshot.columns:
+        snapshot["cells"] = snapshot["cells"].apply(lambda values: ",".join(str(value) for value in values))
+    return _prepare_named_series_observations(
+        project,
+        targets=targets,
+        prefix=spec.prefix,
+        value_column="flow_target",
+        simulated_wide=pivot,
+        metadata_kind="drn_flow",
+        locations_snapshot=snapshot,
+    )
 
 
 def finalize_observations(project, prepared: list[dict]):

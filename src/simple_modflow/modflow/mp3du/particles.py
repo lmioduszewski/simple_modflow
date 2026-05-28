@@ -1,67 +1,188 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
-import os
-import json
-import subprocess
-import flopy
-import pandas as pd
-from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
+from collections import Counter
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-import pickle
-import shutil
-from flopy.utils import CellBudgetFile
-from collections import OrderedDict
+from typing import TYPE_CHECKING, Any
+
+import geopandas as gpd
+import importlib
+import json
 import numpy as np
+import os
+import pandas as pd
+import shutil
+import subprocess
+import warnings
+
+from simple_modflow.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
-    from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 
+__all__ = [
+    "ParticleTrackingInput",
+    "ParticleTrackingResult",
+    "prepare_particle_tracking",
+    "run_particle_tracking",
+]
+
+
+_MODULE_DIR = Path(__file__).resolve().parent
+_LEGACY_PRT_NAMES = {"PRT", "PrtMip", "PrtOc", "PrtPrp", "PrtDisv", "PrtFmi"}
+
+
+@dataclass(frozen=True)
+class ParticleTrackingResult(Mapping[str, Any]):
+    """Structured result from preparing and optionally running one MP3DU job."""
+
+    json_file: Path
+    path_file: Path
+    output_json: Path | None = None
+    start_cell_diagnostics: dict[str, Any] | None = None
+    endpoint_summary: dict[str, int] | None = None
+    diagnostics_file: Path | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "json_file": self.json_file,
+            "path_file": self.path_file,
+            "output_json": self.output_json,
+            "start_cell_diagnostics": self.start_cell_diagnostics,
+            "endpoint_summary": self.endpoint_summary,
+            "diagnostics_file": self.diagnostics_file,
+        }
+
+    def __getitem__(self, key: str) -> Any:
+        return self.to_dict()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.to_dict())
+
+    def __len__(self) -> int:
+        return len(self.to_dict())
+
+
 class ParticleTrackingInput:
+    """Build and optionally run mod-PATH3DU inputs for one MODFLOW 6 model."""
+
+    _DEFAULT_FIELD_ALIASES = {
+        "CELLID_ATTR": ("cells", "Node", "node", "P3D_CellID", "CELLID", "cellid"),
+        "TIME_ATTR": ("TimeRel", "TREL", "time", "Time", "trel"),
+        "ZLOC_ATTR": ("ZLoc", "ZLOC", "zloc"),
+        "ADDTL_ATTR": ("LocName", "locname", "name", "Name"),
+    }
+    _DEFAULT_IFACE_OVERRIDES = {
+        "CHD": 2,
+        "DRN": 7,
+        "GHB": 2,
+        "RCH": 6,
+        "RIV": 6,
+        "SFR": 6,
+        "EVT": 6,
+        "WEL": 0,
+    }
+    _BOUNDARY_PACKAGE_NAMES = {
+        "CHD",
+        "DRN",
+        "EVT",
+        "GHB",
+        "LAK",
+        "RCH",
+        "RIV",
+        "SFR",
+        "UZF",
+        "WEL",
+    }
+
     def __init__(
-            self,
-            model: SimulationBase = None,
-            writep3dgsf_path: Path = None,
-            mp3du_path: Path = None,
-            model_output_files: dict = None,
-            output_path: Path = None,
-            porosities_by_layer=None,
-            particle_shp: Path = None
+        self,
+        model: SimulationBase = None,
+        writep3dgsf_path: Path = None,
+        mp3du_path: Path = None,
+        writep3doutput_path: Path = None,
+        model_output_files: dict | None = None,
+        output_path: Path | None = None,
+        porosities_by_layer: list[float] | None = None,
+        particle_shp: Path | None = None,
+        particle_cells: list[int] | None = None,
+        particle_field_map: dict[str, Any] | None = None,
+        cellid_index_base: int = 0,
+        iface_overrides: dict[str, int] | None = None,
+        direction: str = "FORWARD",
+        simulation_end_time: float | None = None,
+        flow_thread_count: int = 10,
+        pathline_thread_count: int = 4,
+        initial_stepsize: float = 0.1,
+        euler_dt: float = 1.0e-4,
+        adaptive_step_error: float = 1.0e-6,
+        capture_radius: float = 10.0,
+        tracking_options: list[str] | None = None,
+        generated_particle_zloc: float = 0.95,
+        generated_particle_release_time: float = 0.0,
+        generated_particle_label_prefix: str = "cell_",
     ):
         self.model = model
-        mp3du_default = Path(
-            r"C:\Users\lukem\Python\Projects\simple_modflow\src\simple_modflow\modflow\mp3du\mp3du.exe")
-        writegsf_default = Path(
-            r"C:\Users\lukem\Python\Projects\simple_modflow\src\simple_modflow\modflow\mp3du\writep3dgsf.exe")
-        self.writep3dgsf_path = writegsf_default if writep3dgsf_path is None else writep3dgsf_path
-        self.mp3du_path = mp3du_default if mp3du_path is None else mp3du_path
+        mp3du_default = _MODULE_DIR / "mp3du.exe"
+        writegsf_default = _MODULE_DIR / "writep3dgsf.exe"
+        writeout_default = _MODULE_DIR / "writep3doutput.exe"
+        self.writep3dgsf_path = writegsf_default if writep3dgsf_path is None else Path(writep3dgsf_path)
+        self.mp3du_path = mp3du_default if mp3du_path is None else Path(mp3du_path)
+        self.writep3doutput_path = writeout_default if writep3doutput_path is None else Path(writep3doutput_path)
         self._model_output_files = model_output_files
-        self._output_path = output_path
+        self._output_path = Path(output_path) if output_path is not None else None
         self._porosities_by_layer = porosities_by_layer
-        self.path_file_path = self.output_path.joinpath('mp3du.p3d')
-        self.particle_shp = particle_shp
+        self.particle_shp = None if particle_shp is None else Path(particle_shp)
+        self.particle_cells = None if particle_cells is None else [int(cell) for cell in particle_cells]
+        self._particle_field_map_input = dict(particle_field_map or {})
+        self._resolved_particle_field_map = None
+        self._resolved_particle_input_path = None
+        self._generated_from_vector = False
+        self.cellid_index_base = 1 if (particle_cells is not None and particle_shp is None) else int(cellid_index_base)
+        self._iface_overrides = self._coerce_iface_overrides(iface_overrides)
+        self.direction = direction.upper()
+        self.simulation_end_time = simulation_end_time
+        self.flow_thread_count = int(flow_thread_count)
+        self.pathline_thread_count = int(pathline_thread_count)
+        self.initial_stepsize = float(initial_stepsize)
+        self.euler_dt = float(euler_dt)
+        self.adaptive_step_error = float(adaptive_step_error)
+        self.capture_radius = float(capture_radius)
+        self.tracking_options = ["TRACK_TO_TERMINATION"] if tracking_options is None else list(tracking_options)
+        self.generated_particle_zloc = float(generated_particle_zloc)
+        self.generated_particle_release_time = float(generated_particle_release_time)
+        self.generated_particle_label_prefix = str(generated_particle_label_prefix)
         self._variables = None
+        self.path_file_path = self.output_path / "mp3du.p3d"
+
+    @staticmethod
+    def _coerce_iface_overrides(iface_overrides: dict[str, int] | None) -> dict[str, int]:
+        overrides = dict(ParticleTrackingInput._DEFAULT_IFACE_OVERRIDES)
+        if iface_overrides:
+            for key, value in iface_overrides.items():
+                overrides[str(key).upper()] = int(value)
+        return overrides
 
     @property
     def model_output_files(self):
         if self._model_output_files is None:
             model_name = self.model.name
-            model_output_files = {
-                'grb': f'{model_name}.disv.grb',
-                'tdis': f'{model_name}.tdis',
-                'hds': f'{model_name}.hds',
-                'cbc': f'{model_name}.cbc',
-                'gsf': f'{model_name}.gsf'
+            self._model_output_files = {
+                "grb": f"{model_name}.disv.grb",
+                "tdis": f"{model_name}.tdis",
+                "hds": f"{model_name}.hds",
+                "cbc": f"{model_name}.cbc",
+                "gsf": f"{model_name}.gsf",
             }
-            self._model_output_files = model_output_files
         return self._model_output_files
 
     @property
     def output_path(self) -> Path:
         if self._output_path is None:
             self._output_path = self.model.model_output_folder_path
+        self._output_path.mkdir(parents=True, exist_ok=True)
         return self._output_path
 
     @property
@@ -70,424 +191,748 @@ class ParticleTrackingInput:
 
     @porosities_by_layer.setter
     def porosities_by_layer(self, val):
-        assert isinstance(val, list), 'porosities_by_layer must be a list of porosities, one per layer'
-        assert len(val) == self.model.gwf.modelgrid.nlay, 'number of porosities must match number of layers'
+        assert isinstance(val, list), "porosities_by_layer must be a list of porosities, one per layer"
+        assert len(val) == self.model.gwf.modelgrid.nlay, "number of porosities must match number of layers"
         for por in val:
-            assert isinstance(por, (int, float)), f'porosity value: {por} must be an integer or a float (decimal)'
+            assert isinstance(por, (int, float)), f"porosity value: {por} must be an integer or a float (decimal)"
         self._porosities_by_layer = val
 
     @property
     def variables(self):
         if self._variables is None:
             porosities = self.porosities_by_layer
-            vars = {
-                'VELOCITY METHOD LAYER': 3,
-                'POROSITY': porosities,
-                'RETARDATION': 1,
-                'DispH': 0,
-                'DISPT': 0,
-                'DISPV': 0
+            self._variables = {
+                "VELOCITY METHOD LAYER": 3,
+                "POROSITY": porosities,
+                "RETARDATION": 1,
+                "DispH": 0,
+                "DISPT": 0,
+                "DISPV": 0,
             }
-            self._variables = vars
         return self._variables
 
+    @property
+    def particle_field_map(self) -> dict[str, Any]:
+        if self._resolved_particle_field_map is None:
+            self._resolved_particle_field_map = self._resolve_particle_field_map()
+        return self._resolved_particle_field_map
+
+    @property
+    def particle_input_path(self) -> Path:
+        if self._resolved_particle_input_path is None:
+            self._resolved_particle_input_path = self._resolve_particle_input_path()
+        return self._resolved_particle_input_path
+
+    def _require_model(self):
+        if self.model is None:
+            raise ValueError("model is required for MP3DU input generation.")
+
+    def _require_particle_source(self):
+        if self.particle_shp is None and self.particle_cells is None:
+            raise ValueError("Either particle_shp or particle_cells is required for MP3DU input generation.")
+        if self.particle_shp is not None and self.particle_cells is not None:
+            raise ValueError("Specify only one particle source: particle_shp or particle_cells.")
+        if self.particle_shp is not None and not self.particle_shp.exists():
+            raise FileNotFoundError(f"Particle file not found: {self.particle_shp}")
+
+    def _resolve_particle_input_path(self) -> Path:
+        self._require_particle_source()
+        if self.particle_shp is not None:
+            return self._prepare_particle_vector_input()
+        return self._write_generated_particle_file()
+
+    def _prepare_particle_vector_input(self) -> Path:
+        particle_data = read_shp_gpkg(self.particle_shp)
+        columns = set(particle_data.columns)
+        has_required = all(
+            any(alias in columns for alias in self._DEFAULT_FIELD_ALIASES[key])
+            for key in ("CELLID_ATTR", "TIME_ATTR", "ZLOC_ATTR")
+        )
+        geom_types = {
+            str(geom_type).upper()
+            for geom_type in getattr(particle_data, "geom_type", pd.Series(dtype=str)).dropna().tolist()
+        }
+        is_point_input = all(geom_type in {"POINT", "MULTIPOINT"} for geom_type in geom_types) if geom_types else False
+        if has_required and is_point_input:
+            return self.particle_shp
+        self._generated_from_vector = True
+        self.cellid_index_base = 1
+        return self._write_generated_particle_file_from_vector(particle_data)
+
+    def _write_generated_particle_file_from_vector(self, particle_data: pd.DataFrame) -> Path:
+        self._require_model()
+        cells_series = self.model.vor.get_vor_cells_as_series(particle_data)
+        ordered_cells: list[int] = []
+        seen: set[int] = set()
+        for value in cells_series.tolist():
+            for cell in self._flatten_cellid(value):
+                if cell in seen:
+                    continue
+                seen.add(cell)
+                ordered_cells.append(int(cell))
+        if not ordered_cells:
+            raise ValueError(f"No model cells were found from particle vector input: {self.particle_shp}")
+        self.particle_cells = ordered_cells
+        self.generated_particle_label_prefix = f"{self.particle_shp.stem}_cell_"
+        return self._write_generated_particle_file(filename="mp3du_particles_from_vector.shp")
+
+    def _grid_cell_count(self) -> int:
+        vor = getattr(self.model, "vor", None)
+        if vor is not None:
+            ncpl = getattr(vor, "ncpl", None)
+            if ncpl is not None:
+                return int(ncpl)
+            gdf_vor_polys = getattr(vor, "gdf_vorPolys", None)
+            if gdf_vor_polys is not None:
+                return int(len(gdf_vor_polys))
+        modelgrid = getattr(getattr(self.model, "gwf", None), "modelgrid", None)
+        if modelgrid is not None:
+            ncpl = getattr(modelgrid, "ncpl", None)
+            if ncpl is not None:
+                return int(ncpl)
+        raise AttributeError("Could not determine grid cell count for particle generation.")
+
+    def _write_generated_particle_file(self, filename: str = "mp3du_particle_cells.shp") -> Path:
+        self._require_model()
+        if self.particle_cells is None:
+            raise ValueError("particle_cells are required to generate a particle shapefile.")
+
+        grid_cell_count = self._grid_cell_count()
+        invalid_cells = [cell for cell in self.particle_cells if cell < 0 or cell >= grid_cell_count]
+        if invalid_cells:
+            raise ValueError(f"particle_cells includes out-of-range cell IDs: {invalid_cells[:10]}")
+
+        centroids = self.model.vor.gdf_vorPolys.geometry.centroid
+        particle_stem = Path(filename).stem
+        particle_path = self.output_path / filename
+        for sidecar in self.output_path.glob(f"{particle_stem}.*"):
+            sidecar.unlink()
+
+        particle_gdf = gpd.GeoDataFrame(
+            {
+                "P3D_CellID": [cell + 1 for cell in self.particle_cells],
+                "TimeRel": [self.generated_particle_release_time for _ in self.particle_cells],
+                "ZLoc": [self.generated_particle_zloc for _ in self.particle_cells],
+                "LocName": [f"{self.generated_particle_label_prefix}{cell}" for cell in self.particle_cells],
+                "Cell0": self.particle_cells,
+            },
+            geometry=[centroids.iloc[cell] for cell in self.particle_cells],
+            crs=self.model.vor.gdf_vorPolys.crs,
+        )
+        particle_gdf.to_file(particle_path, driver="ESRI Shapefile")
+        return particle_path
+
+    def _read_particle_locations(self) -> pd.DataFrame:
+        return read_shp_gpkg(self.particle_input_path)
+
+    def _resolve_particle_field_map(self) -> dict[str, Any]:
+        particle_data = self._read_particle_locations()
+        columns = set(particle_data.columns)
+        explicit = dict(self._particle_field_map_input)
+        particle_name = self.particle_input_path.name
+
+        if (self.particle_cells is not None or self._generated_from_vector) and not explicit:
+            return {
+                "CELLID_ATTR": "P3D_CellID",
+                "TIME_ATTR": "TimeRel",
+                "ZLOC_ATTR": "ZLoc",
+                "ADDTL_ATTR": ["LocName", "Cell0"],
+            }
+
+        resolved: dict[str, Any] = {}
+        for key in ("CELLID_ATTR", "TIME_ATTR", "ZLOC_ATTR"):
+            explicit_value = explicit.get(key)
+            if explicit_value is not None:
+                if explicit_value not in columns:
+                    raise ValueError(
+                        f"{key} '{explicit_value}' was not found in {particle_name}. "
+                        f"Available fields: {sorted(columns)}"
+                    )
+                resolved[key] = explicit_value
+                continue
+
+            alias = next((name for name in self._DEFAULT_FIELD_ALIASES[key] if name in columns), None)
+            if alias is None:
+                raise ValueError(
+                    f"Could not infer {key} from {particle_name}. "
+                    f"Available fields: {sorted(columns)}"
+                )
+            resolved[key] = alias
+
+        explicit_additional = explicit.get("ADDTL_ATTR")
+        if explicit_additional is None:
+            resolved["ADDTL_ATTR"] = [name for name in self._DEFAULT_FIELD_ALIASES["ADDTL_ATTR"] if name in columns]
+        else:
+            additional = [explicit_additional] if isinstance(explicit_additional, str) else list(explicit_additional)
+            missing = [name for name in additional if name not in columns]
+            if missing:
+                raise ValueError(
+                    f"ADDTL_ATTR fields {missing} were not found in {particle_name}. "
+                    f"Available fields: {sorted(columns)}"
+                )
+            resolved["ADDTL_ATTR"] = additional
+        return resolved
+
+    @staticmethod
+    def _normalize_int(value: Any) -> int | None:
+        if value is None or pd.isna(value):
+            return None
+        if isinstance(value, np.generic):
+            value = value.item()
+        return int(value)
+
+    def _normalize_declared_cellid(self, value: Any) -> int | None:
+        normalized = self._normalize_int(value)
+        if normalized is None:
+            return None
+        return normalized - self.cellid_index_base
+
+    @classmethod
+    def _flatten_cellid(cls, value: Any) -> list[int]:
+        if value is None or (not isinstance(value, (list, tuple, np.ndarray)) and pd.isna(value)):
+            return []
+        if isinstance(value, np.ndarray):
+            return cls._flatten_cellid(value.tolist())
+        if isinstance(value, tuple):
+            if len(value) == 2 and isinstance(value[0], (int, np.integer)) and isinstance(value[1], (int, np.integer)):
+                return [int(value[1])]
+            cells: list[int] = []
+            for item in value:
+                cells.extend(cls._flatten_cellid(item))
+            return cells
+        if isinstance(value, list):
+            cells: list[int] = []
+            for item in value:
+                cells.extend(cls._flatten_cellid(item))
+            return cells
+        return [int(value)]
+
+    @classmethod
+    def _aligned_cells_from_series(cls, frame: pd.DataFrame, cells_series: pd.Series) -> list[int | None]:
+        aligned: list[int | None] = []
+        for idx in range(len(frame)):
+            if idx not in cells_series.index:
+                aligned.append(None)
+                continue
+            flattened = cls._flatten_cellid(cells_series.loc[idx])
+            aligned.append(flattened[0] if flattened else None)
+        return aligned
+
+    def get_start_cell_diagnostics(self) -> dict[str, Any]:
+        self._require_model()
+        particle_data = self._read_particle_locations()
+        declared_cells = [
+            self._normalize_declared_cellid(value)
+            for value in particle_data[self.particle_field_map["CELLID_ATTR"]].tolist()
+        ]
+        geometry_cells = self._aligned_cells_from_series(particle_data, self.model.vor.get_vor_cells_as_series(particle_data))
+        start_cells = [declared if declared is not None else geometry for declared, geometry in zip(declared_cells, geometry_cells)]
+
+        mismatch_count = sum(
+            declared is not None and geometry is not None and declared != geometry
+            for declared, geometry in zip(declared_cells, geometry_cells)
+        )
+        boundary_cells = self.collect_boundary_cell_sets()
+        inactive_cells = self.collect_inactive_cells()
+
+        mapped_cells = [cell for cell in start_cells if cell is not None]
+        total_particles = len(start_cells)
+        mapped_particles = len(mapped_cells)
+        boundary_summary = {}
+        for package_name, cells in boundary_cells.items():
+            count = sum(cell in cells for cell in mapped_cells)
+            boundary_summary[package_name] = {
+                "count": count,
+                "pct_mapped": round((count / mapped_particles) * 100.0, 2) if mapped_particles else 0.0,
+            }
+
+        boundary_packages_seen = sorted(boundary_cells)
+        missing_iface = sorted(
+            package_name
+            for package_name in boundary_packages_seen
+            if package_name in self._BOUNDARY_PACKAGE_NAMES and package_name not in self._iface_overrides
+        )
+        inactive_count = sum(cell in inactive_cells for cell in mapped_cells)
+
+        return {
+            "particle_file": str(self.particle_input_path),
+            "source_particle_file": None if self.particle_shp is None else str(self.particle_shp),
+            "field_map": self.particle_field_map,
+            "cellid_index_base": self.cellid_index_base,
+            "total_particles": total_particles,
+            "mapped_particles": mapped_particles,
+            "unmapped_particles": total_particles - mapped_particles,
+            "declared_vs_geometry_mismatches": mismatch_count,
+            "inactive_particles": inactive_count,
+            "inactive_pct_mapped": round((inactive_count / mapped_particles) * 100.0, 2) if mapped_particles else 0.0,
+            "boundary_packages": boundary_summary,
+            "iface_overrides": dict(sorted(self._iface_overrides.items())),
+            "packages_without_iface_override": missing_iface,
+        }
+
+    def collect_inactive_cells(self) -> set[int]:
+        try:
+            inactive = getattr(self.model, "inactive_cells", None)
+        except Exception:
+            inactive = None
+        if inactive is not None:
+            return {int(cell) for cell in inactive}
+
+        idomain = getattr(self.model.gwf.modelgrid, "idomain", None)
+        if idomain is None:
+            return set()
+        idomain_arr = np.asarray(idomain)
+        if idomain_arr.ndim == 1:
+            layer_zero = idomain_arr
+        else:
+            layer_zero = idomain_arr.reshape(idomain_arr.shape[0], -1)[0]
+        return {int(idx) for idx, value in enumerate(layer_zero) if int(value) == 0}
+
+    @classmethod
+    def _package_type_name(cls, name: str, package) -> str:
+        package_type = getattr(package, "package_type", None) or getattr(package, "_package_type", None) or name
+        return str(package_type).upper().split("_")[0]
+
+    @classmethod
+    def _collect_cells_from_source(cls, source: Any) -> set[int]:
+        cells: set[int] = set()
+        if source is None:
+            return cells
+
+        if isinstance(source, dict):
+            for value in source.values():
+                cells.update(cls._collect_cells_from_source(value))
+            return cells
+
+        if not isinstance(source, (np.ndarray, list, tuple)):
+            array = getattr(source, "array", None)
+            if array is not None:
+                cells.update(cls._collect_cells_from_source(array))
+                return cells
+
+            data = getattr(source, "data", None)
+            if data is not None and data is not source:
+                cells.update(cls._collect_cells_from_source(data))
+                return cells
+        else:
+            array = source
+
+        if isinstance(array, np.ndarray) and array.dtype.names:
+            cellid_field = next((name for name in array.dtype.names if name.lower() == "cellid"), None)
+            if cellid_field is not None:
+                for row in array:
+                    cells.update(cls._flatten_cellid(row[cellid_field]))
+            return cells
+
+        if isinstance(array, (list, tuple)):
+            for item in array:
+                if isinstance(item, np.void) and item.dtype.names:
+                    cellid_field = next((name for name in item.dtype.names if name.lower() == "cellid"), None)
+                    if cellid_field is not None:
+                        cells.update(cls._flatten_cellid(item[cellid_field]))
+                        continue
+                if isinstance(item, (list, tuple, np.ndarray)) and len(item) > 1:
+                    first_value = item[0]
+                    if isinstance(first_value, (list, tuple, np.ndarray)):
+                        cells.update(cls._flatten_cellid(first_value))
+                        continue
+                cells.update(cls._flatten_cellid(item))
+            return cells
+
+        return cells
+
+    def collect_boundary_cell_sets(self) -> dict[str, set[int]]:
+        self._require_model()
+        boundary_cells: dict[str, set[int]] = {}
+        package_dict = getattr(self.model.gwf, "package_dict", {})
+        for package_name, package in package_dict.items():
+            package_type = self._package_type_name(package_name, package)
+            cells = set()
+            for attr_name in ("stress_period_data", "packagedata", "connectiondata"):
+                cells.update(self._collect_cells_from_source(getattr(package, attr_name, None)))
+            if cells:
+                boundary_cells[package_type] = boundary_cells.get(package_type, set()).union(cells)
+        return dict(sorted(boundary_cells.items()))
+
+    def summarize_endpoint_output(self, endpoint_path: Path | None = None) -> dict[str, int]:
+        path = self.output_path / self.output_names["ENDPOINT"] if endpoint_path is None else Path(endpoint_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Endpoint output not found: {path}")
+        endpoint = read_shp_gpkg(path)
+        if "PTERM" not in endpoint.columns:
+            raise ValueError(f"Endpoint output {path.name} does not include a PTERM field.")
+        counts = Counter(str(value) for value in endpoint["PTERM"].fillna("None"))
+        return dict(sorted(counts.items()))
+
+    @property
+    def output_names(self) -> dict[str, str]:
+        prefix = self.model.name
+        return {
+            "DBF_TABLE": f"{prefix}_pathline_table.dbf",
+            "PATHLINE_WHOLE": f"{prefix}_pathline_whole.shp",
+            "PATHLINE_PARTS": f"{prefix}_pathline_parts.shp",
+            "POINTS_IN_TIME": f"{prefix}_points_in_time.shp",
+            "ENDPOINT": f"{prefix}_endpoint.shp",
+        }
+
+    def validate_inputs(self, *, execute: bool, convert_output: bool):
+        self._require_model()
+        self._require_particle_source()
+        if self.porosities_by_layer is None:
+            raise ValueError("porosities_by_layer is required for MP3DU input generation.")
+        required_executables = [self.writep3dgsf_path]
+        if execute:
+            required_executables.append(self.mp3du_path)
+        if execute and convert_output:
+            required_executables.append(self.writep3doutput_path)
+        for executable in required_executables:
+            if not Path(executable).exists():
+                raise FileNotFoundError(f"Required MP3DU executable not found: {executable}")
+        self.porosities_by_layer = list(self.porosities_by_layer)
+        _ = self.particle_input_path
+        _ = self.particle_field_map
+
+    def get_active_iface_overrides(self) -> dict[str, int]:
+        try:
+            boundary_packages = set(self.collect_boundary_cell_sets())
+        except Exception:
+            boundary_packages = set()
+        if not boundary_packages:
+            return dict(sorted(self._iface_overrides.items()))
+        return {
+            name: value
+            for name, value in sorted(self._iface_overrides.items())
+            if name in boundary_packages
+        }
+
     def create_gsf_file(self):
-        # Use the provided grb file with writeP3DGSF.exe to create the GSF file
+        """Create the mod-PATH3DU grid specification file from the MF6 GRB."""
+
         gsf_json = {
             "FLOW_MODEL_TYPE": {
                 "USGS_HFWK": {
-                    "GRB_FILE": self.model_output_files['grb'],
+                    "GRB_FILE": self.model_output_files["grb"],
                     "GSF_FILE": {
                         "TYPE": "HFWK_GRB_V.1.0.0"
-                    }
+                    },
                 }
             },
-            "OUTPUT_FILENAME": f"{self.model.name}.gsf"
+            "OUTPUT_FILENAME": self.model_output_files["gsf"],
         }
-        gsf_json_file_path = self.output_path / 'grb_to_gsf.json'
-        with open(gsf_json_file_path, 'w') as f:
+        gsf_json_file_path = self.output_path / "grb_to_gsf.json"
+        with open(gsf_json_file_path, "w", encoding="utf-8") as f:
             json.dump(gsf_json, f, indent=4)
 
-        cmd = [self.writep3dgsf_path.as_posix(), gsf_json_file_path.as_posix(), 'colorcode']
-        run = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        cmd = [self.writep3dgsf_path.as_posix(), gsf_json_file_path.name, "colorcode"]
+        run = subprocess.run(
+            cmd,
+            cwd=self.output_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
 
         if run.returncode != 0:
-            print(f"Error running writeP3DGSF.exe: {run.stderr}")
-        else:
-            print("GSF file created successfully")
+            raise RuntimeError(f"Error running writeP3DGSF.exe: {run.stderr}")
+        return gsf_json_file_path
 
     def create_modflow_input_files(self):
-        """
-        Creates necessary MODFLOW input files by copying them from the model's output folder to the
-        current working directory if they do not already exist.
+        """Ensure the required MF6 output files are present in the MP3DU workspace."""
 
-        If the required files are missing in the current working directory, they are copied from the
-        model's output folder path. Raises an error if the files do not exist in the source folder.
-
-        :raises FileNotFoundError: If a required file does not exist in the model's output folder path.
-        """
-        cwd = Path.cwd()
-        # Copy files from the model path to the output path if necessary
-        for typ, file in self.model_output_files.items():
-            if not os.path.exists(cwd / file):
-                original_file = self.model.model_output_folder_path / file
-                if os.path.exists(original_file):
-                    # os.symlink(original_file, file)
-                    shutil.copyfile(original_file, file)  # Copies the file instead of linking it
-                elif typ == 'gsf':
-                    print(f"GSF file not found. Creating a new one from the grb file.")
+        self.output_path.mkdir(parents=True, exist_ok=True)
+        for typ, file_name in self.model_output_files.items():
+            destination = self.output_path / file_name
+            if destination.exists():
+                continue
+            original_file = self.model.model_output_folder_path / file_name
+            if original_file.exists():
+                if original_file.resolve() == destination.resolve():
                     continue
-                else:
-                    raise FileNotFoundError(f"Required file {original_file} not found.")
+                shutil.copyfile(original_file, destination)
+            elif typ == "gsf":
+                continue
+            else:
+                raise FileNotFoundError(f"Required file {original_file} not found.")
 
     def create_path_file(self):
-        # Create the PATH file with per-cell properties
-        path_file_path = self.path_file_path
-        porosities_by_layer = self.porosities_by_layer
-        with open(path_file_path, 'w') as f:
+        """Create the per-cell property file used by mod-PATH3DU."""
+
+        with open(self.path_file_path, "w", encoding="utf-8") as f:
             f.write("# PATH3D input file\n\n")
             for variable in self.variables:
                 for layer in range(self.model.gwf.modelgrid.nlay):
-                    if variable == 'POROSITY':
+                    if variable == "POROSITY":
                         f.write(f"  CONSTANT    {self.variables[variable][layer]}   POROSITY {layer + 1}\n")
                     else:
                         f.write(f"  CONSTANT    {self.variables[variable]}   {variable} {layer + 1}\n")
-        print(f"PATH file created at {path_file_path}")
-        return path_file_path
+        return self.path_file_path
 
-    def run_mp3du(self, json_file_path):
-        # Run the mp3du.exe with the created JSON file
-        cmd = [self.mp3du_path.as_posix(), json_file_path, 'colorcode']
-        print(cmd)
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    def run_mp3du(self, json_file_path: Path):
+        """Run mod-PATH3DU in the configured workspace."""
 
+        cmd = [self.mp3du_path.as_posix(), Path(json_file_path).name, "colorcode"]
+        result = subprocess.run(
+            cmd,
+            cwd=self.output_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         if result.returncode != 0:
-            print(f"Error running mp3du.exe: {result.stderr}")
-        else:
-            print(f"MP3DU ran successfully. Output:\n{result.stdout}")
+            raise RuntimeError(f"Error running mp3du.exe: {result.stderr}")
+        return result
 
     def create_json_file(self):
-        # Create the JSON configuration file
-        json_data = {
-            "FLOW_MODEL_TYPE": {
-                "USGS_HFWK": {
-                    "GRB_FILE": self.model_output_files['grb'],
-                    "TDIS_FILE": self.model_output_files['tdis'],
-                    "PATH_FILE": self.path_file_path.as_posix(),
-                    "HDS_FILE": self.model_output_files['hds'],
-                    "CBB_FILE": self.model_output_files['cbc'],
-                    "GSF_FILE": {
-                        "TYPE": "GSF_V.1.1.0",
-                        "FILE_NAME": self.model_output_files['gsf']
-                    },
-                    "OUTPUT_PRECISION": "DOUBLE",
-                    "IFACE": [{"DRN": 7}, {"RCH": 6}],
-                    "THREAD_COUNT": 10
+        """Create the primary mod-PATH3DU JSON configuration file."""
+
+        particle_fields = self.particle_field_map
+        flow_model_block = {
+            "GRB_FILE": self.model_output_files["grb"],
+            "TDIS_FILE": self.model_output_files["tdis"],
+            "PATH_FILE": self.path_file_path.name,
+            "HDS_FILE": self.model_output_files["hds"],
+            "CBB_FILE": self.model_output_files["cbc"],
+            "GSF_FILE": {
+                "TYPE": "GSF_V.1.1.0",
+                "FILE_NAME": self.model_output_files["gsf"],
+            },
+            "OUTPUT_PRECISION": "DOUBLE",
+            "IFACE": [{name: value} for name, value in self.get_active_iface_overrides().items()],
+            "THREAD_COUNT": self.flow_thread_count,
+        }
+        pathline_block = {
+            "NAME": self.model.name,
+            "DIRECTION": self.direction,
+            "THREAD_COUNT": self.pathline_thread_count,
+            "INITIAL_STEPSIZE": self.initial_stepsize,
+            "EULER_DT": self.euler_dt,
+            "ADAPTIVE_STEP_ERROR": self.adaptive_step_error,
+            "CAPTURE_RADIUS": self.capture_radius,
+            "OPTIONS": self.tracking_options,
+            "PARTICLE_START_LOCATIONS": {
+                "SHAPEFILE": {
+                    "FILE_NAME": self.particle_input_path.as_posix(),
+                    "CELLID_ATTR": particle_fields["CELLID_ATTR"],
+                    "TIME_ATTR": particle_fields["TIME_ATTR"],
+                    "ZLOC_ATTR": particle_fields["ZLOC_ATTR"],
                 }
             },
-            "SIMULATIONS": [
-                {
-                    "PATHLINE": {
-                        "NAME": self.model.name,
-                        "DIRECTION": "FORWARD",
-                        "THREAD_COUNT": 4,
-                        "INITIAL_STEPSIZE": 0.1,
-                        "EULER_DT": 1.0e-4,
-                        "ADAPTIVE_STEP_ERROR": 1.0e-06,
-                        "CAPTURE_RADIUS": 10,
-                        "SIMULATION_END_TIME": 500,
-                        "OPTIONS": ["TRACK_TO_TERMINATION"],
-                        "PARTICLE_START_LOCATIONS": {
-                            "SHAPEFILE": {
-                                "FILE_NAME": self.particle_shp.as_posix(),
-                                "CELLID_ATTR": "cells",
-                                "TIME_ATTR": "TimeRel",
-                                "ZLOC_ATTR": "ZLoc",
-                                "ADDTL_ATTR": ["LocName"]
-                            }
-                        }
-                    }
-                }
-            ]
+        }
+        if self.simulation_end_time is not None:
+            pathline_block["SIMULATION_END_TIME"] = float(self.simulation_end_time)
+        if particle_fields["ADDTL_ATTR"]:
+            pathline_block["PARTICLE_START_LOCATIONS"]["SHAPEFILE"]["ADDTL_ATTR"] = particle_fields["ADDTL_ATTR"]
+
+        json_data = {
+            "FLOW_MODEL_TYPE": {"USGS_HFWK": flow_model_block},
+            "SIMULATIONS": [{"PATHLINE": pathline_block}],
         }
 
-        json_file_path = self.output_path / 'mp3du_input.json'
-        with open(json_file_path, 'w') as f:
+        json_file_path = self.output_path / "mp3du_input.json"
+        with open(json_file_path, "w", encoding="utf-8") as f:
             json.dump(json_data, f, indent=4)
-
-        print(f"JSON configuration file created at {json_file_path}")
         return json_file_path
 
-    def run(self):
-        self.create_modflow_input_files()
-        self.create_gsf_file()
-        path_file_path = self.create_path_file()
-        json_file_path = self.create_json_file().as_posix()
-        # self.run_mp3du(json_file_path)
-
-    def get_output_json(self):
-
+    def create_output_json_file(self) -> Path:
         output_json = {
             "MP3DU_BIN": f"{self.model.name}_PATHLINE.bin",
             "OUTPUTS": [
-                {"SUMMARY": {
-                }},
-                {"DBF_TABLE": {
-                    "FILE_NAME": "NAME_OF_OUTPUT.dbf"
-                }},
-                {"PATHLINE_WHOLE": {
-                    "FILE_NAME": "NAME_01_OF_OUTPUT.shp"
-                }},
-                {"PATHLINE_PARTS": {
-                    "FILE_NAME": "NAME_02_OF_OUTPUT.shp"
-                }},
-                {"POINTS_IN_TIME": {
-                    "FILE_NAME": "NAME_03_OF_OUTPUT.shp"
-                }},
-                {"ENDPOINT": {
-                    "FILE_NAME": "NAME_04_OF_OUTPUT.shp"
-                }}
-            ]
+                {"SUMMARY": {}},
+                {"DBF_TABLE": {"FILE_NAME": self.output_names["DBF_TABLE"]}},
+                {"PATHLINE_WHOLE": {"FILE_NAME": self.output_names["PATHLINE_WHOLE"]}},
+                {"PATHLINE_PARTS": {"FILE_NAME": self.output_names["PATHLINE_PARTS"]}},
+                {"POINTS_IN_TIME": {"FILE_NAME": self.output_names["POINTS_IN_TIME"]}},
+                {"ENDPOINT": {"FILE_NAME": self.output_names["ENDPOINT"]}},
+            ],
         }
-        with open('P3DOutput_json.json', 'w') as f:
+        output_json_path = self.output_path / "P3DOutput_json.json"
+        with open(output_json_path, "w", encoding="utf-8") as f:
             json.dump(output_json, f, indent=4)
+        return output_json_path
 
+    def get_output_json(self):
+        """Backwards-compatible alias for writing the output-conversion JSON."""
 
-class PRT:
+        return self.create_output_json_file()
 
-    def __init__(
-            self,
-            model: SimulationBase = None,
-            name: str = None,
-            mf_folder_path: Path = Path().home().joinpath('mf6'),
-    ):
-        """
-        Initializes an instance of a class responsible for managing a MODFLOW 6 model
-        simulation setup using FloPy, setting up the simulation environment and
-        configuring the PRT (particle tracking) model. The initializer associates a
-        simulation model, configures a unique name for the model, and prepares the folder
-        paths for storing simulation outputs. It also creates a FloPy MFSimulation
-        object and a ModflowPRT model instance based on the provided configuration.
-
-        :param model: The associated simulation model, implementing a basic simulation
-            representation to integrate with FloPy.
-        :type model: SimulationBase
-        :param name: The unique name for the MODFLOW simulation. If not provided, it
-            defaults to the name of the given model.
-        :type name: str, optional
-        :param mf_folder_path: The base folder path where the MODFLOW files and all
-            related outputs will be stored. The user can specify an alternative path,
-            or it defaults to the user's home directory appended with 'mf6'.
-        :type mf_folder_path: Path, optional
-        """
-        self.model = model
-        self.name = self.model.name if name is None else name
-        self.model_output_folder_path = mf_folder_path.joinpath(f'{name}')
-        self.nper = self.model.gwf.modeltime.nper
-        self.bud_file = self.model.model_output_folder_path.joinpath(f'{model.name}.cbc')
-        self.hds_file = self.model.model_output_folder_path.joinpath(f'{model.name}.hds')
-
-        self.prt_sim = flopy.mf6.MFSimulation(
-            sim_name='sim_prt',
-            exe_name="mf6",
-            version="mf6",
-            sim_ws=self.model_output_folder_path
+    def run_output_conversion(self, output_json_path: Path):
+        cmd = [self.writep3doutput_path.as_posix(), Path(output_json_path).name, "colorcode"]
+        result = subprocess.run(
+            cmd,
+            cwd=self.output_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
-        self.tdis = flopy.mf6.modflow.ModflowTdis(
-            simulation=self.prt_sim,
-            time_units=self.model.gwf.modeltime.time_units,
-            # pname="tdis-prt",
-            nper=1,
-            perioddata=[(1, 1, 1)],
-            # perioddata=self.generate_tdis_from_cbc(self.bud_file),
-        )
-        self.prt = flopy.mf6.modflow.ModflowPrt(
-            simulation=self.prt_sim,
-            modelname=f'{self.name}.prt',
-            model_nam_file=f'{self.name}.prt.nam',
-            version="mf6",
-            exe_name="mf6",
-            print_input=True,
-            print_flows=False,
-            save_flows=True,
-        )
-        self.ims = flopy.mf6.ModflowIms(
-            simulation=self.prt_sim,
-            pname="ims",
-            complexity="COMPLEX",
-        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Error running writeP3DOutput.exe: {result.stderr}")
+        return result
 
-    @staticmethod
-    def generate_tdis_from_cbc(cbc_path: str) -> list[tuple[float, int, float]]:
-        """
-        Generate TDIS perioddata using only the last saved time step of each stress period
-        in a MODFLOW 6 .cbc budget file. Intended for use with transport models that
-        read only the saved (last) time step per period.
+    def write_diagnostics_file(
+        self,
+        *,
+        start_cells: dict[str, Any] | None = None,
+        endpoint_summary: dict[str, int] | None = None,
+    ) -> Path:
+        diagnostics = {
+            "start_cells": start_cells,
+            "endpoint_summary": endpoint_summary,
+        }
+        diagnostics_path = self.output_path / "mp3du_diagnostics.json"
+        with open(diagnostics_path, "w", encoding="utf-8") as f:
+            json.dump(diagnostics, f, indent=4)
+        return diagnostics_path
 
-        Parameters
-        ----------
-        cbc_path : str
-            Path to the MODFLOW 6 .cbc budget file
+    def run(
+        self,
+        *,
+        execute: bool = True,
+        convert_output: bool = True,
+        write_diagnostics: bool = True,
+    ) -> ParticleTrackingResult:
+        """Create MP3DU inputs and optionally execute the full run."""
 
-        Returns
-        -------
-        list of (perlen, nstp, tsmult) tuples suitable for TDIS
-        """
-        cbc = CellBudgetFile(cbc_path, precision="double")
-        kstpkper = cbc.get_kstpkper()
-        times = cbc.get_times()
+        self.validate_inputs(execute=bool(execute), convert_output=bool(convert_output))
+        self.create_modflow_input_files()
+        start_cell_diagnostics = self.get_start_cell_diagnostics()
+        self.create_gsf_file()
+        self.create_path_file()
+        json_file_path = self.create_json_file()
 
-        last_time_by_kper = OrderedDict()
-        prev_time = 0.0
+        output_json_path = None
+        endpoint_summary = None
+        if execute:
+            self.run_mp3du(json_file_path)
+            if convert_output:
+                output_json_path = self.create_output_json_file()
+                self.run_output_conversion(output_json_path)
+                endpoint_path = self.output_path / self.output_names["ENDPOINT"]
+                if endpoint_path.exists():
+                    endpoint_summary = self.summarize_endpoint_output(endpoint_path)
 
-        for (kstp, kper), totim in zip(kstpkper, times):
-            if kper not in last_time_by_kper or kstp > last_time_by_kper[kper][0]:
-                dt = totim - prev_time
-                last_time_by_kper[kper] = (kstp, dt)
-            prev_time = totim
-
-        # Format: (perlen, nstp, tsmult)
-        perioddata = [(dt, 1, 1.0) for (kstp, dt) in last_time_by_kper.values()]
-        print(perioddata)
-        return perioddata
-
-
-class PrtMip:
-
-    def __init__(
-            self,
-            prt_model: PRT = None,
-            porosity: int | list = 0.2,
-            retfactor: int = 1,
-            izone: int = 0,
-    ):
-        self.prt_mip = flopy.mf6.modflow.ModflowPrtmip(
-            model=prt_model.prt,
-            porosity=porosity,
-            retfactor=retfactor,
-            izone=izone,
-            filename=f'prt-{prt_model.name}.mip',
-            pname='mip'
-        )
-
-
-class PrtOc:
-
-    def __init__(
-            self,
-            prt_model: PRT = None,
-            save_record=("BUDGET", "LAST"),
-            print_record=None
-    ):
-        self.prt_oc = flopy.mf6.ModflowPrtoc(
-            model=prt_model.prt,
-            pname='oc',
-            filename=f'prt-{prt_model.name}.oc',
-            budget_filerecord=f'prt-{prt_model.name}.cbc',
-            track_filerecord=f'prt-{prt_model.name}.trk',
-            saverecord=save_record,
-            printrecord=print_record,
-        )
-
-
-class PrtPrp:
-    def __init__(
-            self,
-            prt_model: PRT = None,
-            exit_solve_tolerance=0.00001,
-            # dev_exit_solve_method=1,  # Brent method = 1
-            stoptime=None,
-            stoptraveltime=None,
-            istopzone=0,
-            shp_gpkg_path: Path = None,
-            vor: VoronoiGridPlus = None,
-            local_z=0.5
-    ):
-        particle_data = read_shp_gpkg(shp_gpkg_path).geometry
-        pnts_vor = vor.get_vor_cells_as_series(particle_data).to_list()
-        pnt_cells = vor.gdf_vorPolys.loc[pnts_vor].geometry
-        nprt = len(pnt_cells)
-        packagedata = []
-        for i, pnt in enumerate(pnt_cells):
-            packagedata.append(
-                [
-                    i, (0, pnts_vor[i]), pnt.centroid.x, pnt.centroid.y, local_z
-                ]
+        diagnostics_path = None
+        if write_diagnostics:
+            diagnostics_path = self.write_diagnostics_file(
+                start_cells=start_cell_diagnostics,
+                endpoint_summary=endpoint_summary,
             )
 
-        self.prt_prp = flopy.mf6.modflow.ModflowPrtprp(
-            model=prt_model.prt,
-            pname='prtprp',
-            filename=f'prt-{prt_model.name}.prp',
-            print_input=True,
-            # dev_exit_solve_method=dev_exit_solve_method,
-            # exit_solve_tolerance=exit_solve_tolerance,
-            local_z=True,
-            # track_filerecord=f'prt-{prt_model.name}.trk',
-            # stoptime=stoptime,
-            # stoptraveltime=stoptraveltime,
-            stop_at_weak_sink=True,
-            # istopzone=istopzone,
-            drape=True,
-            nreleasepts=nprt,
-            packagedata=packagedata,
-            # perioddata=["first"] * prt_model.nper
+        return ParticleTrackingResult(
+            json_file=json_file_path,
+            path_file=self.path_file_path,
+            output_json=output_json_path,
+            start_cell_diagnostics=start_cell_diagnostics,
+            endpoint_summary=endpoint_summary,
+            diagnostics_file=diagnostics_path,
         )
 
 
-class PrtDisv:
+def prepare_particle_tracking(
+    *,
+    model,
+    particles: Path | str | list[int] | tuple[int, ...],
+    porosity: float | list[float] = 0.2,
+    output_path: Path | str | None = None,
+    execute: bool = False,
+    convert_output: bool = False,
+    write_diagnostics: bool = True,
+    **kwargs,
+) -> tuple[ParticleTrackingInput, ParticleTrackingResult]:
+    """Create and optionally run a MP3DU particle-tracking job from a vector file or cell IDs.
 
-    def __init__(
-            self,
-            gwf_model: SimulationBase = None,
-            prt_model: PRT = None,
-    ):
-        modelgrid = gwf_model.modelgrid
-        vor = gwf_model.vor
-        self.prt_disv = flopy.mf6.modflow.ModflowPrtdisv(
-            model=prt_model.prt,
-            pname='disv',
-            filename=f'prt-{prt_model.name}.disv',
-            length_units='feet',
-            export_array_ascii=False,
-            nlay=modelgrid.nlay,
-            ncpl=modelgrid.ncpl,
-            nvert=modelgrid.nvert,
-            top=modelgrid.top,
-            botm=modelgrid.botm,
-            idomain=modelgrid.idomain,
-            vertices=vor.get_disv_gridprops()['vertices'],
-            cell2d=modelgrid.cell2d
-        )
+    Parameters
+    ----------
+    model
+        ``SimulationBase``-like model object.
+    particles
+        Either a shapefile/geopackage path or a list of zero-based cell IDs.
+    porosity
+        Scalar layer porosity or one value per layer.
+    output_path
+        Workspace for MP3DU inputs and outputs. Defaults to ``model.model_output_folder_path``.
+    execute, convert_output, write_diagnostics
+        Passed through to :meth:`ParticleTrackingInput.run`. ``prepare_particle_tracking``
+        defaults to ``execute=False`` and ``convert_output=False`` so it can be used as
+        a setup-first workflow before the final ``tracker.run(...)`` call.
+    **kwargs
+        Additional :class:`ParticleTrackingInput` keyword arguments such as
+        ``direction``, ``simulation_end_time``, ``iface_overrides``,
+        ``generated_particle_zloc``, and threading controls.
 
+    Returns
+    -------
+    tuple[ParticleTrackingInput, ParticleTrackingResult]
+        The configured tracker and the structured result from ``run()``.
+    """
 
-class PrtFmi:
+    if isinstance(porosity, (int, float)):
+        porosities_by_layer = [float(porosity) for _ in range(model.gwf.modelgrid.nlay)]
+    else:
+        porosities_by_layer = [float(value) for value in porosity]
 
-    def __init__(
-            self,
-            prt_model: PRT = None,
-            gwf_model: SimulationBase = None,
-    ):
-        self.prt_fmi = flopy.mf6.modflow.ModflowPrtfmi(
-            save_flows=True,
-            model=prt_model.prt,
-            filename=f'prt-{prt_model.name}.fmi',
-            pname='fmi',
-            packagedata=[
-                ['GWFBUDGET', prt_model.bud_file.as_posix()],
-                ['GWFHEAD', prt_model.hds_file.as_posix()],
-            ]
-        )
-
-
-if __name__ == "__main__":
-    with open(Path(r"C:\Users\lukem\mf6\ssb_temp\ssb_temp.model"), 'rb') as file:
-        model: SimulationBase = pickle.load(file)
-    particles = Path(r"C:\Users\lukem\mf6\SSB data\shp\prt\ssb_particles_v3.shp")
-    pti = ParticleTrackingInput(
+    tracker_kwargs = dict(
         model=model,
-        porosities_by_layer=[0.2 for _ in range(model.gwf.modelgrid.nlay)],
-        particle_shp=particles
+        output_path=None if output_path is None else Path(output_path),
+        porosities_by_layer=porosities_by_layer,
     )
-    pti.run()
-    pti.get_output_json()
+    tracker_kwargs.update(kwargs)
+
+    if isinstance(particles, (str, Path)):
+        tracker_kwargs["particle_shp"] = Path(particles)
+    else:
+        tracker_kwargs["particle_cells"] = [int(cell) for cell in particles]
+
+    tracker = ParticleTrackingInput(**tracker_kwargs)
+    result = tracker.run(
+        execute=bool(execute),
+        convert_output=bool(convert_output),
+        write_diagnostics=bool(write_diagnostics),
+    )
+    return tracker, result
+
+
+def run_particle_tracking(
+    *,
+    model,
+    particles: Path | str | list[int] | tuple[int, ...],
+    porosity: float | list[float] = 0.2,
+    output_path: Path | str | None = None,
+    execute: bool = True,
+    convert_output: bool = True,
+    write_diagnostics: bool = True,
+    **kwargs,
+) -> ParticleTrackingResult:
+    """Run MP3DU end-to-end from either a vector selection or explicit cell IDs.
+
+    This is the shortest public entry point for common use:
+
+    ``run_particle_tracking(model=model, particles=Path('my.gpkg'))``
+    ``run_particle_tracking(model=model, particles=[9151, 9152, 9747])``
+    """
+
+    _, result = prepare_particle_tracking(
+        model=model,
+        particles=particles,
+        porosity=porosity,
+        output_path=output_path,
+        execute=execute,
+        convert_output=convert_output,
+        write_diagnostics=write_diagnostics,
+        **kwargs,
+    )
+    return result
+
+
+def __getattr__(name: str):
+    if name in _LEGACY_PRT_NAMES:
+        warnings.warn(
+            "Legacy FloPy/MODFLOW PRT helpers moved to "
+            "'simple_modflow.modflow.mp3du.legacy_prt'. They remain available for workflows "
+            "that experiment with MODFLOW PRT, but the supported MP3DU API is "
+            "ParticleTrackingInput / prepare_particle_tracking / run_particle_tracking.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        module = importlib.import_module("simple_modflow.modflow.mp3du.legacy_prt")
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

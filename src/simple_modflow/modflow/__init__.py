@@ -16,6 +16,9 @@ _SUBMODULES = {
 _EXPORTS = {
     "get_iheads": ("simple_modflow.modflow.utils.iheads", "get_iheads"),
     "geotiff_to_contours": ("simple_modflow.modflow.utils.raster", "geotiff_to_contours"),
+    "ParticleTrackingInput": ("simple_modflow.modflow.mp3du", "ParticleTrackingInput"),
+    "prepare_particle_tracking": ("simple_modflow.modflow.mp3du", "prepare_particle_tracking"),
+    "run_particle_tracking": ("simple_modflow.modflow.mp3du", "run_particle_tracking"),
 }
 
 __all__ = sorted([*_SUBMODULES.keys(), *_EXPORTS.keys()])

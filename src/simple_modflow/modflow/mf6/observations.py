@@ -82,6 +82,81 @@ def _observation_label(value: str) -> str:
     return normalized or "obs"
 
 
+def _workspace_csv_frames(model) -> list[tuple[Path, pd.DataFrame]]:
+    """Return readable CSV tables from the model workspace.
+
+    This intentionally stays shallow: the canonical observation workflow writes
+    MF6 observation CSVs directly into the active model workspace, so those
+    files are the first place target objects should look when reconstructing
+    simulated series after a run or reload.
+    """
+
+    workspace = getattr(model, "workspace", None)
+    if workspace is None:
+        workspace = getattr(model, "model_output_folder_path", None)
+    if workspace is None:
+        return []
+    workspace = Path(workspace)
+    if not workspace.exists():
+        return []
+
+    frames: list[tuple[Path, pd.DataFrame]] = []
+    for path in sorted(workspace.glob("*.csv")):
+        lower_name = path.name.lower()
+        if "simulated_" in lower_name or "_target_" in lower_name:
+            continue
+        try:
+            frame = pd.read_csv(path)
+        except Exception:
+            continue
+        if frame.empty:
+            continue
+        frames.append((path, frame))
+    return frames
+
+
+def _clean_observation_output_values(values: pd.Series) -> pd.Series:
+    """Normalize MF6 observation CSV values into ordinary numeric series."""
+
+    numeric = pd.to_numeric(values, errors="coerce")
+    # MF6 observation outputs often use huge sentinels such as 3e30 for
+    # inactive/dry values. For review and calibration aggregation, treat those
+    # as zero-flow / missing contributions rather than literal magnitudes.
+    numeric = numeric.mask(numeric.abs() > 1.0e20, 0.0)
+    return numeric.astype(float)
+
+
+def _find_named_observation_output(
+    model,
+    *,
+    expected_columns: dict[str, str],
+) -> pd.DataFrame | None:
+    """Find one workspace CSV containing all requested observation columns.
+
+    Parameters
+    ----------
+    expected_columns
+        Mapping from public target names to the raw MF6 observation column names
+        expected in one CSV.
+    """
+
+    if not expected_columns:
+        return None
+
+    expected_lower = {str(column).strip().lower() for column in expected_columns.values()}
+    for _path, frame in _workspace_csv_frames(model):
+        lower_map = {str(column).strip().lower(): column for column in frame.columns}
+        if not expected_lower.issubset(lower_map):
+            continue
+        time_column = frame.columns[0]
+        result = pd.DataFrame({"time": pd.to_numeric(frame[time_column], errors="coerce")})
+        for name, raw_column in expected_columns.items():
+            actual = lower_map[str(raw_column).strip().lower()]
+            result[str(name)] = _clean_observation_output_values(frame[actual])
+        return result
+    return None
+
+
 def _ensure_unique_observation_names(
     frame: pd.DataFrame,
     *,
@@ -450,6 +525,167 @@ def _normalize_lake_stage_values(
         long["name"] = long["name"].astype(str)
     long["stage"] = pd.to_numeric(long["stage"], errors="coerce")
     return _copy_frame(long)
+
+
+def _normalize_named_integer_locations(
+    locations,
+    *,
+    id_column: str,
+    target_name: str,
+) -> pd.DataFrame:
+    """Normalize simple ``name -> integer id`` location definitions."""
+
+    source = {} if locations is None else locations
+    if isinstance(source, pd.Series):
+        source = source.to_dict()
+    elif isinstance(source, pd.DataFrame):
+        required = {"name", id_column}
+        if required - set(source.columns):
+            missing = sorted(required - set(source.columns))
+            raise ValueError(f"{target_name} locations DataFrame is missing columns: {', '.join(missing)}")
+        source = source.loc[:, ["name", id_column]].drop_duplicates(subset=["name"]).set_index("name")[id_column].to_dict()
+    elif isinstance(source, (list, tuple)):
+        source_frame = pd.DataFrame(source)
+        required = {"name", id_column}
+        if required - set(source_frame.columns):
+            missing = sorted(required - set(source_frame.columns))
+            raise ValueError(f"{target_name} location records are missing columns: {', '.join(missing)}")
+        source = (
+            source_frame.loc[:, ["name", id_column]]
+            .drop_duplicates(subset=["name"])
+            .set_index("name")[id_column]
+            .to_dict()
+        )
+
+    normalized = {
+        str(name): int(value)
+        for name, value in dict(source).items()
+    }
+    return pd.DataFrame([{"name": name, id_column: value} for name, value in normalized.items()])
+
+
+def _normalize_named_series_values(
+    values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None,
+    *,
+    time_column: str,
+    value_column: str,
+    output_column: str,
+    times=None,
+) -> pd.DataFrame:
+    """Normalize long or wide named-series targets to one long table."""
+
+    if values is None:
+        return pd.DataFrame(columns=["time", "name", output_column])
+    if isinstance(values, pd.Series):
+        index_name = values.index.name or time_column
+        frame = values.rename(value_column).rename_axis(index_name).reset_index()
+        if index_name != time_column:
+            frame = frame.rename(columns={index_name: time_column})
+    elif isinstance(values, dict):
+        frame = pd.DataFrame(values)
+        if time_column not in frame.columns and times is not None:
+            frame.insert(0, time_column, list(times))
+    elif isinstance(values, (list, tuple)):
+        frame = pd.DataFrame(values)
+        if time_column not in frame.columns and times is not None:
+            if frame.shape[1] == 1:
+                frame.columns = [value_column]
+            if frame.shape[0] != len(list(times)):
+                raise ValueError(
+                    f"Provided times length {len(list(times))} does not match values length {frame.shape[0]}."
+                )
+            frame.insert(0, time_column, list(times))
+    elif isinstance(values, pd.DataFrame):
+        frame = values.copy()
+    else:
+        frame = pd.read_csv(values)
+
+    if time_column not in frame.columns:
+        raise ValueError(f"Target values must include {time_column!r}.")
+
+    lower_columns = {str(column).strip().lower(): column for column in frame.columns}
+    name_column = lower_columns.get("name")
+    explicit_value_column = lower_columns.get(value_column.strip().lower())
+
+    if name_column is not None and explicit_value_column is not None:
+        long = frame.rename(
+            columns={
+                time_column: "time",
+                name_column: "name",
+                explicit_value_column: output_column,
+            }
+        ).loc[:, ["time", "name", output_column]]
+    elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
+        long = frame.rename(columns={time_column: "time", explicit_value_column: output_column}).loc[
+            :, ["time", output_column]
+        ]
+    else:
+        value_columns = [column for column in frame.columns if column != time_column]
+        long = frame.melt(
+            id_vars=[time_column],
+            value_vars=value_columns,
+            var_name="name",
+            value_name=output_column,
+        ).rename(columns={time_column: "time"})
+    if "name" in long.columns:
+        long["name"] = long["name"].astype(str)
+    long[output_column] = pd.to_numeric(long[output_column], errors="coerce")
+    return _copy_frame(long)
+
+
+def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
+    """Return zero-based stress periods parsed from a target/result frame."""
+
+    if "per" in frame.columns:
+        per = pd.to_numeric(frame["per"], errors="coerce")
+    elif "time" in frame.columns:
+        per = pd.to_numeric(frame["time"], errors="coerce")
+    else:
+        raise ValueError(f"{caller} requires a 'per' or 'time' column.")
+    if per.isna().any():
+        raise ValueError(f"{caller} currently expects numeric zero-based stress periods.")
+    return per.astype(int)
+
+
+def _aggregate_named_series(
+    frame: pd.DataFrame,
+    *,
+    id_column: str,
+    value_column: str,
+) -> pd.DataFrame:
+    """Aggregate model result rows to one value per period and integer id."""
+
+    data = frame.copy()
+    data["per"] = _numeric_periods(data, caller="_aggregate_named_series(...)")
+    data[id_column] = pd.to_numeric(data[id_column], errors="coerce")
+    data[value_column] = pd.to_numeric(data[value_column], errors="coerce")
+    data = data.dropna(subset=[id_column, value_column]).copy()
+    data[id_column] = data[id_column].astype(int)
+    return (
+        data.groupby(["per", id_column], dropna=False, as_index=False)[value_column]
+        .sum()
+        .sort_values(["per", id_column])
+        .reset_index(drop=True)
+    )
+
+
+def _default_compare_stats(frame: pd.DataFrame, *, residual_column: str = "residual") -> pd.DataFrame:
+    """Return basic residual statistics for a compare-style frame."""
+
+    data = frame.dropna(subset=[residual_column]).copy()
+    if data.empty:
+        return pd.DataFrame([{"n": 0, "mean_error": np.nan, "mae": np.nan, "rmse": np.nan}])
+    residual = data[residual_column].to_numpy(dtype=float)
+    return pd.DataFrame(
+        [
+            {
+                "n": int(len(data)),
+                "mean_error": float(np.mean(residual)),
+                "mae": float(np.mean(np.abs(residual))),
+                "rmse": float(np.sqrt(np.mean(residual**2))),
+            }
+        ]
+    )
 
 
 @dataclass
@@ -984,12 +1220,90 @@ class LakeStageTargets:
             return definitions
         return _copy_frame(self._values.merge(definitions, on="name", how="left"))
 
+    def to_long(self) -> pd.DataFrame:
+        """Return the long-format lake-stage target table."""
+
+        return self.get()
+
+    def to_wide(self) -> pd.DataFrame:
+        """Return the target table in wide format with one column per lake series."""
+
+        if self._values.empty:
+            return pd.DataFrame(columns=["time", *self._series.keys()])
+        frame = self.get().pivot_table(
+            index="time",
+            columns="name",
+            values="stage",
+            aggfunc="first",
+        ).reset_index()
+        frame.columns.name = None
+        return frame
+
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of the lake-stage target set."""
 
         return pd.DataFrame(
             [{"n_lakes": int(len(self._series)), "n_rows": int(len(self._values))}]
         )
+
+    def _obs_column_map(self) -> dict[str, str]:
+        return {
+            str(name): _observation_label(name)
+            for name in self._series.keys()
+        }
+
+    def simulated_series(self, model) -> pd.DataFrame:
+        """Return one wide simulated-stage table indexed by stress period."""
+
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            return observed
+        frame = model.packages.lak.results.stage.get().copy()
+        if frame.empty:
+            return pd.DataFrame(columns=["time", *self._series.keys()])
+        frame = _aggregate_named_series(frame, id_column="lake", value_column="stage")
+        definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
+        merged = definitions.merge(frame, on="lake", how="left")
+        wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
+        wide.columns.name = None
+        return wide.rename(columns={"per": "time"})
+
+    def compare(self, model) -> pd.DataFrame:
+        """Compare target lake stages against simulated lake stages."""
+
+        definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
+            simulated["per"] = simulated["time"]
+            simulated = definitions.merge(simulated, on="name", how="left")
+        else:
+            simulated = model.packages.lak.results.stage.get().copy()
+            simulated = _aggregate_named_series(simulated, id_column="lake", value_column="stage")
+            simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
+        if self._values.empty:
+            compare = simulated.rename(columns={"per": "time"}).copy()
+            compare["stage_target"] = np.nan
+        else:
+            targets = self.get().copy()
+            targets["per"] = _numeric_periods(targets, caller="LakeStageTargets.compare(...)")
+            if "stage" in targets.columns and "stage_target" not in targets.columns:
+                targets = targets.rename(columns={"stage": "stage_target"})
+            compare = targets.merge(simulated, on=["name", "lake", "per"], how="left")
+        compare["residual"] = compare["sim_stage"] - compare["stage_target"]
+        compare["abs_residual"] = compare["residual"].abs()
+        return _copy_frame(compare)
+
+    def residuals(self, model) -> pd.DataFrame:
+        """Return a compact residual table for lake-stage targets."""
+
+        frame = self.compare(model)
+        return frame.loc[:, ["name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
+
+    def stats(self, model) -> pd.DataFrame:
+        """Return aggregate residual statistics for the lake-stage target set."""
+
+        return _default_compare_stats(self.compare(model))
 
     def to_flopy_obs(
         self,
@@ -1029,6 +1343,646 @@ class LakeStageTargets:
             filename=str(filename),
         )
 
+    def calibration_plot(self, model, *, type: str = "calibration"):
+        """Build a calibration plot directly from these targets and one model."""
+
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+
+        compare = self.compare(model)
+        return CalibrationPlot.from_compare(
+            compare,
+            type="obs_vs_sim" if type == "calibration" else type,
+            target_column="stage_target",
+            simulated_column="sim_stage",
+            title="Observed vs simulated lake stage" if type != "heads" else "Lake stage",
+            yaxis_title="Simulated stage",
+        )
+
+
+@dataclass
+class SfrStageTargets:
+    """Named SFR stage targets keyed by zero-based reach number."""
+
+    locations: dict[str, int] | pd.Series | pd.DataFrame | list | tuple | None = None
+    values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None
+    time_column: str = "time"
+    value_column: str = "stage"
+    times: list | tuple | pd.Index | pd.Series | None = None
+
+    def __post_init__(self):
+        self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
+        self._values = _normalize_named_series_values(
+            self.values,
+            time_column=self.time_column,
+            value_column=self.value_column,
+            output_column="stage_target",
+            times=self.times,
+        )
+        if not self._values.empty and "name" not in self._values.columns:
+            if len(self._locations) != 1:
+                raise ValueError("SfrStageTargets values without explicit names require exactly one target reach.")
+            self._values["name"] = str(self._locations["name"].iloc[0])
+
+    def get(self) -> pd.DataFrame:
+        definitions = self._locations.copy()
+        if self._values.empty:
+            return definitions
+        return _copy_frame(self._values.merge(definitions, on="name", how="left"))
+
+    def to_long(self) -> pd.DataFrame:
+        return self.get()
+
+    def to_wide(self) -> pd.DataFrame:
+        if self._values.empty:
+            return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+        frame = self.get().pivot_table(index="time", columns="name", values="stage_target", aggfunc="first").reset_index()
+        frame.columns.name = None
+        return frame
+
+    def summary(self) -> pd.DataFrame:
+        return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
+
+    def _obs_column_map(self) -> dict[str, str]:
+        return {
+            str(name): _observation_label(name)
+            for name in self._locations["name"].astype(str).tolist()
+        }
+
+    def simulated_series(self, model) -> pd.DataFrame:
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            return observed
+        frame = model.packages.sfr.results.stage.get().copy()
+        if frame.empty:
+            return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+        frame = _aggregate_named_series(frame, id_column="reach", value_column="stage")
+        merged = self._locations.merge(frame, on="reach", how="left")
+        wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
+        wide.columns.name = None
+        return wide.rename(columns={"per": "time"})
+
+    def compare(self, model) -> pd.DataFrame:
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
+            simulated["per"] = simulated["time"]
+            simulated = self._locations.merge(simulated, on="name", how="left")
+        else:
+            simulated = _aggregate_named_series(model.packages.sfr.results.stage.get().copy(), id_column="reach", value_column="stage")
+            simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
+        if self._values.empty:
+            compare = simulated.rename(columns={"per": "time"}).copy()
+            compare["stage_target"] = np.nan
+        else:
+            targets = self.get().copy()
+            targets["per"] = _numeric_periods(targets, caller="SfrStageTargets.compare(...)")
+            compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
+        compare["residual"] = compare["sim_stage"] - compare["stage_target"]
+        compare["abs_residual"] = compare["residual"].abs()
+        return _copy_frame(compare)
+
+    def residuals(self, model) -> pd.DataFrame:
+        frame = self.compare(model)
+        return frame.loc[:, ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
+
+    def stats(self, model) -> pd.DataFrame:
+        return _default_compare_stats(self.compare(model))
+
+    def to_flopy_obs(
+        self,
+        *,
+        csv_name: str = "sfr_stage_targets.csv",
+        kind: str = "STAGE",
+    ) -> dict[str, list[tuple[str, str, tuple[int]]]]:
+        records = [
+            (_observation_label(name), str(kind).upper(), (int(reach),))
+            for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+        ]
+        return {str(csv_name): records}
+
+    def attach_flopy_obs(
+        self,
+        model,
+        *,
+        pname: str = "sfr_stage_obs",
+        filename: str = "sfr_stage_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "STAGE",
+        package=None,
+    ):
+        import flopy
+
+        owner = model.gwf.sfr if package is None else package
+        csv_name = _default_obs_csv_name(filename, "sfr_stage_targets.csv") if csv_name is None else str(csv_name)
+        continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
+        return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(
+            owner,
+            pname=pname,
+            continuous=continuous,
+            filename=str(filename),
+        )
+
+
+@dataclass
+class SfrFlowTargets:
+    """Named SFR flow targets keyed by zero-based reach number."""
+
+    locations: dict[str, int] | pd.Series | pd.DataFrame | list | tuple | None = None
+    values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None
+    time_column: str = "time"
+    value_column: str = "flow"
+    times: list | tuple | pd.Index | pd.Series | None = None
+
+    def __post_init__(self):
+        self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
+        self._values = _normalize_named_series_values(
+            self.values,
+            time_column=self.time_column,
+            value_column=self.value_column,
+            output_column="flow_target",
+            times=self.times,
+        )
+        if not self._values.empty and "name" not in self._values.columns:
+            if len(self._locations) != 1:
+                raise ValueError("SfrFlowTargets values without explicit names require exactly one target reach.")
+            self._values["name"] = str(self._locations["name"].iloc[0])
+
+    def get(self) -> pd.DataFrame:
+        definitions = self._locations.copy()
+        if self._values.empty:
+            return definitions
+        return _copy_frame(self._values.merge(definitions, on="name", how="left"))
+
+    def to_long(self) -> pd.DataFrame:
+        return self.get()
+
+    def to_wide(self) -> pd.DataFrame:
+        if self._values.empty:
+            return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+        frame = self.get().pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
+        frame.columns.name = None
+        return frame
+
+    def summary(self) -> pd.DataFrame:
+        return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
+
+    def _obs_column_map(self) -> dict[str, str]:
+        return {
+            str(name): _observation_label(name)
+            for name in self._locations["name"].astype(str).tolist()
+        }
+
+    def _package_flow_table(self, model) -> pd.DataFrame:
+        if not hasattr(model, "outputs"):
+            try:
+                flow = model.packages.sfr.results.q.get().copy()
+            except Exception:
+                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
+            if flow.empty:
+                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
+            flow["per"] = pd.to_numeric(flow["per"], errors="coerce").astype(int)
+            flow["reach"] = pd.to_numeric(flow["reach"], errors="coerce").astype(int)
+            flow["sim_flow"] = _clean_observation_output_values(flow["q"]).abs()
+            return flow.loc[:, ["per", "reach", "sim_flow"]]
+
+        flow = model.outputs.sfr.bud.get("FLOW-JA-FACE")
+        if not isinstance(flow, pd.DataFrame) or flow.empty:
+            try:
+                fallback = model.packages.sfr.results.q.get().copy()
+            except Exception:
+                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
+            if fallback.empty:
+                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
+            fallback["per"] = pd.to_numeric(fallback["per"], errors="coerce").astype(int)
+            fallback["reach"] = pd.to_numeric(fallback["reach"], errors="coerce").astype(int)
+            fallback["sim_flow"] = _clean_observation_output_values(fallback["q"]).abs()
+            return fallback.loc[:, ["per", "reach", "sim_flow"]]
+
+        frame = flow.copy()
+        frame["per"] = frame["kstpkper"].apply(lambda values: int(values[1]))
+        frame["reach"] = pd.to_numeric(frame["node"], errors="coerce")
+        frame["reach_to"] = pd.to_numeric(frame["node2"], errors="coerce")
+        if frame["reach"].dropna().min() >= 1:
+            frame["reach"] = frame["reach"] - 1
+        if frame["reach_to"].dropna().min() >= 1:
+            frame["reach_to"] = frame["reach_to"] - 1
+        frame["q"] = _clean_observation_output_values(frame["q"])
+
+        # For in-channel through-flow, use the outbound FLOW-JA-FACE rows
+        # leaving each reach. Those are the negative rows in the SFR package
+        # budget. Taking absolute values keeps the reported flow intuitive.
+        outbound = frame.loc[frame["q"] <= 0.0, ["per", "reach", "q"]].copy()
+        outbound["sim_flow"] = outbound["q"].abs()
+        grouped = outbound.groupby(["per", "reach"], as_index=False)["sim_flow"].sum()
+
+        to_mvr = model.outputs.sfr.bud.get("TO-MVR")
+        if isinstance(to_mvr, pd.DataFrame) and not to_mvr.empty:
+            mvr = to_mvr.copy()
+            mvr["per"] = mvr["kstpkper"].apply(lambda values: int(values[1]))
+            mvr["reach"] = pd.to_numeric(mvr["node"], errors="coerce")
+            if mvr["reach"].dropna().min() >= 1:
+                mvr["reach"] = mvr["reach"] - 1
+            mvr["sim_flow"] = _clean_observation_output_values(mvr["q"]).abs()
+            grouped = (
+                pd.concat([grouped, mvr.loc[:, ["per", "reach", "sim_flow"]]], ignore_index=True)
+                .groupby(["per", "reach"], as_index=False)["sim_flow"]
+                .sum()
+            )
+
+        grouped["reach"] = grouped["reach"].astype(int)
+        grouped["per"] = grouped["per"].astype(int)
+        return grouped
+
+    def simulated_series(self, model) -> pd.DataFrame:
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            return observed
+
+        frame = self._package_flow_table(model)
+        if frame.empty:
+            return pd.DataFrame(columns=["time", *self._locations["name"].astype(str).tolist()])
+        merged = self._locations.merge(frame, on="reach", how="left")
+        value_column = "sim_flow" if "sim_flow" in merged.columns else "q"
+        wide = merged.pivot_table(index="per", columns="name", values=value_column, aggfunc="first").reset_index()
+        wide.columns.name = None
+        return wide.rename(columns={"per": "time"})
+
+    def compare(self, model) -> pd.DataFrame:
+        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        if observed is not None:
+            simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
+            simulated["per"] = simulated["time"]
+            simulated = self._locations.merge(simulated, on="name", how="left")
+        else:
+            simulated = self._package_flow_table(model)
+            simulated = self._locations.merge(simulated, on="reach", how="left")
+        if self._values.empty:
+            compare = simulated.rename(columns={"per": "time"}).copy()
+            compare["flow_target"] = np.nan
+        else:
+            targets = self.get().copy()
+            targets["per"] = _numeric_periods(targets, caller="SfrFlowTargets.compare(...)")
+            compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
+        compare["residual"] = compare["sim_flow"] - compare["flow_target"]
+        compare["abs_residual"] = compare["residual"].abs()
+        return _copy_frame(compare)
+
+    def residuals(self, model) -> pd.DataFrame:
+        frame = self.compare(model)
+        return frame.loc[:, ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]]
+
+    def stats(self, model) -> pd.DataFrame:
+        return _default_compare_stats(self.compare(model))
+
+    def to_flopy_obs(
+        self,
+        *,
+        csv_name: str = "sfr_flow_targets.csv",
+        kind: str = "DOWNSTREAM-FLOW",
+    ) -> dict[str, list[tuple[str, str, tuple[int]]]]:
+        records = [
+            (_observation_label(name), str(kind).upper(), (int(reach),))
+            for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+        ]
+        return {str(csv_name): records}
+
+    def attach_flopy_obs(
+        self,
+        model,
+        *,
+        pname: str = "sfr_flow_obs",
+        filename: str = "sfr_flow_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "DOWNSTREAM-FLOW",
+        package=None,
+    ):
+        import flopy
+
+        owner = model.gwf.sfr if package is None else package
+        csv_name = _default_obs_csv_name(filename, "sfr_flow_targets.csv") if csv_name is None else str(csv_name)
+        continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
+        return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(
+            owner,
+            pname=pname,
+            continuous=continuous,
+            filename=str(filename),
+        )
+
+
+def _normalize_drn_zone_locations(
+    locations,
+    *,
+    name_column: str = "name",
+    group_column: str | None = "group",
+    weight_column: str | None = "weight",
+) -> pd.DataFrame:
+    """Normalize drain-zone definitions from cells or polygons."""
+
+    if isinstance(locations, pd.Series):
+        frame = locations.rename("cells").rename_axis(name_column).reset_index()
+        if frame.columns[0] != name_column:
+            frame = frame.rename(columns={frame.columns[0]: name_column})
+    elif isinstance(locations, dict):
+        lower_keys = {str(key).strip().lower() for key in locations.keys()}
+        if "name" in lower_keys or "cells" in lower_keys or "geometry" in lower_keys:
+            frame = pd.DataFrame(locations)
+        else:
+            frame = pd.DataFrame({name_column: list(locations.keys()), "cells": list(locations.values())})
+    elif isinstance(locations, (list, tuple)):
+        frame = pd.DataFrame(locations)
+    elif isinstance(locations, (pd.DataFrame, gpd.GeoDataFrame)):
+        frame = locations.copy()
+    else:
+        frame = gpd.read_file(locations)
+
+    if name_column not in frame.columns:
+        raise ValueError("DrnFlowTargets locations must include a name column.")
+    keep = [name_column]
+    for column in ("cells", group_column, weight_column, "layer"):
+        if column is not None and column in frame.columns:
+            keep.append(column)
+    if isinstance(frame, gpd.GeoDataFrame):
+        keep.append(frame.geometry.name)
+    frame = frame.loc[:, list(dict.fromkeys(keep))].copy()
+    frame = frame.rename(columns={name_column: "name"})
+    if group_column and group_column in frame.columns:
+        frame = frame.rename(columns={group_column: "group"})
+    if weight_column and weight_column in frame.columns:
+        frame = frame.rename(columns={weight_column: "weight"})
+    if "group" not in frame.columns:
+        frame["group"] = pd.NA
+    if "weight" not in frame.columns:
+        frame["weight"] = np.nan
+    if "layer" not in frame.columns:
+        frame["layer"] = 0
+    if "cells" in frame.columns:
+        def _coerce_cells(values):
+            if isinstance(values, str):
+                return [int(value) for value in values.split(",") if str(value).strip() != ""]
+            if isinstance(values, (list, tuple, np.ndarray, pd.Series)):
+                return [int(value) for value in values]
+            if pd.isna(values):
+                return []
+            return [int(values)]
+
+        frame["cells"] = frame["cells"].apply(_coerce_cells)
+    return frame
+
+
+def _resolve_drn_zone_cells(locations: pd.DataFrame, model) -> pd.DataFrame:
+    """Attach explicit cell lists to each DRN zone, intersecting polygons when needed."""
+
+    frame = locations.copy()
+    if "cells" in frame.columns and frame["cells"].notna().all():
+        return frame
+    if not isinstance(frame, gpd.GeoDataFrame):
+        raise ValueError("DrnFlowTargets polygon zones require a GeoDataFrame or GIS layer input.")
+    vor = model.vor.gdf_vorPolys.reset_index().rename(columns={"index": "cell"})
+    joined = gpd.sjoin(frame, vor.loc[:, ["cell", vor.geometry.name]], how="left", predicate="intersects")
+    cells = (
+        joined.groupby("name", dropna=False)["cell"]
+        .apply(lambda series: sorted({int(value) for value in series.dropna().tolist()}))
+        .rename("cells")
+        .reset_index()
+    )
+    merged = frame.drop(columns=["cells"], errors="ignore").merge(cells, on="name", how="left")
+    merged["cells"] = merged["cells"].apply(lambda value: [] if not isinstance(value, list) else value)
+    return merged
+
+
+@dataclass
+class DrnFlowTargets:
+    """Named seepage-zone targets aggregated from DRN budget cells."""
+
+    locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
+    values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None
+    name_column: str = "name"
+    group_column: str | None = "group"
+    weight_column: str | None = "weight"
+    time_column: str = "time"
+    value_column: str = "flow"
+    times: list | tuple | pd.Index | pd.Series | None = None
+
+    def __post_init__(self):
+        self._locations = _normalize_drn_zone_locations(
+            self.locations,
+            name_column=self.name_column,
+            group_column=self.group_column,
+            weight_column=self.weight_column,
+        )
+        self._values = _normalize_named_series_values(
+            self.values,
+            time_column=self.time_column,
+            value_column=self.value_column,
+            output_column="flow_target",
+            times=self.times,
+        )
+        if not self._values.empty and "name" not in self._values.columns:
+            if len(self._locations["name"].unique()) != 1:
+                raise ValueError("DrnFlowTargets values without explicit names require exactly one zone.")
+            self._values["name"] = str(self._locations["name"].iloc[0])
+
+    @property
+    def locations_gdf(self):
+        return self._locations.copy()
+
+    def zone_definitions(self, model) -> pd.DataFrame:
+        return _resolve_drn_zone_cells(self._locations, model)
+
+    def get(self, model=None) -> pd.DataFrame:
+        definitions = self._locations.copy()
+        if model is not None:
+            definitions = self.zone_definitions(model)
+        if self._values.empty:
+            return definitions
+        return _copy_frame(self._values.merge(definitions.drop(columns="geometry", errors="ignore"), on="name", how="left"))
+
+    def to_long(self, model=None) -> pd.DataFrame:
+        return self.get(model=model)
+
+    def to_wide(self) -> pd.DataFrame:
+        if self._values.empty:
+            return pd.DataFrame(columns=["time", *self._locations["name"].astype(str).tolist()])
+        frame = self._values.pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
+        frame.columns.name = None
+        return frame
+
+    def summary(self, model=None) -> pd.DataFrame:
+        definitions = self.zone_definitions(model) if model is not None else self._locations.copy()
+        zone_count = int(definitions["name"].nunique())
+        cell_count = int(sum(len(value) for value in definitions.get("cells", pd.Series(dtype=object))))
+        return pd.DataFrame([{"n_zones": zone_count, "n_cells": cell_count, "n_rows": int(len(self._values))}])
+
+    def _drn_budget_frame(self, model) -> pd.DataFrame:
+        budget = model.bud("drn").df.reset_index().copy()
+        if "per" not in budget.columns:
+            if "kstpkper" not in budget.columns:
+                raise ValueError("DRN budget dataframe requires 'per' or 'kstpkper' columns.")
+            budget["per"] = budget["kstpkper"].apply(lambda item: int(item[1]))
+        if "node" not in budget.columns:
+            raise ValueError("DRN budget dataframe requires a zero-based 'node' column.")
+        budget["node"] = pd.to_numeric(budget["node"], errors="coerce").astype(int)
+        budget["q"] = pd.to_numeric(budget["q"], errors="coerce")
+        return budget
+
+    def _obs_column_map(self, model) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+        zones = self.zone_definitions(model)
+        zone_columns: dict[str, list[str]] = {}
+        for row in zones.itertuples(index=False):
+            zone_columns[str(row.name)] = [
+                _observation_label(f"{row.name}_c{int(cell)}")
+                for cell in getattr(row, "cells", [])
+            ]
+        return zones, zone_columns
+
+    def _simulated_series_from_obs(self, model) -> pd.DataFrame | None:
+        zones, zone_columns = self._obs_column_map(model)
+        expected = {
+            f"{zone_name}__{index}": column
+            for zone_name, columns in zone_columns.items()
+            for index, column in enumerate(columns)
+        }
+        observed = _find_named_observation_output(model, expected_columns=expected)
+        if observed is None:
+            return None
+
+        result = pd.DataFrame({"time": observed["time"]})
+        for zone_name, columns in zone_columns.items():
+            if not columns:
+                result[zone_name] = 0.0
+                continue
+            zone_frame = pd.DataFrame(
+                {
+                    column: _clean_observation_output_values(
+                        observed[f"{zone_name}__{index}"]
+                    )
+                    for index, column in enumerate(columns)
+                }
+            )
+            result[zone_name] = zone_frame.sum(axis=1)
+        return result
+
+    def _compare_from_obs(self, model) -> pd.DataFrame | None:
+        wide = self._simulated_series_from_obs(model)
+        if wide is None:
+            return None
+
+        zones = self.zone_definitions(model)
+        simulated = wide.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
+        simulated["per"] = simulated["time"]
+        simulated = zones.merge(simulated, on="name", how="left")
+        if self._values.empty:
+            compare = simulated.copy()
+            compare["flow_target"] = np.nan
+        else:
+            targets = self._values.copy()
+            targets["per"] = _numeric_periods(targets, caller="DrnFlowTargets.compare(...)")
+            compare = targets.merge(simulated, on=["name", "per"], how="left")
+        compare["residual"] = compare["sim_flow"] - compare["flow_target"]
+        compare["abs_residual"] = compare["residual"].abs()
+        return _copy_frame(compare)
+
+    def simulated_series(self, model) -> pd.DataFrame:
+        observed = self._simulated_series_from_obs(model)
+        if observed is not None:
+            return observed
+
+        zones = self.zone_definitions(model)
+        budget = self._drn_budget_frame(model)
+        rows = []
+        for row in zones.itertuples(index=False):
+            zone_cells = {int(value) for value in getattr(row, "cells", [])}
+            if not zone_cells:
+                continue
+            subset = budget.loc[budget["node"].isin(zone_cells)].copy()
+            grouped = subset.groupby("per", as_index=False)["q"].sum()
+            grouped["name"] = str(row.name)
+            rows.append(grouped)
+        if not rows:
+            return pd.DataFrame(columns=["time", *zones["name"].astype(str).tolist()])
+        frame = pd.concat(rows, ignore_index=True)
+        wide = frame.pivot_table(index="per", columns="name", values="q", aggfunc="first").reset_index()
+        wide.columns.name = None
+        return wide.rename(columns={"per": "time"})
+
+    def compare(self, model) -> pd.DataFrame:
+        observed = self._compare_from_obs(model)
+        if observed is not None:
+            return observed
+
+        zones = self.zone_definitions(model)
+        budget = self._drn_budget_frame(model)
+        rows = []
+        for row in zones.itertuples(index=False):
+            zone_cells = {int(value) for value in getattr(row, "cells", [])}
+            subset = budget.loc[budget["node"].isin(zone_cells)].copy()
+            grouped = subset.groupby("per", as_index=False)["q"].sum()
+            grouped["name"] = str(row.name)
+            grouped["group"] = getattr(row, "group", pd.NA)
+            grouped["weight"] = getattr(row, "weight", np.nan)
+            grouped["cells"] = [list(zone_cells)] * len(grouped)
+            rows.append(grouped)
+        if rows:
+            simulated = pd.concat(rows, ignore_index=True).rename(columns={"q": "sim_flow"})
+        else:
+            simulated = pd.DataFrame(columns=["per", "name", "sim_flow", "group", "weight", "cells"])
+        if self._values.empty:
+            compare = simulated.rename(columns={"per": "time"}).copy()
+            compare["flow_target"] = np.nan
+        else:
+            targets = self._values.copy()
+            targets["per"] = _numeric_periods(targets, caller="DrnFlowTargets.compare(...)")
+            compare = targets.merge(simulated, on=["name", "per"], how="left")
+        compare["residual"] = compare["sim_flow"] - compare["flow_target"]
+        compare["abs_residual"] = compare["residual"].abs()
+        return _copy_frame(compare)
+
+    def residuals(self, model) -> pd.DataFrame:
+        frame = self.compare(model)
+        columns = ["name", "group", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual", "weight"]
+        if "cells" in frame.columns:
+            columns.append("cells")
+        return frame.loc[:, columns]
+
+    def stats(self, model) -> pd.DataFrame:
+        return _default_compare_stats(self.compare(model))
+
+    def to_flopy_obs(
+        self,
+        model,
+        *,
+        csv_name: str = "drn_flow_targets.csv",
+        kind: str = "DRN",
+    ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
+        zones = self.zone_definitions(model)
+        records: list[tuple[str, str, tuple[int, int]]] = []
+        for row in zones.itertuples(index=False):
+            for cell in getattr(row, "cells", []):
+                obsname = _observation_label(f"{row.name}_c{int(cell)}")
+                records.append((obsname, str(kind).upper(), (int(getattr(row, "layer", 0)), int(cell))))
+        return {str(csv_name): records}
+
+    def attach_flopy_obs(
+        self,
+        model,
+        *,
+        pname: str = "drn_flow_obs",
+        filename: str = "drn_flow_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "DRN",
+        package=None,
+    ):
+        import flopy
+
+        owner = model.gwf.drn if package is None else package
+        csv_name = _default_obs_csv_name(filename, "drn_flow_targets.csv") if csv_name is None else str(csv_name)
+        continuous = self.to_flopy_obs(model, csv_name=csv_name, kind=kind)
+        return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(
+            owner,
+            pname=pname,
+            continuous=continuous,
+            filename=str(filename),
+        )
 
 class BoundHeadTargets:
     """Model-bound head-target helper returned from ``model.targets.heads``."""
@@ -1131,83 +2085,38 @@ class BoundHeadTargetPlots:
         return self.bound_targets.calibration_plot(type=type)
 
     def obs_vs_sim(self, *, baseline=None, ax=None):
-        """Plot target heads against simulated heads for one or two models."""
+        """Return a target-vs-simulated cross plot for one or two models."""
+
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
 
         current = self.targets.compare(self.model)
-        if ax is None:
-            _, ax = plt.subplots()
-        ax.scatter(current["head_target"], current["sim_head"], alpha=0.8, label="Model")
-        if baseline is not None:
-            baseline_frame = self.targets.compare(baseline)
-            ax.scatter(
-                baseline_frame["head_target"],
-                baseline_frame["sim_head"],
-                alpha=0.8,
-                label="Baseline",
-            )
-            values = pd.concat(
-                [
-                    current["head_target"],
-                    current["sim_head"],
-                    baseline_frame["sim_head"],
-                ],
-                axis=0,
-            ).dropna()
-        else:
-            values = pd.concat([current["head_target"], current["sim_head"]], axis=0).dropna()
-        if not values.empty:
-            lower = float(values.min())
-            upper = float(values.max())
-            ax.plot([lower, upper], [lower, upper], linestyle="--", color="black", linewidth=1)
-        ax.set_title("Observed vs simulated heads")
-        ax.set_xlabel("Observed head")
-        ax.set_ylabel("Simulated head")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        return ax
+        baseline_frame = None if baseline is None else self.targets.compare(baseline)
+        return CalibrationPlot.from_obs_vs_sim(current, baseline_compare=baseline_frame)
 
     def timeseries(self, name: str | None = None, *, baseline=None, ax=None):
-        """Plot target and simulated heads through time for one observation."""
+        """Return a time-series plot for one target location."""
+
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
 
         current = self.targets.compare(self.model)
-        names = current["name"].astype(str)
-        if name is None:
-            unique_names = sorted(names.unique().tolist())
-            if len(unique_names) != 1:
-                raise ValueError(
-                    "plot.timeseries(...) requires name= when more than one target location is present."
-                )
-            name = unique_names[0]
-        mask = names.str.lower() == str(name).strip().lower()
-        current = current.loc[mask].copy()
-        if current.empty:
-            raise ValueError(f"No target rows found for observation name {name!r}.")
-        sort_values = pd.to_numeric(current["time"], errors="coerce")
-        if sort_values.notna().all():
-            current = current.assign(_sort=sort_values).sort_values("_sort").drop(columns="_sort")
-        else:
-            current = current.sort_values("time")
-        if ax is None:
-            _, ax = plt.subplots()
-        ax.plot(current["time"], current["head_target"], marker="o", label="Target")
-        ax.plot(current["time"], current["sim_head"], marker="o", label="Model")
-        if baseline is not None:
-            baseline_frame = self.targets.compare(baseline)
-            baseline_frame = baseline_frame.loc[
-                baseline_frame["name"].astype(str).str.lower() == str(name).strip().lower()
-            ].copy()
-            baseline_sort = pd.to_numeric(baseline_frame["time"], errors="coerce")
-            if baseline_sort.notna().all():
-                baseline_frame = baseline_frame.assign(_sort=baseline_sort).sort_values("_sort").drop(columns="_sort")
-            else:
-                baseline_frame = baseline_frame.sort_values("time")
-            ax.plot(baseline_frame["time"], baseline_frame["sim_head"], marker="o", label="Baseline")
-        ax.set_title(str(current["name"].iloc[0]))
-        ax.set_xlabel("Time / period")
-        ax.set_ylabel("Head")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        return ax
+        baseline_frame = None if baseline is None else self.targets.compare(baseline)
+        return CalibrationPlot.from_timeseries(
+            current,
+            name=name,
+            baseline_compare=baseline_frame,
+        )
+
+    def residuals_by_period(self, *, baseline=None):
+        """Return a by-period residual summary plot."""
+
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+
+        current = self.targets.compare(self.model)
+        baseline_frame = None if baseline is None else self.targets.compare(baseline)
+        return CalibrationPlot.from_residuals_by_period(
+            current,
+            baseline_compare=baseline_frame,
+        )
 
 
 class BoundLakeStageTargets:
@@ -1216,12 +2125,31 @@ class BoundLakeStageTargets:
     def __init__(self, model, targets: LakeStageTargets):
         self.model = model
         self.targets = targets
+        self._plot = None
 
     def get(self) -> pd.DataFrame:
         return self.targets.get()
 
+    def to_long(self) -> pd.DataFrame:
+        return self.targets.to_long()
+
+    def to_wide(self) -> pd.DataFrame:
+        return self.targets.to_wide()
+
     def summary(self) -> pd.DataFrame:
         return self.targets.summary()
+
+    def simulated_series(self, model=None) -> pd.DataFrame:
+        return self.targets.simulated_series(self.model if model is None else model)
+
+    def compare(self, model=None) -> pd.DataFrame:
+        return self.targets.compare(self.model if model is None else model)
+
+    def residuals(self, model=None) -> pd.DataFrame:
+        return self.targets.residuals(self.model if model is None else model)
+
+    def stats(self, model=None) -> pd.DataFrame:
+        return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(
         self,
@@ -1249,6 +2177,274 @@ class BoundLakeStageTargets:
             package=package,
         )
 
+    def calibration_plot(self, *, type: str = "calibration"):
+        return self.targets.calibration_plot(self.model, type=type)
+
+    @property
+    def plot(self):
+        if self._plot is None:
+            self._plot = BoundNamedSeriesTargetPlots(
+                self,
+                target_column="stage_target",
+                simulated_column="sim_stage",
+                title="Observed vs simulated lake stage",
+                yaxis_title="Stage",
+            )
+        return self._plot
+
+
+class BoundSfrStageTargets:
+    """Model-bound SFR stage helper returned from ``model.targets.sfr_stage``."""
+
+    def __init__(self, model, targets: SfrStageTargets):
+        self.model = model
+        self.targets = targets
+        self._plot = None
+
+    def get(self) -> pd.DataFrame:
+        return self.targets.get()
+
+    def to_long(self) -> pd.DataFrame:
+        return self.targets.to_long()
+
+    def to_wide(self) -> pd.DataFrame:
+        return self.targets.to_wide()
+
+    def summary(self) -> pd.DataFrame:
+        return self.targets.summary()
+
+    def simulated_series(self, model=None) -> pd.DataFrame:
+        return self.targets.simulated_series(self.model if model is None else model)
+
+    def compare(self, model=None) -> pd.DataFrame:
+        return self.targets.compare(self.model if model is None else model)
+
+    def residuals(self, model=None) -> pd.DataFrame:
+        return self.targets.residuals(self.model if model is None else model)
+
+    def stats(self, model=None) -> pd.DataFrame:
+        return self.targets.stats(self.model if model is None else model)
+
+    def to_flopy_obs(self, *, csv_name: str = "sfr_stage_targets.csv", kind: str = "STAGE"):
+        return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
+
+    def attach_flopy_obs(
+        self,
+        *,
+        pname: str = "sfr_stage_obs",
+        filename: str = "sfr_stage_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "STAGE",
+        package=None,
+    ):
+        return self.targets.attach_flopy_obs(
+            self.model,
+            pname=pname,
+            filename=filename,
+            csv_name=csv_name,
+            kind=kind,
+            package=package,
+        )
+
+    @property
+    def plot(self):
+        if self._plot is None:
+            self._plot = BoundNamedSeriesTargetPlots(
+                self,
+                target_column="stage_target",
+                simulated_column="sim_stage",
+                title="Observed vs simulated SFR stage",
+                yaxis_title="Stage",
+            )
+        return self._plot
+
+
+class BoundSfrFlowTargets:
+    """Model-bound SFR flow helper returned from ``model.targets.sfr_flow``."""
+
+    def __init__(self, model, targets: SfrFlowTargets):
+        self.model = model
+        self.targets = targets
+        self._plot = None
+
+    def get(self) -> pd.DataFrame:
+        return self.targets.get()
+
+    def to_long(self) -> pd.DataFrame:
+        return self.targets.to_long()
+
+    def to_wide(self) -> pd.DataFrame:
+        return self.targets.to_wide()
+
+    def summary(self) -> pd.DataFrame:
+        return self.targets.summary()
+
+    def simulated_series(self, model=None) -> pd.DataFrame:
+        return self.targets.simulated_series(self.model if model is None else model)
+
+    def compare(self, model=None) -> pd.DataFrame:
+        return self.targets.compare(self.model if model is None else model)
+
+    def residuals(self, model=None) -> pd.DataFrame:
+        return self.targets.residuals(self.model if model is None else model)
+
+    def stats(self, model=None) -> pd.DataFrame:
+        return self.targets.stats(self.model if model is None else model)
+
+    def to_flopy_obs(self, *, csv_name: str = "sfr_flow_targets.csv", kind: str = "DOWNSTREAM-FLOW"):
+        return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
+
+    def attach_flopy_obs(
+        self,
+        *,
+        pname: str = "sfr_flow_obs",
+        filename: str = "sfr_flow_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "DOWNSTREAM-FLOW",
+        package=None,
+    ):
+        return self.targets.attach_flopy_obs(
+            self.model,
+            pname=pname,
+            filename=filename,
+            csv_name=csv_name,
+            kind=kind,
+            package=package,
+        )
+
+    @property
+    def plot(self):
+        if self._plot is None:
+            self._plot = BoundNamedSeriesTargetPlots(
+                self,
+                target_column="flow_target",
+                simulated_column="sim_flow",
+                title="Observed vs simulated SFR flow",
+                yaxis_title="Flow",
+            )
+        return self._plot
+
+
+class BoundDrnFlowTargets:
+    """Model-bound DRN seepage-zone helper returned from ``model.targets.drn_flow``."""
+
+    def __init__(self, model, targets: DrnFlowTargets):
+        self.model = model
+        self.targets = targets
+        self._plot = None
+
+    def get(self) -> pd.DataFrame:
+        return self.targets.get(model=self.model)
+
+    def to_long(self) -> pd.DataFrame:
+        return self.targets.to_long(model=self.model)
+
+    def to_wide(self) -> pd.DataFrame:
+        return self.targets.to_wide()
+
+    def summary(self) -> pd.DataFrame:
+        return self.targets.summary(model=self.model)
+
+    def simulated_series(self, model=None) -> pd.DataFrame:
+        return self.targets.simulated_series(self.model if model is None else model)
+
+    def compare(self, model=None) -> pd.DataFrame:
+        return self.targets.compare(self.model if model is None else model)
+
+    def residuals(self, model=None) -> pd.DataFrame:
+        return self.targets.residuals(self.model if model is None else model)
+
+    def stats(self, model=None) -> pd.DataFrame:
+        return self.targets.stats(self.model if model is None else model)
+
+    def to_flopy_obs(self, *, csv_name: str = "drn_flow_targets.csv", kind: str = "DRN"):
+        return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)
+
+    def attach_flopy_obs(
+        self,
+        *,
+        pname: str = "drn_flow_obs",
+        filename: str = "drn_flow_targets.obs",
+        csv_name: str | None = None,
+        kind: str = "DRN",
+        package=None,
+    ):
+        return self.targets.attach_flopy_obs(
+            self.model,
+            pname=pname,
+            filename=filename,
+            csv_name=csv_name,
+            kind=kind,
+            package=package,
+        )
+
+    @property
+    def plot(self):
+        if self._plot is None:
+            self._plot = BoundNamedSeriesTargetPlots(
+                self,
+                target_column="flow_target",
+                simulated_column="sim_flow",
+                title="Observed vs simulated DRN seepage",
+                yaxis_title="Flow",
+            )
+        return self._plot
+
+
+class BoundNamedSeriesTargetPlots:
+    """Shared plotting facade for model-bound stage/flow target sets."""
+
+    def __init__(
+        self,
+        bound_targets,
+        *,
+        target_column: str,
+        simulated_column: str,
+        title: str,
+        yaxis_title: str,
+    ):
+        self.bound_targets = bound_targets
+        self.target_column = target_column
+        self.simulated_column = simulated_column
+        self.title = title
+        self.yaxis_title = yaxis_title
+
+    def obs_vs_sim(self, *, baseline=None):
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+
+        current = self.bound_targets.compare()
+        baseline_frame = None if baseline is None else self.bound_targets.targets.compare(baseline)
+        return CalibrationPlot.from_obs_vs_sim(
+            current,
+            baseline_compare=baseline_frame,
+            target_column=self.target_column,
+            simulated_column=self.simulated_column,
+            title=self.title,
+            yaxis_title=self.yaxis_title,
+        )
+
+    def timeseries(self, name: str | None = None, *, baseline=None):
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+
+        current = self.bound_targets.compare()
+        baseline_frame = None if baseline is None else self.bound_targets.targets.compare(baseline)
+        return CalibrationPlot.from_timeseries(
+            current,
+            name=name,
+            baseline_compare=baseline_frame,
+            target_column=self.target_column,
+            simulated_column=self.simulated_column,
+            yaxis_title=self.yaxis_title,
+            title=None,
+        )
+
+    def residuals_by_period(self, *, baseline=None):
+        from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+
+        current = self.bound_targets.compare()
+        baseline_frame = None if baseline is None else self.bound_targets.targets.compare(baseline)
+        return CalibrationPlot.from_residuals_by_period(current, baseline_compare=baseline_frame)
+
 
 class TargetRegistry:
     """Lightweight model-bound registry for reusable calibration targets."""
@@ -1264,15 +2460,31 @@ class TargetRegistry:
             return BoundHeadTargets(self.model, target)
         if isinstance(target, LakeStageTargets):
             return BoundLakeStageTargets(self.model, target)
+        if isinstance(target, SfrStageTargets):
+            return BoundSfrStageTargets(self.model, target)
+        if isinstance(target, SfrFlowTargets):
+            return BoundSfrFlowTargets(self.model, target)
+        if isinstance(target, DrnFlowTargets):
+            return BoundDrnFlowTargets(self.model, target)
         return target
 
     def _coerce_target(self, value):
-        if isinstance(value, (BoundHeadTargets, BoundLakeStageTargets)):
+        if isinstance(
+            value,
+            (
+                BoundHeadTargets,
+                BoundLakeStageTargets,
+                BoundSfrStageTargets,
+                BoundSfrFlowTargets,
+                BoundDrnFlowTargets,
+            ),
+        ):
             return value.targets
-        if isinstance(value, (HeadTargets, LakeStageTargets)):
+        if isinstance(value, (HeadTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets)):
             return value
         raise TypeError(
-            "Model targets currently support HeadTargets and LakeStageTargets."
+            "Model targets currently support HeadTargets, LakeStageTargets, "
+            "SfrStageTargets, SfrFlowTargets, and DrnFlowTargets."
         )
 
     def keys(self) -> list[str]:

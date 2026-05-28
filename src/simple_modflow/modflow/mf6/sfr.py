@@ -633,7 +633,15 @@ class SFR:
             reach_vor_polys = geom.intersection(self.vor.gdf_vorPolys.geometry)
             reach_vor_polys = reach_vor_polys.apply(lambda x: np.nan if x.length == 0 else x).dropna()
             for vor_idx in self.stream_cells[stream_num]:
-                reach_len = reach_vor_polys[vor_idx].length
+                if vor_idx in reach_vor_polys.index:
+                    reach_len = reach_vor_polys.loc[vor_idx].length
+                else:
+                    # Some branched or kinked stream lines can still map a valid
+                    # stream cell whose first-pass aligned intersection collapses
+                    # to zero length. Recompute directly against that cell so the
+                    # reach-length builder remains stable for compact synthetic
+                    # workflows and real diverted networks.
+                    reach_len = self.vor.gdf_vorPolys.geometry.loc[vor_idx].intersection(geom).length
                 reach_lens.append(reach_len)
             all_reach_lens.append(reach_lens)
         return all_reach_lens
@@ -652,6 +660,9 @@ class SFR:
         sorted_cells = []
         for idx, geom in enumerate(self.stream_geoms):
             intersecting_cells = self.vor.gdf_vorPolys[self.vor.gdf_vorPolys.intersects(geom)].copy()
+            if not intersecting_cells.empty:
+                lengths = intersecting_cells.geometry.intersection(geom).length
+                intersecting_cells = intersecting_cells.loc[lengths > 0].copy()
             # Calculate the centroid of each intersecting cell
             intersecting_cells['centroid'] = intersecting_cells.centroid
 

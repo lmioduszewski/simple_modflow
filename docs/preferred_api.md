@@ -16,6 +16,8 @@ described here.
   A short visually organized workflow summary, arranged one topic per page.
 - [targets_api_quickstart.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/targets_api_quickstart.ipynb)
   A short notebook focused on the flexible target API, model-bound target registry, FloPy observation generation, and PEST touchpoints.
+- [mp3du_quickstart.md](C:/Users/lukem/Python/Projects/simple_modflow/docs/mp3du_quickstart.md)
+  Focused quickstart for the supported MP3DU particle-tracking API.
 
 ## Cheat Sheet
 

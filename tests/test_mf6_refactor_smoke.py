@@ -219,6 +219,59 @@ def _four_cell_vor_clockwise():
     return VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)
 
 
+def test_lak_wrapper_forwards_boundnames_for_named_packagedata(monkeypatch):
+    class _DummyReport:
+        def raise_for_errors(self, _message):
+            return None
+
+    captured = {}
+
+    def _fake_validate(*args, **kwargs):
+        return _DummyReport()
+
+    def _fake_lak_constructor(*args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    class _DummyModel:
+        name = "lak_demo"
+        gwf = object()
+
+    monkeypatch.setattr(
+        "simple_modflow.modflow.mf6.simulation.packages.validate_lak_configuration",
+        _fake_validate,
+    )
+    monkeypatch.setattr(
+        "simple_modflow.modflow.mf6.simulation.packages.flopy.mf6.ModflowGwflak",
+        _fake_lak_constructor,
+    )
+
+    packagedata = [
+        (0, 768.0, 3, "deep_lake"),
+        (1, 796.0, 2, "hyde_lake"),
+    ]
+    connectiondata = [
+        (0, 0, (0, 0), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
+        (0, 1, (0, 1), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
+        (0, 2, (0, 0), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
+        (1, 0, (0, 1), "VERTICAL", 1.0, 790.0, 800.0, 1.0, 1.0),
+        (1, 1, (0, 0), "VERTICAL", 1.0, 790.0, 800.0, 1.0, 1.0),
+    ]
+
+    wrapper = LAKPackage(
+        _DummyModel(),
+        nlakes=2,
+        packagedata=packagedata,
+        connectiondata=connectiondata,
+        boundnames=True,
+        validate=True,
+    )
+
+    assert wrapper.lak is not None
+    assert captured["boundnames"] is True
+    assert captured["packagedata"] == packagedata
+
+
 def _write_refined_workflow_vectors(workspace: Path) -> dict[str, object]:
     """Create synthetic-but-realistic geopackage inputs for the end-to-end workflow test."""
 

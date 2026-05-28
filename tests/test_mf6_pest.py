@@ -29,17 +29,34 @@ except Exception:
             sys.path.insert(0, str(dep_path))
 
 from simple_modflow.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
-from simple_modflow.modflow.mf6.observations import HeadTargets, LakeStageTargets, TargetRegistry  # noqa: E402
+from simple_modflow.modflow.mf6.observations import (  # noqa: E402
+    DrnFlowTargets,
+    HeadTargets,
+    LakeStageTargets,
+    SfrFlowTargets,
+    SfrStageTargets,
+    TargetRegistry,
+)
+from simple_modflow.modflow.mf6.pest.observations import (  # noqa: E402
+    prepare_drn_flow_observations,
+    prepare_lake_stage_observations,
+    prepare_sfr_flow_observations,
+    prepare_sfr_stage_observations,
+)
 from simple_modflow.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
 from simple_modflow.modflow.mf6.pest.parameters import build_k_pilotpoint_frame  # noqa: E402
 from simple_modflow.modflow.mf6.pest.project import PestProject  # noqa: E402
 from simple_modflow.modflow.mf6.pest.results import PestRunResults, PestRunReview, open_pest_run  # noqa: E402
 from simple_modflow.modflow.mf6.pest.specs import (  # noqa: E402
+    DrnFlowObservationSpec,
     HeadTargetObservationSpec,
     DrainConductanceParameter,
     DrainElevationParameter,
     ExpGeoStruct,
     KPilotPointParameter,
+    LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+    SfrStageObservationSpec,
     VectorParameterSource,
 )
 from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
@@ -157,6 +174,55 @@ def _fake_model_with_heads():
     return SimpleNamespace(vor=vor, all_heads=heads)
 
 
+def _fake_surface_water_model():
+    vor = _two_cell_vor_clockwise()
+    lake_stage = pd.DataFrame(
+        {
+            "per": [0, 1, 0, 1],
+            "lake": [0, 0, 1, 1],
+            "stage": [100.0, 101.0, 97.5, 97.0],
+        }
+    )
+    sfr_stage = pd.DataFrame(
+        {
+            "per": [0, 1],
+            "reach": [0, 0],
+            "stage": [12.0, 11.5],
+        }
+    )
+    sfr_flow = pd.DataFrame(
+        {
+            "per": [0, 1],
+            "reach": [0, 0],
+            "q": [1.25, 1.5],
+        }
+    )
+    drn_df = pd.DataFrame(
+        {
+            "kstpkper": [(0, 0), (0, 0), (0, 1), (0, 1)],
+            "node": [0, 1, 0, 1],
+            "q": [0.2, 0.8, 0.25, 0.85],
+        }
+    ).set_index(["kstpkper", "node"])
+
+    model = SimpleNamespace(
+        vor=vor,
+        gwf=SimpleNamespace(lak="lak_owner", sfr="sfr_owner", drn="drn_owner"),
+        packages=SimpleNamespace(
+            lak=SimpleNamespace(results=SimpleNamespace(stage=SimpleNamespace(get=lambda: lake_stage.copy()))),
+            sfr=SimpleNamespace(
+                results=SimpleNamespace(
+                    stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
+                    q=SimpleNamespace(get=lambda: sfr_flow.copy()),
+                )
+            ),
+        ),
+    )
+    model.bud = lambda package: SimpleNamespace(df=drn_df.copy())
+    model.targets = TargetRegistry(model)
+    return model
+
+
 def test_head_targets_normalize_match_and_compare():
     locations = gpd.GeoDataFrame(
         {
@@ -225,23 +291,68 @@ def test_model_bound_targets_registry_and_calibration_plot():
     ax_locations = bound.plot.locations()
     assert ax_locations.get_title() == "Head Target Locations"
 
-    ax_obs = bound.plot.obs_vs_sim()
-    assert ax_obs.get_title() == "Observed vs simulated heads"
+    obs_fig = bound.plot.obs_vs_sim()
+    assert isinstance(obs_fig, CalibrationPlot)
+    assert obs_fig.layout.title.text == "Observed vs simulated heads"
+    assert len(obs_fig.data) == 2
 
-    ax_ts = bound.plot.timeseries("OBS_A")
-    assert ax_ts.get_title() == "OBS_A"
-    assert len(ax_ts.lines) == 2
+    ts_fig = bound.plot.timeseries("OBS_A")
+    assert isinstance(ts_fig, CalibrationPlot)
+    assert ts_fig.layout.title.text == "OBS_A"
+    assert len(ts_fig.data) == 2
 
     ax_heads = bound.plot.calibration(type="heads")
     assert isinstance(ax_heads, CalibrationPlot)
 
+    period_fig = bound.plot.residuals_by_period()
+    assert isinstance(period_fig, CalibrationPlot)
+    assert period_fig.layout.title.text == "Residual MAE by period"
+    assert len(period_fig.data) == 1
+
     baseline_model = _fake_model_with_heads()
     baseline_model.all_heads = baseline_model.all_heads.copy()
     baseline_model.all_heads.loc[:, "elev"] = [9.8, 9.3, 10.0, 9.0]
-    ax_obs_with_baseline = bound.plot.obs_vs_sim(baseline=baseline_model)
-    assert len(ax_obs_with_baseline.collections) == 2
-    ax_ts_with_baseline = bound.plot.timeseries("OBS_A", baseline=baseline_model)
-    assert len(ax_ts_with_baseline.lines) == 3
+    obs_fig_with_baseline = bound.plot.obs_vs_sim(baseline=baseline_model)
+    assert len(obs_fig_with_baseline.data) == 3
+    ts_fig_with_baseline = bound.plot.timeseries("OBS_A", baseline=baseline_model)
+    assert len(ts_fig_with_baseline.data) == 3
+    period_fig_with_baseline = bound.plot.residuals_by_period(baseline=baseline_model)
+    assert len(period_fig_with_baseline.data) == 2
+
+
+def test_calibration_plot_target_driven_constructors():
+    compare = pd.DataFrame(
+        {
+            "name": ["OBS_A", "OBS_A", "OBS_B", "OBS_B"],
+            "time": [0, 1, 0, 1],
+            "per": [0, 1, 0, 1],
+            "layer": [0, 0, 0, 0],
+            "head_target": [10.0, 10.2, 9.5, 9.7],
+            "sim_head": [9.8, 10.1, 9.4, 9.9],
+            "residual": [-0.2, -0.1, -0.1, 0.2],
+            "abs_residual": [0.2, 0.1, 0.1, 0.2],
+        }
+    )
+    baseline = compare.copy()
+    baseline["sim_head"] = [9.4, 9.5, 9.0, 9.2]
+    baseline["residual"] = baseline["sim_head"] - baseline["head_target"]
+    baseline["abs_residual"] = baseline["residual"].abs()
+
+    obs_vs_sim = CalibrationPlot.from_obs_vs_sim(compare, baseline_compare=baseline)
+    assert obs_vs_sim.layout.title.text == "Observed vs simulated heads"
+    assert len(obs_vs_sim.data) == 3
+
+    ts_fig = CalibrationPlot.from_timeseries(compare, name="OBS_A", baseline_compare=baseline)
+    assert ts_fig.layout.title.text == "OBS_A"
+    assert len(ts_fig.data) == 3
+
+    period_fig = CalibrationPlot.from_residuals_by_period(compare, baseline_compare=baseline)
+    assert period_fig.layout.title.text == "Residual MAE by period"
+    assert len(period_fig.data) == 2
+
+    heads_fig = CalibrationPlot.from_compare(compare, type="heads")
+    assert isinstance(heads_fig, CalibrationPlot)
+    assert len(heads_fig.data) == 4
 
 
 def test_head_targets_can_build_and_attach_flopy_obs(monkeypatch):
@@ -438,6 +549,238 @@ def test_lake_stage_targets_plain_constructor_accepts_simple_inputs():
         time_column="per",
     )
     assert series_targets.summary().loc[0, "n_rows"] == 2
+
+
+def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monkeypatch):
+    model = _fake_surface_water_model()
+
+    lake_targets = LakeStageTargets(
+        locations={"deep_lake": 0, "shallow_lake": 1},
+        values={"per": [0, 1], "deep_lake": [99.5, 100.5], "shallow_lake": [97.75, 96.9]},
+        time_column="per",
+    )
+    sfr_stage_targets = SfrStageTargets(
+        locations={"reach_001": 0},
+        values={"per": [0, 1], "reach_001": [11.75, 11.0]},
+        time_column="per",
+    )
+    sfr_flow_targets = SfrFlowTargets(
+        locations={"reach_001": 0},
+        values={"per": [0, 1], "reach_001": [1.0, 1.8]},
+        time_column="per",
+        value_column="flow",
+    )
+    drn_targets = DrnFlowTargets(
+        locations={"zone_west": [0], "zone_east": [1]},
+        values={"per": [0, 1], "zone_west": [0.15, 0.3], "zone_east": [0.75, 0.9]},
+        time_column="per",
+        value_column="flow",
+    )
+
+    model.targets.lake_stage = lake_targets
+    model.targets.sfr_stage = sfr_stage_targets
+    model.targets.sfr_flow = sfr_flow_targets
+    model.targets.drn_flow = drn_targets
+
+    lake_compare = model.targets.lake_stage.compare()
+    assert pytest.approx(lake_compare.loc[lake_compare["name"] == "deep_lake", "sim_stage"].iloc[0]) == 100.0
+    assert model.targets.lake_stage.stats().loc[0, "n"] == 4
+    lake_plot = model.targets.lake_stage.plot.obs_vs_sim()
+    assert isinstance(lake_plot, CalibrationPlot)
+    assert lake_plot.layout.title.text == "Observed vs simulated lake stage"
+
+    sfr_stage_compare = model.targets.sfr_stage.compare()
+    assert pytest.approx(sfr_stage_compare["sim_stage"].iloc[0]) == 12.0
+    sfr_stage_plot = model.targets.sfr_stage.plot.timeseries("reach_001")
+    assert isinstance(sfr_stage_plot, CalibrationPlot)
+    assert len(sfr_stage_plot.data) == 2
+
+    sfr_flow_compare = model.targets.sfr_flow.compare()
+    assert pytest.approx(sfr_flow_compare["sim_flow"].iloc[1]) == 1.5
+    sfr_flow_plot = model.targets.sfr_flow.plot.residuals_by_period()
+    assert isinstance(sfr_flow_plot, CalibrationPlot)
+    assert sfr_flow_plot.layout.title.text == "Residual MAE by period"
+
+    drn_compare = model.targets.drn_flow.compare()
+    assert pytest.approx(drn_compare.loc[drn_compare["name"] == "zone_east", "sim_flow"].iloc[0]) == 0.8
+    assert model.targets.drn_flow.summary().loc[0, "n_cells"] == 2
+    drn_plot = model.targets.drn_flow.plot.obs_vs_sim()
+    assert isinstance(drn_plot, CalibrationPlot)
+    assert drn_plot.layout.title.text == "Observed vs simulated DRN seepage"
+
+    calls = {}
+
+    def _fake_obs(owner, pname, continuous, filename):
+        calls[filename] = {"owner": owner, "pname": pname, "continuous": continuous}
+        return SimpleNamespace(owner=owner, pname=pname, continuous=continuous, filename=filename)
+
+    monkeypatch.setattr("flopy.mf6.modflow.mfutlobs.ModflowUtlobs", _fake_obs)
+    model.targets.sfr_stage.attach_flopy_obs(filename="sfr_stage.obs")
+    model.targets.sfr_flow.attach_flopy_obs(filename="sfr_flow.obs")
+    model.targets.drn_flow.attach_flopy_obs(filename="drn_flow.obs")
+
+    assert calls["sfr_stage.obs"]["owner"] == "sfr_owner"
+    assert calls["sfr_flow.obs"]["owner"] == "sfr_owner"
+    assert calls["drn_flow.obs"]["owner"] == "drn_owner"
+    assert calls["sfr_flow.obs"]["continuous"]["sfr_flow.csv"] == [
+        ("reach_001", "DOWNSTREAM-FLOW", (0,))
+    ]
+    drn_continuous = calls["drn_flow.obs"]["continuous"]
+    assert list(drn_continuous) == ["drn_flow.csv"]
+    assert len(drn_continuous["drn_flow.csv"]) == 2
+
+
+def test_surface_water_targets_prefer_direct_mf6_observation_csvs():
+    model = _fake_surface_water_model()
+    workspace = _project_temp_dir("surface_water_obs_csv_preference")
+    model.workspace = workspace
+
+    pd.DataFrame(
+        {
+            "time": [0, 1],
+            "deep_lake": [101.25, 101.75],
+            "shallow_lake": [96.5, 96.0],
+        }
+    ).to_csv(workspace / "gold_lakes.csv", index=False)
+    pd.DataFrame(
+        {
+            "time": [0, 1],
+            "reach_001": [12.4, 11.9],
+        }
+    ).to_csv(workspace / "gold_sfr_stage.csv", index=False)
+
+    lake_targets = LakeStageTargets(
+        locations={"deep_lake": 0, "shallow_lake": 1},
+        values={"per": [0, 1], "deep_lake": [99.5, 100.5], "shallow_lake": [97.75, 96.9]},
+        time_column="per",
+    )
+    sfr_stage_targets = SfrStageTargets(
+        locations={"reach_001": 0},
+        values={"per": [0, 1], "reach_001": [11.75, 11.0]},
+        time_column="per",
+    )
+
+    lake_compare = lake_targets.compare(model)
+    assert pytest.approx(
+        lake_compare.loc[(lake_compare["name"] == "deep_lake") & (lake_compare["per"] == 0), "sim_stage"].iloc[0]
+    ) == 101.25
+    assert pytest.approx(
+        lake_compare.loc[(lake_compare["name"] == "shallow_lake") & (lake_compare["per"] == 1), "sim_stage"].iloc[0]
+    ) == 96.0
+
+    sfr_stage_compare = sfr_stage_targets.compare(model)
+    assert pytest.approx(
+        sfr_stage_compare.loc[sfr_stage_compare["per"] == 0, "sim_stage"].iloc[0]
+    ) == 12.4
+    assert pytest.approx(
+        sfr_stage_compare.loc[sfr_stage_compare["per"] == 1, "sim_stage"].iloc[0]
+    ) == 11.9
+
+
+def test_drn_flow_targets_accept_polygon_zones():
+    model = _fake_surface_water_model()
+    zone_targets = DrnFlowTargets(
+        locations=gpd.GeoDataFrame(
+            {"name": ["zone_west"]},
+            geometry=[Polygon([(0.0, 0.0), (0.95, 0.0), (0.95, 0.95), (0.0, 0.95)])],
+            crs=model.vor.crs,
+        ),
+        values={"per": [0, 1], "zone_west": [0.15, 0.3]},
+        time_column="per",
+        value_column="flow",
+    )
+    compare = zone_targets.compare(model)
+    assert pytest.approx(compare["sim_flow"].iloc[0]) == 0.2
+    zones = zone_targets.zone_definitions(model)
+    assert zones["cells"].iloc[0] == [0]
+
+
+def test_named_surface_water_and_drn_pest_observation_builders():
+    model = _fake_surface_water_model()
+    tmp_path = _project_temp_dir("named_surface_water_obs_builders")
+    project = SimpleNamespace(
+        model=model,
+        template_workspace=tmp_path,
+        pf=SimpleNamespace(calls=[]),
+    )
+
+    def _add_observations(*args, **kwargs):
+        project.pf.calls.append((args, kwargs))
+
+    project.pf.add_observations = _add_observations
+
+    lake_targets = LakeStageTargets(
+        locations={"deep_lake": 0},
+        values={"per": [0, 1], "deep_lake": [99.5, 100.5]},
+        time_column="per",
+    )
+    sfr_stage_targets = SfrStageTargets(
+        locations={"reach_001": 0},
+        values={"per": [0, 1], "reach_001": [11.75, 11.0]},
+        time_column="per",
+    )
+    sfr_flow_targets = SfrFlowTargets(
+        locations={"reach_001": 0},
+        values={"per": [0, 1], "reach_001": [1.0, 1.8]},
+        time_column="per",
+        value_column="flow",
+    )
+    drn_targets = DrnFlowTargets(
+        locations={"zone_west": [0], "zone_east": [1]},
+        values={"per": [0, 1], "zone_west": [0.15, 0.3], "zone_east": [0.75, 0.9]},
+        time_column="per",
+        value_column="flow",
+    )
+
+    lake_prepared = prepare_lake_stage_observations(
+        project,
+        LakeStageObservationSpec(targets=lake_targets, prefix="lak_stage"),
+    )
+    sfr_stage_prepared = prepare_sfr_stage_observations(
+        project,
+        SfrStageObservationSpec(targets=sfr_stage_targets, prefix="sfr_stage"),
+    )
+    sfr_flow_prepared = prepare_sfr_flow_observations(
+        project,
+        SfrFlowObservationSpec(targets=sfr_flow_targets, prefix="sfr_flow"),
+    )
+    drn_prepared = prepare_drn_flow_observations(
+        project,
+        DrnFlowObservationSpec(targets=drn_targets, prefix="drn_flow"),
+    )
+
+    assert len(project.pf.calls) == 4
+    assert lake_prepared["metadata"]["kind"] == "lake_stage"
+    assert sfr_stage_prepared["metadata"]["kind"] == "sfr_stage"
+    assert sfr_flow_prepared["metadata"]["kind"] == "sfr_flow"
+    assert drn_prepared["metadata"]["kind"] == "drn_flow"
+    assert lake_prepared["named_series_forward_run_config"]["output_csv"] == "lak_stage_simulated_lake_stage.csv"
+    assert sfr_stage_prepared["named_series_forward_run_config"]["output_csv"] == "sfr_stage_simulated_sfr_stage.csv"
+    assert sfr_flow_prepared["named_series_forward_run_config"]["output_csv"] == "sfr_flow_simulated_sfr_flow.csv"
+    assert drn_prepared["named_series_forward_run_config"]["output_csv"] == "drn_flow_simulated_drn_flow.csv"
+    assert (tmp_path / "lak_stage_target_values.csv").exists()
+    assert (tmp_path / "sfr_stage_target_values.csv").exists()
+    assert (tmp_path / "sfr_flow_target_values.csv").exists()
+    assert (tmp_path / "drn_flow_target_values.csv").exists()
+
+
+def test_drn_flow_targets_accept_csv_style_cell_lists():
+    targets = DrnFlowTargets(
+        locations=pd.DataFrame(
+            {
+                "name": ["zone_west", "zone_east"],
+                "cells": ["0,1,2", "5,6"],
+                "weight": [1.0, 0.5],
+            }
+        ),
+        values={"per": [0], "zone_west": [0.2], "zone_east": [0.7]},
+        time_column="per",
+        value_column="flow",
+    )
+
+    definitions = targets.get()
+    assert definitions.loc[definitions["name"] == "zone_west", "cells"].iloc[0] == [0, 1, 2]
+    assert definitions.loc[definitions["name"] == "zone_east", "cells"].iloc[0] == [5, 6]
 
 
 def test_derive_bounds_supports_all_first_slice_modes():
@@ -928,12 +1271,36 @@ def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
     assert ax_k.get_title() == "Final K"
     ax_ratio = results.plot_k_ratio()
     assert ax_ratio.get_title() == "K final / K initial"
-    ax_period = results.plot_residuals_by_period()
-    assert ax_period.get_title() == "Residual MAE by period"
-    ax_scatter = results.plot_obs_vs_sim()
-    assert ax_scatter.get_title() == "Observed vs simulated heads"
-    ax_well = results.plot_well_timeseries("OBS_A")
-    assert ax_well.get_title() == "OBS_A"
+    fig_period = results.plot_residuals_by_period()
+    assert isinstance(fig_period, CalibrationPlot)
+    assert fig_period.layout.title.text == "Residual MAE by period"
+    assert len(fig_period.data) == 2
+    fig_scatter = results.plot_obs_vs_sim()
+    assert isinstance(fig_scatter, CalibrationPlot)
+    assert fig_scatter.layout.title.text == "Observed vs simulated heads"
+    assert len(fig_scatter.data) == 3
+    fig_well = results.plot_well_timeseries("OBS_A")
+    assert isinstance(fig_well, CalibrationPlot)
+    assert fig_well.layout.title.text == "OBS_A"
+    assert len(fig_well.data) == 3
+
+    export_dir = workspace / "review_export"
+    manifest = results.export_review(export_dir, well_names=["OBS_A"])
+    assert Path(manifest["manifest_json"]).exists()
+    assert Path(manifest["residual_compare_csv"]).exists()
+    assert Path(manifest["residual_stats_csv"]).exists()
+    assert Path(manifest["k_review_gpkg"]).exists()
+    assert Path(manifest["obs_vs_sim_html"]).exists()
+    assert Path(manifest["residuals_by_period_html"]).exists()
+    assert Path(manifest["k_final_png"]).exists()
+    assert Path(manifest["k_ratio_png"]).exists()
+    assert Path(manifest["well_timeseries_html"]["OBS_A"]).exists()
+    assert manifest["n_exported_wells"] == 1
+
+    export_dir_alias = workspace / "review_export_alias"
+    manifest_alias = results.export_review(export_dir_alias, timeseries_names=["OBS_A"])
+    assert Path(manifest_alias["well_timeseries_html"]["OBS_A"]).exists()
+    assert manifest_alias["n_exported_wells"] == 1
 
 
 def test_pest_run_results_raise_clean_error_when_final_par_is_missing():

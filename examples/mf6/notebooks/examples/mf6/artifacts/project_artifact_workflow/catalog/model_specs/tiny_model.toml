@@ -1,7 +1,0 @@
-[model_spec]
-name = "tiny_model"
-grid_ref = "two_cell_grid"
-tags = []
-
-[regions]
-default_regions = []

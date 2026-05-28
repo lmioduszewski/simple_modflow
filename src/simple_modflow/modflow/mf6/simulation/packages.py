@@ -537,6 +537,7 @@ class LAK:
             tables=None,
             outlets=None,
             perioddata=None,
+            boundnames: bool = False,
             print_input=False,
             print_flows=False,
             print_stage=True,
@@ -557,6 +558,8 @@ class LAK:
             Core MF6 LAK sizing parameters.
         packagedata, connectiondata, tables, outlets, perioddata
             FloPy/MF6 LAK package inputs.
+        boundnames
+            Whether LAK packagedata rows include a trailing lake boundary name.
         print_input, print_flows, print_stage, mover
             Standard MF6 LAK control flags.
         validate
@@ -577,6 +580,7 @@ class LAK:
             self.validation_report.raise_for_errors("LAK validation failed.")
         self.lak = flopy.mf6.ModflowGwflak(
             model=model.gwf,
+            boundnames=boundnames,
             print_input=print_input,
             print_flows=print_flows,
             print_stage=print_stage,

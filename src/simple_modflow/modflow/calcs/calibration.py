@@ -65,43 +65,134 @@ def calculate_calibration_statistics(observed, simulated):
     return stats
 
 
+def _require_compare_columns(frame: pd.DataFrame, required: set[str], *, caller: str) -> pd.DataFrame:
+    """Validate that a compare/residual frame includes the required columns."""
+
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"{caller} requires columns: {', '.join(sorted(missing))}")
+    return frame.copy()
+
+
+def _sort_compare_by_time(frame: pd.DataFrame) -> pd.DataFrame:
+    """Sort a compare-style DataFrame by time/per when possible."""
+
+    if "time" not in frame.columns:
+        return frame.reset_index(drop=True)
+    sort_values = pd.to_numeric(frame["time"], errors="coerce")
+    if sort_values.notna().all():
+        return frame.assign(_sort=sort_values).sort_values("_sort").drop(columns="_sort").reset_index(drop=True)
+    return frame.sort_values("time").reset_index(drop=True)
+
+
+def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build observed/simulated MultiIndex head frames from compare output."""
+
+    frame = _require_compare_columns(
+        compare,
+        {"name", "layer", "head_target", "sim_head"},
+        caller="CalibrationPlot.from_compare(type='heads')",
+    )
+    time_values = pd.to_numeric(frame["per"] if "per" in frame.columns else frame["time"], errors="coerce")
+    if time_values.isna().any():
+        raise ValueError(
+            "CalibrationPlot.from_compare(type='heads') requires numeric per/time values."
+        )
+    tuples = list(
+        zip(
+            frame["name"].astype(str),
+            pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int),
+            [(0, int(value)) for value in time_values],
+        )
+    )
+    index = pd.MultiIndex.from_tuples(tuples, names=["locs", "layer", "kstpkper"])
+    observed = pd.DataFrame({"elev": frame["head_target"].to_numpy()}, index=index)
+    simulated = pd.DataFrame({"elev": frame["sim_head"].to_numpy()}, index=index)
+    return observed, simulated
+
+
+def _infer_compare_value_columns(
+    frame: pd.DataFrame,
+    *,
+    target_column: str | None = None,
+    simulated_column: str | None = None,
+    caller: str,
+) -> tuple[str, str]:
+    """Resolve target/simulated value columns for compare-style frames."""
+
+    if target_column is not None and simulated_column is not None:
+        _require_compare_columns(
+            frame,
+            {target_column, simulated_column},
+            caller=caller,
+        )
+        return target_column, simulated_column
+
+    known_pairs = [
+        ("head_target", "sim_head"),
+        ("stage_target", "sim_stage"),
+        ("flow_target", "sim_flow"),
+        ("target_value", "sim_value"),
+        ("value_target", "sim_value"),
+    ]
+    for candidate_target, candidate_simulated in known_pairs:
+        if {candidate_target, candidate_simulated}.issubset(frame.columns):
+            return candidate_target, candidate_simulated
+
+    raise ValueError(
+        f"{caller} could not infer target/simulated value columns. "
+        "Pass target_column= and simulated_column= explicitly."
+    )
+
+
 class CalibrationPlot(f.Fig):
 
     @classmethod
-    def from_compare(cls, compare: pd.DataFrame, *, type: str = "calibration"):
+    def from_compare(
+        cls,
+        compare: pd.DataFrame,
+        *,
+        type: str = "calibration",
+        target_column: str | None = None,
+        simulated_column: str | None = None,
+        title: str | None = None,
+        yaxis_title: str | None = None,
+    ):
         """Build a calibration plot directly from a compare/residual DataFrame."""
 
+        resolved_target, resolved_simulated = _infer_compare_value_columns(
+            compare,
+            target_column=target_column,
+            simulated_column=simulated_column,
+            caller="CalibrationPlot.from_compare(...)",
+        )
         frame = compare.copy()
-        required = {"head_target", "sim_head"}
-        missing = required - set(frame.columns)
-        if missing:
-            raise ValueError(
-                "CalibrationPlot.from_compare(...) requires columns: "
-                + ", ".join(sorted(missing))
-            )
 
         if type == "heads":
-            per = pd.to_numeric(frame["per"] if "per" in frame.columns else frame["time"], errors="coerce")
-            if per.isna().any():
-                raise ValueError(
-                    "CalibrationPlot.from_compare(type='heads') requires numeric per/time values."
-                )
-            tuples = list(
-                zip(
-                    frame["name"].astype(str),
-                    pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int),
-                    [(0, int(value)) for value in per],
-                )
-            )
-            index = pd.MultiIndex.from_tuples(tuples, names=["locs", "layer", "kstpkper"])
-            observed = pd.DataFrame({"elev": frame["head_target"].to_numpy()}, index=index)
-            simulated = pd.DataFrame({"elev": frame["sim_head"].to_numpy()}, index=index)
+            if {resolved_target, resolved_simulated} != {"head_target", "sim_head"}:
+                frame = frame.rename(columns={resolved_target: "head_target", resolved_simulated: "sim_head"})
+            observed, simulated = _multiindex_head_frames(frame)
             return cls(observed=observed, simulated=simulated, type=type)
 
-        return cls(
-            observed=pd.Series(frame["head_target"].to_numpy()),
-            simulated=pd.Series(frame["sim_head"].to_numpy()),
-            type=type,
+        if type == "obs_vs_sim":
+            return cls.from_obs_vs_sim(
+                frame,
+                target_column=resolved_target,
+                simulated_column=resolved_simulated,
+                title=title or "Observed vs simulated",
+                yaxis_title=yaxis_title or "Simulated",
+            )
+
+        if type == "residuals_by_period":
+            return cls.from_residuals_by_period(frame)
+
+        return cls.from_obs_vs_sim(
+            frame,
+            target_column=resolved_target,
+            simulated_column=resolved_simulated,
+            title=title or "Calibration",
+            yaxis_title=yaxis_title or "Simulated",
+            add_stats=True,
         )
 
     @classmethod
@@ -117,6 +208,194 @@ class CalibrationPlot(f.Fig):
                 )
             compare = targets.compare(model)
         return cls.from_compare(compare, type=type)
+
+    @classmethod
+    def from_obs_vs_sim(
+        cls,
+        compare: pd.DataFrame,
+        *,
+        baseline_compare: pd.DataFrame | None = None,
+        target_column: str = "head_target",
+        simulated_column: str = "sim_head",
+        title: str = "Observed vs simulated heads",
+        xaxis_title: str = "Observed",
+        yaxis_title: str = "Simulated",
+        add_stats: bool = False,
+    ):
+        """Build a target-vs-simulated cross plot from compare-style DataFrames."""
+
+        frame = _require_compare_columns(
+            compare,
+            {target_column, simulated_column},
+            caller="CalibrationPlot.from_obs_vs_sim(...)",
+        ).dropna(subset=[target_column, simulated_column])
+        fig = cls()
+        fig.add_scattergl(
+            x=frame[target_column],
+            y=frame[simulated_column],
+            mode="markers",
+            name="Model",
+        )
+        values = [frame[target_column], frame[simulated_column]]
+        if baseline_compare is not None:
+            baseline = _require_compare_columns(
+                baseline_compare,
+                {target_column, simulated_column},
+                caller="CalibrationPlot.from_obs_vs_sim(..., baseline_compare=...)",
+            ).dropna(subset=[target_column, simulated_column])
+            fig.add_scattergl(
+                x=baseline[target_column],
+                y=baseline[simulated_column],
+                mode="markers",
+                name="Baseline",
+            )
+            values.extend([baseline[target_column], baseline[simulated_column]])
+
+        merged_values = pd.concat(values, axis=0).dropna()
+        if not merged_values.empty:
+            lower = float(merged_values.min())
+            upper = float(merged_values.max())
+            fig.add_scattergl(
+                x=[lower, upper],
+                y=[lower, upper],
+                mode="lines",
+                name="1:1 line",
+            )
+        fig.update_layout(
+            title=title,
+            xaxis_title=xaxis_title,
+            yaxis_title=yaxis_title,
+        )
+        if add_stats and not frame.empty:
+            fig.add_stats(observed=frame[target_column], simulated=frame[simulated_column])
+        return fig
+
+    @classmethod
+    def from_timeseries(
+        cls,
+        compare: pd.DataFrame,
+        *,
+        name: str | None = None,
+        baseline_compare: pd.DataFrame | None = None,
+        target_column: str = "head_target",
+        simulated_column: str = "sim_head",
+        target_label: str = "Target",
+        simulated_label: str = "Model",
+        baseline_label: str = "Baseline",
+        yaxis_title: str = "Head",
+        title: str | None = None,
+    ):
+        """Build a time-series plot of targets and simulated heads for one target."""
+
+        frame = _require_compare_columns(
+            compare,
+            {"name", "time", target_column, simulated_column},
+            caller="CalibrationPlot.from_timeseries(...)",
+        )
+        names = frame["name"].astype(str)
+        if name is None:
+            unique_names = sorted(names.unique().tolist())
+            if len(unique_names) != 1:
+                raise ValueError(
+                    "CalibrationPlot.from_timeseries(...) requires name= when more than one target location is present."
+                )
+            name = unique_names[0]
+        key = str(name).strip().lower()
+        frame = frame.loc[names.str.lower() == key].copy()
+        if frame.empty:
+            raise ValueError(f"No compare rows found for observation name {name!r}.")
+        frame = _sort_compare_by_time(frame)
+
+        fig = cls()
+        fig.add_scattergl(
+            x=frame["time"],
+            y=frame[target_column],
+            mode="lines+markers",
+            name=target_label,
+        )
+        fig.add_scattergl(
+            x=frame["time"],
+            y=frame[simulated_column],
+            mode="lines+markers",
+            name=simulated_label,
+        )
+        if baseline_compare is not None:
+            baseline = _require_compare_columns(
+                baseline_compare,
+                {"name", "time", simulated_column},
+                caller="CalibrationPlot.from_timeseries(..., baseline_compare=...)",
+            )
+            baseline_names = baseline["name"].astype(str)
+            baseline = baseline.loc[baseline_names.str.lower() == key].copy()
+            baseline = _sort_compare_by_time(baseline)
+            fig.add_scattergl(
+                x=baseline["time"],
+                y=baseline[simulated_column],
+                mode="lines+markers",
+                name=baseline_label,
+            )
+        fig.update_layout(
+            title=title or str(frame["name"].iloc[0]),
+            xaxis_title="Time / period",
+            yaxis_title=yaxis_title,
+        )
+        return fig
+
+    @classmethod
+    def from_residuals_by_period(
+        cls,
+        compare: pd.DataFrame,
+        *,
+        baseline_compare: pd.DataFrame | None = None,
+        title: str = "Residual MAE by period",
+        yaxis_title: str = "Mean absolute error",
+    ):
+        """Build a by-period residual summary plot from compare-style data."""
+
+        frame = _require_compare_columns(
+            compare,
+            {"time", "abs_residual"},
+            caller="CalibrationPlot.from_residuals_by_period(...)",
+        )
+        current_stats = (
+            frame.groupby("time")
+            .agg(mae=("abs_residual", "mean"))
+            .reset_index()
+        )
+        current_stats = _sort_compare_by_time(current_stats.rename(columns={"mae": "value"}))
+
+        fig = cls()
+        fig.add_scattergl(
+            x=current_stats["time"],
+            y=current_stats["value"],
+            mode="lines+markers",
+            name="Model MAE",
+        )
+
+        if baseline_compare is not None:
+            baseline = _require_compare_columns(
+                baseline_compare,
+                {"time", "abs_residual"},
+                caller="CalibrationPlot.from_residuals_by_period(..., baseline_compare=...)",
+            )
+            baseline_stats = (
+                baseline.groupby("time")
+                .agg(mae=("abs_residual", "mean"))
+                .reset_index()
+            )
+            baseline_stats = _sort_compare_by_time(baseline_stats.rename(columns={"mae": "value"}))
+            fig.add_scattergl(
+                x=baseline_stats["time"],
+                y=baseline_stats["value"],
+                mode="lines+markers",
+                name="Baseline MAE",
+            )
+        fig.update_layout(
+            title=title,
+            xaxis_title="Time / period",
+            yaxis_title=yaxis_title,
+        )
+        return fig
 
     def __init__(
             self,

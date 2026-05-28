@@ -164,6 +164,57 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv):
         hds.close()
 
 
+def _read_saved_locations(path):
+    """Read one saved target-definition table from CSV or GPKG."""
+
+    from pathlib import Path
+
+    path = Path(path)
+    if path.suffix.lower() == ".gpkg":
+        import geopandas as gpd
+
+        return gpd.read_file(path)
+    frame = pd.read_csv(path)
+    if "cells" in frame.columns:
+        frame["cells"] = frame["cells"].fillna("").apply(
+            lambda text: [int(value) for value in str(text).split(",") if str(value).strip() != ""]
+        )
+    return frame
+
+
+def _load_model_for_named_series(sim_ws="."):
+    """Open the active MF6 workspace through the ``simple_modflow`` run wrapper."""
+
+    from pathlib import Path
+
+    import simple_modflow as mf
+
+    model = mf.load_mf6_run(Path(sim_ws), verbosity_level=0)
+    model.load_all()
+    return model
+
+
+def _write_named_series_target_csv(model, kind, locations_file, output_csv):
+    """Write one canonical named-series simulated target CSV from a saved definition."""
+
+    import simple_modflow as mf
+
+    locations = _read_saved_locations(locations_file)
+    kind_key = str(kind).strip().lower()
+    if kind_key == "lake_stage":
+        targets = mf.LakeStageTargets(locations=locations, values=None)
+    elif kind_key == "sfr_stage":
+        targets = mf.SfrStageTargets(locations=locations, values=None)
+    elif kind_key == "sfr_flow":
+        targets = mf.SfrFlowTargets(locations=locations, values=None)
+    elif kind_key == "drn_flow":
+        targets = mf.DrnFlowTargets(locations=locations, values=None)
+    else:
+        raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
+    simulated = targets.simulated_series(model)
+    simulated.to_csv(output_csv, index=False)
+
+
 def _write_simulation_with_retry(sim, *, attempts=4, delay_seconds=1.0):
     """Write the MF6 simulation with a small retry loop for transient Windows errors."""
 
@@ -208,5 +259,15 @@ def apply_pest_forward_run(config_path="pest_forward_config.json"):
             mapping_csv=target["mapping_csv"],
             output_csv=target["output_csv"],
         )
+    named_series_outputs = config.get("named_series_outputs", [])
+    if named_series_outputs:
+        named_series_model = _load_model_for_named_series(".")
+        for target in named_series_outputs:
+            _write_named_series_target_csv(
+                model=named_series_model,
+                kind=target["kind"],
+                locations_file=target["locations_file"],
+                output_csv=target["output_csv"],
+            )
 
     return True

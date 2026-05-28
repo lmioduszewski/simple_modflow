@@ -10,9 +10,12 @@ import warnings
 from pathlib import Path
 
 from simple_modflow.modflow.mf6.pest.observations import (
+    prepare_drn_flow_observations,
     finalize_observations,
     prepare_head_target_observations,
     prepare_lake_stage_observations,
+    prepare_sfr_flow_observations,
+    prepare_sfr_stage_observations,
 )
 from simple_modflow.modflow.mf6.pest.parameters import prepare_parameter_spec, register_parameter_spec
 from simple_modflow.modflow.mf6.pest.specs import (
@@ -20,7 +23,10 @@ from simple_modflow.modflow.mf6.pest.specs import (
     KPilotPointParameter,
     DrainElevationParameter,
     DrainConductanceParameter,
+    DrnFlowObservationSpec,
     LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+    SfrStageObservationSpec,
 )
 
 METADATA_FILENAME = "simple_modflow_pest_metadata.json"
@@ -161,6 +167,12 @@ class PestProject:
                 prepared.append(prepare_head_target_observations(self, spec))
             elif isinstance(spec, LakeStageObservationSpec):
                 prepared.append(prepare_lake_stage_observations(self, spec))
+            elif isinstance(spec, SfrStageObservationSpec):
+                prepared.append(prepare_sfr_stage_observations(self, spec))
+            elif isinstance(spec, SfrFlowObservationSpec):
+                prepared.append(prepare_sfr_flow_observations(self, spec))
+            elif isinstance(spec, DrnFlowObservationSpec):
+                prepared.append(prepare_drn_flow_observations(self, spec))
             else:
                 raise TypeError(f"Unsupported observation spec type: {type(spec).__name__}")
         self._prepared_observations = prepared
@@ -185,6 +197,11 @@ class PestProject:
             for item in self._prepared_observations
             if "forward_run_config" in item
         ]
+        named_series_outputs = [
+            item["named_series_forward_run_config"]
+            for item in self._prepared_observations
+            if "named_series_forward_run_config" in item
+        ]
         k_specs = [
             prepared["config"]
             for prepared in self._prepared_parameters.values()
@@ -201,6 +218,7 @@ class PestProject:
             "k_specs": k_specs,
             "drain_specs": drain_specs,
             "head_target_outputs": head_target_outputs,
+            "named_series_outputs": named_series_outputs,
         }
         config_path = self.template_workspace / "pest_forward_config.json"
         config_path.write_text(json.dumps(self._forward_run_config, indent=2), encoding="utf-8")
@@ -259,6 +277,9 @@ class PestProject:
             "_interpolate_idw(x=None, y=None, px=None, py=None, values=None)",
             "_apply_k_specs(gwf=None, specs=None)",
             "_write_head_target_csv(model_name=None, mapping_csv=None, output_csv=None)",
+            "_read_saved_locations(path=None)",
+            "_load_model_for_named_series(sim_ws='.')",
+            "_write_named_series_target_csv(model=None, kind=None, locations_file=None, output_csv=None)",
             "_write_simulation_with_retry(sim=None)",
         ]
         for call in helper_calls:

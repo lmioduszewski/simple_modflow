@@ -4,6 +4,7 @@
 
 - Codebase structure map: [docs/codebase_structure.md](docs/codebase_structure.md)
 - Preferred API guide: [docs/preferred_api.md](docs/preferred_api.md)
+- Local run clutter guide: [docs/local_run_clutter.md](docs/local_run_clutter.md)
 
 Utilities for building, running, and post-processing MODFLOW 6 models with FloPy.
 
@@ -43,3 +44,12 @@ pip install .[dev]
   inside the importable package tree.
 - Some integrations in this repo are environment-specific and are not declared as install dependencies here,
   especially custom `figs` wrappers plus GRASS/QGIS-related tooling.
+
+## Test Helper
+
+If Windows keeps locking old pytest temp folders, use the repo helper below. It keeps only one temp test
+workspace at a time under `.pytest-work` and recreates it fresh for each run.
+
+```powershell
+.\scripts\pytest_local.cmd tests\test_mp3du_particles.py
+```

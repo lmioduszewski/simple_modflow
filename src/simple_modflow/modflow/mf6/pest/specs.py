@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from simple_modflow.modflow.mf6.observations import HeadTargets
+from simple_modflow.modflow.mf6.observations import (
+    DrnFlowTargets,
+    HeadTargets,
+    LakeStageTargets,
+    SfrFlowTargets,
+    SfrStageTargets,
+)
 
 
 @dataclass
@@ -130,9 +136,34 @@ class LakeStageObservationSpec:
         pyEMU observation-name prefix.
     """
 
-    lake_names: list[str]
+    lake_names: list[str] | None = None
     values: str | Path | pd.DataFrame | None = None
     time_column: str = "time"
     value_column: str = "stage"
     weight: float | None = None
     prefix: str = "stage"
+    targets: LakeStageTargets | None = None
+
+
+@dataclass
+class SfrStageObservationSpec:
+    """Use :class:`SfrStageTargets` as a pyEMU-compatible observation source."""
+
+    targets: SfrStageTargets
+    prefix: str = "sfr_stage"
+
+
+@dataclass
+class SfrFlowObservationSpec:
+    """Use :class:`SfrFlowTargets` as a pyEMU-compatible observation source."""
+
+    targets: SfrFlowTargets
+    prefix: str = "sfr_flow"
+
+
+@dataclass
+class DrnFlowObservationSpec:
+    """Use :class:`DrnFlowTargets` as a pyEMU-compatible observation source."""
+
+    targets: DrnFlowTargets
+    prefix: str = "drn_flow"

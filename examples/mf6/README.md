@@ -36,6 +36,7 @@ compatibility, but the names above are the intended long-term surface.
 - `notebooks/targets_api_quickstart.ipynb`: short focused notebook showing the flexible target API, including `HeadTargets`, `LakeStageTargets`, `model.targets...`, plotting helpers, FloPy observation object generation, and the PEST/reopen touchpoints
 - `notebooks/cumberland_predev_pest_first_slice_workflow.ipynb`: Cumberland-specific version of the first-slice calibration workflow, following the pre-development geometry adjustments from `model_pit_pre_excavation.py` but using one steady-state period and the current `ks_v5.gpkg` / `drn.gpkg` inputs
 - `notebooks/cumberland_observed_snapshot_pest_first_slice_workflow.ipynb`: Cumberland-specific first-slice workflow that swaps the pseudo-targets for a real observed-head snapshot from `calib_observations.xlsx`, while keeping the model side to a one-period steady-state calibration example
+- `cumberland_forward_mp3du.py`: command-line Cumberland MP3DU forward-tracking harness that exercises the stable `ParticleTrackingInput` / `prepare_particle_tracking` / `run_particle_tracking` API, writes a timestamped MP3DU workspace under `artifacts`, and captures start-cell plus endpoint diagnostics
 - `cumberland_steady_snapshot_pest_first_slice.py`: command-line Cumberland steady-state snapshot calibration example using the current GIS inputs, one representative observed-head snapshot plus low-weight supplemental wells, timestamped artifact workspaces, and the current first-slice `PestProject` API, including `--fast-mode`, `--k-only`, optional local parallel workers, and any desired `--noptmax`
 - `cumberland_transient_observed_pest_first_slice.py`: command-line Cumberland transient calibration example with one initial steady-state period plus 12 monthly transient periods, real observed heads, low-weight one-time supplemental wells, timestamped workspaces, and the current first-slice `PestProject` API, including `--fast-mode`, `--k-only`, and local parallel worker options
 - `import_existing_runs_workflow.py`: command-line version of the archive import and comparison workflow
@@ -43,3 +44,5 @@ compatibility, but the names above are the intended long-term surface.
 Reference handout:
 
 - `../docs/simple_modflow_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page
+- `../docs/mp3du_quickstart.md`: focused quickstart for the supported MP3DU particle-tracking API
+- `../docs/local_run_clutter.md`: where example runs, pytest temp workspaces, and scratch MP3DU folders are stored locally

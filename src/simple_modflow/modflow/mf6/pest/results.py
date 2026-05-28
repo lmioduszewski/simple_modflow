@@ -11,9 +11,17 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.io as pio
 from shapely.geometry import Polygon
 
-from simple_modflow.modflow.mf6.observations import HeadTargets
+from simple_modflow.modflow.calcs.calibration import CalibrationPlot
+from simple_modflow.modflow.mf6.observations import (
+    DrnFlowTargets,
+    HeadTargets,
+    LakeStageTargets,
+    SfrFlowTargets,
+    SfrStageTargets,
+)
 from simple_modflow.modflow.mf6.pest.forward_run import _apply_drain_specs, _apply_k_specs
 from simple_modflow.project.run_model import LoadedMf6Run, load_mf6_run
 
@@ -129,6 +137,20 @@ def _discover_metadata_file(pest_workspace: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _read_saved_locations(path: Path) -> pd.DataFrame | gpd.GeoDataFrame:
+    """Read one saved target-definition table from CSV or GPKG."""
+
+    path = Path(path)
+    if path.suffix.lower() == ".gpkg":
+        return gpd.read_file(path)
+    frame = pd.read_csv(path)
+    if "cells" in frame.columns:
+        frame["cells"] = frame["cells"].fillna("").apply(
+            lambda text: [int(value) for value in str(text).split(",") if str(value).strip() != ""]
+        )
+    return frame
+
+
 def _discover_materialization_file(pest_workspace: Path) -> Path | None:
     """Return the calibrated-materialization marker when present."""
 
@@ -144,6 +166,14 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sanitize_filename_token(value: str) -> str:
+    """Return a filesystem-friendly token for figure and export filenames."""
+
+    token = "".join(character if str(character).isalnum() else "_" for character in str(value).strip())
+    token = token.strip("_")
+    return token or "item"
 
 
 def _clear_runtime_caches(model):
@@ -343,10 +373,17 @@ class PestRunResults:
             if str(item.get("kind", "")).strip().lower() == kind_key
         ]
 
-    def load_head_targets(self, *, prefix: str | None = None) -> HeadTargets:
-        """Load a saved head-target dataset from the workspace metadata."""
+    def _saved_observation_entry(self, *, kind: str, prefix: str | None = None) -> dict:
+        """Return one saved observation metadata entry by kind/prefix."""
 
-        entries = self.saved_observation_sets(kind="head_targets")
+        display_kind = {
+            "head_targets": "head-target",
+            "lake_stage": "lake-stage",
+            "sfr_stage": "SFR-stage",
+            "sfr_flow": "SFR-flow",
+            "drn_flow": "DRN-flow",
+        }.get(str(kind), str(kind).replace("_", "-"))
+        entries = self.saved_observation_sets(kind=kind)
         if prefix is not None:
             prefix_key = str(prefix).strip().lower()
             entries = [
@@ -355,14 +392,15 @@ class PestRunResults:
                 if str(item.get("prefix", "")).strip().lower() == prefix_key
             ]
         if not entries:
-            raise FileNotFoundError(
-                "No saved head-target metadata was found in the PEST workspace."
-            )
+            raise FileNotFoundError(f"No saved {display_kind} metadata was found in the PEST workspace.")
         if len(entries) > 1:
-            raise ValueError(
-                "Multiple saved head-target sets are available. Pass prefix=... to select one."
-            )
-        entry = entries[0]
+            raise ValueError(f"Multiple saved {display_kind} sets are available. Pass prefix=... to select one.")
+        return entries[0]
+
+    def load_head_targets(self, *, prefix: str | None = None) -> HeadTargets:
+        """Load a saved head-target dataset from the workspace metadata."""
+
+        entry = self._saved_observation_entry(kind="head_targets", prefix=prefix)
         return HeadTargets(
             locations=self.pest_workspace / entry["locations_file"],
             values=self.pest_workspace / entry["values_file"],
@@ -372,6 +410,58 @@ class PestRunResults:
             weight_column=entry.get("weight_column", "weight"),
             time_column=entry.get("time_column", "time"),
             value_column=entry.get("value_column", "head"),
+        )
+
+    def load_lake_stage_targets(self, *, prefix: str | None = None) -> LakeStageTargets:
+        """Load a saved lake-stage target dataset from the workspace metadata."""
+
+        entry = self._saved_observation_entry(kind="lake_stage", prefix=prefix)
+        locations = _read_saved_locations(self.pest_workspace / entry["locations_file"])
+        values = self.pest_workspace / entry["values_file"]
+        return LakeStageTargets(
+            locations=locations,
+            values=values,
+            time_column=entry.get("time_column", "time"),
+            value_column=entry.get("value_column", "stage"),
+        )
+
+    def load_sfr_stage_targets(self, *, prefix: str | None = None) -> SfrStageTargets:
+        """Load a saved SFR-stage target dataset from the workspace metadata."""
+
+        entry = self._saved_observation_entry(kind="sfr_stage", prefix=prefix)
+        locations = _read_saved_locations(self.pest_workspace / entry["locations_file"])
+        values = self.pest_workspace / entry["values_file"]
+        return SfrStageTargets(
+            locations=locations,
+            values=values,
+            time_column=entry.get("time_column", "time"),
+            value_column=entry.get("value_column", "stage_target"),
+        )
+
+    def load_sfr_flow_targets(self, *, prefix: str | None = None) -> SfrFlowTargets:
+        """Load a saved SFR-flow target dataset from the workspace metadata."""
+
+        entry = self._saved_observation_entry(kind="sfr_flow", prefix=prefix)
+        locations = _read_saved_locations(self.pest_workspace / entry["locations_file"])
+        values = self.pest_workspace / entry["values_file"]
+        return SfrFlowTargets(
+            locations=locations,
+            values=values,
+            time_column=entry.get("time_column", "time"),
+            value_column=entry.get("value_column", "flow_target"),
+        )
+
+    def load_drn_flow_targets(self, *, prefix: str | None = None) -> DrnFlowTargets:
+        """Load a saved DRN seepage-zone target dataset from the workspace metadata."""
+
+        entry = self._saved_observation_entry(kind="drn_flow", prefix=prefix)
+        locations = _read_saved_locations(self.pest_workspace / entry["locations_file"])
+        values = self.pest_workspace / entry["values_file"]
+        return DrnFlowTargets(
+            locations=locations,
+            values=values,
+            time_column=entry.get("time_column", "time"),
+            value_column=entry.get("value_column", "flow_target"),
         )
 
     def load_baseline_model(self) -> LoadedMf6Run:
@@ -471,7 +561,7 @@ class PestRunResults:
         polygons = [Polygon(calibrated.gwf.modelgrid.get_cell_vertices(i)) for i in range(ncpl)]
         x = np.asarray(calibrated.gwf.modelgrid.xcellcenters, dtype=float).reshape(-1)
         y = np.asarray(calibrated.gwf.modelgrid.ycellcenters, dtype=float).reshape(-1)
-        return gpd.GeoDataFrame(
+        gdf = gpd.GeoDataFrame(
             {
                 "cell": np.arange(ncpl, dtype=int),
                 "x": x,
@@ -483,6 +573,9 @@ class PestRunResults:
             geometry=polygons,
             crs=getattr(calibrated.gwf.modelgrid, "crs", None),
         )
+        if gdf.crs is None and getattr(calibrated, "_crs", None) is not None:
+            gdf = gdf.set_crs(calibrated._crs, allow_override=True)
+        return gdf
 
     def compare_head_targets(self, targets: HeadTargets | None = None, *, prefix: str | None = None) -> pd.DataFrame:
         """Compare one set of head targets against baseline and calibrated models."""
@@ -605,72 +698,56 @@ class PestRunResults:
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
-        ax=None,
     ):
-        """Plot baseline vs calibrated MAE by period/time."""
+        """Return a by-period residual summary plot for baseline vs calibrated fits."""
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
-        period_stats = (
-            residual_compare.groupby("time")
-            .agg(
-                mae_baseline=("abs_residual_baseline", "mean"),
-                mae_calibrated=("abs_residual_calibrated", "mean"),
-            )
-            .reset_index()
-            .sort_values("time")
+        current = residual_compare.rename(
+            columns={
+                "sim_head_calibrated": "sim_head",
+                "residual_calibrated": "residual",
+                "abs_residual_calibrated": "abs_residual",
+            }
         )
-        if ax is None:
-            _, ax = plt.subplots()
-        period_stats.plot(x="time", y="mae_baseline", marker="o", ax=ax, label="Baseline MAE")
-        period_stats.plot(x="time", y="mae_calibrated", marker="o", ax=ax, label="Calibrated MAE")
-        ax.set_title("Residual MAE by period")
-        ax.set_xlabel("Time / period")
-        ax.set_ylabel("Mean absolute error")
-        ax.grid(True, alpha=0.3)
-        return ax
+        baseline = residual_compare.rename(
+            columns={
+                "sim_head_baseline": "sim_head",
+                "residual_baseline": "residual",
+                "abs_residual_baseline": "abs_residual",
+            }
+        )
+        return CalibrationPlot.from_residuals_by_period(
+            current,
+            baseline_compare=baseline,
+        )
 
     def plot_obs_vs_sim(
         self,
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
-        ax=None,
     ):
-        """Plot observed heads against baseline and calibrated simulated heads."""
+        """Return an observed-vs-simulated plot for baseline and calibrated fits."""
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
-        if ax is None:
-            _, ax = plt.subplots()
-        ax.scatter(
-            residual_compare["head_target"],
-            residual_compare["sim_head_baseline"],
-            label="Baseline",
-            alpha=0.8,
+        current = residual_compare.rename(
+            columns={
+                "sim_head_calibrated": "sim_head",
+                "residual_calibrated": "residual",
+                "abs_residual_calibrated": "abs_residual",
+            }
         )
-        ax.scatter(
-            residual_compare["head_target"],
-            residual_compare["sim_head_calibrated"],
-            label="Calibrated",
-            alpha=0.8,
+        baseline = residual_compare.rename(
+            columns={
+                "sim_head_baseline": "sim_head",
+                "residual_baseline": "residual",
+                "abs_residual_baseline": "abs_residual",
+            }
         )
-        values = pd.concat(
-            [
-                residual_compare["head_target"],
-                residual_compare["sim_head_baseline"],
-                residual_compare["sim_head_calibrated"],
-            ],
-            axis=0,
-        ).dropna()
-        if not values.empty:
-            lower = float(values.min())
-            upper = float(values.max())
-            ax.plot([lower, upper], [lower, upper], linestyle="--", color="black", linewidth=1)
-        ax.set_title("Observed vs simulated heads")
-        ax.set_xlabel("Observed head")
-        ax.set_ylabel("Simulated head")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        return ax
+        return CalibrationPlot.from_obs_vs_sim(
+            current,
+            baseline_compare=baseline,
+        )
 
     def plot_well_timeseries(
         self,
@@ -678,26 +755,113 @@ class PestRunResults:
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
-        ax=None,
     ):
-        """Plot one observation location through time for baseline and calibrated runs."""
+        """Return one observation location through time for baseline and calibrated runs."""
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
-        well_frame = residual_compare.loc[
-            residual_compare["name"].astype(str).str.lower() == str(name).strip().lower()
-        ].sort_values("time")
-        if well_frame.empty:
-            raise ValueError(f"No residual rows found for observation name {name!r}.")
-        if ax is None:
-            _, ax = plt.subplots()
-        well_frame.plot(x="time", y="head_target", marker="o", ax=ax, label="Target")
-        well_frame.plot(x="time", y="sim_head_baseline", marker="o", ax=ax, label="Baseline")
-        well_frame.plot(x="time", y="sim_head_calibrated", marker="o", ax=ax, label="Calibrated")
-        ax.set_title(str(well_frame['name'].iloc[0]))
-        ax.set_xlabel("Time / period")
-        ax.set_ylabel("Head")
-        ax.grid(True, alpha=0.3)
-        return ax
+        current = residual_compare.rename(
+            columns={
+                "sim_head_calibrated": "sim_head",
+                "residual_calibrated": "residual",
+                "abs_residual_calibrated": "abs_residual",
+            }
+        )
+        baseline = residual_compare.rename(
+            columns={
+                "sim_head_baseline": "sim_head",
+                "residual_baseline": "residual",
+                "abs_residual_baseline": "abs_residual",
+            }
+        )
+        return CalibrationPlot.from_timeseries(
+            current,
+            name=name,
+            baseline_compare=baseline,
+        )
+
+    def export_review(
+        self,
+        folder: str | Path,
+        targets: HeadTargets | None = None,
+        *,
+        prefix: str | None = None,
+        well_names: list[str] | tuple[str, ...] | None = None,
+        timeseries_names: list[str] | tuple[str, ...] | None = None,
+        max_wells: int = 5,
+    ) -> dict:
+        """Export a compact review bundle of tables, geodata, and figures."""
+
+        export_root = Path(folder)
+        export_root.mkdir(parents=True, exist_ok=True)
+        figures_dir = export_root / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
+
+        review = self.review(targets=targets, prefix=prefix)
+        residual_compare = review.residual_compare
+        stats = review.stats
+        k_gdf = review.k_geodata.copy()
+        if k_gdf.crs is None and self.crs is not None:
+            k_gdf = k_gdf.set_crs(self.crs, allow_override=True)
+
+        residual_compare_path = export_root / "residual_compare.csv"
+        stats_path = export_root / "residual_stats.csv"
+        k_gdf_path = export_root / "k_review.gpkg"
+
+        residual_compare.to_csv(residual_compare_path, index=False)
+        stats.to_csv(stats_path, index=False)
+        k_gdf.to_file(k_gdf_path, driver="GPKG")
+
+        fig_obs_vs_sim = self.plot_obs_vs_sim(review.targets)
+        fig_period = self.plot_residuals_by_period(review.targets)
+        obs_vs_sim_path = figures_dir / "obs_vs_sim.html"
+        residuals_by_period_path = figures_dir / "residuals_by_period.html"
+        pio.write_html(fig_obs_vs_sim, file=obs_vs_sim_path, include_plotlyjs="cdn")
+        pio.write_html(fig_period, file=residuals_by_period_path, include_plotlyjs="cdn")
+
+        ax_k = self.plot_k()
+        k_png_path = figures_dir / "k_final.png"
+        ax_k.figure.savefig(k_png_path, dpi=200, bbox_inches="tight")
+        plt.close(ax_k.figure)
+
+        ax_k_ratio = self.plot_k_ratio()
+        k_ratio_png_path = figures_dir / "k_ratio.png"
+        ax_k_ratio.figure.savefig(k_ratio_png_path, dpi=200, bbox_inches="tight")
+        plt.close(ax_k_ratio.figure)
+
+        unique_names = residual_compare["name"].astype(str).dropna().drop_duplicates().tolist()
+        if well_names is None and timeseries_names is not None:
+            well_names = [str(name) for name in timeseries_names]
+
+        if well_names is None:
+            selected_wells = unique_names[: max(0, int(max_wells))]
+        else:
+            selected_wells = [str(name) for name in well_names]
+
+        exported_well_paths: dict[str, str] = {}
+        for name in selected_wells:
+            fig = self.plot_well_timeseries(name, review.targets)
+            filename = f"timeseries_{_sanitize_filename_token(name)}.html"
+            path = figures_dir / filename
+            pio.write_html(fig, file=path, include_plotlyjs="cdn")
+            exported_well_paths[name] = str(path)
+
+        manifest = {
+            "export_root": str(export_root),
+            "figures_dir": str(figures_dir),
+            "residual_compare_csv": str(residual_compare_path),
+            "residual_stats_csv": str(stats_path),
+            "k_review_gpkg": str(k_gdf_path),
+            "obs_vs_sim_html": str(obs_vs_sim_path),
+            "residuals_by_period_html": str(residuals_by_period_path),
+            "k_final_png": str(k_png_path),
+            "k_ratio_png": str(k_ratio_png_path),
+            "well_timeseries_html": exported_well_paths,
+            "n_exported_wells": len(exported_well_paths),
+        }
+        manifest_path = export_root / "review_manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        manifest["manifest_json"] = str(manifest_path)
+        return manifest
 
 
 def open_pest_run(workspace: str | Path, *, crs: str = "EPSG:2927", verbosity_level: int = 0) -> PestRunResults:

@@ -5,16 +5,20 @@ from .results import PestRunResults, PestRunReview, open_pest_run
 from .specs import (
     DrainConductanceParameter,
     DrainElevationParameter,
+    DrnFlowObservationSpec,
     ExpGeoStruct,
     HeadTargetObservationSpec,
     KPilotPointParameter,
     LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+    SfrStageObservationSpec,
     VectorParameterSource,
 )
 
 __all__ = [
     "DrainConductanceParameter",
     "DrainElevationParameter",
+    "DrnFlowObservationSpec",
     "ExpGeoStruct",
     "HeadTargetObservationSpec",
     "KPilotPointParameter",
@@ -22,6 +26,8 @@ __all__ = [
     "PestProject",
     "PestRunResults",
     "PestRunReview",
+    "SfrFlowObservationSpec",
+    "SfrStageObservationSpec",
     "VectorParameterSource",
     "open_pest_run",
 ]
