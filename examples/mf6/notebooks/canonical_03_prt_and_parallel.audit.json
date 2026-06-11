@@ -1,0 +1,74 @@
+[
+  {
+    "cell": 1,
+    "execution_count": 1,
+    "output_count": 31,
+    "errors": 0,
+    "normal_termination_mentions": 1,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 3,
+    "execution_count": 2,
+    "output_count": 4,
+    "errors": 0,
+    "normal_termination_mentions": 1,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 4,
+    "execution_count": 3,
+    "output_count": 0,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 5,
+    "execution_count": 4,
+    "output_count": 1,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 6,
+    "execution_count": 5,
+    "output_count": 4,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 8,
+    "execution_count": 6,
+    "output_count": 8,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 10,
+    "execution_count": 7,
+    "output_count": 18,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 11,
+    "execution_count": 8,
+    "output_count": 1,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  },
+  {
+    "cell": 13,
+    "execution_count": 9,
+    "output_count": 1,
+    "errors": 0,
+    "normal_termination_mentions": 0,
+    "parallel_mode_mentions": 0
+  }
+]

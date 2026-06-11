@@ -844,8 +844,15 @@ def test_minimal_model_can_run_and_read_heads():
         assert np.allclose(heads, [10.0, 9.0])
 
         all_heads = model.all_heads
+        heads_long = model.hds.long()
+        heads_wide = model.hds.wide()
         assert len(all_heads) == 2
         assert np.allclose(all_heads["elev"].astype(float).to_numpy(), [10.0, 9.0])
+        assert heads_long.index.names == ["kstpkper", "layer", "cell"]
+        assert heads_long.name == "elev"
+        assert np.allclose(heads_long.astype(float).to_numpy(), [10.0, 9.0])
+        assert {"layer", "cell", "kstpkper_0_0"}.issubset(heads_wide.columns)
+        assert np.allclose(heads_wide.sort_values("cell")["kstpkper_0_0"].astype(float).to_numpy(), [10.0, 9.0])
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

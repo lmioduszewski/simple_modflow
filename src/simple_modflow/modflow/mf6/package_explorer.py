@@ -9,7 +9,8 @@ logic in many places.
 The first slice focuses on:
 
 - cell-based stress-period packages: ``RCH``, ``CHD``, ``DRN``, ``GHB``
-- UZF perioddata field exploration, starting with ``finf``
+- registry-backed stress-period packages such as ``WEL`` and ``UZF``
+- static layer/cell arrays such as ``IC``, ``NPF``, and ``STO``
 
 Each explorer follows the same shape where practical:
 
@@ -27,45 +28,207 @@ The first results slice adds:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import figs
+import plotly.graph_objects as go
+from flopy.plot import PlotMapView
+from plotly.subplots import make_subplots
 
 if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.simulation.base import SimulationBase
 
 
-_CELL_PACKAGE_DEFAULT_VALUE_COLUMNS = {
-    "rch": "recharge",
-    "chd": "head",
-    "drn": "elev",
-    "ghb": "bhead",
-}
+@dataclass(frozen=True)
+class FieldSpec:
+    """Registry metadata for one package input field."""
 
-_CELL_PACKAGE_DEFAULT_COLORSCALES = {
-    "rch": "Viridis",
-    "chd": "Blues",
-    "drn": "YlOrRd",
-    "ghb": "Portland",
-    "uzf_finf": "Viridis",
+    name: str
+    label: str | None = None
+    colorscale: str | None = None
+    fill_value: float = 0.0
+    agg: str = "sum"
+
+
+@dataclass(frozen=True)
+class ResultSpec:
+    """Registry metadata for one package result term."""
+
+    name: str
+    budget_text: str
+    value_name: str = "q"
+    label: str | None = None
+    colorscale: str | None = None
+    diverging: bool = True
+
+
+@dataclass(frozen=True)
+class PackageExplorerSpec:
+    """Registry metadata for one MF6 package explorer."""
+
+    name: str
+    kind: str = "cell_stress"
+    default_input: str | None = None
+    colorscale: str | None = None
+    inputs: dict[str, FieldSpec] = field(default_factory=dict)
+    results: dict[str, ResultSpec] = field(default_factory=dict)
+
+
+_PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
+    "rch": PackageExplorerSpec(
+        name="rch",
+        default_input="recharge",
+        colorscale="Viridis",
+        inputs={
+            "recharge": FieldSpec("recharge", label="Recharge", colorscale="Viridis"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="RCH", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "chd": PackageExplorerSpec(
+        name="chd",
+        default_input="head",
+        colorscale="Blues",
+        inputs={
+            "head": FieldSpec("head", label="Constant head", colorscale="Blues"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="CHD", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "drn": PackageExplorerSpec(
+        name="drn",
+        default_input="elev",
+        colorscale="YlOrRd",
+        inputs={
+            "elev": FieldSpec("elev", label="Drain elevation", colorscale="YlOrRd"),
+            "cond": FieldSpec("cond", label="Drain conductance", colorscale="Viridis"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="DRN", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "ghb": PackageExplorerSpec(
+        name="ghb",
+        default_input="bhead",
+        colorscale="Portland",
+        inputs={
+            "bhead": FieldSpec("bhead", label="Boundary head", colorscale="Portland"),
+            "cond": FieldSpec("cond", label="Boundary conductance", colorscale="Viridis"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="GHB", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "wel": PackageExplorerSpec(
+        name="wel",
+        default_input="q",
+        colorscale="RdBu",
+        inputs={
+            "q": FieldSpec("q", label="Well flow", colorscale="RdBu"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="WEL", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "uzf": PackageExplorerSpec(
+        name="uzf",
+        kind="uzf",
+        inputs={
+            "finf": FieldSpec("finf", label="UZF infiltration", colorscale="Viridis"),
+            "pet": FieldSpec("pet", label="Potential evapotranspiration", colorscale="YlOrRd"),
+            "extdp": FieldSpec("extdp", label="ET extinction depth", colorscale="Blues"),
+            "extwc": FieldSpec("extwc", label="ET extinction water content", colorscale="Viridis"),
+            "ha": FieldSpec("ha", label="Surface depression storage depth", colorscale="Blues"),
+            "hroot": FieldSpec("hroot", label="Root zone thickness", colorscale="Blues"),
+            "rootact": FieldSpec("rootact", label="Root activity", colorscale="Viridis"),
+        },
+        results={
+            "gwrch": ResultSpec(
+                "gwrch",
+                budget_text="UZF-GWRCH",
+                value_name="gwrch",
+                label="UZF groundwater recharge",
+                colorscale="Viridis",
+                diverging=False,
+            ),
+            "sat": ResultSpec(
+                "sat",
+                budget_text="DATA-SAT",
+                value_name="sat",
+                label="UZF saturation",
+                colorscale="Viridis",
+                diverging=False,
+            ),
+        },
+    ),
+    "sfr": PackageExplorerSpec(
+        name="sfr",
+        kind="surface_water",
+        results={
+            "q": ResultSpec("q", budget_text="SFR", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "lak": PackageExplorerSpec(
+        name="lak",
+        kind="surface_water",
+        results={
+            "q": ResultSpec("q", budget_text="GWF", value_name="q", colorscale="RdBu"),
+        },
+    ),
 }
 
 _GROUP_COMPARE_DEFAULT_COLORSCALE = "RdBu"
 
-_CELL_PACKAGE_BUDGET_TERMS = {
-    "rch": ("RCH", "q"),
-    "chd": ("CHD", "q"),
-    "drn": ("DRN", "q"),
-    "ghb": ("GHB", "q"),
-    "uzf_gwrch": ("UZF-GWRCH", "gwrch"),
-    "uzf_sat": ("DATA-SAT", "sat"),
-    "sfr": ("SFR", "q"),
-    "lak": ("GWF", "q"),
-}
+
+def _get_package_explorer_cache(model: "SimulationBase") -> dict[tuple, pd.DataFrame]:
+    """Return a per-model cache for expensive normalized explorer tables."""
+
+    cache = getattr(model, "_package_explorer_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(model, "_package_explorer_cache", cache)
+    return cache
+
+
+def _extract_structured_column(data, column_name: str):
+    """Return one column from structured MF6 record data with a safe fallback."""
+
+    dtype = getattr(data, "dtype", None)
+    names = getattr(dtype, "names", None)
+    if names and column_name in names:
+        return np.asarray(data[column_name])
+    frame = pd.DataFrame(data).copy()
+    if column_name not in frame.columns:
+        raise KeyError(column_name)
+    return frame[column_name].to_numpy()
+
+
+def _coerce_numeric_like_columns(frame: pd.DataFrame, *, exclude: Iterable[str] = ()) -> pd.DataFrame:
+    """Convert object/string columns to numeric when every non-null value is numeric-like."""
+
+    excluded = {str(column) for column in exclude}
+    coerced = frame.copy()
+    for column in coerced.columns:
+        if str(column) in excluded:
+            continue
+        series = coerced[column]
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+        non_null = series.notna()
+        if not non_null.any():
+            continue
+        converted = pd.to_numeric(series, errors="coerce")
+        if converted.loc[non_null].notna().all():
+            coerced[column] = converted
+    return coerced
 
 
 def split_cellid_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -106,7 +269,14 @@ def split_cellid_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return expanded.drop(columns=["cellid"])
 
 
-def build_cell_package_input_table(model: "SimulationBase", package_name: str) -> pd.DataFrame:
+def build_cell_package_input_table(
+    model: "SimulationBase",
+    package_name: str,
+    *,
+    per: int | None = None,
+    layer: int | Iterable[int] | None = None,
+    cells: Iterable[int] | None = None,
+) -> pd.DataFrame:
     """Return a normalized table for a cell-based MF6 stress-period package.
 
     Parameters
@@ -124,12 +294,31 @@ def build_cell_package_input_table(model: "SimulationBase", package_name: str) -
     """
 
     package = model.package(package_name)
+    layer_values = _normalize_iterable_filter(layer)
+    cell_values = _normalize_iterable_filter(cells)
+    if per is None and layer_values is None and cell_values is None:
+        cache_key = ("cell_package_input_table", str(package_name).lower())
+        cached = _get_package_explorer_cache(model).get(cache_key)
+        if cached is not None:
+            return cached.copy()
     frames: list[pd.DataFrame] = []
-    for per, data in package.stress_period_data.data.items():
+    if per is not None:
+        period_items = [(int(per), package.stress_period_data.get_data(key=int(per)))]
+    else:
+        period_items = package.stress_period_data.get_data().items()
+    for period, data in period_items:
         frame = pd.DataFrame(data).copy()
+        if frame.empty:
+            continue
         frame = split_cellid_columns(frame)
+        if layer_values is not None and "layer" in frame.columns:
+            frame = frame[frame["layer"].isin(layer_values)]
+        if cell_values is not None and "cell" in frame.columns:
+            frame = frame[frame["cell"].isin(cell_values)]
+        if frame.empty:
+            continue
         frame["package"] = str(package_name).lower()
-        frame["per"] = int(per)
+        frame["per"] = int(period)
         frame["model"] = model.name
         frames.append(frame)
 
@@ -140,10 +329,20 @@ def build_cell_package_input_table(model: "SimulationBase", package_name: str) -
     for column in ("layer", "cell", "per"):
         if column in combined.columns:
             combined[column] = combined[column].astype(int)
+    combined = _coerce_numeric_like_columns(combined, exclude={"model", "package"})
+    if per is None and layer_values is None and cell_values is None:
+        _get_package_explorer_cache(model)[("cell_package_input_table", str(package_name).lower())] = combined.copy()
     return combined
 
 
-def build_uzf_field_input_table(model: "SimulationBase", field_name: str) -> pd.DataFrame:
+def build_uzf_field_input_table(
+    model: "SimulationBase",
+    field_name: str,
+    *,
+    per: int | None = None,
+    layer: int | Iterable[int] | None = None,
+    cells: Iterable[int] | None = None,
+) -> pd.DataFrame:
     """Return a normalized table for one UZF perioddata field.
 
     Parameters
@@ -161,19 +360,64 @@ def build_uzf_field_input_table(model: "SimulationBase", field_name: str) -> pd.
     """
 
     package = model.package("uzf")
-    ifno_to_cellid = model.outputs.uzf.ifno_to_cellid.copy()
-    ifno_to_cellid = ifno_to_cellid.rename_axis("ifno").reset_index()
+    layer_values = _normalize_iterable_filter(layer)
+    cell_values = _normalize_iterable_filter(cells)
+    if per is None and layer_values is None and cell_values is None:
+        cache_key = ("uzf_field_input_table", str(field_name).lower())
+        cached = _get_package_explorer_cache(model).get(cache_key)
+        if cached is not None:
+            return cached.copy()
+    ifno_to_cellid = model.outputs.uzf.ifno_to_cellid
+    layer_lookup = ifno_to_cellid["layer"].to_numpy()
+    cell_lookup = ifno_to_cellid["cellid"].to_numpy()
     frames: list[pd.DataFrame] = []
-    for per, data in package.perioddata.data.items():
-        frame = pd.DataFrame(data).copy()
-        if field_name not in frame.columns:
-            raise KeyError(f"UZF field {field_name!r} was not found.")
-        frame = frame.merge(ifno_to_cellid, on="ifno", how="left")
-        frame = frame.rename(columns={"cellid": "cell"})
-        frame["package"] = "uzf"
-        frame["per"] = int(per)
-        frame["model"] = model.name
-        frames.append(frame[["model", "package", "per", "ifno", "layer", "cell", field_name]])
+    if per is not None:
+        period_items = [(int(per), package.perioddata.get_data(key=int(per)))]
+    else:
+        period_items = package.perioddata.get_data().items()
+    for period, data in period_items:
+        if data is None or len(data) == 0:
+            continue
+        try:
+            ifno_raw = _extract_structured_column(data, "ifno")
+            value_raw = _extract_structured_column(data, field_name)
+        except KeyError as exc:
+            raise KeyError(f"UZF field {field_name!r} was not found.") from exc
+
+        ifno_series = pd.to_numeric(pd.Series(ifno_raw), errors="coerce")
+        valid_mask = ifno_series.notna().to_numpy()
+        if not valid_mask.any():
+            continue
+        ifno_values = ifno_series.loc[valid_mask].astype(int).to_numpy()
+        layer_values_for_rows = np.take(layer_lookup, ifno_values)
+        cell_values_for_rows = np.take(cell_lookup, ifno_values)
+        field_values = np.asarray(value_raw)[valid_mask]
+
+        row_mask = np.ones(len(ifno_values), dtype=bool)
+        if layer_values is not None:
+            row_mask &= np.isin(layer_values_for_rows, layer_values)
+        if cell_values is not None:
+            row_mask &= np.isin(cell_values_for_rows, cell_values)
+        if not row_mask.any():
+            continue
+
+        ifno_values = ifno_values[row_mask]
+        layer_values_for_rows = layer_values_for_rows[row_mask]
+        cell_values_for_rows = cell_values_for_rows[row_mask]
+        field_values = field_values[row_mask]
+        frames.append(
+            pd.DataFrame(
+                {
+                    "model": model.name,
+                    "package": "uzf",
+                    "per": int(period),
+                    "ifno": ifno_values,
+                    "layer": layer_values_for_rows,
+                    "cell": cell_values_for_rows,
+                    field_name: field_values,
+                }
+            )
+        )
 
     if not frames:
         return pd.DataFrame(columns=["model", "package", "per", "ifno", "layer", "cell", field_name])
@@ -181,7 +425,67 @@ def build_uzf_field_input_table(model: "SimulationBase", field_name: str) -> pd.
     combined = pd.concat(frames, ignore_index=True)
     for column in ("per", "ifno", "layer", "cell"):
         combined[column] = combined[column].astype(int)
+    combined = _coerce_numeric_like_columns(combined, exclude={"model", "package"})
+    if per is None and layer_values is None and cell_values is None:
+        _get_package_explorer_cache(model)[("uzf_field_input_table", str(field_name).lower())] = combined.copy()
     return combined
+
+
+def build_uzf_field_input_wide_table(
+    model: "SimulationBase",
+    field_name: str,
+    *,
+    layer: int | Iterable[int] | None = None,
+    cells: Iterable[int] | None = None,
+) -> pd.DataFrame:
+    """Return a compact wide UZF table with one row per UZF record/cell."""
+
+    cache_key = ("uzf_field_input_wide_table", str(field_name).lower())
+    layer_values = _normalize_iterable_filter(layer)
+    cell_values = _normalize_iterable_filter(cells)
+    if layer_values is None and cell_values is None:
+        cached = _get_package_explorer_cache(model).get(cache_key)
+        if cached is not None:
+            return cached.copy()
+
+    package = model.package("uzf")
+    ifno_to_cellid = model.outputs.uzf.ifno_to_cellid.copy()
+    ifno_to_cellid.index.name = "ifno"
+    base = ifno_to_cellid.reset_index().rename(columns={"cellid": "cell"})
+    if layer_values is not None:
+        base = base[base["layer"].isin(layer_values)]
+    if cell_values is not None:
+        base = base[base["cell"].isin(cell_values)]
+    if base.empty:
+        return pd.DataFrame(columns=["ifno", "layer", "cell"])
+
+    wide = base.set_index("ifno").copy()
+    period_items = package.perioddata.get_data().items()
+    for period, data in period_items:
+        if data is None or len(data) == 0:
+            continue
+        try:
+            ifno_raw = _extract_structured_column(data, "ifno")
+            value_raw = _extract_structured_column(data, field_name)
+        except KeyError as exc:
+            raise KeyError(f"UZF field {field_name!r} was not found.") from exc
+        ifno_series = pd.to_numeric(pd.Series(ifno_raw), errors="coerce")
+        value_series = pd.Series(value_raw)
+        valid_mask = ifno_series.notna().to_numpy()
+        if not valid_mask.any():
+            continue
+        period_series = pd.Series(
+            value_series.loc[valid_mask].to_numpy(),
+            index=ifno_series.loc[valid_mask].astype(int).to_numpy(),
+            name=f"per_{int(period)}",
+        )
+        wide = wide.join(period_series, how="left")
+
+    wide = wide.reset_index()
+    wide = _coerce_numeric_like_columns(wide)
+    if layer_values is None and cell_values is None:
+        _get_package_explorer_cache(model)[cache_key] = wide.copy()
+    return wide
 
 
 def _normalize_budget_nodes(frame: pd.DataFrame) -> pd.DataFrame:
@@ -266,6 +570,10 @@ def build_budget_result_table(
     combined = pd.concat(frames, ignore_index=True)
     for column in ("per", "layer", "cell"):
         combined[column] = combined[column].astype(int)
+    combined = _coerce_numeric_like_columns(
+        combined,
+        exclude={"model", "package", "kstpkper"},
+    )
     return combined
 
 
@@ -274,9 +582,12 @@ def build_sfr_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
 
     stage_frame = model.outputs.sfr.stage.get().copy()
     stage_frame.index.name = "reach"
-    stage_long = stage_frame.reset_index().melt(id_vars="reach", var_name="per", value_name="stage")
+    stage_long = stage_frame.reset_index().melt(
+        id_vars="reach", var_name="kstpkper", value_name="stage"
+    )
     stage_long["reach"] = stage_long["reach"].astype(int)
-    stage_long["per"] = stage_long["per"].astype(int)
+    stage_long["kstpkper"] = stage_long["kstpkper"].apply(tuple)
+    stage_long["per"] = stage_long["kstpkper"].apply(lambda value: int(value[1]))
 
     reach_table = build_sfr_reach_table(model)
     stage_long = stage_long.merge(reach_table, on="reach", how="left")
@@ -287,6 +598,7 @@ def build_sfr_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
     ordered = [
         "model",
         "package",
+        "kstpkper",
         "per",
         "reach",
         "layer",
@@ -363,7 +675,11 @@ def build_sfr_long_profile_table(model: "SimulationBase", *, per: int = 0) -> pd
 
     stage = build_sfr_stage_result_table(model)
     stage = (
-        stage.loc[stage["per"] == int(per), ["reach", "stage"]]
+        stage.loc[stage["per"] == int(per)]
+        .sort_values("kstpkper")
+        .groupby("reach", as_index=False)
+        .tail(1)
+        .loc[:, ["reach", "stage"]]
         .drop_duplicates(subset=["reach"])
         .reset_index(drop=True)
     )
@@ -1219,6 +1535,90 @@ def build_lak_connection_table(model: "SimulationBase") -> pd.DataFrame:
     return connectiondata[ordered + remaining]
 
 
+def _numeric_period_settings(package, *, id_column: str, nper: int) -> dict[int, dict[int, dict[str, float]]]:
+    """Return carried-forward numeric package settings keyed by period and feature id."""
+
+    current: dict[int, dict[str, float]] = {}
+    by_period: dict[int, dict[int, dict[str, float]]] = {}
+    perioddata = package.perioddata.get_data()
+    for period in range(int(nper)):
+        records = perioddata.get(period)
+        if records is not None:
+            frame = pd.DataFrame(records).copy()
+            if not frame.empty:
+                identifier = id_column if id_column in frame.columns else frame.columns[0]
+                setting_column = next(
+                    (column for column in frame.columns if str(column).lower().endswith("setting")),
+                    None,
+                )
+                data_column = next(
+                    (column for column in frame.columns if str(column).lower().endswith("setting_data")),
+                    None,
+                )
+                if setting_column is not None and data_column is not None:
+                    for row in frame.itertuples(index=False):
+                        feature_id = int(getattr(row, identifier))
+                        setting = str(getattr(row, setting_column)).strip().lower().replace("-", "_")
+                        raw_value = getattr(row, data_column)
+                        numeric = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
+                        if pd.notna(numeric):
+                            current.setdefault(feature_id, {})[setting] = float(numeric)
+        by_period[period] = {
+            feature_id: dict(settings)
+            for feature_id, settings in current.items()
+        }
+    return by_period
+
+
+def build_sfr_input_table(model: "SimulationBase") -> pd.DataFrame:
+    """Return normalized static and stress-period SFR inputs mapped to cells."""
+
+    base = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
+    base = split_cellid_columns(base)
+    if "ifno" in base.columns:
+        base = base.rename(columns={"ifno": "reach"})
+    base["reach"] = pd.to_numeric(base["reach"], errors="coerce").astype(int)
+    base["layer"] = pd.to_numeric(base["layer"], errors="coerce").astype(int)
+    base["cell"] = pd.to_numeric(base["cell"], errors="coerce").astype(int)
+    settings = _numeric_period_settings(model.sfr, id_column="ifno", nper=model.nper)
+    frames = []
+    for period in range(int(model.nper)):
+        frame = base.copy()
+        for reach, values in settings[period].items():
+            mask = frame["reach"] == int(reach)
+            for name, value in values.items():
+                frame.loc[mask, name] = value
+        frame["per"] = period
+        frame["package"] = "sfr"
+        frame["model"] = model.name
+        frames.append(frame)
+    return _coerce_numeric_like_columns(pd.concat(frames, ignore_index=True), exclude={"model", "package"})
+
+
+def build_lak_input_table(model: "SimulationBase") -> pd.DataFrame:
+    """Return normalized static and stress-period LAK inputs mapped to connection cells."""
+
+    connections = build_lak_connection_table(model)
+    packagedata = pd.DataFrame(model.lak.packagedata.get_data()).copy()
+    if "ifno" in packagedata.columns:
+        packagedata = packagedata.rename(columns={"ifno": "lake"})
+    packagedata["lake"] = pd.to_numeric(packagedata["lake"], errors="coerce").astype(int)
+    base = connections.merge(packagedata, on="lake", how="left", suffixes=("", "_package"))
+    settings = _numeric_period_settings(model.lak, id_column="number", nper=model.nper)
+    frames = []
+    for period in range(int(model.nper)):
+        frame = base.copy()
+        for lake, values in settings[period].items():
+            mask = frame["lake"] == int(lake)
+            for name, value in values.items():
+                frame.loc[mask, name] = value
+        frame["per"] = period
+        frame["package"] = "lak"
+        frame["model"] = model.name
+        frames.append(frame)
+    return _coerce_numeric_like_columns(pd.concat(frames, ignore_index=True), exclude={"model", "package"})
+
+
 def build_lak_stage_change_table(model: "SimulationBase") -> pd.DataFrame:
     """Return per-transition lake-stage changes for one model.
 
@@ -1293,19 +1693,60 @@ def summarize_input_table(frame: pd.DataFrame, *, label: str, value_columns: lis
 def get_default_package_value_column(package_name: str) -> str | None:
     """Return the preferred primary numeric input column for one package."""
 
-    return _CELL_PACKAGE_DEFAULT_VALUE_COLUMNS.get(str(package_name).lower())
+    spec = get_package_explorer_spec(package_name)
+    return spec.default_input if spec is not None else None
 
 
 def get_default_package_colorscale(package_name: str) -> str | None:
     """Return the preferred choropleth colorscale for one package or field."""
 
-    return _CELL_PACKAGE_DEFAULT_COLORSCALES.get(str(package_name).lower())
+    normalized = str(package_name).lower()
+    if "_" in normalized:
+        package, field_name = normalized.split("_", 1)
+        field_spec = get_package_input_field_spec(package, field_name)
+        if field_spec is not None and field_spec.colorscale is not None:
+            return field_spec.colorscale
+
+    spec = get_package_explorer_spec(normalized)
+    return spec.colorscale if spec is not None else None
 
 
 def get_default_budget_term(package_name: str) -> tuple[str, str] | None:
     """Return the preferred budget text and public value name for a package."""
 
-    return _CELL_PACKAGE_BUDGET_TERMS.get(str(package_name).lower())
+    normalized = str(package_name).lower()
+    if "_" in normalized:
+        package, result_name = normalized.split("_", 1)
+        result_spec = get_package_result_spec(package, result_name)
+    else:
+        result_spec = get_package_result_spec(normalized, "q")
+    if result_spec is None:
+        return None
+    return result_spec.budget_text, result_spec.value_name
+
+
+def get_package_explorer_spec(package_name: str) -> PackageExplorerSpec | None:
+    """Return registry metadata for one package, if it is known."""
+
+    return _PACKAGE_EXPLORER_SPECS.get(str(package_name).lower())
+
+
+def get_package_input_field_spec(package_name: str, field_name: str) -> FieldSpec | None:
+    """Return registry metadata for one input field, if it is known."""
+
+    spec = get_package_explorer_spec(package_name)
+    if spec is None:
+        return None
+    return spec.inputs.get(str(field_name).lower())
+
+
+def get_package_result_spec(package_name: str, result_name: str) -> ResultSpec | None:
+    """Return registry metadata for one result field, if it is known."""
+
+    spec = get_package_explorer_spec(package_name)
+    if spec is None:
+        return None
+    return spec.results.get(str(result_name).lower())
 
 
 def get_default_group_compare_colorscale() -> str:
@@ -1431,6 +1872,33 @@ def _default_show_layer_elevs(model) -> bool:
     """Return whether choropleths should show layer elevations by default."""
 
     return getattr(model.vor, "gdf_topbtm", None) is not None
+
+
+def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.ndarray:
+    """Return static package arrays as a consistent ``(nlay, ncpl)`` array."""
+
+    arr = np.asarray(values)
+    arr = np.squeeze(arr)
+    if arr.ndim == 0:
+        return np.full((int(nlay), int(ncpl)), arr.item())
+    if arr.ndim == 1:
+        if arr.size == int(ncpl):
+            return np.tile(arr.reshape(1, int(ncpl)), (int(nlay), 1))
+        if arr.size == int(nlay) * int(ncpl):
+            return arr.reshape(int(nlay), int(ncpl))
+    if arr.ndim == 2:
+        if arr.shape == (int(nlay), int(ncpl)):
+            return arr
+        if arr.shape == (int(ncpl), int(nlay)):
+            return arr.T
+        if arr.size == int(nlay) * int(ncpl):
+            return arr.reshape(int(nlay), int(ncpl))
+    if arr.ndim >= 3:
+        if arr.shape[0] == int(nlay) and int(np.prod(arr.shape[1:])) == int(ncpl):
+            return arr.reshape(int(nlay), int(ncpl))
+        if arr.size == int(nlay) * int(ncpl):
+            return arr.reshape(int(nlay), int(ncpl))
+    raise ValueError(f"{label} must resolve to one value per layer/cell; got shape={arr.shape}.")
 
 
 def build_cell_input_map_payload(
@@ -1618,12 +2086,211 @@ def build_group_input_compare_map_payload(
     return diff_values.tolist(), hover, absmax
 
 
+class MappedFieldVisualizationMixin:
+    """Shared spatial views for cell-mapped package input and result fields."""
+
+    @property
+    def _mapped_value_name(self) -> str:
+        for attribute in ("field_name", "value_name"):
+            value = getattr(self, attribute, None)
+            if value is not None:
+                return str(value)
+        return "stage"
+
+    def _mapped_periods(self) -> list[int]:
+        frame = self.get()
+        if "per" not in frame.columns or frame.empty:
+            return [0]
+        return sorted({int(value) for value in frame["per"].dropna().tolist()})
+
+    def _mapped_layers(self, layers=None) -> list[int]:
+        if layers is None:
+            return list(range(int(self.model.gwf.modelgrid.nlay)))
+        if isinstance(layers, (int, np.integer)):
+            return [int(layers)]
+        resolved = [int(layer) for layer in layers]
+        if not resolved:
+            raise ValueError("layers must contain at least one layer.")
+        return resolved
+
+    def _mapped_values(self, *, per: int, layer: int, **map_kwargs) -> np.ndarray:
+        return np.asarray(self.map(per=per, layer=layer, **map_kwargs).zs, dtype=float)
+
+    def plot(
+        self,
+        *,
+        per: int = 0,
+        layers=None,
+        ncols: int = 3,
+        figsize: tuple[float, float] | None = None,
+        cmap: str = "viridis",
+        vmin: float | None = None,
+        vmax: float | None = None,
+        show_grid: bool = True,
+        show_colorbar: bool = True,
+        title: str | None = None,
+        **map_kwargs,
+    ):
+        """Plot one layer or a selected-layer Matplotlib mosaic."""
+
+        resolved_layers = self._mapped_layers(layers)
+        ncols = min(int(ncols), len(resolved_layers))
+        nrows = int(np.ceil(len(resolved_layers) / ncols))
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize or (5.0 * ncols, 4.0 * nrows),
+            squeeze=False,
+        )
+        arrays = [self._mapped_values(per=per, layer=layer, **map_kwargs) for layer in resolved_layers]
+        finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
+        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+        if finite.size:
+            vmin = float(np.nanmin(finite)) if vmin is None else vmin
+            vmax = float(np.nanmax(finite)) if vmax is None else vmax
+        image = None
+        for ax, layer, values in zip(axes.flat, resolved_layers, arrays, strict=False):
+            view = PlotMapView(model=self.model.gwf, modelgrid=self.model.gwf.modelgrid, layer=layer, ax=ax)
+            image = view.plot_array(values, cmap=cmap, vmin=vmin, vmax=vmax)
+            if show_grid:
+                view.plot_grid(color="#3c4652", linewidth=0.2)
+            ax.set_title(f"Layer {layer + 1}")
+            ax.set_aspect("equal")
+        for ax in axes.flat[len(resolved_layers):]:
+            ax.set_visible(False)
+        if show_colorbar and image is not None:
+            fig.colorbar(image, ax=list(axes.flat[:len(resolved_layers)]), shrink=0.75, label=self._mapped_value_name)
+        fig.suptitle(title or f"{self._mapped_value_name} | stress period {per}")
+        return fig
+
+    def plotly_mosaic(
+        self,
+        *,
+        per: int = 0,
+        layers=None,
+        ncols: int = 3,
+        title: str | None = None,
+        **map_kwargs,
+    ):
+        """Return a selected-layer Plotly choropleth mosaic."""
+
+        resolved_layers = self._mapped_layers(layers)
+        ncols = min(int(ncols), len(resolved_layers))
+        nrows = int(np.ceil(len(resolved_layers) / ncols))
+        fig = make_subplots(
+            rows=nrows,
+            cols=ncols,
+            specs=[[{"type": "map"} for _ in range(ncols)] for _ in range(nrows)],
+            subplot_titles=[f"Layer {layer + 1}" for layer in resolved_layers],
+        )
+        traces = []
+        for index, layer in enumerate(resolved_layers):
+            trace = self.map(per=per, layer=layer, **map_kwargs).get_choropleth()
+            trace.coloraxis = "coloraxis"
+            traces.append(trace)
+            fig.add_trace(trace, row=(index // ncols) + 1, col=(index % ncols) + 1)
+        finite_parts = [
+            np.asarray(trace.z, dtype=float)[np.isfinite(np.asarray(trace.z, dtype=float))]
+            for trace in traces
+            if np.isfinite(np.asarray(trace.z, dtype=float)).any()
+        ]
+        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+        coloraxis = {"colorscale": traces[0].colorscale if traces else "Viridis"}
+        if finite.size:
+            coloraxis.update(cmin=float(np.nanmin(finite)), cmax=float(np.nanmax(finite)), cauto=False)
+        fig.update_layout(
+            title=title or f"{self._mapped_value_name} | stress period {per}",
+            coloraxis=coloraxis,
+            uirevision="lock",
+        )
+        return fig
+
+    def slider_html(
+        self,
+        output_path: str | Path,
+        *,
+        periods=None,
+        layers=None,
+        ncols: int = 3,
+        dpi: int = 160,
+        title: str | None = None,
+        **map_kwargs,
+    ):
+        """Export selected layers through stress periods as standalone Matplotlib HTML."""
+
+        from simple_modflow.modflow.mf6.interactive_plotting import export_matplotlib_slider_html
+
+        periods = self._mapped_periods() if periods is None else [int(period) for period in periods]
+        labels = [f"Stress period {period}" for period in periods]
+
+        def render(period, index):
+            return self.plot(per=period, layers=layers, ncols=ncols, title=labels[index], **map_kwargs)
+
+        return export_matplotlib_slider_html(
+            render,
+            periods,
+            output_path,
+            labels=labels,
+            title=title or self._mapped_value_name,
+            dpi=dpi,
+        )
+
+    def plotly_animation(
+        self,
+        *,
+        periods=None,
+        layers=None,
+        ncols: int = 3,
+        output_path: str | Path | None = None,
+        title: str | None = None,
+        **map_kwargs,
+    ):
+        """Return or export a Plotly stress-period animation for selected layers."""
+
+        from simple_modflow.modflow.mf6.interactive_plotting import _plotly_config
+        from simple_modflow.modflow.utils.animations import Animation
+        import plotly.io as pio
+
+        periods = self._mapped_periods() if periods is None else [int(period) for period in periods]
+        figures = [
+            self.plotly_mosaic(per=period, layers=layers, ncols=ncols, title=title, **map_kwargs)
+            for period in periods
+        ]
+        fig = go.Figure(data=figures[0].data, layout=figures[0].layout)
+        fig.frames = [
+            go.Frame(data=frame.data, name=str(period))
+            for period, frame in zip(periods, figures, strict=False)
+        ]
+        animation = Animation(self.model, periods=periods, redraw=True)
+        fig.update_layout(updatemenus=animation.updatemenus, sliders=animation.sliders, uirevision="lock")
+        if output_path is not None:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            pio.write_html(
+                fig,
+                file=output_path,
+                include_plotlyjs=True,
+                config=_plotly_config(fig),
+                auto_play=False,
+                auto_open=False,
+            )
+        return fig
+
+
 class CellPackageInputsExplorer:
     """Normalized input explorer for one cell-based MF6 stress-period package."""
 
     def __init__(self, model: "SimulationBase", package_name: str):
         self.model = model
         self.package_name = str(package_name).lower()
+
+    def __getattr__(self, field_name: str) -> "CellPackageInputFieldExplorer":
+        """Return a field-specific explorer for registry-backed input fields."""
+
+        field_spec = get_package_input_field_spec(self.package_name, field_name)
+        if field_spec is None:
+            raise AttributeError(f"{type(self).__name__!s} has no input field {field_name!r}")
+        return CellPackageInputFieldExplorer(self, field_spec)
 
     def get(
         self,
@@ -1644,7 +2311,13 @@ class CellPackageInputsExplorer:
             Optional zero-based cell ids to keep.
         """
 
-        frame = build_cell_package_input_table(self.model, self.package_name)
+        frame = build_cell_package_input_table(
+            self.model,
+            self.package_name,
+            per=per,
+            layer=layer,
+            cells=cells,
+        )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
     def summary(self) -> pd.DataFrame:
@@ -1697,7 +2370,7 @@ class CellPackageInputsExplorer:
         selected = self.get(per=per, layer=layer)
         chosen_value_column = _infer_default_value_column(
             selected if not selected.empty else self.get(),
-            fallback=_CELL_PACKAGE_DEFAULT_VALUE_COLUMNS.get(self.package_name),
+            fallback=get_default_package_value_column(self.package_name),
         )
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
@@ -1722,8 +2395,98 @@ class CellPackageInputsExplorer:
             **kwargs,
         )
 
+    @property
+    def default(self) -> "CellPackageInputFieldExplorer":
+        """Return the registry-defined preferred input field."""
 
-class UzfFieldInputsExplorer:
+        return getattr(self, get_default_package_value_column(self.package_name))
+
+    def plot(self, **kwargs):
+        return self.default.plot(**kwargs)
+
+    def plotly_mosaic(self, **kwargs):
+        return self.default.plotly_mosaic(**kwargs)
+
+    def slider_html(self, *args, **kwargs):
+        return self.default.slider_html(*args, **kwargs)
+
+    def plotly_animation(self, **kwargs):
+        return self.default.plotly_animation(**kwargs)
+
+
+class CellPackageInputFieldExplorer(MappedFieldVisualizationMixin):
+    """Field-specific view over a cell package's normalized input table."""
+
+    def __init__(self, inputs: CellPackageInputsExplorer, field_spec: FieldSpec):
+        self.inputs = inputs
+        self.field_spec = field_spec
+        self.field_name = field_spec.name
+
+    @property
+    def model(self):
+        """Return the underlying model."""
+
+        return self.inputs.model
+
+    @property
+    def package_name(self) -> str:
+        """Return the underlying package name."""
+
+        return self.inputs.package_name
+
+    def get(
+        self,
+        *,
+        per: int | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return rows for this input field, preserving package metadata."""
+
+        frame = self.inputs.get(per=per, layer=layer, cells=cells)
+        required_columns = ["model", "package", "per", "layer", "cell", self.field_name]
+        if frame.empty:
+            return pd.DataFrame(columns=required_columns)
+        missing = [column for column in required_columns if column not in frame.columns]
+        if missing:
+            raise KeyError(f"Input field {self.field_name!r} is missing required columns: {missing}")
+        return frame.loc[:, required_columns].copy()
+
+    def summary(self) -> pd.DataFrame:
+        """Return a compact summary for this input field."""
+
+        return summarize_input_table(
+            self.get(),
+            label=f"{self.package_name}.inputs.{self.field_name}",
+            value_columns=[self.field_name],
+        )
+
+    def map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        multiplier: float = 1.0,
+        fill_value: float | None = None,
+        agg: str | None = None,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Build a choropleth for this specific input field."""
+
+        return self.inputs.map(
+            per=per,
+            layer=layer,
+            value_column=self.field_name,
+            multiplier=multiplier,
+            fill_value=self.field_spec.fill_value if fill_value is None else fill_value,
+            agg=self.field_spec.agg if agg is None else agg,
+            colorscale=colorscale or self.field_spec.colorscale,
+            **kwargs,
+        )
+
+
+class UzfFieldInputsExplorer(MappedFieldVisualizationMixin):
     """Normalized explorer for one UZF perioddata field."""
 
     def __init__(self, model: "SimulationBase", field_name: str):
@@ -1739,7 +2502,13 @@ class UzfFieldInputsExplorer:
     ) -> pd.DataFrame:
         """Return the normalized UZF field table for the selected rows."""
 
-        frame = build_uzf_field_input_table(self.model, self.field_name)
+        frame = build_uzf_field_input_table(
+            self.model,
+            self.field_name,
+            per=per,
+            layer=layer,
+            cells=cells,
+        )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
     def summary(self) -> pd.DataFrame:
@@ -1750,6 +2519,21 @@ class UzfFieldInputsExplorer:
             frame,
             label=f"uzf.inputs.{self.field_name}",
             value_columns=[self.field_name],
+        )
+
+    def wide(
+        self,
+        *,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return a wide DataFrame with one row per UZF record and one column per period."""
+
+        return build_uzf_field_input_wide_table(
+            self.model,
+            self.field_name,
+            layer=layer,
+            cells=cells,
         )
 
     def map(
@@ -1797,13 +2581,115 @@ class UzfInputsNamespace:
         self.model = model
 
     @property
+    def fields(self) -> pd.DataFrame:
+        """Return registry metadata for supported UZF perioddata fields."""
+
+        spec = get_package_explorer_spec("uzf")
+        if spec is None:
+            return pd.DataFrame(columns=["field", "label", "colorscale", "fill_value", "agg"])
+        rows = [
+            {
+                "field": field_spec.name,
+                "label": field_spec.label,
+                "colorscale": field_spec.colorscale,
+                "fill_value": field_spec.fill_value,
+                "agg": field_spec.agg,
+            }
+            for field_spec in spec.inputs.values()
+        ]
+        return pd.DataFrame(rows)
+
+    def summary(self) -> pd.DataFrame:
+        """Return one compact summary row per supported UZF input field."""
+
+        frames = []
+        for field_name in self.fields["field"].tolist():
+            frames.append(self._field(field_name).summary())
+        if not frames:
+            return pd.DataFrame(columns=["label", "records", "periods", "layers", "cells", "value_columns"])
+        summary = pd.concat(frames, ignore_index=True)
+        summary["field_name"] = summary["value_columns"].apply(lambda values: values[0] if values else None)
+        field_metadata = self.fields.rename(columns={"field": "field_name"})
+        return summary.merge(field_metadata, on="field_name", how="left")
+
+    def _field(self, field_name: str) -> UzfFieldInputsExplorer:
+        """Return one registry-backed UZF perioddata field explorer."""
+
+        field_spec = get_package_input_field_spec("uzf", field_name)
+        if field_spec is None:
+            raise AttributeError(f"{type(self).__name__!s} has no UZF input field {field_name!r}")
+        return UzfFieldInputsExplorer(self.model, field_spec.name)
+
+    def __getattr__(self, field_name: str) -> UzfFieldInputsExplorer:
+        """Return a registry-backed UZF perioddata field explorer."""
+
+        return self._field(field_name)
+
+    @property
+    def default(self) -> UzfFieldInputsExplorer:
+        """Return the preferred UZF input field."""
+
+        return self.finf
+
+    def map(self, **kwargs):
+        return self.default.map(**kwargs)
+
+    def plot(self, **kwargs):
+        return self.default.plot(**kwargs)
+
+    def plotly_mosaic(self, **kwargs):
+        return self.default.plotly_mosaic(**kwargs)
+
+    def slider_html(self, *args, **kwargs):
+        return self.default.slider_html(*args, **kwargs)
+
+    def plotly_animation(self, **kwargs):
+        return self.default.plotly_animation(**kwargs)
+
+    @property
     def finf(self) -> UzfFieldInputsExplorer:
         """Return the preferred infiltration-rate explorer."""
 
-        return UzfFieldInputsExplorer(self.model, "finf")
+        return self._field("finf")
+
+    @property
+    def pet(self) -> UzfFieldInputsExplorer:
+        """Return the potential evapotranspiration explorer."""
+
+        return self._field("pet")
+
+    @property
+    def extdp(self) -> UzfFieldInputsExplorer:
+        """Return the ET extinction-depth explorer."""
+
+        return self._field("extdp")
+
+    @property
+    def extwc(self) -> UzfFieldInputsExplorer:
+        """Return the ET extinction-water-content explorer."""
+
+        return self._field("extwc")
+
+    @property
+    def ha(self) -> UzfFieldInputsExplorer:
+        """Return the surface-depression-storage-depth explorer."""
+
+        return self._field("ha")
+
+    @property
+    def hroot(self) -> UzfFieldInputsExplorer:
+        """Return the root-zone-thickness explorer."""
+
+        return self._field("hroot")
+
+    @property
+    def rootact(self) -> UzfFieldInputsExplorer:
+        """Return the root-activity explorer."""
+
+        return self._field("rootact")
 
 
-class CellBudgetResultsExplorer:
+class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
     """Normalized explorer for one cell-based package result term."""
 
     def __init__(self, model: "SimulationBase", package_name: str, budget_text: str, value_name: str):
@@ -1839,6 +2725,138 @@ class CellBudgetResultsExplorer:
             value_columns=[self.value_name],
         )
 
+    def wide(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+        index: list[str] | tuple[str, ...] = ("layer", "cell"),
+        values: str | None = None,
+        agg: str = "sum",
+    ) -> pd.DataFrame:
+        """Pivot this result term to one column per stress period."""
+
+        value_column = self.value_name if values is None else str(values)
+        frame = self.get(layer=layer, cells=cells)
+        per_values = _normalize_iterable_filter(per)
+        if per_values is not None and "per" in frame.columns:
+            frame = frame[frame["per"].isin(per_values)]
+        if frame.empty:
+            return pd.DataFrame(columns=[*index])
+        if value_column not in frame.columns:
+            raise KeyError(f"Result value column {value_column!r} was not found.")
+        missing_index = [column for column in index if column not in frame.columns]
+        if missing_index:
+            raise KeyError(f"Wide result index columns were not found: {missing_index}")
+
+        wide = frame.pivot_table(
+            index=list(index),
+            columns="per",
+            values=value_column,
+            aggfunc=agg,
+        )
+        wide.columns = [f"per_{int(column)}" for column in wide.columns]
+        return wide.reset_index()
+
+    def long(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+        values: str | None = None,
+        agg: str = "sum",
+    ) -> pd.Series:
+        """Return a long result series indexed by ``kstpkper/layer/cell``."""
+
+        value_column = self.value_name if values is None else str(values)
+        frame = self.get(layer=layer, cells=cells)
+        per_values = _normalize_iterable_filter(per)
+        if per_values is not None and "per" in frame.columns:
+            frame = frame[frame["per"].isin(per_values)]
+        index_columns = ["kstpkper", "layer", "cell"]
+        if frame.empty:
+            empty_index = pd.MultiIndex.from_arrays(
+                [[] for _ in index_columns],
+                names=index_columns,
+            )
+            return pd.Series([], index=empty_index, dtype=float, name=value_column)
+        if value_column not in frame.columns:
+            raise KeyError(f"Result value column {value_column!r} was not found.")
+        missing_index = [column for column in index_columns if column not in frame.columns]
+        if missing_index:
+            raise KeyError(f"Long result index columns were not found: {missing_index}")
+
+        series = (
+            frame.groupby(index_columns, dropna=False)[value_column]
+            .agg(agg)
+            .sort_index()
+        )
+        series.name = value_column
+        return series
+
+    def stack(self, **kwargs) -> pd.Series:
+        """Alias for :meth:`long`."""
+
+        return self.long(**kwargs)
+
+    def plot_timeseries(
+        self,
+        *,
+        cells: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        agg: str = "sum",
+        ax=None,
+        return_fig: bool = True,
+    ):
+        """Plot this cell result by stress period for selected cells."""
+
+        selected_cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
+        frame = self.get(layer=layer, cells=selected_cells)
+        result_spec = get_package_result_spec(self.package_name, self.value_name)
+        display_label = (
+            result_spec.label
+            if result_spec is not None and result_spec.label is not None
+            else f"{self.package_name.upper()} {self.value_name}"
+        )
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4))
+        else:
+            fig = ax.figure
+        if frame.empty:
+            ax.set_title(f"{display_label} by stress period")
+            ax.set_xlabel("Stress Period")
+            ax.set_ylabel(self.value_name)
+            if return_fig:
+                return fig
+            return None
+
+        grouped_keys = [column for column in ("layer", "cell") if column in frame.columns]
+        for key, group in frame.groupby(grouped_keys, dropna=False):
+            if not isinstance(key, tuple):
+                key = (key,)
+            key_map = dict(zip(grouped_keys, key, strict=False))
+            series = group.groupby("per", as_index=False)[self.value_name].agg(agg).sort_values("per")
+            layer_label = f"L{int(key_map['layer'])} " if "layer" in key_map and pd.notna(key_map["layer"]) else ""
+            cell_label = f"C{int(key_map['cell'])}" if "cell" in key_map and pd.notna(key_map["cell"]) else "All cells"
+            ax.plot(
+                series["per"].astype(int).to_numpy(),
+                series[self.value_name].astype(float).to_numpy(),
+                marker="o",
+                linewidth=2.0,
+                label=f"{layer_label}{cell_label}",
+            )
+
+        ax.set_title(f"{display_label} by stress period")
+        ax.set_xlabel("Stress Period")
+        ax.set_ylabel(self.value_name)
+        ax.legend()
+        fig.tight_layout()
+        if return_fig:
+            return fig
+        return None
+
     def map(
         self,
         *,
@@ -1869,6 +2887,7 @@ class CellBudgetResultsExplorer:
             kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
             kwargs.setdefault("zmax", absmax if absmax > 0 else None)
             kwargs.setdefault("zmid", 0.0)
+        result_spec = get_package_result_spec(self.package_name, self.value_name)
         return self.model.cor(
             per=per,
             layer=layer,
@@ -1879,6 +2898,7 @@ class CellBudgetResultsExplorer:
             hover_ks=False,
             colorscale=(
                 colorscale
+                or (result_spec.colorscale if result_spec is not None else None)
                 or ("RdBu" if self.value_name == "q" else None)
                 or get_default_package_colorscale(self.package_name)
                 or "Viridis"
@@ -2222,7 +3242,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         return None
 
 
-class StageResultsExplorer:
+class StageResultsExplorer(MappedFieldVisualizationMixin):
     """Normalized explorer for cell-mapped stage results such as LAK and SFR."""
 
     def __init__(self, model: "SimulationBase", package_name: str, builder):
@@ -2620,11 +3640,64 @@ class CellPackageResultsNamespace:
         self.package_name = str(package_name).lower()
 
     @property
+    def fields(self) -> pd.DataFrame:
+        """Return registry metadata for supported package result fields."""
+
+        spec = get_package_explorer_spec(self.package_name)
+        if spec is None:
+            return pd.DataFrame(columns=["field", "budget_text", "value_name", "label", "colorscale", "diverging"])
+        rows = [
+            {
+                "field": result_spec.name,
+                "budget_text": result_spec.budget_text,
+                "value_name": result_spec.value_name,
+                "label": result_spec.label,
+                "colorscale": result_spec.colorscale,
+                "diverging": result_spec.diverging,
+            }
+            for result_spec in spec.results.values()
+        ]
+        return pd.DataFrame(rows)
+
+    def summary(self) -> pd.DataFrame:
+        """Return one compact summary row per supported package result field."""
+
+        frames = []
+        for field_name in self.fields["field"].tolist():
+            frames.append(getattr(self, field_name).summary())
+        if not frames:
+            return pd.DataFrame(columns=["label", "records", "periods", "layers", "cells", "value_columns"])
+        summary = pd.concat(frames, ignore_index=True)
+        summary["field_name"] = summary["value_columns"].apply(lambda values: values[0] if values else None)
+        field_metadata = self.fields.rename(columns={"field": "field_name"})
+        return summary.merge(field_metadata, on="field_name", how="left")
+
+    def __getattr__(self, result_name: str) -> CellBudgetResultsExplorer:
+        """Return a registry-backed named result explorer."""
+
+        result_spec = get_package_result_spec(self.package_name, result_name)
+        if result_spec is None:
+            raise AttributeError(f"{type(self).__name__!s} has no result {result_name!r}")
+        return CellBudgetResultsExplorer(
+            self.model,
+            self.package_name,
+            result_spec.budget_text,
+            result_spec.value_name,
+        )
+
+    @property
     def q(self) -> CellBudgetResultsExplorer:
         """Return the primary package-exchange result explorer."""
 
-        budget_text, value_name = get_default_budget_term(self.package_name) or (self.package_name.upper(), "q")
-        return CellBudgetResultsExplorer(self.model, self.package_name, budget_text, value_name)
+        result_spec = get_package_result_spec(self.package_name, "q")
+        if result_spec is None:
+            return CellBudgetResultsExplorer(self.model, self.package_name, self.package_name.upper(), "q")
+        return CellBudgetResultsExplorer(
+            self.model,
+            self.package_name,
+            result_spec.budget_text,
+            result_spec.value_name,
+        )
 
 
 class UzfResultsNamespace:
@@ -2634,18 +3707,62 @@ class UzfResultsNamespace:
         self.model = model
 
     @property
+    def fields(self) -> pd.DataFrame:
+        """Return registry metadata for supported UZF result fields."""
+
+        spec = get_package_explorer_spec("uzf")
+        if spec is None:
+            return pd.DataFrame(columns=["field", "budget_text", "value_name", "label", "colorscale", "diverging"])
+        rows = [
+            {
+                "field": result_spec.name,
+                "budget_text": result_spec.budget_text,
+                "value_name": result_spec.value_name,
+                "label": result_spec.label,
+                "colorscale": result_spec.colorscale,
+                "diverging": result_spec.diverging,
+            }
+            for result_spec in spec.results.values()
+        ]
+        return pd.DataFrame(rows)
+
+    def summary(self) -> pd.DataFrame:
+        """Return one compact summary row per supported UZF result field."""
+
+        frames = []
+        for field_name in self.fields["field"].tolist():
+            frames.append(self._field(field_name).summary())
+        if not frames:
+            return pd.DataFrame(columns=["label", "records", "periods", "layers", "cells", "value_columns"])
+        summary = pd.concat(frames, ignore_index=True)
+        summary["field_name"] = summary["value_columns"].apply(lambda values: values[0] if values else None)
+        field_metadata = self.fields.rename(columns={"field": "field_name"})
+        return summary.merge(field_metadata, on="field_name", how="left")
+
+    def _field(self, field_name: str) -> CellBudgetResultsExplorer:
+        """Return one registry-backed UZF result explorer."""
+
+        result_spec = get_package_result_spec("uzf", field_name)
+        if result_spec is None:
+            raise AttributeError(f"{type(self).__name__!s} has no UZF result field {field_name!r}")
+        return CellBudgetResultsExplorer(self.model, "uzf", result_spec.budget_text, result_spec.value_name)
+
+    def __getattr__(self, field_name: str) -> CellBudgetResultsExplorer:
+        """Return a registry-backed UZF result explorer."""
+
+        return self._field(field_name)
+
+    @property
     def gwrch(self) -> CellBudgetResultsExplorer:
         """Return groundwater recharge from the UZF package."""
 
-        budget_text, value_name = get_default_budget_term("uzf_gwrch") or ("UZF-GWRCH", "gwrch")
-        return CellBudgetResultsExplorer(self.model, "uzf", budget_text, value_name)
+        return self._field("gwrch")
 
     @property
     def sat(self) -> CellBudgetResultsExplorer:
         """Return normalized unsaturated-zone saturation results."""
 
-        budget_text, value_name = get_default_budget_term("uzf_sat") or ("DATA-SAT", "sat")
-        return CellBudgetResultsExplorer(self.model, "uzf", budget_text, value_name)
+        return self._field("sat")
 
 
 class LakResultsNamespace:
@@ -3405,6 +4522,202 @@ class SurfaceWaterResultsNamespace:
         return SurfaceWaterExchangeResultsExplorer(self.model)
 
 
+class StaticArrayFieldExplorer(MappedFieldVisualizationMixin):
+    """Explorer for static layer/cell arrays such as IC, NPF, and STO fields."""
+
+    def __init__(
+        self,
+        model: "SimulationBase",
+        package_name: str,
+        field_name: str,
+        *,
+        label: str | None = None,
+        colorscale: str = "Viridis",
+    ):
+        self.model = model
+        self.package_name = str(package_name).lower()
+        self.field_name = str(field_name)
+        self.label = label or f"{self.package_name}.{self.field_name}"
+        self.colorscale = colorscale
+
+    def _array(self) -> np.ndarray:
+        package = self.model.package(self.package_name)
+        data = getattr(package, self.field_name)
+        values = getattr(data, "array", None)
+        if values is None:
+            values = getattr(data, "data", data)
+        nlay = int(getattr(self.model.gwf.modelgrid, "nlay", getattr(self.model, "nlay", 1)))
+        ncpl = int(self.model.vor.ncpl)
+        return _as_layer_cell_property(values, nlay=nlay, ncpl=ncpl, label=self.label)
+
+    def get(
+        self,
+        *,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return this static array field as a normalized layer/cell table."""
+
+        arr = self._array()
+        rows = []
+        for layer_index in range(arr.shape[0]):
+            for cell in range(arr.shape[1]):
+                rows.append(
+                    {
+                        "model": self.model.name,
+                        "package": self.package_name,
+                        "field": self.field_name,
+                        "layer": layer_index,
+                        "cell": cell,
+                        self.field_name: arr[layer_index, cell],
+                    }
+                )
+        frame = pd.DataFrame(rows)
+        return _filter_normalized_table(frame, layer=layer, cells=cells)
+
+    def summary(self) -> pd.DataFrame:
+        """Return a compact summary for this array field."""
+
+        return summarize_input_table(
+            self.get(),
+            label=f"{self.package_name}.arrays.{self.field_name}",
+            value_columns=[self.field_name],
+        )
+
+    def long(
+        self,
+        *,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.Series:
+        """Return this field as a series indexed by ``layer/cell``."""
+
+        frame = self.get(layer=layer, cells=cells)
+        if frame.empty:
+            empty_index = pd.MultiIndex.from_arrays([[], []], names=["layer", "cell"])
+            return pd.Series([], index=empty_index, dtype=float, name=self.field_name)
+        series = frame.set_index(["layer", "cell"])[self.field_name].sort_index()
+        series.name = self.field_name
+        return series
+
+    def stack(self, **kwargs) -> pd.Series:
+        """Alias for :meth:`long`."""
+
+        return self.long(**kwargs)
+
+    def wide(
+        self,
+        *,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Pivot this field to one row per cell and one column per layer."""
+
+        frame = self.get(layer=layer, cells=cells)
+        if frame.empty:
+            return pd.DataFrame(columns=["cell"])
+        wide = frame.pivot_table(index="cell", columns="layer", values=self.field_name, aggfunc="first")
+        wide.columns = [f"layer_{int(column)}" for column in wide.columns]
+        return wide.reset_index()
+
+    def map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Build a choropleth for one layer of this static array field."""
+
+        del per
+        selected = self.get(layer=layer)
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
+        values, hover = build_cell_input_map_payload(
+            selected,
+            ncpl=self.model.vor.ncpl,
+            value_column=self.field_name,
+            per=None,
+            layer=layer,
+            agg="first",
+        )
+        return self.model.cor(
+            per=0,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or self.colorscale,
+            **kwargs,
+        )
+
+
+class StaticArrayPackageExplorer:
+    """Namespace for static array fields in one package."""
+
+    def __init__(self, model: "SimulationBase", package_name: str, fields: Mapping[str, dict[str, str]]):
+        self.model = model
+        self.package_name = str(package_name).lower()
+        self._fields = dict(fields)
+
+    def _available_field_items(self) -> list[tuple[str, dict[str, str]]]:
+        package = self.model.package(self.package_name)
+        available = []
+        for field_name, metadata in self._fields.items():
+            data = getattr(package, field_name, None)
+            if data is None:
+                continue
+            available.append((field_name, metadata))
+        return available
+
+    @property
+    def fields(self) -> pd.DataFrame:
+        """Return supported static array fields available on this package."""
+
+        return pd.DataFrame(
+            [
+                {
+                    "field": field_name,
+                    "label": metadata.get("label"),
+                    "colorscale": metadata.get("colorscale", "Viridis"),
+                }
+                for field_name, metadata in self._available_field_items()
+            ]
+        ).reindex(columns=["field", "label", "colorscale"])
+
+    def summary(self) -> pd.DataFrame:
+        """Return one compact summary row per supported array field."""
+
+        frames = [self._field(field_name).summary() for field_name in self.fields["field"].tolist()]
+        if not frames:
+            return pd.DataFrame(columns=["label", "records", "periods", "layers", "cells", "value_columns"])
+        summary = pd.concat(frames, ignore_index=True)
+        summary["field_name"] = summary["value_columns"].apply(lambda values: values[0] if values else None)
+        return summary.merge(self.fields.rename(columns={"field": "field_name"}), on="field_name", how="left")
+
+    def _field(self, field_name: str) -> StaticArrayFieldExplorer:
+        metadata = self._fields.get(str(field_name))
+        if metadata is None:
+            raise AttributeError(f"{type(self).__name__!s} has no array field {field_name!r}")
+        package = self.model.package(self.package_name)
+        if getattr(package, str(field_name), None) is None:
+            raise AttributeError(f"Package {self.package_name!r} has no available array field {field_name!r}")
+        return StaticArrayFieldExplorer(
+            self.model,
+            self.package_name,
+            str(field_name),
+            label=metadata.get("label"),
+            colorscale=metadata.get("colorscale", "Viridis"),
+        )
+
+    def __getattr__(self, field_name: str) -> StaticArrayFieldExplorer:
+        """Return a supported static array field explorer."""
+
+        return self._field(field_name)
+
+
 class PackageExplorer:
     """Namespace for one package's preferred exploration helpers."""
 
@@ -3441,6 +4754,14 @@ class ModelPackages:
     def __init__(self, model: "SimulationBase"):
         self.model = model
 
+    def __getattr__(self, package_name: str) -> PackageExplorer:
+        """Return a registry-backed generic package explorer."""
+
+        spec = get_package_explorer_spec(package_name)
+        if spec is None or spec.kind != "cell_stress":
+            raise AttributeError(f"{type(self).__name__!s} has no package {package_name!r}")
+        return PackageExplorer(self.model, spec.name)
+
     @property
     def rch(self) -> PackageExplorer:
         """Recharge package exploration helpers."""
@@ -3466,10 +4787,55 @@ class ModelPackages:
         return PackageExplorer(self.model, "ghb")
 
     @property
+    def wel(self) -> PackageExplorer:
+        """Well package exploration helpers."""
+
+        return PackageExplorer(self.model, "wel")
+
+    @property
     def uzf(self) -> "UzfPackageExplorer":
         """UZF package exploration helpers."""
 
         return UzfPackageExplorer(self.model)
+
+    @property
+    def ic(self) -> StaticArrayPackageExplorer:
+        """Initial conditions array exploration helpers."""
+
+        return StaticArrayPackageExplorer(
+            self.model,
+            "ic",
+            {
+                "strt": {"label": "Starting head", "colorscale": "Viridis"},
+            },
+        )
+
+    @property
+    def npf(self) -> StaticArrayPackageExplorer:
+        """Node property flow array exploration helpers."""
+
+        return StaticArrayPackageExplorer(
+            self.model,
+            "npf",
+            {
+                "k": {"label": "Horizontal hydraulic conductivity", "colorscale": "Viridis"},
+                "k22": {"label": "Horizontal hydraulic conductivity K22", "colorscale": "Viridis"},
+                "k33": {"label": "Vertical hydraulic conductivity", "colorscale": "Viridis"},
+            },
+        )
+
+    @property
+    def sto(self) -> StaticArrayPackageExplorer:
+        """Storage package array exploration helpers."""
+
+        return StaticArrayPackageExplorer(
+            self.model,
+            "sto",
+            {
+                "ss": {"label": "Specific storage", "colorscale": "Viridis"},
+                "sy": {"label": "Specific yield", "colorscale": "Viridis"},
+            },
+        )
 
     @property
     def lak(self) -> "LakPackageExplorer":
@@ -3509,11 +4875,157 @@ class UzfPackageExplorer:
         return UzfResultsNamespace(self.model)
 
 
+class SurfaceWaterInputFieldExplorer(MappedFieldVisualizationMixin):
+    """One cell-mapped LAK or SFR input field."""
+
+    def __init__(self, inputs: "SurfaceWaterInputsNamespace", field_name: str):
+        self.inputs = inputs
+        self.model = inputs.model
+        self.package_name = inputs.package_name
+        self.field_name = str(field_name)
+
+    def get(
+        self,
+        *,
+        per: int | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return rows containing this mapped input field."""
+
+        frame = self.inputs.get(per=per, layer=layer, cells=cells)
+        metadata = [
+            column
+            for column in ("model", "package", "per", "lake", "reach", "layer", "cell")
+            if column in frame.columns
+        ]
+        return frame.loc[:, [*metadata, self.field_name]].copy()
+
+    def summary(self) -> pd.DataFrame:
+        return summarize_input_table(
+            self.get(),
+            label=f"{self.package_name}.inputs.{self.field_name}",
+            value_columns=[self.field_name],
+        )
+
+    def map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        agg: str | None = None,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Build a Plotly choropleth for this LAK or SFR input field."""
+
+        selected = self.get(per=per, layer=layer)
+        if agg is None:
+            agg = "sum" if self.field_name in {"connection_area", "rlen", "inflow", "runoff"} else "first"
+        values, hover = build_cell_input_map_payload(
+            selected,
+            ncpl=self.model.vor.ncpl,
+            value_column=self.field_name,
+            per=per,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+            agg=agg,
+        )
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
+        return self.model.cor(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or "Viridis",
+            **kwargs,
+        )
+
+
+class SurfaceWaterInputsNamespace:
+    """Consistent input exploration namespace for LAK and SFR."""
+
+    def __init__(self, model: "SimulationBase", package_name: str):
+        self.model = model
+        self.package_name = str(package_name).lower()
+
+    def get(
+        self,
+        *,
+        per: int | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return normalized package inputs mapped to groundwater cells."""
+
+        builder = build_lak_input_table if self.package_name == "lak" else build_sfr_input_table
+        return _filter_normalized_table(builder(self.model), per=per, layer=layer, cells=cells)
+
+    @property
+    def fields(self) -> pd.DataFrame:
+        """Return numeric input fields that can be mapped."""
+
+        frame = self.get()
+        excluded = {
+            "model", "package", "per", "lake", "reach", "layer", "cell",
+            "ifno", "iconn", "ncon", "ndv", "nlakeconn",
+        }
+        fields = [
+            column
+            for column in frame.columns
+            if column not in excluded and pd.api.types.is_numeric_dtype(frame[column])
+        ]
+        return pd.DataFrame({"field": fields})
+
+    def summary(self) -> pd.DataFrame:
+        frames = [getattr(self, field).summary() for field in self.fields["field"].tolist()]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def __getattr__(self, field_name: str) -> SurfaceWaterInputFieldExplorer:
+        if field_name not in set(self.fields["field"].tolist()):
+            raise AttributeError(f"{type(self).__name__!s} has no input field {field_name!r}")
+        return SurfaceWaterInputFieldExplorer(self, field_name)
+
+    @property
+    def default(self) -> SurfaceWaterInputFieldExplorer:
+        """Return the preferred package input field."""
+
+        preferred = "connection_area" if self.package_name == "lak" else "rhk"
+        return getattr(self, preferred)
+
+    def map(self, **kwargs):
+        return self.default.map(**kwargs)
+
+    def plot(self, **kwargs):
+        return self.default.plot(**kwargs)
+
+    def plotly_mosaic(self, **kwargs):
+        return self.default.plotly_mosaic(**kwargs)
+
+    def slider_html(self, *args, **kwargs):
+        return self.default.slider_html(*args, **kwargs)
+
+    def plotly_animation(self, **kwargs):
+        return self.default.plotly_animation(**kwargs)
+
+
 class LakPackageExplorer:
     """Top-level LAK package explorer namespace."""
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
+
+    @property
+    def inputs(self) -> SurfaceWaterInputsNamespace:
+        """Return mapped LAK starting-stage, connection, and period inputs."""
+
+        return SurfaceWaterInputsNamespace(self.model, "lak")
 
     @property
     def connections(self) -> LakConnectionsExplorer:
@@ -3539,6 +5051,12 @@ class SfrPackageExplorer:
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
+
+    @property
+    def inputs(self) -> SurfaceWaterInputsNamespace:
+        """Return mapped SFR reach-hydraulic and period inputs."""
+
+        return SurfaceWaterInputsNamespace(self.model, "sfr")
 
     @property
     def budget(self) -> SfrBudgetNamespace:

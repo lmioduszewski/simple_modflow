@@ -1310,11 +1310,11 @@ class LakeStageTargets:
         *,
         csv_name: str = "lake_stage_targets.csv",
         kind: str = "STAGE",
-    ) -> dict[str, list[tuple[str, str, tuple[int]]]]:
+    ) -> dict[str, list[tuple[str, str, int]]]:
         """Return a FloPy ``continuous`` dict for MF6 lake-stage observations."""
 
         records = [
-            (_observation_label(name), str(kind).upper(), (int(lake_id),))
+            (_observation_label(name), str(kind).upper(), int(lake_id) + 1)
             for name, lake_id in self._series.items()
         ]
         return {str(csv_name): records}
@@ -1453,9 +1453,9 @@ class SfrStageTargets:
         *,
         csv_name: str = "sfr_stage_targets.csv",
         kind: str = "STAGE",
-    ) -> dict[str, list[tuple[str, str, tuple[int]]]]:
+    ) -> dict[str, list[tuple[str, str, int]]]:
         records = [
-            (_observation_label(name), str(kind).upper(), (int(reach),))
+            (_observation_label(name), str(kind).upper(), int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -1639,9 +1639,9 @@ class SfrFlowTargets:
         *,
         csv_name: str = "sfr_flow_targets.csv",
         kind: str = "DOWNSTREAM-FLOW",
-    ) -> dict[str, list[tuple[str, str, tuple[int]]]]:
+    ) -> dict[str, list[tuple[str, str, int]]]:
         records = [
-            (_observation_label(name), str(kind).upper(), (int(reach),))
+            (_observation_label(name), str(kind).upper(), int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -2497,6 +2497,61 @@ class TargetRegistry:
         ]
         return pd.DataFrame(rows)
 
+    def _named_target(self, name: str):
+        if name not in self._targets:
+            raise AttributeError(f"{type(self).__name__!r} has no target set {name!r}")
+        return self[name]
+
+    @property
+    def heads(self) -> BoundHeadTargets:
+        """Return model-bound head targets with IDE-visible completion."""
+
+        return self._named_target("heads")
+
+    @heads.setter
+    def heads(self, value: HeadTargets | BoundHeadTargets):
+        self["heads"] = value
+
+    @property
+    def lake_stage(self) -> BoundLakeStageTargets:
+        """Return model-bound lake-stage targets."""
+
+        return self._named_target("lake_stage")
+
+    @lake_stage.setter
+    def lake_stage(self, value: LakeStageTargets | BoundLakeStageTargets):
+        self["lake_stage"] = value
+
+    @property
+    def sfr_stage(self) -> BoundSfrStageTargets:
+        """Return model-bound SFR-stage targets."""
+
+        return self._named_target("sfr_stage")
+
+    @sfr_stage.setter
+    def sfr_stage(self, value: SfrStageTargets | BoundSfrStageTargets):
+        self["sfr_stage"] = value
+
+    @property
+    def sfr_flow(self) -> BoundSfrFlowTargets:
+        """Return model-bound SFR-flow targets."""
+
+        return self._named_target("sfr_flow")
+
+    @sfr_flow.setter
+    def sfr_flow(self, value: SfrFlowTargets | BoundSfrFlowTargets):
+        self["sfr_flow"] = value
+
+    @property
+    def drn_flow(self) -> BoundDrnFlowTargets:
+        """Return model-bound DRN seepage-flow targets."""
+
+        return self._named_target("drn_flow")
+
+    @drn_flow.setter
+    def drn_flow(self, value: DrnFlowTargets | BoundDrnFlowTargets):
+        self["drn_flow"] = value
+
     def __getitem__(self, key: str):
         return self._bind(self._targets[key])
 
@@ -2510,15 +2565,21 @@ class TargetRegistry:
         del self._targets[str(key)]
 
     def __getattr__(self, name: str):
-        if name in self._targets:
-            return self._bind(self._targets[name])
+        targets = object.__getattribute__(self, "__dict__").get("_targets", {})
+        if name in targets:
+            return self._bind(targets[name])
         raise AttributeError(f"{type(self).__name__!r} has no target set {name!r}")
 
     def __setattr__(self, name: str, value):
         if name in self._INTERNAL_NAMES:
             object.__setattr__(self, name, value)
             return
-        self._targets[name] = self._coerce_target(value)
+        targets = object.__getattribute__(self, "__dict__").get("_targets")
+        if targets is None:
+            object.__setattr__(self, name, value)
+            return
+        targets[name] = self._coerce_target(value)
 
     def __dir__(self):
-        return sorted(set(super().__dir__()) | set(self._targets))
+        targets = object.__getattribute__(self, "__dict__").get("_targets", {})
+        return sorted(set(super().__dir__()) | set(targets))

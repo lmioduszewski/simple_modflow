@@ -488,8 +488,8 @@ def test_lake_stage_targets_can_build_and_attach_flopy_obs(monkeypatch):
     obs_dict = targets.to_flopy_obs(csv_name="lak_obs.csv")
     assert list(obs_dict) == ["lak_obs.csv"]
     assert obs_dict["lak_obs.csv"] == [
-        ("deep_lake", "STAGE", (0,)),
-        ("shallow_lake", "STAGE", (1,)),
+        ("deep_lake", "STAGE", 1),
+        ("shallow_lake", "STAGE", 2),
     ]
 
     calls = {}
@@ -623,7 +623,7 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     assert calls["sfr_flow.obs"]["owner"] == "sfr_owner"
     assert calls["drn_flow.obs"]["owner"] == "drn_owner"
     assert calls["sfr_flow.obs"]["continuous"]["sfr_flow.csv"] == [
-        ("reach_001", "DOWNSTREAM-FLOW", (0,))
+        ("reach_001", "DOWNSTREAM-FLOW", 1)
     ]
     drn_continuous = calls["drn_flow.obs"]["continuous"]
     assert list(drn_continuous) == ["drn_flow.csv"]

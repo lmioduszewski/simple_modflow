@@ -42,6 +42,7 @@ class XSection:
             clip: shp.Polygon = None,
             show_model_top: bool = True,
             show_model_btm: bool = False,
+            animation_kstpkpers=None,
             **kwargs
     ):
         """
@@ -105,6 +106,7 @@ class XSection:
         self._kwargs = kwargs
         self.show_model_top = show_model_top
         self.show_model_btm = show_model_btm
+        self.animation_kstpkpers = list(model.kstpkper if animation_kstpkpers is None else animation_kstpkpers)
         self._overlapping_cells = None
         self._xs = None
         self._model_top = None
@@ -511,7 +513,8 @@ class XSection:
         if self.interpolator:
             print(f'using {self.interpolator} interpolation method')
 
-        for per in self.model.kstpkper:
+        periods = self.animation_kstpkpers
+        for per in periods:
 
             print(f'reading kstpkper {per}', end='\r')
             try:
@@ -572,15 +575,6 @@ class XSection:
 
         y_max = y_max + ((y_max - y_min) * 0.05)  # add a buffer of 5% of the total y-span to y max
 
-        for frame in frames:
-            frame.update(dict1={
-                'layout': {
-                    'yaxis': {
-                        'range': [y_min, y_max]
-                    }
-                }
-            })
-
         # define figure and update layout to include buttons and slider
         fig = f.Fig(
             data=self.fig.data,
@@ -590,9 +584,10 @@ class XSection:
             yaxis={
                 'range': [y_min, y_max]
             },
-            updatemenus=Animation(self.model).updatemenus)
+            updatemenus=Animation(self.model, periods=periods).updatemenus)
         fig.update_layout(
-            sliders=Animation(self.model).sliders,
+            sliders=Animation(self.model, periods=periods).sliders,
+            uirevision="lock",
             xaxis=dict(uirevision="lock"),
             yaxis=dict(uirevision="lock"),
         )

@@ -21,6 +21,21 @@ if TYPE_CHECKING:
         SfrFlowTargets,
         SfrStageTargets,
     )
+    from simple_modflow.modflow.mf6.interactive_plotting import (
+        FrameExportProgress,
+        ModelMapStyle,
+        ModelVisualization,
+        ParticleTrackingScene,
+        StandaloneHtmlSlider,
+        build_particle_tracking_scene,
+        export_cross_section_slider_html,
+        export_head_layer_mosaic_slider_html,
+        export_head_map_slider_html,
+        export_matplotlib_slider_html,
+        export_particle_tracking_html,
+        plot_model_head_map,
+        plot_particle_pathlines,
+    )
     from simple_modflow.modflow.mf6.pest import (
         DrainConductanceParameter,
         DrainElevationParameter,
@@ -37,6 +52,32 @@ if TYPE_CHECKING:
         VectorParameterSource,
         open_pest_run,
     )
+    from simple_modflow.modflow.mf6.prt import (
+        ParticleTracking,
+        PRTProject,
+        PRTReleasePoints,
+        PRTRunResults,
+        open_prt_run,
+    )
+    from simple_modflow.modflow.mf6.parallel import (
+        ParallelCompatibilityError,
+        ParallelEnvironment,
+        ParallelModelWorkflow,
+        ParallelSplitResults,
+        ParallelSplitRun,
+    )
+    from simple_modflow.modflow.mf6.canonical import (
+        CANONICAL_MODEL_CONTRACT,
+        CanonicalModelContract,
+        canonical_feature_signals,
+        canonical_head_signals,
+        canonical_partition_mask,
+        canonical_sfr_signals,
+    )
+    from simple_modflow.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        build_canonical_model,
+    )
     from simple_modflow.modflow.mf6.recharge import RCHFromVector
     from simple_modflow.modflow.mf6.surface_water_validation import (
         SurfaceWaterValidationIssue,
@@ -46,6 +87,7 @@ if TYPE_CHECKING:
     from simple_modflow.modflow.mf6.simplemodel import SimpleModel, SimpleModelConfig, build_simple_model
     from simple_modflow.modflow.mp3du import ParticleTrackingInput, prepare_particle_tracking, run_particle_tracking
     from simple_modflow.modflow.mf6.simulation.base import SimulationBase
+    from simple_modflow.modflow.mf6.simulation.packages import Wells
     from simple_modflow.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
     from simple_modflow.project import (
         DiscoveredRun,
@@ -83,6 +125,14 @@ _EXPORTS = {
     "ModelGroup": ("simple_modflow.project", "ModelGroup"),
     "PackageArtifact": ("simple_modflow.project", "PackageArtifact"),
     "PackageCompatibilityError": ("simple_modflow.project", "PackageCompatibilityError"),
+    "ParallelCompatibilityError": ("simple_modflow.modflow.mf6.parallel", "ParallelCompatibilityError"),
+    "ParallelEnvironment": ("simple_modflow.modflow.mf6.parallel", "ParallelEnvironment"),
+    "ParallelModelWorkflow": ("simple_modflow.modflow.mf6.parallel", "ParallelModelWorkflow"),
+    "ParallelSplitResults": ("simple_modflow.modflow.mf6.parallel", "ParallelSplitResults"),
+    "ParallelSplitRun": ("simple_modflow.modflow.mf6.parallel", "ParallelSplitRun"),
+    "CANONICAL_MODEL_CONTRACT": ("simple_modflow.modflow.mf6.canonical", "CANONICAL_MODEL_CONTRACT"),
+    "CanonicalModelContract": ("simple_modflow.modflow.mf6.canonical", "CanonicalModelContract"),
+    "CanonicalModelConfig": ("simple_modflow.modflow.mf6.canonical_example", "CanonicalModelConfig"),
     "ProjectCatalog": ("simple_modflow.project", "ProjectCatalog"),
     "RunComparison": ("simple_modflow.project", "RunComparison"),
     "RunExplorer": ("simple_modflow.project", "RunExplorer"),
@@ -99,6 +149,12 @@ _EXPORTS = {
     "DrnFlowTargets": ("simple_modflow.modflow.mf6.observations", "DrnFlowTargets"),
     "GHBFromVector": ("simple_modflow.modflow.mf6.ghb", "GHBFromVector"),
     "HeadTargets": ("simple_modflow.modflow.mf6.observations", "HeadTargets"),
+    "ModelMapStyle": ("simple_modflow.modflow.mf6.interactive_plotting", "ModelMapStyle"),
+    "FrameExportProgress": ("simple_modflow.modflow.mf6.interactive_plotting", "FrameExportProgress"),
+    "ModelVisualization": ("simple_modflow.modflow.mf6.interactive_plotting", "ModelVisualization"),
+    "ParticleTrackingScene": ("simple_modflow.modflow.mf6.interactive_plotting", "ParticleTrackingScene"),
+    "ParticleTracking": ("simple_modflow.modflow.mf6.prt", "ParticleTracking"),
+    "StandaloneHtmlSlider": ("simple_modflow.modflow.mf6.interactive_plotting", "StandaloneHtmlSlider"),
     "LakeStageTargets": ("simple_modflow.modflow.mf6.observations", "LakeStageTargets"),
     "SfrStageTargets": ("simple_modflow.modflow.mf6.observations", "SfrStageTargets"),
     "SfrFlowTargets": ("simple_modflow.modflow.mf6.observations", "SfrFlowTargets"),
@@ -116,6 +172,9 @@ _EXPORTS = {
     "PestProject": ("simple_modflow.modflow.mf6.pest", "PestProject"),
     "PestRunReview": ("simple_modflow.modflow.mf6.pest", "PestRunReview"),
     "PestRunResults": ("simple_modflow.modflow.mf6.pest", "PestRunResults"),
+    "PRTProject": ("simple_modflow.modflow.mf6.prt", "PRTProject"),
+    "PRTReleasePoints": ("simple_modflow.modflow.mf6.prt", "PRTReleasePoints"),
+    "PRTRunResults": ("simple_modflow.modflow.mf6.prt", "PRTRunResults"),
     "RCHFromVector": ("simple_modflow.modflow.mf6.recharge", "RCHFromVector"),
     "SimpleModel": ("simple_modflow.modflow.mf6.simplemodel", "SimpleModel"),
     "SimpleModelConfig": ("simple_modflow.modflow.mf6.simplemodel", "SimpleModelConfig"),
@@ -131,8 +190,40 @@ _EXPORTS = {
     "TriangleGrid": ("simple_modflow.modflow.mf6.grid.triangle", "TriangleGrid"),
     "VectorParameterSource": ("simple_modflow.modflow.mf6.pest", "VectorParameterSource"),
     "open_pest_run": ("simple_modflow.modflow.mf6.pest", "open_pest_run"),
+    "open_prt_run": ("simple_modflow.modflow.mf6.prt", "open_prt_run"),
     "VoronoiGridPlus": ("simple_modflow.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
     "build_simple_model": ("simple_modflow.modflow.mf6.simplemodel", "build_simple_model"),
+    "build_canonical_model": ("simple_modflow.modflow.mf6.canonical_example", "build_canonical_model"),
+    "canonical_head_signals": ("simple_modflow.modflow.mf6.canonical", "canonical_head_signals"),
+    "canonical_feature_signals": ("simple_modflow.modflow.mf6.canonical", "canonical_feature_signals"),
+    "canonical_sfr_signals": ("simple_modflow.modflow.mf6.canonical", "canonical_sfr_signals"),
+    "canonical_partition_mask": ("simple_modflow.modflow.mf6.canonical", "canonical_partition_mask"),
+    "build_particle_tracking_scene": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "build_particle_tracking_scene",
+    ),
+    "export_cross_section_slider_html": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "export_cross_section_slider_html",
+    ),
+    "export_head_layer_mosaic_slider_html": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "export_head_layer_mosaic_slider_html",
+    ),
+    "export_head_map_slider_html": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "export_head_map_slider_html",
+    ),
+    "export_matplotlib_slider_html": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "export_matplotlib_slider_html",
+    ),
+    "export_particle_tracking_html": (
+        "simple_modflow.modflow.mf6.interactive_plotting",
+        "export_particle_tracking_html",
+    ),
+    "plot_model_head_map": ("simple_modflow.modflow.mf6.interactive_plotting", "plot_model_head_map"),
+    "plot_particle_pathlines": ("simple_modflow.modflow.mf6.interactive_plotting", "plot_particle_pathlines"),
     "ParticleTrackingInput": ("simple_modflow.modflow.mp3du", "ParticleTrackingInput"),
     "prepare_particle_tracking": ("simple_modflow.modflow.mp3du", "prepare_particle_tracking"),
     "run_particle_tracking": ("simple_modflow.modflow.mp3du", "run_particle_tracking"),

@@ -29,13 +29,16 @@ class SFRStageOutput:
         self.model = model
 
     def get(self):
-        """Return a reach-by-period dataframe of stream stage output."""
+        """Return a reach-by-saved-timestep dataframe of stream stage output."""
 
         nreaches = self.model.sfr.nreaches.data
-        stages = self.model.sfr.output.stage().get_alldata()
-        stage_data = stages.reshape(self.model.nper, nreaches).transpose()
-        frame = pd.DataFrame(stage_data)
+        reader = self.model.sfr.output.stage()
+        kstpkpers = [tuple(value) for value in reader.get_kstpkper()]
+        stages = reader.get_alldata()
+        stage_data = stages.reshape(len(kstpkpers), nreaches).transpose()
+        frame = pd.DataFrame(stage_data, columns=kstpkpers)
         frame.index.name = "reaches"
+        frame.columns.name = "kstpkper"
         return frame
 
 

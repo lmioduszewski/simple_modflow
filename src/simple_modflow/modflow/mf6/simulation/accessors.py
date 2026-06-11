@@ -29,19 +29,19 @@ class ModelOutputs:
         self.model = model
 
     @property
-    def lak(self):
+    def lak(self) -> LakOutputData:
         """Return the lake output helper."""
 
         return get_lak_output(self.model)
 
     @property
-    def uzf(self):
+    def uzf(self) -> UzfOutputData:
         """Return the UZF output helper."""
 
         return get_uzf_output(self.model)
 
     @property
-    def sfr(self):
+    def sfr(self) -> SFROutputData:
         """Return the SFR output helper."""
 
         return get_sfr_output(self.model)
@@ -68,6 +68,7 @@ def build_choro(
     *,
     kstpkper: tuple = None,
     per: int = None,
+    per_timestep: int | str = "last",
     layer: int = 0,
     type: str = 'hds',
     custom_hover: dict = None,
@@ -75,6 +76,8 @@ def build_choro(
     zmin: float | int = None,
     zmax: float | int = None,
     zoom: int = 13,
+    fit_bounds: bool = True,
+    bounds_padding: float = 0.05,
     show_layer_elevs: bool = True,
     show_mounding: bool = False,
     hover_heads: bool = True,
@@ -85,6 +88,15 @@ def build_choro(
     hillshade_path: Path = None,
     colorscale: str = None,
     logscale: bool = False,
+    contours: bool | str = False,
+    contour_values=None,
+    contour_levels: int | float | list[float] = 10,
+    contour_color: str = "black",
+    contour_width: float = 1.5,
+    contour_name: str = None,
+    contour_clip: bool = True,
+    contour_resolution: int = 150,
+    contour_method: str = "linear",
     **kwargs,
 ) -> Choro:
     """Build the standard choropleth wrapper for model result exploration.
@@ -96,6 +108,7 @@ def build_choro(
         model=model,
         kstpkper=kstpkper,
         per=per,
+        per_timestep=per_timestep,
         layer=layer,
         type=type,
         custom_hover=custom_hover,
@@ -103,6 +116,8 @@ def build_choro(
         zmin=zmin,
         zmax=zmax,
         zoom=zoom,
+        fit_bounds=fit_bounds,
+        bounds_padding=bounds_padding,
         show_layer_elevs=show_layer_elevs,
         show_mounding=show_mounding,
         hover_heads=hover_heads,
@@ -113,6 +128,15 @@ def build_choro(
         hillshade_path=hillshade_path,
         colorscale=colorscale,
         logscale=logscale,
+        contours=contours,
+        contour_values=contour_values,
+        contour_levels=contour_levels,
+        contour_color=contour_color,
+        contour_width=contour_width,
+        contour_name=contour_name,
+        contour_clip=contour_clip,
+        contour_resolution=contour_resolution,
+        contour_method=contour_method,
         **kwargs,
     )
 
@@ -132,6 +156,7 @@ def build_xsection(
     use_rbf: bool = False,
     show_model_top=True,
     show_model_btm=False,
+    animation_kstpkpers=None,
 ):
     """Build the standard cross-section helper for a model."""
     return XSection(
@@ -148,6 +173,7 @@ def build_xsection(
         use_rbf=use_rbf,
         show_model_top=show_model_top,
         show_model_btm=show_model_btm,
+        animation_kstpkpers=animation_kstpkpers,
     )
 
 

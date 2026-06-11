@@ -54,6 +54,12 @@ if TYPE_CHECKING:
 
     from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from simple_modflow.modflow.mf6.sfr import SFR
+    from simple_modflow.modflow.mf6.interactive_plotting import ModelVisualization
+    from simple_modflow.modflow.mf6.observations import TargetRegistry
+    from simple_modflow.modflow.mf6.package_explorer import ModelPackages
+    from simple_modflow.modflow.mf6.parallel import ParallelModelWorkflow
+    from simple_modflow.modflow.mf6.prt import ParticleTracking
+    from simple_modflow.modflow.mf6.simulation.accessors import ModelOutputs
 
 
 class SimulationBase:
@@ -189,6 +195,9 @@ class SimulationBase:
         self.auto_apply_package_artifacts = bool(auto_apply_package_artifacts)
         self.regions = RegionRegistry(self)
         self._targets = None
+        self._visualize = None
+        self._particle_tracking = None
+        self._parallel = None
 
         self.per_dates = per_dates
         self.idomain_path = idomain_path
@@ -254,7 +263,7 @@ class SimulationBase:
         return sorted(self.gwf.get_package_list())
 
     @property
-    def targets(self):
+    def targets(self) -> "TargetRegistry":
         """Model-bound registry for reusable calibration target sets."""
 
         if self._targets is None:
@@ -262,6 +271,36 @@ class SimulationBase:
 
             self._targets = TargetRegistry(self)
         return self._targets
+
+    @property
+    def visualize(self) -> "ModelVisualization":
+        """Model-bound standalone visualization and export helpers."""
+
+        if self._visualize is None:
+            from simple_modflow.modflow.mf6.interactive_plotting import ModelVisualization
+
+            self._visualize = ModelVisualization(self)
+        return self._visualize
+
+    @property
+    def particle_tracking(self) -> "ParticleTracking":
+        """Model-bound MF6 PRT and MP3DU workflow entry point."""
+
+        if self._particle_tracking is None:
+            from simple_modflow.modflow.mf6.prt import ParticleTracking
+
+            self._particle_tracking = ParticleTracking(self)
+        return self._particle_tracking
+
+    @property
+    def parallel(self) -> "ParallelModelWorkflow":
+        """Model-bound unified splitting and parallel execution workflow."""
+
+        if self._parallel is None:
+            from simple_modflow.modflow.mf6.parallel import ParallelModelWorkflow
+
+            self._parallel = ParallelModelWorkflow(self)
+        return self._parallel
 
     @property
     def grid_type(self) -> str:
@@ -408,6 +447,7 @@ class SimulationBase:
         self,
         kstpkper: tuple = None,
         per: int = None,
+        per_timestep: int | str = "last",
         layer: int = 0,
         type: str = 'hds',
         custom_hover: dict = None,
@@ -415,6 +455,8 @@ class SimulationBase:
         zmin: float | int = None,
         zmax: float | int = None,
         zoom: int = 13,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
         show_layer_elevs: bool = True,
         show_mounding: bool = False,
         hover_heads: bool = True,
@@ -425,6 +467,15 @@ class SimulationBase:
         hillshade_path: Path = None,
         colorscale: str = None,
         logscale: bool = False,
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list[float] = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
         **kwargs,
     ):
         """Build a choropleth-style spatial plot from heads or other model values."""
@@ -433,6 +484,7 @@ class SimulationBase:
             self,
             kstpkper=kstpkper,
             per=per,
+            per_timestep=per_timestep,
             layer=layer,
             type=type,
             custom_hover=custom_hover,
@@ -440,6 +492,8 @@ class SimulationBase:
             zmin=zmin,
             zmax=zmax,
             zoom=zoom,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
             show_layer_elevs=show_layer_elevs,
             show_mounding=show_mounding,
             hover_heads=hover_heads,
@@ -450,6 +504,15 @@ class SimulationBase:
             hillshade_path=hillshade_path,
             colorscale=colorscale,
             logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
             **kwargs,
         )
 
@@ -467,6 +530,7 @@ class SimulationBase:
         use_rbf: bool = False,
         show_model_top=True,
         show_model_btm=False,
+        animation_kstpkpers=None,
     ):
         """Build a cross-section style plot/view through the current model."""
 
@@ -484,6 +548,7 @@ class SimulationBase:
             use_rbf=use_rbf,
             show_model_top=show_model_top,
             show_model_btm=show_model_btm,
+            animation_kstpkpers=animation_kstpkpers,
         )
 
     @property
@@ -493,13 +558,13 @@ class SimulationBase:
         return get_inputs(self)
 
     @property
-    def outputs(self):
+    def outputs(self) -> "ModelOutputs":
         """Namespace of package-specific output helpers."""
 
         return get_outputs(self)
 
     @property
-    def packages(self):
+    def packages(self) -> "ModelPackages":
         """Preferred package exploration namespace for inputs and maps.
 
         This is the higher-level package inspection surface intended to grow

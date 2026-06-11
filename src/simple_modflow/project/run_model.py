@@ -298,6 +298,9 @@ class LoadedMf6Run(SimulationBase):
         self._idomain = None
         self._grid_type_override = grid_type if grid_type != "unknown" else None
         self._targets = None
+        self._visualize = None
+        self._particle_tracking = None
+        self._parallel = None
         self.regions = RegionRegistry(self)
         self.source = "mf6_files"
         self._model_name = model_name
@@ -423,21 +426,23 @@ class LoadedMf6Run(SimulationBase):
     ):
         """Load the FloPy simulation with the requested package subset."""
 
+        display_verbosity = self._verbosity_level if self._verbosity_level > 0 else 1
+
         if load_only is None:
-            _progress(self._verbosity_level, f"Loading full MF6 simulation from: {self.workspace}")
+            _progress(display_verbosity, f"Loading full MF6 simulation from: {self.workspace}")
         else:
             _progress(
-                self._verbosity_level,
+                display_verbosity,
                 f"Loading MF6 packages for {reason}: {', '.join(package.upper() for package in load_only)}",
             )
         sim = flopy.mf6.MFSimulation.load(
             sim_ws=str(self.workspace),
             load_only=load_only,
             lazy_io=True,
-            verbosity_level=self._verbosity_level,
+            verbosity_level=display_verbosity,
         )
         patch_simulation_plot(sim)
-        _progress(self._verbosity_level, f"Locating GWF model '{self._model_name}'")
+        _progress(display_verbosity, f"Locating GWF model '{self._model_name}'")
         gwf = sim.get_model(self._model_name)
         if gwf is None:
             raise FileNotFoundError(
@@ -471,6 +476,18 @@ class LoadedMf6Run(SimulationBase):
 
         normalized = self._normalize_package_names(package_names)
         if all(name.upper() in self._loaded_package_types for name in normalized):
+            return
+
+        # For exploratory file-backed workflows, repeatedly reloading FloPy with a
+        # slightly larger ``load_only`` set is much slower than paying one full
+        # load once. After the initial core/grid load, the first non-core package
+        # request therefore upgrades the loaded run to a full package load.
+        missing_non_core = [
+            name for name in normalized
+            if name.upper() not in _CORE_PACKAGE_TYPES and name.upper() not in self._loaded_package_types
+        ]
+        if missing_non_core and not self._fully_loaded:
+            self._load_simulation(load_only=None, mark_full=True, reason="package access warm load")
             return
 
         target = {name.lower() for name in normalized}

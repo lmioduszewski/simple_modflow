@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,6 +25,64 @@ import rasterio
 from rasterio.warp import transform_bounds
 from PIL import Image
 import base64, mimetypes
+from simple_modflow.modflow.mf6.contour_plotting import contour_line_segments_latlon
+
+
+def _content_aware_hover(name_dict: dict[str, list]):
+    """Build hover metadata with readable significant digits for numeric values."""
+
+    names = list(name_dict)
+    values = [list(name_dict[name]) for name in names]
+    custom_data = [list(row) for row in zip(*values)]
+    template = []
+    for index, name in enumerate(names):
+        non_null = next(
+            (
+                value
+                for value in values[index]
+                if value is not None and not (isinstance(value, float) and np.isnan(value))
+            ),
+            None,
+        )
+        if isinstance(non_null, (float, np.floating)):
+            value_template = f"%{{customdata[{index}]:.3g}}"
+        else:
+            value_template = f"%{{customdata[{index}]}}"
+        template.append(f"<b>{name}: </b>{value_template}<br>")
+    template.append("<extra></extra>")
+    return custom_data, "".join(template)
+
+
+def _as_cell_vector(values, *, ncpl: int, label: str):
+    """Flatten DIS/DISV per-cell arrays to one value per cell."""
+
+    arr = np.asarray(values)
+    arr = np.squeeze(arr)
+    if arr.ndim == 0:
+        return np.full(int(ncpl), arr.item())
+    if arr.size == int(ncpl):
+        return arr.reshape(-1)
+    raise ValueError(f"{label} must contain one value per cell; got shape={arr.shape}, ncpl={ncpl}.")
+
+
+def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, height: int = 700) -> float:
+    """Estimate a Plotly map zoom that initially fits unconstrained WGS84 bounds."""
+
+    west, south, east, north = map(float, bounds)
+    south = max(south, -85.051129)
+    north = min(north, 85.051129)
+    scale = 1.0 + (2.0 * float(padding))
+
+    lon_fraction = max(abs(east - west) * scale / 360.0, 1.0e-12)
+
+    def mercator_y(latitude):
+        radians = np.radians(latitude)
+        return (1.0 - np.log(np.tan(radians) + (1.0 / np.cos(radians))) / np.pi) / 2.0
+
+    lat_fraction = max(abs(mercator_y(north) - mercator_y(south)) * scale, 1.0e-12)
+    lon_zoom = np.log2(float(width) / 512.0 / lon_fraction)
+    lat_zoom = np.log2(float(height) / 512.0 / lat_fraction)
+    return float(np.clip(min(lon_zoom, lat_zoom), 0.0, 20.0))
 
 
 class Choro:
@@ -34,6 +93,7 @@ class Choro:
             vor: Vor = None,
             kstpkper: tuple = None,
             per: int = None,
+            per_timestep: int | str = "last",
             layer: int = 0,
             type: str = 'hds',
             custom_hover: dict = None,
@@ -41,6 +101,8 @@ class Choro:
             zmin: float | int = None,
             zmax: float | int = None,
             zoom: int = 13,
+            fit_bounds: bool = True,
+            bounds_padding: float = 0.05,
             show_layer_elevs: bool = True,
             show_mounding: bool = False,
             hover_heads: bool = True,
@@ -51,6 +113,16 @@ class Choro:
             hillshade_path: Path = None,
             colorscale: str = None,
             logscale: bool = False,
+            contours: bool | str = False,
+            contour_values: list | np.ndarray | pd.Series = None,
+            contour_levels: int | float | list[float] = 10,
+            contour_color: str = "black",
+            contour_width: float = 1.5,
+            contour_name: str = None,
+            contour_clip: bool = True,
+            contour_resolution: int = 150,
+            contour_method: str = "linear",
+            animation_kstpkpers=None,
             **kwargs
 
     ):
@@ -59,8 +131,11 @@ class Choro:
         :param model: a modflow simulation object. SimulationBase is the base class for all modflow simulations.
         :param vor: a VoronoiGridPlus object.
         :param kstpkper: tuple of stress period and time step to plot
-        :param per: can just provide stress period. appropriate kstpkper tuple will be determined, will throw an
-        error if more than one valid kstpkper in the model output exists with the provided per
+        :param per: stress period to plot. Defaults to the final saved timestep
+        in that stress period.
+        :param per_timestep: saved timestep to use with ``per``. Accepts
+        ``"last"``, ``"first"``, a zero-based saved-output index, or an exact
+        zero-based MODFLOW timestep number.
         :param layer: what layer to plot, a zero-index. 0 equals layer 1.
         :param type: type of choropleth to plot - options are 'hds', 'ks', 'input_rch', 'output_rch'
         :param custom_hover: custom dictionary of hover labels to use for choropleth.
@@ -69,6 +144,8 @@ class Choro:
         :param zmin: minimum z value to use for choropleth colorscale.
         :param zmax: maximum z value to use for choropleth colorscale.
         :param zoom: zoom level for choropleth map. Default is 13.
+        :param fit_bounds: calculate an unconstrained initial view fitted to the model polygons.
+        :param bounds_padding: fractional padding added around fitted model bounds.
         :param show_layer_elevs: Default is True. To show elevations of all layers on hover
         :param show_mounding: if True, colorscale will be mounding over given Layer
         :param hover_heads: boolean to show heads on hover.
@@ -88,6 +165,7 @@ class Choro:
         else:
             self.kstpkper = None
         self._per = None
+        self.per_timestep = per_timestep
         self.per = per
         self._layer = layer
         self.type = type
@@ -97,6 +175,10 @@ class Choro:
         self._locs = None
         self._zmax = zmax
         self.zoom = zoom
+        self.fit_bounds = fit_bounds
+        self.bounds_padding = float(bounds_padding)
+        if self.bounds_padding < 0:
+            raise ValueError("bounds_padding must be zero or greater.")
         self.show_layer_elevs = show_layer_elevs
         self.show_mounding = show_mounding
         self.hover_heads = hover_heads
@@ -107,6 +189,21 @@ class Choro:
         self._show_mounding_above_ground = False
         self._colorscale = None
         self.logscale = logscale
+        self.contours = contours
+        self.contour_values = contour_values
+        self.contour_levels = contour_levels
+        self.contour_color = contour_color
+        self.contour_width = contour_width
+        self.contour_name = contour_name
+        self.contour_clip = contour_clip
+        self.contour_resolution = contour_resolution
+        self.contour_method = contour_method
+        self.animation_kstpkpers = (
+            list(self.model.kstpkper)
+            if animation_kstpkpers is None and self.model is not None
+            else list(animation_kstpkpers or [])
+        )
+        self._contour_segments = []
         self.kwargs = kwargs
 
         self.fig = Fig()
@@ -131,11 +228,30 @@ class Choro:
     @per.setter
     def per(self, per):
         if per is not None:
-            kstpkper = self.model.kstpkper
-            per_idx = [i for i, period in enumerate(list(zip(*kstpkper))[1]) if period == per]
-            assert len(per_idx) == 1, f'more than one kstpkper with stress period - {per}. Provide unique kstpkper.'
-            per_tpl = kstpkper[per_idx[0]]
-            self.kstpkper = per_tpl
+            matches = [tuple(value) for value in self.model.kstpkper if int(value[1]) == int(per)]
+            if not matches:
+                available = sorted({int(value[1]) for value in self.model.kstpkper})
+                raise ValueError(f"Stress period {per} is unavailable. Available periods: {available}")
+
+            selector = self.per_timestep
+            if selector == "last":
+                selected = matches[-1]
+            elif selector == "first":
+                selected = matches[0]
+            elif isinstance(selector, int):
+                exact = [value for value in matches if int(value[0]) == selector]
+                if exact:
+                    selected = exact[0]
+                elif -len(matches) <= selector < len(matches):
+                    selected = matches[selector]
+                else:
+                    raise ValueError(
+                        f"per_timestep={selector} is unavailable for stress period {per}. "
+                        f"Available kstpkper values: {matches}"
+                    )
+            else:
+                raise ValueError("per_timestep must be 'first', 'last', or an integer.")
+            self.kstpkper = selected
         self._per = per
 
     @property
@@ -149,6 +265,81 @@ class Choro:
         if self._all_ks is None:
             self._all_ks = self.model.gwf.npf.k.data
         return self._all_ks
+
+    def _cell_vector(self, values, label: str):
+        return _as_cell_vector(values, ncpl=self.vor.ncpl, label=label)
+
+    def _top_vector(self):
+        return self._cell_vector(self.model.gwf.modelgrid.top, "model top")
+
+    def _bottom_vector(self, layer: int):
+        return self._cell_vector(self.model.gwf.modelgrid.botm[layer], f"layer {layer + 1} bottom")
+
+    def _contour_vector(self):
+        """Return values used for optional contour overlays."""
+
+        if self.contour_values is not None:
+            return self._cell_vector(self.contour_values, "contour values")
+        if self.contours is True:
+            return self._cell_vector(self.zs, "choropleth values")
+        contour_key = str(self.contours).lower()
+        if contour_key in {"top", "model_top", "model top"}:
+            return self._top_vector()
+        if contour_key in {"bottom", "botm", "layer_bottom", "layer bottom"}:
+            return self._bottom_vector(self.layer)
+        if contour_key in {"heads", "head", "hds"}:
+            return self._cell_vector(
+                self.all_heads.loc[idxx[self.kstpkper, self.layer], "elev"].reset_index(drop=True),
+                f"layer {self.layer + 1} heads",
+            )
+        raise ValueError(
+            "contours must be False, True, 'top', 'bottom', 'heads', or use contour_values."
+        )
+
+    def _active_cell_mask(self):
+        """Return active cells for the selected layer, defaulting to all cells."""
+
+        ncpl = int(self.vor.ncpl)
+        if self.model is None:
+            return np.ones(ncpl, dtype=bool)
+        idomain = getattr(getattr(self.model, "gwf", None).modelgrid, "idomain", None)
+        if idomain is None:
+            dis = getattr(self.model.gwf, "disv", None) or getattr(self.model.gwf, "disu", None) or getattr(self.model.gwf, "dis", None)
+            idomain_data = getattr(dis, "idomain", None)
+            idomain = getattr(idomain_data, "array", None)
+        if idomain is None:
+            return np.ones(ncpl, dtype=bool)
+        arr = np.asarray(idomain).squeeze()
+        if arr.ndim == 0:
+            return np.full(ncpl, bool(arr.item()))
+        if arr.ndim == 1:
+            if arr.size == ncpl:
+                return arr.astype(int) != 0
+            if arr.size == int(self.nlay) * ncpl:
+                return arr.reshape(int(self.nlay), ncpl)[int(self.layer)].astype(int) != 0
+        if arr.ndim >= 2:
+            if arr.shape[0] == int(self.nlay) and int(np.prod(arr.shape[1:])) == ncpl:
+                return arr.reshape(int(self.nlay), ncpl)[int(self.layer)].astype(int) != 0
+            if arr.size == int(self.nlay) * ncpl:
+                return arr.reshape(int(self.nlay), ncpl)[int(self.layer)].astype(int) != 0
+        return np.ones(ncpl, dtype=bool)
+
+    def _contour_clip_geometry(self):
+        """Return active model-domain geometry for contour clipping."""
+
+        if not self.contour_clip:
+            return None
+        mask = self._active_cell_mask()
+        if mask.size != int(self.vor.ncpl) or not mask.any():
+            return None
+        active = self.vor.gdf_vorPolys.loc[mask]
+        if active.empty:
+            return None
+        return active.union_all()
+
+    def _series_minus_cell_vector(self, series, values, label: str):
+        vector = self._cell_vector(values, label)
+        return pd.Series(pd.to_numeric(series, errors="coerce").to_numpy() - vector, index=series.index)
 
     @property
     def model(self):
@@ -198,6 +389,10 @@ class Choro:
     def hover_dict(self):
 
         if self.model is not None:
+            if self.kstpkper is not None:
+                kstp, kper = self.kstpkper
+                self._hover_dict['Time Step'] = [kstp] * self.vor.ncpl
+                self._hover_dict['Stress Period'] = [kper] * self.vor.ncpl
             if self.type == 'hds' or self.hover_heads is True:
                 for lyr in range(self.nlay):
                     lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], 'elev'].to_list()
@@ -214,18 +409,21 @@ class Choro:
         if self.show_layer_elevs:
             layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
             if self.model is not None:
-                botms = self.model.gwf.modelgrid.botm
-                top = self.model.gwf.modelgrid.top
+                botms = [
+                    self._bottom_vector(lyr)
+                    for lyr in range(self.model.gwf.modelgrid.nlay)
+                ]
+                top = self._top_vector()
             else:
                 botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1, self.vor.nlay).transpose()
                 top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1, 1).transpose()[
                     0]  # TODO why do i have to add [0]
             layer_nums = list(range(len(botms)))
             self._hover_dict.update(
-                {f'Top of Model': np.round(top, 2)})
+                {f'Top of Model': np.round(top, 2).tolist()})
             self._hover_dict.update(
                 {
-                    f'Layer {lyr + 1} Bottom': np.round(botm, 2) for lyr, botm in enumerate(botms)
+                    f'Layer {lyr + 1} Bottom': np.round(botm, 2).tolist() for lyr, botm in enumerate(botms)
                 }
             )
         if self.show_mounding:
@@ -233,11 +431,11 @@ class Choro:
                 self._show_mounding_above_ground = True
                 self.layer = 0
             if self._show_mounding_above_ground is True:
-                layer_bottom = self.model.gwf.modelgrid.top.transpose()
+                layer_bottom = self._top_vector()
             else:
-                layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
+                layer_bottom = self._bottom_vector(self.layer)
             z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
-            zs = z_hd - layer_bottom
+            zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
             # remove negative mounding values
             zs = zs.mask(zs < 0, 0)
             self._hover_dict.update(
@@ -260,8 +458,7 @@ class Choro:
                 )
         if self.bgs:
             z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
-            model_top = self.model.gwf.modelgrid.top.transpose()
-            zs = z_hd - model_top
+            zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
             self._hover_dict.update(
                 {
                     f'Layer {self.layer + 1} Below Ground': zs
@@ -286,7 +483,7 @@ class Choro:
 
     @custom_zs.setter
     def custom_zs(self, custom_zs):
-        if not isinstance(self.custom_zs, list):
+        if not isinstance(custom_zs, list):
             raise ValueError('custom_zs must be an instance of list')
         assert len(custom_zs) == self.vor.ncpl, 'customs zs must be provided for every cell'
         self._custom_zs = custom_zs
@@ -304,24 +501,23 @@ class Choro:
                     self._show_mounding_above_ground = True
                     self.layer = 0
                 if self._show_mounding_above_ground is True:
-                    layer_bottom = self.model.gwf.modelgrid.top.transpose()
+                    layer_bottom = self._top_vector()
                 else:
-                    layer_bottom = self.model.gwf.modelgrid.botm[self.layer].transpose()
+                    layer_bottom = self._bottom_vector(self.layer)
                 z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
                 z_hd.loc[z_hd == 1e+30] = np.nan  # make modflow empty elevations NaN
-                zs = z_hd - layer_bottom
+                zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
                 # remove negative mounding values
                 zs = zs.mask(zs < 0, 0)
             elif self.bgs is True:
                 z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
-                model_top = self.model.gwf.modelgrid.top.transpose()
-                zs = z_hd - model_top
+                zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
             else:
                 zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
                 zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
 
         elif self.type == 'ks' and self.model is not None:
-            zs = self.all_ks[self.layer].tolist()
+            zs = self._cell_vector(self.all_ks[self.layer], f"layer {self.layer + 1} Kh").tolist()
 
         elif self.type == 'output_rch' and self.model is not None:
             zs = self.output_rch_zs
@@ -426,22 +622,61 @@ class Choro:
             map_center = {"lat": self.vor.grid_centroid.y, "lon": self.vor.grid_centroid.x}
         else:
             map_center = None
+        map_layout = {
+            "style": "carto-voyager",
+            "center": map_center,
+        }
+        if self.fit_bounds and self.vor is not None:
+            map_layout["zoom"] = _initial_map_zoom(
+                self.vor.gdf_latlon.total_bounds,
+                padding=self.bounds_padding,
+            )
+        else:
+            map_layout["zoom"] = self.zoom
         self.fig.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            map_style="carto-voyager",
-            map_zoom=self.zoom,
-            map_center=map_center
+            map=map_layout,
+            uirevision="lock",
         )
 
     def add_choropleth(self):
         """creates a choropleth map based on the provided params and adds to the fig"""
-        custom_data, hover_template = create_hover(self.hover_dict)
+        custom_data, hover_template = _content_aware_hover(self.hover_dict)
         self.update_layout()
         self.fig.add_trace(self.get_choropleth())
 
+    def add_contours(self):
+        """Add optional contour lines to the choropleth map."""
+
+        if not self.contours and self.contour_values is None:
+            return
+        values = self._contour_vector()
+        segments = contour_line_segments_latlon(
+            self.vor,
+            values,
+            levels=self.contour_levels,
+            label=self.contour_name or "contour",
+            clip_geometry=self._contour_clip_geometry(),
+            resolution=self.contour_resolution,
+            method=self.contour_method,
+        )
+        self._contour_segments = segments
+        for segment in segments:
+            hover_text = f"{self.contour_name or 'Contour'}: {segment['level']:.6g}"
+            self.fig.add_scattermap(
+                mode="lines",
+                lon=segment["lon"].tolist(),
+                lat=segment["lat"].tolist(),
+                line={"color": self.contour_color, "width": self.contour_width},
+                name=self.contour_name or "Contour",
+                text=[hover_text] * len(segment["lon"]),
+                hovertemplate="%{text}<extra></extra>",
+                showlegend=False,
+            )
+
     def get_choropleth(self):
 
-        custom_data, hover_template = create_hover(self.hover_dict)
+        custom_data, hover_template = _content_aware_hover(self.hover_dict)
         choropleth = go.Choroplethmap(
             geojson=self.vor.latlon,
             featureidkey="id",
@@ -482,6 +717,7 @@ class Choro:
     @property
     def choropleth(self):
         self.add_choropleth()
+        self.add_contours()
         if self.locs is not None:
             self.add_locs()
         if self.hillshade_path is not None:
@@ -504,50 +740,81 @@ class Choro:
         """get animation frames for a choropleth plot"""
 
         frames = []
-        zmin = 1_000_000
-        zmax = 0
+        zmin = np.inf
+        zmax = -np.inf
 
-        for i, per in enumerate(self.model.kstpkper):
-            if i > 5:
-                continue
+        base_data = None
+        periods = getattr(self, "animation_kstpkpers", None)
+        if periods is None:
+            periods = list(self.model.kstpkper)
+        for per in periods:
             print(f'reading kstpkper {per}', end='\r')
             self.kstpkper = per
             choropleth = self.get_choropleth()
-            frame = go.Frame(data=choropleth, name=str(per), baseframe=str(self.model.kstpkper[0]))
-            frames.append(frame)
-            frame_zmin = round(choropleth.z.min())
-            frame_zmax = round(choropleth.z.max())
-            zmin = frame_zmin if frame_zmin < zmin else zmin
-            zmax = frame_zmax if frame_zmax > zmax else zmax
+            frame_values = np.asarray(choropleth.z, dtype=float)
+            finite_values = frame_values[np.isfinite(frame_values)]
+            if finite_values.size:
+                zmin = min(zmin, float(finite_values.min()))
+                zmax = max(zmax, float(finite_values.max()))
+            frames.append(
+                go.Frame(
+                    data=[choropleth],
+                    name=str(per),
+                    baseframe=str(periods[0]),
+                )
+            )
 
-        # make zmin and zmax the same for all frames
-        for frame in frames:
-            frame.data[0]['zmin'] = zmin
-            frame.data[0]['zmax'] = zmax
+        if frames:
+            requested_zmin = getattr(self, "_zmin", None)
+            requested_zmax = getattr(self, "_zmax", None)
+            shared_zmin = requested_zmin if requested_zmin is not None else zmin
+            shared_zmax = requested_zmax if requested_zmax is not None else zmax
+            base_data = copy.deepcopy(frames[0].data[0])
+            coloraxis = {
+                "colorscale": base_data.colorscale,
+                "cmin": shared_zmin,
+                "cmax": shared_zmax,
+                "cauto": False,
+                "colorbar": base_data.colorbar.to_plotly_json(),
+            }
+            for trace in [base_data, *(frame.data[0] for frame in frames)]:
+                trace.coloraxis = "coloraxis"
+                trace.colorscale = None
+                trace.zmin = None
+                trace.zmax = None
+        else:
+            base_data = None
+            coloraxis = None
 
         self.fig = Fig(
-            data=frames[0].data,
+            data=[base_data],
             frames=frames,
             layout=go.Layout(
+                coloraxis=coloraxis,
                 updatemenus=[
-                    dict(
-                        type="buttons",
-                        buttons=[dict(label="Play", method="animate", args=[None])],
-                    ),
+                    {
+                        "type": "buttons",
+                        "buttons": [
+                            {"label": "Play", "method": "animate", "args": [None]},
+                            {
+                                "label": "Pause",
+                                "method": "animate",
+                                "args": [[None], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}}],
+                            },
+                        ],
+                    }
                 ],
-                # sliders=sliders,
+                sliders=Animation(self.model, periods=periods).sliders,
             ),
         )
-        # self.fig.update_layout(updatemenus=Animation(self.model).updatemenus)
-        # self.fig.update_layout(sliders=Animation(self.model).sliders)
+        self.update_layout()
 
         return self.fig
 
     def plot(self):
-        fig = self.choropleth
-        """if self.hillshade_path is not None:
-            self.add_hillshade(self.hillshade_path)"""
-        self.fig.show()
+        """Return the Plotly figure for notebook display or explicit export."""
+
+        return self.choropleth
 
     def dash_selector(self):
 

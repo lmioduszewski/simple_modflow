@@ -218,6 +218,7 @@ class KFlow:
             model: "SimulationBase",
             k: list = None,
             k33_vert=None,
+            icelltype=1,
             perched: bool = False,
             save_specific_discharge: bool = True,
             artifact_id: str | None = None,
@@ -236,6 +237,9 @@ class KFlow:
             Horizontal hydraulic conductivity input.
         k33_vert
             Optional vertical conductivity input.
+        icelltype
+            Convertible/confined flag by layer or cell. The canonical four-layer
+            model uses ``[1, 1, 0, 0]``.
         perched
             Whether perched conditions are enabled.
         save_specific_discharge
@@ -249,7 +253,7 @@ class KFlow:
             model,
             pname="npf",
             filename_suffix="npf",
-            icelltype=1,
+            icelltype=icelltype,
             k=k,
             perched=perched,
             k33=k33_vert,
@@ -282,6 +286,7 @@ class Storage:
             specific_yield: float = 0.2,
             sto_steady: dict = None,
             sto_transient: dict = None,
+            iconvert=1,
 
     ):
         """Parameters
@@ -294,6 +299,8 @@ class Storage:
             Specific yield value for convertible cells.
         sto_steady, sto_transient
             MF6 steady-state and transient stress-period flags.
+        iconvert
+            Convertible/confined storage flag by layer or cell.
         """
         if sto_steady is None and sto_transient is None:
             sto_steady = {0: True}
@@ -305,7 +312,7 @@ class Storage:
             pname="sto",
             filename_suffix="sto",
             save_flows=True,
-            iconvert=1,
+            iconvert=iconvert,
             ss=specific_storage,
             sy=specific_yield,
             steady_state=sto_steady,
@@ -363,6 +370,47 @@ class Recharge:
             package=package,
             model=model,
             package_name="rch",
+            artifact_id=artifact_id,
+            artifact_catalog=artifact_catalog,
+            artifact_description=artifact_description,
+            artifact_tags=artifact_tags,
+            artifact_metadata=artifact_metadata,
+            artifact_overwrite=artifact_overwrite,
+        )
+
+
+class Wells:
+    """Create the MF6 WEL package using the shared package conventions."""
+
+    def __init__(
+            self,
+            model: "SimulationBase",
+            stress_period_data,
+            auxiliary=None,
+            boundnames: bool = True,
+            artifact_id: str | None = None,
+            artifact_catalog=None,
+            artifact_description: str | None = None,
+            artifact_tags: list[str] | None = None,
+            artifact_metadata: dict | None = None,
+            artifact_overwrite: bool = False,
+    ):
+        package = _build_gwf_package(
+            flopy.mf6.ModflowGwfwel,
+            model,
+            pname="wel",
+            filename_suffix="wel",
+            save_flows=True,
+            stress_period_data=stress_period_data,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+        )
+        _finalize_wrapper(
+            self,
+            attr_name="wel",
+            package=package,
+            model=model,
+            package_name="wel",
             artifact_id=artifact_id,
             artifact_catalog=artifact_catalog,
             artifact_description=artifact_description,

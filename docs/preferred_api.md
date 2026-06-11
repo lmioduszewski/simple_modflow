@@ -182,16 +182,51 @@ pst = pest.build_pst("first_slice.pst")
 
 ```python
 model.hds
+model.hds.long()
+model.hds.wide()
+model.hds.map(contours=True)
+model.hds.map(contours="top")
+model.hds.map(contours="bottom", contour_levels=10)
+model.hds.map(contours=True, contour_method="linear")
+model.hds.map(contours=True, contour_method="cubic", contour_resolution=150)
+model.hds.map(contours=True, contour_levels=[100, 105, 110])
 model.bud("drn")
 model.packages.rch.inputs.get()
 model.packages.rch.inputs.map(per=0)
+model.packages.wel.inputs.q.get()
+model.packages.wel.inputs.q.map(per=0)
+model.packages.ic.strt.get()
+model.packages.ic.strt.long()
+model.packages.ic.strt.map(layer=0)
+model.packages.npf.k.get()
+model.packages.npf.k.wide()
+model.packages.npf.k.map(layer=0)
+model.packages.npf.k.map(layer=0, contours=True)
+model.packages.npf.k.map(layer=0, contours=True, contour_method="cubic")
+model.packages.sto.ss.get()
+model.packages.sto.sy.get()
+model.packages.sto.ss.map(layer=0)
 model.packages.uzf.inputs.finf.get()
 model.packages.uzf.inputs.finf.map(per=0)
+model.packages.uzf.inputs.fields
+model.packages.uzf.inputs.summary()
+model.packages.uzf.inputs.pet.get()
+model.packages.uzf.inputs.rootact.map(per=0)
 model.packages.chd.results.q.get()
+model.packages.chd.results.q.wide()
+model.packages.chd.results.q.long()
+model.packages.chd.results.q.stack()
+model.packages.chd.results.q.plot_timeseries(cells=[1, 3])
 model.packages.chd.results.q.map(per=0)
 model.packages.uzf.results.gwrch.get()
+model.packages.uzf.results.gwrch.wide()
+model.packages.uzf.results.gwrch.long()
+model.packages.uzf.results.gwrch.plot_timeseries(cells=[0, 1])
 model.packages.uzf.results.gwrch.map(per=0)
+model.packages.uzf.results.fields
+model.packages.uzf.results.summary()
 model.packages.uzf.results.sat.get()
+model.packages.uzf.results.sat.plot_timeseries(cells=[0, 1])
 model.packages.uzf.results.sat.map(per=0)
 model.packages.lak.connections.get()
 model.packages.lak.connections.map()
@@ -285,6 +320,8 @@ run.bud("drn")
 run.packages.rch.inputs.get()
 run.packages.rch.inputs.map(per=0)
 run.packages.uzf.results.gwrch.get()
+run.packages.uzf.results.gwrch.wide()
+run.packages.uzf.results.gwrch.plot_timeseries(cells=[0, 1])
 run.packages.uzf.results.gwrch.map(per=0)
 run.packages.uzf.results.sat.get()
 run.packages.sfr.results.q.profile(per=0)
@@ -324,8 +361,12 @@ group.packages.chd.results.q.get()
 group.packages.chd.results.q.compare()
 group.packages.chd.results.q.map(model_name="postdev", per=0)
 group.packages.chd.results.q.compare_map(model_name="postdev", per=0)
+group.packages.chd.results.q.subplot_map(per=0)
+group.packages.chd.results.q.plot_timeseries(cells=[1, 3])
 group.packages.uzf.results.gwrch.get()
 group.packages.uzf.results.gwrch.compare()
+group.packages.uzf.results.gwrch.subplot_map(per=0)
+group.packages.uzf.results.gwrch.plot_timeseries(cells=[0, 1])
 group.packages.uzf.results.sat.get()
 group.packages.lak.connections.get()
 group.packages.lak.connections.map(model_name="postdev")
@@ -700,11 +741,18 @@ Examples:
 ```python
 run.packages.rch.inputs.get()
 run.packages.rch.inputs.map(per=0)
+run.packages.wel.inputs.q.get()
+run.packages.wel.inputs.q.map(per=0)
 run.packages.uzf.inputs.finf.get()
 run.packages.uzf.inputs.finf.map(per=0)
+run.packages.uzf.inputs.pet.get()
+run.packages.uzf.inputs.rootact.map(per=0)
 run.packages.chd.results.q.get()
+run.packages.chd.results.q.wide()
+run.packages.chd.results.q.long()
 run.packages.chd.results.q.map(per=0)
 run.packages.uzf.results.gwrch.get()
+run.packages.uzf.results.gwrch.stack()
 run.packages.uzf.results.gwrch.map(per=0)
 run.packages.uzf.results.sat.get()
 run.packages.uzf.results.sat.map(per=0)
@@ -784,8 +832,12 @@ Preferred grouped access:
 - `group.packages.rch.inputs.compare()`
 - `group.packages.rch.inputs.map(model_name="scenario", per=0)`
 - `group.packages.rch.inputs.compare_map(model_name="scenario", per=0)`
+- `group.packages.wel.inputs.get()`
+- `group.packages.wel.inputs.compare()`
 - `group.packages.uzf.inputs.finf.get()`
 - `group.packages.uzf.inputs.finf.compare()`
+- `group.packages.uzf.inputs.pet.get()`
+- `group.packages.uzf.inputs.pet.compare()`
 - `group.packages.uzf.inputs.finf.map(model_name="scenario", per=0)`
 - `group.packages.uzf.inputs.finf.compare_map(model_name="scenario", per=0)`
 - `group.packages.chd.results.q.get()`
@@ -880,6 +932,95 @@ The most useful notebooks for the preferred API are:
   wells, timestamped artifact workspaces, and optional fast/parallel run modes.
 - [import_existing_runs_workflow.ipynb](C:/Users/lukem/Python/Projects/simple_modflow/examples/mf6/notebooks/import_existing_runs_workflow.ipynb)
   Lazy run reopening and archive browsing.
+
+## Interactive Results and Particle Tracking
+
+Use `model.visualize` for the canonical interactive result-export surface:
+
+```python
+model.visualize.cross_section_slider_html(line, "cross_section.html")
+model.visualize.head_map_slider_html("head_map.html", layer=0)
+model.visualize.head_layer_mosaic_slider_html(
+    "head_mosaic.html",
+    dpi=240,
+    panel_figsize=(7, 5),
+)
+
+## Unified Parallel Model Splitting
+
+Use the same API for a single GWF model or a coupled GWF-GWT/GWE simulation.
+`simple_modflow` inspects the simulation and selects FloPy's appropriate
+splitting implementation internally.
+
+```python
+parallel = model.parallel.split_model(
+    workspace="parallel_run",
+    nparts=8,
+    active_only=True,
+)
+
+parallel.plot_partitions()
+parallel.summary()
+
+# Validate the split simulation before introducing MPI.
+parallel.run_serial()
+parallel.compare_heads()
+
+# Requires mpiexec and a parallel-enabled MODFLOW 6 executable.
+parallel.run(processors=8)
+
+# Reconstruct partitioned results onto the original model grid.
+heads = parallel.results.heads()
+```
+
+For the shortest workflow, preparation and execution can be combined:
+
+```python
+parallel = model.parallel.run(
+    workspace="parallel_run",
+    nparts=8,
+    processors=8,
+    validate_serial=True,
+)
+```
+
+For a hydrologically informed custom partition, pass an integer mask instead of
+`nparts`. Automatic masks require the optional `parallel` dependencies:
+
+```bash
+python -m pip install "simple_modflow[parallel]"
+```
+
+model.visualize.plotly_cross_section_animation(
+    cells=[10, 20, 30],
+    output_path="cross_section_plotly.html",
+)
+model.visualize.plotly_head_map_animation(
+    layer=0,
+    output_path="head_map_plotly.html",
+)
+```
+
+Use MF6 PRT as the preferred integrated particle-tracking engine:
+
+```python
+release_points = mf.PRTReleasePoints.from_cells(model, [100, 120, 140])
+prt = model.particle_tracking.prt(
+    workspace=model.workspace.parent / "prt",
+    release_points=release_points,
+)
+result = prt.run()
+
+result.plot_map()
+result.export_3d_html("prt_pathlines.html")
+```
+
+MP3DU remains available through `model.particle_tracking.mp3du(...)`.
+
+See:
+
+- [interactive_visualization_and_prt.md](C:/Users/lukem/Python/Projects/simple_modflow/docs/interactive_visualization_and_prt.md)
+- [princeton_2026_visualization_review.md](C:/Users/lukem/Python/Projects/simple_modflow/docs/princeton_2026_visualization_review.md)
 
 ## Where To Look Next
 

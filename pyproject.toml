@@ -30,12 +30,26 @@ viz = [
   "dash>=2.15",
   "dash-bootstrap-components>=1.5",
 ]
+viz3d = [
+  "pyvista>=0.48",
+  "trame>=3.0",
+  "trame-vtk>=2.0",
+  "trame-vuetify>=3.0",
+]
 dev = [
   "pytest>=8.0",
+]
+parallel = [
+  "h5py>=3.10",
+  "pymetis>=2023.1",
+  "scikit-learn>=1.3",
 ]
 
 [tool.setuptools]
 include-package-data = false
+
+[tool.setuptools.package-data]
+simple_modflow = ["py.typed", "**/*.pyi"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -69,4 +83,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
+markers = [
+  "canonical: integration test that must use the authoritative canonical model",
+  "unit: intentionally isolated small-fixture test that does not claim canonical coverage",
+]
 

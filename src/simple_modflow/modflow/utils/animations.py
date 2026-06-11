@@ -18,22 +18,24 @@ class Animation:
     :ivar model: The simulation model associated with the animation.
     :type model: SimulationBase
     """
-    def __init__(self, model: SimulationBase):
+    def __init__(self, model: SimulationBase, periods=None, redraw: bool = False):
         self.model = model
+        self.periods = list(model.kstpkper if periods is None else periods)
+        self.redraw = bool(redraw)
 
     @property
     def updatemenus(self):
         updatemenus = [{
             'type': 'buttons',
             'buttons': [
-                {'args': [None, {'frame': {'duration': 125, 'redraw': False},
+                {'args': [None, {'frame': {'duration': 125, 'redraw': self.redraw},
                                  'transition': {'duration': 0, 'easing': 'quad-in'},
                                  'fromcurrent': True,
                                  'mode': 'afterall'}],
                  'label': 'Play',
                  'method': 'animate'},
                 {'args': [[None], {'mode': 'immediate',
-                                   'frame': {'duration': 0, 'redraw': False}
+                                   'frame': {'duration': 0, 'redraw': self.redraw}
                                    }],
                  'label': 'Pause',
                  'method': 'animate'}
@@ -62,7 +64,7 @@ class Animation:
             'y': 0,
             'steps': [{
                 'args': [[f'{per}'],
-                         {'frame': {'duration': 100, 'redraw': False},
+                         {'frame': {'duration': 100, 'redraw': self.redraw},
                           'mode': 'immediate',
                           'fromcurrent': True,
                           'transition': {
@@ -70,7 +72,7 @@ class Animation:
                               'easing': 'linear'
                           }}],
                 'label': f'{per}',
-                'method': 'animate'} for per in self.model.kstpkper]}
+                'method': 'animate'} for per in self.periods]}
         ]
 
         return sliders

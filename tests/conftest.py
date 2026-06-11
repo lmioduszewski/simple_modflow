@@ -7,8 +7,15 @@ from uuid import uuid4
 
 import pytest
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
+
+from simple_modflow.modflow.mf6.canonical import CANONICAL_MODEL_CONTRACT
+from simple_modflow.modflow.mf6.canonical_example import (
+    CanonicalModelConfig,
+    build_canonical_model,
+)
 
 
 def _pytest_temp_root() -> Path:
@@ -37,3 +44,29 @@ def tmp_path():
         shutil.rmtree(path)
     except OSError:
         pass
+
+
+@pytest.fixture
+def canonical_config():
+    """Return the scaled validation profile of the authoritative model."""
+
+    return CanonicalModelConfig.validation()
+
+
+@pytest.fixture
+def canonical_model(tmp_path, canonical_config):
+    """Build and contract-check the canonical model for integration tests."""
+
+    model = build_canonical_model(tmp_path / "canonical", config=canonical_config)
+    CANONICAL_MODEL_CONTRACT.validate(model)
+    return model
+
+
+@pytest.fixture
+def canonical_run(canonical_model):
+    """Run and return the contract-checked canonical integration model."""
+
+    success, report = canonical_model.run_simulation()
+    assert success, "\n".join(report[-30:])
+    CANONICAL_MODEL_CONTRACT.validate(canonical_model)
+    return canonical_model

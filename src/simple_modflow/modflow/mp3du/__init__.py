@@ -1,4 +1,4 @@
-"""Public MP3DU helpers for simple_modflow.
+"""Public MP3DU-engine helpers for simple_modflow.
 
 The supported particle-tracking surface is intentionally small:
 
@@ -6,9 +6,9 @@ The supported particle-tracking surface is intentionally small:
 - ``prepare_particle_tracking``
 - ``run_particle_tracking``
 
-Legacy FloPy helpers for the native MODFLOW ``PRT`` model live in
-``simple_modflow.modflow.mp3du.legacy_prt`` and are not part of the preferred
-API.
+The preferred native MODFLOW 6 PRT workflow lives in
+``simple_modflow.modflow.mf6.prt``. Legacy experimental PRT package wrappers
+remain in ``simple_modflow.modflow.mp3du.legacy_prt`` for compatibility only.
 """
 
 from .particles import (

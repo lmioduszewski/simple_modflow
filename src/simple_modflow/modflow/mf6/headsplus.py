@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from figs import Fig
 
 import pandas as pd
+import numpy as np
 import flopy.utils.binaryfile as bf
 from pathlib import Path
 from simple_modflow.modflow.utils.datatypes.datalists import convert_nested_to_int
@@ -25,6 +26,43 @@ from simple_modflow.modflow.mf6.heads_plotting import (
 )
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
+
+
+def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
+    """Return head data as a consistent ``(nlay, ncpl)`` array."""
+
+    values = np.asarray(data)
+    values = np.squeeze(values)
+
+    if values.ndim == 1:
+        if nlay == 1 and values.size == ncpl:
+            return values.reshape(1, ncpl)
+        if values.size == nlay * ncpl:
+            return values.reshape(nlay, ncpl)
+
+    if values.ndim == 2:
+        if values.shape == (nlay, ncpl):
+            return values
+        if values.shape == (ncpl, nlay):
+            return values.T
+        if nlay == 1 and values.size == ncpl:
+            return values.reshape(1, ncpl)
+        if values.size == nlay * ncpl:
+            return values.reshape(nlay, ncpl)
+
+    if values.ndim >= 3:
+        if values.shape[0] == nlay and int(np.prod(values.shape[1:])) == ncpl:
+            return values.reshape(nlay, ncpl)
+        if values.shape[-1] == nlay and int(np.prod(values.shape[:-1])) == ncpl:
+            return np.moveaxis(values, -1, 0).reshape(nlay, ncpl)
+
+    if values.size == nlay * ncpl:
+        return values.reshape(nlay, ncpl)
+
+    raise ValueError(
+        "Could not reshape heads to layer/cell form. "
+        f"Got shape={values.shape}, expected nlay={nlay}, ncpl={ncpl}."
+    )
 
 
 def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] | Path, **kwargs):
@@ -99,6 +137,67 @@ class HeadsPlus(bf.HeadFile):
             self._all_heads = self.get_all_heads()
         return self._all_heads
 
+    def long(self, *, values: str = "elev") -> pd.Series:
+        """Return heads as a long series indexed by ``kstpkper/layer/cell``."""
+
+        if values not in self.all_heads.columns:
+            raise KeyError(f"Heads value column {values!r} was not found.")
+        series = pd.to_numeric(self.all_heads[values], errors="coerce")
+        series.name = values
+        return series
+
+    def wide(
+        self,
+        *,
+        index: list[str] | tuple[str, ...] = ("layer", "cell"),
+        values: str = "elev",
+        agg: str = "first",
+    ) -> pd.DataFrame:
+        """Pivot heads to one row per layer/cell and one column per ``kstpkper``."""
+
+        if values not in self.all_heads.columns:
+            raise KeyError(f"Heads value column {values!r} was not found.")
+        frame = self.all_heads.reset_index()
+        missing_index = [column for column in index if column not in frame.columns]
+        if missing_index:
+            raise KeyError(f"Heads wide index columns were not found: {missing_index}")
+        wide = frame.pivot_table(
+            index=list(index),
+            columns="kstpkper",
+            values=values,
+            aggfunc=agg,
+        )
+        wide.columns = [f"kstpkper_{kstp}_{kper}" for kstp, kper in wide.columns]
+        return wide.reset_index()
+
+    def map(
+        self,
+        *,
+        per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
+        layer: int = 0,
+        contours: bool | str = False,
+        contour_levels: int | float | list[float] = 10,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        **kwargs,
+    ):
+        """Return a choropleth map of heads, optionally with contour overlays."""
+
+        if self.model is None:
+            raise ValueError("HeadsPlus.map() requires a parent model.")
+        return self.model.cor(
+            per=per,
+            kstpkper=kstpkper,
+            layer=layer,
+            type="hds",
+            contours=contours,
+            contour_levels=contour_levels,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            **kwargs,
+        )
+
     @property
     def obs(self):
         return self._obs
@@ -140,15 +239,19 @@ class HeadsPlus(bf.HeadFile):
         )
         """get data for each stress period"""
         for kstpkper in self.kstpkper:
-            spHds = pd.DataFrame(self.get_data(kstpkper=kstpkper).squeeze().transpose())
+            spHds = _as_layer_cell_heads(
+                self.get_data(kstpkper=kstpkper),
+                nlay=self.nlay,
+                ncpl=len(vor_cell_list),
+            )
             """copy and paste this stress period data to the MultiIndex DataFrame"""
             for layer in range(self.nlay):
-                assert self.vor.ncpl == spHds.shape[0], (
+                assert self.vor.ncpl == spHds.shape[1], (
                     'Are you using the wrong voronoi grid??? \n'
-                    f'The provided vor grid has {self.vor.ncpl} cells, but there are {spHds.shape[0]} heads '
+                    f'The provided vor grid has {self.vor.ncpl} cells, but there are {spHds.shape[1]} heads '
                     f'in the model'
                 )
-                df_heads.loc[idxx[kstpkper, layer, :]] = spHds.iloc[:, layer].values.reshape(-1, 1)
+                df_heads.loc[idxx[kstpkper, layer, :]] = spHds[layer].reshape(-1, 1)
         return df_heads
 
     @staticmethod

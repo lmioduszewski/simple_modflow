@@ -35,6 +35,7 @@ from .packages import (
     KFlow,
     OutputControl,
     Recharge,
+    Wells,
     Storage,
 )
 from .runtime import run_simulation
@@ -53,6 +54,7 @@ __all__ = [
     "RegionGroup",
     "OutputControl",
     "Recharge",
+    "Wells",
     "RegionRegistry",
     "SimulationBase",
     "Storage",

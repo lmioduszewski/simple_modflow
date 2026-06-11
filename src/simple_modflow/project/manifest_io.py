@@ -11,6 +11,7 @@ from simple_modflow.project.specs import ModelSpec, RunRecord
 
 RUN_MANIFEST_NAME = "run.toml"
 PROJECT_MANIFEST_NAME = "project.toml"
+_NONE_SENTINEL = "__SIMPLE_MODFLOW_TOML_NONE__"
 
 
 def _toml_quote(value: str) -> str:
@@ -42,6 +43,8 @@ def _clean_dict(data: dict) -> dict:
 def _format_value(value):
     """Format one scalar/list value for the limited TOML writer used here."""
 
+    if value is None:
+        return _toml_quote(_NONE_SENTINEL)
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
@@ -100,7 +103,19 @@ def read_toml(path: Path) -> dict:
     """Read a TOML file into a Python dictionary."""
 
     with path.open("rb") as file:
-        return tomllib.load(file)
+        return _restore_none(tomllib.load(file))
+
+
+def _restore_none(value):
+    """Restore nested ``None`` values encoded inside TOML arrays."""
+
+    if isinstance(value, dict):
+        return {key: _restore_none(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_restore_none(item) for item in value]
+    if value == _NONE_SENTINEL:
+        return None
+    return value
 
 
 def _serialize_path(path: Path, *, base_dir: Path) -> str:

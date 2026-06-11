@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
-os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ["MPLBACKEND"] = "Agg"
 
 import flopy
 import geopandas as gpd
@@ -245,6 +245,12 @@ def _build_and_run_two_cell_rch_uzf_model(
     heads: tuple[float, float] = (10.0, 9.0),
     recharge: tuple[float, float] = (0.001, 0.00075),
     finf: tuple[float, float] = (0.0005, 0.00025),
+    pet: tuple[float, float] | None = None,
+    extdp: tuple[float, float] | None = None,
+    extwc: tuple[float, float] | None = None,
+    ha: tuple[float, float] | None = None,
+    hroot: tuple[float, float] | None = None,
+    rootact: tuple[float, float] | None = None,
 ) -> SimulationBase:
     vor = _two_cell_vor_clockwise()
     model = SimulationBase(vor=vor, nper=1, **record.simulation_kwargs())
@@ -268,7 +274,39 @@ def _build_and_run_two_cell_rch_uzf_model(
         thts=0.3,
         thti=0.2,
         finf={0: list(finf)},
+        pet=None if pet is None else {0: list(pet)},
+        extdp=None if extdp is None else {0: list(extdp)},
+        extwc=None if extwc is None else {0: list(extwc)},
+        ha=None if ha is None else {0: list(ha)},
+        hroot=None if hroot is None else {0: list(hroot)},
+        rootact=None if rootact is None else {0: list(rootact)},
         add_uzf=True,
+    )
+    success, _ = model.run_simulation()
+    assert success is True
+    return model
+
+
+def _build_and_run_two_cell_wel_model(
+    record: RunRecord,
+    *,
+    heads: tuple[float, float] = (10.0, 9.0),
+    q: tuple[float, float] = (-0.1, 0.05),
+) -> SimulationBase:
+    vor = _two_cell_vor_clockwise()
+    model = SimulationBase(vor=vor, nper=1, **record.simulation_kwargs())
+    DisvGrid(vor=vor, model=model, top=[10.0, 10.0], bottom=[[0.0, 0.0]], nlay=1)
+    TemporalDiscretization(model=model, per_len=1, num_steps=1, multiplier=1.0)
+    InitialConditions(model=model, vor=vor, nlay=1, strt=list(heads))
+    KFlow(model=model, k=[1.0, 1.0], save_specific_discharge=False)
+    Storage(model=model, sto_steady={0: True}, sto_transient={})
+    OutputControl(model=model)
+    CHD(model=model, stress_period_data={0: [[(0, 0), heads[0]], [(0, 1), heads[1]]]})
+    flopy.mf6.ModflowGwfwel(
+        model.gwf,
+        pname="wel",
+        stress_period_data={0: [[(0, 0), q[0]], [(0, 1), q[1]]]},
+        save_flows=True,
     )
     success, _ = model.run_simulation()
     assert success is True
@@ -2507,6 +2545,8 @@ def test_run_loader_can_open_file_backed_disv_run_without_model_object():
         assert loaded._vor is None
         heads = loaded.hds.get_data(kstpkper=(0, 0)).squeeze()
         all_heads = loaded.all_heads
+        heads_long = loaded.hds.long()
+        heads_wide = loaded.hds.wide()
         fig = loaded.hds.plot_heads(locs=[0, 1], plot_fig=False, return_fig=True)
         sim_axes = loaded.sim.plot()
         run_axes = loaded.plot()
@@ -2536,6 +2576,10 @@ def test_run_loader_can_open_file_backed_disv_run_without_model_object():
         assert loaded._vor is not None
         assert np.allclose(heads, [10.0, 8.75])
         assert np.allclose(all_heads["elev"].astype(float).to_numpy(), [10.0, 8.75])
+        assert heads_long.index.names == ["kstpkper", "layer", "cell"]
+        assert np.allclose(heads_long.astype(float).to_numpy(), [10.0, 8.75])
+        assert {"layer", "cell", "kstpkper_0_0"}.issubset(heads_wide.columns)
+        assert np.allclose(heads_wide.sort_values("cell")["kstpkper_0_0"].astype(float).to_numpy(), [10.0, 8.75])
         assert fig is not None
         assert sim_axes is not None
         assert run_axes is not None
@@ -2662,6 +2706,7 @@ def test_loaded_run_lazily_loads_grid_outputs_and_selected_packages():
         assert packages["rch"] is loaded.rch
         assert packages["uzf"] is loaded.uzf
         assert loaded._loaded_package_types >= {"DISV", "OC", "RCH", "UZF"}
+        assert loaded._fully_loaded is True
 
         ifno_to_cellid = loaded.outputs.uzf.ifno_to_cellid
         assert ifno_to_cellid.index.name == "ifno"
@@ -2670,6 +2715,32 @@ def test_loaded_run_lazily_loads_grid_outputs_and_selected_packages():
         loaded.load_all()
         assert loaded._fully_loaded is True
         assert loaded._loaded_package_types >= {"CHD", "DISV", "IC", "NPF", "OC", "RCH", "STO", "UZF"}
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_loaded_run_shows_package_load_progress_even_when_opened_quietly(capsys):
+    workspace = _project_temp_dir("project_catalog_lazy_load_quiet_progress")
+    try:
+        catalog = ProjectCatalog(workspace / "quiet_project", name="quiet_project")
+        catalog.register_model_spec(ModelSpec(name="tiny_model", grid_ref="two_cell_grid"))
+        record = catalog.create_run(
+            RunSpec(
+                run_id="quiet_run",
+                model_spec="tiny_model",
+                package_versions={"rch": "rch_v1", "uzf": "uzf_v1"},
+            )
+        )
+
+        _build_and_run_two_cell_rch_uzf_model(record)
+        loaded = catalog.load_run_model("quiet_run", verbosity_level=0)
+        _ = capsys.readouterr().out
+
+        _ = loaded.uzf
+        output = capsys.readouterr().out
+
+        assert "[LoadedMf6Run] Loading full MF6 simulation from:" in output
+        assert "[LoadedMf6Run] Locating GWF model 'quiet_run'" in output
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -3202,16 +3273,111 @@ def test_model_packages_uzf_finf_support_get_summary_and_map():
 
         accessor = model.packages.uzf.inputs.finf
         data = accessor.get(per=0)
+        wide = accessor.wide()
         summary = accessor.summary()
         choro = accessor.map(per=0)
 
         assert data.empty is False
         assert {"model", "package", "per", "ifno", "layer", "cell", "finf"}.issubset(data.columns)
+        assert pd.api.types.is_numeric_dtype(data["finf"])
+        assert "per_0" in wide.columns
+        assert pd.api.types.is_numeric_dtype(wide["per_0"])
         assert summary.iloc[0]["label"] == "uzf.inputs.finf"
         assert summary.iloc[0]["records"] == 2
         np.testing.assert_allclose(np.asarray(choro.zs, dtype=float), np.asarray([0.0005, 0.00025], dtype=float))
         assert choro.hover_dict["Cell"] == [0, 1]
         assert choro.hover_dict["finf"] == [0.0005, 0.00025]
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_model_packages_wel_support_get_summary_map_and_results():
+    workspace = _project_temp_dir("project_catalog_model_packages_wel")
+    try:
+        record = RunRecord(run_id="wel_inputs", model_spec="tiny", workspace=workspace / "wel_inputs", status="completed")
+        model = _build_and_run_two_cell_wel_model(record, q=(-0.1, 0.05))
+
+        accessor = model.packages.wel.inputs.q
+        data = accessor.get(per=0)
+        summary = accessor.summary()
+        choro = accessor.map(per=0)
+        results = model.packages.wel.results.q.get(per=0)
+        result_fields = model.packages.wel.results.fields
+        result_summary = model.packages.wel.results.summary()
+        result_wide = model.packages.wel.results.q.wide()
+        result_long = model.packages.wel.results.q.long()
+        result_stack = model.packages.wel.results.q.stack()
+        result_fig = model.packages.wel.results.q.plot_timeseries(cells=[0, 1])
+
+        assert data.empty is False
+        assert {"model", "package", "per", "layer", "cell", "q"}.issubset(data.columns)
+        np.testing.assert_allclose(data.sort_values("cell")["q"].astype(float).to_numpy(), [-0.1, 0.05])
+        assert summary.iloc[0]["label"] == "wel.inputs.q"
+        assert summary.iloc[0]["records"] == 2
+        np.testing.assert_allclose(np.asarray(choro.zs, dtype=float), np.asarray([-0.1, 0.05], dtype=float))
+        assert results.empty is False
+        assert {"model", "package", "per", "layer", "cell", "q"}.issubset(results.columns)
+        assert result_fields["field"].tolist() == ["q"]
+        assert set(result_summary["field_name"]) == {"q"}
+        assert {"layer", "cell", "per_0"}.issubset(result_wide.columns)
+        assert result_long.index.names == ["kstpkper", "layer", "cell"]
+        assert result_long.name == "q"
+        assert result_long.empty is False
+        pd.testing.assert_series_equal(result_stack, result_long)
+        assert len(result_fig.axes) == 1
+        assert len(result_fig.axes[0].lines) >= 1
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_model_packages_uzf_registry_fields_support_get_wide_and_map():
+    workspace = _project_temp_dir("project_catalog_model_packages_uzf_registry_fields")
+    try:
+        record = RunRecord(
+            run_id="uzf_reg",
+            model_spec="tiny",
+            workspace=workspace / "uzf_reg",
+            status="completed",
+        )
+        model = _build_and_run_two_cell_rch_uzf_model(
+            record,
+            finf=(0.0005, 0.00025),
+            pet=(0.00008, 0.00004),
+            extdp=(2.0, 1.5),
+            extwc=(0.12, 0.10),
+            ha=(0.05, 0.02),
+            hroot=(1.0, 0.8),
+            rootact=(0.7, 0.5),
+        )
+
+        expected_fields = {
+            "finf": [0.0005, 0.00025],
+            "pet": [0.00008, 0.00004],
+            "extdp": [2.0, 1.5],
+            "extwc": [0.12, 0.10],
+            "ha": [0.05, 0.02],
+            "hroot": [1.0, 0.8],
+            "rootact": [0.7, 0.5],
+        }
+        fields = model.packages.uzf.inputs.fields
+        summary = model.packages.uzf.inputs.summary()
+
+        assert fields["field"].tolist() == list(expected_fields)
+        assert set(summary["field_name"]) == set(expected_fields)
+        assert set(summary["records"]) == {2}
+        for field_name, expected in expected_fields.items():
+            accessor = getattr(model.packages.uzf.inputs, field_name)
+            data = accessor.get(per=0)
+            wide = accessor.wide()
+            choro = accessor.map(per=0)
+
+            assert data.empty is False
+            assert {"model", "package", "per", "ifno", "layer", "cell", field_name}.issubset(data.columns)
+            np.testing.assert_allclose(data.sort_values("cell")[field_name].astype(float).to_numpy(), expected)
+            assert "per_0" in wide.columns
+            np.testing.assert_allclose(wide.sort_values("cell")["per_0"].astype(float).to_numpy(), expected)
+            np.testing.assert_allclose(np.asarray(choro.zs, dtype=float), np.asarray(expected, dtype=float))
+            assert choro.hover_dict[field_name] == expected
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -3223,6 +3389,12 @@ def test_loaded_mf6_run_packages_namespace_supports_input_exploration():
         _build_and_run_two_cell_rch_uzf_model(
             record,
             finf=(0.0005, 0.00025),
+            pet=(0.00008, 0.00004),
+            extdp=(2.0, 1.5),
+            extwc=(0.12, 0.10),
+            ha=(0.05, 0.02),
+            hroot=(1.0, 0.8),
+            rootact=(0.7, 0.5),
             recharge=(0.0010, 0.0007),
         )
 
@@ -3232,12 +3404,31 @@ def test_loaded_mf6_run_packages_namespace_supports_input_exploration():
 
         rch = loaded.packages.rch.inputs.get(per=0)
         uzf_choro = loaded.packages.uzf.inputs.finf.map(per=0)
+        expected_fields = {
+            "finf": [0.0005, 0.00025],
+            "pet": [0.00008, 0.00004],
+            "extdp": [2.0, 1.5],
+            "extwc": [0.12, 0.10],
+            "ha": [0.05, 0.02],
+            "hroot": [1.0, 0.8],
+            "rootact": [0.7, 0.5],
+        }
+        uzf_fields = {
+            field_name: getattr(loaded.packages.uzf.inputs, field_name).get(per=0)
+            for field_name in expected_fields
+        }
 
         assert rch.empty is False
         assert {"recharge", "layer", "cell"}.issubset(rch.columns)
         assert loaded._gwf is not None
         assert loaded._vor is not None
         np.testing.assert_allclose(np.asarray(uzf_choro.zs, dtype=float), np.asarray([0.0005, 0.00025], dtype=float))
+        assert loaded.packages.uzf.inputs.fields["field"].tolist() == list(expected_fields)
+        assert set(loaded.packages.uzf.inputs.summary()["field_name"]) == set(expected_fields)
+        for field_name, expected in expected_fields.items():
+            data = uzf_fields[field_name]
+            assert data.empty is False
+            np.testing.assert_allclose(data.sort_values("cell")[field_name].astype(float).to_numpy(), expected)
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -3251,6 +3442,64 @@ def test_model_packages_results_support_budget_and_stage_exploration():
         chd_results = cell_model.packages.chd.results.q.get(per=0)
         chd_summary = cell_model.packages.chd.results.q.summary()
         chd_map = cell_model.packages.chd.results.q.map(per=0)
+        heads_map = cell_model.hds.map(contours=True, contour_levels=3)
+        heads_fig = heads_map.choropleth
+        contour_choro = cell_model.cor(
+            per=0,
+            layer=0,
+            type="custom",
+            custom_zs=[0.0, 1.0, 2.0, 3.0],
+            contours=True,
+            contour_levels=[0.5, 1.5, 2.5],
+            contour_method="cubic",
+            contour_resolution=40,
+            contour_name="custom",
+            hover_heads=False,
+        )
+        contour_fig = contour_choro.choropleth
+        top_contour_fig = cell_model.cor(
+            per=0,
+            layer=0,
+            type="custom",
+            custom_zs=[0.0, 1.0, 2.0, 3.0],
+            contours="top",
+            hover_heads=False,
+        ).choropleth
+        ic_strt = cell_model.packages.ic.strt.get(layer=0)
+        ic_strt_wide = cell_model.packages.ic.strt.wide()
+        ic_strt_long = cell_model.packages.ic.strt.long()
+        ic_strt_map = cell_model.packages.ic.strt.map(layer=0)
+        npf_k = cell_model.packages.npf.k.get(layer=0)
+        sto_ss = cell_model.packages.sto.ss.get(layer=0)
+        sto_sy = cell_model.packages.sto.sy.get(layer=0)
+        array_summary = pd.concat(
+            [
+                cell_model.packages.ic.summary(),
+                cell_model.packages.npf.summary(),
+                cell_model.packages.sto.summary(),
+            ],
+            ignore_index=True,
+        )
+        for package_name in ("rch", "chd", "drn", "ghb"):
+            namespace = getattr(cell_model.packages, package_name).results
+            package_fields = namespace.fields
+            package_summary = namespace.summary()
+            package_result = namespace.q.get(per=0)
+            package_wide = namespace.q.wide()
+            package_long = namespace.q.long()
+            package_stack = namespace.q.stack()
+            package_fig = namespace.q.plot_timeseries()
+
+            assert package_fields["field"].tolist() == ["q"]
+            assert set(package_summary["field_name"]) == {"q"}
+            assert package_result.empty is False
+            assert {"layer", "cell", "per_0"}.issubset(package_wide.columns)
+            assert package_long.index.names == ["kstpkper", "layer", "cell"]
+            assert package_long.name == "q"
+            assert package_long.empty is False
+            pd.testing.assert_series_equal(package_stack, package_long)
+            assert len(package_fig.axes) == 1
+            assert len(package_fig.axes[0].lines) >= 1
         uzf_results_model = _build_and_run_two_cell_rch_uzf_model(
             RunRecord(run_id="uzf_results", model_spec="tiny", workspace=workspace / "uzf_results", status="completed"),
             finf=(0.0005, 0.00025),
@@ -3258,14 +3507,47 @@ def test_model_packages_results_support_budget_and_stage_exploration():
         )
         uzf_gwrch = uzf_results_model.packages.uzf.results.gwrch.get(per=0)
         uzf_sat = uzf_results_model.packages.uzf.results.sat.get(per=0)
+        uzf_result_fields = uzf_results_model.packages.uzf.results.fields
+        uzf_result_summary = uzf_results_model.packages.uzf.results.summary()
+        uzf_gwrch_wide = uzf_results_model.packages.uzf.results.gwrch.wide()
+        uzf_sat_wide = uzf_results_model.packages.uzf.results.sat.wide()
+        uzf_gwrch_long = uzf_results_model.packages.uzf.results.gwrch.long()
+        uzf_sat_stack = uzf_results_model.packages.uzf.results.sat.stack()
+        uzf_gwrch_fig = uzf_results_model.packages.uzf.results.gwrch.plot_timeseries(cells=[0, 1])
+        uzf_sat_fig = uzf_results_model.packages.uzf.results.sat.plot_timeseries(cells=[0, 1])
         uzf_sat_map = uzf_results_model.packages.uzf.results.sat.map(per=0)
 
         assert chd_results.empty is False
         assert {"model", "package", "kstpkper", "per", "layer", "cell", "q"}.issubset(chd_results.columns)
         assert chd_summary.iloc[0]["label"] == "chd.results.q"
         assert len(chd_map.zs) == cell_model.vor.ncpl
+        assert len(heads_fig.data) >= 1
+        assert len(contour_choro._contour_segments) >= 1
+        assert len(contour_fig.data) > 1
+        assert len(top_contour_fig.data) >= 1
+        assert {"strt", "layer", "cell"}.issubset(ic_strt.columns)
+        assert {"k", "layer", "cell"}.issubset(npf_k.columns)
+        assert {"ss", "layer", "cell"}.issubset(sto_ss.columns)
+        assert {"sy", "layer", "cell"}.issubset(sto_sy.columns)
+        assert "layer_0" in ic_strt_wide.columns
+        assert ic_strt_long.index.names == ["layer", "cell"]
+        assert ic_strt_long.name == "strt"
+        assert len(ic_strt_map.zs) == cell_model.vor.ncpl
+        assert {"strt", "k", "ss", "sy"}.issubset(set(array_summary["field_name"]))
+        assert uzf_result_fields["field"].tolist() == ["gwrch", "sat"]
+        assert set(uzf_result_summary["field_name"]) == {"gwrch", "sat"}
         assert {"gwrch", "cell", "layer"}.issubset(uzf_gwrch.columns)
         assert {"sat", "cell", "layer"}.issubset(uzf_sat.columns)
+        assert {"layer", "cell", "per_0"}.issubset(uzf_gwrch_wide.columns)
+        assert {"layer", "cell", "per_0"}.issubset(uzf_sat_wide.columns)
+        assert uzf_gwrch_long.index.names == ["kstpkper", "layer", "cell"]
+        assert uzf_gwrch_long.name == "gwrch"
+        assert uzf_sat_stack.index.names == ["kstpkper", "layer", "cell"]
+        assert uzf_sat_stack.name == "sat"
+        assert len(uzf_gwrch_fig.axes) == 1
+        assert len(uzf_gwrch_fig.axes[0].lines) >= 1
+        assert len(uzf_sat_fig.axes) == 1
+        assert len(uzf_sat_fig.axes[0].lines) >= 1
         assert len(uzf_sat_map.zs) == uzf_results_model.vor.ncpl
 
         routed_record = RunRecord(run_id="stage_results", model_spec="sfr_lak", workspace=workspace / "stage_results", status="completed")
@@ -3522,11 +3804,13 @@ def test_model_group_uzf_finf_supports_get_and_compare():
         _build_and_run_two_cell_rch_uzf_model(
             pre,
             finf=(0.0005, 0.0002),
+            pet=(0.00008, 0.00004),
             recharge=(0.0010, 0.0007),
         )
         _build_and_run_two_cell_rch_uzf_model(
             post,
             finf=(0.00065, 0.00035),
+            pet=(0.0001, 0.00007),
             recharge=(0.0012, 0.00085),
         )
 
@@ -3540,6 +3824,7 @@ def test_model_group_uzf_finf_supports_get_and_compare():
 
         data = group.uzf.finf.get()
         comparison = group.uzf.finf.compare()
+        pet_comparison = group.packages.uzf.inputs.pet.compare()
 
         assert data.empty is False
         assert comparison.empty is False
@@ -3553,6 +3838,47 @@ def test_model_group_uzf_finf_supports_get_and_compare():
         assert np.allclose(
             comparison.sort_values("ifno")["finf_diff"].astype(float).to_numpy(),
             [0.00015, 0.00015],
+        )
+        np.testing.assert_allclose(
+            pet_comparison.sort_values("ifno")["pet_diff"].astype(float).to_numpy(),
+            [0.00002, 0.00003],
+        )
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_model_group_wel_package_inputs_support_get_and_compare():
+    workspace = _project_temp_dir("project_catalog_model_group_wel")
+    try:
+        catalog = ProjectCatalog(workspace / "group_project", name="group_project")
+        catalog.register_model_spec(ModelSpec(name="tiny_model", grid_ref="two_cell_grid"))
+
+        pre = catalog.create_run(RunSpec(run_id="pre", model_spec="tiny_model"))
+        post = catalog.create_run(RunSpec(run_id="post", model_spec="tiny_model"))
+
+        _build_and_run_two_cell_wel_model(pre, q=(-0.1, 0.05))
+        _build_and_run_two_cell_wel_model(post, q=(-0.14, 0.02))
+
+        group = ModelGroup(
+            {
+                "pre": catalog.load_run_model("pre"),
+                "post": catalog.load_run_model("post"),
+            },
+            reference="pre",
+        )
+
+        data = group.packages.wel.inputs.get()
+        comparison = group.packages.wel.inputs.compare()
+
+        assert data.empty is False
+        assert comparison.empty is False
+        assert set(data["model"]) == {"pre", "post"}
+        assert set(comparison["model"]) == {"post"}
+        assert set(comparison["reference_model"]) == {"pre"}
+        assert set(data["cell"]) == {0, 1}
+        np.testing.assert_allclose(
+            comparison.sort_values("cell")["q_diff"].astype(float).to_numpy(),
+            [-0.04, -0.03],
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
@@ -3598,12 +3924,25 @@ def test_model_group_package_results_support_get_compare_and_maps():
         comparison = group.packages.chd.results.q.compare(model_name="variant", per=0)
         raw_map = group.packages.chd.results.q.map(model_name="variant", per=0)
         diff_map = group.packages.chd.results.q.compare_map(model_name="variant", per=0)
+        chd_subplot = group.packages.chd.results.q.subplot_map(per=0)
+        chd_timeseries = group.packages.chd.results.q.plot_timeseries(cells=[1, 3])
 
         assert data.empty is False
         assert comparison.empty is False
         assert {"q", "reference_q", "q_diff"}.issubset(comparison.columns)
         assert len(raw_map.zs) == group.models["variant"].vor.ncpl
         assert len(diff_map.zs) == group.models["base"].vor.ncpl
+        np.testing.assert_allclose(
+            np.asarray(chd_subplot._simple_modflow_panel_values["base"], dtype=float),
+            np.asarray(group.models["base"].packages.chd.results.q.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(chd_subplot._simple_modflow_panel_values["variant"], dtype=float),
+            np.asarray(group.models["variant"].packages.chd.results.q.map(per=0).zs, dtype=float),
+        )
+        assert [ax.get_title() for ax in chd_subplot.axes[:2]] == ["base", "variant"]
+        assert len(chd_timeseries.axes) == 1
+        assert len(chd_timeseries.axes[0].lines) >= 1
 
         uzf_catalog = ProjectCatalog(workspace / "uzf_group_project", name="uzf_group_project")
         uzf_catalog.register_model_spec(ModelSpec(name="tiny_model", grid_ref="two_cell_grid"))
@@ -3620,8 +3959,21 @@ def test_model_group_package_results_support_get_compare_and_maps():
         )
         sat = uzf_group.packages.uzf.results.sat.get()
         gwrch_diff = uzf_group.packages.uzf.results.gwrch.compare(model_name="post")
+        gwrch_subplot = uzf_group.packages.uzf.results.gwrch.subplot_map(per=0)
+        gwrch_timeseries = uzf_group.packages.uzf.results.gwrch.plot_timeseries(cells=[0, 1])
         assert sat.empty is False
         assert gwrch_diff.empty is False
+        np.testing.assert_allclose(
+            np.asarray(gwrch_subplot._simple_modflow_panel_values["pre"], dtype=float),
+            np.asarray(uzf_group.models["pre"].packages.uzf.results.gwrch.map(per=0).zs, dtype=float),
+        )
+        np.testing.assert_allclose(
+            np.asarray(gwrch_subplot._simple_modflow_panel_values["post"], dtype=float),
+            np.asarray(uzf_group.models["post"].packages.uzf.results.gwrch.map(per=0).zs, dtype=float),
+        )
+        assert [ax.get_title() for ax in gwrch_subplot.axes[:2]] == ["pre", "post"]
+        assert len(gwrch_timeseries.axes) == 1
+        assert len(gwrch_timeseries.axes[0].lines) >= 1
 
         sfr_catalog = ProjectCatalog(workspace / "sfr_group_project", name="sfr_group_project")
         sfr_catalog.register_model_spec(ModelSpec(name="sfr_model", grid_ref="four_cell_grid"))

@@ -33,6 +33,7 @@ class SFR:
             mannings: list | float = 0.03,
             streambed_k: list | int | float = 1,
             streambed_thickness: list | int | float = 1,
+            reach_elevations: list | None = None,
             stream_end_conn: dict = None,
             div_prioritization='FRACTION',
             mover: bool = False,
@@ -67,6 +68,9 @@ class SFR:
             Optional explicit diversion period records.
         widths, gradients, mannings, streambed_k, streambed_thickness
             Per-reach or scalar hydraulic properties.
+        reach_elevations
+            Optional nested list of explicit streambed-top elevations, one value
+            per reach. When omitted, elevations are derived from model top.
         stream_end_conn
             Optional rules describing how stream endpoints connect/divert.
         div_prioritization
@@ -135,6 +139,11 @@ class SFR:
         self.mannings = mannings
         self.rhk = streambed_k
         self.rbth = streambed_thickness
+        self.reach_elevations = (
+            None
+            if reach_elevations is None
+            else self.package_data_validator(name="rtp", data=reach_elevations)
+        )
         self.stream_endpoint_connections = stream_end_conn
         self.div_prioritization = div_prioritization
         self.diversion_perioddata = diversion_perioddata
@@ -516,7 +525,10 @@ class SFR:
                 sfr_reach_data['rlen'][rno] = self.reach_lens[stream_idx][cell_idx]
                 sfr_reach_data['rwid'][rno] = self.widths[stream_idx][cell_idx]
                 sfr_reach_data['rgrd'][rno] = self.gradients[stream_idx][cell_idx]
-                sfr_reach_data['rtp'][rno] = self.get_smoothed_reach_elevs()[stream_idx][cell]
+                if self.reach_elevations is None:
+                    sfr_reach_data['rtp'][rno] = self.get_smoothed_reach_elevs()[stream_idx][cell]
+                else:
+                    sfr_reach_data['rtp'][rno] = self.reach_elevations[stream_idx][cell_idx]
                 sfr_reach_data['rbth'][rno] = self.rbth[stream_idx][cell_idx]
                 sfr_reach_data['rhk'][rno] = self.rhk[stream_idx][cell_idx]
                 sfr_reach_data['man'][rno] = self.mannings[stream_idx][cell_idx]

@@ -89,6 +89,7 @@ def multimodel_plot_budget_obs(
     name_field: str = "name",
     times: pd.DatetimeIndex | None = None,
     plot_fig: bool = True,
+    return_frame: bool = False,
 ):
     """Plot observation-area budget totals for several models at once.
 
@@ -108,6 +109,8 @@ def multimodel_plot_budget_obs(
         Optional datetime labels for the x-axis.
     plot_fig
         If ``True``, display the figure before returning it.
+    return_frame
+        If ``True``, return the dictionary of dataframe data, not the figure
     """
 
     times = coerce_plot_times(times)
@@ -136,6 +139,8 @@ def multimodel_plot_budget_obs(
 
     if plot_fig:
         fig.show()
+    if return_frame:
+        return obs_dict
     return fig
 
 

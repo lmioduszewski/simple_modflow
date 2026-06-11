@@ -30,6 +30,7 @@ from simple_modflow.modflow.mf6.package_explorer import (
     get_default_budget_term,
     get_default_group_compare_colorscale,
     get_default_package_colorscale,
+    get_package_input_field_spec,
     get_default_package_value_column,
     _symmetric_color_limit,
 )
@@ -75,7 +76,10 @@ def _coerce_matplotlib_colormap(colorscale) -> mcolors.Colormap:
     if colorscale is None:
         return plt.get_cmap("RdBu")
     if isinstance(colorscale, str):
-        return plt.get_cmap(colorscale)
+        try:
+            return plt.get_cmap(colorscale)
+        except ValueError:
+            return plt.get_cmap(colorscale.lower())
     if isinstance(colorscale, Sequence):
         color_values = []
         for entry in colorscale:
@@ -97,6 +101,7 @@ def _plot_group_choropleth_subplots(
     model_names: Sequence[str] | None = None,
     ncols: int | None = None,
     figsize: tuple[float, float] | None = None,
+    symmetric: bool = True,
 ):
     """Plot one shared-scale choropleth panel per model and return the figure."""
 
@@ -113,11 +118,22 @@ def _plot_group_choropleth_subplots(
 
     all_values = np.concatenate([np.asarray(panel_values[name], dtype=float) for name in ordered_names])
     finite = all_values[np.isfinite(all_values)]
-    absmax = float(np.max(np.abs(finite))) if finite.size else 0.0
-    if absmax <= 0.0:
-        absmax = 1.0
+    if symmetric:
+        absmax = float(np.max(np.abs(finite))) if finite.size else 0.0
+        if absmax <= 0.0:
+            absmax = 1.0
+        vmin, vmax = -absmax, absmax
+    elif finite.size:
+        vmin = float(np.min(finite))
+        vmax = float(np.max(finite))
+        if vmin == vmax:
+            padding = abs(vmin) * 0.05 if vmin != 0.0 else 1.0
+            vmin -= padding
+            vmax += padding
+    else:
+        vmin, vmax = 0.0, 1.0
     cmap = _coerce_matplotlib_colormap(colorscale)
-    norm = mcolors.Normalize(vmin=-absmax, vmax=absmax)
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
     for axis, model_name in zip(axes_array, ordered_names, strict=False):
         model = group.models[model_name]
@@ -127,8 +143,8 @@ def _plot_group_choropleth_subplots(
             column="value",
             ax=axis,
             cmap=cmap,
-            vmin=-absmax,
-            vmax=absmax,
+            vmin=vmin,
+            vmax=vmax,
             linewidth=0.3,
             edgecolor="#666666",
         )
@@ -902,6 +918,112 @@ class GroupCellPackageResults:
             **kwargs,
         )
 
+    def subplot_map(
+        self,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        model_names: Sequence[str] | None = None,
+        ncols: int | None = None,
+        figsize: tuple[float, float] | None = None,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        agg: str = "sum",
+        colorscale=None,
+        symmetric: bool | None = None,
+    ):
+        """Plot one grouped package-result choropleth panel per model."""
+
+        ordered_names = _coerce_panel_model_names(self.group, model_names)
+        panel_values: dict[str, np.ndarray] = {}
+        for current_model_name in ordered_names:
+            model = self.group.models[current_model_name]
+            selected = self.get(model_name=current_model_name, per=per, layer=layer)
+            values, _hover = build_cell_input_map_payload(
+                selected,
+                ncpl=model.vor.ncpl,
+                value_column=self.value_name,
+                per=per,
+                layer=layer,
+                multiplier=multiplier,
+                fill_value=fill_value,
+                agg=agg,
+            )
+            panel_values[current_model_name] = np.asarray(values, dtype=float)
+
+        use_symmetric = self.value_name == "q" if symmetric is None else bool(symmetric)
+        return _plot_group_choropleth_subplots(
+            self.group,
+            panel_values,
+            colorbar_label=f"{self.package_name.upper()} {self.value_name}",
+            title_prefix=f"Grouped {self.package_name.upper()} {self.value_name} (per={per}, layer={layer})",
+            colorscale=(
+                colorscale
+                or ("RdBu" if use_symmetric else None)
+                or get_default_package_colorscale(self.package_name)
+                or "Viridis"
+            ),
+            model_names=ordered_names,
+            ncols=ncols,
+            figsize=figsize,
+            symmetric=use_symmetric,
+        )
+
+    def plot_timeseries(
+        self,
+        *,
+        cells: int | Sequence[int] | None = None,
+        layer: int | Sequence[int] | None = None,
+        model_names: Sequence[str] | None = None,
+        agg: str = "sum",
+        ax=None,
+        return_fig: bool = True,
+    ):
+        """Plot grouped package results by stress period for selected cells."""
+
+        selected_cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
+        ordered_names = _coerce_panel_model_names(self.group, model_names)
+        frame = self.get(layer=layer, cells=selected_cells)
+        if ordered_names:
+            frame = frame.loc[frame["model"].isin(ordered_names)].copy()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4))
+        else:
+            fig = ax.figure
+        if frame.empty:
+            ax.set_title(f"Grouped {self.package_name.upper()} {self.value_name} by stress period")
+            ax.set_xlabel("Stress Period")
+            ax.set_ylabel(self.value_name)
+            if return_fig:
+                return fig
+            return None
+
+        grouped_keys = [column for column in ("model", "layer", "cell") if column in frame.columns]
+        for key, group in frame.groupby(grouped_keys, dropna=False):
+            if not isinstance(key, tuple):
+                key = (key,)
+            key_map = dict(zip(grouped_keys, key, strict=False))
+            series = group.groupby("per", as_index=False)[self.value_name].agg(agg).sort_values("per")
+            model_label = str(key_map.get("model", "model"))
+            layer_label = f"L{int(key_map['layer'])} " if "layer" in key_map and pd.notna(key_map["layer"]) else ""
+            cell_label = f"C{int(key_map['cell'])}" if "cell" in key_map and pd.notna(key_map["cell"]) else "All cells"
+            ax.plot(
+                series["per"].astype(int).to_numpy(),
+                series[self.value_name].astype(float).to_numpy(),
+                marker="o",
+                linewidth=2.0,
+                label=f"{model_label} / {layer_label}{cell_label}",
+            )
+
+        ax.set_title(f"Grouped {self.package_name.upper()} {self.value_name} by stress period")
+        ax.set_xlabel("Stress Period")
+        ax.set_ylabel(self.value_name)
+        ax.legend()
+        fig.tight_layout()
+        if return_fig:
+            return fig
+        return None
+
 
 class GroupSfrBudgetResults(GroupCellPackageResults):
     """Grouped SFR exchange accessor with reach-length-normalized maps."""
@@ -1575,11 +1697,60 @@ class GroupUzfInputs:
     def __init__(self, group: "ModelGroup"):
         self.group = group
 
+    def _field(self, field_name: str) -> GroupUzfFieldAccessor:
+        """Return one registry-backed grouped UZF field accessor."""
+
+        field_spec = get_package_input_field_spec("uzf", field_name)
+        if field_spec is None:
+            raise AttributeError(f"{type(self).__name__!s} has no UZF input field {field_name!r}")
+        return GroupUzfFieldAccessor(self.group, field_spec.name)
+
+    def __getattr__(self, field_name: str) -> GroupUzfFieldAccessor:
+        """Return a registry-backed grouped UZF field accessor."""
+
+        return self._field(field_name)
+
     @property
     def finf(self) -> GroupUzfFieldAccessor:
         """Return grouped infiltration accessors."""
 
-        return GroupUzfFieldAccessor(self.group, "finf")
+        return self._field("finf")
+
+    @property
+    def pet(self) -> GroupUzfFieldAccessor:
+        """Return grouped potential evapotranspiration accessors."""
+
+        return self._field("pet")
+
+    @property
+    def extdp(self) -> GroupUzfFieldAccessor:
+        """Return grouped ET extinction-depth accessors."""
+
+        return self._field("extdp")
+
+    @property
+    def extwc(self) -> GroupUzfFieldAccessor:
+        """Return grouped ET extinction-water-content accessors."""
+
+        return self._field("extwc")
+
+    @property
+    def ha(self) -> GroupUzfFieldAccessor:
+        """Return grouped surface-depression-storage-depth accessors."""
+
+        return self._field("ha")
+
+    @property
+    def hroot(self) -> GroupUzfFieldAccessor:
+        """Return grouped root-zone-thickness accessors."""
+
+        return self._field("hroot")
+
+    @property
+    def rootact(self) -> GroupUzfFieldAccessor:
+        """Return grouped root-activity accessors."""
+
+        return self._field("rootact")
 
 
 class GroupLakOutputs:
@@ -2084,6 +2255,12 @@ class GroupPackages:
         return GroupPackageAccessor(self.group.ghb)
 
     @property
+    def wel(self) -> GroupPackageAccessor:
+        """Grouped well package input helpers."""
+
+        return GroupPackageAccessor(self.group.wel)
+
+    @property
     def uzf(self) -> GroupUzfPackageAccessor:
         """Grouped UZF input helpers."""
 
@@ -2176,6 +2353,7 @@ class ModelGroup:
         self.chd = GroupPackageInputs(self, "chd")
         self.drn = GroupPackageInputs(self, "drn")
         self.ghb = GroupPackageInputs(self, "ghb")
+        self.wel = GroupPackageInputs(self, "wel")
         self.uzf = GroupUzfInputs(self)
         self.packages = GroupPackages(self)
 
