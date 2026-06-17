@@ -9,6 +9,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_explorer_spec,
 )
+from myflopy.modflow.mf6.package_registry import get_package_explorer_spec as registry_spec
 from myflopy.project.model_group import GroupPackages
 
 
@@ -21,6 +22,7 @@ def test_package_explorer_registry_preserves_existing_defaults():
     assert get_default_package_value_column("drn") == "elev"
     assert get_default_package_colorscale("ghb") == "Portland"
     assert get_default_budget_term("uzf_gwrch") == ("UZF-GWRCH", "gwrch")
+    assert get_package_explorer_spec("lak") is registry_spec("lak")
 
 
 def test_package_explorer_registry_adds_wel_semantics():
