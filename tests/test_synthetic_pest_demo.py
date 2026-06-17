@@ -15,8 +15,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mf6.pest.results import open_pest_run  # noqa: E402
-from simple_modflow.modflow.mf6.pest.synthetic_demo import (  # noqa: E402
+from myflopy.modflow.mf6.pest.results import open_pest_run  # noqa: E402
+from myflopy.modflow.mf6.pest.synthetic_demo import (  # noqa: E402
     SyntheticPestDemoConfig,
     build_and_optionally_run_synthetic_demo,
 )
@@ -50,7 +50,7 @@ def test_synthetic_demo_build_only_writes_reopenable_workspace():
     assert (run.pest_workspace / run.control_file).exists()
     assert (run.review_dir / "baseline_stats.csv").exists()
     assert (run.inputs_dir / "truth_targets.csv").exists()
-    assert (run.pest_workspace / "simple_modflow_pest_metadata.json").exists()
+    assert (run.pest_workspace / "myflopy_pest_metadata.json").exists()
     assert len(run.targets.to_long()) == len(run.observation_locations) * config.nper
 
     pest_run = open_pest_run(run.pest_workspace)

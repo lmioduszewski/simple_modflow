@@ -6,9 +6,9 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import LineString, box
 
-from simple_modflow.modflow.mf6.contour_plotting import _resolve_contour_levels, contour_line_segments
-from simple_modflow.modflow.mf6.headsplus import _as_layer_cell_heads
-from simple_modflow.modflow.utils.datatypes.choros import _as_cell_vector
+from myflopy.modflow.mf6.contour_plotting import _resolve_contour_levels, contour_line_segments
+from myflopy.modflow.mf6.headsplus import _as_layer_cell_heads
+from myflopy.modflow.utils.datatypes.choros import _as_cell_vector
 
 
 class _DummyVor:

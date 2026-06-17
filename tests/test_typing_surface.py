@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import get_type_hints
 
-import simple_modflow as mf
-from simple_modflow.modflow.mf6.observations import (
+import myflopy as mf
+from myflopy.modflow.mf6.observations import (
     BoundDrnFlowTargets,
     BoundHeadTargets,
     BoundLakeStageTargets,
@@ -12,12 +12,34 @@ from simple_modflow.modflow.mf6.observations import (
     BoundSfrStageTargets,
     TargetRegistry,
 )
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase
+from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
 def test_package_declares_inline_typing_support():
     package_root = Path(mf.__file__).resolve().parent
     assert (package_root / "py.typed").exists()
+
+
+def test_top_level_exports_signal_package_first_api():
+    assert "lak" in mf.__all__
+    assert "sfr" in mf.__all__
+    assert "rch" in mf.__all__
+    assert "LAKBuilder" not in mf.__all__
+    assert "lak_spec" not in mf.__all__
+    assert "build_ims" not in mf.__all__
+
+    assert "lak" in dir(mf)
+    assert "LAKBuilder" not in dir(mf)
+    assert "lak_spec" not in dir(mf)
+    assert "LAKBuilder" in mf.__compatibility__
+    assert "lak_spec" in mf.__compatibility__
+
+
+def test_second_tier_top_level_exports_remain_explicitly_importable():
+    from myflopy import LAKBuilder, lak_spec
+
+    assert LAKBuilder.__name__ == "LAKBuilder"
+    assert callable(lak_spec)
 
 
 def test_primary_model_namespaces_have_ide_visible_return_annotations():

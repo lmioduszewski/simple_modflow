@@ -1,0 +1,431 @@
+"""Canonical MODFLOW 6 PRT workflow.
+
+PRT is a separate MF6 simulation that consumes a completed groundwater-flow
+model's head and budget outputs through FMI. The resulting track CSV is exposed
+as a pandas DataFrame and feeds the same plotting and 3D visualization layer as
+other particle-tracking engines.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from functools import cached_property
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Sequence
+
+import flopy
+import pandas as pd
+
+if TYPE_CHECKING:
+    from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+
+def _mfdata_value(value, default=None):
+    if value is None:
+        return default
+    getter = getattr(value, "get_data", None)
+    return getter() if callable(getter) else value
+
+
+def _default_prt_name(flow_name: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_]", "_", str(flow_name))
+    return f"{stem[:12]}_prt"
+
+
+def _output_filename(model: "SimulationBase", kind: str) -> str:
+    oc = getattr(model.gwf, "oc", None)
+    record = getattr(oc, f"{kind}_filerecord", None) if oc is not None else None
+    data = _mfdata_value(record)
+    if data is not None and len(data):
+        value = data[0][0]
+        return value.decode() if isinstance(value, bytes) else str(value)
+    suffix = "hds" if kind == "head" else "cbc"
+    return f"{model.name}.{suffix}"
+
+
+def _grid_filename(model: "SimulationBase") -> str:
+    """Return the GWF binary-grid filename required by PRT local-z releases."""
+
+    grid = getattr(model.gwf, "dis", None) or getattr(model.gwf, "disv", None) or getattr(model.gwf, "disu", None)
+    record = getattr(grid, "grb_filerecord", None) if grid is not None else None
+    data = _mfdata_value(record)
+    if data is not None and len(data):
+        value = data[0][0]
+        return value.decode() if isinstance(value, bytes) else str(value)
+    package_type = getattr(grid, "package_type", "disv")
+    return f"{model.name}.{package_type}.grb"
+
+
+def _tdis_perioddata(model: "SimulationBase") -> list[tuple[float, int, float]]:
+    tdis = getattr(model.sim, "tdis", None)
+    data = _mfdata_value(getattr(tdis, "perioddata", None))
+    if data is None:
+        return [(1.0, 1, 1.0)]
+    return [
+        (float(row["perlen"]), int(row["nstp"]), float(row["tsmult"]))
+        for row in data
+    ]
+
+
+def _tdis_time_units(model: "SimulationBase") -> str:
+    tdis = getattr(model.sim, "tdis", None)
+    return str(_mfdata_value(getattr(tdis, "time_units", None), "DAYS"))
+
+
+def _copy_grid_to_prt(flow_model: "SimulationBase", prt_model):
+    gwf = flow_model.gwf
+    if getattr(gwf, "disv", None) is not None:
+        disv = gwf.disv
+        return flopy.mf6.ModflowPrtdisv(
+            prt_model,
+            length_units=_mfdata_value(disv.length_units),
+            xorigin=_mfdata_value(disv.xorigin),
+            yorigin=_mfdata_value(disv.yorigin),
+            angrot=_mfdata_value(disv.angrot),
+            nlay=int(_mfdata_value(disv.nlay)),
+            ncpl=int(_mfdata_value(disv.ncpl)),
+            nvert=int(_mfdata_value(disv.nvert)),
+            top=_mfdata_value(disv.top),
+            botm=_mfdata_value(disv.botm),
+            idomain=_mfdata_value(disv.idomain),
+            vertices=_mfdata_value(disv.vertices),
+            cell2d=_mfdata_value(disv.cell2d),
+        )
+    if getattr(gwf, "dis", None) is not None:
+        dis = gwf.dis
+        return flopy.mf6.ModflowPrtdis(
+            prt_model,
+            length_units=_mfdata_value(dis.length_units),
+            xorigin=_mfdata_value(dis.xorigin),
+            yorigin=_mfdata_value(dis.yorigin),
+            angrot=_mfdata_value(dis.angrot),
+            nlay=int(_mfdata_value(dis.nlay)),
+            nrow=int(_mfdata_value(dis.nrow)),
+            ncol=int(_mfdata_value(dis.ncol)),
+            delr=_mfdata_value(dis.delr),
+            delc=_mfdata_value(dis.delc),
+            top=_mfdata_value(dis.top),
+            botm=_mfdata_value(dis.botm),
+            idomain=_mfdata_value(dis.idomain),
+        )
+    raise NotImplementedError("Canonical PRT currently supports GWF DIS and DISV grids.")
+
+
+@dataclass(frozen=True)
+class PRTReleasePoints:
+    """Normalized PRT release-point package data."""
+
+    packagedata: tuple[tuple[Any, ...], ...]
+
+    @classmethod
+    def from_cells(
+        cls,
+        model: "SimulationBase",
+        cells: Sequence[int | tuple[int, ...]],
+        *,
+        layer: int = 0,
+        local_z: float = 0.5,
+    ) -> "PRTReleasePoints":
+        """Create release points at model-cell centers."""
+
+        grid = model.gwf.modelgrid
+        rows = []
+        for irpt, cell in enumerate(cells):
+            if isinstance(cell, tuple):
+                if len(cell) == 2:
+                    cellid = (int(layer), int(cell[0]), int(cell[1]))
+                elif len(cell) == 3:
+                    cellid = tuple(int(value) for value in cell)
+                else:
+                    raise ValueError("Structured PRT cell tuples must be (row, col) or (layer, row, col).")
+                row, col = cellid[-2:]
+                x = grid.xcellcenters[row, col]
+                y = grid.ycellcenters[row, col]
+            else:
+                cell = int(cell)
+                cellid = (int(layer), cell)
+                x = grid.xcellcenters[cell]
+                y = grid.ycellcenters[cell]
+            rows.append(
+                (
+                    irpt,
+                    cellid,
+                    float(x),
+                    float(y),
+                    float(local_z),
+                )
+            )
+        return cls(tuple(rows))
+
+    @classmethod
+    def from_points(
+        cls,
+        model: "SimulationBase",
+        points,
+        *,
+        layer: int = 0,
+        local_z: float = 0.5,
+    ) -> "PRTReleasePoints":
+        """Create release points from point geometries or an iterable of ``(x, y)``."""
+
+        geometries = getattr(points, "geometry", points)
+        rows = []
+        for irpt, point in enumerate(geometries):
+            x, y = (point.x, point.y) if hasattr(point, "x") else point[:2]
+            cell = model.gwf.modelgrid.intersect(float(x), float(y))
+            if isinstance(cell, tuple):
+                cellid = (int(layer), *(int(value) for value in cell)) if len(cell) == 2 else tuple(int(value) for value in cell)
+            else:
+                cellid = (int(layer), int(cell))
+            rows.append((irpt, cellid, float(x), float(y), float(local_z)))
+        return cls(tuple(rows))
+
+
+@dataclass
+class PRTRunResults:
+    """File-backed results from a completed MF6 PRT simulation."""
+
+    flow_model: "SimulationBase"
+    workspace: Path
+    name: str
+    track_csv_path: Path
+    budget_path: Path | None = None
+    success: bool | None = None
+    report: tuple[str, ...] = ()
+
+    @property
+    def engine(self) -> str:
+        return "mf6-prt"
+
+    @cached_property
+    def pathlines(self) -> pd.DataFrame:
+        """Load and cache the PRT track CSV."""
+
+        if not self.track_csv_path.exists():
+            raise FileNotFoundError(f"PRT track CSV not found: {self.track_csv_path}")
+        return pd.read_csv(self.track_csv_path)
+
+    def refresh(self) -> "PRTRunResults":
+        """Clear cached file-backed results so subsequent access rereads disk."""
+
+        self.__dict__.pop("pathlines", None)
+        return self
+
+    @property
+    def terminal_points(self) -> pd.DataFrame:
+        data = self.pathlines
+        if "ireason" not in data.columns:
+            return data.iloc[0:0].copy()
+        return data.loc[data["ireason"] == 3].copy()
+
+    def scene(self, **kwargs):
+        from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
+
+        return build_particle_tracking_scene(self.flow_model, self.pathlines, **kwargs)
+
+    def plot_map(self, **kwargs):
+        from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
+
+        return plot_particle_pathlines(self.flow_model, self.pathlines, **kwargs)
+
+    def export_3d_html(self, output_path: str | Path, **kwargs) -> Path:
+        from myflopy.modflow.mf6.interactive_plotting import export_particle_tracking_html
+
+        return export_particle_tracking_html(self.flow_model, self.pathlines, output_path, **kwargs)
+
+
+class PRTProject:
+    """Build and run an MF6 PRT simulation from a completed flow model."""
+
+    def __init__(
+        self,
+        model: "SimulationBase",
+        *,
+        workspace: str | Path,
+        name: str | None = None,
+        release_points: PRTReleasePoints | Sequence[tuple[Any, ...]],
+        porosity: float | Sequence[float] = 0.2,
+        perioddata: Sequence[tuple[float, int, float]] | None = None,
+        time_units: str | None = None,
+        release_perioddata: dict | None = None,
+        extend_tracking: bool = False,
+        stoptime: float | None = None,
+        stoptraveltime: float | None = None,
+        drape: bool = True,
+        local_z: bool = True,
+        stop_at_weak_sink: bool = False,
+        track_times: Sequence[float] | None = None,
+        exe_name: str = "mf6",
+    ):
+        self.flow_model = model
+        self.workspace = Path(workspace)
+        self.name = _default_prt_name(model.name) if name is None else str(name)
+        if len(self.name) > 16:
+            raise ValueError("MF6 PRT model names cannot exceed 16 characters.")
+        self.release_points = (
+            release_points
+            if isinstance(release_points, PRTReleasePoints)
+            else PRTReleasePoints(tuple(tuple(row) for row in release_points))
+        )
+        if not self.release_points.packagedata:
+            raise ValueError("At least one PRT release point is required.")
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.track_csv_path = self.workspace / f"{self.name}.trk.csv"
+        self.budget_path = self.workspace / f"{self.name}.bud"
+
+        self.sim = flopy.mf6.MFSimulation(
+            sim_name=self.name,
+            version="mf6",
+            exe_name=exe_name,
+            sim_ws=self.workspace,
+        )
+        self.tdis = flopy.mf6.ModflowTdis(
+            self.sim,
+            time_units=time_units or _tdis_time_units(model),
+            nper=len(perioddata or _tdis_perioddata(model)),
+            perioddata=list(perioddata or _tdis_perioddata(model)),
+        )
+        self.prt = flopy.mf6.ModflowPrt(
+            self.sim,
+            modelname=self.name,
+            model_nam_file=f"{self.name}.nam",
+        )
+        self.discretization = _copy_grid_to_prt(model, self.prt)
+        self.mip = flopy.mf6.ModflowPrtmip(self.prt, pname="mip", porosity=porosity)
+        self.prp = flopy.mf6.ModflowPrtprp(
+            self.prt,
+            pname="prp",
+            nreleasepts=len(self.release_points.packagedata),
+            packagedata=list(self.release_points.packagedata),
+            perioddata={0: ["FIRST"]} if release_perioddata is None else release_perioddata,
+            extend_tracking=extend_tracking,
+            stoptime=stoptime,
+            stoptraveltime=stoptraveltime,
+            drape=drape,
+            local_z=local_z,
+            stop_at_weak_sink=stop_at_weak_sink,
+            coordinate_check_method=None,
+        )
+        oc_kwargs = {}
+        if track_times is not None:
+            oc_kwargs.update(
+                ntracktimes=len(track_times),
+                tracktimes=[(float(value),) for value in track_times],
+            )
+        self.oc = flopy.mf6.ModflowPrtoc(
+            self.prt,
+            pname="oc",
+            budget_filerecord=[self.budget_path.name],
+            trackcsv_filerecord=[self.track_csv_path.name],
+            saverecord=[("BUDGET", "ALL")],
+            **oc_kwargs,
+        )
+        flow_workspace = Path(model.model_output_folder_path)
+        self.fmi = flopy.mf6.ModflowPrtfmi(
+            self.prt,
+            pname="fmi",
+            packagedata=[
+                ("GWFHEAD", Path(os.path.relpath(flow_workspace / _output_filename(model, "head"), self.workspace)).as_posix()),
+                (
+                    "GWFBUDGET",
+                    Path(os.path.relpath(flow_workspace / _output_filename(model, "budget"), self.workspace)).as_posix(),
+                ),
+                (
+                    "GWFGRID",
+                    Path(os.path.relpath(flow_workspace / _grid_filename(model), self.workspace)).as_posix(),
+                ),
+            ],
+        )
+        self.ems = flopy.mf6.ModflowEms(self.sim, pname="ems", filename=f"{self.name}.ems")
+
+    def write(self, *, silent: bool = True) -> Path:
+        self.sim.write_simulation(silent=silent)
+        return self.workspace
+
+    def results(self, *, success: bool | None = None, report: Sequence[str] = ()) -> PRTRunResults:
+        return PRTRunResults(
+            flow_model=self.flow_model,
+            workspace=self.workspace,
+            name=self.name,
+            track_csv_path=self.track_csv_path,
+            budget_path=self.budget_path,
+            success=success,
+            report=tuple(report),
+        )
+
+    def run(self, *, write: bool = True, silent: bool = True, report: bool = True) -> PRTRunResults:
+        missing = [
+            path
+            for path in (
+                Path(self.flow_model.model_output_folder_path) / _output_filename(self.flow_model, "head"),
+                Path(self.flow_model.model_output_folder_path) / _output_filename(self.flow_model, "budget"),
+                Path(self.flow_model.model_output_folder_path) / _grid_filename(self.flow_model),
+            )
+            if not path.exists()
+        ]
+        if missing:
+            formatted = "\n".join(f"- {path}" for path in missing)
+            raise FileNotFoundError(
+                "PRT requires completed GWF head and budget outputs before it can run:\n"
+                f"{formatted}"
+            )
+        if write:
+            self.write(silent=silent)
+        success, output = self.sim.run_simulation(silent=silent, report=report)
+        if not success:
+            tail = "\n".join(output[-20:]) if output else "No MF6 report was returned."
+            raise RuntimeError(f"PRT simulation failed in {self.workspace}\n{tail}")
+        return self.results(success=success, report=output)
+
+
+def open_prt_run(
+    model: "SimulationBase",
+    workspace: str | Path,
+    *,
+    name: str | None = None,
+) -> PRTRunResults:
+    """Open a completed PRT workspace without rebuilding the PRT simulation."""
+
+    workspace = Path(workspace)
+    if name is None:
+        csv_candidates = sorted(workspace.glob("*.trk.csv"))
+        if len(csv_candidates) != 1:
+            raise FileNotFoundError(
+                f"Expected one *.trk.csv file in {workspace}, found {len(csv_candidates)}."
+            )
+        track_path = csv_candidates[0]
+        name = track_path.name.removesuffix(".trk.csv")
+    else:
+        track_path = workspace / f"{name}.trk.csv"
+    return PRTRunResults(
+        flow_model=model,
+        workspace=workspace,
+        name=name,
+        track_csv_path=track_path,
+        budget_path=workspace / f"{name}.bud",
+    )
+
+
+class ParticleTracking:
+    """Model-bound entry point for MF6 PRT and existing MP3DU workflows."""
+
+    def __init__(self, model: "SimulationBase"):
+        self.model = model
+
+    def prt(self, *, workspace: str | Path, release_points, **kwargs) -> PRTProject:
+        return PRTProject(
+            self.model,
+            workspace=workspace,
+            release_points=release_points,
+            **kwargs,
+        )
+
+    def open_prt(self, workspace: str | Path, *, name: str | None = None) -> PRTRunResults:
+        return open_prt_run(self.model, workspace, name=name)
+
+    def mp3du(self, particles, **kwargs):
+        from myflopy.modflow.mp3du import prepare_particle_tracking
+
+        return prepare_particle_tracking(model=self.model, particles=particles, **kwargs)

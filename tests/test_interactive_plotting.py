@@ -2,7 +2,7 @@ from __future__ import annotations
 def test_choro_plot_returns_figure_without_calling_show():
     import plotly.graph_objects as go
 
-    from simple_modflow.modflow.utils.datatypes.choros import Choro
+    from myflopy.modflow.utils.datatypes.choros import Choro
 
     choro = object.__new__(Choro)
     figure = go.Figure()
@@ -34,7 +34,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mf6.interactive_plotting import (  # noqa: E402
+from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     FrameExportProgress,
     ModelMapStyle,
     ModelVisualization,
@@ -47,13 +47,13 @@ from simple_modflow.modflow.mf6.interactive_plotting import (  # noqa: E402
     export_matplotlib_slider_html,
     plot_model_head_map,
 )
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.discretization import (  # noqa: E402
+from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
 )
-from simple_modflow.modflow.mf6.simulation.packages import KFlow  # noqa: E402
-from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mf6.simulation.packages import KFlow  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 
 
 def _workspace(name: str) -> Path:
@@ -343,11 +343,11 @@ def test_head_layer_mosaic_has_high_resolution_default_and_direct_controls(monke
             return ax.figure, ax
 
         monkeypatch.setattr(
-            "simple_modflow.modflow.mf6.interactive_plotting.export_matplotlib_slider_html",
+            "myflopy.modflow.mf6.interactive_plotting.export_matplotlib_slider_html",
             capture_export,
         )
         monkeypatch.setattr(
-            "simple_modflow.modflow.mf6.interactive_plotting.plot_model_head_map",
+            "myflopy.modflow.mf6.interactive_plotting.plot_model_head_map",
             draw_without_contours,
         )
         export_head_layer_mosaic_slider_html(
@@ -442,7 +442,7 @@ def test_large_multilayer_shared_color_scale_ignores_dry_and_nan_values(monkeypa
             return original(*args, **kwargs)
 
         monkeypatch.setattr(
-            "simple_modflow.modflow.mf6.interactive_plotting.plot_model_head_map",
+            "myflopy.modflow.mf6.interactive_plotting.plot_model_head_map",
             capture_limits,
         )
         export_head_map_slider_html(
@@ -567,7 +567,7 @@ def test_plotly_animation_export_can_select_frames(monkeypatch, tmp_path):
 def test_plotly_cross_section_frames_preserve_current_axis_zoom():
     from types import SimpleNamespace
 
-    from simple_modflow.modflow.utils.datatypes.xsections import XSection
+    from myflopy.modflow.utils.datatypes.xsections import XSection
 
     periods = [(0, 0), (0, 1), (0, 2)]
 
@@ -604,7 +604,7 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
     import plotly.graph_objects as go
     from types import SimpleNamespace
 
-    from simple_modflow.modflow.utils.datatypes.choros import Choro
+    from myflopy.modflow.utils.datatypes.choros import Choro
 
     periods = [(0, index) for index in range(8)]
 

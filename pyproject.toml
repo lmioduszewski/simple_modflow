@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "simple_modflow"
+name = "myflopy"
 version = "0.1.0"
 description = "modflow helper package"
 readme = "README.md"
@@ -12,7 +12,7 @@ authors = [
   { name="Luke Mioduszewski", email="luke.mioduszewski@gmail.com" }
 ]
 dependencies = [
-  "flopy>=3.9",
+  "flopy>=3.10,<4",
   "geopandas>=0.14",
   "numpy>=1.24",
   "pandas>=2.0",
@@ -49,7 +49,7 @@ parallel = [
 include-package-data = false
 
 [tool.setuptools.package-data]
-simple_modflow = ["py.typed", "**/*.pyi"]
+myflopy = ["py.typed", "**/*.pyi"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 from shapely.geometry import Point, Polygon
 
-from simple_modflow.modflow.mp3du import prepare_particle_tracking, run_particle_tracking
-from simple_modflow.modflow.mp3du.particles import ParticleTrackingInput, ParticleTrackingResult
+from myflopy.modflow.mp3du import prepare_particle_tracking, run_particle_tracking
+from myflopy.modflow.mp3du.particles import ParticleTrackingInput, ParticleTrackingResult
 
 
 class _DummyVor:
@@ -412,7 +412,7 @@ def test_mp3du_subprocess_wrappers_raise_clear_errors(monkeypatch, tmp_path):
             self.stdout = ""
 
     monkeypatch.setattr(
-        "simple_modflow.modflow.mp3du.particles.subprocess.run",
+        "myflopy.modflow.mp3du.particles.subprocess.run",
         lambda *args, **kwargs: _Result(1, "boom"),
     )
 
@@ -426,6 +426,6 @@ def test_mp3du_subprocess_wrappers_raise_clear_errors(monkeypatch, tmp_path):
 
 def test_legacy_prt_names_lazy_load_with_deprecation_warning():
     with pytest.deprecated_call():
-        from simple_modflow.modflow.mp3du.particles import PRT
+        from myflopy.modflow.mp3du.particles import PRT
 
     assert PRT.__module__.endswith("legacy_prt")

@@ -16,11 +16,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid  # noqa: E402
-from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
+from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
+from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
     KFlow,

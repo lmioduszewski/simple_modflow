@@ -1,6 +1,6 @@
 # Interactive Visualization and MF6 PRT
 
-`simple_modflow` supports three complementary interactive result workflows:
+`myflopy` supports three complementary interactive result workflows:
 
 1. standalone Matplotlib frame sliders
 2. Plotly animations with sliders
@@ -23,7 +23,7 @@ The `viz3d` extra installs PyVista and the Trame packages needed by
 Use `model.visualize` as the preferred entry point:
 
 ```python
-# Existing simple_modflow/FloPy Matplotlib cross-section style, through time.
+# Existing myflopy/FloPy Matplotlib cross-section style, through time.
 model.visualize.cross_section_slider_html(
     line,
     "cross_section.html",
@@ -128,7 +128,7 @@ MF6 PRT is the preferred integrated particle-tracking engine. MP3DU remains
 available through the same model-bound namespace.
 
 ```python
-import simple_modflow as mf
+import myflopy as mf
 
 release_points = mf.PRTReleasePoints.from_cells(
     model,
@@ -196,7 +196,7 @@ vtk.add_pathline_points(pathlines)
 meshes = vtk.to_pyvista()
 ```
 
-`simple_modflow` wraps this sequence so pathline results can be reviewed and
+`myflopy` wraps this sequence so pathline results can be reviewed and
 exported consistently.
 
 ## Testing Contract

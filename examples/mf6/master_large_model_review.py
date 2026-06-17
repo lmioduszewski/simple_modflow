@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-import simple_modflow as mf
-from simple_modflow.modflow.mf6.canonical_example import representative_cells
+import myflopy as mf
+from myflopy.modflow.mf6.canonical_example import representative_cells
 
 
 def parse_args():

@@ -11,8 +11,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
 
-from simple_modflow.modflow.mf6.canonical import CANONICAL_MODEL_CONTRACT
-from simple_modflow.modflow.mf6.canonical_example import (
+from myflopy.modflow.mf6.canonical import CANONICAL_MODEL_CONTRACT
+from myflopy.modflow.mf6.canonical_example import (
     CanonicalModelConfig,
     build_canonical_model,
 )

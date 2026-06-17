@@ -1,22 +1,26 @@
-# simple_modflow
+# myflopy
 
 ## Developer Guide
 
 - Codebase structure map: [docs/codebase_structure.md](docs/codebase_structure.md)
+- Core specification API: [docs/core_specs.md](docs/core_specs.md)
 - Preferred API guide: [docs/preferred_api.md](docs/preferred_api.md)
+- Refactor review and consolidation strategy: [docs/refactor_review_report.md](docs/refactor_review_report.md)
 - Local run clutter guide: [docs/local_run_clutter.md](docs/local_run_clutter.md)
 
 Utilities for building, running, and post-processing MODFLOW 6 models with FloPy.
 
+Use `import myflopy`.
+
 Preferred vector-builder names for GIS-driven package/material inputs are:
 `DRNFromVector`, `GHBFromVector`, `CHDFromVector`, `RCHFromVector`, and
-`KFromVector`. Older names remain supported for compatibility.
+`KFromVector`.
 
 ## Status
 
-This project is in the middle of a packaging and architecture cleanup. The codebase now has clearer internal
-subpackages for MF6 grid helpers and simulation helpers, but some legacy façade modules are still kept for
-compatibility while the refactor continues.
+This project is undergoing a clean architecture refactor. Existing APIs,
+aliases, and internal layouts may be removed when they do not fit the new
+design; backward compatibility with `simple_modflow` is not a goal.
 
 ## Installation
 

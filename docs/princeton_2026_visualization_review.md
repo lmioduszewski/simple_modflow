@@ -4,7 +4,7 @@ This review covers the notebooks in:
 
 `C:\Users\lukem\Python\Projects\modflow-training-princeton2026\examples\notebooks`
 
-It records the patterns that informed the canonical `simple_modflow`
+It records the patterns that informed the canonical `myflopy`
 visualization and MF6 PRT APIs.
 
 ## Slider Patterns
@@ -33,7 +33,7 @@ visualization and MF6 PRT APIs.
   `PlotCrossSection`.
 
 These patterns require a live Jupyter kernel. The corresponding standalone
-`simple_modflow` path pre-renders the Matplotlib frames and embeds them into a
+`myflopy` path pre-renders the Matplotlib frames and embeds them into a
 browser-side HTML slider:
 
 - `model.visualize.head_map_slider_html(...)`
@@ -41,12 +41,12 @@ browser-side HTML slider:
 - `model.visualize.cross_section_slider_html(...)`
 
 The cross-section exporter deliberately reuses
-`plot_model_cross_section(...)`, preserving the existing `simple_modflow`
+`plot_model_cross_section(...)`, preserving the existing `myflopy`
 Matplotlib cross-section style.
 
-## Plotly Patterns Already in simple_modflow
+## Plotly Patterns Already in myflopy
 
-Before this review, `simple_modflow` already supported:
+Before this review, `myflopy` already supported:
 
 - `model.xs(...).ani` for Plotly cross-section animations
 - `model.cor(...).ani` for Plotly map animations

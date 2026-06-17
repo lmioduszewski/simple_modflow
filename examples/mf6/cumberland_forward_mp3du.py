@@ -18,7 +18,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mp3du.particles import ParticleTrackingInput
+from myflopy.modflow.mp3du.particles import ParticleTrackingInput
 
 
 @dataclass(frozen=True)

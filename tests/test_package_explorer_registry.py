@@ -2,14 +2,14 @@ import os
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-from simple_modflow.modflow.mf6.package_explorer import (
+from myflopy.modflow.mf6.package_explorer import (
     ModelPackages,
     get_default_budget_term,
     get_default_package_colorscale,
     get_default_package_value_column,
     get_package_explorer_spec,
 )
-from simple_modflow.project.model_group import GroupPackages
+from myflopy.project.model_group import GroupPackages
 
 
 class _DummyModel:

@@ -15,11 +15,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mf6.pest.gold_standard_demo import (  # noqa: E402
+from myflopy.modflow.mf6.pest.gold_standard_demo import (  # noqa: E402
     GoldStandardPestDemoConfig,
     build_and_optionally_run_gold_standard_demo,
 )
-from simple_modflow.modflow.mf6.pest.results import open_pest_run  # noqa: E402
+from myflopy.modflow.mf6.pest.results import open_pest_run  # noqa: E402
 
 
 def _temp_artifact_root(name: str) -> Path:
@@ -48,9 +48,9 @@ def test_gold_standard_demo_build_only_writes_reopenable_workspace():
 
     assert run.workspace_root.exists()
     assert (run.pest_workspace / run.control_file).exists()
-    assert (run.pest_workspace / "simple_modflow_pest_metadata.json").exists()
+    assert (run.pest_workspace / "myflopy_pest_metadata.json").exists()
     assert (run.model_workspace / config.model_name / "gold_sfr_stage.csv").exists()
-    assert (run.model_workspace / config.model_name / "sfr_budget.sfr").exists()
+    assert (run.model_workspace / config.model_name / f"{config.model_name}_sfr_budget.sfr").exists()
 
     pest_run = open_pest_run(run.pest_workspace)
     assert not pest_run.load_head_targets().to_long().empty

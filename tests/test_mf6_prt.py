@@ -19,20 +19,20 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
-from simple_modflow.modflow.mf6.prt import (  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mf6.prt import (  # noqa: E402
     PRTProject,
     PRTReleasePoints,
     PRTRunResults,
     open_prt_run,
 )
-from simple_modflow.modflow.mf6.canonical_example import representative_cells  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.discretization import (  # noqa: E402
+from myflopy.modflow.mf6.canonical_example import representative_cells  # noqa: E402
+from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
 )
-from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
+from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
     KFlow,
@@ -133,14 +133,24 @@ def test_prt_project_copies_disv_timing_and_writes_inputs():
         assert (workspace / "prt" / f"{project.name}.prp").exists()
         assert (workspace / "prt" / f"{project.name}.fmi").exists()
         assert not project.prt.prp.extend_tracking.get_data()
+        assert project.prt.prp.stoptime.get_data() is None
+        assert project.prt.prp.stoptraveltime.get_data() is None
 
         extended = PRTProject(
             model,
             workspace=workspace / "extended_prt",
             release_points=PRTReleasePoints.from_cells(model, [0]),
             extend_tracking=True,
+            stoptime=365.0,
+            stoptraveltime=120.0,
         )
         assert extended.prt.prp.extend_tracking.get_data()
+        assert extended.prt.prp.stoptime.get_data() == pytest.approx(365.0)
+        assert extended.prt.prp.stoptraveltime.get_data() == pytest.approx(120.0)
+        extended.write()
+        prp_text = (workspace / "extended_prt" / f"{extended.name}.prp").read_text()
+        assert "STOPTIME     365.00000000" in prp_text
+        assert "STOPTRAVELTIME     120.00000000" in prp_text
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

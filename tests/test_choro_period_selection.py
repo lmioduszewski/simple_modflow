@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from simple_modflow.modflow.utils.datatypes.choros import Choro
+from myflopy.modflow.utils.datatypes.choros import Choro
 
 
 def _selector(kstpkper, per_timestep="last"):

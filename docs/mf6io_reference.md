@@ -1,6 +1,6 @@
 # MF6 I/O Reference Notes
 
-This note captures the `simple_modflow` assumptions that come directly from the
+This note captures the `myflopy` assumptions that come directly from the
 local MF6 I/O reference PDF:
 
 - Source PDF: `C:\Users\lukem\OneDrive - Associated Earth Sciences Inc\References\Software\MODFLOW\mf6io.pdf`
@@ -45,7 +45,7 @@ For LAK package binary output:
 - the package-output `GWF` rows do **not** include the LAK input-file
   `iconn` value
 
-Implications for `simple_modflow`:
+Implications for `myflopy`:
 - LAK exchange sign convention:
   - positive `q` = lake losing to groundwater
   - negative `q` = groundwater gaining to lake
@@ -66,7 +66,7 @@ For SFR package binary output:
 - `GWF` means calculated flow from reach (`ID1`) to GWF cell (`ID2`)
 - auxiliary `FLOW-AREA` is written for this term
 
-Implications for `simple_modflow`:
+Implications for `myflopy`:
 - SFR exchange sign convention:
   - positive `q` = stream losing to groundwater
   - negative `q` = groundwater gaining to stream
@@ -85,7 +85,7 @@ For UZF package binary output:
 - `GWF` means calculated flow from UZF cell (`ID1`) to GWF cell (`ID2`)
 - auxiliary `FLOW-AREA` is written for this term
 
-Implications for `simple_modflow`:
+Implications for `myflopy`:
 - `UZF-GWRCH`, `UZF-GWET`, and related result helpers should treat package
   output signs and identifiers according to the package-output table, not
   according to the main GWF budget assumptions
@@ -100,7 +100,7 @@ For `DISV`:
 - package-output `ID2` values that refer to GWF cells are still node/cell ids
   that need to be normalized carefully for zero-based internal use
 
-## Guidance for `simple_modflow`
+## Guidance for `myflopy`
 
 When implementing or debugging package explorers:
 
@@ -109,5 +109,5 @@ When implementing or debugging package explorers:
 3. Do not assume package-output rows include input-file identifiers like
    `iconn`; confirm from the MF6 table first.
 4. Preserve `FLOW-AREA` from MF6 output whenever it is written.
-5. Keep all public `simple_modflow` cell and period references zero-based, but
+5. Keep all public `myflopy` cell and period references zero-based, but
    document exactly where MF6 writes one-based ids.

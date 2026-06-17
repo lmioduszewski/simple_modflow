@@ -18,10 +18,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import simple_modflow as mf
-from simple_modflow import read_shp_gpkg
-from simple_modflow.modflow.mf6.simulation import DisvGrid, TemporalDiscretization
-from simple_modflow.modflow.mf6.simulation.packages import (
+import myflopy as mf
+from myflopy import read_shp_gpkg
+from myflopy.modflow.mf6.simulation import DisvGrid, TemporalDiscretization
+from myflopy.modflow.mf6.simulation.packages import (
     Drains,
     InitialConditions,
     KFlow,

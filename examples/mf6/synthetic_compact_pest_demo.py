@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from simple_modflow.modflow.mf6.pest.synthetic_demo import (
+from myflopy.modflow.mf6.pest.synthetic_demo import (
     SyntheticPestDemoConfig,
     build_and_optionally_run_synthetic_demo,
 )

@@ -1,11 +1,11 @@
-"""Run the gold-standard synthetic simple_modflow + PEST workflow."""
+"""Run the gold-standard synthetic myflopy + PEST workflow."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from simple_modflow.modflow.mf6.pest.gold_standard_demo import (
+from myflopy.modflow.mf6.pest.gold_standard_demo import (
     GoldStandardPestDemoConfig,
     build_and_optionally_run_gold_standard_demo,
 )

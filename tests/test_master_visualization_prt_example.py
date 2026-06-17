@@ -12,7 +12,7 @@ from examples.mf6.visualization_prt_master_support import (
     MasterExampleConfig,
     build_transient_model,
 )
-from simple_modflow.modflow.mf6.interactive_plotting import ModelMapStyle
+from myflopy.modflow.mf6.interactive_plotting import ModelMapStyle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,13 +97,13 @@ def test_master_example_validation_profile_runs_complex_package_topology():
         assert not model.packages.lak.results.stage.get().empty
         assert not model.packages.sfr.results.q.get().empty
         assert not model.outputs.uzf.ifno_to_cellid.empty
-        from simple_modflow.modflow.mf6.canonical import canonical_head_signals
+        from myflopy.modflow.mf6.canonical import canonical_head_signals
 
         head_signals = canonical_head_signals(model)
         assert min(head_signals["spatial_range_by_layer"]) > 10.0
         assert max(head_signals["temporal_range_by_layer"]) > 3.0
         assert head_signals["maximum_drawdown_by_layer"][3] > 1.0
-        from simple_modflow.modflow.mf6.canonical import canonical_feature_signals
+        from myflopy.modflow.mf6.canonical import canonical_feature_signals
 
         feature_signals = canonical_feature_signals(model)
         assert feature_signals["head_change"]["pond_mound"] > 0.5
@@ -111,7 +111,7 @@ def test_master_example_validation_profile_runs_complex_package_topology():
         assert feature_signals["head_change"]["confined_pumping"] > 1.0
         assert feature_signals["seepage_peak"]["unconfined_seepage"] > 0.0
         assert feature_signals["seepage_peak"]["confined_seepage"] > 0.0
-        from simple_modflow.modflow.mf6.canonical import canonical_sfr_signals
+        from myflopy.modflow.mf6.canonical import canonical_sfr_signals
 
         sfr_signals = canonical_sfr_signals(model)
         assert sfr_signals["reach_count"] >= 40
@@ -158,7 +158,11 @@ def test_master_notebook_documents_full_integration_surface():
 
 def test_canonical_master_notebook_set_uses_one_builder():
     notebook_root = ROOT / "examples" / "mf6" / "notebooks"
-    paths = sorted(notebook_root.glob("canonical_*.ipynb"))
+    paths = sorted(
+        path
+        for path in notebook_root.glob("canonical_*.ipynb")
+        if not path.name.endswith(".executed.ipynb")
+    )
     assert len(paths) == 5
     combined = ""
     for path in paths:
@@ -179,3 +183,38 @@ def test_canonical_master_notebook_set_uses_one_builder():
         "PEST",
     ):
         assert required.lower() in combined.lower()
+
+
+def test_canonical_pest_notebook_covers_full_build_run_and_review_workflow():
+    path = ROOT / "examples" / "mf6" / "notebooks" / "canonical_04_pest_and_results.ipynb"
+    notebook = json.loads(path.read_text(encoding="utf-8"))
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+
+    assert sum(cell["cell_type"] == "markdown" for cell in notebook["cells"]) >= 9
+    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) >= 9
+    assert not any(
+        output.get("output_type") == "error"
+        for cell in notebook["cells"]
+        for output in cell.get("outputs", [])
+    )
+    for required in (
+        "build_canonical_model",
+        "build_and_optionally_run_gold_standard_demo",
+        "RUN_PESTPP",
+        "NOPTMAX",
+        "N_WORKERS",
+        "forward_run.py",
+        "parameter_data",
+        "observation_data",
+        "load_head_targets",
+        "load_lake_stage_targets",
+        "load_sfr_stage_targets",
+        "load_sfr_flow_targets",
+        "load_drn_flow_targets",
+        "review()",
+        "plot_obs_vs_sim",
+        "plot_residuals_by_period",
+        "plot_well_timeseries",
+        "export_review",
+    ):
+        assert required in source

@@ -23,19 +23,21 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import figs  # noqa: E402
-import simple_modflow  # noqa: E402
-from simple_modflow import (  # noqa: E402
-    SimpleModel as PackageSimpleModel,
+import myflopy  # noqa: E402
+from myflopy import (  # noqa: E402
+    ModelContext,
+    Project,
     SimpleModelConfig as PackageSimpleModelConfig,
     SimulationBase as PackageSimulationBase,
     TriangleGrid as PackageTriangleGrid,
+    UZFBuilder,
     VoronoiGridPlus as PackageVoronoiGridPlus,
-    build_simple_model as package_build_simple_model,
     read_gpkg,
     read_shp_gpkg,
+    simple_model_spec as package_simple_model_spec,
 )
-from simple_modflow.modflow import geotiff_to_contours, get_iheads  # noqa: E402
-from simple_modflow.modflow.mf6 import (  # noqa: E402
+from myflopy.modflow import geotiff_to_contours, get_iheads  # noqa: E402
+from myflopy.modflow.mf6 import (  # noqa: E402
     DRN as PackageDRN,
     DisvGrid as PackageDisvGrid,
     GHB as PackageGHB,
@@ -47,66 +49,188 @@ from simple_modflow.modflow.mf6 import (  # noqa: E402
     SimpleModelConfig as PackageMf6SimpleModelConfig,
     TemporalDiscretization as PackageTemporalDiscretization,
     VoronoiGridPlus as PackageMf6Voronoi,
-    build_simple_model as mf6_build_simple_model,
+    simple_model_spec as mf6_simple_model_spec,
 )
-from simple_modflow.modflow.mf6.grid.connectivity import build_disu_connectivity  # noqa: E402
-from simple_modflow.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
-from simple_modflow.modflow.mf6.grid.plotting import GridSection  # noqa: E402
-from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus as GridVoronoiGridPlus  # noqa: E402
-from simple_modflow.modflow.mf6.cross_section_plotting import (  # noqa: E402
+from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity  # noqa: E402
+from myflopy.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
+from myflopy.modflow.mf6.grid.plotting import GridSection  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as GridVoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mf6.cross_section_plotting import (  # noqa: E402
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
-from simple_modflow.modflow.mf6.grid.selection import (  # noqa: E402
+from myflopy.modflow.mf6.grid.selection import (  # noqa: E402
     get_grid_edge_cells,
     get_vor_cells_as_series,
 )
-from simple_modflow.modflow.mf6.boundaries import Boundaries  # noqa: E402
-from simple_modflow.modflow.mf6.chd import CHDFromVector  # noqa: E402
-from simple_modflow.modflow.mf6.drn import DRN, DRNFromVector  # noqa: E402
-from simple_modflow.modflow.mf6.ghb import GHB, GHBFromVector  # noqa: E402
-from simple_modflow.modflow.mf6.kflow import KFromVector  # noqa: E402
-from simple_modflow.modflow.gwt.gwt import GWT  # noqa: E402
-from simple_modflow.modflow.mf6.lakes import (  # noqa: E402
-    LakeAreaVolumeRelationship,
-    LakeConnectionData,
-    LakePackageData,
-    LakePeriodData,
+from myflopy.modflow.mf6.boundaries import Boundaries  # noqa: E402
+from myflopy.modflow.mf6.chd import CHDFromVector  # noqa: E402
+from myflopy.modflow.mf6.drn import DRN, DRNFromVector  # noqa: E402
+from myflopy.modflow.mf6.ghb import GHB, GHBFromVector  # noqa: E402
+from myflopy.modflow.mf6.kflow import KFromVector  # noqa: E402
+from myflopy.modflow.gwt.gwt import GWT  # noqa: E402
+from myflopy.modflow.mf6.lakes import (  # noqa: E402
+    LAKBuilder,
+    LakeTableBuilder,
 )
-from simple_modflow.modflow.mf6.mfsimbase import SimulationBase  # noqa: E402
-from simple_modflow.modflow.mf6.recharge import RechargeFromShp, RCHFromVector  # noqa: E402
-from simple_modflow.modflow.mf6.sfr import SFR  # noqa: E402
-from simple_modflow.modflow.mf6.simplemodel import (  # noqa: E402
-    SimpleModel,
+from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection  # noqa: E402
+from myflopy.modflow.mf6.mfsimbase import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.recharge import RechargeFromShp, RCHFromVector  # noqa: E402
+from myflopy.modflow.mf6.sfr import SFRBuilder  # noqa: E402
+from myflopy.modflow.mf6.simplemodel import (  # noqa: E402
     SimpleModelConfig,
-    build_simple_model,
+    simple_model_spec,
 )
-from simple_modflow.modflow.mf6.uzf import UZFPackageData  # noqa: E402
-from simple_modflow.modflow.mf6.simulation import SimulationBase as SimulationPkgBase  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase as SimulationBaseDirect  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.discretization import (  # noqa: E402
+from myflopy.modflow.mf6.simulation import SimulationBase as SimulationPkgBase  # noqa: E402
+from myflopy.modflow.mf6.simulation.base import SimulationBase as SimulationBaseDirect  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisuGrid,
     DisvGrid,
     TemporalDiscretization,
 )
-from simple_modflow.modflow.mf6.simulation.regions import (  # noqa: E402
+from myflopy.modflow.mf6.simulation.regions import (  # noqa: E402
     ModelRegion,
     RegionGroup,
     RegionRegistry,
 )
-from simple_modflow.modflow.utils.datatypes.xsections import XSection  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
+from myflopy.modflow.utils.datatypes.xsections import XSection  # noqa: E402
+from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
     KFlow,
-    LAK as LAKPackage,
-    MVR,
     OutputControl,
     Recharge,
     Storage,
 )
-from simple_modflow.modflow.mp3du.particles import ParticleTrackingInput  # noqa: E402
-from simple_modflow.modflow.mf6.voronoiplus import TriangleGrid, VoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mp3du.particles import ParticleTrackingInput  # noqa: E402
+from myflopy.modflow.mf6.voronoiplus import TriangleGrid, VoronoiGridPlus  # noqa: E402
+
+
+def _model_context(model, vor):
+    return ModelContext(grid=vor, domain=np.asarray(model.gwf.modelgrid.idomain))
+
+
+def _surface_cells(context):
+    domain = np.asarray(context.domain)
+    if domain.ndim == 1:
+        domain = domain[np.newaxis, :]
+    return [
+        (int(np.flatnonzero(domain[:, cell] > 0)[0]), cell)
+        for cell in range(domain.shape[1])
+        if np.any(domain[:, cell] > 0)
+    ]
+
+
+def _uzf_finf_from_rch(rch_dict, surface_cells, nper):
+    values = {}
+    for period in range(nper):
+        by_cell = {tuple(row[0]): row[1] for row in rch_dict.get(period, [])}
+        values[period] = [by_cell.get(cellid, 0.0) for cellid in surface_cells]
+    return values
+
+
+def _attach_sfr(
+    model,
+    vor,
+    stream_paths,
+    *,
+    inflows=None,
+    widths=10.0,
+    gradients=0.001,
+    mannings=0.03,
+    streambed_k=1.0,
+    streambed_thickness=1.0,
+    mover=False,
+    region_name_prefix=None,
+    combined_region_name=None,
+    region_tags=None,
+    overwrite_regions=False,
+):
+    builder = SFRBuilder(
+        context=_model_context(model, vor),
+        nper=model.nper,
+        streams=stream_paths,
+        inflow=inflows,
+        width=widths,
+        gradient=gradients,
+        roughness=mannings,
+        streambed_k=streambed_k,
+        streambed_thickness=streambed_thickness,
+        mover=mover,
+    )
+    builder.build().build(model.gwf)
+    for stream_id, cells in builder.stream_cells.items():
+        name = f"{region_name_prefix}_{stream_id}" if region_name_prefix else stream_id
+        model.add_region_from_cells(
+            name,
+            [(0, cell) for cell in cells],
+            category="boundary",
+            package="sfr",
+            tags=region_tags or ["sfr"],
+            geometry=builder.stream_table.loc[stream_id].geometry,
+            overwrite=overwrite_regions,
+        )
+    if combined_region_name:
+        model.add_region_from_cells(
+            combined_region_name,
+            [(0, cell) for cells in builder.stream_cells.values() for cell in cells],
+            category="boundary",
+            package="sfr",
+            tags=region_tags or ["sfr"],
+            overwrite=overwrite_regions,
+        )
+    return builder
+
+
+def _attach_lak(
+    model,
+    vor,
+    lake_paths,
+    *,
+    starting_stage,
+    lake_bottom,
+    bed_leakance=1.0,
+    status="ACTIVE",
+    mover=False,
+    region_name_prefix=None,
+    combined_region_name=None,
+    region_tags=None,
+    overwrite_regions=False,
+):
+    builder = LAKBuilder(
+        context=_model_context(model, vor),
+        nper=model.nper,
+        lakes=lake_paths,
+        lake_id_field="name",
+        starting_stage=starting_stage,
+        lake_bottom=lake_bottom,
+        bed_leakance=bed_leakance,
+        connection_modes="rectangular",
+        status=status,
+        mover=mover,
+    )
+    builder.build().build(model.gwf)
+    for lake_id, cells in builder.lake_cells.items():
+        name = f"{region_name_prefix}_{lake_id}" if region_name_prefix else lake_id
+        model.add_region_from_cells(
+            name,
+            [(0, cell) for cell in cells],
+            category="boundary",
+            package="lak",
+            tags=region_tags or ["lak"],
+            geometry=builder.lake_table.loc[lake_id].geometry,
+            overwrite=overwrite_regions,
+        )
+    if combined_region_name:
+        model.add_region_from_cells(
+            combined_region_name,
+            [(0, cell) for cells in builder.lake_cells.values() for cell in cells],
+            category="boundary",
+            package="lak",
+            tags=region_tags or ["lak"],
+            overwrite=overwrite_regions,
+        )
+    return builder
 
 
 def _two_cell_grid() -> gpd.GeoDataFrame:
@@ -217,59 +341,6 @@ def _four_cell_vor_clockwise():
         dtype=float,
     )
     return VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)
-
-
-def test_lak_wrapper_forwards_boundnames_for_named_packagedata(monkeypatch):
-    class _DummyReport:
-        def raise_for_errors(self, _message):
-            return None
-
-    captured = {}
-
-    def _fake_validate(*args, **kwargs):
-        return _DummyReport()
-
-    def _fake_lak_constructor(*args, **kwargs):
-        captured.update(kwargs)
-        return object()
-
-    class _DummyModel:
-        name = "lak_demo"
-        gwf = object()
-
-    monkeypatch.setattr(
-        "simple_modflow.modflow.mf6.simulation.packages.validate_lak_configuration",
-        _fake_validate,
-    )
-    monkeypatch.setattr(
-        "simple_modflow.modflow.mf6.simulation.packages.flopy.mf6.ModflowGwflak",
-        _fake_lak_constructor,
-    )
-
-    packagedata = [
-        (0, 768.0, 3, "deep_lake"),
-        (1, 796.0, 2, "hyde_lake"),
-    ]
-    connectiondata = [
-        (0, 0, (0, 0), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
-        (0, 1, (0, 1), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
-        (0, 2, (0, 0), "VERTICAL", 1.0, 760.0, 770.0, 1.0, 1.0),
-        (1, 0, (0, 1), "VERTICAL", 1.0, 790.0, 800.0, 1.0, 1.0),
-        (1, 1, (0, 0), "VERTICAL", 1.0, 790.0, 800.0, 1.0, 1.0),
-    ]
-
-    wrapper = LAKPackage(
-        _DummyModel(),
-        nlakes=2,
-        packagedata=packagedata,
-        connectiondata=connectiondata,
-        boundnames=True,
-        validate=True,
-    )
-
-    assert wrapper.lak is not None
-    assert captured["boundnames"] is True
-    assert captured["packagedata"] == packagedata
 
 
 def _write_refined_workflow_vectors(workspace: Path) -> dict[str, object]:
@@ -494,9 +565,8 @@ class DummyVor:
 
 def test_imports_and_custom_figs_are_available():
     assert figs is not None
-    assert simple_modflow.__version__
+    assert myflopy.__version__
     assert SimulationBase is not None
-    assert SimpleModel is not None
     assert TriangleGrid is not None
     assert DRN is not None
     assert DRNFromVector is not None
@@ -504,12 +574,11 @@ def test_imports_and_custom_figs_are_available():
     assert GHBFromVector is not None
     assert RechargeFromShp is not None
     assert RCHFromVector is not None
-    assert LakeAreaVolumeRelationship is not None
-    assert SFR is not None
+    assert LakeTableBuilder is not None
+    assert SFRBuilder is not None
     assert GWT is not None
     assert ParticleTrackingInput is not None
     assert PackageSimulationBase is SimulationBase
-    assert PackageSimpleModel is SimpleModel
     assert PackageSimpleModelConfig is SimpleModelConfig
     assert PackageTriangleGrid is TriangleGrid
     assert PackageVoronoiGridPlus is VoronoiGridPlus
@@ -522,8 +591,8 @@ def test_imports_and_custom_figs_are_available():
     assert PackageRegionRegistry is RegionRegistry
     assert SimulationPkgBase is SimulationBase
     assert SimulationBaseDirect is SimulationBase
-    assert package_build_simple_model is build_simple_model
-    assert mf6_build_simple_model is build_simple_model
+    assert package_simple_model_spec is simple_model_spec
+    assert mf6_simple_model_spec is simple_model_spec
     assert PackageDisvGrid is DisvGrid
     assert PackageTemporalDiscretization is TemporalDiscretization
     assert PackageOutputControl is OutputControl
@@ -533,7 +602,7 @@ def test_imports_and_custom_figs_are_available():
     assert read_shp_gpkg is not None
     assert get_iheads is not None
     assert geotiff_to_contours is not None
-    assert simple_modflow.validate_surface_water_configuration is not None
+    assert myflopy.validate_surface_water_configuration is not None
 
 
 def test_examples_layout_smoke():
@@ -549,8 +618,6 @@ def test_examples_layout_smoke():
     assert (notebooks_dir / "feature_rich_model_workflow.ipynb").exists()
     assert (notebooks_dir / "refined_feature_rich_model_workflow.ipynb").exists()
     assert (notebooks_dir / "code_geometry_refined_model_workflow.ipynb").exists()
-    assert (notebooks_dir / "project_artifact_workflow.ipynb").exists()
-    assert (notebooks_dir / "optimized_related_run_artifact_workflow.ipynb").exists()
     assert (notebooks_dir / "refined_end_to_end_preferred_api_workflow.ipynb").exists()
 
 
@@ -563,9 +630,6 @@ def test_example_notebooks_are_valid_json():
         "code_geometry_refined_model_workflow.ipynb",
         "cumberland_mesh_optimization_workflow.ipynb",
         "cumberland_cvt_diagnostics_workflow.ipynb",
-        "import_existing_runs_workflow.ipynb",
-        "project_artifact_workflow.ipynb",
-        "optimized_related_run_artifact_workflow.ipynb",
         "refined_end_to_end_preferred_api_workflow.ipynb",
     ]
     notebooks_dir = ROOT / "examples" / "mf6" / "notebooks"
@@ -578,7 +642,7 @@ def test_example_notebooks_are_valid_json():
 
 
 def test_internal_modules_do_not_import_legacy_facades():
-    source_root = ROOT / "src" / "simple_modflow"
+    source_root = ROOT / "src" / "myflopy"
     allowed_legacy_modules = {
         source_root / "modflow" / "mf6" / "mfsimbase.py",
         source_root / "modflow" / "mf6" / "voronoiplus.py",
@@ -770,7 +834,7 @@ def test_model_cross_section_plotting_smoke():
 
 
 def test_minimal_model_can_write_inputs():
-    workspace = _project_temp_dir("simple_modflow_write")
+    workspace = _project_temp_dir("myflopy_write")
     try:
         vor = _two_cell_vor()
         model = SimulationBase(name="write_smoke", mf_folder_path=workspace, vor=vor, nper=1)
@@ -810,7 +874,7 @@ def test_minimal_model_can_write_inputs():
 
 
 def test_minimal_model_can_run_and_read_heads():
-    workspace = _project_temp_dir("simple_modflow_run")
+    workspace = _project_temp_dir("myflopy_run")
     try:
         vor = _two_cell_vor_clockwise()
         model = SimulationBase(name="run_smoke", mf_folder_path=workspace, vor=vor, nper=1)
@@ -858,7 +922,7 @@ def test_minimal_model_can_run_and_read_heads():
 
 
 def test_model_region_registry_supports_cells_geometry_and_head_queries():
-    workspace = _project_temp_dir("simple_modflow_region_registry")
+    workspace = _project_temp_dir("myflopy_region_registry")
     try:
         vor = _two_cell_vor_clockwise()
         model = SimulationBase(name="region_smoke", mf_folder_path=workspace, vor=vor, nper=1)
@@ -931,7 +995,7 @@ def test_model_region_registry_supports_cells_geometry_and_head_queries():
 
 
 def test_model_region_groups_resolve_nested_membership_and_deduplicate_cells():
-    workspace = _project_temp_dir("simple_modflow_region_groups")
+    workspace = _project_temp_dir("myflopy_region_groups")
     try:
         vor = _two_cell_vor_clockwise()
         model = SimulationBase(name="group_smoke", mf_folder_path=workspace, vor=vor, nper=1)
@@ -1002,14 +1066,13 @@ def test_model_region_groups_resolve_nested_membership_and_deduplicate_cells():
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_build_simple_model_factory_can_build_and_run():
+def test_simple_model_spec_can_build_and_run_through_project():
     workspace = _project_temp_dir("simple_model_factory_run")
     try:
         vor = _two_cell_vor_clockwise()
         config = SimpleModelConfig(
             vor=vor,
             name="factory_smoke",
-            mf_folder_path=workspace,
             nper=1,
             nlay=1,
             grid_type="disv",
@@ -1025,57 +1088,86 @@ def test_build_simple_model_factory_can_build_and_run():
             sto_transient={},
         )
 
-        model = build_simple_model(config)
-        success, _ = model.run_simulation()
+        spec = simple_model_spec(config)
+        project = Project(workspace / "project")
+        run = project.run("baseline", spec)
 
-        assert isinstance(model, SimulationBase)
-        assert model.simple_model_config is config
-        assert model.boundary_mode == "chd"
-        assert success is True
-        assert (workspace / "factory_smoke" / "factory_smoke.chd").exists()
+        assert run.success is True
+        assert spec.models[0].name == "factory_smoke"
+        assert spec.models[0].context.grid is vor
+        assert spec.models[0].context.metadata["grid_type"] == "disv"
+        assert [package.name for package in spec.models[0].packages] == [
+            "disv",
+            "ic",
+            "npf",
+            "sto",
+            "oc",
+            "chd",
+        ]
+        assert (run.workspace / "factory_smoke.chd").exists()
 
-        heads = model.hds.get_data(kstpkper=(0, 0)).squeeze()
+        heads = run.simulation.get_model("factory_smoke").output.head().get_data(
+            kstpkper=(0, 0)
+        ).squeeze()
         assert np.allclose(heads, [10.0, 9.0])
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_simple_model_class_accepts_config_or_config_kwargs():
+def test_simple_model_spec_exposes_replaceable_package_specs():
     workspace = _project_temp_dir("simple_model_class_smoke")
     try:
         vor = _two_cell_vor_clockwise()
         config = SimpleModelConfig(
             vor=vor,
             name="class_smoke",
-            mf_folder_path=workspace,
             top=[10.0, 10.0],
             bottom=[[0.0, 0.0]],
             k=[1.0, 1.0],
             boundary_mode="drain",
             boundary_conductance=5.0,
         )
-        model_from_config = SimpleModel(config)
-        model_from_kwargs = SimpleModel(
-            vor=vor,
-            name="class_kwargs",
-            mf_folder_path=workspace,
-            top=[10.0, 10.0],
-            bottom=[[0.0, 0.0]],
+        baseline = simple_model_spec(config)
+        flow = baseline.model("class_smoke")
+        npf = flow.package("npf")
+        high_k = baseline.with_model(flow.with_package(npf.with_options(k=[25.0, 25.0])))
+
+        assert [package.name for package in flow.packages][-1] == "drn"
+        assert flow.package("drn").options["stress_period_data"] == [
+            [(0, 0), 0.1, 5.0],
+            [(0, 1), 0.1, 5.0],
+        ]
+        assert high_k.model("class_smoke").package("npf").options["k"] == [25.0, 25.0]
+        assert npf.options["k"] == [1.0, 1.0]
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_simple_model_spec_can_run_disu_grid():
+    workspace = _project_temp_dir("simple_model_disu_spec")
+    try:
+        config = SimpleModelConfig(
+            vor=_two_cell_vor_clockwise(),
+            name="disu_spec",
+            grid_type="disu",
+            top=[10.0, 9.0],
+            bottom=[0.0, 0.0],
+            idomain=np.array([1, 1]),
+            initial_heads=[10.0, 9.0],
             k=[1.0, 1.0],
-            boundary_mode="drain",
-            boundary_conductance=5.0,
+            save_specific_discharge=False,
+            boundary_mode="chd",
+            boundary_cells=[0, 1],
+            boundary_head=[10.0, 9.0],
+            sto_transient={},
         )
 
-        assert model_from_config.boundary_mode == "drain"
-        assert hasattr(model_from_config, "drn")
-        assert len(model_from_config.drain_stress_period_data) == 2
-        assert model_from_config.drain_stress_period_data[0][0] == (0, 0)
+        spec = simple_model_spec(config)
+        run = Project(workspace / "project").run("baseline", spec)
 
-        assert isinstance(model_from_kwargs.simple_model_config, SimpleModelConfig)
-        assert model_from_kwargs.boundary_mode == "drain"
-        assert hasattr(model_from_kwargs, "drn")
-        assert len(model_from_kwargs.drain_stress_period_data) == 2
-        assert model_from_kwargs.drain_stress_period_data[1][0] == (0, 1)
+        assert run.success is True
+        assert spec.model("disu_spec").packages[0].name == "disu"
+        assert (run.workspace / "disu_spec.disu").exists()
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -1086,7 +1178,7 @@ def test_simple_model_config_validates_model_name_length():
 
 
 def test_rch_and_uzf_can_run_together():
-    workspace = _project_temp_dir("simple_modflow_rch_uzf_run")
+    workspace = _project_temp_dir("myflopy_rch_uzf_run")
     try:
         vor = _two_cell_vor_clockwise()
         model = SimulationBase(name="rch_uzf_smoke", mf_folder_path=workspace, vor=vor, nper=2)
@@ -1140,19 +1232,20 @@ def test_rch_and_uzf_can_run_together():
         )
         Recharge(model=model, vor=vor, rch_dict=rch_dict)
 
-        uzf = UZFPackageData(
-            model=model,
-            vor=vor,
+        uzf_context = _model_context(model, vor)
+        uzf = UZFBuilder(
+            context=uzf_context,
+            nper=model.nper,
             vks=1.0,
             thtr=0.1,
             thts=0.3,
             thti=0.2,
-            rch_from_shp=recharge_builder,
-            add_uzf=True,
-            register_regions=True,
-            region_name="uzf_all",
-            region_tags=["uzf"],
-            overwrite_regions=True,
+            finf=_uzf_finf_from_rch(rch_dict, _surface_cells(uzf_context), model.nper),
+        )
+        uzf.build().build(model.gwf)
+        model.add_region_from_cells(
+            "uzf_all", uzf.uzf_cells, category="boundary", package="uzf",
+            tags=["uzf"], overwrite=True,
         )
 
         success, _ = model.run_simulation()
@@ -1172,7 +1265,7 @@ def test_rch_and_uzf_can_run_together():
 
 
 def test_minimal_disu_model_can_run():
-    workspace = _project_temp_dir("simple_modflow_disu_run")
+    workspace = _project_temp_dir("myflopy_disu_run")
     try:
         vor = _two_cell_vor_clockwise()
         vor.get_disu_connectivity(validate=True)
@@ -1207,7 +1300,7 @@ def test_minimal_disu_model_can_run():
 
 
 def test_lak_and_sfr_can_run_together():
-    workspace = _project_temp_dir("simple_modflow_lak_sfr_run")
+    workspace = _project_temp_dir("myflopy_lak_sfr_run")
     try:
         vor = _four_cell_vor_clockwise()
         vor.gdf_topbtm = gpd.GeoDataFrame(
@@ -1252,59 +1345,34 @@ def test_lak_and_sfr_can_run_together():
             ),
         )
 
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[lake_path],
+        lak = _attach_lak(
+            model,
+            vor,
+            [lake_path],
+            starting_stage=11.0,
+            lake_bottom=9.0,
             bed_leakance=0.1,
-            horizontal_connections={0: [11.0, 9.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-            register_regions=True,
+            status="ACTIVE",
             region_name_prefix="lake_zone",
             combined_region_name="all_lakes",
             region_tags=["lak"],
             overwrite_regions=True,
         )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(
-            nlakes=1,
-            starting_stage=[11.0],
-            connectiondata=connectiondata,
-        )
-        lake_perioddata = LakePeriodData(
-            model=model,
-            lake_ids=[0],
-            lake_stages=[11.0],
-            status=["ACTIVE"],
-        )
-
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
-            mover=False,
-        )
-        sfr = SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[stream_path],
+        sfr = _attach_sfr(
+            model,
+            vor,
+            [stream_path],
             widths=1.0,
             gradients=0.001,
             mannings=0.03,
             streambed_k=1.0,
             streambed_thickness=1.0,
-            add_sfr=True,
-            register_regions=True,
             region_name_prefix="sfr_group",
             combined_region_name="all_streams",
             region_tags=["sfr"],
             overwrite_regions=True,
         )
+        sfr_package_spec = sfr.build()
 
         success, _ = model.run_simulation()
         assert success is True
@@ -1312,7 +1380,9 @@ def test_lak_and_sfr_can_run_together():
         outdir = workspace / "lak_sfr_smoke"
         assert (outdir / "lak_sfr_smoke.lak").exists()
         assert (outdir / "lak_sfr_smoke.sfr").exists()
-        assert len(connectiondata) >= 1
+        assert sfr_package_spec.name == "sfr"
+        assert sfr_package_spec.options["nreaches"] == sfr.total_nreaches
+        assert len(lak.connectiondata) >= 1
         assert sfr.total_nreaches >= 1
         assert model.get_region_cells("lake_zone_lake_0") == [0]
         assert set(model.get_region_cells("all_lakes")) == {0}
@@ -1323,7 +1393,7 @@ def test_lak_and_sfr_can_run_together():
 
 
 def test_small_vector_sfr_lak_mvr_workflow_can_run():
-    workspace = _project_temp_dir("simple_modflow_sfr_lak_mvr_run")
+    workspace = _project_temp_dir("myflopy_sfr_lak_mvr_run")
     try:
         vor = _four_cell_vor_clockwise()
         vor.gdf_topbtm = gpd.GeoDataFrame(
@@ -1362,37 +1432,24 @@ def test_small_vector_sfr_lak_mvr_workflow_can_run():
             ),
         )
 
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[lake_path],
+        lak = _attach_lak(
+            model,
+            vor,
+            [lake_path],
+            starting_stage=11.0,
+            lake_bottom=9.0,
             bed_leakance=0.1,
-            horizontal_connections={0: [11.0, 9.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-            register_regions=True,
+            status="ACTIVE",
+            mover=True,
             region_name_prefix="lake_zone",
             combined_region_name="all_lakes",
             overwrite_regions=True,
         )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(nlakes=1, starting_stage=[11.0], connectiondata=connectiondata)
-        lake_perioddata = LakePeriodData(model=model, lake_ids=[0], lake_stages=[11.0], status=["ACTIVE"])
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
-            mover=True,
-        )
 
-        sfr = SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[stream_path],
+        sfr = _attach_sfr(
+            model,
+            vor,
+            [stream_path],
             inflows={0: [(0, 0.5)]},
             widths=5.0,
             gradients=0.001,
@@ -1400,34 +1457,36 @@ def test_small_vector_sfr_lak_mvr_workflow_can_run():
             streambed_k=1.0,
             streambed_thickness=1.0,
             mover=True,
-            add_sfr=True,
-            register_regions=True,
             region_name_prefix="sfr_group",
             combined_region_name="all_streams",
             overwrite_regions=True,
         )
 
-        mvr_perioddata = {0: [["sfr", sfr.stream_reaches[0][-1] - 1, "lak", 0, "FACTOR", 1.0]]}
+        mvr = MVRBuilder(
+            nper=1,
+            moves={
+                0: [
+                    Move(
+                        source=sfr.connection(sfr.stream_ids[0]),
+                        receiver=lak.connection(lak.lake_ids[0]),
+                    )
+                ]
+            },
+        )
         validation_report = model.validate_surface_water(
             nlakes=1,
-            lak_packagedata=lake_packagedata.packagedata,
-            lak_connectiondata=connectiondata,
-            lak_perioddata=lake_perioddata.perioddata,
+            lak_packagedata=lak.packagedata,
+            lak_connectiondata=lak.connectiondata,
+            lak_perioddata=lak.perioddata,
             sfr=sfr,
             maxmvr=1,
             maxpackages=2,
-            mvr_packages=[["sfr"], ["lak"]],
-            mvr_perioddata=mvr_perioddata,
+            mvr_packages=mvr.packages,
+            mvr_perioddata=mvr.perioddata,
             raise_on_error=True,
         )
         assert validation_report.ok is True
-        MVR(
-            model=model,
-            maxmvr=1,
-            maxpackages=2,
-            packages=[["sfr"], ["lak"]],
-            perioddata=mvr_perioddata,
-        )
+        mvr.build().build(model.gwf)
 
         success, _ = model.run_simulation()
         assert success is True
@@ -1445,7 +1504,7 @@ def test_small_vector_sfr_lak_mvr_workflow_can_run():
 
 
 def test_feature_rich_small_model_workflow_can_run():
-    workspace = _project_temp_dir("simple_modflow_feature_rich_workflow")
+    workspace = _project_temp_dir("myflopy_feature_rich_workflow")
     try:
         vor = _four_cell_vor_clockwise()
         vor.gdf_topbtm = gpd.GeoDataFrame(
@@ -1496,7 +1555,7 @@ def test_feature_rich_small_model_workflow_can_run():
             region_tags=["drn"],
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
+        myflopy.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
 
         ghb_path = _write_gpkg(
             workspace / "ghb.gpkg",
@@ -1521,7 +1580,7 @@ def test_feature_rich_small_model_workflow_can_run():
             region_tags=["ghb"],
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
+        myflopy.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
 
         recharge_path = _write_gpkg(
             workspace / "recharge.gpkg",
@@ -1557,19 +1616,20 @@ def test_feature_rich_small_model_workflow_can_run():
             overwrite_regions=True,
         )
         Recharge(model=model, vor=vor, rch_dict=rch_dict)
-        UZFPackageData(
-            model=model,
-            vor=vor,
+        uzf_context = _model_context(model, vor)
+        uzf = UZFBuilder(
+            context=uzf_context,
+            nper=model.nper,
             vks=1.0,
             thtr=0.1,
             thts=0.3,
             thti=0.2,
-            rch_from_shp=recharge_builder,
-            add_uzf=True,
-            register_regions=True,
-            region_name="uzf_all",
-            region_tags=["uzf"],
-            overwrite_regions=True,
+            finf=_uzf_finf_from_rch(rch_dict, _surface_cells(uzf_context), model.nper),
+        )
+        uzf.build().build(model.gwf)
+        model.add_region_from_cells(
+            "uzf_all", uzf.uzf_cells, category="boundary", package="uzf",
+            tags=["uzf"], overwrite=True,
         )
 
         lake_path = _write_gpkg(
@@ -1580,41 +1640,18 @@ def test_feature_rich_small_model_workflow_can_run():
                 crs=vor.crs,
             ),
         )
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[lake_path],
+        lak = _attach_lak(
+            model,
+            vor,
+            [lake_path],
+            starting_stage=11.0,
+            lake_bottom=9.0,
             bed_leakance=0.1,
-            horizontal_connections={0: [11.0, 9.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-            register_regions=True,
+            status=["ACTIVE", "ACTIVE"],
             region_name_prefix="lake_zone",
             combined_region_name="all_lakes",
             region_tags=["lak"],
             overwrite_regions=True,
-        )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(
-            nlakes=1,
-            starting_stage=[11.0],
-            connectiondata=connectiondata,
-        )
-        lake_perioddata = LakePeriodData(
-            model=model,
-            lake_ids=[0],
-            lake_stages=[11.0, 11.0],
-            status=["ACTIVE", "ACTIVE"],
-        )
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
-            mover=False,
         )
 
         stream_path = _write_gpkg(
@@ -1625,17 +1662,15 @@ def test_feature_rich_small_model_workflow_can_run():
                 crs=vor.crs,
             ),
         )
-        SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[stream_path],
+        _attach_sfr(
+            model,
+            vor,
+            [stream_path],
             widths=1.0,
             gradients=0.001,
             mannings=0.03,
             streambed_k=1.0,
             streambed_thickness=1.0,
-            add_sfr=True,
-            register_regions=True,
             region_name_prefix="sfr_group",
             combined_region_name="all_streams",
             region_tags=["sfr"],
@@ -1724,7 +1759,7 @@ def test_refined_end_to_end_model_can_run_with_preferred_builder_api():
             combined_region_name="all_ghb",
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
+        myflopy.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
 
         drn_builder = DRNFromVector(model=model, vor=vor, shp_gpkg=inputs["drn"], uid="name")
         drn_dict = drn_builder.from_vector(
@@ -1735,7 +1770,7 @@ def test_refined_end_to_end_model_can_run_with_preferred_builder_api():
             combined_region_name="all_drains",
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
+        myflopy.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
 
         recharge_builder = RCHFromVector(
             model=model,
@@ -1755,61 +1790,40 @@ def test_refined_end_to_end_model_can_run_with_preferred_builder_api():
             overwrite_regions=True,
         )
         Recharge(model=model, vor=vor, rch_dict=rch_dict)
-        uzf = UZFPackageData(
-            model=model,
-            vor=vor,
+        uzf_context = _model_context(model, vor)
+        uzf = UZFBuilder(
+            context=uzf_context,
+            nper=model.nper,
             vks=0.05,
             thtr=0.08,
             thts=0.28,
             thti=0.18,
-            rch_from_shp=recharge_builder,
-            add_uzf=True,
-            register_regions=True,
-            region_name="uzf_all",
-            overwrite_regions=True,
+            finf=_uzf_finf_from_rch(rch_dict, _surface_cells(uzf_context), model.nper),
+        )
+        uzf.build().build(model.gwf)
+        model.add_region_from_cells(
+            "uzf_all", uzf.uzf_cells, category="boundary", package="uzf", overwrite=True,
         )
 
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[inputs["lakes"][0]],
+        lak = _attach_lak(
+            model,
+            vor,
+            [inputs["lakes"][0]],
+            starting_stage=129.0,
+            lake_bottom=118.0,
             bed_leakance=0.001,
-            horizontal_connections={0: [126.0, 118.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-            register_regions=True,
+            status=["ACTIVE", "ACTIVE"],
+            mover=True,
             region_name_prefix="lake_zone",
             combined_region_name="all_lakes",
             region_tags=["lak"],
             overwrite_regions=True,
         )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(
-            nlakes=1,
-            starting_stage=[129.0],
-            connectiondata=connectiondata,
-        )
-        lake_perioddata = LakePeriodData(
-            model=model,
-            lake_ids=[0],
-            lake_stages=[129.0, 129.0],
-            status=["ACTIVE", "ACTIVE"],
-        )
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
-            mover=True,
-        )
 
-        sfr = SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[inputs["streams"][0]],
+        sfr = _attach_sfr(
+            model,
+            vor,
+            [inputs["streams"][0]],
             inflows={
                 0: [(0, 0.005)],
                 1: [(0, 0.005)],
@@ -1820,37 +1834,38 @@ def test_refined_end_to_end_model_can_run_with_preferred_builder_api():
             streambed_k=0.05,
             streambed_thickness=2.0,
             mover=True,
-            add_sfr=True,
-            register_regions=True,
             region_name_prefix="sfr_group",
             combined_region_name="all_streams",
             overwrite_regions=True,
         )
-        mvr_perioddata = {
-            0: [["sfr", sfr.stream_reaches[0][-1] - 1, "lak", 0, "FACTOR", 0.25]],
-            1: [["sfr", sfr.stream_reaches[0][-1] - 1, "lak", 0, "FACTOR", 0.25]],
-        }
+        mvr = MVRBuilder(
+            nper=2,
+            moves={
+                period: [
+                    Move(
+                        source=sfr.connection(sfr.stream_ids[0]),
+                        receiver=lak.connection(lak.lake_ids[0]),
+                        value=0.25,
+                    )
+                ]
+                for period in range(2)
+            },
+        )
         validation_report = model.validate_surface_water(
             nlakes=1,
-            lak_packagedata=lake_packagedata.packagedata,
-            lak_connectiondata=connectiondata,
-            lak_perioddata=lake_perioddata.perioddata,
+            lak_packagedata=lak.packagedata,
+            lak_connectiondata=lak.connectiondata,
+            lak_perioddata=lak.perioddata,
             sfr=sfr,
             maxmvr=1,
             maxpackages=2,
-            mvr_packages=[["sfr"], ["lak"]],
-            mvr_perioddata=mvr_perioddata,
+            mvr_packages=mvr.packages,
+            mvr_perioddata=mvr.perioddata,
             raise_on_error=True,
         )
         assert validation_report.ok is True
         assert validation_report.summary()["num_errors"] == 0
-        MVR(
-            model=model,
-            maxmvr=1,
-            maxpackages=2,
-            packages=[["sfr"], ["lak"]],
-            perioddata=mvr_perioddata,
-        )
+        mvr.build().build(model.gwf)
 
         success, _ = model.run_simulation()
         assert success is True
@@ -1861,7 +1876,7 @@ def test_refined_end_to_end_model_can_run_with_preferred_builder_api():
         assert len(ghb_dict[0]) > 0
         assert len(drn_dict[0]) > 0
         assert len(rch_dict[0]) > 0
-        assert len(connectiondata) >= 1
+        assert len(lak.connectiondata) >= 1
         assert sfr.total_nreaches > 5
         assert len(uzf.packagedata) == vor.ncpl
         assert list(outdir.glob("*.disv"))
@@ -1922,33 +1937,21 @@ def test_surface_water_validation_catches_invalid_mvr_source_index():
             ),
         )
 
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[lake_path],
+        lak = _attach_lak(
+            model,
+            vor,
+            [lake_path],
+            starting_stage=11.0,
+            lake_bottom=9.0,
             bed_leakance=0.1,
-            horizontal_connections={0: [11.0, 9.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-        )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(nlakes=1, starting_stage=[11.0], connectiondata=connectiondata)
-        lake_perioddata = LakePeriodData(model=model, lake_ids=[0], lake_stages=[11.0], status=["ACTIVE"])
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
+            status="ACTIVE",
             mover=True,
         )
 
-        sfr = SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[stream_path],
+        sfr = _attach_sfr(
+            model,
+            vor,
+            [stream_path],
             inflows={0: [(0, 0.5)]},
             widths=5.0,
             gradients=0.001,
@@ -1956,19 +1959,29 @@ def test_surface_water_validation_catches_invalid_mvr_source_index():
             streambed_k=1.0,
             streambed_thickness=1.0,
             mover=True,
-            add_sfr=True,
         )
 
+        mvr = MVRBuilder(
+            nper=1,
+            moves={
+                0: [
+                    Move(
+                        source=MoverConnection("sfr", sfr.total_nreaches),
+                        receiver=lak.connection(lak.lake_ids[0]),
+                    )
+                ]
+            },
+        )
         report = model.validate_surface_water(
             nlakes=1,
-            lak_packagedata=lake_packagedata.packagedata,
-            lak_connectiondata=connectiondata,
-            lak_perioddata=lake_perioddata.perioddata,
+            lak_packagedata=lak.packagedata,
+            lak_connectiondata=lak.connectiondata,
+            lak_perioddata=lak.perioddata,
             sfr=sfr,
             maxmvr=1,
             maxpackages=2,
-            mvr_packages=[["sfr"], ["lak"]],
-            mvr_perioddata={0: [["sfr", sfr.total_nreaches, "lak", 0, "FACTOR", 1.0]]},
+            mvr_packages=mvr.packages,
+            mvr_perioddata=mvr.perioddata,
         )
 
         assert report.ok is False
@@ -2087,7 +2100,7 @@ def test_code_defined_geometries_can_drive_refinement_regions_and_packages():
             combined_region_name="all_drains",
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
+        myflopy.modflow.mf6.simulation.packages.Drains(model=model, stress_period_data=drn_dict)
 
         ghb_builder = GHBFromVector(model=model, vor=vor, shp_gpkg=ghb_path, uid="name", idomain=[1] * vor.ncpl)
         ghb_dict = ghb_builder.from_vector(
@@ -2096,7 +2109,7 @@ def test_code_defined_geometries_can_drive_refinement_regions_and_packages():
             combined_region_name="all_ghb",
             overwrite_regions=True,
         )
-        simple_modflow.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
+        myflopy.modflow.mf6.simulation.packages.GHB(model=model, stress_period_data=ghb_dict)
 
         recharge_builder = RCHFromVector(
             model=model,
@@ -2116,58 +2129,43 @@ def test_code_defined_geometries_can_drive_refinement_regions_and_packages():
             overwrite_regions=True,
         )
         Recharge(model=model, vor=vor, rch_dict=rch_dict)
-        uzf = UZFPackageData(
-            model=model,
-            vor=vor,
+        uzf_context = _model_context(model, vor)
+        uzf = UZFBuilder(
+            context=uzf_context,
+            nper=model.nper,
             vks=0.5,
             thtr=0.1,
             thts=0.3,
             thti=0.2,
-            rch_from_shp=recharge_builder,
-            add_uzf=True,
-            register_regions=True,
-            region_name="uzf_all",
-            overwrite_regions=True,
+            finf=_uzf_finf_from_rch(rch_dict, _surface_cells(uzf_context), model.nper),
+        )
+        uzf.build().build(model.gwf)
+        model.add_region_from_cells(
+            "uzf_all", uzf.uzf_cells, category="boundary", package="uzf", overwrite=True,
         )
 
-        lake_connections = LakeConnectionData(
-            model=model,
-            vor=vor,
-            paths=[lake_path],
+        lak = _attach_lak(
+            model,
+            vor,
+            [lake_path],
+            starting_stage=100.0,
+            lake_bottom=92.0,
             bed_leakance=0.05,
-            horizontal_connections={0: [100.0, 92.0]},
-            use_reconciled_surfaces=False,
-            only_vertical=True,
-            register_regions=True,
+            status="ACTIVE",
             region_name_prefix="lake_zone",
             combined_region_name="all_lakes",
             overwrite_regions=True,
         )
-        connectiondata = lake_connections.connection_data
-        lake_packagedata = LakePackageData(nlakes=1, starting_stage=[100.0], connectiondata=connectiondata)
-        lake_perioddata = LakePeriodData(model=model, lake_ids=[0], lake_stages=[100.0], status=["ACTIVE"])
-        LAKPackage(
-            model=model,
-            nlakes=1,
-            noutlets=0,
-            ntables=0,
-            packagedata=lake_packagedata.packagedata,
-            connectiondata=connectiondata,
-            perioddata=lake_perioddata.perioddata,
-            mover=False,
-        )
 
-        sfr = SFR(
-            model=model,
-            vor=vor,
-            stream_paths=[stream_path],
+        sfr = _attach_sfr(
+            model,
+            vor,
+            [stream_path],
             widths=12.0,
             gradients=0.001,
             mannings=0.03,
             streambed_k=2.0,
             streambed_thickness=1.5,
-            add_sfr=True,
-            register_regions=True,
             region_name_prefix="sfr_group",
             combined_region_name="all_streams",
             overwrite_regions=True,
@@ -2179,8 +2177,8 @@ def test_code_defined_geometries_can_drive_refinement_regions_and_packages():
         assert len(ghb_dict[0]) > 0
         assert len(rch_dict[0]) > 0
         assert len(uzf.packagedata) > 0
-        assert len(connectiondata) > 0
-        assert len(lake_packagedata.packagedata) == 1
+        assert len(lak.connectiondata) > 0
+        assert len(lak.packagedata) == 1
         assert len(sfr.stream_cells) == 1
         assert model.get_region_cells("all_lakes") == sorted(set(model.get_region_cells("all_lakes")))
         assert model.get_region_cells("lake_circle_region") == sorted(set(model.get_region_cells("lake_circle_region")))
@@ -2578,21 +2576,16 @@ def test_boundary_package_builders_smoke():
         assert merged_rch[0] == [[(0, 0), 0.375], [(0, 1), 0.05]]
         assert merged_rch[1] == [[(0, 0), 0.125], [(0, 1), 0.07]]
 
-        uzf = UZFPackageData(
-            model=model,
-            vor=vor,
-            uzf_cells=[(0, 0), (0, 1)],
+        uzf = UZFBuilder(
+            context=_model_context(model, vor),
+            nper=model.nper,
+            cells=[(0, 0), (0, 1)],
             vks=1.0,
             thtr=0.1,
             thts=0.3,
             thti=0.2,
             pet={1: [0.01, 0.02]},
-            rch_from_shp=recharge,
-            add_uzf=False,
-            register_regions=True,
-            region_name="uzf_zone",
-            region_tags=["uzf", "unit"],
-            overwrite_regions=True,
+            finf=_uzf_finf_from_rch(rch_dict, [(0, 0), (0, 1)], model.nper),
         )
 
         assert uzf.finf[0] == [0.125, 0.05]
@@ -2601,7 +2594,11 @@ def test_boundary_package_builders_smoke():
         assert uzf.packagedata[0][1] == (0, 0)
         assert uzf.perioddata[0][0][1] == 0.125
         assert uzf.perioddata[1][1][2] == 0.02
-        uzf.add_uzf()
+        uzf.build().build(model.gwf)
+        model.add_region_from_cells(
+            "uzf_zone", uzf.uzf_cells, category="boundary", package="uzf",
+            tags=["uzf", "unit"], overwrite=True,
+        )
         assert set(model.get_region_cells("uzf_zone")) == {0, 1}
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
@@ -2793,9 +2790,13 @@ def test_vector_builder_aliases_are_consistent_across_packages():
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_preferred_vector_builder_aliases_are_exported_publicly():
-    assert simple_modflow.DRNFromVector is DRN
-    assert simple_modflow.GHBFromVector is GHB
-    assert simple_modflow.CHDFromVector is CHDFromVector
-    assert simple_modflow.RCHFromVector is RechargeFromShp
-    assert simple_modflow.KFromVector is KFromVector
+def test_geopackage_source_is_the_public_vector_builder_api():
+    assert myflopy.GeoPackageSource is not None
+    for legacy_name in (
+        "DRNFromVector",
+        "GHBFromVector",
+        "CHDFromVector",
+        "RCHFromVector",
+        "KFromVector",
+    ):
+        assert not hasattr(myflopy, legacy_name)

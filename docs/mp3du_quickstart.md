@@ -1,6 +1,6 @@
 # MP3DU Quickstart
 
-The supported particle-tracking API in `simple_modflow` is:
+The supported particle-tracking API in `myflopy` is:
 
 - `ParticleTrackingInput`
 - `prepare_particle_tracking`
@@ -13,7 +13,7 @@ Those are the only recommended entry points for new MP3DU workflows.
 ```python
 from pathlib import Path
 import pickle
-import simple_modflow as mf
+import myflopy as mf
 
 with open(Path(r"C:\path\to\model.model"), "rb") as f:
     model = pickle.load(f)
@@ -29,7 +29,7 @@ result = mf.run_particle_tracking(
 `particles=` accepts either:
 
 - a point shapefile or geopackage with MP3DU particle fields already present
-- a polygon shapefile or geopackage with no particle attributes, in which case `simple_modflow` maps geometry to model cells and generates the required particle file
+- a polygon shapefile or geopackage with no particle attributes, in which case `myflopy` maps geometry to model cells and generates the required particle file
 - a list of zero-based model cell IDs
 
 ## Zero-Based Cell IDs
@@ -69,7 +69,7 @@ final_result = tracker.run(execute=True, convert_output=True)
 ## Full Control
 
 ```python
-from simple_modflow.modflow.mp3du import ParticleTrackingInput
+from myflopy.modflow.mp3du import ParticleTrackingInput
 
 tracker = ParticleTrackingInput(
     model=model,
@@ -104,4 +104,4 @@ result["endpoint_summary"]
 
 - Some MP3DU `IFACE` package names are not accepted by the current executable build, even if the MF6 model contains those packages.
 - Particles that enter sink/source-controlled flow paths may terminate quickly. `endpoint_summary` is the first place to check why.
-- Legacy FloPy helpers for the native MODFLOW `PRT` model still exist in `simple_modflow.modflow.mp3du.legacy_prt`, but they are not part of the supported MP3DU API and remain constrained by current MODFLOW PRT support for many DISV grids.
+- Legacy FloPy helpers for the native MODFLOW `PRT` model still exist in `myflopy.modflow.mp3du.legacy_prt`, but they are not part of the supported MP3DU API and remain constrained by current MODFLOW PRT support for many DISV grids.

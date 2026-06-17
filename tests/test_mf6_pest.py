@@ -28,8 +28,8 @@ except Exception:
         if dep_path.exists() and str(dep_path) not in sys.path:
             sys.path.insert(0, str(dep_path))
 
-from simple_modflow.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
-from simple_modflow.modflow.mf6.observations import (  # noqa: E402
+from myflopy.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
+from myflopy.modflow.mf6.observations import (  # noqa: E402
     DrnFlowTargets,
     HeadTargets,
     LakeStageTargets,
@@ -37,17 +37,17 @@ from simple_modflow.modflow.mf6.observations import (  # noqa: E402
     SfrStageTargets,
     TargetRegistry,
 )
-from simple_modflow.modflow.mf6.pest.observations import (  # noqa: E402
+from myflopy.modflow.mf6.pest.observations import (  # noqa: E402
     prepare_drn_flow_observations,
     prepare_lake_stage_observations,
     prepare_sfr_flow_observations,
     prepare_sfr_stage_observations,
 )
-from simple_modflow.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
-from simple_modflow.modflow.mf6.pest.parameters import build_k_pilotpoint_frame  # noqa: E402
-from simple_modflow.modflow.mf6.pest.project import PestProject  # noqa: E402
-from simple_modflow.modflow.mf6.pest.results import PestRunResults, PestRunReview, open_pest_run  # noqa: E402
-from simple_modflow.modflow.mf6.pest.specs import (  # noqa: E402
+from myflopy.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
+from myflopy.modflow.mf6.pest.parameters import build_k_pilotpoint_frame  # noqa: E402
+from myflopy.modflow.mf6.pest.project import PestProject  # noqa: E402
+from myflopy.modflow.mf6.pest.results import PestRunResults, PestRunReview, open_pest_run  # noqa: E402
+from myflopy.modflow.mf6.pest.specs import (  # noqa: E402
     DrnFlowObservationSpec,
     HeadTargetObservationSpec,
     DrainConductanceParameter,
@@ -59,9 +59,9 @@ from simple_modflow.modflow.mf6.pest.specs import (  # noqa: E402
     SfrStageObservationSpec,
     VectorParameterSource,
 )
-from simple_modflow.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
-from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
+from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
+from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     Drains,
     InitialConditions,
@@ -69,9 +69,9 @@ from simple_modflow.modflow.mf6.simulation.packages import (  # noqa: E402
     OutputControl,
     Storage,
 )
-from simple_modflow.modflow.mf6.drn import DRNFromVector  # noqa: E402
-from simple_modflow.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
-from simple_modflow.project.run_model import LoadedMf6Run  # noqa: E402
+from myflopy.modflow.mf6.drn import DRNFromVector  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
+from myflopy.project.run_model import LoadedMf6Run  # noqa: E402
 
 
 def _project_temp_dir(name: str) -> Path:
@@ -607,6 +607,10 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     drn_plot = model.targets.drn_flow.plot.obs_vs_sim()
     assert isinstance(drn_plot, CalibrationPlot)
     assert drn_plot.layout.title.text == "Observed vs simulated DRN seepage"
+    for compare in (lake_compare, sfr_stage_compare, sfr_flow_compare, drn_compare):
+        assert "time" in compare.columns
+        assert "time_x" not in compare.columns
+        assert "time_y" not in compare.columns
 
     calls = {}
 
@@ -1215,7 +1219,7 @@ def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
     )
     pest.add_observation(HeadTargetObservationSpec(targets=targets))
     pst = pest.build_pst("results_slice.pst")
-    metadata_path = artifact_root / "pest" / "simple_modflow_pest_metadata.json"
+    metadata_path = artifact_root / "pest" / "myflopy_pest_metadata.json"
     assert metadata_path.exists()
 
     _write_synthetic_par(
@@ -1234,7 +1238,7 @@ def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
     assert isinstance(results, PestRunResults)
     assert isinstance(baseline_model, LoadedMf6Run)
     assert isinstance(calibrated_model, LoadedMf6Run)
-    materialization_path = artifact_root / "pest" / "simple_modflow_calibrated_materialization.json"
+    materialization_path = artifact_root / "pest" / "myflopy_calibrated_materialization.json"
     assert materialization_path.exists()
     saved_targets = results.load_head_targets()
     assert isinstance(saved_targets, HeadTargets)
@@ -1372,7 +1376,7 @@ def test_pest_run_results_raise_clean_error_when_saved_targets_are_missing():
         pst.parameter_data.reset_index()[["parnme", "parval1"]],
         {},
     )
-    metadata_path = artifact_root / "pest" / "simple_modflow_pest_metadata.json"
+    metadata_path = artifact_root / "pest" / "myflopy_pest_metadata.json"
     assert metadata_path.exists()
     metadata_path.unlink()
 

@@ -8,13 +8,13 @@ import numpy as np
 import pytest
 import flopy
 
-from simple_modflow.modflow.mf6.parallel import (
+from myflopy.modflow.mf6.parallel import (
     ParallelCompatibilityError,
     ParallelModelWorkflow,
     ParallelSplitRun,
     _mover_column_groups,
 )
-from simple_modflow.modflow.mf6.canonical import canonical_partition_mask
+from myflopy.modflow.mf6.canonical import canonical_partition_mask
 
 
 class _FakeModel:

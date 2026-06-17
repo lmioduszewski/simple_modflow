@@ -1,7 +1,7 @@
 # MF6 Examples
 
 This folder holds notebooks, sample model outputs, and one-off artifacts that were previously stored under
-`src/simple_modflow/modflow/mf6/`.
+`src/myflopy/modflow/mf6/`.
 
 Contents:
 
@@ -11,33 +11,26 @@ Contents:
 
 Suggested starting points:
 
-Preferred GIS/vector builder names in the current API:
-- `DRNFromVector`
-- `GHBFromVector`
-- `CHDFromVector`
-- `RCHFromVector`
-- `KFromVector`
+The preferred GeoPackage-first API is `GeoPackageSource`. It maps one
+GeoPackage layer onto a `ModelContext` grid and returns reusable package specs
+through `.chd()`, `.ghb()`, `.drn()`, `.wel()`, and `.rch()`, or conductivity
+data through `.k_array()`.
 
-Older builder names like `DRN`, `GHB`, and `RechargeFromShp` still work for
-compatibility, but the names above are the intended long-term surface.
-
-- `notebooks/simple_model_workflow.ipynb`: minimal config-first `SimpleModel` example
+- `notebooks/simple_model_workflow.ipynb`: minimal `SimpleModelConfig` to `SimulationSpec` and `Project.run()` example
 - `notebooks/triangle_voronoi_simplemodel_workflow.ipynb`: build a mesh with `TriangleGrid`, convert to `VoronoiGridPlus`, then run a simple model
 - `notebooks/feature_rich_model_workflow.ipynb`: build and run a small but more realistic MF6 model with drains, GHB, recharge/UZF, lake, stream, and region groups
 - `notebooks/refined_feature_rich_model_workflow.ipynb`: build and run a denser `TriangleGrid -> VoronoiGridPlus` model with refinement zones, then add the same boundary and package workflow on top of a more realistic mesh
 - `notebooks/code_geometry_refined_model_workflow.ipynb`: define the domain, lake, stream, drain, GHB, and recharge zones directly in code with `shapely`, use those same geometries for grid refinement and model regions, and write temporary GIS layers only where today’s package-builder APIs still expect files
 - `notebooks/cumberland_mesh_optimization_workflow.ipynb`: use the actual Cumberland mesh-input pattern from the pre-AlgoMesh workflow, compare a baseline Triangle/Voronoi mesh with a conservative optimized build, and optionally compare both against the imported AlgoMesh `.disu` grid
 - `notebooks/cumberland_cvt_diagnostics_workflow.ipynb`: focused diagnostics notebook for the new constrained full-seed CVT/Lloyd implementation, comparing `baseline`, `cleanup_only`, `experimental_cvt`, and optional `AlgoMesh DISU`
-- `notebooks/import_existing_runs_workflow.ipynb`: scan an archive of existing MF6 runs, browse it naturally with `RunExplorer`, inspect lightweight run summaries, optionally import into a `ProjectCatalog`, and compare runs lazily
-- `notebooks/project_artifact_workflow.ipynb`: the modern project-managed workflow for related runs, showing inline artifact creation, preflight validation, auto-apply on `run_simulation()`, and derived artifacts with lineage
-- `notebooks/optimized_related_run_artifact_workflow.ipynb`: a fuller related-run example on a modest optimized Voronoi model, showing source-run artifact capture, derived artifacts for scenario changes, validation, auto-apply, and result comparison on the same mesh
-- `notebooks/refined_end_to_end_preferred_api_workflow.ipynb`: a robust end-to-end example that writes real geopackage inputs on the fly, builds an optimized refined Voronoi grid, validates the coupled surface-water inputs, and uses the preferred `*FromVector` builders plus UZF/LAK/SFR with MVR routing on a stable two-period model
+- `import_existing_runs_workflow.py`: discover native MF6 workspaces through `Project.discover_native_runs()`
+- `notebooks/refined_end_to_end_preferred_api_workflow.ipynb`: historical end-to-end workflow that will be migrated to `GeoPackageSource`
 - `notebooks/pest_first_slice_workflow.ipynb`: the first reusable PEST/pyEMU workflow example, showing GIS-defined `K` and `DRN` inputs, `HeadTargets`, `PestProject` template generation, and a forward run that reapplies pilot-point `K` multipliers plus drain elevation/conductance changes
 - `notebooks/targets_api_quickstart.ipynb`: short focused notebook showing the flexible target API, including `HeadTargets`, `LakeStageTargets`, `model.targets...`, plotting helpers, FloPy observation object generation, and the PEST/reopen touchpoints
 - `notebooks/master_large_model_visualization_prt_workflow.ipynb`: master integration notebook that defaults to a 10,000-cell, four-layer DISV/Voronoi model with CHD, GHB, DRN, UZF, SFR, two lakes, MVR, canonical observations, Matplotlib/Plotly standalone result animations, and MF6 PRT/PyVista review
 - `master_large_model_review.py`: bounded command-line review harness for the same 10,000-cell model, with timed model execution, resumable selected-frame exports, optional bounded Plotly and PRT/PyVista review, and a JSON performance/result summary
 - `../../docs/interactive_visualization_and_prt.md`: canonical standalone Matplotlib slider, Plotly animation, MF6 PRT, and PyVista 3D particle-viewing workflow
-- `../../docs/princeton_2026_visualization_review.md`: detailed mapping from the Princeton 2026 FloPy training notebooks into the preferred `simple_modflow` API
+- `../../docs/princeton_2026_visualization_review.md`: detailed mapping from the Princeton 2026 FloPy training notebooks into the preferred `myflopy` API
 - `notebooks/cumberland_predev_pest_first_slice_workflow.ipynb`: Cumberland-specific version of the first-slice calibration workflow, following the pre-development geometry adjustments from `model_pit_pre_excavation.py` but using one steady-state period and the current `ks_v5.gpkg` / `drn.gpkg` inputs
 - `notebooks/cumberland_observed_snapshot_pest_first_slice_workflow.ipynb`: Cumberland-specific first-slice workflow that swaps the pseudo-targets for a real observed-head snapshot from `calib_observations.xlsx`, while keeping the model side to a one-period steady-state calibration example
 - `cumberland_forward_mp3du.py`: command-line Cumberland MP3DU forward-tracking harness that exercises the stable `ParticleTrackingInput` / `prepare_particle_tracking` / `run_particle_tracking` API, writes a timestamped MP3DU workspace under `artifacts`, and captures start-cell plus endpoint diagnostics
@@ -47,13 +40,13 @@ compatibility, but the names above are the intended long-term surface.
 
 Reference handout:
 
-- `../docs/simple_modflow_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page
+- `../docs/myflopy_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page
 - `../docs/mp3du_quickstart.md`: focused quickstart for the supported MP3DU particle-tracking API
 - `../docs/local_run_clutter.md`: where example runs, pytest temp workspaces, and scratch MP3DU folders are stored locally
 # Canonical master notebooks
 
 The preferred end-to-end learning path starts at
 `notebooks/CANONICAL_MASTER_NOTEBOOKS.md`. Its five notebooks all use
-`simple_modflow.build_canonical_model()` so model construction, observations,
+`myflopy.build_canonical_model()` so model construction, observations,
 visualization, PRT, parallel splitting, PEST, and completed-run review remain
 aligned.
