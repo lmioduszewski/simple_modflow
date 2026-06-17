@@ -81,18 +81,42 @@ if TYPE_CHECKING:
         build_canonical_model,
     )
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
+    from myflopy.project_spec import ProjectLayout, ProjectSpec
+    from myflopy.sources import (
+        DataSourceSpec,
+        GeoPackageSourceSpec,
+        LiteralSource,
+        RasterSource,
+        ShapeSource,
+        TableSource,
+    )
     from myflopy.modflow.mf6.surface_water_validation import (
         SurfaceWaterValidationIssue,
         SurfaceWaterValidationReport,
         validate_surface_water_configuration,
     )
     from myflopy.modflow.mf6.simplemodel import SimpleModelConfig, simple_model_spec
-    from myflopy.modflow.mf6.lakes import LAKBuilder, LakeConnection, LakeOutlet, LakeTable, LakeTableBuilder
+    from myflopy.modflow.mf6.lakes import (
+        LAKBuilder,
+        LakeConnection,
+        LakeOutlet,
+        LakeTable,
+        LakeTableBuilder,
+    )
     from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection
     from myflopy.modflow.mf6.recharge import RCHBuilder
-    from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion, StreamNetwork
+    from myflopy.modflow.mf6.sfr import (
+        SFRBuilder,
+        StreamConnection,
+        StreamDiversion,
+        StreamNetwork,
+    )
     from myflopy.modflow.mf6.uzf import UZFBuilder
-    from myflopy.modflow.mp3du import ParticleTrackingInput, prepare_particle_tracking, run_particle_tracking
+    from myflopy.modflow.mp3du import (
+        ParticleTrackingInput,
+        prepare_particle_tracking,
+        run_particle_tracking,
+    )
     from myflopy.modflow.mf6.simulation.base import SimulationBase
     from myflopy.modflow.mf6.simulation.packages import Wells
     from myflopy.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
@@ -116,6 +140,7 @@ if TYPE_CHECKING:
         ModelContext,
         ModelSpec,
         ModelType,
+        GridSpec,
         PackageSpec,
         PrtModel,
         PostBuildHook,
@@ -140,7 +165,28 @@ if TYPE_CHECKING:
         build_gwf_prt_exchange,
         build_ims,
     )
-    from myflopy.package_api import chd, disv, drn, ghb, gwe, gwf, gwt, ic, ims, lak, mvr, npf, oc, prt, rch, sfr, sto, tdis, uzf, wel
+    from myflopy.package_api import (
+        chd,
+        disv,
+        drn,
+        ghb,
+        gwe,
+        gwf,
+        gwt,
+        ic,
+        ims,
+        lak,
+        mvr,
+        npf,
+        oc,
+        prt,
+        rch,
+        sfr,
+        sto,
+        tdis,
+        uzf,
+        wel,
+    )
     from myflopy.workspace import ModelView, Project, Run, load_run
 
 try:
@@ -171,10 +217,19 @@ _EXPORTS = {
     "ModelContext": ("myflopy.specs", "ModelContext"),
     "ModelSpec": ("myflopy.specs", "ModelSpec"),
     "ModelType": ("myflopy.specs", "ModelType"),
+    "GridSpec": ("myflopy.specs", "GridSpec"),
     "PackageSpec": ("myflopy.specs", "PackageSpec"),
     "PostBuildHook": ("myflopy.specs", "PostBuildHook"),
+    "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
+    "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
+    "LiteralSource": ("myflopy.sources", "LiteralSource"),
+    "RasterSource": ("myflopy.sources", "RasterSource"),
+    "ShapeSource": ("myflopy.sources", "ShapeSource"),
+    "TableSource": ("myflopy.sources", "TableSource"),
     "CellSurfaceOffset": ("myflopy.geopackage", "CellSurfaceOffset"),
     "GeoPackageSource": ("myflopy.geopackage", "GeoPackageSource"),
+    "ProjectLayout": ("myflopy.project_spec", "ProjectLayout"),
+    "ProjectSpec": ("myflopy.project_spec", "ProjectSpec"),
     "ModelView": ("myflopy.workspace", "ModelView"),
     "Project": ("myflopy.workspace", "Project"),
     "Run": ("myflopy.workspace", "Run"),
@@ -227,35 +282,68 @@ _EXPORTS = {
     "ModelGroup": ("myflopy.project", "ModelGroup"),
     "PackageArtifact": ("myflopy.project", "PackageArtifact"),
     "PackageCompatibilityError": ("myflopy.project", "PackageCompatibilityError"),
-    "ParallelCompatibilityError": ("myflopy.modflow.mf6.parallel", "ParallelCompatibilityError"),
+    "ParallelCompatibilityError": (
+        "myflopy.modflow.mf6.parallel",
+        "ParallelCompatibilityError",
+    ),
     "ParallelEnvironment": ("myflopy.modflow.mf6.parallel", "ParallelEnvironment"),
     "ParallelModelWorkflow": ("myflopy.modflow.mf6.parallel", "ParallelModelWorkflow"),
     "ParallelSplitResults": ("myflopy.modflow.mf6.parallel", "ParallelSplitResults"),
     "ParallelSplitRun": ("myflopy.modflow.mf6.parallel", "ParallelSplitRun"),
-    "CANONICAL_MODEL_CONTRACT": ("myflopy.modflow.mf6.canonical", "CANONICAL_MODEL_CONTRACT"),
-    "CanonicalModelContract": ("myflopy.modflow.mf6.canonical", "CanonicalModelContract"),
-    "CanonicalModelConfig": ("myflopy.modflow.mf6.canonical_example", "CanonicalModelConfig"),
+    "CANONICAL_MODEL_CONTRACT": (
+        "myflopy.modflow.mf6.canonical",
+        "CANONICAL_MODEL_CONTRACT",
+    ),
+    "CanonicalModelContract": (
+        "myflopy.modflow.mf6.canonical",
+        "CanonicalModelContract",
+    ),
+    "CanonicalModelConfig": (
+        "myflopy.modflow.mf6.canonical_example",
+        "CanonicalModelConfig",
+    ),
     "load_mf6_run": ("myflopy.project", "load_mf6_run"),
     "MeshBuildProfile": ("myflopy.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
-    "FrameExportProgress": ("myflopy.modflow.mf6.interactive_plotting", "FrameExportProgress"),
-    "ModelVisualization": ("myflopy.modflow.mf6.interactive_plotting", "ModelVisualization"),
-    "ParticleTrackingScene": ("myflopy.modflow.mf6.interactive_plotting", "ParticleTrackingScene"),
+    "FrameExportProgress": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "FrameExportProgress",
+    ),
+    "ModelVisualization": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "ModelVisualization",
+    ),
+    "ParticleTrackingScene": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "ParticleTrackingScene",
+    ),
     "ParticleTracking": ("myflopy.modflow.mf6.prt", "ParticleTracking"),
-    "StandaloneHtmlSlider": ("myflopy.modflow.mf6.interactive_plotting", "StandaloneHtmlSlider"),
+    "StandaloneHtmlSlider": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "StandaloneHtmlSlider",
+    ),
     "LakeStageTargets": ("myflopy.modflow.mf6.observations", "LakeStageTargets"),
     "SfrStageTargets": ("myflopy.modflow.mf6.observations", "SfrStageTargets"),
     "SfrFlowTargets": ("myflopy.modflow.mf6.observations", "SfrFlowTargets"),
     "KPilotPointParameter": ("myflopy.modflow.mf6.pest", "KPilotPointParameter"),
     "patch_simulation_plot": ("myflopy.project", "patch_simulation_plot"),
-    "DrainConductanceParameter": ("myflopy.modflow.mf6.pest", "DrainConductanceParameter"),
+    "DrainConductanceParameter": (
+        "myflopy.modflow.mf6.pest",
+        "DrainConductanceParameter",
+    ),
     "DrainElevationParameter": ("myflopy.modflow.mf6.pest", "DrainElevationParameter"),
     "DrnFlowObservationSpec": ("myflopy.modflow.mf6.pest", "DrnFlowObservationSpec"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
-    "HeadTargetObservationSpec": ("myflopy.modflow.mf6.pest", "HeadTargetObservationSpec"),
-    "LakeStageObservationSpec": ("myflopy.modflow.mf6.pest", "LakeStageObservationSpec"),
+    "HeadTargetObservationSpec": (
+        "myflopy.modflow.mf6.pest",
+        "HeadTargetObservationSpec",
+    ),
+    "LakeStageObservationSpec": (
+        "myflopy.modflow.mf6.pest",
+        "LakeStageObservationSpec",
+    ),
     "SfrStageObservationSpec": ("myflopy.modflow.mf6.pest", "SfrStageObservationSpec"),
     "SfrFlowObservationSpec": ("myflopy.modflow.mf6.pest", "SfrFlowObservationSpec"),
     "PestProject": ("myflopy.modflow.mf6.pest", "PestProject"),
@@ -280,11 +368,23 @@ _EXPORTS = {
     "open_prt_run": ("myflopy.modflow.mf6.prt", "open_prt_run"),
     "VoronoiGridPlus": ("myflopy.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
     "simple_model_spec": ("myflopy.modflow.mf6.simplemodel", "simple_model_spec"),
-    "build_canonical_model": ("myflopy.modflow.mf6.canonical_example", "build_canonical_model"),
-    "canonical_head_signals": ("myflopy.modflow.mf6.canonical", "canonical_head_signals"),
-    "canonical_feature_signals": ("myflopy.modflow.mf6.canonical", "canonical_feature_signals"),
+    "build_canonical_model": (
+        "myflopy.modflow.mf6.canonical_example",
+        "build_canonical_model",
+    ),
+    "canonical_head_signals": (
+        "myflopy.modflow.mf6.canonical",
+        "canonical_head_signals",
+    ),
+    "canonical_feature_signals": (
+        "myflopy.modflow.mf6.canonical",
+        "canonical_feature_signals",
+    ),
     "canonical_sfr_signals": ("myflopy.modflow.mf6.canonical", "canonical_sfr_signals"),
-    "canonical_partition_mask": ("myflopy.modflow.mf6.canonical", "canonical_partition_mask"),
+    "canonical_partition_mask": (
+        "myflopy.modflow.mf6.canonical",
+        "canonical_partition_mask",
+    ),
     "build_particle_tracking_scene": (
         "myflopy.modflow.mf6.interactive_plotting",
         "build_particle_tracking_scene",
@@ -309,8 +409,14 @@ _EXPORTS = {
         "myflopy.modflow.mf6.interactive_plotting",
         "export_particle_tracking_html",
     ),
-    "plot_model_head_map": ("myflopy.modflow.mf6.interactive_plotting", "plot_model_head_map"),
-    "plot_particle_pathlines": ("myflopy.modflow.mf6.interactive_plotting", "plot_particle_pathlines"),
+    "plot_model_head_map": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "plot_model_head_map",
+    ),
+    "plot_particle_pathlines": (
+        "myflopy.modflow.mf6.interactive_plotting",
+        "plot_particle_pathlines",
+    ),
     "ParticleTrackingInput": ("myflopy.modflow.mp3du", "ParticleTrackingInput"),
     "prepare_particle_tracking": ("myflopy.modflow.mp3du", "prepare_particle_tracking"),
     "run_particle_tracking": ("myflopy.modflow.mp3du", "run_particle_tracking"),
@@ -348,7 +454,9 @@ _SECOND_TIER_EXPORTS = {
     "wel_spec",
 }
 
-__preferred__ = tuple(sorted(name for name in _EXPORTS if name not in _SECOND_TIER_EXPORTS))
+__preferred__ = tuple(
+    sorted(name for name in _EXPORTS if name not in _SECOND_TIER_EXPORTS)
+)
 __compatibility__ = tuple(sorted(_SECOND_TIER_EXPORTS))
 __all__ = list(__preferred__)
 

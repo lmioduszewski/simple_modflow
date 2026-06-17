@@ -11,10 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from html import escape
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Iterable, TypeAlias, TypeVar, cast
 
 import flopy
+
+from myflopy.sources import (
+    DataSourceSpec,
+    GeoPackageSourceSpec,
+    LiteralSource,
+    source_from_dict,
+)
 
 
 Builder = Callable[..., Any]
@@ -64,6 +72,57 @@ def _builder_label(builder: Builder | None) -> str:
     if module.startswith("flopy."):
         return f"flopy.{name}"
     return name
+
+
+def _callable_ref(builder: Builder) -> str:
+    module = getattr(builder, "__module__", None)
+    qualname = getattr(builder, "__qualname__", None)
+    if not module or not qualname or "<locals>" in qualname:
+        raise ValueError(
+            f"Builder {builder!r} cannot be serialized. Use an importable builder."
+        )
+    return f"{module}:{qualname}"
+
+
+def _resolve_callable(reference: str) -> Builder:
+    module_name, _, qualname = reference.partition(":")
+    if not module_name or not qualname:
+        raise ValueError(f"Invalid builder reference: {reference!r}")
+    value: Any = import_module(module_name)
+    for part in qualname.split("."):
+        value = getattr(value, part)
+    return cast(Builder, value)
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, (DataSourceSpec, LiteralSource)):
+        return value.to_dict()
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError(
+        f"Value of type {type(value).__module__}.{type(value).__name__} "
+        "cannot be serialized in a spec."
+    )
+
+
+def _spec_value(value: Any) -> Any:
+    if isinstance(value, dict) and "kind" in value:
+        kind = value["kind"]
+        if kind.endswith("Source"):
+            return source_from_dict(value)
+    if isinstance(value, list):
+        return [_spec_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _spec_value(item) for key, item in value.items()}
+    return value
 
 
 def _preview(values: Iterable[Any], *, limit: int = 4) -> str:
@@ -134,10 +193,7 @@ def _html_table(rows: Iterable[tuple[str, str]], *, empty: str = "None") -> str:
     if not rows:
         return f"<p>{escape(empty)}</p>"
     body = "\n".join(
-        "<tr>"
-        f"<td><code>{escape(key)}</code></td>"
-        f"<td>{escape(value)}</td>"
-        "</tr>"
+        f"<tr><td><code>{escape(key)}</code></td><td>{escape(value)}</td></tr>"
         for key, value in rows
     )
     return (
@@ -174,6 +230,7 @@ class PackageSpec:
     enabled: bool = True
     requires: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    inputs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "requires", tuple(self.requires))
@@ -183,7 +240,7 @@ class PackageSpec:
 
         if not self.enabled:
             return None
-        return self.builder(target, **self.options)
+        return self.builder(target, **self.inputs, **self.options)
 
     def with_options(self, **overrides: Any) -> PackageSpec:
         """Return a copy with selected options added or replaced."""
@@ -200,14 +257,49 @@ class PackageSpec:
 
         return replace(self, metadata={**self.metadata, **updates})
 
+    def with_input(self, name: str, source: Any) -> PackageSpec:
+        """Return a copy with one named package input source added."""
+
+        return replace(self, inputs={**self.inputs, name: source})
+
+    def with_inputs(self, **sources: Any) -> PackageSpec:
+        """Return a copy with named package input sources added or replaced."""
+
+        return replace(self, inputs={**self.inputs, **sources})
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready representation of this package recipe."""
+
+        return {
+            "kind": "PackageSpec",
+            "name": self.name,
+            "builder": _callable_ref(self.builder),
+            "inputs": _json_value(self.inputs),
+            "options": _json_value(self.options),
+            "enabled": self.enabled,
+            "requires": list(self.requires),
+            "metadata": _json_value(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PackageSpec:
+        """Recreate a package specification from :meth:`to_dict` output."""
+
+        return cls(
+            name=data["name"],
+            builder=_resolve_callable(data["builder"]),
+            inputs=_spec_value(dict(data.get("inputs", {}))),
+            options=_spec_value(dict(data.get("options", {}))),
+            enabled=bool(data.get("enabled", True)),
+            requires=tuple(data.get("requires", ())),
+            metadata=_spec_value(dict(data.get("metadata", {}))),
+        )
+
     @property
     def option_summary(self) -> dict[str, str]:
         """Return a compact summary of package options for display."""
 
-        return {
-            key: _summarize_value(value)
-            for key, value in self.options.items()
-        }
+        return {key: _summarize_value(value) for key, value in self.options.items()}
 
     def __repr__(self) -> str:
         status = "enabled" if self.enabled else "disabled"
@@ -215,6 +307,7 @@ class PackageSpec:
             f"name={self.name!r}",
             f"builder={_builder_label(self.builder)!r}",
             f"status={status!r}",
+            f"inputs={tuple(self.inputs)!r}",
             f"options={self.option_summary!r}",
         ]
         if self.requires:
@@ -235,8 +328,7 @@ class PackageSpec:
         requires = ""
         if self.requires:
             requires = (
-                "<p><strong>Requires:</strong> "
-                f"{escape(', '.join(self.requires))}</p>"
+                f"<p><strong>Requires:</strong> {escape(', '.join(self.requires))}</p>"
             )
         return (
             "<div>"
@@ -247,6 +339,201 @@ class PackageSpec:
             f"{metadata}"
             f"{_html_table(self.option_summary.items(), empty='No options')}"
             "</div>"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GridSpec:
+    """Recipe for obtaining the grid used by one model specification."""
+
+    name: str
+    grid_type: str
+    method: str
+    source: DataSourceSpec | None = None
+    boundary: DataSourceSpec | None = None
+    refinement: DataSourceSpec | None = None
+    breaklines: tuple[DataSourceSpec, ...] = ()
+    points: tuple[DataSourceSpec, ...] = ()
+    crs: str | None = None
+    engine: str | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "breaklines", tuple(self.breaklines))
+        object.__setattr__(self, "points", tuple(self.points))
+
+    @classmethod
+    def from_geopackage(
+        cls,
+        path: Path | str,
+        *,
+        name: str = "grid",
+        layer: str | None = None,
+        id_column: str | None = None,
+        grid_type: str = "disv",
+        crs: str | None = None,
+        **options: Any,
+    ) -> GridSpec:
+        """Return a grid spec that loads an existing grid from a GeoPackage."""
+
+        if id_column is not None:
+            options = {**options, "id_column": id_column}
+        return cls(
+            name=name,
+            grid_type=grid_type,
+            method="existing",
+            source=GeoPackageSourceSpec(path, layer=layer),
+            crs=crs,
+            options=options,
+        )
+
+    @classmethod
+    def structured(
+        cls,
+        *,
+        name: str = "grid",
+        nlay: int,
+        nrow: int,
+        ncol: int,
+        delr: float,
+        delc: float,
+        top: Any,
+        botm: Any,
+        crs: str | None = None,
+        **options: Any,
+    ) -> GridSpec:
+        """Return a spec for a simple structured DIS grid."""
+
+        return cls(
+            name=name,
+            grid_type="dis",
+            method="structured",
+            crs=crs,
+            options={
+                "nlay": nlay,
+                "nrow": nrow,
+                "ncol": ncol,
+                "delr": delr,
+                "delc": delc,
+                "top": top,
+                "botm": botm,
+                **options,
+            },
+        )
+
+    @classmethod
+    def voronoi(
+        cls,
+        *,
+        name: str = "grid",
+        boundary: DataSourceSpec,
+        refinement: DataSourceSpec | None = None,
+        breaklines: Iterable[DataSourceSpec] = (),
+        points: Iterable[DataSourceSpec] = (),
+        crs: str | None = None,
+        engine: str = "triangle_voronoi_plus",
+        options: dict[str, Any] | None = None,
+        **engine_options: Any,
+    ) -> GridSpec:
+        """Return a spec for a generated DISV/Voronoi grid."""
+
+        merged_options = {**({} if options is None else options), **engine_options}
+        return cls(
+            name=name,
+            grid_type="disv",
+            method="voronoi",
+            boundary=boundary,
+            refinement=refinement,
+            breaklines=tuple(breaklines),
+            points=tuple(points),
+            crs=crs,
+            engine=engine,
+            options=merged_options,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready representation of this grid recipe."""
+
+        payload: dict[str, Any] = {
+            "kind": "GridSpec",
+            "name": self.name,
+            "grid_type": self.grid_type,
+            "method": self.method,
+            "options": _json_value(self.options),
+        }
+        for key in ("source", "boundary", "refinement"):
+            value = getattr(self, key)
+            if value is not None:
+                payload[key] = value.to_dict()
+        if self.breaklines:
+            payload["breaklines"] = [source.to_dict() for source in self.breaklines]
+        if self.points:
+            payload["points"] = [source.to_dict() for source in self.points]
+        if self.crs is not None:
+            payload["crs"] = self.crs
+        if self.engine is not None:
+            payload["engine"] = self.engine
+        if self.metadata:
+            payload["metadata"] = _json_value(self.metadata)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GridSpec:
+        """Recreate a grid specification from :meth:`to_dict` output."""
+
+        return cls(
+            name=data["name"],
+            grid_type=data["grid_type"],
+            method=data["method"],
+            source=(
+                source_from_dict(data["source"])
+                if data.get("source") is not None
+                else None
+            ),
+            boundary=(
+                source_from_dict(data["boundary"])
+                if data.get("boundary") is not None
+                else None
+            ),
+            refinement=(
+                source_from_dict(data["refinement"])
+                if data.get("refinement") is not None
+                else None
+            ),
+            breaklines=tuple(
+                source_from_dict(item) for item in data.get("breaklines", ())
+            ),
+            points=tuple(source_from_dict(item) for item in data.get("points", ())),
+            crs=data.get("crs"),
+            engine=data.get("engine"),
+            options=_spec_value(dict(data.get("options", {}))),
+            metadata=_spec_value(dict(data.get("metadata", {}))),
+        )
+
+    def resolve(
+        self,
+        *,
+        project_root: Path | str | None = None,
+        workspace: Path | str | None = None,
+        build: bool = True,
+        return_triangle: bool = False,
+    ) -> Any:
+        """Resolve this grid recipe into the configured grid implementation.
+
+        Generated Voronoi specs currently resolve through the existing
+        ``TriangleGrid`` plus ``VoronoiGridPlus`` workflow. Set ``build=False``
+        to prepare and inspect the Triangle setup without running Triangle.
+        """
+
+        from myflopy.grid_spec_resolver import resolve_grid_spec
+
+        return resolve_grid_spec(
+            self,
+            project_root=project_root,
+            workspace=workspace,
+            build=build,
+            return_triangle=return_triangle,
         )
 
 
@@ -374,6 +661,7 @@ class ModelSpec:
     builder: Builder | None = None
     context: ModelContext = field(default_factory=ModelContext)
     hooks: tuple[PostBuildHook, ...] = ()
+    grid: GridSpec | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_type", ModelType(self.model_type))
@@ -430,7 +718,9 @@ class ModelSpec:
 
         return replace(
             self,
-            packages=tuple(package for package in self.packages if package.name != name),
+            packages=tuple(
+                package for package in self.packages if package.name != name
+            ),
         )
 
     def with_options(self, **overrides: Any) -> ModelSpec:
@@ -442,6 +732,11 @@ class ModelSpec:
         """Return a copy carrying the supplied model context."""
 
         return replace(self, context=context)
+
+    def with_grid(self, grid: GridSpec) -> ModelSpec:
+        """Return a copy with a durable grid recipe attached."""
+
+        return replace(self, grid=grid)
 
     def with_hook(self, hook: PostBuildHook) -> ModelSpec:
         """Return a copy with a post-build hook added or replaced by name."""
@@ -478,6 +773,56 @@ class ModelSpec:
             simulation=simulation,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready representation of this model recipe."""
+
+        if self.hooks:
+            raise ValueError(
+                "ModelSpec with post-build hooks cannot be serialized yet."
+            )
+        payload: dict[str, Any] = {
+            "kind": "ModelSpec",
+            "name": self.name,
+            "model_type": self.model_type.value,
+            "options": _json_value(self.options),
+            "packages": [package.to_dict() for package in self.packages],
+            "context": {
+                "metadata": _json_value(self.context.metadata),
+            },
+        }
+        if self.builder is not None:
+            payload["builder"] = _callable_ref(self.builder)
+        if self.grid is not None:
+            payload["grid"] = self.grid.to_dict()
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ModelSpec:
+        """Recreate a model specification from :meth:`to_dict` output."""
+
+        context_data = data.get("context", {})
+        return cls(
+            name=data["name"],
+            model_type=data["model_type"],
+            packages=tuple(
+                PackageSpec.from_dict(package) for package in data.get("packages", ())
+            ),
+            options=_spec_value(dict(data.get("options", {}))),
+            builder=(
+                _resolve_callable(data["builder"])
+                if data.get("builder") is not None
+                else None
+            ),
+            context=ModelContext(
+                metadata=_spec_value(dict(context_data.get("metadata", {}))),
+            ),
+            grid=(
+                GridSpec.from_dict(data["grid"])
+                if data.get("grid") is not None
+                else None
+            ),
+        )
+
     @property
     def package_names(self) -> tuple[str, ...]:
         """Return enabled package names in declaration order."""
@@ -504,7 +849,11 @@ class ModelSpec:
                 f"{_builder_label(package.builder)}; "
                 f"{len(package.options)} options"
                 + ("; disabled" if not package.enabled else "")
-                + (f"; requires {', '.join(package.requires)}" if package.requires else ""),
+                + (
+                    f"; requires {', '.join(package.requires)}"
+                    if package.requires
+                    else ""
+                ),
             )
             for package in self.packages
         ]
@@ -637,11 +986,14 @@ class SimulationSpec:
     workspace: Path | str | None = None
     executable: str = "mf6"
     run_name: str | None = None
+    derived_from: str | None = None
+    lineage: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "models", tuple(self.models))
         object.__setattr__(self, "packages", tuple(self.packages))
         object.__setattr__(self, "exchanges", tuple(self.exchanges))
+        object.__setattr__(self, "lineage", tuple(self.lineage))
         _require_unique_names(self.models, item_type="model")
         _require_unique_names(self.packages, item_type="simulation package")
         _require_unique_names(self.exchanges, item_type="exchange")
@@ -657,6 +1009,14 @@ class SimulationSpec:
         else:
             models.append(model)
         return replace(self, models=tuple(models))
+
+    def with_models(self, *models: ModelSpec) -> SimulationSpec:
+        """Return a copy with each supplied model added or replaced by name."""
+
+        spec = self
+        for model in models:
+            spec = spec.with_model(model)
+        return spec
 
     def model(self, name: str) -> ModelSpec:
         """Return one model specification by name."""
@@ -695,7 +1055,62 @@ class SimulationSpec:
 
         return replace(self, workspace=workspace)
 
-    def build(self, workspace: Path | str | None = None, *, run_name: str | None = None):
+    def derive(self, name: str) -> SimulationSpec:
+        """Return a named version of this fully resolved simulation recipe."""
+
+        return replace(
+            self,
+            name=name,
+            run_name=name,
+            derived_from=self.name,
+            lineage=(
+                *self.lineage,
+                {"operation": "derive", "from": self.name, "to": name},
+            ),
+        )
+
+    def replace_package(self, model_name: str, package: PackageSpec) -> SimulationSpec:
+        """Return a copy with a model package replaced by name.
+
+        The target package must already exist. Use :meth:`add_package` when the
+        operation is intentionally an addition.
+        """
+
+        model = self.model(model_name)
+        model.package(package.name)
+        return replace(
+            self.with_model(model.with_package(package)),
+            lineage=(
+                *self.lineage,
+                {
+                    "operation": "replace_package",
+                    "model": model_name,
+                    "package": package.name,
+                },
+            ),
+        )
+
+    def add_package(self, model_name: str, package: PackageSpec) -> SimulationSpec:
+        """Return a copy with a package added or replaced on one model."""
+
+        model = self.model(model_name)
+        existed = any(existing.name == package.name for existing in model.packages)
+        operation = "replace_package" if existed else "add_package"
+        return replace(
+            self.with_model(model.with_package(package)),
+            lineage=(
+                *self.lineage,
+                {
+                    "operation": operation,
+                    "model": model_name,
+                    "package": package.name,
+                },
+            ),
+        )
+
+    def build(
+        self, workspace: Path | str | None = None, *, run_name: str | None = None
+    ):
         """Build this specification as a workflow ``Run``.
 
         Use :meth:`build_flopy` when you need only the raw in-memory FloPy
@@ -753,6 +1168,54 @@ class SimulationSpec:
         """Return simulation-level package names in declaration order."""
 
         return tuple(package.name for package in self.packages if package.enabled)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready representation of this simulation recipe."""
+
+        if self.exchanges:
+            raise ValueError("SimulationSpec with exchanges cannot be serialized yet.")
+        payload: dict[str, Any] = {
+            "kind": "SimulationSpec",
+            "name": self.name,
+            "models": [model.to_dict() for model in self.models],
+            "packages": [package.to_dict() for package in self.packages],
+            "options": _json_value(self.options),
+            "builder": _callable_ref(self.builder),
+            "executable": self.executable,
+            "lineage": _json_value(list(self.lineage)),
+        }
+        if self.workspace is not None:
+            payload["workspace"] = str(Path(self.workspace).as_posix())
+        if self.run_name is not None:
+            payload["run_name"] = self.run_name
+        if self.derived_from is not None:
+            payload["derived_from"] = self.derived_from
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SimulationSpec:
+        """Recreate a simulation specification from :meth:`to_dict` output."""
+
+        return cls(
+            name=data["name"],
+            models=tuple(
+                ModelSpec.from_dict(model) for model in data.get("models", ())
+            ),
+            packages=tuple(
+                PackageSpec.from_dict(package) for package in data.get("packages", ())
+            ),
+            options=_spec_value(dict(data.get("options", {}))),
+            builder=(
+                _resolve_callable(data["builder"])
+                if data.get("builder") is not None
+                else flopy.mf6.MFSimulation
+            ),
+            workspace=data.get("workspace"),
+            executable=data.get("executable", "mf6"),
+            run_name=data.get("run_name"),
+            derived_from=data.get("derived_from"),
+            lineage=tuple(_spec_value(list(data.get("lineage", ())))),
+        )
 
     def __repr__(self) -> str:
         return (
