@@ -27,18 +27,21 @@ def test_top_level_exports_signal_package_first_api():
     assert "LAKBuilder" not in mf.__all__
     assert "lak_spec" not in mf.__all__
     assert "build_ims" not in mf.__all__
+    assert "Wells" not in mf.__all__
 
     assert "lak" in dir(mf)
     assert "LAKBuilder" not in dir(mf)
     assert "lak_spec" not in dir(mf)
     assert "LAKBuilder" in mf.__compatibility__
     assert "lak_spec" in mf.__compatibility__
+    assert "Wells" in mf.__compatibility__
 
 
 def test_second_tier_top_level_exports_remain_explicitly_importable():
-    from myflopy import LAKBuilder, lak_spec
+    from myflopy import LAKBuilder, Wells, lak_spec
 
     assert LAKBuilder.__name__ == "LAKBuilder"
+    assert Wells.__name__ == "Wells"
     assert callable(lak_spec)
 
 

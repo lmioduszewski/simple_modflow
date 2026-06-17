@@ -15,6 +15,10 @@ __pycache__/
 *.tif
 *.tiff
 *.vor
+_triangle.*
+**/_triangle.*
+triangle.*
+**/triangle.*
 
 # Local temp / scratch roots
 bak/
