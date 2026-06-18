@@ -1540,7 +1540,7 @@ class SimulationSpec:
                 {
                     "operation": "replace_package",
                     "model": model_name,
-                    "package": package.name,
+                    "package": _package_entry_label(package),
                 },
             ),
         )
@@ -1555,11 +1555,17 @@ class SimulationSpec:
         """
 
         model = self.model(model_name)
+        if isinstance(grid, GridRef):
+            grid_label = grid.key
+        elif isinstance(grid, GridSpec):
+            grid_label = grid.name
+        else:
+            grid_label = "object"
         return replace(
             self.with_model(model.with_grid(grid)),
             lineage=(
                 *self.lineage,
-                {"operation": "replace_grid", "model": model_name},
+                {"operation": "replace_grid", "model": model_name, "grid": grid_label},
             ),
         )
 
@@ -1579,7 +1585,7 @@ class SimulationSpec:
                 {
                     "operation": operation,
                     "model": model_name,
-                    "package": package.name,
+                    "package": _package_entry_label(package),
                 },
             ),
         )

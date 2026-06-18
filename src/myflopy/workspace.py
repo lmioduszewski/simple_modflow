@@ -25,6 +25,7 @@ from myflopy.specs import (
     SimulationSpec,
     SpecBuildContext,
     _grid_entry,
+    _package_entry_label,
 )
 
 
@@ -255,9 +256,6 @@ class ProjectLayout:
 def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     """Return stable, readable provenance for a simulation specification."""
 
-    def package_name(package: PackageSpec | PackageRef) -> str:
-        return package.name
-
     def package_metadata(package: PackageSpec | PackageRef) -> dict[str, Any]:
         return package.metadata if isinstance(package, PackageSpec) else {}
 
@@ -267,13 +265,15 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
             {
                 "name": model.name,
                 "type": model.model_type.value,
+                # Use the entry label so a reference keeps its library key
+                # (e.g. "npf/high_k"), preserving which variant was used.
                 "packages": [
-                    package_name(package)
+                    _package_entry_label(package)
                     for package in model.packages
                     if package.enabled
                 ],
                 "package_metadata": {
-                    package_name(package): metadata
+                    _package_entry_label(package): metadata
                     for package in model.packages
                     if package.enabled and (metadata := package_metadata(package))
                 },
@@ -283,7 +283,7 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
             for model in spec.models
         ],
         "simulation_packages": [
-            package_name(package) for package in spec.packages if package.enabled
+            _package_entry_label(package) for package in spec.packages if package.enabled
         ],
         "exchanges": [
             {"name": exchange.name, "models": list(exchange.models)}
@@ -729,12 +729,39 @@ class Project:
             return str(error)
         return None
 
+    def _unresolved_refs(self, simulation: SimulationSpec) -> list[str]:
+        """Return issues for package/grid references the library cannot resolve.
+
+        A saved project must be rebuildable, so every ``mf.ref`` / ``mf.grid_ref``
+        in a simulation must point at a defined library entry.
+        """
+
+        issues: list[str] = []
+        package_keys = set(self.packages)
+        grid_keys = set(self.grids)
+
+        def check_packages(packages, where: str) -> None:
+            for package in packages:
+                if isinstance(package, PackageRef) and package.key not in package_keys:
+                    issues.append(
+                        f"{where} references undefined package '{package.key}'."
+                    )
+
+        check_packages(simulation.packages, f"Simulation '{simulation.name}'")
+        for model in simulation.models:
+            where = f"Model '{model.name}' in simulation '{simulation.name}'"
+            check_packages(model.packages, where)
+            if isinstance(model.grid, GridRef) and model.grid.key not in grid_keys:
+                issues.append(f"{where} references undefined grid '{model.grid.key}'.")
+        return issues
+
     def validate(self) -> list[str]:
         """Return human-readable persistence issues without touching disk.
 
-        Persistence requires serializable specs. Simulations that embed raw
-        arrays, or that contain exchanges, are reported here rather than failing
-        silently at :meth:`save`.
+        Persistence requires serializable, rebuildable specs. Simulations that
+        embed raw arrays or exchanges, derive from unknown simulations, or
+        reference undefined library packages/grids are reported here rather than
+        failing silently at :meth:`save` (or later at build).
         """
 
         issues: list[str] = []
@@ -753,6 +780,7 @@ class Project:
                 issues.append(
                     f"Simulation '{simulation.name}' is not serializable: {reason}"
                 )
+            issues.extend(self._unresolved_refs(simulation))
         return issues
 
     def _project_dict(self) -> dict[str, Any]:

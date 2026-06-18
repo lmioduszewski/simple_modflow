@@ -77,7 +77,11 @@ def test_project_grid_library_resolves_and_swaps(tmp_path):
     # Same reference machinery, different grid resolved per simulation.
     assert run_a.built.models["gwf"].context.grid.tag == "A"
     assert run_b.built.models["gwf"].context.grid.tag == "B"
-    assert swapped.lineage[-1] == {"operation": "replace_grid", "model": "gwf"}
+    assert swapped.lineage[-1] == {
+        "operation": "replace_grid",
+        "model": "gwf",
+        "grid": "b",
+    }
 
 
 def test_project_unresolved_grid_reference_raises(tmp_path):

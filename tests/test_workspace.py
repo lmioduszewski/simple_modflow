@@ -155,6 +155,53 @@ def test_project_unresolved_package_reference_raises(tmp_path):
         run.build()
 
 
+def test_project_save_rejects_unresolved_references(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    # The simulation references "npf/base", which is not in the library.
+    project.add_simulation(_tiny_flow_with_npf_ref())
+
+    issues = project.validate()
+    assert any("npf/base" in issue for issue in issues)
+    with pytest.raises(ValueError, match="npf/base"):
+        project.save()
+
+    # Once defined, the project is valid and saves.
+    project.add_package(
+        "npf/base", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    assert project.validate() == []
+    project.save()
+
+
+def test_provenance_keeps_package_reference_variant(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_package(
+        "npf/base", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    project.add_package(
+        "npf/high_k", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 50.0})
+    )
+
+    high_k = (
+        _tiny_flow_with_npf_ref()
+        .derive("high_k")
+        .replace_package("flow", mf.ref("npf/high_k"))
+    )
+
+    # Lineage records the library key, not just the package name.
+    assert high_k.lineage[-1] == {
+        "operation": "replace_package",
+        "model": "flow",
+        "package": "npf/high_k",
+    }
+
+    run = project.prepare_run("high_k", high_k)
+    manifest = json.loads(run.manifest_path.read_text(encoding="utf-8"))
+    flow_packages = manifest["spec"]["models"][0]["packages"]
+    assert "npf/high_k" in flow_packages
+    assert "npf" not in flow_packages
+
+
 def test_project_owns_reusable_specs_and_prepares_runs(tmp_path):
     project = Project(tmp_path / "demo", name="demo")
     simulation = project.add_simulation(_tiny_flow_spec())
