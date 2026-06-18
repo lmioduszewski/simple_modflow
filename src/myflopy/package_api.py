@@ -85,6 +85,7 @@ def gwf(
     packages: Iterable[PackageSpec] = (),
     context: ModelContext | None = None,
     hooks: Iterable[PostBuildHook] = (),
+    grid: Any = None,
     model_nam_file: str | None = None,
     version: str = "mf6",
     exe_name: str = "mf6",
@@ -129,6 +130,7 @@ def gwf(
         packages=tuple(packages),
         context=ModelContext() if context is None else context,
         hooks=tuple(hooks),
+        grid=grid,
         options=options,
     )
 
@@ -139,6 +141,7 @@ def gwt(
     packages: Iterable[PackageSpec] = (),
     context: ModelContext | None = None,
     hooks: Iterable[PostBuildHook] = (),
+    grid: Any = None,
     model_nam_file: str | None = None,
     version: str = "mf6",
     exe_name: str = "mf6",
@@ -178,6 +181,7 @@ def gwt(
         packages=tuple(packages),
         context=ModelContext() if context is None else context,
         hooks=tuple(hooks),
+        grid=grid,
         options=options,
     )
 
@@ -188,6 +192,7 @@ def gwe(
     packages: Iterable[PackageSpec] = (),
     context: ModelContext | None = None,
     hooks: Iterable[PostBuildHook] = (),
+    grid: Any = None,
     model_nam_file: str | None = None,
     version: str = "mf6",
     exe_name: str = "mf6",
@@ -227,6 +232,7 @@ def gwe(
         packages=tuple(packages),
         context=ModelContext() if context is None else context,
         hooks=tuple(hooks),
+        grid=grid,
         options=options,
     )
 
@@ -237,6 +243,7 @@ def prt(
     packages: Iterable[PackageSpec] = (),
     context: ModelContext | None = None,
     hooks: Iterable[PostBuildHook] = (),
+    grid: Any = None,
     model_nam_file: str | None = None,
     version: str = "mf6",
     exe_name: str = "mf6",
@@ -255,6 +262,7 @@ def prt(
         packages=tuple(packages),
         context=ModelContext() if context is None else context,
         hooks=tuple(hooks),
+        grid=grid,
         options=_model_options(
             model_nam_file=model_nam_file,
             version=version,

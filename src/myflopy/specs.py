@@ -84,6 +84,42 @@ def ref(key: str) -> PackageRef:
     return PackageRef(key)
 
 
+@dataclass(frozen=True, slots=True)
+class GridRef:
+    """Deferred reference to a project-level grid recipe or built grid."""
+
+    key: str
+
+    def __post_init__(self) -> None:
+        key = self.key.strip()
+        if not key:
+            raise ValueError("GridRef key cannot be empty.")
+        object.__setattr__(self, "key", key)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready grid reference."""
+
+        return {"kind": "GridRef", "key": self.key}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GridRef:
+        """Recreate a grid reference from :meth:`to_dict` output."""
+
+        return cls(data["key"])
+
+
+def grid_ref(key: str) -> GridRef:
+    """Return a deferred reference to a project-level grid by ``key``.
+
+    Use this as a model's ``grid`` to reuse a grid defined once in a
+    :class:`~myflopy.workspace.Project` grid library, for example
+    ``mf.gwf("flow", grid=mf.grid_ref("base"))``. The reference is resolved
+    against the project's grid library when the run is built.
+    """
+
+    return GridRef(key)
+
+
 class ModelType(str, Enum):
     """MODFLOW 6 model types supported by the default model builders."""
 
@@ -472,11 +508,31 @@ class GridSpec:
     mesh_options: dict[str, Any] = field(default_factory=dict)
     voronoi_options: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    obj: Any = field(default=None, repr=False)
+    persist: str = "pickle"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "breaklines", tuple(self.breaklines))
         object.__setattr__(self, "points", tuple(self.points))
         object.__setattr__(self, "inputs", tuple(self.inputs))
+
+    @classmethod
+    def from_object(
+        cls,
+        obj: Any,
+        *,
+        name: str = "grid",
+        grid_type: str = "disv",
+        persist: str = "pickle",
+    ) -> GridSpec:
+        """Wrap an already-built grid object (such as a ``VoronoiGridPlus``).
+
+        Build the grid however you like (typically with ``TriangleGrid`` /
+        ``VoronoiGridPlus``), look at it, then register it. The object is held
+        in memory; persisting it to disk is handled by the project, not here.
+        """
+
+        return cls(name=name, grid_type=grid_type, method="object", obj=obj, persist=persist)
 
     @classmethod
     def python(
@@ -647,6 +703,12 @@ class GridSpec:
     def to_dict(self) -> dict[str, Any]:
         """Return a durable JSON-ready representation of this grid recipe."""
 
+        if self.method == "object":
+            raise ValueError(
+                "A GridSpec wrapping a built grid object cannot be serialized "
+                "directly. Persist it with project.save(), or use "
+                "GridSpec.python(...) for a reproducible recipe."
+            )
         payload: dict[str, Any] = {
             "kind": "GridSpec",
             "name": self.name,
@@ -734,7 +796,13 @@ class GridSpec:
         Generated Voronoi specs currently resolve through the existing
         ``TriangleGrid`` plus ``VoronoiGridPlus`` workflow. Set ``build=False``
         to prepare and inspect the Triangle setup without running Triangle.
+        A spec created with :meth:`from_object` returns its held grid directly.
         """
+
+        if self.method == "object":
+            if self.obj is None:
+                raise ValueError("This GridSpec has no materialized grid object.")
+            return self.obj
 
         from myflopy.grid_spec_resolver import resolve_grid_spec
 
@@ -745,6 +813,29 @@ class GridSpec:
             build=build,
             return_triangle=return_triangle,
         )
+
+
+def _grid_entry(value: Any) -> GridSpec | GridRef | None:
+    """Normalize a model/library grid value into a spec or reference.
+
+    Accepts a :class:`GridSpec`, a :class:`GridRef`, ``None``, or an
+    already-built grid object (such as a ``VoronoiGridPlus``), wrapping a bare
+    object with :meth:`GridSpec.from_object`.
+    """
+
+    if value is None or isinstance(value, (GridSpec, GridRef)):
+        return value
+    return GridSpec.from_object(value)
+
+
+def _grid_from_dict(data: dict[str, Any] | None) -> GridSpec | GridRef | None:
+    """Rebuild a model grid from a serialized GridSpec or GridRef payload."""
+
+    if data is None:
+        return None
+    if data.get("kind") == "GridRef":
+        return GridRef.from_dict(data)
+    return GridSpec.from_dict(data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,6 +867,7 @@ class SpecBuildContext:
     simulation_workspace: Path | str | None = None
     grid_workspace: Path | str | None = None
     package_specs: dict[str, PackageSpec] = field(default_factory=dict)
+    grid_specs: dict[str, "GridSpec"] = field(default_factory=dict)
     build_grids: bool = True
 
     def __post_init__(self) -> None:
@@ -784,6 +876,7 @@ class SpecBuildContext:
             if value is not None:
                 object.__setattr__(self, name, Path(value))
         object.__setattr__(self, "package_specs", dict(self.package_specs))
+        object.__setattr__(self, "grid_specs", dict(self.grid_specs))
 
     def with_simulation_workspace(
         self,
@@ -812,6 +905,16 @@ class SpecBuildContext:
         except KeyError as error:
             raise KeyError(
                 f"Package reference '{key}' is unresolved in the build context."
+            ) from error
+
+    def grid_spec(self, key: str) -> "GridSpec":
+        """Return a resolved project-level grid spec by key."""
+
+        try:
+            return self.grid_specs[key]
+        except KeyError as error:
+            raise KeyError(
+                f"Grid reference '{key}' is unresolved in the build context."
             ) from error
 
 
@@ -918,7 +1021,7 @@ class ModelSpec:
     builder: Builder | None = None
     context: ModelContext = field(default_factory=ModelContext)
     hooks: tuple[PostBuildHook, ...] = ()
-    grid: GridSpec | None = None
+    grid: GridSpec | GridRef | Any = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_type", ModelType(self.model_type))
@@ -928,6 +1031,7 @@ class ModelSpec:
             tuple(_package_entry(package) for package in self.packages),
         )
         object.__setattr__(self, "hooks", tuple(self.hooks))
+        object.__setattr__(self, "grid", _grid_entry(self.grid))
         _require_unique_names(self.packages, item_type="package")
         _require_unique_names(self.hooks, item_type="post-build hook")
         concrete_packages = [
@@ -1007,8 +1111,8 @@ class ModelSpec:
 
         return replace(self, context=context)
 
-    def with_grid(self, grid: GridSpec) -> ModelSpec:
-        """Return a copy with a durable grid recipe attached."""
+    def with_grid(self, grid: "GridSpec | GridRef | Any") -> ModelSpec:
+        """Return a copy with a grid recipe, reference, or built object attached."""
 
         return replace(self, grid=grid)
 
@@ -1037,7 +1141,10 @@ class ModelSpec:
             build_context = (
                 SpecBuildContext() if build_context is None else build_context
             )
-            grid = self.grid.resolve(
+            grid_spec = self.grid
+            if isinstance(grid_spec, GridRef):
+                grid_spec = build_context.grid_spec(grid_spec.key)
+            grid = grid_spec.resolve(
                 project_root=build_context.project_root,
                 workspace=build_context.model_grid_workspace(self.name),
                 build=build_context.build_grids,
@@ -1108,11 +1215,7 @@ class ModelSpec:
             context=ModelContext(
                 metadata=_spec_value(dict(context_data.get("metadata", {}))),
             ),
-            grid=(
-                GridSpec.from_dict(data["grid"])
-                if data.get("grid") is not None
-                else None
-            ),
+            grid=_grid_from_dict(data.get("grid")),
         )
 
     @property
@@ -1408,6 +1511,24 @@ class SimulationSpec:
                     "model": model_name,
                     "package": package.name,
                 },
+            ),
+        )
+
+    def replace_grid(
+        self, model_name: str, grid: "GridSpec | GridRef | Any"
+    ) -> SimulationSpec:
+        """Return a copy with one model's grid replaced.
+
+        ``grid`` may be a :class:`GridSpec`, a :func:`grid_ref` reference into a
+        project grid library, or an already-built grid object.
+        """
+
+        model = self.model(model_name)
+        return replace(
+            self.with_model(model.with_grid(grid)),
+            lineage=(
+                *self.lineage,
+                {"operation": "replace_grid", "model": model_name},
             ),
         )
 

@@ -19,6 +19,7 @@ from myflopy.specs import (
     PackageSpec,
     SimulationSpec,
     SpecBuildContext,
+    _grid_entry,
 )
 
 
@@ -479,6 +480,7 @@ class Project:
         self.root = self.layout.root
         self.name = name or self.root.name
         self.packages: dict[str, PackageSpec] = {}
+        self.grids: dict[str, Any] = {}
         self.simulations: dict[str, SimulationSpec] = {}
 
     @property
@@ -504,6 +506,19 @@ class Project:
         self.packages[key] = package
         return package
 
+    def add_grid(self, key: str, grid: Any) -> Any:
+        """Add or replace a reusable grid under a project ``key``.
+
+        The grid may be a ``GridSpec`` recipe or an already-built grid object
+        (such as a ``VoronoiGridPlus``). Models reference it with
+        ``mf.grid_ref(key)``. The grid is normalized to a ``GridSpec`` and
+        resolved into a model only when a run is built.
+        """
+
+        grid = _grid_entry(grid)
+        self.grids[key] = grid
+        return grid
+
     def add_simulation(self, simulation: SimulationSpec) -> SimulationSpec:
         """Add or replace a reusable simulation specification."""
 
@@ -523,6 +538,7 @@ class Project:
             simulation_workspace=workspace,
             grid_workspace=workspace / "_grid",
             package_specs=dict(self.packages),
+            grid_specs={key: _grid_entry(value) for key, value in self.grids.items()},
         )
 
     def prepare_run(
