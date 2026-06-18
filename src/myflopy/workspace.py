@@ -116,6 +116,28 @@ def _grid_version_sidecar() -> dict[str, str]:
     return versions
 
 
+def _materialize_models(spec: SimulationSpec) -> SimulationSpec:
+    """Give each model its own subdirectory when a simulation has multiple models.
+
+    A coupled simulation (for example GWF with GWT, GWE, or PRT) writes each
+    model's input files into ``<workspace>/<model name>/`` so it is clear which
+    files belong to which model. Single-model simulations stay flat, and a model
+    that already declares a ``model_rel_path`` is left untouched.
+    """
+
+    if len(spec.models) <= 1:
+        return spec
+    models = []
+    changed = False
+    for model in spec.models:
+        if model.options.get("model_rel_path") in (None, ".", ""):
+            models.append(model.with_options(model_rel_path=model.name))
+            changed = True
+        else:
+            models.append(model)
+    return spec.with_models(*models) if changed else spec
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectLayout:
     """Directory layout for a durable project on disk.
@@ -608,6 +630,7 @@ class Project:
         spec = (
             self.simulations[simulation] if isinstance(simulation, str) else simulation
         )
+        spec = _materialize_models(spec)
         workspace = self.runs_dir / name
         if workspace.exists() and any(workspace.iterdir()) and not overwrite:
             raise FileExistsError(f"Run workspace already exists: {workspace}")

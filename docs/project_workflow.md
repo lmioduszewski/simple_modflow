@@ -62,6 +62,26 @@ etc.) re-map onto whatever grid resolves, because they are evaluated against
 the model grid at build time. Inputs tied to concrete cell IDs or raw per-cell
 arrays do **not** re-map — keep swappable inputs source-driven.
 
+## Coupled (multi-model) runs
+
+When a simulation has more than one model — for example GWF coupled to GWT,
+GWE, or PRT — each model's input files are written into its own subdirectory
+named after the model, so it is clear which files belong to which model:
+
+```
+project/runs/high_k/
+├── mfsim.nam
+├── gwf/            ← flow model files
+└── gwt/            ← transport model files
+```
+
+This is automatic for multi-model simulations. Single-model runs stay flat
+(files at the run root). A model that sets its own `model_rel_path` is left as
+declared. Building and running coupled models works today; note that a
+simulation containing an exchange cannot yet be persisted with `save()` (see
+the serialization boundary below) — though its built MF6 files remain
+reopenable with `mf.load_run(...)`.
+
 ## Grids: build, look, then register
 
 Grid generation with `TriangleGrid` / `VoronoiGridPlus` is iterative and

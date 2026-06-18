@@ -267,3 +267,75 @@ def test_reopened_run_without_spec_cannot_be_rebuilt(tmp_path):
 
     with pytest.raises(ValueError, match="without a spec cannot be rebuilt"):
         reopened.build()
+
+
+def _one_cell_gwf(name: str) -> ModelSpec:
+    """Return a minimal one-cell GWF model spec."""
+
+    return ModelSpec(
+        name,
+        "gwf",
+        packages=(
+            PackageSpec(
+                "dis",
+                flopy.mf6.ModflowGwfdis,
+                {
+                    "nlay": 1,
+                    "nrow": 1,
+                    "ncol": 1,
+                    "delr": 1.0,
+                    "delc": 1.0,
+                    "top": 10.0,
+                    "botm": 0.0,
+                },
+            ),
+            PackageSpec("ic", flopy.mf6.ModflowGwfic, {"strt": 9.0}),
+            PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0}),
+        ),
+    )
+
+
+def _two_model_sim() -> SimulationSpec:
+    """Return a two-model simulation (separate solvers, no exchange)."""
+
+    return SimulationSpec(
+        "coupled",
+        models=(_one_cell_gwf("north"), _one_cell_gwf("south")),
+        packages=(
+            PackageSpec(
+                "tdis",
+                flopy.mf6.ModflowTdis,
+                {"nper": 1, "perioddata": [(1.0, 1, 1.0)]},
+            ),
+            PackageSpec("ims_north", build_ims, {"models": ("north",), "complexity": "SIMPLE"}),
+            PackageSpec("ims_south", build_ims, {"models": ("south",), "complexity": "SIMPLE"}),
+        ),
+    )
+
+
+def test_project_multi_model_run_uses_per_model_subdirs(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_simulation(_two_model_sim())
+
+    run = project.prepare_run("high_k", "coupled")
+    run.write()
+
+    # mfsim.nam stays at the run root; each model writes into its own subdir.
+    assert (run.workspace / "mfsim.nam").exists()
+    assert (run.workspace / "north" / "north.dis").exists()
+    assert (run.workspace / "south" / "south.dis").exists()
+    assert run.spec.model("north").options["model_rel_path"] == "north"
+    assert run.spec.model("south").options["model_rel_path"] == "south"
+
+
+def test_project_single_model_run_stays_flat(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_simulation(_tiny_flow_spec())
+
+    run = project.prepare_run("baseline", "tiny_flow")
+    run.write()
+
+    # One model: no subdirectory, files at the run root.
+    assert (run.workspace / "flow.dis").exists()
+    assert not (run.workspace / "flow").is_dir()
+    assert run.spec.model("flow").options.get("model_rel_path", ".") == "."
