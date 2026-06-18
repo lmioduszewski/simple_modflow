@@ -568,6 +568,16 @@ class Project:
         self.simulations[simulation.name] = simulation
         return simulation
 
+    def simulation(self, name: str) -> SimulationSpec:
+        """Return one registered simulation specification by name."""
+
+        try:
+            return self.simulations[name]
+        except KeyError as error:
+            raise KeyError(
+                f"Project '{self.name}' has no simulation named '{name}'."
+            ) from error
+
     def _build_context(self, workspace: Path) -> SpecBuildContext:
         """Return the build context that resolves project package references.
 

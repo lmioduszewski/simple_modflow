@@ -5,6 +5,7 @@
 - Codebase structure map: [docs/codebase_structure.md](docs/codebase_structure.md)
 - Core specification API: [docs/core_specs.md](docs/core_specs.md)
 - Preferred API guide: [docs/preferred_api.md](docs/preferred_api.md)
+- Projects, reusable packages, and swappable grids: [docs/project_workflow.md](docs/project_workflow.md)
 - Refactor review and consolidation strategy: [docs/refactor_review_report.md](docs/refactor_review_report.md)
 - Local run clutter guide: [docs/local_run_clutter.md](docs/local_run_clutter.md)
 
