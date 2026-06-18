@@ -168,6 +168,40 @@ class VoronoiGridPlus(VoronoiGrid):
         self.grid_centroid = self.get_grid_centroid()
         print('Voronoi grid initialized.')
 
+    # Attributes dropped from pickles: the Triangle builder plus caches that
+    # recompute from the stored mesh geometry. Keeping them would bloat the
+    # pickle and tie it more tightly to dependency versions.
+    _PICKLE_VOLATILE = (
+        "tri",
+        "_centroids",
+        "_gdf_latlon",
+        "_latlon",
+        "_gdf_vorPolys",
+        "_iac",
+        "_nja",
+        "_ja",
+        "_cl12",
+        "_hwva",
+        "_area_list",
+        "_adjacent_cells_idx",
+    )
+
+    def __getstate__(self):
+        """Return a lean picklable state, dropping ``tri`` and recomputable caches."""
+
+        return {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in self._PICKLE_VOLATILE
+        }
+
+    def __setstate__(self, state):
+        """Restore state, leaving dropped caches empty for lazy recomputation."""
+
+        self.__dict__.update(state)
+        for key in self._PICKLE_VOLATILE:
+            self.__dict__.setdefault(key, None)
+
     @property
     def vor_list(self):
         """Return the Voronoi polygons as a plain geometry list."""

@@ -213,6 +213,26 @@ def test_package_ref_round_trip_and_model_package_lookup():
     assert loaded.package("npf/base").key == "npf/base"
 
 
+def test_voronoi_grid_pickles_leanly(tmp_path):
+    import pickle
+
+    _write_voronoi_inputs(tmp_path / "inputs.gpkg")
+    grid = _voronoi_grid_spec(include_breaklines=False).resolve(
+        project_root=tmp_path, workspace=tmp_path / "g", build=True
+    )
+
+    # A freshly built grid carries its Triangle builder.
+    assert grid.tri is not None
+
+    restored = pickle.loads(pickle.dumps(grid))
+
+    # The builder is dropped, but the essential mesh geometry survives.
+    assert restored.tri is None
+    assert restored.ncpl == grid.ncpl
+    assert len(restored.iverts) == len(grid.iverts)
+    assert restored.name == grid.name
+
+
 def test_voronoi_grid_spec_resolves_to_triangle_setup(tmp_path):
     _write_voronoi_inputs(tmp_path / "inputs.gpkg")
     grid = _voronoi_grid_spec()

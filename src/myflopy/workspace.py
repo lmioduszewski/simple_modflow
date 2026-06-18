@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from importlib import import_module
 import json
 from pathlib import Path
+import pickle
 import re
+import warnings
 from typing import Any
 
 import flopy
@@ -15,6 +18,8 @@ from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
     BuiltSimulation,
+    GridRef,
+    GridSpec,
     PackageRef,
     PackageSpec,
     SimulationSpec,
@@ -93,6 +98,24 @@ def _package_key_parts(key: str) -> tuple[str, ...]:
     return parts
 
 
+def _grid_version_sidecar() -> dict[str, str]:
+    """Return library versions recorded beside a pickled grid.
+
+    A built grid is pickled as a regenerable cache, not an archival format.
+    These versions let :meth:`Project.load` warn when a pickle was written
+    under a different stack that may no longer unpickle cleanly.
+    """
+
+    versions: dict[str, str] = {}
+    for name in ("flopy", "geopandas", "shapely", "numpy"):
+        try:
+            module = import_module(name)
+        except Exception:
+            continue
+        versions[name] = getattr(module, "__version__", "unknown")
+    return versions
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectLayout:
     """Directory layout for a durable project on disk.
@@ -106,6 +129,7 @@ class ProjectLayout:
     simulations_dir_name: str = "simulations"
     inputs_dir_name: str = "inputs"
     packages_dir_name: str = "packages"
+    grids_dir_name: str = "grids"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root))
@@ -151,6 +175,25 @@ class ProjectLayout:
 
         *parents, filename = _package_key_parts(key)
         return self.package_specs_dir.joinpath(*parents, f"{filename}.json")
+
+    @property
+    def grid_specs_dir(self) -> Path:
+        return self.specs_dir / self.grids_dir_name
+
+    def grid_spec_path(self, key: str) -> Path:
+        """Return the durable spec path for one project grid key."""
+
+        return self.grid_specs_dir / f"{_slug(key)}.json"
+
+    def grid_pickle_path(self, key: str) -> Path:
+        """Return the pickle path for one project grid key."""
+
+        return self.grid_specs_dir / f"{_slug(key)}.pkl"
+
+    def grid_sidecar_path(self, key: str) -> Path:
+        """Return the version-sidecar path for one pickled project grid key."""
+
+        return self.grid_specs_dir / f"{_slug(key)}.versions.json"
 
     def ensure(self) -> None:
         """Create the durable spec directories."""
@@ -675,7 +718,29 @@ class Project:
             "layout": self.layout.to_dict(),
             "simulations": sorted(self.simulations),
             "packages": sorted(self.packages),
+            "grids": sorted(self.grids),
         }
+
+    def _save_grid(self, key: str, grid: Any) -> None:
+        """Persist one project-library grid, pickling built grid objects."""
+
+        if isinstance(grid, GridSpec) and grid.method == "object":
+            pickle_path = self.layout.grid_pickle_path(key)
+            pickle_path.parent.mkdir(parents=True, exist_ok=True)
+            with pickle_path.open("wb") as handle:
+                pickle.dump(grid.obj, handle)
+            _write_json(self.layout.grid_sidecar_path(key), _grid_version_sidecar())
+            doc = {
+                "kind": "GridSpec",
+                "name": grid.name,
+                "grid_type": grid.grid_type,
+                "method": "pickle",
+                "pickle_path": pickle_path.relative_to(self.root).as_posix(),
+            }
+            _write_json(self.layout.grid_spec_path(key), doc)
+        else:
+            # Recipe GridSpec or GridRef: already serializable.
+            _write_json(self.layout.grid_spec_path(key), grid.to_dict())
 
     def save(self) -> Path:
         """Persist the project document, its simulations, and its package library.
@@ -705,6 +770,8 @@ class Project:
             _write_json(self.layout.simulation_spec_path(name), simulation.to_dict())
         for key, package in self.packages.items():
             _write_json(self.layout.package_spec_path(key), package.to_dict())
+        for key, grid in self.grids.items():
+            self._save_grid(key, grid)
         return self.layout.project_spec_path
 
     @classmethod
@@ -725,4 +792,38 @@ class Project:
             sim_path = project.layout.simulation_spec_path(name)
             if sim_path.exists():
                 project.add_simulation(SimulationSpec.from_dict(_read_json(sim_path)))
+        for key in data.get("grids", ()):
+            grid_path = project.layout.grid_spec_path(key)
+            if grid_path.exists():
+                project.grids[key] = project._load_grid(key, _read_json(grid_path))
         return project
+
+    def _load_grid(self, key: str, doc: dict[str, Any]) -> Any:
+        """Reconstruct one project-library grid from its document."""
+
+        if doc.get("kind") == "GridRef":
+            return GridRef.from_dict(doc)
+        if doc.get("method") == "pickle":
+            self._warn_grid_version_mismatch(key)
+        return GridSpec.from_dict(doc)
+
+    def _warn_grid_version_mismatch(self, key: str) -> None:
+        """Warn if a pickled grid was written under a different library stack."""
+
+        sidecar_path = self.layout.grid_sidecar_path(key)
+        if not sidecar_path.exists():
+            return
+        stored = _read_json(sidecar_path)
+        current = _grid_version_sidecar()
+        mismatched = {
+            name: (stored.get(name), current.get(name))
+            for name in current
+            if name in stored and stored[name] != current[name]
+        }
+        if mismatched:
+            warnings.warn(
+                f"Pickled grid '{key}' was written under different library "
+                f"versions {mismatched}. If it fails to load, rebuild it "
+                "(for example with GridSpec.python).",
+                stacklevel=3,
+            )

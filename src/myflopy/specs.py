@@ -13,6 +13,7 @@ from enum import Enum
 from html import escape
 from importlib import import_module
 from pathlib import Path
+import pickle
 from typing import Any, Callable, Iterable, TypeAlias, TypeVar, cast
 
 import flopy
@@ -510,6 +511,7 @@ class GridSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
     obj: Any = field(default=None, repr=False)
     persist: str = "pickle"
+    pickle_path: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "breaklines", tuple(self.breaklines))
@@ -533,6 +535,22 @@ class GridSpec:
         """
 
         return cls(name=name, grid_type=grid_type, method="object", obj=obj, persist=persist)
+
+    @classmethod
+    def from_pickle(
+        cls,
+        path: Path | str,
+        *,
+        name: str = "grid",
+        grid_type: str = "disv",
+    ) -> GridSpec:
+        """Reference a previously pickled grid on disk.
+
+        The pickle is loaded lazily by :meth:`resolve`. Relative paths are
+        resolved against the ``project_root`` supplied at resolve time.
+        """
+
+        return cls(name=name, grid_type=grid_type, method="pickle", pickle_path=str(path))
 
     @classmethod
     def python(
@@ -716,6 +734,8 @@ class GridSpec:
             "method": self.method,
             "options": _json_value(self.options),
         }
+        if self.pickle_path is not None:
+            payload["pickle_path"] = self.pickle_path
         if self.script is not None:
             payload["script"] = _json_value(self.script)
         if self.function is not None:
@@ -752,6 +772,7 @@ class GridSpec:
             name=data["name"],
             grid_type=data["grid_type"],
             method=data["method"],
+            pickle_path=data.get("pickle_path"),
             script=data.get("script"),
             function=data.get("function"),
             source=(
@@ -796,13 +817,23 @@ class GridSpec:
         Generated Voronoi specs currently resolve through the existing
         ``TriangleGrid`` plus ``VoronoiGridPlus`` workflow. Set ``build=False``
         to prepare and inspect the Triangle setup without running Triangle.
-        A spec created with :meth:`from_object` returns its held grid directly.
+        A spec created with :meth:`from_object` returns its held grid directly,
+        and one created with :meth:`from_pickle` unpickles it from disk.
         """
 
         if self.method == "object":
             if self.obj is None:
                 raise ValueError("This GridSpec has no materialized grid object.")
             return self.obj
+
+        if self.method == "pickle":
+            if self.pickle_path is None:
+                raise ValueError("This GridSpec has no pickle path to load.")
+            path = Path(self.pickle_path)
+            if not path.is_absolute() and project_root is not None:
+                path = Path(project_root) / path
+            with path.open("rb") as handle:
+                return pickle.load(handle)
 
         from myflopy.grid_spec_resolver import resolve_grid_spec
 
