@@ -339,3 +339,34 @@ def test_project_single_model_run_stays_flat(tmp_path):
     assert (run.workspace / "flow.dis").exists()
     assert not (run.workspace / "flow").is_dir()
     assert run.spec.model("flow").options.get("model_rel_path", ".") == "."
+
+
+def test_project_pickles_array_bearing_packages_and_reuses_them(tmp_path):
+    import numpy as np
+
+    project = Project(tmp_path / "demo", name="demo")
+    # Scalar package: JSON-serializable.
+    project.add_package(
+        "npf/scalar", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 10.0})
+    )
+    # Computed-array package: pickled as an artifact.
+    karr = np.full((1, 1, 1), 7.0)
+    project.add_package(
+        "npf/array", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": karr})
+    )
+
+    project.save()
+    pkgs = project.layout.package_specs_dir
+
+    # Scalar -> JSON only; array -> JSON pointer + pickle + version sidecar.
+    assert (pkgs / "npf" / "scalar.json").exists()
+    assert not (pkgs / "npf" / "scalar.pkl").exists()
+    assert (pkgs / "npf" / "array.json").exists()
+    assert (pkgs / "npf" / "array.pkl").exists()
+    assert (pkgs / "npf" / "array.versions.json").exists()
+
+    # Reload in a fresh project: both packages come back, array intact.
+    loaded = Project.load(project.root)
+    assert loaded.packages["npf/scalar"].options["k"] == 10.0
+    reused = np.asarray(loaded.packages["npf/array"].options["k"])
+    assert float(reused.reshape(-1)[0]) == 7.0

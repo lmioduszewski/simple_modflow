@@ -98,16 +98,17 @@ def _package_key_parts(key: str) -> tuple[str, ...]:
     return parts
 
 
-def _grid_version_sidecar() -> dict[str, str]:
-    """Return library versions recorded beside a pickled grid.
+def _artifact_versions() -> dict[str, str]:
+    """Return library versions recorded beside a pickled grid or package.
 
-    A built grid is pickled as a regenerable cache, not an archival format.
-    These versions let :meth:`Project.load` warn when a pickle was written
-    under a different stack that may no longer unpickle cleanly.
+    Built grids and array-bearing packages are pickled as regenerable caches,
+    not an archival format. These versions let :meth:`Project.load` warn when a
+    pickle was written under a different stack that may no longer unpickle
+    cleanly.
     """
 
     versions: dict[str, str] = {}
-    for name in ("flopy", "geopandas", "shapely", "numpy"):
+    for name in ("flopy", "geopandas", "shapely", "numpy", "pandas"):
         try:
             module = import_module(name)
         except Exception:
@@ -197,6 +198,18 @@ class ProjectLayout:
 
         *parents, filename = _package_key_parts(key)
         return self.package_specs_dir.joinpath(*parents, f"{filename}.json")
+
+    def package_pickle_path(self, key: str) -> Path:
+        """Return the pickle path for one array-bearing project package key."""
+
+        *parents, filename = _package_key_parts(key)
+        return self.package_specs_dir.joinpath(*parents, f"{filename}.pkl")
+
+    def package_sidecar_path(self, key: str) -> Path:
+        """Return the version-sidecar path for one pickled project package key."""
+
+        *parents, filename = _package_key_parts(key)
+        return self.package_specs_dir.joinpath(*parents, f"{filename}.versions.json")
 
     @property
     def grid_specs_dir(self) -> Path:
@@ -762,7 +775,7 @@ class Project:
             pickle_path.parent.mkdir(parents=True, exist_ok=True)
             with pickle_path.open("wb") as handle:
                 pickle.dump(grid.obj, handle)
-            _write_json(self.layout.grid_sidecar_path(key), _grid_version_sidecar())
+            _write_json(self.layout.grid_sidecar_path(key), _artifact_versions())
             doc = {
                 "kind": "GridSpec",
                 "name": grid.name,
@@ -774,6 +787,38 @@ class Project:
         else:
             # Recipe GridSpec or GridRef: already serializable.
             _write_json(self.layout.grid_spec_path(key), grid.to_dict())
+
+    def _save_package(self, key: str, package: PackageSpec) -> None:
+        """Persist one project package, pickling it when it carries arrays.
+
+        Source-driven / scalar packages serialize to readable JSON. A package
+        whose options embed arrays (a computed ``k`` field, explicit
+        stress-period data, etc.) is pickled as an artifact instead, mirroring
+        how built grids are persisted, so it can be reused across variants
+        without recomputing.
+        """
+
+        try:
+            doc = package.to_dict()
+        except ValueError:
+            doc = None
+        if doc is not None:
+            _write_json(self.layout.package_spec_path(key), doc)
+            return
+        pickle_path = self.layout.package_pickle_path(key)
+        pickle_path.parent.mkdir(parents=True, exist_ok=True)
+        with pickle_path.open("wb") as handle:
+            pickle.dump(package, handle)
+        _write_json(self.layout.package_sidecar_path(key), _artifact_versions())
+        _write_json(
+            self.layout.package_spec_path(key),
+            {
+                "kind": "PackageSpec",
+                "name": package.name,
+                "method": "pickle",
+                "pickle_path": pickle_path.relative_to(self.root).as_posix(),
+            },
+        )
 
     def save(self) -> Path:
         """Persist the project document, its simulations, and its package library.
@@ -802,7 +847,7 @@ class Project:
         for name, simulation in self.simulations.items():
             _write_json(self.layout.simulation_spec_path(name), simulation.to_dict())
         for key, package in self.packages.items():
-            _write_json(self.layout.package_spec_path(key), package.to_dict())
+            self._save_package(key, package)
         for key, grid in self.grids.items():
             self._save_grid(key, grid)
         return self.layout.project_spec_path
@@ -820,7 +865,9 @@ class Project:
         for key in data.get("packages", ()):
             package_path = project.layout.package_spec_path(key)
             if package_path.exists():
-                project.packages[key] = PackageSpec.from_dict(_read_json(package_path))
+                project.packages[key] = project._load_package(
+                    key, _read_json(package_path)
+                )
         for name in data.get("simulations", ()):
             sim_path = project.layout.simulation_spec_path(name)
             if sim_path.exists():
@@ -837,17 +884,28 @@ class Project:
         if doc.get("kind") == "GridRef":
             return GridRef.from_dict(doc)
         if doc.get("method") == "pickle":
-            self._warn_grid_version_mismatch(key)
+            self._warn_version_mismatch("grid", key, self.layout.grid_sidecar_path(key))
         return GridSpec.from_dict(doc)
 
-    def _warn_grid_version_mismatch(self, key: str) -> None:
-        """Warn if a pickled grid was written under a different library stack."""
+    def _load_package(self, key: str, doc: dict[str, Any]) -> PackageSpec:
+        """Reconstruct one project package from its document."""
 
-        sidecar_path = self.layout.grid_sidecar_path(key)
+        if doc.get("method") == "pickle":
+            self._warn_version_mismatch(
+                "package", key, self.layout.package_sidecar_path(key)
+            )
+            path = self.root / doc["pickle_path"]
+            with path.open("rb") as handle:
+                return pickle.load(handle)
+        return PackageSpec.from_dict(doc)
+
+    def _warn_version_mismatch(self, kind: str, key: str, sidecar_path: Path) -> None:
+        """Warn if a pickled artifact was written under a different library stack."""
+
         if not sidecar_path.exists():
             return
         stored = _read_json(sidecar_path)
-        current = _grid_version_sidecar()
+        current = _artifact_versions()
         mismatched = {
             name: (stored.get(name), current.get(name))
             for name in current
@@ -855,8 +913,7 @@ class Project:
         }
         if mismatched:
             warnings.warn(
-                f"Pickled grid '{key}' was written under different library "
-                f"versions {mismatched}. If it fails to load, rebuild it "
-                "(for example with GridSpec.python).",
+                f"Pickled {kind} '{key}' was written under different library "
+                f"versions {mismatched}. If it fails to load, rebuild it.",
                 stacklevel=3,
             )
