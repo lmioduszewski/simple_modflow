@@ -32,13 +32,47 @@ def _grass_modules():
     return r, g, v, gsetup
 
 
+def _grass_search_dirs() -> list[Path]:
+    """Return likely locations of a GRASS launcher (OSGeo4W and QGIS bundles)."""
+
+    dirs = [
+        Path.home() / "AppData" / "Local" / "Programs" / "OSGeo4W" / "bin",
+        Path("C:/OSGeo4W/bin"),
+        Path("C:/OSGeo4W64/bin"),
+    ]
+    dirs.extend(sorted(Path("C:/Program Files").glob("QGIS */bin"), reverse=True))
+    return dirs
+
+
+def _find_grass_launcher(search_dirs) -> Path | None:
+    """Return the highest-versioned ``grass*.bat`` launcher found, if any.
+
+    The ``python-grass*.bat`` wrapper is skipped in favor of the main launcher.
+    """
+
+    for directory in search_dirs:
+        directory = Path(directory)
+        if not directory.is_dir():
+            continue
+        for candidate in sorted(directory.glob("grass*.bat"), reverse=True):
+            if candidate.is_file() and not candidate.name.startswith("python"):
+                return candidate
+    return None
+
+
 def _default_grass_bin() -> Path:
+    """Resolve a GRASS launcher: GRASS_BIN env var, then auto-discovery."""
+
     env = os.environ.get("GRASS_BIN")
     if env:
         return Path(env)
+    found = _find_grass_launcher(_grass_search_dirs())
+    if found is not None:
+        return found
     raise ValueError(
-        "Provide grass_bin (path to the GRASS launcher, e.g. grass84.bat) "
-        "or set the GRASS_BIN environment variable."
+        "Could not find a GRASS launcher. Pass grass_bin=... (e.g. the path to "
+        "grass84.bat), set the GRASS_BIN environment variable, or install GRASS "
+        "via OSGeo4W."
     )
 
 

@@ -104,3 +104,22 @@ def test_from_contours_is_lazy_and_does_not_run_grass():
     assert surface.kind == "contours"
     assert surface.out == Path("out.tif")
     assert surface.z == "elev"
+
+
+def test_grass_launcher_discovery_picks_latest_main_launcher(tmp_path):
+    from myflopy.modflow.utils.contour_interp import _find_grass_launcher
+
+    (tmp_path / "grass83.bat").write_text("")
+    (tmp_path / "grass84.bat").write_text("")
+    (tmp_path / "python-grass84.bat").write_text("")  # the wrapper, must be skipped
+
+    found = _find_grass_launcher([tmp_path / "missing", tmp_path])
+    assert found is not None
+    assert found.name == "grass84.bat"
+
+
+def test_grass_bin_env_var_takes_precedence(tmp_path, monkeypatch):
+    from myflopy.modflow.utils.contour_interp import _default_grass_bin
+
+    monkeypatch.setenv("GRASS_BIN", str(tmp_path / "my_grass.bat"))
+    assert _default_grass_bin() == tmp_path / "my_grass.bat"
