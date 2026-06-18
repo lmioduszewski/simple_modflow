@@ -173,6 +173,46 @@ def test_project_save_rejects_unresolved_references(tmp_path):
     project.save()
 
 
+def test_project_custom_layout_round_trips(tmp_path):
+    layout = mf.ProjectLayout(
+        tmp_path / "demo", specs_dir_name="recipes", packages_dir_name="pkgs"
+    )
+    project = Project(tmp_path / "demo", name="demo", layout=layout)
+    project.add_package(
+        "npf/base", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    project.save()
+
+    assert (project.root / "recipes" / "pkgs" / "npf" / "base.json").exists()
+
+    # Load without passing a layout: the saved custom dir names are restored.
+    loaded = Project.load(project.root)
+    assert loaded.layout.specs_dir_name == "recipes"
+    assert loaded.layout.packages_dir_name == "pkgs"
+    assert loaded.packages["npf/base"].options["k"] == 1.0
+
+
+def test_project_load_fails_loud_on_missing_file(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_package(
+        "npf/base", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    project.save()
+    project.layout.package_spec_path("npf/base").unlink()
+
+    with pytest.raises(FileNotFoundError, match="npf/base"):
+        Project.load(project.root)
+
+
+def test_add_package_warns_on_key_name_mismatch(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+
+    with pytest.warns(UserWarning, match="npf"):
+        project.add_package(
+            "npf/base", PackageSpec("rch", flopy.mf6.ModflowGwfrch, {})
+        )
+
+
 def test_provenance_keeps_package_reference_variant(tmp_path):
     project = Project(tmp_path / "demo", name="demo")
     project.add_package(

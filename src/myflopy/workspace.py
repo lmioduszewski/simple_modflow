@@ -250,7 +250,25 @@ class ProjectLayout:
             "simulations_dir": self.simulations_dir_name,
             "inputs_dir": self.inputs_dir_name,
             "packages_dir": self.packages_dir_name,
+            "grids_dir": self.grids_dir_name,
         }
+
+    @classmethod
+    def from_dict(cls, root: Path | str, data: dict[str, Any]) -> ProjectLayout:
+        """Rebuild a layout from saved directory names, rooted at ``root``.
+
+        The current ``root`` is used (the project may have moved); only the
+        directory names are restored.
+        """
+
+        return cls(
+            Path(root),
+            specs_dir_name=data.get("specs_dir", "specs"),
+            simulations_dir_name=data.get("simulations_dir", "simulations"),
+            inputs_dir_name=data.get("inputs_dir", "inputs"),
+            packages_dir_name=data.get("packages_dir", "packages"),
+            grids_dir_name=data.get("grids_dir", "grids"),
+        )
 
 
 def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
@@ -579,8 +597,19 @@ class Project:
         The key is how models reference the package later, for example
         ``mf.ref("npf/base")``. Packages live independently of any model and
         are resolved into a simulation only when a run is built.
+
+        The first key segment should match the package name, since
+        ``mf.ref("npf/base")`` resolves into an ``npf`` slot.
         """
 
+        expected = key.split("/", 1)[0]
+        if package.name != expected:
+            warnings.warn(
+                f"Package key '{key}' implies package name '{expected}', but the "
+                f"spec is named '{package.name}'. A model using mf.ref('{key}') "
+                f"will build a '{package.name}' package.",
+                stacklevel=2,
+            )
         self.packages[key] = package
         return package
 
@@ -880,10 +909,34 @@ class Project:
             self._save_grid(key, grid)
         return self.layout.project_spec_path
 
+    @staticmethod
+    def _restore_layout(root: Path) -> ProjectLayout | None:
+        """Rebuild a saved custom layout via the fixed project manifest, if any."""
+
+        manifest_path = root / PROJECT_MANIFEST_NAME
+        if not manifest_path.exists():
+            return None
+        spec_rel = _read_json(manifest_path).get("project", {}).get("spec")
+        spec_path = root / spec_rel if spec_rel else None
+        if spec_path is None or not spec_path.exists():
+            return None
+        layout_block = _read_json(spec_path).get("layout")
+        if not layout_block:
+            return None
+        return ProjectLayout.from_dict(root, layout_block)
+
     @classmethod
     def load(cls, root: Path | str, *, layout: ProjectLayout | None = None) -> Project:
-        """Load a project previously written with :meth:`save`."""
+        """Load a project previously written with :meth:`save`.
 
+        A saved custom layout round-trips automatically. A listed package, grid,
+        or simulation whose file is missing raises rather than loading a broken
+        project silently.
+        """
+
+        root = Path(root)
+        if layout is None:
+            layout = cls._restore_layout(root)
         project = cls(root, layout=layout)
         spec_path = project.layout.project_spec_path
         if not spec_path.exists():
@@ -892,18 +945,25 @@ class Project:
         project.name = data.get("name", project.name)
         for key in data.get("packages", ()):
             package_path = project.layout.package_spec_path(key)
-            if package_path.exists():
-                project.packages[key] = project._load_package(
-                    key, _read_json(package_path)
+            if not package_path.exists():
+                raise FileNotFoundError(
+                    f"Project lists package '{key}' but its spec is missing: {package_path}"
                 )
+            project.packages[key] = project._load_package(key, _read_json(package_path))
         for name in data.get("simulations", ()):
             sim_path = project.layout.simulation_spec_path(name)
-            if sim_path.exists():
-                project.add_simulation(SimulationSpec.from_dict(_read_json(sim_path)))
+            if not sim_path.exists():
+                raise FileNotFoundError(
+                    f"Project lists simulation '{name}' but its spec is missing: {sim_path}"
+                )
+            project.add_simulation(SimulationSpec.from_dict(_read_json(sim_path)))
         for key in data.get("grids", ()):
             grid_path = project.layout.grid_spec_path(key)
-            if grid_path.exists():
-                project.grids[key] = project._load_grid(key, _read_json(grid_path))
+            if not grid_path.exists():
+                raise FileNotFoundError(
+                    f"Project lists grid '{key}' but its spec is missing: {grid_path}"
+                )
+            project.grids[key] = project._load_grid(key, _read_json(grid_path))
         return project
 
     def _load_grid(self, key: str, doc: dict[str, Any]) -> Any:
