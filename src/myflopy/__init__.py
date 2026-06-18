@@ -147,6 +147,7 @@ if TYPE_CHECKING:
         PostBuildHook,
         SimulationSpec,
         SpecBuildContext,
+        ref,
     )
     from myflopy.advanced import (
         chd_spec,
@@ -222,6 +223,7 @@ _EXPORTS = {
     "GridSpec": ("myflopy.specs", "GridSpec"),
     "PackageRef": ("myflopy.specs", "PackageRef"),
     "PackageSpec": ("myflopy.specs", "PackageSpec"),
+    "ref": ("myflopy.specs", "ref"),
     "PostBuildHook": ("myflopy.specs", "PostBuildHook"),
     "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),

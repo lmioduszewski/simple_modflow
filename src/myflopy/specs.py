@@ -72,6 +72,18 @@ class PackageRef:
         return cls(data["key"])
 
 
+def ref(key: str) -> PackageRef:
+    """Return a deferred reference to a project-level package spec by ``key``.
+
+    Use this in a model's package list to reuse a package that is defined once
+    in a :class:`~myflopy.workspace.Project` package library, for example
+    ``mf.gwf("flow", packages=[mf.ref("npf/base"), ...])``. The reference is
+    resolved against the project's package library when the run is built.
+    """
+
+    return PackageRef(key)
+
+
 class ModelType(str, Enum):
     """MODFLOW 6 model types supported by the default model builders."""
 

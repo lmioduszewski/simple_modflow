@@ -14,7 +14,6 @@ from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
     BuiltSimulation,
-    ModelSpec,
     PackageRef,
     PackageSpec,
     SimulationSpec,
@@ -365,7 +364,6 @@ class Project:
         self.root = Path(root)
         self.name = name or self.root.name
         self.packages: dict[str, PackageSpec] = {}
-        self.models: dict[str, ModelSpec] = {}
         self.simulations: dict[str, SimulationSpec] = {}
 
         if create:
@@ -397,23 +395,37 @@ class Project:
         )
         return self.manifest_path
 
-    def add_package(self, package: PackageSpec) -> PackageSpec:
-        """Add or replace a reusable package specification."""
+    def add_package(self, key: str, package: PackageSpec) -> PackageSpec:
+        """Add or replace a reusable package spec under a project ``key``.
 
-        self.packages[package.name] = package
+        The key is how models reference the package later, for example
+        ``mf.ref("npf/base")``. Packages live independently of any model and
+        are resolved into a simulation only when a run is built.
+        """
+
+        self.packages[key] = package
         return package
-
-    def add_model(self, model: ModelSpec) -> ModelSpec:
-        """Add or replace a reusable model specification."""
-
-        self.models[model.name] = model
-        return model
 
     def add_simulation(self, simulation: SimulationSpec) -> SimulationSpec:
         """Add or replace a reusable simulation specification."""
 
         self.simulations[simulation.name] = simulation
         return simulation
+
+    def _build_context(self, workspace: Path) -> SpecBuildContext:
+        """Return the build context that resolves project package references.
+
+        The project's package library is passed through so that any
+        ``PackageRef`` declared on a model resolves to its concrete
+        ``PackageSpec`` at build time.
+        """
+
+        return SpecBuildContext(
+            project_root=self.root,
+            simulation_workspace=workspace,
+            grid_workspace=workspace / "_grid",
+            package_specs=dict(self.packages),
+        )
 
     def prepare_run(
         self,
@@ -439,6 +451,7 @@ class Project:
             spec=spec,
             executable=executable,
             metadata={} if metadata is None else dict(metadata),
+            build_context=self._build_context(workspace),
         )
         run.save_manifest()
         return run

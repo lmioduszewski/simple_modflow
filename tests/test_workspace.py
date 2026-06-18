@@ -68,17 +68,102 @@ def _tiny_flow_spec() -> SimulationSpec:
     )
 
 
+def _tiny_flow_with_npf_ref() -> SimulationSpec:
+    """Return the tiny flow simulation with NPF supplied as a project ref."""
+
+    flow = ModelSpec(
+        "flow",
+        "gwf",
+        packages=(
+            PackageSpec(
+                "dis",
+                flopy.mf6.ModflowGwfdis,
+                {
+                    "nlay": 1,
+                    "nrow": 1,
+                    "ncol": 1,
+                    "delr": 1.0,
+                    "delc": 1.0,
+                    "top": 10.0,
+                    "botm": 0.0,
+                },
+            ),
+            PackageSpec("ic", flopy.mf6.ModflowGwfic, {"strt": 9.0}),
+            mf.ref("npf/base"),
+            PackageSpec(
+                "chd",
+                flopy.mf6.ModflowGwfchd,
+                {"stress_period_data": {0: [[(0, 0, 0), 9.0]]}},
+            ),
+            PackageSpec(
+                "oc",
+                flopy.mf6.ModflowGwfoc,
+                {"head_filerecord": "flow.hds", "saverecord": [("HEAD", "ALL")]},
+            ),
+        ),
+    )
+    return SimulationSpec(
+        "tiny_flow",
+        models=(flow,),
+        packages=(
+            PackageSpec(
+                "tdis",
+                flopy.mf6.ModflowTdis,
+                {"nper": 1, "perioddata": [(1.0, 1, 1.0)]},
+            ),
+            PackageSpec(
+                "ims", build_ims, {"models": ("flow",), "complexity": "SIMPLE"}
+            ),
+        ),
+    )
+
+
+def test_project_package_library_resolves_and_swaps_references(tmp_path):
+    import numpy as np
+
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_package(
+        "npf/base", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    project.add_package(
+        "npf/high_k", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 100.0})
+    )
+
+    baseline = project.add_simulation(_tiny_flow_with_npf_ref())
+    high_k = baseline.derive("high_k").replace_package("flow", mf.ref("npf/high_k"))
+    project.add_simulation(high_k)
+
+    base_run = project.prepare_run("baseline", "tiny_flow").build()
+    hk_run = project.prepare_run("high_k", "high_k").build()
+
+    def npf_k(run: Run) -> float:
+        npf = run.built.built_model("flow").package("npf")
+        return float(np.asarray(npf.k.array).reshape(-1)[0])
+
+    # Same reference machinery, different library entry per simulation.
+    assert npf_k(base_run) == 1.0
+    assert npf_k(hk_run) == 100.0
+
+
+def test_project_unresolved_package_reference_raises(tmp_path):
+    project = Project(tmp_path / "demo", name="demo")
+    # Library is empty: the "npf/base" reference cannot be resolved.
+    project.add_simulation(_tiny_flow_with_npf_ref())
+
+    run = project.prepare_run("baseline", "tiny_flow")
+    with pytest.raises((KeyError, ValueError)):
+        run.build()
+
+
 def test_project_owns_reusable_specs_and_prepares_runs(tmp_path):
     project = Project(tmp_path / "demo", name="demo")
     simulation = project.add_simulation(_tiny_flow_spec())
-    model = project.add_model(simulation.models[0])
-    package = project.add_package(model.packages[2])
+    package = project.add_package("npf/base", simulation.models[0].packages[2])
 
     run = project.prepare_run("baseline", simulation, metadata={"scenario": "baseline"})
 
     assert project.simulations["tiny_flow"] is simulation
-    assert project.models["flow"] is model
-    assert project.packages["npf"] is package
+    assert project.packages["npf/base"] is package
     assert run.workspace == project.runs_dir / "baseline"
     assert run.status == "created"
     assert run.manifest_path.exists()
