@@ -1650,11 +1650,17 @@ class SimulationSpec:
         )
 
         packages = self.resolved_packages(build_context)
-        simulation_packages = {
-            package.name: built
-            for package in packages
-            if (built := package.build(simulation)) is not None
-        }
+        # MF6 build order: timing (TDIS) before models, then exchanges, then
+        # solvers (IMS). Solver packages register their models, so the models
+        # must already exist -- otherwise multiple solutions collapse into one,
+        # which MF6 rejects for coupled (e.g. GWF-GWT) simulations.
+        timing = [p for p in packages if p.builder is flopy.mf6.ModflowTdis]
+        solvers = [p for p in packages if p.builder is not flopy.mf6.ModflowTdis]
+
+        simulation_packages: dict[str, Any] = {}
+        for package in timing:
+            if (built := package.build(simulation)) is not None:
+                simulation_packages[package.name] = built
         built_models = {
             model.name: model.build(simulation, build_context=build_context)
             for model in self.models
@@ -1663,6 +1669,9 @@ class SimulationSpec:
             exchange.name: exchange.build(simulation, built_models)
             for exchange in self.exchanges
         }
+        for package in solvers:
+            if (built := package.build(simulation)) is not None:
+                simulation_packages[package.name] = built
         return BuiltSimulation(
             simulation=simulation,
             models=built_models,

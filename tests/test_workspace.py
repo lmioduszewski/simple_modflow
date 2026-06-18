@@ -341,6 +341,35 @@ def test_project_single_model_run_stays_flat(tmp_path):
     assert run.spec.model("flow").options.get("model_rel_path", ".") == "."
 
 
+def test_two_solver_simulation_writes_separate_solutions(tmp_path):
+    # Two models with two solvers must produce two solutions in mfsim.nam.
+    # Regression: IMS used to build before models and collapse into one
+    # solution, which MF6 rejects for coupled simulations.
+    simulation = SimulationSpec(
+        "multi",
+        models=(_one_cell_gwf("north"), _one_cell_gwf("south")),
+        packages=(
+            PackageSpec(
+                "tdis",
+                flopy.mf6.ModflowTdis,
+                {"nper": 1, "perioddata": [(1.0, 1, 1.0)]},
+            ),
+            mf.ims(name="ims_north", models=["north"], complexity="SIMPLE"),
+            mf.ims(name="ims_south", models=["south"], complexity="SIMPLE"),
+        ),
+    ).with_workspace(tmp_path / "multi")
+
+    run = simulation.build()
+    run.write()
+
+    nam = (run.workspace / "mfsim.nam").read_text()
+    solutions = nam[nam.find("BEGIN solutiongroup") :]
+    assert solutions.count("ims6") == 2
+    assert "ims_north.ims" in solutions and "ims_south.ims" in solutions
+    # The first model's solver is listed first.
+    assert solutions.index("ims_north.ims") < solutions.index("ims_south.ims")
+
+
 def test_project_pickles_array_bearing_packages_and_reuses_them(tmp_path):
     import numpy as np
 

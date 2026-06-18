@@ -104,3 +104,6 @@ src/simple_modflow/modflow/mp3du/bin/
 src/simple_modflow/modflow/mp3du/NAME_*
 src/simple_modflow/modflow/mp3du/P3DOutput_json.json
 src/simple_modflow/modflow/mp3du/ssb_temp.*
+
+# Variant-workflow example run outputs
+examples/mf6/variant_workflow/runs/

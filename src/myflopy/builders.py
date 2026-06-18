@@ -22,10 +22,18 @@ class PackageBuilder(Protocol):
 
 
 def build_ims(simulation, *, models: Iterable[str], **options):
-    """Build an IMS package and register it with the named models."""
+    """Build an IMS package and register it with the named models.
 
+    Each solution needs a distinct file. Without one, multiple IMS packages
+    collapse into a single solution, which MF6 rejects for coupled simulations
+    (for example GWF-GWT). The filename defaults to the package name.
+    """
+
+    models = list(models)
+    base = options.get("pname") or (models[0] if models else "ims")
+    options.setdefault("filename", f"{base}.ims")
     ims = flopy.mf6.ModflowIms(simulation, **options)
-    simulation.register_ims_package(ims, list(models))
+    simulation.register_ims_package(ims, models)
     return ims
 
 

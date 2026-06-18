@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import functools
 from typing import Any
 
 import flopy
@@ -27,7 +28,9 @@ def _build_named(constructor, model, **options):
 
 
 def _factory(constructor):
-    return lambda model, **options: _build_named(constructor, model, **options)
+    # functools.partial over a module-level function (not a lambda) so the
+    # resulting PackageSpec can be pickled and reused across variants/sessions.
+    return functools.partial(_build_named, constructor)
 
 
 def wel_spec(
