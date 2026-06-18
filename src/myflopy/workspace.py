@@ -12,7 +12,14 @@ import flopy
 
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
-from myflopy.specs import BuiltSimulation, ModelSpec, PackageSpec, SimulationSpec
+from myflopy.specs import (
+    BuiltSimulation,
+    ModelSpec,
+    PackageRef,
+    PackageSpec,
+    SimulationSpec,
+    SpecBuildContext,
+)
 
 
 RUN_MANIFEST_NAME = "run.json"
@@ -52,11 +59,19 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write a readable JSON manifest, creating its parent directory."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     """Return stable, readable provenance for a simulation specification."""
+
+    def package_name(package: PackageSpec | PackageRef) -> str:
+        return package.name
+
+    def package_metadata(package: PackageSpec | PackageRef) -> dict[str, Any]:
+        return package.metadata if isinstance(package, PackageSpec) else {}
 
     return {
         "name": spec.name,
@@ -64,11 +79,15 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
             {
                 "name": model.name,
                 "type": model.model_type.value,
-                "packages": [package.name for package in model.packages if package.enabled],
-                "package_metadata": {
-                    package.name: package.metadata
+                "packages": [
+                    package_name(package)
                     for package in model.packages
-                    if package.enabled and package.metadata
+                    if package.enabled
+                ],
+                "package_metadata": {
+                    package_name(package): metadata
+                    for package in model.packages
+                    if package.enabled and (metadata := package_metadata(package))
                 },
                 "context_metadata": model.context.metadata,
                 "post_build_hooks": [hook.name for hook in model.hooks],
@@ -76,7 +95,7 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
             for model in spec.models
         ],
         "simulation_packages": [
-            package.name for package in spec.packages if package.enabled
+            package_name(package) for package in spec.packages if package.enabled
         ],
         "exchanges": [
             {"name": exchange.name, "models": list(exchange.models)}
@@ -106,7 +125,10 @@ class Run:
     metadata: dict[str, Any] = field(default_factory=dict)
     built: BuiltSimulation | None = field(default=None, repr=False)
     simulation: Any | None = field(default=None, repr=False)
-    _model_views: dict[str, SimulationBase] = field(default_factory=dict, init=False, repr=False)
+    build_context: SpecBuildContext | None = field(default=None, repr=False)
+    _model_views: dict[str, SimulationBase] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.workspace = Path(self.workspace)
@@ -123,7 +145,10 @@ class Run:
         if self.spec is None:
             raise ValueError("A reopened run without a spec cannot be rebuilt.")
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.built = self.spec.build_flopy(self.workspace)
+        self.built = self.spec.build_flopy(
+            self.workspace,
+            build_context=self.build_context,
+        )
         self.simulation = self.built.simulation
         patch_simulation_plot(self.simulation)
         self.simulation.exe_name = self.executable
@@ -143,7 +168,10 @@ class Run:
     def execute(self, *, silent: bool = True) -> tuple[bool, list[str]]:
         """Write and execute the simulation with FloPy 3.10."""
 
-        if self.status not in {"written", "completed", "failed"} or self.simulation is None:
+        if (
+            self.status not in {"written", "completed", "failed"}
+            or self.simulation is None
+        ):
             self.write()
         self.simulation.exe_name = self.executable
         success, report = self.simulation.run_simulation(silent=silent, report=True)
@@ -157,7 +185,9 @@ class Run:
         """Load this run's native MF6 simulation from disk."""
 
         if not (self.workspace / "mfsim.nam").exists():
-            raise FileNotFoundError(f"No MF6 simulation found in run workspace: {self.workspace}")
+            raise FileNotFoundError(
+                f"No MF6 simulation found in run workspace: {self.workspace}"
+            )
         self.simulation = flopy.mf6.MFSimulation.load(
             sim_ws=str(self.workspace),
             exe_name=self.executable,
@@ -302,7 +332,9 @@ class Run:
         return run
 
     @classmethod
-    def load(cls, workspace: Path | str, *, executable: str = "mf6", load: bool = True) -> Run:
+    def load(
+        cls, workspace: Path | str, *, executable: str = "mf6", load: bool = True
+    ) -> Run:
         """Open a native MF6 workspace, with or without a myflopy manifest."""
 
         workspace = Path(workspace)
@@ -327,7 +359,9 @@ class Project:
     is intentionally in-memory because its builders may be arbitrary callables.
     """
 
-    def __init__(self, root: Path | str, *, name: str | None = None, create: bool = True):
+    def __init__(
+        self, root: Path | str, *, name: str | None = None, create: bool = True
+    ):
         self.root = Path(root)
         self.name = name or self.root.name
         self.packages: dict[str, PackageSpec] = {}
@@ -358,7 +392,9 @@ class Project:
     def save_manifest(self) -> Path:
         """Persist the small project workspace manifest."""
 
-        _write_json(self.manifest_path, {"project": {"name": self.name, "runs_dir": "runs"}})
+        _write_json(
+            self.manifest_path, {"project": {"name": self.name, "runs_dir": "runs"}}
+        )
         return self.manifest_path
 
     def add_package(self, package: PackageSpec) -> PackageSpec:
@@ -390,7 +426,9 @@ class Project:
     ) -> Run:
         """Create an unbuilt run from a simulation spec or registered spec name."""
 
-        spec = self.simulations[simulation] if isinstance(simulation, str) else simulation
+        spec = (
+            self.simulations[simulation] if isinstance(simulation, str) else simulation
+        )
         workspace = self.runs_dir / name
         if workspace.exists() and any(workspace.iterdir()) and not overwrite:
             raise FileExistsError(f"Run workspace already exists: {workspace}")

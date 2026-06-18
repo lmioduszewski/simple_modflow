@@ -141,10 +141,12 @@ if TYPE_CHECKING:
         ModelSpec,
         ModelType,
         GridSpec,
+        PackageRef,
         PackageSpec,
         PrtModel,
         PostBuildHook,
         SimulationSpec,
+        SpecBuildContext,
     )
     from myflopy.advanced import (
         chd_spec,
@@ -218,8 +220,10 @@ _EXPORTS = {
     "ModelSpec": ("myflopy.specs", "ModelSpec"),
     "ModelType": ("myflopy.specs", "ModelType"),
     "GridSpec": ("myflopy.specs", "GridSpec"),
+    "PackageRef": ("myflopy.specs", "PackageRef"),
     "PackageSpec": ("myflopy.specs", "PackageSpec"),
     "PostBuildHook": ("myflopy.specs", "PostBuildHook"),
+    "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
     "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
     "LiteralSource": ("myflopy.sources", "LiteralSource"),

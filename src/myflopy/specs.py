@@ -36,6 +36,42 @@ Mf6Model: TypeAlias = GwfModel | GwtModel | GweModel | PrtModel
 _ModelT = TypeVar("_ModelT", bound=Mf6Model)
 
 
+@dataclass(frozen=True, slots=True)
+class PackageRef:
+    """Deferred reference to a project-level reusable package specification."""
+
+    key: str
+
+    def __post_init__(self) -> None:
+        key = self.key.strip()
+        if not key:
+            raise ValueError("PackageRef key cannot be empty.")
+        object.__setattr__(self, "key", key)
+
+    @property
+    def name(self) -> str:
+        """Return the package identity inferred from the project key."""
+
+        return self.key.split("/", 1)[0]
+
+    @property
+    def enabled(self) -> bool:
+        """Package references are active until resolved or removed."""
+
+        return True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready package reference."""
+
+        return {"kind": "PackageRef", "key": self.key}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PackageRef:
+        """Recreate a package reference from :meth:`to_dict` output."""
+
+        return cls(data["key"])
+
+
 class ModelType(str, Enum):
     """MODFLOW 6 model types supported by the default model builders."""
 
@@ -342,6 +378,66 @@ class PackageSpec:
         )
 
 
+PackageEntry: TypeAlias = PackageSpec | PackageRef
+
+
+def _package_entry(value: PackageEntry | str) -> PackageEntry:
+    if isinstance(value, str):
+        return PackageRef(value)
+    return value
+
+
+def _package_entry_from_dict(data: dict[str, Any]) -> PackageEntry:
+    kind = data.get("kind")
+    if kind == "PackageRef":
+        return PackageRef.from_dict(data)
+    if kind == "PackageSpec":
+        return PackageSpec.from_dict(data)
+    raise ValueError(f"Unknown package entry kind: {kind!r}")
+
+
+def _package_entry_label(package: PackageEntry) -> str:
+    if isinstance(package, PackageRef):
+        return package.key
+    return package.name
+
+
+def _package_entry_matches(package: PackageEntry, name: str) -> bool:
+    if package.name == name:
+        return True
+    return isinstance(package, PackageRef) and package.key == name
+
+
+def _package_entry_is_enabled(package: PackageEntry) -> bool:
+    return package.enabled if isinstance(package, PackageSpec) else True
+
+
+def _validate_concrete_packages(packages: Iterable[PackageSpec]) -> None:
+    packages = tuple(packages)
+    _require_unique_names(packages, item_type="package")
+    available = {package.name for package in packages if package.enabled}
+    package_positions = {
+        package.name: index for index, package in enumerate(packages) if package.enabled
+    }
+    for package in packages:
+        missing = sorted(set(package.requires) - available)
+        if package.enabled and missing:
+            raise ValueError(
+                f"Package '{package.name}' requires missing packages: {', '.join(missing)}"
+            )
+        if package.enabled:
+            later = sorted(
+                name
+                for name in package.requires
+                if package_positions[name] > package_positions[package.name]
+            )
+            if later:
+                raise ValueError(
+                    f"Package '{package.name}' must be declared after required packages: "
+                    f"{', '.join(later)}"
+                )
+
+
 @dataclass(frozen=True, slots=True)
 class GridSpec:
     """Recipe for obtaining the grid used by one model specification."""
@@ -349,19 +445,55 @@ class GridSpec:
     name: str
     grid_type: str
     method: str
+    script: Path | str | None = None
+    function: str | None = None
     source: DataSourceSpec | None = None
     boundary: DataSourceSpec | None = None
     refinement: DataSourceSpec | None = None
     breaklines: tuple[DataSourceSpec, ...] = ()
     points: tuple[DataSourceSpec, ...] = ()
+    inputs: tuple[Any, ...] = ()
     crs: str | None = None
     engine: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    triangle_options: dict[str, Any] = field(default_factory=dict)
+    mesh_options: dict[str, Any] = field(default_factory=dict)
+    voronoi_options: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "breaklines", tuple(self.breaklines))
         object.__setattr__(self, "points", tuple(self.points))
+        object.__setattr__(self, "inputs", tuple(self.inputs))
+
+    @classmethod
+    def python(
+        cls,
+        script: Path | str,
+        *,
+        function: str,
+        name: str = "grid",
+        grid_type: str = "disv",
+        inputs: Iterable[Any] = (),
+        crs: str | None = None,
+        options: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> GridSpec:
+        """Return a spec backed by a project-local Python grid builder."""
+
+        if not function:
+            raise ValueError("GridSpec.python requires a function name.")
+        return cls(
+            name=name,
+            grid_type=grid_type,
+            method="python",
+            script=script,
+            function=function,
+            inputs=tuple(inputs),
+            crs=crs,
+            options={} if options is None else dict(options),
+            metadata={} if metadata is None else dict(metadata),
+        )
 
     @classmethod
     def from_geopackage(
@@ -434,11 +566,56 @@ class GridSpec:
         crs: str | None = None,
         engine: str = "triangle_voronoi_plus",
         options: dict[str, Any] | None = None,
+        triangle_options: dict[str, Any] | None = None,
+        mesh_options: dict[str, Any] | None = None,
+        voronoi_options: dict[str, Any] | None = None,
         **engine_options: Any,
     ) -> GridSpec:
         """Return a spec for a generated DISV/Voronoi grid."""
 
-        merged_options = {**({} if options is None else options), **engine_options}
+        merged_options = {**({} if options is None else options)}
+        merged_mesh_options = {**({} if mesh_options is None else mesh_options)}
+        merged_triangle_options = {
+            **({} if triangle_options is None else triangle_options)
+        }
+        merged_voronoi_options = {
+            **({} if voronoi_options is None else voronoi_options)
+        }
+        for key, value in engine_options.items():
+            if key == "min_angle":
+                merged_triangle_options["angle"] = value
+            elif key in {
+                "angle",
+                "exe_name",
+                "maximum_area",
+                "nodes",
+                "additional_args",
+                "region_point_tolerance",
+            }:
+                merged_triangle_options[key] = value
+            elif key in {
+                "cleanup",
+                "damping",
+                "max_optimization_points",
+                "min_feature_area",
+                "min_move",
+                "optimization_iterations",
+                "optimize",
+                "profile",
+                "protect_sources",
+                "protected_labels",
+                "resample_domain_boundary",
+                "resample_region_sources",
+                "simplify_tolerance",
+                "snap_tolerance",
+                "target_segment_length",
+                "verbose",
+            }:
+                merged_mesh_options[key] = value
+            elif key in {"idomain", "idomain_path", "name", "qhull_options", "rasters"}:
+                merged_voronoi_options[key] = value
+            else:
+                merged_options[key] = value
         return cls(
             name=name,
             grid_type="disv",
@@ -450,6 +627,9 @@ class GridSpec:
             crs=crs,
             engine=engine,
             options=merged_options,
+            triangle_options=merged_triangle_options,
+            mesh_options=merged_mesh_options,
+            voronoi_options=merged_voronoi_options,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -462,6 +642,18 @@ class GridSpec:
             "method": self.method,
             "options": _json_value(self.options),
         }
+        if self.script is not None:
+            payload["script"] = _json_value(self.script)
+        if self.function is not None:
+            payload["function"] = self.function
+        if self.inputs:
+            payload["inputs"] = _json_value(self.inputs)
+        if self.triangle_options:
+            payload["triangle_options"] = _json_value(self.triangle_options)
+        if self.mesh_options:
+            payload["mesh_options"] = _json_value(self.mesh_options)
+        if self.voronoi_options:
+            payload["voronoi_options"] = _json_value(self.voronoi_options)
         for key in ("source", "boundary", "refinement"):
             value = getattr(self, key)
             if value is not None:
@@ -486,6 +678,8 @@ class GridSpec:
             name=data["name"],
             grid_type=data["grid_type"],
             method=data["method"],
+            script=data.get("script"),
+            function=data.get("function"),
             source=(
                 source_from_dict(data["source"])
                 if data.get("source") is not None
@@ -505,9 +699,13 @@ class GridSpec:
                 source_from_dict(item) for item in data.get("breaklines", ())
             ),
             points=tuple(source_from_dict(item) for item in data.get("points", ())),
+            inputs=tuple(_spec_value(list(data.get("inputs", ())))),
             crs=data.get("crs"),
             engine=data.get("engine"),
             options=_spec_value(dict(data.get("options", {}))),
+            triangle_options=_spec_value(dict(data.get("triangle_options", {}))),
+            mesh_options=_spec_value(dict(data.get("mesh_options", {}))),
+            voronoi_options=_spec_value(dict(data.get("voronoi_options", {}))),
             metadata=_spec_value(dict(data.get("metadata", {}))),
         )
 
@@ -556,6 +754,53 @@ class ModelContext:
         """Return a copy with selected metadata added or replaced."""
 
         return replace(self, metadata={**self.metadata, **updates})
+
+
+@dataclass(frozen=True, slots=True)
+class SpecBuildContext:
+    """Filesystem context used while materializing durable specs."""
+
+    project_root: Path | str | None = None
+    simulation_workspace: Path | str | None = None
+    grid_workspace: Path | str | None = None
+    package_specs: dict[str, PackageSpec] = field(default_factory=dict)
+    build_grids: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("project_root", "simulation_workspace", "grid_workspace"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, Path(value))
+        object.__setattr__(self, "package_specs", dict(self.package_specs))
+
+    def with_simulation_workspace(
+        self,
+        workspace: Path | str | None,
+    ) -> SpecBuildContext:
+        """Return a copy with a simulation workspace when one is known."""
+
+        if workspace is None or self.simulation_workspace is not None:
+            return self
+        return replace(self, simulation_workspace=Path(workspace))
+
+    def model_grid_workspace(self, model_name: str) -> Path | None:
+        """Return the generated grid workspace for one model, when available."""
+
+        if self.grid_workspace is not None:
+            return self.grid_workspace / model_name
+        if self.simulation_workspace is not None:
+            return self.simulation_workspace / "_grid" / model_name
+        return None
+
+    def package_spec(self, key: str) -> PackageSpec:
+        """Return a resolved project-level package spec by key."""
+
+        try:
+            return self.package_specs[key]
+        except KeyError as error:
+            raise KeyError(
+                f"Package reference '{key}' is unresolved in the build context."
+            ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -656,7 +901,7 @@ class ModelSpec:
 
     name: str
     model_type: ModelType | str
-    packages: tuple[PackageSpec, ...] = ()
+    packages: tuple[PackageEntry, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
     builder: Builder | None = None
     context: ModelContext = field(default_factory=ModelContext)
@@ -665,37 +910,24 @@ class ModelSpec:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_type", ModelType(self.model_type))
-        object.__setattr__(self, "packages", tuple(self.packages))
+        object.__setattr__(
+            self,
+            "packages",
+            tuple(_package_entry(package) for package in self.packages),
+        )
         object.__setattr__(self, "hooks", tuple(self.hooks))
         _require_unique_names(self.packages, item_type="package")
         _require_unique_names(self.hooks, item_type="post-build hook")
-        available = {package.name for package in self.packages if package.enabled}
-        package_positions = {
-            package.name: index
-            for index, package in enumerate(self.packages)
-            if package.enabled
-        }
-        for package in self.packages:
-            missing = sorted(set(package.requires) - available)
-            if package.enabled and missing:
-                raise ValueError(
-                    f"Package '{package.name}' requires missing packages: {', '.join(missing)}"
-                )
-            if package.enabled:
-                later = sorted(
-                    name
-                    for name in package.requires
-                    if package_positions[name] > package_positions[package.name]
-                )
-                if later:
-                    raise ValueError(
-                        f"Package '{package.name}' must be declared after required packages: "
-                        f"{', '.join(later)}"
-                    )
+        concrete_packages = [
+            package for package in self.packages if isinstance(package, PackageSpec)
+        ]
+        if len(concrete_packages) == len(self.packages):
+            _validate_concrete_packages(concrete_packages)
 
-    def with_package(self, package: PackageSpec) -> ModelSpec:
+    def with_package(self, package: PackageEntry | str) -> ModelSpec:
         """Return a copy with ``package`` added or replaced by name."""
 
+        package = _package_entry(package)
         packages = list(self.packages)
         for index, existing in enumerate(packages):
             if existing.name == package.name:
@@ -705,11 +937,19 @@ class ModelSpec:
             packages.append(package)
         return replace(self, packages=tuple(packages))
 
-    def package(self, name: str) -> PackageSpec:
+    def with_packages(self, *packages: PackageEntry | str) -> ModelSpec:
+        """Return a copy with each supplied package added or replaced by name."""
+
+        spec = self
+        for package in packages:
+            spec = spec.with_package(package)
+        return spec
+
+    def package(self, name: str) -> PackageEntry:
         """Return one package specification by name."""
 
         for package in self.packages:
-            if package.name == name:
+            if _package_entry_matches(package, name):
                 return package
         raise KeyError(f"Model '{self.name}' has no package named '{name}'.")
 
@@ -719,9 +959,31 @@ class ModelSpec:
         return replace(
             self,
             packages=tuple(
-                package for package in self.packages if package.name != name
+                package
+                for package in self.packages
+                if not _package_entry_matches(package, name)
             ),
         )
+
+    def resolved_packages(
+        self,
+        build_context: SpecBuildContext | None = None,
+    ) -> tuple[PackageSpec, ...]:
+        """Return concrete package specs, resolving project package refs."""
+
+        packages: list[PackageSpec] = []
+        for package in self.packages:
+            if isinstance(package, PackageSpec):
+                packages.append(package)
+                continue
+            if build_context is None:
+                raise ValueError(
+                    f"Package reference '{package.key}' cannot be resolved without "
+                    "a SpecBuildContext package library."
+                )
+            packages.append(build_context.package_spec(package.key))
+        _validate_concrete_packages(packages)
+        return tuple(packages)
 
     def with_options(self, **overrides: Any) -> ModelSpec:
         """Return a copy with selected model options added or replaced."""
@@ -750,25 +1012,42 @@ class ModelSpec:
             hooks.append(hook)
         return replace(self, hooks=tuple(hooks))
 
-    def build(self, simulation: Any) -> BuiltModel:
+    def build(
+        self,
+        simulation: Any,
+        *,
+        build_context: SpecBuildContext | None = None,
+    ) -> BuiltModel:
         """Build the model and all enabled packages in declaration order."""
+
+        context = self.context
+        if self.grid is not None:
+            build_context = (
+                SpecBuildContext() if build_context is None else build_context
+            )
+            grid = self.grid.resolve(
+                project_root=build_context.project_root,
+                workspace=build_context.model_grid_workspace(self.name),
+                build=build_context.build_grids,
+            )
+            context = replace(context, grid=grid)
 
         builder = self.builder or _DEFAULT_MODEL_BUILDERS[self.model_type]
         model = builder(simulation, modelname=self.name, **self.options)
-        model.myflopy_context = self.context
+        model.myflopy_context = context
+        packages = self.resolved_packages(build_context)
         built_packages = {
             package.name: built
-            for package in self.packages
+            for package in packages
             if (built := package.build(model)) is not None
         }
         hook_results = {
-            hook.name: hook.run(model, built_packages, self.context)
-            for hook in self.hooks
+            hook.name: hook.run(model, built_packages, context) for hook in self.hooks
         }
         return BuiltModel(
             model=model,
             packages=built_packages,
-            context=self.context,
+            context=context,
             hook_results=hook_results,
             simulation=simulation,
         )
@@ -805,7 +1084,8 @@ class ModelSpec:
             name=data["name"],
             model_type=data["model_type"],
             packages=tuple(
-                PackageSpec.from_dict(package) for package in data.get("packages", ())
+                _package_entry_from_dict(package)
+                for package in data.get("packages", ())
             ),
             options=_spec_value(dict(data.get("options", {}))),
             builder=(
@@ -827,7 +1107,11 @@ class ModelSpec:
     def package_names(self) -> tuple[str, ...]:
         """Return enabled package names in declaration order."""
 
-        return tuple(package.name for package in self.packages if package.enabled)
+        return tuple(
+            _package_entry_label(package)
+            for package in self.packages
+            if _package_entry_is_enabled(package)
+        )
 
     def __repr__(self) -> str:
         return (
@@ -845,14 +1129,18 @@ class ModelSpec:
 
         package_rows = [
             (
-                package.name,
-                f"{_builder_label(package.builder)}; "
-                f"{len(package.options)} options"
-                + ("; disabled" if not package.enabled else "")
-                + (
-                    f"; requires {', '.join(package.requires)}"
-                    if package.requires
-                    else ""
+                _package_entry_label(package),
+                (
+                    "project package reference"
+                    if isinstance(package, PackageRef)
+                    else f"{_builder_label(package.builder)}; "
+                    f"{len(package.options)} options"
+                    + ("; disabled" if not package.enabled else "")
+                    + (
+                        f"; requires {', '.join(package.requires)}"
+                        if package.requires
+                        else ""
+                    )
                 ),
             )
             for package in self.packages
@@ -979,7 +1267,7 @@ class SimulationSpec:
 
     name: str
     models: tuple[ModelSpec, ...]
-    packages: tuple[PackageSpec, ...] = ()
+    packages: tuple[PackageEntry, ...] = ()
     exchanges: tuple[ExchangeSpec, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
     builder: Builder = flopy.mf6.MFSimulation
@@ -991,12 +1279,21 @@ class SimulationSpec:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "models", tuple(self.models))
-        object.__setattr__(self, "packages", tuple(self.packages))
+        object.__setattr__(
+            self,
+            "packages",
+            tuple(_package_entry(package) for package in self.packages),
+        )
         object.__setattr__(self, "exchanges", tuple(self.exchanges))
         object.__setattr__(self, "lineage", tuple(self.lineage))
         _require_unique_names(self.models, item_type="model")
         _require_unique_names(self.packages, item_type="simulation package")
         _require_unique_names(self.exchanges, item_type="exchange")
+        concrete_packages = [
+            package for package in self.packages if isinstance(package, PackageSpec)
+        ]
+        if len(concrete_packages) == len(self.packages):
+            _validate_concrete_packages(concrete_packages)
 
     def with_model(self, model: ModelSpec) -> SimulationSpec:
         """Return a copy with ``model`` added or replaced by name."""
@@ -1026,9 +1323,10 @@ class SimulationSpec:
                 return model
         raise KeyError(f"Simulation '{self.name}' has no model named '{name}'.")
 
-    def with_package(self, package: PackageSpec) -> SimulationSpec:
+    def with_package(self, package: PackageEntry | str) -> SimulationSpec:
         """Return a copy with a simulation-level package added or replaced."""
 
+        package = _package_entry(package)
         packages = list(self.packages)
         for index, existing in enumerate(packages):
             if existing.name == package.name:
@@ -1037,6 +1335,14 @@ class SimulationSpec:
         else:
             packages.append(package)
         return replace(self, packages=tuple(packages))
+
+    def with_packages(self, *packages: PackageEntry | str) -> SimulationSpec:
+        """Return a copy with each simulation-level package added or replaced."""
+
+        spec = self
+        for package in packages:
+            spec = spec.with_package(package)
+        return spec
 
     def with_exchange(self, exchange: ExchangeSpec) -> SimulationSpec:
         """Return a copy with ``exchange`` added or replaced by name."""
@@ -1069,13 +1375,16 @@ class SimulationSpec:
             ),
         )
 
-    def replace_package(self, model_name: str, package: PackageSpec) -> SimulationSpec:
+    def replace_package(
+        self, model_name: str, package: PackageEntry | str
+    ) -> SimulationSpec:
         """Return a copy with a model package replaced by name.
 
         The target package must already exist. Use :meth:`add_package` when the
         operation is intentionally an addition.
         """
 
+        package = _package_entry(package)
         model = self.model(model_name)
         model.package(package.name)
         return replace(
@@ -1090,9 +1399,12 @@ class SimulationSpec:
             ),
         )
 
-    def add_package(self, model_name: str, package: PackageSpec) -> SimulationSpec:
+    def add_package(
+        self, model_name: str, package: PackageEntry | str
+    ) -> SimulationSpec:
         """Return a copy with a package added or replaced on one model."""
 
+        package = _package_entry(package)
         model = self.model(model_name)
         existed = any(existing.name == package.name for existing in model.packages)
         operation = "replace_package" if existed else "add_package"
@@ -1108,8 +1420,32 @@ class SimulationSpec:
             ),
         )
 
+    def resolved_packages(
+        self,
+        build_context: SpecBuildContext | None = None,
+    ) -> tuple[PackageSpec, ...]:
+        """Return concrete simulation-level package specs."""
+
+        packages: list[PackageSpec] = []
+        for package in self.packages:
+            if isinstance(package, PackageSpec):
+                packages.append(package)
+                continue
+            if build_context is None:
+                raise ValueError(
+                    f"Package reference '{package.key}' cannot be resolved without "
+                    "a SpecBuildContext package library."
+                )
+            packages.append(build_context.package_spec(package.key))
+        _validate_concrete_packages(packages)
+        return tuple(packages)
+
     def build(
-        self, workspace: Path | str | None = None, *, run_name: str | None = None
+        self,
+        workspace: Path | str | None = None,
+        *,
+        run_name: str | None = None,
+        build_context: SpecBuildContext | None = None,
     ):
         """Build this specification as a workflow ``Run``.
 
@@ -1127,11 +1463,17 @@ class SimulationSpec:
             workspace=run_workspace,
             spec=self,
             executable=self.executable,
+            build_context=build_context,
         )
         run.build()
         return run
 
-    def build_flopy(self, workspace: Path | str | None = None) -> BuiltSimulation:
+    def build_flopy(
+        self,
+        workspace: Path | str | None = None,
+        *,
+        build_context: SpecBuildContext | None = None,
+    ) -> BuiltSimulation:
         """Build and return the raw FloPy simulation objects."""
 
         options = dict(self.options)
@@ -1139,13 +1481,20 @@ class SimulationSpec:
         if run_workspace is not None:
             options["sim_ws"] = str(run_workspace)
         simulation = self.builder(sim_name=self.name, **options)
+        build_context = (build_context or SpecBuildContext()).with_simulation_workspace(
+            run_workspace
+        )
 
+        packages = self.resolved_packages(build_context)
         simulation_packages = {
             package.name: built
-            for package in self.packages
+            for package in packages
             if (built := package.build(simulation)) is not None
         }
-        built_models = {model.name: model.build(simulation) for model in self.models}
+        built_models = {
+            model.name: model.build(simulation, build_context=build_context)
+            for model in self.models
+        }
         built_exchanges = {
             exchange.name: exchange.build(simulation, built_models)
             for exchange in self.exchanges
@@ -1167,7 +1516,11 @@ class SimulationSpec:
     def package_names(self) -> tuple[str, ...]:
         """Return simulation-level package names in declaration order."""
 
-        return tuple(package.name for package in self.packages if package.enabled)
+        return tuple(
+            _package_entry_label(package)
+            for package in self.packages
+            if _package_entry_is_enabled(package)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a durable JSON-ready representation of this simulation recipe."""
@@ -1202,7 +1555,8 @@ class SimulationSpec:
                 ModelSpec.from_dict(model) for model in data.get("models", ())
             ),
             packages=tuple(
-                PackageSpec.from_dict(package) for package in data.get("packages", ())
+                _package_entry_from_dict(package)
+                for package in data.get("packages", ())
             ),
             options=_spec_value(dict(data.get("options", {}))),
             builder=(
@@ -1240,10 +1594,14 @@ class SimulationSpec:
         package_rows = [
             (
                 package.name,
-                f"{_builder_label(package.builder)}; {len(package.options)} options",
+                (
+                    "project package reference"
+                    if isinstance(package, PackageRef)
+                    else f"{_builder_label(package.builder)}; {len(package.options)} options"
+                ),
             )
             for package in self.packages
-            if package.enabled
+            if _package_entry_is_enabled(package)
         ]
         exchange_rows = [
             (

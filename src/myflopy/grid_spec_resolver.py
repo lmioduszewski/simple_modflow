@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 from pathlib import Path
+import sys
 from typing import Any
 
 import geopandas as gpd
@@ -39,6 +42,15 @@ _BUILD_OPTION_KEYS = {
     "verbose",
 }
 
+_TRIANGLE_OPTION_KEYS = {
+    "additional_args",
+    "angle",
+    "exe_name",
+    "maximum_area",
+    "nodes",
+    "region_point_tolerance",
+}
+
 
 def _source_path(
     source: DataSourceSpec, project_root: Path | str | None = None
@@ -47,6 +59,85 @@ def _source_path(
     if path.is_absolute() or source.external or project_root is None:
         return path
     return Path(project_root) / path
+
+
+def _project_path(value: Path | str, project_root: Path | str | None = None) -> Path:
+    path = Path(value)
+    if path.is_absolute() or project_root is None:
+        return path
+    return Path(project_root) / path
+
+
+def _resolved_project_root(
+    project_root: Path | str | None,
+    *,
+    fallback: Path | str | None = None,
+) -> Path:
+    if project_root is not None:
+        return Path(project_root)
+    if fallback is not None:
+        return Path(fallback)
+    return Path.cwd()
+
+
+def _path_option(value: Any, project_root: Path | str | None = None) -> Any:
+    if isinstance(value, DataSourceSpec):
+        return _source_path(value, project_root)
+    if isinstance(value, Path):
+        return _project_path(value, project_root)
+    if isinstance(value, str):
+        return _project_path(value, project_root)
+    if isinstance(value, list):
+        return [_path_option(item, project_root) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_path_option(item, project_root) for item in value)
+    return value
+
+
+def _input_path(value: Any, project_root: Path | str | None = None) -> Path | None:
+    if isinstance(value, DataSourceSpec):
+        if value.external:
+            return None
+        return _source_path(value, project_root)
+    if isinstance(value, (Path, str)):
+        return _project_path(value, project_root)
+    return None
+
+
+def _validate_inputs(inputs: tuple[Any, ...], project_root: Path | str | None) -> None:
+    for value in inputs:
+        path = _input_path(value, project_root)
+        if path is not None and not path.exists():
+            raise FileNotFoundError(f"GridSpec input does not exist: {path}")
+
+
+def _load_builder(script: Path, function: str) -> Any:
+    module_hash = hashlib.sha1(str(script.resolve()).encode()).hexdigest()[:12]
+    module_name = f"_myflopy_grid_builder_{module_hash}"
+    module_spec = importlib.util.spec_from_file_location(module_name, script)
+    if module_spec is None or module_spec.loader is None:
+        raise ImportError(f"Could not load grid builder script: {script}")
+
+    module = importlib.util.module_from_spec(module_spec)
+    search_paths = [str(script.parent)]
+    prior_sys_path = list(sys.path)
+    try:
+        for path in reversed(search_paths):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+        module_spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = prior_sys_path
+
+    try:
+        builder = getattr(module, function)
+    except AttributeError as error:
+        raise AttributeError(
+            f"Grid builder function {function!r} was not found in {script}."
+        ) from error
+    if not callable(builder):
+        raise TypeError(f"Grid builder {function!r} in {script} is not callable.")
+    return builder
 
 
 def _read_source(
@@ -264,6 +355,42 @@ def _build_options(options: dict[str, Any]) -> dict[str, Any]:
     return build_options
 
 
+def _triangle_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]:
+    triangle_options = dict(spec.triangle_options)
+    if "min_angle" in options and "angle" not in triangle_options:
+        triangle_options["angle"] = options["min_angle"]
+    for key in _TRIANGLE_OPTION_KEYS:
+        if key in options and key not in triangle_options:
+            triangle_options[key] = options[key]
+    return triangle_options
+
+
+def _mesh_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]:
+    mesh_options = dict(spec.mesh_options)
+    for key in _BUILD_OPTION_KEYS:
+        if key in options and key not in mesh_options:
+            mesh_options[key] = options[key]
+    return _build_options(mesh_options)
+
+
+def _voronoi_options(
+    spec: GridSpec,
+    options: dict[str, Any],
+    *,
+    project_root: Path | str | None,
+) -> dict[str, Any]:
+    voronoi_options = dict(spec.voronoi_options)
+    for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters"):
+        if key in options and key not in voronoi_options:
+            voronoi_options[key] = options[key]
+    voronoi_options.setdefault("crs", spec.crs or options.get("crs", "EPSG:2927"))
+    voronoi_options.setdefault("name", spec.name)
+    for key in ("idomain_path", "rasters"):
+        if key in voronoi_options:
+            voronoi_options[key] = _path_option(voronoi_options[key], project_root)
+    return voronoi_options
+
+
 def _resolve_voronoi(
     spec: GridSpec,
     *,
@@ -273,13 +400,25 @@ def _resolve_voronoi(
     return_triangle: bool,
 ) -> TriangleGrid | VoronoiGridPlus | tuple[VoronoiGridPlus, TriangleGrid]:
     options = dict(spec.options)
+    triangle_options = _triangle_options(spec, options)
     model_ws = workspace or _option(
-        options, "model_ws", "workspace", default=Path.cwd() / "_triangle"
+        triangle_options,
+        "model_ws",
+        "workspace",
+        default=_option(
+            options, "model_ws", "workspace", default=Path.cwd() / "_triangle"
+        ),
+    )
+    triangle_options.pop("model_ws", None)
+    triangle_options.pop("workspace", None)
+    region_point_tolerance = triangle_options.pop(
+        "region_point_tolerance",
+        _option(options, "region_point_tolerance"),
     )
     tri = TriangleGrid(
-        angle=float(_option(options, "angle", "min_angle", default=32)),
-        region_point_tolerance=_option(options, "region_point_tolerance"),
         model_ws=str(model_ws),
+        region_point_tolerance=region_point_tolerance,
+        **triangle_options,
     )
     tri.myflopy_grid_spec = spec
 
@@ -317,17 +456,48 @@ def _resolve_voronoi(
         tri.prepare()
         return tri
 
-    build_options = _build_options(options)
+    build_options = _mesh_options(spec, options)
     verbose = bool(build_options.pop("verbose", False))
     tri.build_mesh(verbose=verbose, **build_options)
-    vor = VoronoiGridPlus(
-        tri,
-        crs=spec.crs or _option(options, "crs", default="EPSG:2927"),
-        name=spec.name,
-        qhull_options=_option(options, "qhull_options"),
-    )
+    voronoi_options = _voronoi_options(spec, options, project_root=project_root)
+    vor = VoronoiGridPlus(tri, **voronoi_options)
     vor.myflopy_grid_spec = spec
     return (vor, tri) if return_triangle else vor
+
+
+def _resolve_python(
+    spec: GridSpec,
+    *,
+    project_root: Path | str | None,
+    workspace: Path | str | None,
+) -> Any:
+    if spec.script is None:
+        raise ValueError("Python GridSpec requires a script.")
+    if spec.function is None:
+        raise ValueError("Python GridSpec requires a function.")
+
+    root = _resolved_project_root(project_root)
+    script = _project_path(spec.script, root)
+    if not script.exists():
+        raise FileNotFoundError(f"Grid builder script does not exist: {script}")
+    if not script.is_file():
+        raise ValueError(f"Grid builder script is not a file: {script}")
+
+    _validate_inputs(spec.inputs, root)
+    grid_workspace = (
+        Path(workspace) if workspace is not None else root / "_grid" / spec.name
+    )
+    grid_workspace.mkdir(parents=True, exist_ok=True)
+
+    builder = _load_builder(script, spec.function)
+    grid = builder(project_root=root, workspace=grid_workspace, spec=spec)
+    if grid is None:
+        raise ValueError(f"Grid builder {spec.function!r} in {script} returned None.")
+    try:
+        grid.myflopy_grid_spec = spec
+    except Exception:
+        pass
+    return grid
 
 
 def resolve_grid_spec(
@@ -340,9 +510,14 @@ def resolve_grid_spec(
 ) -> Any:
     """Resolve a :class:`GridSpec` into an existing grid implementation."""
 
+    if spec.method == "python":
+        if return_triangle:
+            raise ValueError("return_triangle is only supported for Voronoi GridSpec.")
+        return _resolve_python(spec, project_root=project_root, workspace=workspace)
+
     if spec.method != "voronoi":
         raise NotImplementedError(
-            "GridSpec.resolve currently wires generated Voronoi specs. "
+            "GridSpec.resolve currently wires Python and generated Voronoi specs. "
             f"Received method={spec.method!r}."
         )
     if spec.engine != "triangle_voronoi_plus":
