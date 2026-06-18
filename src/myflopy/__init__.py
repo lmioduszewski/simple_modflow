@@ -81,6 +81,7 @@ if TYPE_CHECKING:
         build_canonical_model,
     )
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
+    from myflopy.surfaces import LayerSurfaces, Surface
     from myflopy.sources import (
         DataSourceSpec,
         GeoPackageSourceSpec,
@@ -237,6 +238,8 @@ _EXPORTS = {
     "TableSource": ("myflopy.sources", "TableSource"),
     "CellSurfaceOffset": ("myflopy.geopackage", "CellSurfaceOffset"),
     "GeoPackageSource": ("myflopy.geopackage", "GeoPackageSource"),
+    "Surface": ("myflopy.surfaces", "Surface"),
+    "LayerSurfaces": ("myflopy.surfaces", "LayerSurfaces"),
     "ProjectLayout": ("myflopy.workspace", "ProjectLayout"),
     "ModelView": ("myflopy.workspace", "ModelView"),
     "Project": ("myflopy.workspace", "Project"),
