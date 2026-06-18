@@ -108,8 +108,8 @@ def test_project_layout_defaults_to_home_mf6(monkeypatch, tmp_path):
     assert layout.root == tmp_path / "mf6" / "Elk_Creek"
     assert layout.project_spec_path == layout.root / "specs" / "project_spec.json"
     assert (
-        layout.simulation_workspace("baseline")
-        == layout.root / "simulations" / "baseline"
+        layout.package_spec_path("npf/base")
+        == layout.root / "specs" / "packages" / "npf" / "base.json"
     )
 
 
@@ -289,107 +289,62 @@ def test_manual_model_context_grid_is_preserved_without_grid_spec(tmp_path):
     assert built.model("gwf").myflopy_context.grid is manual_grid
 
 
-def test_project_spec_save_load_round_trip(tmp_path):
+def test_project_save_load_round_trip(tmp_path):
     baseline = _basic_simulation()
     high_k = baseline.derive("high_k").replace_package("gwf", mf.npf(k=35.0))
-    project = mf.ProjectSpec(
-        "elk_creek",
-        root=tmp_path / "elk_creek",
-    ).with_simulations(baseline, high_k)
+    project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
+    project.add_simulation(baseline)
+    project.add_simulation(high_k)
 
     saved_path = project.save()
-    loaded = mf.ProjectSpec.load(project.layout.root)
+    loaded = mf.Project.load(project.root)
 
     assert saved_path == project.layout.project_spec_path
-    assert (project.layout.root / "project.json").exists()
-    assert (project.layout.root / "specs" / "simulations" / "baseline.json").exists()
-    assert (project.layout.root / "specs" / "simulations" / "high_k.json").exists()
-    assert not (project.layout.root / "snapshots").exists()
-    assert loaded.simulation("high_k").derived_from == "baseline"
-    assert loaded.simulation("high_k").model("gwf").package("npf").options["k"] == 35.0
+    assert (project.root / "project.json").exists()
+    assert (project.root / "specs" / "simulations" / "baseline.json").exists()
+    assert (project.root / "specs" / "simulations" / "high_k.json").exists()
+    assert loaded.simulations["high_k"].derived_from == "baseline"
+    assert (
+        loaded.simulations["high_k"].model("gwf").package("npf").options["k"] == 35.0
+    )
 
 
-def test_project_spec_saves_and_loads_package_library(tmp_path):
-    project = (
-        mf.ProjectSpec("elk_creek", root=tmp_path / "elk_creek")
-        .with_package_spec("npf/base", mf.npf(k=25.0))
-        .with_package_spec(
-            "rch/big_pond", mf.PackageSpec("rch", dict, {"recharge": 0.001})
-        )
-        .with_package_spec("wel/planned")
+def test_project_saves_and_loads_package_library(tmp_path):
+    project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
+    project.add_package("npf/base", mf.npf(k=25.0))
+    project.add_package(
+        "rch/big_pond", mf.PackageSpec("rch", dict, {"recharge": 0.001})
     )
 
     project.save()
-    loaded = mf.ProjectSpec.load(project.layout.root)
+    loaded = mf.Project.load(project.root)
 
-    assert (project.layout.root / "specs" / "packages" / "npf" / "base.json").exists()
-    assert (
-        project.layout.root / "specs" / "packages" / "rch" / "big_pond.json"
-    ).exists()
-    assert loaded.package_spec("npf/base").options["k"] == 25.0
-    assert loaded.package_spec("rch/big_pond").options["recharge"] == 0.001
-    assert loaded.package_specs["wel/planned"] is None
+    assert (project.root / "specs" / "packages" / "npf" / "base.json").exists()
+    assert (project.root / "specs" / "packages" / "rch" / "big_pond.json").exists()
+    assert loaded.packages["npf/base"].options["k"] == 25.0
+    assert loaded.packages["rch/big_pond"].options["recharge"] == 0.001
 
 
-def test_project_spec_build_uses_simulations_workspace(tmp_path):
-    project = mf.ProjectSpec(
-        "elk_creek",
-        root=tmp_path / "elk_creek",
-    ).with_simulation(_basic_simulation())
-
-    run = project.build("baseline")
-
-    assert run.workspace == project.layout.root / "simulations" / "baseline"
-    assert run.simulation is not None
-    assert run.flopy_model("gwf") is not None
-    assert run.spec.model("gwf").options["model_rel_path"] == "gwf"
-
-
-def test_project_spec_build_resolves_package_refs(tmp_path):
+def test_project_build_resolves_package_refs(tmp_path):
     gwf = mf.gwf("gwf").with_package("npf/base")
     simulation = mf.SimulationSpec(
         "baseline",
         models=(gwf,),
         packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
     )
-    project = (
-        mf.ProjectSpec("elk_creek", root=tmp_path / "elk_creek")
-        .with_package_spec("npf/base")
-        .with_package_spec("npf/base", mf.npf(k=25.0))
-        .with_simulation(simulation)
-    )
+    project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
+    project.add_package("npf/base", mf.npf(k=25.0))
+    project.add_simulation(simulation)
 
-    run = project.build("baseline")
+    run = project.prepare_run("baseline", "baseline").build()
 
     assert "npf" in run.built.models["gwf"].packages
     assert run.spec.model("gwf").package("npf/base").key == "npf/base"
 
 
-def test_project_spec_build_requires_declared_package_specs_to_be_defined(tmp_path):
-    gwf = mf.gwf("gwf").with_package("npf/base")
-    simulation = mf.SimulationSpec(
-        "baseline",
-        models=(gwf,),
-        packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
-    )
-    project = (
-        mf.ProjectSpec("elk_creek", root=tmp_path / "elk_creek")
-        .with_package_spec("npf/base")
-        .with_simulation(simulation)
-    )
-
-    project.save()
-    try:
-        project.build("baseline")
-    except ValueError as error:
-        assert "npf/base" in str(error)
-    else:
-        raise AssertionError("Expected unresolved package spec to fail at build.")
-
-
-def test_project_spec_build_resolves_project_relative_grid_sources(tmp_path):
-    project = mf.ProjectSpec("elk_creek", root=tmp_path / "elk_creek")
-    _write_voronoi_inputs(project.layout.root / "inputs" / "grid.gpkg")
+def test_project_build_resolves_project_relative_grid_sources(tmp_path):
+    project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
+    _write_voronoi_inputs(project.root / "inputs" / "grid.gpkg")
     model = mf.gwf("gwf").with_grid(
         _voronoi_grid_spec("inputs/grid.gpkg", include_breaklines=False)
     )
@@ -398,20 +353,20 @@ def test_project_spec_build_resolves_project_relative_grid_sources(tmp_path):
         models=(model,),
         packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
     )
-    project = project.with_simulation(simulation)
+    project.add_simulation(simulation)
 
-    run = project.build("baseline")
+    run = project.prepare_run("baseline", "baseline").build()
     resolved_grid = run.built.models["gwf"].context.grid
 
-    assert run.workspace == project.layout.root / "simulations" / "baseline"
+    assert run.workspace == project.runs_dir / "baseline"
     assert (run.workspace / "_grid" / "gwf").exists()
     assert Path(resolved_grid.tri.model_ws) == run.workspace / "_grid" / "gwf"
     assert run.flopy_model("gwf").myflopy_context.grid is resolved_grid
 
 
-def test_project_spec_build_resolves_python_grid_builder(tmp_path):
-    project = mf.ProjectSpec("elk_creek", root=tmp_path / "elk_creek")
-    _write_python_grid_builder(project.layout.root)
+def test_project_build_resolves_python_grid_builder(tmp_path):
+    project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
+    _write_python_grid_builder(project.root)
     grid = mf.GridSpec.python("grid/build_grid.py", function="build_grid")
     model = mf.gwf("gwf").with_grid(grid)
     simulation = mf.SimulationSpec(
@@ -419,9 +374,9 @@ def test_project_spec_build_resolves_python_grid_builder(tmp_path):
         models=(model,),
         packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
     )
-    project = project.with_simulation(simulation)
+    project.add_simulation(simulation)
 
-    run = project.build("baseline")
+    run = project.prepare_run("baseline", "baseline").build()
     resolved_grid = run.built.models["gwf"].context.grid
 
     assert resolved_grid.workspace == run.workspace / "_grid" / "gwf"

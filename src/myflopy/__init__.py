@@ -81,7 +81,6 @@ if TYPE_CHECKING:
         build_canonical_model,
     )
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
-    from myflopy.project_spec import ProjectLayout, ProjectSpec
     from myflopy.sources import (
         DataSourceSpec,
         GeoPackageSourceSpec,
@@ -190,7 +189,7 @@ if TYPE_CHECKING:
         uzf,
         wel,
     )
-    from myflopy.workspace import ModelView, Project, Run, load_run
+    from myflopy.workspace import ModelView, Project, ProjectLayout, Run, load_run
 
 try:
     from importlib.metadata import version
@@ -234,8 +233,7 @@ _EXPORTS = {
     "TableSource": ("myflopy.sources", "TableSource"),
     "CellSurfaceOffset": ("myflopy.geopackage", "CellSurfaceOffset"),
     "GeoPackageSource": ("myflopy.geopackage", "GeoPackageSource"),
-    "ProjectLayout": ("myflopy.project_spec", "ProjectLayout"),
-    "ProjectSpec": ("myflopy.project_spec", "ProjectSpec"),
+    "ProjectLayout": ("myflopy.workspace", "ProjectLayout"),
     "ModelView": ("myflopy.workspace", "ModelView"),
     "Project": ("myflopy.workspace", "Project"),
     "Run": ("myflopy.workspace", "Run"),

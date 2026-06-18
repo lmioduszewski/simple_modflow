@@ -168,9 +168,13 @@ def test_project_owns_reusable_specs_and_prepares_runs(tmp_path):
     assert run.status == "created"
     assert run.manifest_path.exists()
 
-    reopened_project = Project.reopen(project.root)
-    assert reopened_project.name == "demo"
-    assert reopened_project.simulations == {}
+    # Persistence is opt-in: nothing on disk until save().
+    assert not project.layout.project_spec_path.exists()
+    project.save()
+    reloaded = Project.load(project.root)
+    assert reloaded.name == "demo"
+    assert set(reloaded.simulations) == {"tiny_flow"}
+    assert set(reloaded.packages) == {"npf/base"}
 
 
 def test_run_builds_writes_executes_and_reopens_with_flopy_310(tmp_path):

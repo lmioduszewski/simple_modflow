@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import flopy
@@ -23,6 +24,7 @@ from myflopy.specs import (
 
 RUN_MANIFEST_NAME = "run.json"
 PROJECT_MANIFEST_NAME = "project.json"
+PROJECT_SPEC_NAME = "project_spec.json"
 
 
 class ModelView(SimulationBase):
@@ -61,6 +63,114 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    """Read a JSON document from ``path``."""
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _slug(value: str) -> str:
+    """Return a filesystem-safe slug for a project, simulation, or key part."""
+
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip()).strip("._-")
+    if not slug:
+        raise ValueError(
+            "Project, simulation, and package names must contain at least one "
+            "filesystem-safe character."
+        )
+    return slug
+
+
+def _package_key_parts(key: str) -> tuple[str, ...]:
+    """Split a package key such as ``"npf/base"`` into safe path segments."""
+
+    parts = tuple(_slug(part) for part in str(key).split("/") if part)
+    if not parts:
+        raise ValueError("Package spec keys must contain at least one safe segment.")
+    return parts
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectLayout:
+    """Directory layout for a durable project on disk.
+
+    This is internal infrastructure, but it can be supplied to :class:`Project`
+    to customize where specs, package definitions, and inputs are written.
+    """
+
+    root: Path
+    specs_dir_name: str = "specs"
+    simulations_dir_name: str = "simulations"
+    inputs_dir_name: str = "inputs"
+    packages_dir_name: str = "packages"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", Path(self.root))
+
+    @classmethod
+    def for_project(cls, name: str, root: Path | str | None = None) -> ProjectLayout:
+        """Return the default layout for a project name (defaults under ~/mf6)."""
+
+        project_root = Path.home() / "mf6" / _slug(name) if root is None else Path(root)
+        return cls(project_root)
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.root / PROJECT_MANIFEST_NAME
+
+    @property
+    def specs_dir(self) -> Path:
+        return self.root / self.specs_dir_name
+
+    @property
+    def project_spec_path(self) -> Path:
+        return self.specs_dir / PROJECT_SPEC_NAME
+
+    @property
+    def simulation_specs_dir(self) -> Path:
+        return self.specs_dir / self.simulations_dir_name
+
+    @property
+    def package_specs_dir(self) -> Path:
+        return self.specs_dir / self.packages_dir_name
+
+    @property
+    def inputs_dir(self) -> Path:
+        return self.root / self.inputs_dir_name
+
+    def simulation_spec_path(self, name: str) -> Path:
+        """Return the durable spec path for one simulation name."""
+
+        return self.simulation_specs_dir / f"{_slug(name)}.json"
+
+    def package_spec_path(self, key: str) -> Path:
+        """Return the durable spec path for one project package key."""
+
+        *parents, filename = _package_key_parts(key)
+        return self.package_specs_dir.joinpath(*parents, f"{filename}.json")
+
+    def ensure(self) -> None:
+        """Create the durable spec directories."""
+
+        for path in (
+            self.root,
+            self.specs_dir,
+            self.simulation_specs_dir,
+            self.package_specs_dir,
+            self.inputs_dir,
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root": str(self.root.as_posix()),
+            "specs_dir": self.specs_dir_name,
+            "simulations_dir": self.simulations_dir_name,
+            "inputs_dir": self.inputs_dir_name,
+            "packages_dir": self.packages_dir_name,
+        }
 
 
 def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
@@ -359,21 +469,17 @@ class Project:
     """
 
     def __init__(
-        self, root: Path | str, *, name: str | None = None, create: bool = True
+        self,
+        root: Path | str,
+        *,
+        name: str | None = None,
+        layout: ProjectLayout | None = None,
     ):
-        self.root = Path(root)
+        self.layout = layout or ProjectLayout(Path(root))
+        self.root = self.layout.root
         self.name = name or self.root.name
         self.packages: dict[str, PackageSpec] = {}
         self.simulations: dict[str, SimulationSpec] = {}
-
-        if create:
-            self.runs_dir.mkdir(parents=True, exist_ok=True)
-            self.save_manifest()
-        elif self.manifest_path.exists():
-            data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-            self.name = data.get("project", {}).get("name", self.name)
-        else:
-            raise FileNotFoundError(f"Project manifest not found: {self.manifest_path}")
 
     @property
     def runs_dir(self) -> Path:
@@ -383,17 +489,9 @@ class Project:
 
     @property
     def manifest_path(self) -> Path:
-        """Path to the project manifest."""
+        """Path to the project workspace manifest written by :meth:`save`."""
 
-        return self.root / PROJECT_MANIFEST_NAME
-
-    def save_manifest(self) -> Path:
-        """Persist the small project workspace manifest."""
-
-        _write_json(
-            self.manifest_path, {"project": {"name": self.name, "runs_dir": "runs"}}
-        )
-        return self.manifest_path
+        return self.layout.manifest_path
 
     def add_package(self, key: str, package: PackageSpec) -> PackageSpec:
         """Add or replace a reusable package spec under a project ``key``.
@@ -517,8 +615,98 @@ class Project:
             runs.append(run)
         return runs
 
-    @classmethod
-    def reopen(cls, root: Path | str) -> Project:
-        """Reopen an existing project workspace."""
+    def _why_unserializable(self, simulation: SimulationSpec) -> str | None:
+        """Return a readable reason a simulation cannot be persisted, or None."""
 
-        return cls(root, create=False)
+        try:
+            simulation.to_dict()
+        except ValueError as error:
+            return str(error)
+        return None
+
+    def validate(self) -> list[str]:
+        """Return human-readable persistence issues without touching disk.
+
+        Persistence requires serializable specs. Simulations that embed raw
+        arrays, or that contain exchanges, are reported here rather than failing
+        silently at :meth:`save`.
+        """
+
+        issues: list[str] = []
+        names = set(self.simulations)
+        for simulation in self.simulations.values():
+            if (
+                simulation.derived_from is not None
+                and simulation.derived_from not in names
+            ):
+                issues.append(
+                    f"Simulation '{simulation.name}' derives from unknown "
+                    f"simulation '{simulation.derived_from}'."
+                )
+            reason = self._why_unserializable(simulation)
+            if reason is not None:
+                issues.append(
+                    f"Simulation '{simulation.name}' is not serializable: {reason}"
+                )
+        return issues
+
+    def _project_dict(self) -> dict[str, Any]:
+        """Return the durable project document."""
+
+        return {
+            "kind": "Project",
+            "name": self.name,
+            "layout": self.layout.to_dict(),
+            "simulations": sorted(self.simulations),
+            "packages": sorted(self.packages),
+        }
+
+    def save(self) -> Path:
+        """Persist the project document, its simulations, and its package library.
+
+        Persistence is opt-in. Returns the path to the written project spec.
+        """
+
+        issues = self.validate()
+        if issues:
+            raise ValueError(
+                "Project cannot be saved:\n"
+                + "\n".join(f"- {issue}" for issue in issues)
+            )
+
+        self.layout.ensure()
+        _write_json(
+            self.manifest_path,
+            {
+                "project": {
+                    "name": self.name,
+                    "spec": f"{self.layout.specs_dir_name}/{PROJECT_SPEC_NAME}",
+                }
+            },
+        )
+        _write_json(self.layout.project_spec_path, self._project_dict())
+        for name, simulation in self.simulations.items():
+            _write_json(self.layout.simulation_spec_path(name), simulation.to_dict())
+        for key, package in self.packages.items():
+            _write_json(self.layout.package_spec_path(key), package.to_dict())
+        return self.layout.project_spec_path
+
+    @classmethod
+    def load(cls, root: Path | str, *, layout: ProjectLayout | None = None) -> Project:
+        """Load a project previously written with :meth:`save`."""
+
+        project = cls(root, layout=layout)
+        spec_path = project.layout.project_spec_path
+        if not spec_path.exists():
+            raise FileNotFoundError(f"Project spec not found: {spec_path}")
+        data = _read_json(spec_path)
+        project.name = data.get("name", project.name)
+        for key in data.get("packages", ()):
+            package_path = project.layout.package_spec_path(key)
+            if package_path.exists():
+                project.packages[key] = PackageSpec.from_dict(_read_json(package_path))
+        for name in data.get("simulations", ()):
+            sim_path = project.layout.simulation_spec_path(name)
+            if sim_path.exists():
+                project.add_simulation(SimulationSpec.from_dict(_read_json(sim_path)))
+        return project
