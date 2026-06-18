@@ -54,8 +54,8 @@ def flow_model(name: str, npf_key: str) -> mf.SimulationSpec:
 
 
 # Each variant is one line. Runs land in runs/library_demo/runs/<name>/.
-base = project.run("base", flow_model("base", "npf/base"))
-high = project.run("high_k", flow_model("high_k", "npf/high_k"))
+base = project.run("base", flow_model("base", "npf/base"), overwrite=True)
+high = project.run("high_k", flow_model("high_k", "npf/high_k"), overwrite=True)
 
 print(f"base   success={base.success}  k[0]={concerns.k0(base):.1f}")
 print(f"high_k success={high.success}  k[0]={concerns.k0(high):.1f}")
@@ -63,5 +63,5 @@ print(f"high_k success={high.success}  k[0]={concerns.k0(high):.1f}")
 # Reload in a fresh project: the pickled packages come back, no recompute.
 reloaded = mf.Project.load(project.root)
 print("reloaded packages:", sorted(reloaded.packages))
-again = reloaded.run("base_again", flow_model("base_again", "npf/base"))
+again = reloaded.run("base_again", flow_model("base_again", "npf/base"), overwrite=True)
 print(f"base_again success={again.success}  k[0]={concerns.k0(again):.1f}")
