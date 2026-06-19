@@ -158,9 +158,13 @@ def test_master_notebook_documents_full_integration_surface():
 
 def test_canonical_master_notebook_set_uses_one_builder():
     notebook_root = ROOT / "examples" / "mf6" / "notebooks"
+    # Only the numbered canonical run set (canonical_00..canonical_04) uses the
+    # shared mf.build_canonical_model() builder. canonical_model_template.ipynb is
+    # an editable scaffold that demonstrates the builder API directly, so it is
+    # intentionally excluded here.
     paths = sorted(
         path
-        for path in notebook_root.glob("canonical_*.ipynb")
+        for path in notebook_root.glob("canonical_[0-9]*.ipynb")
         if not path.name.endswith(".executed.ipynb")
     )
     assert len(paths) == 5
