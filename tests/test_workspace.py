@@ -204,13 +204,34 @@ def test_project_load_fails_loud_on_missing_file(tmp_path):
         Project.load(project.root)
 
 
-def test_add_package_warns_on_key_name_mismatch(tmp_path):
+def test_add_package_accepts_semantic_keys(tmp_path):
+    # A key is a free-form library address; the package keeps its own name and is
+    # addressed by the full key, so a semantic key whose prefix is not the MF6
+    # package type is valid (no warning, no coupling).
     project = Project(tmp_path / "demo", name="demo")
 
-    with pytest.warns(UserWarning, match="npf"):
-        project.add_package(
-            "npf/base", PackageSpec("rch", flopy.mf6.ModflowGwfrch, {})
-        )
+    spec = project.add_package(
+        "k/calibrated", PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": 1.0})
+    )
+    assert spec.name == "npf"
+    assert project.packages["k/calibrated"] is spec
+
+
+def test_replace_package_targets_slot_for_semantic_key_ref(tmp_path):
+    # A semantically-keyed ref ("k/high" -> builds npf) replaces the npf slot
+    # when the slot is named explicitly.
+    project = Project(tmp_path / "demo", name="demo")
+    project.add_package("k/high", mf.npf(k=99.0))
+
+    variant = (
+        _tiny_flow_spec()
+        .derive("v")
+        .replace_package("flow", mf.ref("k/high"), name="npf")
+    )
+    assert variant.model("flow").package("k/high").key == "k/high"
+    # Targeting a non-existent slot is a clear error.
+    with pytest.raises(KeyError, match="no 'does_not_exist' package"):
+        _tiny_flow_spec().replace_package("flow", mf.npf(k=1.0), name="does_not_exist")
 
 
 def test_provenance_keeps_package_reference_variant(tmp_path):

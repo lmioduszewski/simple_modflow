@@ -51,9 +51,14 @@ class PackageRef:
 
     @property
     def name(self) -> str:
-        """Return the package identity inferred from the project key."""
+        """Return the ref's spec-time identity: the full project key.
 
-        return self.key.split("/", 1)[0]
+        The ref does not claim a package type -- the package it resolves to keeps
+        its own ``PackageSpec.name``. The key prefix is used only as a
+        slot-targeting hint by ``replace_package`` (see :func:`_package_slot`).
+        """
+
+        return self.key
 
     @property
     def enabled(self) -> bool:
@@ -451,10 +456,29 @@ def _package_entry_label(package: PackageEntry) -> str:
     return package.name
 
 
+def _package_slot(package: PackageEntry) -> str:
+    """Return the MF6 package slot an entry targets.
+
+    A concrete package targets its own name. A reference targets the first
+    segment of its key as a *hint* (``mf.ref("npf/high")`` -> ``"npf"``), so a
+    ref can replace a same-typed package without being resolved first. When the
+    key prefix is not the package type (a semantic key like ``"k/calibrated"``),
+    pass an explicit ``name`` to :meth:`SimulationSpec.replace_package`.
+    """
+
+    if isinstance(package, PackageRef):
+        return package.key.split("/", 1)[0]
+    return package.name
+
+
 def _package_entry_matches(package: PackageEntry, name: str) -> bool:
-    if package.name == name:
-        return True
-    return isinstance(package, PackageRef) and package.key == name
+    """Match an entry by its full identity (name / key) or by its slot hint.
+
+    So ``model.package("npf/base")`` finds that exact ref, and
+    ``model.package("npf")`` finds whatever occupies the ``npf`` slot.
+    """
+
+    return package.name == name or _package_slot(package) == name
 
 
 def _package_entry_is_enabled(package: PackageEntry) -> bool:
@@ -1071,13 +1095,20 @@ class ModelSpec:
         if len(concrete_packages) == len(self.packages):
             _validate_concrete_packages(concrete_packages)
 
-    def with_package(self, package: PackageEntry | str) -> ModelSpec:
-        """Return a copy with ``package`` added or replaced by name."""
+    def with_package(
+        self, package: PackageEntry | str, *, slot: str | None = None
+    ) -> ModelSpec:
+        """Return a copy with ``package`` added or replaced in its slot.
+
+        The slot defaults to the entry's own slot (a concrete package's name, or
+        a reference's key prefix). Pass ``slot`` to target a slot explicitly.
+        """
 
         package = _package_entry(package)
+        target = slot if slot is not None else _package_slot(package)
         packages = list(self.packages)
         for index, existing in enumerate(packages):
-            if existing.name == package.name:
+            if _package_slot(existing) == target:
                 packages[index] = package
                 break
         else:
@@ -1522,19 +1553,28 @@ class SimulationSpec:
         )
 
     def replace_package(
-        self, model_name: str, package: PackageEntry | str
+        self, model_name: str, package: PackageEntry | str, *, name: str | None = None
     ) -> SimulationSpec:
-        """Return a copy with a model package replaced by name.
+        """Return a copy with a model package replaced in its slot.
 
-        The target package must already exist. Use :meth:`add_package` when the
-        operation is intentionally an addition.
+        The slot defaults to the replacement's own slot (a concrete package's
+        name, or a reference's key prefix). Pass ``name`` to target a slot
+        explicitly -- needed when a semantically-keyed ref such as
+        ``mf.ref("k/calibrated")`` replaces the ``npf`` slot.
+
+        The target slot must already exist; use :meth:`add_package` to add.
         """
 
         package = _package_entry(package)
         model = self.model(model_name)
-        model.package(package.name)
+        target = name if name is not None else _package_slot(package)
+        if not any(_package_slot(existing) == target for existing in model.packages):
+            raise KeyError(
+                f"Model '{model_name}' has no '{target}' package to replace. "
+                "Pass name=<slot> to target a slot explicitly, or use add_package."
+            )
         return replace(
-            self.with_model(model.with_package(package)),
+            self.with_model(model.with_package(package, slot=target)),
             lineage=(
                 *self.lineage,
                 {
@@ -1570,16 +1610,17 @@ class SimulationSpec:
         )
 
     def add_package(
-        self, model_name: str, package: PackageEntry | str
+        self, model_name: str, package: PackageEntry | str, *, name: str | None = None
     ) -> SimulationSpec:
         """Return a copy with a package added or replaced on one model."""
 
         package = _package_entry(package)
         model = self.model(model_name)
-        existed = any(existing.name == package.name for existing in model.packages)
+        target = name if name is not None else _package_slot(package)
+        existed = any(_package_slot(existing) == target for existing in model.packages)
         operation = "replace_package" if existed else "add_package"
         return replace(
-            self.with_model(model.with_package(package)),
+            self.with_model(model.with_package(package, slot=target)),
             lineage=(
                 *self.lineage,
                 {

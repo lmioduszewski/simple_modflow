@@ -594,22 +594,13 @@ class Project:
     def add_package(self, key: str, package: PackageSpec) -> PackageSpec:
         """Add or replace a reusable package spec under a project ``key``.
 
-        The key is how models reference the package later, for example
-        ``mf.ref("npf/base")``. Packages live independently of any model and
-        are resolved into a simulation only when a run is built.
-
-        The first key segment should match the package name, since
-        ``mf.ref("npf/base")`` resolves into an ``npf`` slot.
+        The key is a free-form library address that models reference later, for
+        example ``mf.ref("npf/base")`` or a semantic key like
+        ``mf.ref("k/calibrated")``. The package keeps its own ``PackageSpec.name``
+        (the MF6 package it builds); the key does not have to match it. Resolved
+        packages are checked for name collisions when a run is built.
         """
 
-        expected = key.split("/", 1)[0]
-        if package.name != expected:
-            warnings.warn(
-                f"Package key '{key}' implies package name '{expected}', but the "
-                f"spec is named '{package.name}'. A model using mf.ref('{key}') "
-                f"will build a '{package.name}' package.",
-                stacklevel=2,
-            )
         self.packages[key] = package
         return package
 
