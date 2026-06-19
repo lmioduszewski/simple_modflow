@@ -666,8 +666,16 @@ class Project:
         executable: str = "mf6",
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
+        build: bool = True,
     ) -> Run:
-        """Create an unbuilt run from a simulation spec or registered spec name."""
+        """Create a run and build its FloPy simulation in memory, ready to inspect.
+
+        The returned run is built but **not** written or executed -- no MF6 input
+        files exist yet -- so you can inspect it with ``run.model(...)`` (and your
+        plotting/explorer tools) before committing to ``run.execute()``. Pass
+        ``build=False`` to defer building (for example when staging several runs
+        to build/execute selectively later).
+        """
 
         spec = (
             self.simulations[simulation] if isinstance(simulation, str) else simulation
@@ -686,6 +694,8 @@ class Project:
             build_context=self._build_context(workspace),
         )
         run.save_manifest()
+        if build:
+            run.build()
         return run
 
     def run(

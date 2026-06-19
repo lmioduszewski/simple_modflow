@@ -150,9 +150,9 @@ def test_project_unresolved_package_reference_raises(tmp_path):
     # Library is empty: the "npf/base" reference cannot be resolved.
     project.add_simulation(_tiny_flow_with_npf_ref())
 
-    run = project.prepare_run("baseline", "tiny_flow")
+    # prepare_run builds by default, so the unresolved reference raises there.
     with pytest.raises((KeyError, ValueError)):
-        run.build()
+        project.prepare_run("baseline", "tiny_flow")
 
 
 def test_project_save_rejects_unresolved_references(tmp_path):
@@ -252,7 +252,7 @@ def test_project_owns_reusable_specs_and_prepares_runs(tmp_path):
     assert project.simulations["tiny_flow"] is simulation
     assert project.packages["npf/base"] is package
     assert run.workspace == project.runs_dir / "baseline"
-    assert run.status == "created"
+    assert run.status == "built"  # prepare_run builds in memory by default
     assert run.manifest_path.exists()
 
     # Persistence is opt-in: nothing on disk until save().

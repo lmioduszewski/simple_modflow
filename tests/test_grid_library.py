@@ -71,8 +71,8 @@ def test_project_grid_library_resolves_and_swaps(tmp_path):
     swapped = baseline.derive("swapped").replace_grid("gwf", mf.grid_ref("b"))
     project.add_simulation(swapped)
 
-    run_a = project.prepare_run("a_run", "baseline").build()
-    run_b = project.prepare_run("b_run", "swapped").build()
+    run_a = project.prepare_run("a_run", "baseline")
+    run_b = project.prepare_run("b_run", "swapped")
 
     # Same reference machinery, different grid resolved per simulation.
     assert run_a.built.models["gwf"].context.grid.tag == "A"
@@ -89,9 +89,9 @@ def test_project_unresolved_grid_reference_raises(tmp_path):
     # Library has no grid named "missing".
     project.add_simulation(_sim_with_grid("baseline", mf.grid_ref("missing")))
 
-    run = project.prepare_run("baseline", "baseline")
+    # Building now happens inside prepare_run, so the unresolved ref raises there.
     with pytest.raises(KeyError):
-        run.build()
+        project.prepare_run("baseline", "baseline")
 
 
 def test_grid_from_pickle_resolves(tmp_path):
@@ -135,7 +135,7 @@ def test_project_saves_and_loads_object_grid(tmp_path):
     assert grid.resolve(project_root=loaded.root).tag == "built"
 
     # The reloaded project still builds, resolving the unpickled grid.
-    run = loaded.prepare_run("run", "baseline").build()
+    run = loaded.prepare_run("run", "baseline")
     assert run.built.models["gwf"].context.grid.tag == "built"
 
 

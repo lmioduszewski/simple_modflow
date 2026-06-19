@@ -356,7 +356,7 @@ def test_project_build_resolves_package_refs(tmp_path):
     project.add_package("npf/base", mf.npf(k=25.0))
     project.add_simulation(simulation)
 
-    run = project.prepare_run("baseline", "baseline").build()
+    run = project.prepare_run("baseline", "baseline")
 
     assert "npf" in run.built.models["gwf"].packages
     assert run.spec.model("gwf").package("npf/base").key == "npf/base"
@@ -375,7 +375,7 @@ def test_project_build_resolves_project_relative_grid_sources(tmp_path):
     )
     project.add_simulation(simulation)
 
-    run = project.prepare_run("baseline", "baseline").build()
+    run = project.prepare_run("baseline", "baseline")
     resolved_grid = run.built.models["gwf"].context.grid
 
     assert run.workspace == project.runs_dir / "baseline"
@@ -396,7 +396,7 @@ def test_project_build_resolves_python_grid_builder(tmp_path):
     )
     project.add_simulation(simulation)
 
-    run = project.prepare_run("baseline", "baseline").build()
+    run = project.prepare_run("baseline", "baseline")
     resolved_grid = run.built.models["gwf"].context.grid
 
     assert resolved_grid.workspace == run.workspace / "_grid" / "gwf"

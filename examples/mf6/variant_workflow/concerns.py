@@ -80,3 +80,10 @@ def k0(run, model: str = "flow") -> float:
 
     npf_pkg = run.built.built_model(model).package("npf")
     return float(np.asarray(npf_pkg.k.array).reshape(-1)[0])
+
+
+def top0(run, model: str = "flow") -> float:
+    """Helper: first DIS top value of a built model, to show a dis swap took."""
+
+    dis_pkg = run.built.built_model(model).package("dis")
+    return float(np.asarray(dis_pkg.top.array).reshape(-1)[0])

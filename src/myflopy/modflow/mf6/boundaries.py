@@ -69,13 +69,12 @@ class Boundaries:
         """
 
         self.model = model
-        try:
-            self.vor = self.model.vor if vor is None else vor
-            self.crs = self.vor.crs if crs is None else crs
-            self.nper = self.model.nper
-        except:
-            self.vor = None
-            self.nper = None
+        # Resolve the grid independently of the model: an explicit ``vor`` must
+        # survive even when there is no model (grid-only use), and a missing
+        # ``nper`` must not wipe out the grid.
+        self.vor = vor if vor is not None else getattr(model, "vor", None)
+        self.crs = crs if crs is not None else getattr(self.vor, "crs", None)
+        self.nper = getattr(model, "nper", None)
         self.bound_type = bound_type
         self.uid = uid
         self._gdf = None

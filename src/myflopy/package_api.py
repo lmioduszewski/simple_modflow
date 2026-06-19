@@ -34,7 +34,13 @@ from myflopy.modflow.mf6.mvr import MVRBuilder, Move
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
-from myflopy.specs import ModelContext, ModelSpec, PackageSpec, PostBuildHook
+from myflopy.specs import (
+    ModelContext,
+    ModelSpec,
+    PackageSpec,
+    PostBuildHook,
+    SimulationSpec,
+)
 
 
 PathLike = Path | str
@@ -338,6 +344,11 @@ def tdis(
     return PackageSpec(name, flopy.mf6.ModflowTdis, values)
 
 
+# Captured under a private name so simulation()'s ``tdis=`` keyword can shadow
+# the public ``tdis`` builder without losing access to the default.
+_steady_tdis = tdis
+
+
 def ims(
     *,
     models: Iterable[str],
@@ -432,6 +443,58 @@ def ims(
         if value is not None:
             values[key] = value
     return PackageSpec(name, build_ims, values)
+
+
+def simulation(
+    *models: ModelSpec,
+    name: str = "sim",
+    tdis: PackageSpec | None = None,
+    solver: PackageSpec | Iterable[PackageSpec] | None = None,
+    complexity: str | None = "SIMPLE",
+    exchanges: Iterable[Any] = (),
+    packages: Iterable[PackageSpec] = (),
+    **options: Any,
+) -> SimulationSpec:
+    """Assemble a :class:`SimulationSpec` with sensible timing/solver defaults.
+
+    The common case -- one or more models that should just run -- needs no
+    timing or solver boilerplate::
+
+        mf.simulation(flow)              # steady, one IMS solving `flow`
+        mf.simulation(flow, transport)   # one IMS each (coupled-ready)
+
+    Defaults: a single steady stress period (``mf.tdis()``) and one ``IMS`` per
+    model, each solving only that model -- which is what both single-model and
+    coupled GWF/GWT/GWE/PRT runs require. Override any of it::
+
+        mf.simulation(flow, tdis=mf.tdis(nper=12, perioddata=spd))
+        mf.simulation(flow, transport, solver=[flow_ims, transport_ims])
+
+    Extra simulation-level packages are appended via ``packages=``; couplings
+    via ``exchanges=``.
+    """
+
+    if not models:
+        raise ValueError("simulation() requires at least one model spec.")
+
+    timing = _steady_tdis() if tdis is None else tdis
+    if solver is None:
+        solvers: list[PackageSpec] = [
+            ims(models=[m.name], name=f"{m.name}_ims", complexity=complexity)
+            for m in models
+        ]
+    elif isinstance(solver, PackageSpec):
+        solvers = [solver]
+    else:
+        solvers = list(solver)
+
+    return SimulationSpec(
+        name,
+        models=list(models),
+        packages=[timing, *solvers, *packages],
+        exchanges=tuple(exchanges),
+        **options,
+    )
 
 
 def disv(
@@ -782,9 +845,10 @@ class _RCHPackage:
     def __call__(
         self,
         *,
-        context: ModelContext,
-        nper: int,
-        recharge: Any,
+        stress_period_data: Any = None,
+        context: ModelContext | None = None,
+        nper: int | None = None,
+        recharge: Any = None,
         cells: str | Sequence[int | tuple[int, int]] = "top_active",
         layer: int = 0,
         name_by_cell: Mapping[int | tuple[int, int], str] | None = None,
@@ -792,8 +856,25 @@ class _RCHPackage:
         name: str = "rch",
         **options: Any,
     ) -> PackageSpec:
-        """Return a high-level RCH package spec from the model domain."""
+        """Return an RCH package spec.
 
+        Two forms, mirroring the other stress packages:
+
+        * Direct ``stress_period_data=`` (like ``mf.drn`` / ``mf.wel``) returns a
+          list-based RCH spec.
+        * The high-level builder form (``context=``, ``nper=``, ``recharge=``)
+          computes the cells from the model domain.
+        """
+
+        if stress_period_data is not None:
+            return rch_spec(
+                stress_period_data, name=name, boundnames=boundnames, **options
+            )
+        if context is None or nper is None or recharge is None:
+            raise TypeError(
+                "mf.rch requires either stress_period_data=, or the builder "
+                "arguments context=, nper=, and recharge=."
+            )
         return RCHBuilder(
             context=context,
             nper=nper,
@@ -1213,6 +1294,7 @@ __all__ = [
     "prt",
     "rch",
     "sfr",
+    "simulation",
     "sto",
     "tdis",
     "uzf",

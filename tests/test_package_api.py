@@ -198,3 +198,74 @@ def test_package_api_advanced_helpers_and_flopy_escape_hatches():
     assert mvr_direct.requires == ("sfr", "lak")
     assert sfr_direct.name == "sfr"
     assert lak_direct.name == "lak"
+
+
+def test_simulation_single_model_defaults():
+    flow = mf.gwf("flow", packages=[])
+    sim = mf.simulation(flow)
+
+    assert [m.name for m in sim.models] == ["flow"]
+    names = [p.name for p in sim.packages]
+    assert names == ["tdis", "flow_ims"]            # steady tdis + one IMS for flow
+    ims = next(p for p in sim.packages if p.name == "flow_ims")
+    assert tuple(ims.options["models"]) == ("flow",)
+    assert ims.options["complexity"] == "SIMPLE"
+
+
+def test_simulation_one_ims_per_model_for_coupled():
+    flow = mf.gwf("flow", packages=[])
+    transport = mf.gwt("transport", packages=[])
+    sim = mf.simulation(flow, transport)
+
+    names = [p.name for p in sim.packages]
+    assert names == ["tdis", "flow_ims", "transport_ims"]
+    by_name = {p.name: p for p in sim.packages}
+    assert tuple(by_name["flow_ims"].options["models"]) == ("flow",)
+    assert tuple(by_name["transport_ims"].options["models"]) == ("transport",)
+
+
+def test_simulation_overrides_tdis_and_solver():
+    flow = mf.gwf("flow", packages=[])
+    my_tdis = mf.tdis(nper=3, perioddata=[(1.0, 1, 1.0)] * 3)
+    my_ims = mf.ims(models=["flow"], complexity="COMPLEX", name="custom_ims")
+    sim = mf.simulation(flow, tdis=my_tdis, solver=my_ims)
+
+    tdis_pkg = next(p for p in sim.packages if p.name == "tdis")
+    assert tdis_pkg.options["nper"] == 3
+    assert [p.name for p in sim.packages] == ["tdis", "custom_ims"]
+
+
+def test_simulation_requires_a_model():
+    import pytest
+
+    with pytest.raises(ValueError):
+        mf.simulation()
+
+
+def test_drn_helper_runs_grid_only():
+    # F3: a boundary helper given only a grid (no model) must keep the grid and
+    # not null it out when there is no model.nper.
+    from myflopy.modflow.mf6.drn import DRN
+
+    vor = _two_cell_grid()
+    helper = DRN(vor=vor)
+    assert helper.vor is vor
+    assert helper.nper is None
+
+    data = helper.get_drn_stress_period_data(
+        cells=[0, 1], conductance=10, bottom_addition=5, layer=0
+    )
+    assert len(data) == 2
+    assert data[0] == [(0, 0), 5, 10]
+
+
+def test_rch_accepts_stress_period_data():
+    # F4: mf.rch should take stress_period_data= like mf.drn / mf.wel.
+    spec = mf.rch(stress_period_data={0: [[(0, 0), 1.0e-3]]})
+    assert spec.name == "rch"
+
+    # The builder form still requires its arguments.
+    import pytest
+
+    with pytest.raises(TypeError):
+        mf.rch()
