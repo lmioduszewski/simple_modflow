@@ -21,6 +21,17 @@ class _FakeVor:
         self.centroids = ([p.x for p in points], [p.y for p in points])
         self.ncpl = n
         self.crs = "EPSG:2927"
+        self.gdf_topbtm = None
+
+    def get_disv_gridprops(self) -> dict:
+        """Minimal DISV geometry stand-in (enough for Surface.to_disv)."""
+
+        return {
+            "ncpl": self.ncpl,
+            "nvert": self.ncpl + 1,
+            "vertices": [[i, float(i), 0.0] for i in range(self.ncpl + 1)],
+            "cell2d": [[i, float(i), 0.0, 1, i] for i in range(self.ncpl)],
+        }
 
 
 def test_modules_import_without_grass():
@@ -71,6 +82,29 @@ def test_top_botm_arrays_shape():
     assert list(top) == [50.0] * 4
     assert botm.shape == (2, 4)
     assert list(botm[0]) == [40.0] * 4
+
+
+def test_to_disv_builds_package_spec():
+    vor = _FakeVor(3)
+    spec = LayerSurfaces(
+        [Surface.flat(50), Surface.flat(40), Surface.flat(30)]
+    ).to_disv(vor, reconcile=False)
+
+    assert spec.name == "disv"
+    assert spec.options["nlay"] == 2          # 3 surfaces -> 2 layers
+    assert spec.options["ncpl"] == 3
+    assert spec.options["nvert"] == 4
+    assert list(spec.options["top"]) == [50.0, 50.0, 50.0]
+    assert spec.options["botm"].shape == (2, 3)
+    assert vor.gdf_topbtm is not None         # attach=True by default
+
+
+def test_to_disv_without_attach_leaves_grid_untouched():
+    vor = _FakeVor(3)
+    LayerSurfaces([Surface.flat(50), Surface.flat(40)]).to_disv(
+        vor, attach=False, reconcile=False
+    )
+    assert vor.gdf_topbtm is None
 
 
 def test_raster_surface_samples_values(tmp_path):

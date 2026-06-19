@@ -210,13 +210,57 @@ class LayerSurfaces:
         vor.gdf_topbtm = gdf
         return gdf
 
-    def top_botm(self, vor, **kwargs) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(top, botm)`` elevation arrays ready for ``mf.disv``."""
+    @staticmethod
+    def _split_top_botm(gdf: gpd.GeoDataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """Split a sampled centroid frame into ``(top, botm)`` arrays."""
 
-        gdf = self.sample(vor, **kwargs)
         columns = [c for c in gdf.columns if c != "geometry"]
         elevations = gdf[columns].to_numpy().T  # (n_surfaces, n_cells)
         return elevations[0], elevations[1:]
+
+    def top_botm(self, vor, **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(top, botm)`` elevation arrays ready for ``mf.disv``."""
+
+        return self._split_top_botm(self.sample(vor, **kwargs))
+
+    def to_disv(
+        self,
+        vor,
+        *,
+        nlay: int | None = None,
+        idomain: Any | None = None,
+        name: str = "disv",
+        attach: bool = True,
+        **sample_kwargs,
+    ):
+        """Build a ready-to-use ``mf.disv`` package spec from ``vor`` + surfaces.
+
+        Samples the surfaces onto ``vor`` (reconciling overlaps by default),
+        takes the cell geometry from ``vor.get_disv_gridprops()``, and returns a
+        :class:`~myflopy.specs.PackageSpec` for DISV -- the single call that
+        turns a grid and a layer stack into discretization. With ``attach=True``
+        (default) the sampled elevations are also written to ``vor.gdf_topbtm``
+        so choropleth/mapping code keeps working.
+        """
+
+        from myflopy.package_api import disv  # lazy: avoid an import cycle
+
+        gdf = self.sample(vor, **sample_kwargs)
+        if attach:
+            vor.gdf_topbtm = gdf
+        top, botm = self._split_top_botm(gdf)
+        props = vor.get_disv_gridprops()
+        return disv(
+            nlay=len(self.surfaces) - 1 if nlay is None else nlay,
+            ncpl=props["ncpl"],
+            nvert=len(props["vertices"]),
+            vertices=props["vertices"],
+            cell2d=props["cell2d"],
+            top=top,
+            botm=botm,
+            idomain=idomain,
+            name=name,
+        )
 
 
 __all__ = ["Surface", "LayerSurfaces"]

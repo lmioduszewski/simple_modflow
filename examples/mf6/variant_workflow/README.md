@@ -1,13 +1,15 @@
 # Variant Workflow Examples
 
-Three runnable examples showing how to keep model variants reusable, trackable,
-and tidy with `myflopy`. A small structured grid stands in for a Voronoi mesh;
-the patterns are identical for unstructured models.
+Four runnable examples showing how to keep model variants reusable, trackable,
+and tidy with `myflopy`. Examples 01–03 use a small structured grid as a stand-in
+mesh; example 04 builds a real Voronoi/DISV grid from layer surfaces. The
+patterns are identical for unstructured models.
 
 ```
 python 01_package_library_and_variants.py
 python 02_grid_aware_packages.py
 python 03_coupled_gwf_gwt.py
+python 04_layer_surfaces_to_disv.py
 ```
 
 - **`concerns.py`** — the reusable building-block functions. The "messy" array
@@ -50,6 +52,24 @@ subdirectory automatically (`runs/<name>/gwf/`, `runs/<name>/gwt/`).
 Coupling notes baked into the example: each model needs its **own IMS**
 (transport uses `BICGSTAB`); a flow boundary requires an **SSM** package on the
 transport model with an auxiliary concentration on the boundary.
+
+## 04 — layer surfaces → a real DISV grid
+
+Build a Voronoi mesh once, describe the layering as a stack of `Surface`s
+(`flat` / `raster` / `from_contours` / `from_points`), and turn it into
+discretization with one call:
+
+```python
+layers = mf.LayerSurfaces([top, layer1_botm, layer2_botm])
+disv   = layers.to_disv(vor)   # samples + reconciles overlaps -> mf.disv spec
+```
+
+Each surface is an independent, swappable ingredient: the example builds two
+models on the **same mesh** that differ only in one layer surface (flat vs.
+point-interpolated dip), and both solve. Swap in `Surface.raster("ground.tif")`
+or `Surface.from_contours("aq_botm.gpkg", z="elev", region_raster="dom.tif")`
+unchanged. `to_disv` also writes `vor.gdf_topbtm`, so choropleth/mapping code
+keeps working.
 
 ## What persists vs. what stays in code
 
