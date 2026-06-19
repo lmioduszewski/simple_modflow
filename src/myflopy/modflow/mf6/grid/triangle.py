@@ -20,6 +20,7 @@ import shapely as shp
 from flopy.utils.geospatial_utils import GeoSpatialUtil
 from flopy.utils.triangle import Triangle
 from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Point, Polygon
+from shapely.geometry.base import BaseGeometry
 
 from myflopy.modflow.mf6.grid.geometry_cleanup import cleanup_polygonal_geometry
 from myflopy.modflow.mf6.grid.helpers import densify_poly
@@ -141,7 +142,14 @@ class MeshBuildProfile:
 class TriangleGrid(Triangle):
     """Higher-level Triangle wrapper used to generate Voronoi-ready meshes."""
 
-    def __init__(self, angle=32, region_point_tolerance: float | None = None, *args, **kwargs):
+    def __init__(
+        self,
+        angle=32,
+        region_point_tolerance: float | None = None,
+        domain_clip_tolerance: float | None = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(angle=angle, *args, **kwargs)
         self.domain_spec: DomainSpec | None = None
         self.region_specs: list[RegionSpec] = []
@@ -150,6 +158,10 @@ class TriangleGrid(Triangle):
         self._point_constraints: list[tuple[float, float]] = []
         self._optimization_points: list[tuple[float, float]] = []
         self.region_point_tolerance = region_point_tolerance
+        # Refinement regions are clipped to the domain inset by this tolerance so
+        # their boundary segments never coincide with the domain boundary (which
+        # makes Triangle abort). None auto-scales to the domain extent.
+        self.domain_clip_tolerance = domain_clip_tolerance
         self._last_cleanup_report: dict[str, float | int] | None = None
         self._last_quality_report: dict[str, float | int] | None = None
         self._last_optimization_report: dict[str, float | int | str] | None = None
@@ -188,7 +200,10 @@ class TriangleGrid(Triangle):
             return read_shp_gpkg(geometry).union_all()
         if isinstance(geometry, gpd.GeoDataFrame | gpd.GeoSeries):
             return geometry.union_all()
-        if isinstance(geometry, (Polygon, MultiPolygon)):
+        # Any shapely geometry passes through as-is. Points and lines are valid
+        # inputs here -- they are turned into an area by the buffer step in
+        # _polygonize_geometry (e.g. add_polygon(uic_point, buffer=4.5)).
+        if isinstance(geometry, BaseGeometry):
             return geometry
         return shp.Polygon(geometry)
 
@@ -228,6 +243,12 @@ class TriangleGrid(Triangle):
 
         if buffer != 0:
             geometry = geometry.buffer(buffer)
+
+        if not isinstance(geometry, (Polygon, MultiPolygon, GeometryCollection)):
+            raise ValueError(
+                f"A {geometry.geom_type} region has no area; pass buffer>0 to give "
+                "it width, e.g. add_polygon(point_or_line, buffer=...)."
+            )
 
         if simplify_tolerance:
             geometry = geometry.simplify(simplify_tolerance)
@@ -1015,6 +1036,45 @@ class TriangleGrid(Triangle):
                 raise ValueError(f"Region {idx} is missing max_area")
         return True
 
+    def _domain_interior(self) -> Polygon | MultiPolygon | None:
+        """Return the domain inset by the clip tolerance (for trimming regions).
+
+        A refinement region whose boundary coincides with the domain boundary
+        makes Triangle abort with a topological inconsistency. Clipping each
+        region to a slightly inset domain keeps its segments strictly interior.
+        ``None`` when no domain is set; the original domain when the tolerance is
+        non-positive or would empty the domain.
+        """
+        if self.domain_spec is None:
+            return None
+        geometry = self.domain_spec.geometry
+        tol = self.domain_clip_tolerance
+        if tol is None:
+            minx, miny, maxx, maxy = geometry.bounds
+            tol = ((maxx - minx) ** 2 + (maxy - miny) ** 2) ** 0.5 * 1e-4
+        if tol <= 0:
+            return geometry
+        inset = geometry.buffer(-tol)
+        return inset if not inset.is_empty else geometry
+
+    @staticmethod
+    def _polygonal_parts(geometry: Any) -> list[Polygon]:
+        """Return the non-empty polygonal pieces of any geometry (ignore lines/points)."""
+        if isinstance(geometry, Polygon):
+            parts = [geometry]
+        elif isinstance(geometry, MultiPolygon):
+            parts = list(geometry.geoms)
+        elif isinstance(geometry, GeometryCollection):
+            parts = []
+            for geom in geometry.geoms:
+                if isinstance(geom, Polygon):
+                    parts.append(geom)
+                elif isinstance(geom, MultiPolygon):
+                    parts.extend(geom.geoms)
+        else:
+            parts = []
+        return [poly for poly in parts if not poly.is_empty and poly.area > 0]
+
     def prepare(self) -> list[PreparedRegion]:
         """Resolve regions into Triangle-ready polygons and interior points."""
         self.validate_setup()
@@ -1022,6 +1082,7 @@ class TriangleGrid(Triangle):
         prepared: list[PreparedRegion] = []
         occupied_geometries: list[Polygon] = []
         occupied_points: list[tuple[float, float]] = []
+        interior = self._domain_interior()
 
         sorted_specs = sorted(
             self.region_specs,
@@ -1029,7 +1090,17 @@ class TriangleGrid(Triangle):
         )
 
         for idx, region in enumerate(sorted_specs):
-            region_polygons = list(self._iter_polygons(region.geometry))
+            geometry = region.geometry
+            if interior is not None:
+                geometry = geometry.intersection(interior)
+            region_polygons = self._polygonal_parts(geometry)
+            if not region_polygons:
+                warnings.warn(
+                    f"Region '{region.label or f'region_{idx}'}' is empty after "
+                    "clipping to the domain interior; skipping it.",
+                    stacklevel=2,
+                )
+                continue
             for poly_idx, polygon in enumerate(region_polygons):
                 label = region.label or f"region_{idx}"
                 if len(region_polygons) > 1:

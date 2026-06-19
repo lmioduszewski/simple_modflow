@@ -312,3 +312,42 @@ def test_quality_regression_guard_rejects_obviously_worse_mesh():
     assert "min_angle_regression" in reasons
     assert "edge_ratio_regression" in reasons
     assert "neighbor_area_ratio_regression" in reasons
+
+
+def test_add_polygon_buffers_point_and_line_features(tmp_path):
+    # F1: point/line refinement features are polygonized by buffer (the old API
+    # buffered them; the rewrite must too).
+    from shapely.geometry import Point
+
+    tri = TriangleGrid(model_ws=str(tmp_path / "pt"), angle=30)
+    tri.set_domain_rectangle(x_dist=1000, y_dist=1000, origin=(0, 0), max_area=40000)
+    tri.add_polygon(Point(500, 500), buffer=60, max_area=400)
+    tri.build(verbose=False)
+    assert VoronoiGridPlus(tri, crs="EPSG:2927").ncpl > 0
+
+
+def test_add_polygon_point_without_buffer_errors_clearly(tmp_path):
+    from shapely.geometry import Point
+
+    import pytest
+
+    tri = TriangleGrid(model_ws=str(tmp_path / "pt2"), angle=30)
+    tri.set_domain_rectangle(x_dist=1000, y_dist=1000, origin=(0, 0))
+    with pytest.raises(ValueError, match="no area"):
+        tri.add_polygon(Point(200, 200))
+
+
+def test_region_touching_domain_boundary_builds(tmp_path):
+    # F2: a refinement region whose boundary coincides with the domain boundary
+    # used to abort Triangle ("topological inconsistency"). It is auto-clipped to
+    # the domain interior and now builds.
+    tri = TriangleGrid(model_ws=str(tmp_path / "edge"), angle=30)
+    tri.set_domain_rectangle(x_dist=1000, y_dist=1000, origin=(0, 0), max_area=40000)
+    # Region shares the domain's left, top, and bottom edges.
+    tri.add_region_polygon(
+        Polygon([(0, 0), (300, 0), (300, 1000), (0, 1000)]),
+        max_area=2000,
+        label="edge_region",
+    )
+    tri.build(verbose=False)
+    assert VoronoiGridPlus(tri, crs="EPSG:2927").ncpl > 0
