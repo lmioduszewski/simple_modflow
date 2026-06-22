@@ -1128,6 +1128,27 @@ def test_pest_forward_run_applies_k_and_drn_parameters_end_to_end():
     assert pytest.approx(float(drn_data[0]["cond"])) == 10.0
 
 
+def test_flatten_array_file_handles_mf6_wrapped_ragged_arrays(tmp_path):
+    from myflopy.modflow.mf6.pest.native_parameters import _flatten_array_file
+
+    # MF6 wraps arrays at a fixed width (e.g. 20 values/line), leaving a short
+    # final line. numpy.loadtxt (used by pyEMU) rejects that ragged layout.
+    values = np.arange(24, dtype=float)
+    path = tmp_path / "npf_k.txt"
+    path.write_text(
+        " ".join(str(v) for v in values[:20]) + "\n"
+        + " ".join(str(v) for v in values[20:]) + "\n"
+    )
+    with pytest.raises(ValueError):
+        np.loadtxt(path)
+
+    _flatten_array_file(path)
+
+    loaded = np.loadtxt(path)
+    assert loaded.shape == (24,)
+    assert np.allclose(np.sort(loaded), values)
+
+
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")

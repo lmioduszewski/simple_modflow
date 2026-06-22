@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 # --- recipe registry -------------------------------------------------------
 #
@@ -158,6 +160,20 @@ class NativeParameterSpec:
         return "none" if self.additive else self.transform
 
 
+def _flatten_array_file(path: Path) -> None:
+    """Rewrite an MF6 external array file as one value per line.
+
+    MF6 wraps large arrays at a fixed number of values per line, leaving a
+    short final line. pyEMU reads array files with ``numpy.loadtxt``, which
+    rejects that ragged layout (and which also emits a ``%F`` format warning).
+    Rewriting the values in a single column (free format, scientific notation)
+    is read identically by MF6 and cleanly by pyEMU, regardless of cell count.
+    """
+
+    values = np.array(Path(path).read_text().split(), dtype=float)
+    np.savetxt(path, values.reshape(-1, 1), fmt="%.10E")
+
+
 def _resolve_files(template_workspace: Path, model_name: str, recipe: _Recipe) -> list[str]:
     """Return external input filenames (relative to the template) for a recipe."""
 
@@ -185,6 +201,11 @@ def add_native_parameter(project, spec: NativeParameterSpec):
 
     recipe = spec.recipe
     files = _resolve_files(project.template_workspace, project.model.name, recipe)
+
+    if recipe.family == "array":
+        # Normalize MF6's wrapped array layout so pyEMU can read any cell count.
+        for filename in files:
+            _flatten_array_file(Path(project.template_workspace) / filename)
 
     if recipe.family == "array" and spec.style in _SPATIAL_STYLES:
         raise NotImplementedError(
