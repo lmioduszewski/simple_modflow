@@ -67,6 +67,7 @@ from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     InitialConditions,
     KFlow,
     OutputControl,
+    Recharge,
     Storage,
 )
 from myflopy.modflow.mf6.drn import DRNFromVector  # noqa: E402
@@ -1125,6 +1126,107 @@ def test_pest_forward_run_applies_k_and_drn_parameters_end_to_end():
     assert len(drn_data) == 1
     assert pytest.approx(float(drn_data[0]["elev"])) == 9.25
     assert pytest.approx(float(drn_data[0]["cond"])) == 10.0
+
+
+def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+    from pyemu.pst.pst_utils import write_to_template
+
+    workspace = _project_temp_dir("native_pstfrom")
+    model, vor = _build_two_cell_pest_forward_model("native_pstfrom", workspace / "model")
+    Recharge(model=model, vor=vor, rch_dict={0: [[(0, 0), 0.001], [(0, 1), 0.001]]})
+    success, _ = model.run_simulation()
+    assert success is True
+
+    obs_path = _write_gpkg(
+        workspace / "native_obs.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["OBS_A", "OBS_B"], "layer": [0, 0], "weight": [1.0, 1.0]},
+            geometry=[Point(0.5, 0.5), Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    targets = HeadTargets(
+        locations=obs_path,
+        values=pd.DataFrame({"per": [0], "OBS_A": [10.0], "OBS_B": [8.75]}),
+        time_column="per",
+    )
+    fore_path = _write_gpkg(
+        workspace / "native_fore.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["PRED"], "layer": [0], "weight": [1.0]},
+            geometry=[Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    forecast = HeadTargets(
+        locations=fore_path,
+        values=pd.DataFrame({"per": [0], "PRED": [9.0]}),
+        time_column="per",
+    )
+
+    cal = PestProject(
+        model=model,
+        name="native_demo",
+        workspace=workspace / "template",
+        start_datetime="2024-01-01",
+    )
+    cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
+    cal.parameterize("recharge", style="constant", bounds=(0.5, 1.5), physical=(0.0, 0.01))
+    cal.observe(targets)
+    cal.forecast(forecast)
+
+    settings_before = cal.settings()
+    assert settings_before.built is False
+    assert len(settings_before.parameters) == 2
+
+    pst = cal.build("native_demo.pst", noptmax=0)
+
+    template = workspace / "template"
+    forward_run_text = (template / "forward_run.py").read_text(encoding="utf-8")
+    # The whole point of the native path: pyEMU's own apply is kept, not stripped.
+    assert "apply_list_and_array_pars" in forward_run_text
+    call_lines = [
+        line for line in forward_run_text.splitlines()
+        if "_write_head_target_csv(" in line and "def " not in line
+    ]
+    assert any("hds_simulated_heads.csv" in line for line in call_lines)
+    assert any("fore1_simulated_heads.csv" in line for line in call_lines)
+    assert pst.pestpp_options.get("forecasts")
+
+    settings_after = cal.settings()
+    assert settings_after.built is True
+    assert settings_after.npar == 2
+    assert settings_after.nnz_obs == 2
+    assert settings_after.n_forecasts == 1
+
+    # A unit-multiplier forward run must reproduce the baseline model inputs.
+    subprocess.run(
+        [sys.executable, "forward_run.py"],
+        cwd=template, check=True, capture_output=True, text=True,
+    )
+    assert (template / "mult2model_info.csv").exists()
+    k_file = template / f"{model.name}.npf_k.txt"
+    assert np.allclose(np.loadtxt(k_file), [5.0, 5.0])
+    assert (template / "hds_simulated_heads.csv").exists()
+    assert (template / "fore1_simulated_heads.csv").exists()
+
+    # Now prove the multipliers actually scale the model inputs.
+    par = pst.parameter_data
+    par.loc[par.index[par["pargp"] == "k"], "parval1"] = 2.0
+    par.loc[par.index[par["pargp"] == "recharge"], "parval1"] = 0.5
+    for tpl, inp in zip(pst.template_files, pst.input_files):
+        write_to_template(par["parval1"], str(template / tpl), str(template / inp))
+    subprocess.run(
+        [sys.executable, "forward_run.py"],
+        cwd=template, check=True, capture_output=True, text=True,
+    )
+    assert np.allclose(np.loadtxt(k_file), [10.0, 10.0])
+    rch = pd.read_csv(
+        template / f"{model.name}.rch_stress_period_data_1.txt", sep=r"\s+", header=None
+    )
+    assert np.allclose(rch.iloc[:, 2].to_numpy(), [0.0005, 0.0005])
 
 
 def test_pest_run_results_reopen_completed_artifact_and_compare_heads():

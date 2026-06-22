@@ -9,6 +9,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from myflopy.modflow.mf6.observations import HeadTargets
 from myflopy.modflow.mf6.pest.observations import (
     prepare_drn_flow_observations,
     finalize_observations,
@@ -16,8 +17,11 @@ from myflopy.modflow.mf6.pest.observations import (
     prepare_lake_stage_observations,
     prepare_sfr_flow_observations,
     prepare_sfr_stage_observations,
+    _observation_name,
 )
 from myflopy.modflow.mf6.pest.parameters import prepare_parameter_spec, register_parameter_spec
+from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec, add_native_parameter
+from myflopy.modflow.mf6.pest.summary import PestSettings
 from myflopy.modflow.mf6.pest.specs import (
     HeadTargetObservationSpec,
     KPilotPointParameter,
@@ -55,15 +59,50 @@ def _pyemu_warning_class(pyemu_module):
 
 
 class PestProject:
-    """Build a reusable pyEMU/Pest workspace from a ``SimulationBase`` model.
+    """Build a pyEMU/PEST++ calibration workspace from a ``myflopy`` model.
 
-    The first implementation slice supports:
+    ``PestProject`` is the single front door for calibration. The recommended
+    (modern) workflow compiles a few readable declarations straight to native
+    ``pyemu.utils.PstFrom`` and lets pyEMU drive the forward run::
 
-    - head-target observations
-    - lake-stage observations
-    - pilot-point K parameter metadata and forward-run application
-    - drain elevation/conductance parameter metadata and forward-run application
-    - head-target output regeneration during the forward run
+        cal = PestProject(model, "calib", workspace="calib_template",
+                          start_datetime="2020-01-01")
+        cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
+        cal.parameterize("recharge", bounds=(0.5, 1.5))
+        cal.parameterize("ghb.cond", bounds=(0.1, 10))
+        cal.observe(head_targets)          # history-matching targets
+        cal.forecast(prediction_targets)   # predictions of interest (zero weight)
+        print(cal.settings())              # review the resolved configuration
+        pst = cal.build("calib.pst")       # -> native .pst + forward_run.py
+
+    Use :meth:`parameterize`, :meth:`observe`, :meth:`forecast`, :meth:`build`
+    and :meth:`settings` for new work. The legacy spec-object path
+    (:meth:`add_parameter`/:meth:`add_observation`/:meth:`build_pst` with
+    :class:`KPilotPointParameter` etc.) is still supported for Voronoi pilot
+    points and named-series (lake/SFR/DRN) observations until those land on the
+    native path.
+
+    Parameters
+    ----------
+    model
+        A built ``myflopy`` model (``SimulationBase`` or compatible) exposing
+        ``.sim`` (the FloPy simulation), ``.name``, and ``.workspace``.
+    name
+        Project name; used as the default ``.pst`` filename stem.
+    workspace
+        Directory for the generated PEST template workspace. It is created
+        (and cleared) when the control file is built.
+    start_datetime
+        Simulation start date (e.g. ``"2020-01-01"``). Required by pyEMU to
+        place time-varying parameters and observations on the time axis.
+    spatial_reference
+        Optional cell spatial reference; only needed for spatial array
+        parameters (pilot points / grid geostatistics).
+    zero_based
+        Whether index columns in list files are zero-based (default ``False``,
+        matching pyEMU's convention for the indices pyEMU itself writes).
+    longnames
+        Use long PEST parameter/observation names (default ``True``).
     """
 
     def __init__(
@@ -76,7 +115,10 @@ class PestProject:
         zero_based: bool = False,
         longnames: bool = True,
     ):
-        """Create a calibration project around an existing model workspace."""
+        """Create a calibration project around an existing model workspace.
+
+        See the class docstring for the full parameter reference and workflow.
+        """
 
         self.model = model
         self.name = str(name)
@@ -88,6 +130,9 @@ class PestProject:
         self.longnames = bool(longnames)
         self._parameter_specs: list = []
         self._observation_specs: list = []
+        self._forecast_specs: list = []
+        self._native_parameter_specs: list[NativeParameterSpec] = []
+        self._native_parameter_frames: dict[str, object] = {}
         self._prepared_observations: list[dict] = []
         self._prepared_parameters: dict[str, dict] = {}
         self._parameter_frames: dict[str, object] = {}
@@ -108,6 +153,199 @@ class PestProject:
 
         self._observation_specs.append(spec)
         return spec
+
+    # -- modern declarative facade ----------------------------------------
+    #
+    # These methods compile directly to native ``pyemu.utils.PstFrom`` calls
+    # (see native_parameters.py) rather than the hand-rolled template path used
+    # by ``add_parameter``/``build_pst``. Prefer ``parameterize``/``observe``/
+    # ``forecast``/``build`` for new calibrations.
+
+    def parameterize(
+        self,
+        target: str,
+        *,
+        style: str | None = None,
+        bounds: tuple[float, float] = (0.5, 2.0),
+        physical: tuple[float, float] | None = None,
+        transform: str = "log",
+        additive: bool | None = None,
+        zones=None,
+        correlation: float | None = None,
+        temporal: float | None = None,
+        name: str | None = None,
+        **extra,
+    ) -> NativeParameterSpec:
+        """Declare a calibration parameter that compiles to ``pf.add_parameters``.
+
+        Each call expands, at :meth:`build` time, into the correct
+        ``pyemu.utils.PstFrom.add_parameters`` invocation against the external
+        MODFLOW input file(s) for ``target``. Call it once per property you want
+        to adjust; call it multiple times for the same target to stack styles
+        (e.g. a broad ``"constant"`` plus a fine ``"grid"``).
+
+        Parameters
+        ----------
+        target
+            Friendly name of the model property to calibrate. Supported targets
+            (with aliases): ``"k"`` (``"npf.k"``/``"hk"``/``"kh"``),
+            ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
+            ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
+            ``"drn.cond"``/``"drn.elev"`` (``"drn"``), and ``"wel"`` (``"pumping"``).
+        style
+            Spatial parameterization style:
+
+            - ``"constant"`` -- a single multiplier for the whole target;
+            - ``"zone"`` -- one multiplier per ``zones`` value (pass ``zones=``);
+            - ``"grid"`` -- one multiplier per list entry / cell;
+            - ``"pilotpoints"`` -- geostatistical pilot points.
+
+            ``None`` uses the recipe default (``"constant"``). ``"grid"`` and
+            ``"pilotpoints"`` on *array* targets (K, K33) require a cell spatial
+            reference and are not yet available on the native path (Phase 2);
+            they work for list targets (recharge, GHB, DRN, ...) today.
+        bounds
+            ``(lower, upper)`` bounds on the adjustable value. For a multiplier
+            these are factors (e.g. ``(0.2, 5)`` = 5x down to 5x up); for an
+            additive parameter they are offsets in model units.
+        physical
+            ``(ult_lbound, ult_ubound)`` -- hard limits clamped onto the *final*
+            model value after all multipliers are applied. Strongly recommended
+            for multipliers so calibration cannot push K (etc.) to nonphysical
+            values. ``None`` leaves the input unclamped.
+        transform
+            ``"log"`` (default, recommended for strictly positive properties
+            like K and recharge) or ``"none"``. Forced to ``"none"`` for
+            additive parameters.
+        additive
+            Apply the parameter as an additive offset instead of a multiplier.
+            ``None`` uses the recipe default (drain elevation is additive;
+            everything else is multiplicative).
+        zones
+            Zone array for ``style="zone"`` (and to mask inactive cells). Values
+            map one parameter per distinct zone.
+        correlation
+            Variogram range (model length units) for ``grid``/``pilotpoints``
+            spatial correlation. Ignored for ``constant``/``zone``.
+        temporal
+            Temporal correlation range (days) for time-varying list packages.
+            Recorded now; wired in a later phase.
+        name
+            Parameter group / name base. Defaults to a slug of ``target``
+            (e.g. ``"ghbcond"``). Useful when stacking multiple calls.
+        **extra
+            Advanced keyword arguments passed straight through to
+            ``pf.add_parameters`` for cases the facade does not cover.
+
+        Returns
+        -------
+        NativeParameterSpec
+            The recorded specification (also stored on the project). Inspect the
+            full set at any time with :meth:`settings`.
+
+        Examples
+        --------
+        >>> cal.parameterize("k", style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
+        >>> cal.parameterize("recharge", bounds=(0.5, 1.5), physical=(0, 1e-2))
+        >>> cal.parameterize("ghb.cond", bounds=(0.1, 10))
+        >>> cal.parameterize("drn.elev", bounds=(-2, 2))   # additive offsets
+        """
+
+        spec = NativeParameterSpec(
+            target=target,
+            style=style,
+            bounds=bounds,
+            physical=physical,
+            transform=transform,
+            additive=additive,
+            zones=zones,
+            correlation=correlation,
+            temporal=temporal,
+            name=name,
+            extra=extra,
+        )
+        self._native_parameter_specs.append(spec)
+        return spec
+
+    def observe(self, targets, *, prefix: str | None = None):
+        """Register history-matching observations from a ``myflopy`` target set.
+
+        Observations are the measured data calibration tries to reproduce. At
+        :meth:`build` time the targets are registered with pyEMU
+        (``pf.add_observations``), their measured values and weights are written
+        into the control file, and a post-processor is added to the forward run
+        so simulated equivalents are regenerated on every model run.
+
+        Parameters
+        ----------
+        targets
+            A :class:`HeadTargets` object (locations + measured values), or a
+            pre-built observation spec (e.g. :class:`HeadTargetObservationSpec`).
+            Other target types (lake/SFR/DRN) are currently supported only via
+            :meth:`add_parameter`-style specs on the legacy :meth:`build_pst`.
+        prefix
+            Observation-name prefix (default ``"hds"``). Use distinct prefixes
+            when registering more than one head-target set.
+
+        Returns
+        -------
+        The registered observation spec.
+        """
+
+        spec = self._coerce_observation_spec(targets, prefix=prefix, default_prefix="hds")
+        self._observation_specs.append(spec)
+        return spec
+
+    def forecast(self, targets, *, prefix: str | None = None):
+        """Register a prediction of interest as a zero-weight forecast.
+
+        Forecasts use the *same* target objects as :meth:`observe`, but they are
+        never history-matched: at :meth:`build` time their weight is set to zero
+        and their observation names are recorded in
+        ``pst.pestpp_options["forecasts"]``. The downstream uncertainty tools
+        (IES ensembles, FOSM) report posterior uncertainty for exactly these
+        quantities, so declare here whatever model output you ultimately care
+        about predicting (a future head, a stream flux, a seepage rate).
+
+        Parameters
+        ----------
+        targets
+            A :class:`HeadTargets` (or observation spec) describing *where* and
+            *when* the prediction is taken. Any values supplied are placeholders
+            (e.g. an expected value); the weight is forced to zero regardless.
+        prefix
+            Observation-name prefix. Defaults to ``"fore1"``, ``"fore2"``, ...
+            so forecast names never collide with calibration observations.
+
+        Returns
+        -------
+        The registered forecast spec.
+        """
+
+        default = prefix or f"fore{len(self._forecast_specs) + 1}"
+        spec = self._coerce_observation_spec(targets, prefix=default, default_prefix=default)
+        self._forecast_specs.append(spec)
+        return spec
+
+    def _coerce_observation_spec(self, targets, *, prefix, default_prefix):
+        """Turn a target object (or spec) into a registered observation spec."""
+
+        observation_spec_types = (
+            HeadTargetObservationSpec,
+            LakeStageObservationSpec,
+            SfrStageObservationSpec,
+            SfrFlowObservationSpec,
+            DrnFlowObservationSpec,
+        )
+        if isinstance(targets, observation_spec_types):
+            return targets
+        if isinstance(targets, HeadTargets):
+            return HeadTargetObservationSpec(targets=targets, prefix=prefix or default_prefix)
+        raise TypeError(
+            "observe()/forecast() accept a HeadTargets object or a pre-built "
+            f"observation spec; got {type(targets).__name__}. Other target types "
+            "are supported through add_observation() with the legacy build."
+        )
 
     def _ensure_original_workspace(self):
         """Ensure MF6 input files exist before creating the PEST template."""
@@ -158,23 +396,31 @@ class PestProject:
             with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
                 yield
 
+    def _prepare_one_observation_spec(self, spec):
+        """Create simulated files and register one observation spec with pyEMU."""
+
+        if isinstance(spec, HeadTargetObservationSpec):
+            return prepare_head_target_observations(self, spec)
+        if isinstance(spec, LakeStageObservationSpec):
+            return prepare_lake_stage_observations(self, spec)
+        if isinstance(spec, SfrStageObservationSpec):
+            return prepare_sfr_stage_observations(self, spec)
+        if isinstance(spec, SfrFlowObservationSpec):
+            return prepare_sfr_flow_observations(self, spec)
+        if isinstance(spec, DrnFlowObservationSpec):
+            return prepare_drn_flow_observations(self, spec)
+        raise TypeError(f"Unsupported observation spec type: {type(spec).__name__}")
+
     def _prepare_observation_specs(self):
         """Create simulated observation files and register them with pyEMU."""
 
         prepared: list[dict] = []
         for spec in self._observation_specs:
-            if isinstance(spec, HeadTargetObservationSpec):
-                prepared.append(prepare_head_target_observations(self, spec))
-            elif isinstance(spec, LakeStageObservationSpec):
-                prepared.append(prepare_lake_stage_observations(self, spec))
-            elif isinstance(spec, SfrStageObservationSpec):
-                prepared.append(prepare_sfr_stage_observations(self, spec))
-            elif isinstance(spec, SfrFlowObservationSpec):
-                prepared.append(prepare_sfr_flow_observations(self, spec))
-            elif isinstance(spec, DrnFlowObservationSpec):
-                prepared.append(prepare_drn_flow_observations(self, spec))
-            else:
-                raise TypeError(f"Unsupported observation spec type: {type(spec).__name__}")
+            prepared.append(self._prepare_one_observation_spec(spec))
+        for spec in self._forecast_specs:
+            item = self._prepare_one_observation_spec(spec)
+            item["is_forecast"] = True
+            prepared.append(item)
         self._prepared_observations = prepared
 
     def _prepare_parameter_specs(self):
@@ -351,5 +597,223 @@ class PestProject:
         """Draw a prior parameter ensemble using the underlying ``PstFrom``."""
 
         if self.pf is None:
-            raise ValueError("Call build_pst() before draw_prior().")
+            raise ValueError("Call build_pst() or build() before draw_prior().")
         return self.pf.draw(num_reals=num_reals, use_specsim=use_specsim)
+
+    # -- native build path ------------------------------------------------
+
+    def _ensure_external_model(self):
+        """Write MF6 inputs as external array/list files for native PstFrom."""
+
+        self.original_workspace.mkdir(parents=True, exist_ok=True)
+        self.model.sim.set_all_data_external()
+        self.model.sim.write_simulation(silent=True)
+
+    def _resolve_exe(self) -> str:
+        """Return a forward-run-usable MF6 command (absolute path when found)."""
+
+        exe = getattr(self.model.sim, "exe_name", "mf6") or "mf6"
+        exe_path = Path(exe)
+        if not exe_path.is_absolute():
+            candidate = (Path(self.model.workspace) / exe).resolve()
+            if candidate.exists():
+                return str(candidate)
+        if exe_path.exists():
+            return str(exe_path.resolve())
+        return exe
+
+    def _geostruct_for(self, spec: NativeParameterSpec):
+        """Build a pyEMU geostruct from a parameter spec's correlation range."""
+
+        pyemu = self.pyemu or _import_pyemu()
+        vario = pyemu.geostats.ExpVario(contribution=1.0, a=float(spec.correlation))
+        return pyemu.geostats.GeoStruct(variograms=[vario], transform=spec.resolved_transform)
+
+    def _attach_native_observation_postprocessors(self):
+        """Add post-model functions that regenerate simulated observation CSVs."""
+
+        helper_path = Path(__file__).with_name("forward_run.py")
+        for item in self._prepared_observations:
+            config = item.get("forward_run_config")
+            if config is None:
+                raise NotImplementedError(
+                    f"The native build() currently wires head-target observations "
+                    f"only; observation set {item.get('prefix')!r} is not yet "
+                    "supported. Use the legacy build_pst() for it, or wait for the "
+                    "named-series observation phase."
+                )
+            self.pf.add_py_function(
+                str(helper_path),
+                "_write_head_target_csv("
+                f"model_name='{self.model.name}', "
+                f"mapping_csv='{config['mapping_csv']}', "
+                f"output_csv='{config['output_csv']}')",
+                is_pre_cmd=False,
+            )
+
+    def _forecast_observation_names(self) -> list[str]:
+        """Return the pyEMU observation names registered as forecasts."""
+
+        names: list[str] = []
+        for item in self._prepared_observations:
+            if not item.get("is_forecast"):
+                continue
+            target_frame = item.get("target_frame")
+            if target_frame is None:
+                continue
+            for row in target_frame.itertuples(index=False):
+                names.append(_observation_name(item["prefix"], row.col_label, row.row_label))
+        return names
+
+    def _apply_forecasts(self):
+        """Zero forecast weights and register them as PEST++ forecasts."""
+
+        names = [name for name in self._forecast_observation_names() if name in self.pst.observation_data.index]
+        if not names:
+            return
+        self.pst.observation_data.loc[names, "weight"] = 0.0
+        self.pst.pestpp_options["forecasts"] = ",".join(names)
+
+    def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
+        """Compile the declarations into a runnable PEST(++) control file.
+
+        This is the modern build path. In order it: writes the model inputs as
+        external array/list files (``set_all_data_external``); creates a
+        ``pyemu.utils.PstFrom`` over the model workspace; registers every
+        :meth:`parameterize` call natively (``pf.add_parameters``) and every
+        :meth:`observe`/:meth:`forecast` set; adds the MF6 run command and the
+        observation post-processors to ``forward_run.py``; and builds the
+        ``.pst``. Crucially, it keeps pyEMU's own ``apply_list_and_array_pars``
+        in the forward run (the legacy path deleted it), so the multiplier
+        machinery is handled by pyEMU rather than hand-rolled code.
+
+        After this call the workspace contains a self-contained PEST setup:
+        the ``.pst``, ``forward_run.py``, template/instruction files, and the
+        ``mult/`` multiplier files. Run it with PEST++ (e.g. ``pestpp-ies`` /
+        ``pestpp-glm``) or, in a later phase, via ``cal.run_ies()``.
+
+        Parameters
+        ----------
+        filename
+            Output ``.pst`` filename (default ``"<name>.pst"``). Written into
+            the template workspace.
+        noptmax
+            Initial ``NOPTMAX`` written to the control file. ``0`` (default)
+            means "run the model once and compute residuals" -- the standard
+            way to sanity-check a fresh setup before launching a real run.
+
+        Returns
+        -------
+        pyemu.Pst
+            The built control object (also available as ``cal.pst``). The
+            underlying ``PstFrom`` is ``cal.pf`` for advanced edits.
+        """
+
+        target_name = Path(filename).name if filename else f"{self.name}.pst"
+        self._ensure_external_model()
+        self._build_pstfrom()
+        self._prepare_observation_specs()
+        with self._quiet_pyemu_context():
+            for spec in self._native_parameter_specs:
+                add_native_parameter(self, spec)
+        self.pf.mod_sys_cmds.append(self._resolve_exe())
+        self._attach_native_observation_postprocessors()
+        self._write_project_metadata(filename=target_name)
+        with self._quiet_pyemu_context():
+            self.pst = self.pf.build_pst(filename=target_name)
+        finalize_observations(self, self._prepared_observations)
+        self._apply_forecasts()
+        self.pst.control_data.noptmax = int(noptmax)
+        with self._quiet_pyemu_context():
+            self.pst.write(self.template_workspace / target_name, version=2)
+        return self.pst
+
+    def settings(self) -> PestSettings:
+        """Return a printable snapshot of the resolved calibration configuration.
+
+        The facade hides pyEMU boilerplate but never hides *state*: this lets
+        you review exactly what was declared (every parameter with its style,
+        bounds, physical limits, and transform; every observation and forecast)
+        and -- once :meth:`build` has run -- the resulting control-file counts
+        (number of parameters and groups, observations, nonzero-weight
+        observations, forecasts, and ``NOPTMAX``).
+
+        Returns
+        -------
+        PestSettings
+            A dataclass with a readable ``str``/``repr`` (``print(cal.settings())``)
+            plus ``.parameter_frame()`` / ``.observation_frame()`` accessors for
+            the declared parameters and observations as ``pandas`` tables.
+
+        Examples
+        --------
+        >>> print(cal.settings())          # before build: declared config
+        >>> pst = cal.build("calib.pst")
+        >>> print(cal.settings())          # after build: + control-file counts
+        """
+
+        parameters = [
+            {
+                "target": spec.recipe.canonical,
+                "style": spec.style,
+                "bounds": tuple(spec.bounds),
+                "physical": tuple(spec.physical) if spec.physical is not None else None,
+                "transform": spec.resolved_transform,
+                "additive": bool(spec.additive),
+                "name": spec.name,
+            }
+            for spec in self._native_parameter_specs
+        ]
+
+        def _obs_rows(specs, prepared_filter):
+            rows = []
+            prepared = {
+                item.get("prefix"): item
+                for item in self._prepared_observations
+                if bool(item.get("is_forecast")) == prepared_filter
+            }
+            for spec in specs:
+                prefix = getattr(spec, "prefix", "?")
+                item = prepared.get(prefix)
+                target_frame = item.get("target_frame") if item else None
+                rows.append(
+                    {
+                        "prefix": prefix,
+                        "kind": type(spec).__name__.replace("ObservationSpec", "").lower(),
+                        "n": int(len(target_frame)) if target_frame is not None else None,
+                    }
+                )
+            return rows
+
+        observations = _obs_rows(self._observation_specs, prepared_filter=False)
+        forecasts = _obs_rows(self._forecast_specs, prepared_filter=True)
+
+        built = self.pst is not None
+        npar = npar_groups = nobs = nnz_obs = n_forecasts = noptmax = None
+        if built:
+            par_data = self.pst.parameter_data
+            npar = int(self.pst.npar)
+            npar_groups = int(par_data["pargp"].nunique())
+            nobs = int(self.pst.nobs)
+            nnz_obs = int(self.pst.nnz_obs)
+            forecast_option = self.pst.pestpp_options.get("forecasts", "")
+            n_forecasts = len([name for name in forecast_option.split(",") if name]) if forecast_option else 0
+            noptmax = int(self.pst.control_data.noptmax)
+
+        return PestSettings(
+            name=self.name,
+            model_name=self.model.name,
+            original_workspace=str(self.original_workspace),
+            template_workspace=str(self.template_workspace),
+            start_datetime=str(self.start_datetime),
+            parameters=parameters,
+            observations=observations,
+            forecasts=forecasts,
+            built=built,
+            npar=npar,
+            npar_groups=npar_groups,
+            nobs=nobs,
+            nnz_obs=nnz_obs,
+            n_forecasts=n_forecasts,
+            noptmax=noptmax,
+        )

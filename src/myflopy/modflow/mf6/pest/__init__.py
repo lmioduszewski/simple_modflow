@@ -1,7 +1,9 @@
 """Public exports for the first ``myflopy`` PEST slice."""
 
+from .native_parameters import NativeParameterSpec
 from .project import PestProject
 from .results import PestRunResults, PestRunReview, open_pest_run
+from .summary import PestSettings
 from .specs import (
     DrainConductanceParameter,
     DrainElevationParameter,
@@ -23,9 +25,11 @@ __all__ = [
     "HeadTargetObservationSpec",
     "KPilotPointParameter",
     "LakeStageObservationSpec",
+    "NativeParameterSpec",
     "PestProject",
     "PestRunResults",
     "PestRunReview",
+    "PestSettings",
     "SfrFlowObservationSpec",
     "SfrStageObservationSpec",
     "VectorParameterSource",
