@@ -170,6 +170,7 @@ _EXPORTS = {
     "canonical_sfr_signals": ("myflopy.modflow.mf6.canonical", "canonical_sfr_signals"),
     "canonical_partition_mask": ("myflopy.modflow.mf6.canonical", "canonical_partition_mask"),
     "plot_model_cross_section": ("myflopy.modflow.mf6.cross_section_plotting", "plot_model_cross_section"),
+    "plot_layered_cross_section": ("myflopy.modflow.mf6.cross_section_plotting", "plot_layered_cross_section"),
     "plot_model_head_map": ("myflopy.modflow.mf6.interactive_plotting", "plot_model_head_map"),
     "plot_particle_pathlines": ("myflopy.modflow.mf6.interactive_plotting", "plot_particle_pathlines"),
     "export_matplotlib_slider_html": (

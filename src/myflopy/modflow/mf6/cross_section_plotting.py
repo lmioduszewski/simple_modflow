@@ -74,13 +74,12 @@ def _normalize_line(line) -> dict:
     raise TypeError(f"Unsupported line specification: {type(line)}")
 
 
-def _resolve_layer_array(model) -> np.ndarray:
-    grid = model.gwf.modelgrid
+def _resolve_layer_array(grid) -> np.ndarray:
     nlay = grid.nlay
     if hasattr(grid, "ncpl"):
         ncpl = grid.ncpl
         return np.arange(nlay)[:, None] * np.ones((1, ncpl), dtype=int)
-    raise ValueError("plot_model_cross_section currently expects a grid with an 'ncpl' attribute.")
+    raise ValueError("layered cross sections currently expect a grid with an 'ncpl' attribute.")
 
 
 def _resolve_head_data(
@@ -155,59 +154,53 @@ def _build_legend_handles(
     return handles
 
 
-def plot_model_cross_section(
-    model: "SimulationBase",
+def plot_layered_cross_section(
+    modelgrid,
     line,
     *,
-    kstpkper: tuple | None = None,
-    head_data=None,
-    head_layer: int = 0,
     ax: "Axes" | None = None,
     style: ModelCrossSectionStyle | None = None,
+    layer_colors: Sequence[str] | None = None,
+    layer_labels: Sequence[str] | None = None,
+    head_surface=None,
+    flopy_model=None,
     ylim: tuple[float, float] | None = None,
     xlim: tuple[float, float] | None = None,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
-    layer_colors: Sequence[str] | None = None,
-    layer_labels: Sequence[str] | None = None,
     show_grid: bool = True,
     show_layers: bool = True,
     show_head: bool = True,
     show_legend: bool = True,
 ):
-    """
-    Build a report-oriented matplotlib cross section for a MODFLOW model.
+    """Render a layer-colored cross section from any flopy modelgrid + line.
+
+    This is the grid-level rendering core shared by
+    :func:`plot_model_cross_section` (model-aware) and
+    ``myflopy.layers.LayerBuildResult.cross_section`` (pre-model, off raw
+    ``top``/``botm``/``idomain`` arrays). It colors cells by layer index, draws
+    the grid, an optional head/water surface line, and a layer legend.
 
     Parameters
     ----------
-    model
-        Parent simulation/model wrapper containing ``gwf``.
+    modelgrid
+        Any flopy modelgrid exposing ``nlay`` and ``ncpl`` (e.g. a ``VertexGrid``).
     line
-        Cross-section line specification accepted by ``flopy.plot.PlotCrossSection``.
-        This may be a dict, a shapely ``LineString``, or a sequence of ``(x, y)``
-        pairs.
-    kstpkper
-        Stress-period / time-step tuple used to read heads from the model output
-        when ``head_data`` is not provided.
-    head_data
-        Optional explicit head array. When provided it takes precedence over
-        ``kstpkper``.
-    head_layer
-        Zero-based layer index used when selecting the head surface from a
-        multi-layer head array.
-    ax
-        Existing matplotlib axes to draw into. When omitted a new figure is
-        created.
-    style
-        Optional style preset for report plotting.
+        Section line accepted by ``flopy.plot.PlotCrossSection`` -- a dict, a
+        shapely ``LineString``, or a sequence of ``(x, y)`` pairs.
+    head_surface
+        Optional 1-D array drawn as a line over the section (e.g. simulated heads).
+    flopy_model
+        Optional flopy model passed through to ``PlotCrossSection`` (only needed
+        for model-aware head rendering).
+
+    Returns ``(fig, ax)``.
     """
     style = ModelCrossSectionStyle() if style is None else style
     line_spec = _normalize_line(line)
-    head_array = _resolve_head_data(model, kstpkper=kstpkper, head_data=head_data)
-    head_surface = _resolve_head_surface(head_array, head_layer=head_layer)
-    layer_id = _resolve_layer_array(model)
-    nlay = model.gwf.modelgrid.nlay
+    nlay = modelgrid.nlay
+    layer_id = _resolve_layer_array(modelgrid)
     resolved_layer_colors = _resolve_layer_colors(nlay, layer_colors, style)
     resolved_layer_labels = _resolve_layer_labels(nlay, layer_labels)
 
@@ -217,11 +210,7 @@ def plot_model_cross_section(
         else:
             fig = ax.figure
 
-        xsect = PlotCrossSection(
-            model=model.gwf,
-            modelgrid=model.gwf.modelgrid,
-            line=line_spec,
-        )
+        xsect = PlotCrossSection(model=flopy_model, modelgrid=modelgrid, line=line_spec)
 
         if show_grid:
             xsect.plot_grid(ax=ax, linewidths=style.grid_linewidth, color=style.grid_color)
@@ -273,3 +262,76 @@ def plot_model_cross_section(
             )
 
     return fig, ax
+
+
+def plot_model_cross_section(
+    model: "SimulationBase",
+    line,
+    *,
+    kstpkper: tuple | None = None,
+    head_data=None,
+    head_layer: int = 0,
+    ax: "Axes" | None = None,
+    style: ModelCrossSectionStyle | None = None,
+    ylim: tuple[float, float] | None = None,
+    xlim: tuple[float, float] | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    layer_colors: Sequence[str] | None = None,
+    layer_labels: Sequence[str] | None = None,
+    show_grid: bool = True,
+    show_layers: bool = True,
+    show_head: bool = True,
+    show_legend: bool = True,
+):
+    """
+    Build a report-oriented matplotlib cross section for a MODFLOW model.
+
+    Resolves heads from the model and delegates the rendering to
+    :func:`plot_layered_cross_section`.
+
+    Parameters
+    ----------
+    model
+        Parent simulation/model wrapper containing ``gwf``.
+    line
+        Cross-section line specification accepted by ``flopy.plot.PlotCrossSection``.
+        This may be a dict, a shapely ``LineString``, or a sequence of ``(x, y)``
+        pairs.
+    kstpkper
+        Stress-period / time-step tuple used to read heads from the model output
+        when ``head_data`` is not provided.
+    head_data
+        Optional explicit head array. When provided it takes precedence over
+        ``kstpkper``.
+    head_layer
+        Zero-based layer index used when selecting the head surface from a
+        multi-layer head array.
+    ax
+        Existing matplotlib axes to draw into. When omitted a new figure is
+        created.
+    style
+        Optional style preset for report plotting.
+    """
+    head_array = _resolve_head_data(model, kstpkper=kstpkper, head_data=head_data)
+    head_surface = _resolve_head_surface(head_array, head_layer=head_layer)
+    return plot_layered_cross_section(
+        model.gwf.modelgrid,
+        line,
+        ax=ax,
+        style=style,
+        layer_colors=layer_colors,
+        layer_labels=layer_labels,
+        head_surface=head_surface,
+        flopy_model=model.gwf,
+        ylim=ylim,
+        xlim=xlim,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        show_grid=show_grid,
+        show_layers=show_layers,
+        show_head=show_head,
+        show_legend=show_legend,
+    )

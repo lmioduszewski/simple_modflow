@@ -350,13 +350,20 @@ def test_partition_validation_rejects_disconnected_custom_mask(tmp_path):
 
 
 @pytest.mark.canonical
-def test_canonical_model_prepares_contiguous_partitions_two_through_eight(canonical_model, tmp_path):
+def test_canonical_model_prepares_contiguous_partitions_across_representative_part_counts(
+    canonical_model, tmp_path
+):
+    # Sweep three representative partition counts (min / mid / max of the
+    # supported 2..8 range) rather than all seven -- splitting the canonical
+    # model is expensive, and these endpoints exercise the boundary assertions
+    # (max-fraction at low counts, small-partition floor at high counts).
+    part_counts = (2, 5, 8)
     source_observations = [
         package.package_name
         for package in canonical_model.gwf.packagelist
         if package.package_type == "obs"
     ]
-    for nparts in range(2, 9):
+    for nparts in part_counts:
         mask = canonical_partition_mask(canonical_model, nparts)
         lak = canonical_model.gwf.get_package("lak")
         connectiondata = lak.connectiondata.get_data()

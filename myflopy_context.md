@@ -1,266 +1,119 @@
-# myflopy — Project Context & Roadmap
+# myflopy — Capability Map (code-derived)
 
-Generated from a Claude Code web session (June 2026). Open this file in any session to restore context quickly.
-
----
-
-## What myflopy is
-
-A Python-first MODFLOW 6 toolkit built on top of FloPy, living on the `myflopy` branch of `lmioduszewski/simple_modflow`. It is **not** a thin wrapper — it is a full model-authoring, visualization, and calibration toolkit aimed at unstructured-grid groundwater models.
-
-### Core architecture (src/myflopy/)
-
-| File / Dir | What it does |
-|---|---|
-| `specs.py` (61 KB) | Composable `SimulationSpec`, `ModelSpec`, `PackageSpec`, `GridSpec` dataclasses — build a model by assembling specs |
-| `package_api.py` (35 KB) | Top-level factory functions: `gwf()`, `gwt()`, `gwe()`, `prt()`, `lak()`, `sfr()`, `rch()`, `uzf()`, `mvr()`, `wel()`, etc. |
-| `workspace.py` | `Project`, `ProjectLayout`, `ModelView`, `Run`, `load_run` — project/run management |
-| `builders.py` | `build_gwf_gwt_exchange`, `build_gwf_gwe_exchange`, `build_gwf_prt_exchange`, `build_gwf_gwf_exchange`, `build_ims` |
-| `advanced.py` | Higher-level spec factories: `lak_spec`, `sfr_spec`, `rch_spec`, etc. |
-| `sources.py` | `RasterSource`, `ShapeSource`, `TableSource`, `GeoPackageSourceSpec`, `LiteralSource` |
-| `geopackage.py` | `GeoPackageSource`, `CellSurfaceOffset` |
-| `grid_spec_resolver.py` | Resolves `GridSpec` into FloPy DISV grid props |
-| `modflow/mf6/grid/` | `VoronoiGridPlus`, `TriangleGrid`, `MeshBuildProfile` |
-| `modflow/mf6/pest/` | Full PEST/pyemu calibration layer (see below) |
-| `modflow/mf6/interactive_plotting.py` | HTML slider exports, `ModelVisualization`, `ParticleTrackingScene` |
-| `modflow/mf6/parallel.py` | `ParallelModelWorkflow`, `ParallelEnvironment`, `ParallelSplitRun` |
-| `modflow/mf6/canonical.py` | `CanonicalModelContract`, standardized output signals |
-| `modflow/mf6/observations.py` | `HeadTargets`, `DrnFlowTargets`, `LakeStageTargets`, `SfrFlowTargets`, `SfrStageTargets` |
-
-### Model types supported
-- **GWF** — groundwater flow
-- **GWT** — solute transport + GWF-GWT exchange
-- **GWE** — energy transport + GWF-GWE exchange
-- **PRT** — native MODFLOW 6 particle tracking + GWF-PRT exchange
+> **Read this first.** This file was rebuilt on **2026-06-20** by scanning the actual
+> `src/myflopy/` tree, not from memory or a prior plan. The previous version of this
+> file listed features as "missing" that were already implemented, which caused real
+> duplicated work (a standalone `LayerStack` that duplicated `LayerSurfaces`).
+>
+> **Discipline to avoid that again:** before building anything, `grep` the codebase for
+> the capability **in both API layers** (see below). Treat every "gap" in this file as a
+> hypothesis to re-verify against the code, not a fact. When in doubt, read the module.
 
 ---
 
-## PEST / pyemu module — what's built
+## Two API generations (the core duplication trap)
 
-All code lives in `src/myflopy/modflow/mf6/pest/`.
+A capability often exists in one or both of these. Always check both before adding code.
 
-### `PestProject` (project.py)
-The main orchestrator. Wraps `pyemu.utils.PstFrom`.
-
-```python
-pest = PestProject(model, name="cal", workspace=Path("pest_ws"), start_datetime="2020-01-01")
-pest.add_parameter(KPilotPointParameter(...))
-pest.add_observation(HeadTargetObservationSpec(...))
-pst = pest.build_pst("cal.pst")
-```
-
-Full pipeline: writes MF6 input → builds PstFrom workspace → prepares observation CSVs → prepares parameter template files → writes `pest_forward_config.json` → builds `.pst` → registers templates → finalizes observation values/weights.
-
-Also: `pest.draw_prior(num_reals=1000)` for prior ensemble sampling.
-
-### Parameters implemented
-
-| Class | What it adjusts | Style |
+| Layer | Where | Style |
 |---|---|---|
-| `KPilotPointParameter` | Hydraulic conductivity on Voronoi cells | Pilot points, IDW interpolation, zone-aware via polygon GIS source |
-| `DrainElevationParameter` | DRN package cell elevations | By feature or grouped, absolute or additive |
-| `DrainConductanceParameter` | DRN package conductance | By feature or grouped, multiplier or absolute |
+| **Modern declarative spec API** (preferred) | `src/myflopy/*.py` — `package_api.py`, `specs.py`, `sources.py`, `geopackage.py`, `surfaces.py`, `advanced.py`, `builders.py`, `workspace.py`, `grid_spec_resolver.py` | `mf.gwf(...)`, `mf.disv(...)`, `mf.ghb.gpkg(...)`, dataclass specs, `to_dict`/`from_dict` |
+| **Legacy OO API** | `src/myflopy/modflow/mf6/*.py` — `simplemodel.py`, `simulation/`, `boundaries.py`, `drn.py`/`ghb.py`/`chd.py`, `recharge.py`, `lakes.py`, `sfr.py`, `mvr.py`, `uzf.py`, `ModelSurface` | `SimulationBase`, `Boundaries`, builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …) |
 
-Supports:
-- Bounds modes: `absolute`, `multiplier`, `from_columns`, `multiplier_from_columns`
-- Parameter space: `absolute` or `multiplier`
-- PEST template file (`.tpl`) + CSV generation
-- `ExpGeoStruct` / `build_geostruct` for pilot point kriging
-
-### Observations implemented
-
-| Class | Targets |
-|---|---|
-| `HeadTargetObservationSpec` | Water level at monitoring wells |
-| `LakeStageObservationSpec` | LAK package stage |
-| `SfrStageObservationSpec` | SFR package stream stage |
-| `SfrFlowObservationSpec` | SFR package streamflow |
-| `DrnFlowObservationSpec` | DRN zone seepage totals |
-
-Each writes: simulated output CSV, `.ins` instruction file, target values CSV, location GeoPackage.
-
-### Forward run (forward_run.py)
-Injected script that PEST calls each iteration:
-- Reads `pest_forward_config.json`
-- IDW-interpolates pilot point K values to Voronoi cell centroids
-- Applies drain elevation/conductance updates from parameter CSVs
-- Reruns MF6
-- Regenerates head and named-series (lake, SFR, DRN) output CSVs
-
-### Results (results.py)
-`PestRunResults`, `PestRunReview`, `open_pest_run` — post-run analysis and review.
-
-### Demo files
-- `gold_standard_demo.py` — full workflow with a real model
-- `synthetic_demo.py` — synthetic test case
+The authoritative public surface is `src/myflopy/__init__.py` (`_EXPORTS`).
 
 ---
 
-## PEST — what's missing / roadmap
+## Capability map
 
-| Item | Notes |
-|---|---|
-| `RechargeMultiplierParameter` | Recharge is a primary calibration target — not yet parameterized. Highest priority. |
-| `KPilotPointParameter` from raster | Currently polygon-zone only. Need raster zone support (intersect cell centroids with a lithology raster). |
-| `WelSpec` / well rate parameters | No adjustable pumping rates yet |
-| UZF / GHB / CHD parameters | Not covered |
-| Regularization helpers | No Tikhonov or preferred-value regularization setup |
-| Ensemble methods | `draw_prior` exists; no IES/GLM ensemble smoother wrappers |
-| Sensitivity / identifiability analysis | Not started |
-| Parallel PEST++ workers | Not wired up |
+Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 
----
-
-## myflopy vs modflow-setup (DOI-USGS)
-
-### What myflopy does that modflow-setup cannot
-
-- Voronoi/unstructured DISV grids with programmatic refinement zones
-- Solute transport (GWT), energy (GWE), particle tracking (PRT) models
-- Native MODFLOW 6 PRT with interactive 3D visualization
-- Parallel model workflows (`ParallelModelWorkflow`)
-- Interactive HTML outputs — head map sliders, cross-sections, particle tracking
-- PEST calibration on Voronoi grids (unique — modflow-setup PEST is structured-grid only)
-- Declarative Python spec system
-- Workspace/project/run management
-- Canonical model contract / standardized output signals
-- Surface water validation (`validate_surface_water_configuration`)
-
-### What modflow-setup does that myflopy cannot (yet)
-
-- Single YAML config file drives the entire model — no Python required
-- Automatic CRS reprojection + resampling of all source data to the model grid
-- Automated SFR from NHDPlus stream network data
-- Local Grid Refinement (LGR) — parent + child structured model pairs
-- GHB / RIV / CHD auto-built from GIS boundary shapefiles
-- Reads existing MODFLOW array files as source data
-
-### Priority borrowings from modflow-setup
-
-| Feature | Why | Effort |
+### Grids & discretization
+| Capability | Status | Where |
 |---|---|---|
-| `RechargeMultiplierParameter` | Completes PEST parameter coverage | Low |
-| `KPilotPointParameter` from raster | Common lithology-zone workflow | Low–Medium |
-| Idomain from boundary polygon | Removes boilerplate every model | Low |
-| Boundary BCs from GIS features | Eliminates manual SPD construction | Medium |
-| Spec YAML serialization (`SimulationSpec.to_yaml()`) | Reproducibility, shareability | Medium |
-| Raster data ingestion pipeline | Core usability gap for layer data | Medium |
-| SFR from stream centerline shapefile | Currently fully manual | High |
-| LGR parent-child models | Niche but powerful | High |
+| Voronoi / unstructured grids (DISV, DISU) | ✅ | `grid/voronoi.py` (`VoronoiGridPlus`), `grid/triangle.py` (`TriangleGrid`), `simulation/discretization.py` |
+| Programmatic refinement regions | ✅ | `TriangleGrid`, `MeshBuildProfile`, `grid/seed_optimization.py`, `grid/mesh_quality.py` |
+| Layer surfaces from raster / flat / points / contours(GRASS) | ✅ | `surfaces.py` (`Surface`, `LayerSurfaces`) |
+| Relative surfaces (`offset_below`, `constant_thickness`) | ✅ | `surfaces.py` (added 2026-06) |
+| Surface reconcile (enforce top-down ordering) | ✅ | `grid/geometry.py` `reconcile_surfaces` |
+| Pinch-out → `idomain = -1` (vertical pass-through) | ✅ | `surfaces.py` `to_disv(pinch_out=...)`, `top_botm_idomain`, `thickness_report` (added 2026-06) |
+| Raster sampling at centroids (reproject + nodata→NaN) | ✅ | `grid/surfaces.py` `get_raster_vals_at_centroids` (fixed 2026-06) |
+| idomain from boundary polygon | N/A | For Voronoi the grid *is* the domain; only interior holes + layer pinch-outs matter |
+| Area-weighted raster **resampling** (vs point-at-centroid) | 🟡 | sampling is point-at-centroid; no sub-cell averaging |
+| LGR parent/child structured grids | ❌ | no `Lgr`/`ModflowLgr` anywhere (niche for an unstructured-first tool) |
+
+### Sources & GIS ingestion
+| Capability | Status | Where |
+|---|---|---|
+| Declarative sources (raster, shape, table, geopackage, literal) | ✅ | `sources.py` (`RasterSource`, `ShapeSource`, `TableSource`, `GeoPackageSourceSpec`, `LiteralSource`) |
+| GeoPackage feature → cell pipeline | ✅ | `geopackage.py` `GeoPackageSource` (`.chd/.ghb/.drn/.wel/.rch`) |
+| CRS reprojection of vector sources | ✅ | `boundaries.py` `Boundaries.gdf` (`to_crs`) |
+| CRS reprojection of rasters | ✅ | `grid/surfaces.py` (fixed 2026-06) |
+| Read existing MODFLOW array files as source data | ❌ | not verified present; likely missing |
+
+### Boundary conditions
+| Capability | Status | Where |
+|---|---|---|
+| CHD/GHB/DRN/WEL/RCH/UZF package builders | ✅ | `package_api.py` (`_CHDPackage`…`_MVRPackage`), `advanced.py` `*_spec` |
+| **BCs auto-built from GIS** (polygon/line) | ✅ | `mf.ghb.gpkg(...)`, `mf.drn.gpkg(...)`; `GeoPackageSource`; legacy `Boundaries` |
+| Perimeter / edge-cell BCs (CHD/GHB on grid edge) | ✅ | `Boundaries.edge_intersections`, `edges_only=True` on `.gpkg()` builders |
+| Cells ordered along a line (for line BCs / SFR) | ✅ | `Boundaries.sorted_cells_along_line` |
+| Recharge from GIS + PRISM precip scaling + area scaling | ✅ | `recharge.py` `RCHBuilder`, `PrismPrecipScaling`, `Boundaries.shp_to_vor_poly_scale` |
+| Dedicated RIV builder | ❌ | no `_RIV`/`riv`; represent via GHB/DRN |
+
+### Advanced packages
+| Capability | Status | Where |
+|---|---|---|
+| LAK (lakes, connections, outlets, lake tables) | ✅ | `lakes.py` (`LAKBuilder`, `LakeTableBuilder`), `advanced.py` `lak_spec` |
+| **SFR from stream centerline** (LineString → reaches by cell intersection) | ✅ | `sfr.py` `SFRBuilder`/`StreamNetwork`; `rlen` from geometry; reach-top from grid surfaces |
+| SFR connectivity inference | ✅ | `connection_mode` = `automatic` (geometric) / `nodes` / `explicit` |
+| SFR direct from **NHDPlus** national dataset (sfrmaker-style) | ❌ | only custom centerline tables; no NHDPlus reader |
+| MVR (mover), UZF | ✅ | `mvr.py` (`MVRBuilder`), `uzf.py` (`UZFBuilder`) |
+| Surface-water configuration validation | ✅ | `surface_water_validation.py` `validate_surface_water_configuration` |
+
+### Multi-physics, runs, viz
+| Capability | Status | Where |
+|---|---|---|
+| GWF / GWT / GWE / PRT models + exchanges | ✅ | `package_api.py` `gwf/gwt/gwe/prt`; `builders.py` `build_gwf_{gwt,gwe,prt,gwf}_exchange` |
+| MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
+| Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |
+| Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
+| Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |
+| Canonical model contract (standardized signals) | ✅ | `canonical.py`, `canonical_example.py` |
+
+### Serialization
+| Capability | Status | Where |
+|---|---|---|
+| `to_dict`/`from_dict` round-trip for all specs | ✅ | `specs.py` (Package/Grid/Model/**Simulation**Spec) |
+| Workspace pickling / native MF6 reload | ✅ | `workspace.py`, `project/` (`load_mf6_run`) |
+| **YAML/TOML** config file wrapper | ❌ | no `to_yaml`; would be a thin wrapper over existing `to_dict`/`from_dict` |
+
+### PEST / pyemu (`modflow/mf6/pest/`)
+| Capability | Status | Where |
+|---|---|---|
+| `PestProject` orchestration (PstFrom, forward run, build_pst) | ✅ | `pest/project.py`, `pest/forward_run.py` |
+| Parameters: K pilot points, drain elevation, drain conductance | ✅ | `pest/specs.py` (`KPilotPointParameter`, `DrainElevationParameter`, `DrainConductanceParameter`) |
+| Observations: head, lake stage, SFR stage/flow, DRN flow | ✅ | `pest/specs.py`, `pest/observations.py` |
+| Results / review / reopen | ✅ | `pest/results.py` |
+| Geostats for kriging pilot points | ✅ | `pest/geostats.py` (`ExpGeoStruct`) |
+| **RechargeMultiplierParameter** | ❌ | confirmed missing (recharge is a forward-model class only) |
+| K pilot points from **raster** zone (vs polygon zone) | 🟡 | verify in `pest/specs.py` before building |
+| Regularization / IES-GLM ensemble / identifiability / PEST++ workers | ❌ | not present |
 
 ---
 
-## Why myflopy is worth using
+## The genuinely short gap list (verify each before building)
 
-**Real advantages over bare FloPy + nothing:**
-1. Voronoi grid construction (`VoronoiGridPlus` + `TriangleGrid`) is significantly easier than raw FloPy triangle utilities
-2. PEST calibration on Voronoi grids — no other public tool does this
-3. Interactive HTML deliverables for clients (sliders, particle tracking, cross-sections)
-4. Multi-physics (GWF+GWT+GWE+PRT) in one coherent spec system
-5. Run/project management keeps multi-run workflows organized
+1. **PEST `RechargeMultiplierParameter`** — confirmed missing; follow the `DrainElevationParameter` pattern in `pest/specs.py`. *(High value, low effort.)*
+2. **YAML/TOML serialization** — thin `yaml.dump(spec.to_dict())` / `from_dict(yaml.load(...))` wrapper. *(Low effort; `to_dict`/`from_dict` already exist.)*
+3. **PEST raster-zone pilot points**, regularization, ensemble (IES), PEST++ workers — the real PEST roadmap.
+4. **NHDPlus SFR reader** — only piece of "SFR from streams" not already covered by `SFRBuilder`.
+5. **Area-weighted raster resampling**; **read existing MF6 array files** as sources — minor usability.
+6. **LGR** — absent; likely not worth it for a Voronoi-first toolkit.
 
-**Honest caveats:**
-- For structured-grid GWF models with lots of GIS data, modflow-setup is faster to set up
-- No public docs or community — onboarding collaborators takes effort
-- YAML serialization not yet implemented, so models aren't easily shareable as config files
-
----
-
-## ACTIVE WORK: Layer / raster pipeline overhaul
-
-> This is the next thing to implement. Decided in the June 2026 session.
-> User wants this done **locally**, not pushed to the remote branch directly.
-
-### Where the current pipeline lives
-
-| File | Relevant code |
-|---|---|
-| `src/myflopy/modflow/mf6/grid/surfaces.py` | `get_raster_vals_at_centroids(vor, raster_files, labels)`, `get_gdf_topbtm_multilyr`, `get_raster_from_strike_dip` |
-| `src/myflopy/modflow/mf6/grid/geometry.py` (≈312–378) | `reconcile_surfaces(vor, df, min_sep, trigger_sep, which)`, `adjust_cells_by_id`, `adjust_top_btm_overlaps` |
-| `src/myflopy/modflow/mf6/grid/voronoi.py` | `gdf_topbtm` property, `nlay` property, `reconcile_surfaces` method, `idomain` setter |
-| `src/myflopy/package_api.py` (≈437–465) | `disv(*, nlay, ncpl, ..., top, botm, idomain=None, ...)` |
-
-### Gaps vs. modflow-setup's `discretization.py`
-
-modflow-setup has: `make_idomain`, `create_vertical_pass_through_cells`,
-`fix_model_layer_conflicts`, `fill_cells_vertically`, `fill_empty_layers`,
-`verify_minimum_layer_thickness`. myflopy's gaps:
-
-1. **No `IDOMAIN = -1` pass-through.** `reconcile_surfaces` only forces `min_sep`
-   spacing — it never produces true pinch-outs. A thin/zero-thickness middle layer
-   stays in the solution as a paper-thin cell instead of being removed with vertical
-   flow passing through.
-2. **No automatic idomain** from thickness or NaN coverage.
-3. **Raster sampler does not reproject** — centroids are sampled in the grid CRS with
-   no transform to the raster CRS. Silent garbage if CRS differ.
-4. **nodata not converted to NaN.** Bug in `get_raster_vals_at_centroids`:
-   ```python
-   sampled = np.array(
-       [val[0] if val is not None else np.nan for val in src.sample(zip(xs, ys))]
-   )
-   ```
-   `rasterio.sample()` returns the nodata value (e.g. `-9999`), never `None`, so the
-   guard never fires and nodata leaks in as a real elevation.
-5. **No convenience layer constructors** — flat layers, constant-thickness, offset-below.
-6. **No minimum-thickness validation / reporting.**
-
-### Key design fact (confirmed)
-
-For Voronoi/DISV grids the **grid IS the domain**, so "idomain from boundary polygon"
-is irrelevant. Only two things matter: interior holes (carved by polygons) and
-**layer pinch-outs**. MODFLOW 6 `IDOMAIN = -1` = vertical pass-through: the cell is
-removed from the solution but vertical flow passes through, connecting the layer above
-to the layer below. That is exactly the mechanism for "make a middle layer inactive in
-an area and have the other layers act like it's not there."
-
-### THE FIRST SLICE (what to implement)
-
-New file: `src/myflopy/modflow/mf6/grid/layer_stack.py`
-
-Source classes (each resolves to a per-cell elevation array):
-- `Raster(path, fill=None)` — sample a GeoTIFF at centroids. Must reproject centroids
-  to the raster CRS and convert nodata → NaN. `fill="propagate"` carries the previous
-  surface down where NaN.
-- `Flat(elevation)` — constant elevation everywhere.
-- `OffsetBelow(distance)` — previous surface minus a fixed distance.
-- `ConstantThickness(thickness)` — previous surface minus thickness (alias-ish of
-  OffsetBelow but named for layer intent).
-- (stretch) `StrikeDip(...)` — wrap existing `get_raster_from_strike_dip`.
-
-`LayerStack` class:
-```python
-from myflopy.layers import LayerStack, Raster, Flat, OffsetBelow, ConstantThickness
-
-stack = LayerStack(vor=vor)
-stack.top(Raster("ground.tif"))
-stack.add(Raster("l1_bot.tif"), name="alluvium")
-stack.add(Flat(550.0),          name="clay")
-stack.add(ConstantThickness(30),name="sand")
-stack.add(OffsetBelow(20),      name="weathered")
-stack.add(Raster("bedrock.tif"),name="bedrock", fill="propagate")
-
-result = stack.build(
-    minimum_thickness=1.0,
-    pinch_out=True,      # thin cells -> idomain = -1 (pass-through). OPT-IN.
-    reconcile="bottom",  # reuse existing reconcile_surfaces
-)
-# result.top, result.botm, result.idomain  -> feed mf.disv(...)
-```
-
-`build()` order of operations:
-1. Resolve each source to a per-cell elevation array (top + each bottom).
-2. `reconcile` (reuse `geometry.reconcile_surfaces`) to enforce ordering.
-3. Thickness check against `minimum_thickness`.
-4. **Pinch-out (opt-in):** where thickness < `minimum_thickness`, set
-   `idomain = -1` (NOT `0` — `0` would block vertical flow). Default `pinch_out=False`
-   keeps existing `min_sep` behavior so nothing breaks.
-5. Return a small result object exposing `.top`, `.botm`, `.idomain`.
-
-Also fix `get_raster_vals_at_centroids` in `surfaces.py`:
-- Reproject centroid coords from `vor.crs` to the raster CRS before sampling.
-- Read `src.nodata` and convert matches → NaN (don't rely on `is not None`).
-
-Export from `src/myflopy/__init__.py` (or `grid/__init__.py`) so
-`from myflopy.layers import ...` resolves.
-
-Pinch-out is **opt-in**; the default path must reproduce today's behavior.
+## Already done — do NOT rebuild
+GIS-driven BCs (CHD/GHB/DRN/WEL/RCH via `GeoPackageSource` + `mf.*.gpkg`), edge/perimeter
+BCs, recharge from GIS/PRISM, CRS reprojection (vector + raster), layer surfaces +
+reconcile + **pinch-out/idomain**, **SFR from centerline** (`SFRBuilder`), LAK/MVR/UZF
+builders, spec `to_dict`/`from_dict`, multi-physics + exchanges, parallel split, viz, PEST
+core. (The old version of this file wrongly listed several of these as missing.)

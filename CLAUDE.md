@@ -15,6 +15,18 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 - **Workspace/project management** — `Project`, `Run`, `load_run` in `workspace.py`
 - **Parallel model workflows** — `ParallelModelWorkflow` in `parallel.py`
 
+## Two API layers + capability map
+This codebase has **two API generations** — check both before adding code, or you risk
+duplicating an existing capability:
+- **Modern declarative spec API** (preferred): `src/myflopy/*.py` — `package_api`, `specs`,
+  `sources`, `geopackage`, `surfaces`, `advanced`, `builders`, `workspace`. Authoritative
+  export list: `src/myflopy/__init__.py`.
+- **Legacy OO API**: `src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`,
+  `lakes`, `recharge`, and builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …).
+
+**`myflopy_context.md` is the accurate, code-derived capability map** (rebuilt 2026-06-20).
+Treat any "gap" as a hypothesis to re-verify against the code before building.
+
 ## Planned work: PEST / pyemu integration
 
 ### What's already built (`src/myflopy/modflow/mf6/pest/`)
@@ -42,14 +54,22 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 8. **Parallel PEST++ workers** — not wired up
 
 ### Broader things myflopy could learn from modflow-setup (DOI-USGS)
-- Automated raster/shapefile ingestion with CRS reprojection + resampling strategies
-- Systematic layer data setup (tops/bottoms/K from rasters with pinch-out reconciliation)
-- Boundary conditions (GHB, RIV, CHD) auto-built from GIS boundary features
-- SFR network from stream centerline shapefile (snap reaches, compute lengths/slopes)
-- Spec YAML/TOML serialization for reproducibility (`SimulationSpec.to_yaml()`)
-- `idomain` auto-derived from model boundary polygon
-- LGR parent-child model pairs with GWF-GWF exchange
+> Re-verified against the code on 2026-06-20. **Most items previously listed here are
+> already built** (see `myflopy_context.md`). Genuine remaining gaps only:
+- **YAML/TOML spec serialization** — thin wrapper over the existing
+  `SimulationSpec.to_dict()` / `from_dict()` (round-trip already implemented in `specs.py`)
+- **NHDPlus direct SFR reader** — `SFRBuilder` already builds reaches from any stream
+  centerline LineString table; only national NHDPlus ingestion is missing
+- **Area-weighted raster resampling** — sampling is point-at-centroid today
+- **Reading existing MODFLOW array files** as source data
+- **LGR parent-child model pairs** — absent (niche for a Voronoi-first toolkit)
+
+Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/wel/rch`,
+`mf.ghb.gpkg`, legacy `Boundaries`), CRS reprojection (vector + raster), layer surfaces +
+reconcile + **pinch-out/idomain** (`surfaces.py`), SFR from centerline (`SFRBuilder`),
+recharge from GIS/PRISM (`RCHBuilder`).
 
 ## Comparison: myflopy vs modflow-setup
-- myflopy wins on: unstructured grids, transport/energy/PRT models, visualization, parallel runs, Python-first API
-- modflow-setup wins on: YAML no-code setup, NHDPlus SFR, LGR, automatic GIS data ingestion
+- myflopy wins on: unstructured grids, transport/energy/PRT models, visualization, parallel
+  runs, Python-first API, GIS-driven BCs, SFR-from-centerline, PEST on Voronoi grids
+- modflow-setup wins on: single-file YAML no-code setup, NHDPlus SFR, LGR

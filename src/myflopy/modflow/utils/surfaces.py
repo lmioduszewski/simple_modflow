@@ -418,8 +418,25 @@ class InterpolatedSurface:
         fig.show()
 
 
-    def plot(self, surface=None, clip=False, renderer='browser'):
+    def surface_trace(self, *, surface=None, colorscale=None, **kwargs):
+        """Return a Plotly ``go.Surface`` trace for this interpolated surface.
+
+        The single builder shared by :meth:`plot` and higher-level multi-surface
+        views (e.g. ``myflopy.layers.LayerBuildResult.surface_3d``). ``surface``
+        overrides the interpolated z-array (defaults to :attr:`surface`); any
+        extra keyword arguments pass straight through to ``go.Surface``.
+        """
         surface = self.surface if surface is None else surface
+        xg, yg = self.xy_meshgrid
+        return go.Surface(
+            x=xg,
+            y=yg,
+            z=surface,
+            colorscale=self.colorscale if colorscale is None else colorscale,
+            **kwargs,
+        )
+
+    def plot(self, surface=None, clip=False, renderer='browser'):
         """
         plot surface using plotly, defaults to griddata_interp
         :param surface: surface to plot, ex. self.griddata_interp or self.rbf_interp
@@ -430,15 +447,7 @@ class InterpolatedSurface:
             surface = surface.astype(float)
             surface[surface == 0] = np.nan
 
-        xg, yg = self.xy_meshgrid
-
-        fig = go.Figure()
-        fig.add_surface(
-            x=xg,
-            y=yg,
-            z=surface,
-            colorscale=self.colorscale
-        )
+        fig = go.Figure(self.surface_trace(surface=surface))
         fig.show(renderer=renderer)
 
 def rasterize_points(

@@ -82,6 +82,12 @@ if TYPE_CHECKING:
     )
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
     from myflopy.surfaces import LayerSurfaces, Surface
+    from myflopy.layers import (
+        LayerBuildResult,
+        LayerQCReport,
+        LayerStack,
+        modflow_surfaces,
+    )
     from myflopy.sources import (
         DataSourceSpec,
         GeoPackageSourceSpec,
@@ -241,6 +247,10 @@ _EXPORTS = {
     "GeoPackageSource": ("myflopy.geopackage", "GeoPackageSource"),
     "Surface": ("myflopy.surfaces", "Surface"),
     "LayerSurfaces": ("myflopy.surfaces", "LayerSurfaces"),
+    "LayerStack": ("myflopy.layers", "LayerStack"),
+    "LayerBuildResult": ("myflopy.layers", "LayerBuildResult"),
+    "LayerQCReport": ("myflopy.layers", "LayerQCReport"),
+    "modflow_surfaces": ("myflopy.layers", "modflow_surfaces"),
     "ProjectLayout": ("myflopy.workspace", "ProjectLayout"),
     "ModelView": ("myflopy.workspace", "ModelView"),
     "Project": ("myflopy.workspace", "Project"),

@@ -86,5 +86,6 @@ testpaths = ["tests"]
 markers = [
   "canonical: integration test that must use the authoritative canonical model",
   "unit: intentionally isolated small-fixture test that does not claim canonical coverage",
+  "slow: test that shells out to a MODFLOW 6 / MODPATH binary or runs a PEST build (deselect with -m 'not slow')",
 ]
 

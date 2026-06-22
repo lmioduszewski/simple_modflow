@@ -1,0 +1,992 @@
+"""Layer-centric authoring facade for model discretization.
+
+`LayerStack` is a thin, friendly front door over :class:`~myflopy.surfaces.LayerSurfaces`.
+You declare a model top, then ``add`` named layers -- each carrying its own bottom
+definition and (optionally) its own ``min_thickness`` / ``pinch`` policy::
+
+    from myflopy.layers import LayerStack, Raster, Flat, Contours
+
+    stack = LayerStack(vor, top=Raster("ground.tif"), length_units="feet")
+    stack.add("alluvium", bottom=Raster("allu_bot.tif"))
+    stack.add("clay",     thickness=30, min_thickness=1, pinch="passthrough")
+    stack.add("bedrock",  bottom=Contours("bedrock.gpkg", z="elev"), fill="propagate")
+
+    result = stack.build()          # result.top / .botm / .idomain / .report()
+    disv   = stack.to_disv(vor)     # ready-to-use mf.disv spec
+
+This module adds **no new geometry logic**: it translates "top + N named layers"
+into the "N+1 surfaces" list and delegates sampling, reconcile, and pinch-out to
+the existing, tested `LayerSurfaces` engine.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace as _dc_replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from myflopy.surfaces import LayerSurfaces, Surface
+
+# Convenience source aliases -- the existing Surface constructors under friendlier
+# names for layer authoring (NOT new implementations).
+Raster = Surface.raster
+Flat = Surface.flat
+Contours = Surface.from_contours
+Points = Surface.from_points
+Array = Surface.from_array
+Isopach = Surface.isopach
+# Surface algebra (lower/upper envelopes, clamping, zone selection).
+Min = Surface.minimum
+Max = Surface.maximum
+Clamp = Surface.clamp
+Where = Surface.where
+
+_UNSET = object()
+
+
+def _coerce_surface(x) -> Surface:
+    """Accept a Surface, or coerce a path -> Raster and a number -> Flat."""
+
+    if isinstance(x, Surface):
+        return x
+    if isinstance(x, (str, Path)):
+        return Surface.raster(x)
+    if isinstance(x, (int, float)):
+        return Surface.flat(float(x))
+    raise TypeError(f"Expected a Surface, path, or number; got {type(x).__name__}.")
+
+
+def _make_surface(bottom, thickness, fill) -> Surface:
+    """Build a layer's bottom surface from ``bottom=`` or ``thickness=``."""
+
+    if (bottom is None) == (thickness is None):
+        raise ValueError("Provide exactly one of bottom= or thickness=.")
+    if thickness is not None:
+        surface = (
+            thickness
+            if isinstance(thickness, Surface)
+            else Surface.constant_thickness(float(thickness))
+        )
+    else:
+        surface = _coerce_surface(bottom)
+    if fill is not None:
+        surface = _dc_replace(surface, fill=fill)
+    return surface
+
+
+def _reconcile_args(reconcile) -> tuple[bool, str]:
+    """Map the facade ``reconcile`` argument to ``LayerSurfaces.sample`` kwargs."""
+
+    if reconcile in (False, None):
+        return False, "bottom"
+    if reconcile is True:
+        return True, "bottom"
+    if reconcile in ("bottom", "top"):
+        return True, reconcile
+    raise ValueError("reconcile must be 'bottom', 'top', or False.")
+
+
+def modflow_surfaces(source, *, resample: bool = True):
+    """Read an existing MODFLOW model's surfaces as :class:`Surface` objects.
+
+    ``source`` is a flopy model (anything exposing ``.modelgrid``) or a flopy
+    modelgrid directly. Returns ``(top_surface, [bottom_surface, ...])``. With
+    ``resample=True`` (default) each surface is interpolated from the source cell
+    centres, so it transfers onto a *different* grid; with ``resample=False`` the
+    arrays are used verbatim (the target grid must match cell-for-cell).
+    """
+    mg = getattr(source, "modelgrid", source)
+    top = np.asarray(mg.top, dtype=float).ravel()
+    botm = np.asarray(mg.botm, dtype=float)
+    botm = botm.reshape(botm.shape[0], -1)
+    if resample:
+        xc = np.asarray(mg.xcellcenters, dtype=float).ravel()
+        yc = np.asarray(mg.ycellcenters, dtype=float).ravel()
+        top_s = Surface.from_points(xc, yc, top)
+        botm_s = [Surface.from_points(xc, yc, botm[k]) for k in range(botm.shape[0])]
+    else:
+        top_s = Surface.from_array(top)
+        botm_s = [Surface.from_array(botm[k]) for k in range(botm.shape[0])]
+    return top_s, botm_s
+
+
+@dataclass
+class _Layer:
+    name: str
+    surface: Surface
+    min_thickness: float | None = None
+    pinch: str | None = None
+
+
+@dataclass
+class LayerQCReport:
+    """Findings from :meth:`LayerBuildResult.qc` -- problems caught before MF6 runs."""
+
+    nlay: int
+    ncpl: int
+    names: list[str]
+    nan_top: int                       # cells with no top elevation (no coverage)
+    nan_botm: list[int]                # per layer: cells with no bottom elevation
+    nan_active_cells: int              # active cells bounded by a NaN surface (fatal)
+    nonpositive_active: list[int]      # per layer: active cells with thickness <= 0
+    thin: list[int]                    # per layer: cells thinner than min_thickness
+    pinched: list[int]                 # per layer: cells removed (idomain != 1)
+    isolated_active: list[tuple]       # (layer, cell) active cells with no connection
+    n_active_components: int           # connected components of active cells
+    component_sizes: list[int]         # sizes, largest first
+    # reconcile diagnostics -- only filled by LayerStack.qc (needs the surfaces)
+    reconcile_adjusted: list[int] | None = None    # per layer: cells reconcile moved
+    reconcile_max_shift: list[float] | None = None  # per layer: largest move
+
+    @property
+    def ok(self) -> bool:
+        """True when nothing fatal was found (no NaN-bounded or isolated active cells,
+        no non-positive active thickness). Thin/pinched cells are expected, not fatal."""
+        return (
+            self.nan_active_cells == 0
+            and sum(self.nonpositive_active) == 0
+            and len(self.isolated_active) == 0
+        )
+
+    def __str__(self) -> str:
+        head = "OK" if self.ok else "PROBLEMS FOUND"
+        lines = [
+            f"LayerStack QC [{head}]: {self.nlay} layers, {self.ncpl} cells, "
+            f"{self.n_active_components} active component(s)"
+        ]
+        if self.nan_active_cells:
+            lines.append(f"  ** {self.nan_active_cells} active cell(s) bounded by a NaN "
+                         "surface (no source coverage) -- fix the source or fill='propagate'")
+        if self.isolated_active:
+            lines.append(f"  ** {len(self.isolated_active)} isolated active cell(s) with no "
+                         "connection -- prune_isolated() deactivates them")
+        if sum(self.nonpositive_active):
+            lines.append(f"  ** {sum(self.nonpositive_active)} active cell(s) with thickness <= 0")
+        if self.n_active_components > 1:
+            shown = ", ".join(str(s) for s in self.component_sizes[:5])
+            lines.append(f"  note: active cells split into {self.n_active_components} components "
+                         f"(sizes: {shown}{'...' if self.n_active_components > 5 else ''})")
+        for i, name in enumerate(self.names):
+            extra = ""
+            if self.reconcile_adjusted is not None:
+                extra = (f"  reconcile_moved={self.reconcile_adjusted[i]} "
+                         f"(max {self.reconcile_max_shift[i]:.2f})")
+            lines.append(
+                f"  [{i}] {name:<14} nan_bottom={self.nan_botm[i]} "
+                f"thin={self.thin[i]} pinched={self.pinched[i]} "
+                f"thickness<=0(active)={self.nonpositive_active[i]}{extra}"
+            )
+        return "\n".join(lines)
+
+
+@dataclass
+class LayerBuildResult:
+    """Output of :meth:`LayerStack.build`, shaped for ``mf.disv``."""
+
+    top: np.ndarray          # (ncpl,)
+    botm: np.ndarray         # (nlay, ncpl)
+    idomain: np.ndarray      # (nlay, ncpl): 1 active, -1 pass-through, 0 inactive
+    thickness: np.ndarray    # (nlay, ncpl)
+    names: list[str]
+    min_thickness: list[float]
+    pinch: list[str]
+    length_units: str
+    time_units: str
+    vor: Any = None          # grid the result was built on (for views)
+
+    @property
+    def nlay(self) -> int:
+        return self.botm.shape[0]
+
+    @property
+    def n_pinched(self) -> int:
+        """Cells removed from the solution (idomain != 1)."""
+        return int((self.idomain != 1).sum())
+
+    def report(self) -> str:
+        """Per-layer thickness + thin/pinched-cell summary."""
+        lines = [
+            f"LayerStack: {self.nlay} layers, {self.top.size} cells "
+            f"[{self.length_units}/{self.time_units}], {self.n_pinched} pinched cells"
+        ]
+        for i, name in enumerate(self.names):
+            t = self.thickness[i]
+            thin = int((t < float(self.min_thickness[i])).sum())
+            pinched = int((self.idomain[i] != 1).sum())
+            lines.append(
+                f"  [{i}] {name:<14} thk min={t.min():.2f} mean={t.mean():.2f} "
+                f"max={t.max():.2f}  thin(<{self.min_thickness[i]})={thin} "
+                f"pinched={pinched} ({self.pinch[i]})"
+            )
+        return "\n".join(lines)
+
+    # -- QC / validation -------------------------------------------------- #
+    def _active_components(self):
+        """Union-find over active cells (idomain == 1). Returns ``(labels, sizes)``:
+        ``labels`` is an ``(nlay, ncpl)`` array of component roots (-1 where not
+        active) and ``sizes`` maps a root to its cell count.
+
+        Connections follow MF6: horizontal between active plan-neighbors, and
+        vertical down a column where ``idomain == -1`` (pass-through) bridges
+        active cells while ``idomain == 0`` (inactive) blocks them."""
+        from collections import Counter
+
+        nlay, ncpl = self.idomain.shape
+        parent = list(range(nlay * ncpl))
+
+        def find(a):
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        active = self.idomain == 1
+        adj = self.vor.adjacent_cells_idx
+        for k in range(nlay):
+            base = k * ncpl
+            for i in range(ncpl):
+                if not active[k, i]:
+                    continue
+                for j in adj[i]:
+                    if 0 <= j < ncpl and active[k, j]:
+                        union(base + i, k * ncpl + j)
+        for i in range(ncpl):
+            last = None
+            for k in range(nlay):
+                d = self.idomain[k, i]
+                if d == 1:
+                    if last is not None:
+                        union(last * ncpl + i, k * ncpl + i)
+                    last = k
+                elif d == 0:
+                    last = None      # inactive blocks vertical flow
+                # d == -1: pass-through keeps ``last`` reachable
+        labels = np.full((nlay, ncpl), -1, dtype=int)
+        sizes = Counter()
+        for k in range(nlay):
+            for i in range(ncpl):
+                if active[k, i]:
+                    r = find(k * ncpl + i)
+                    labels[k, i] = r
+                    sizes[r] += 1
+        return labels, sizes
+
+    def qc(self) -> "LayerQCReport":
+        """Check the built stack for problems MODFLOW 6 would choke on.
+
+        Catches **NaN-bounded active cells** (a surface had no source coverage),
+        **non-positive active thickness**, and **isolated active cells** (no
+        connection to any neighbour) -- plus thin/pinched counts and the number
+        of connected active components. Returns a :class:`LayerQCReport` whose
+        ``.ok`` is False if anything fatal was found. ``LayerStack.qc`` adds
+        reconcile diagnostics on top of this."""
+        nlay, ncpl = self.idomain.shape
+        active = self.idomain == 1
+        surf_top = np.vstack([self.top[None, :], self.botm[:-1]])  # top of each layer
+        nan_bounded = np.isnan(surf_top) | np.isnan(self.botm)
+        labels, sizes = self._active_components()
+        isolated = [
+            (k, i)
+            for k in range(nlay)
+            for i in range(ncpl)
+            if active[k, i] and sizes[labels[k, i]] == 1
+        ]
+        return LayerQCReport(
+            nlay=nlay,
+            ncpl=ncpl,
+            names=list(self.names),
+            nan_top=int(np.isnan(self.top).sum()),
+            nan_botm=[int(np.isnan(self.botm[k]).sum()) for k in range(nlay)],
+            nan_active_cells=int((nan_bounded & active).sum()),
+            nonpositive_active=[int(((self.thickness[k] <= 0) & active[k]).sum())
+                                for k in range(nlay)],
+            thin=[int((self.thickness[k] < float(self.min_thickness[k])).sum())
+                  for k in range(nlay)],
+            pinched=[int((self.idomain[k] != 1).sum()) for k in range(nlay)],
+            isolated_active=isolated,
+            n_active_components=len(sizes),
+            component_sizes=sorted(sizes.values(), reverse=True),
+        )
+
+    def validate(self) -> "LayerBuildResult":
+        """Raise ``ValueError`` if :meth:`qc` finds anything fatal; else return self."""
+        report = self.qc()
+        if not report.ok:
+            raise ValueError("Layer stack failed QC:\n" + str(report))
+        return self
+
+    def prune_isolated(self) -> "LayerBuildResult":
+        """Deactivate (``idomain -> 0``) active cells that have no connection.
+
+        Returns a new result. Isolated cells have no edges, so removing them
+        never disconnects anything else -- a single pass is enough."""
+        isolated = self.qc().isolated_active
+        if not isolated:
+            return self
+        idomain = self.idomain.copy()
+        for k, i in isolated:
+            idomain[k, i] = 0
+        return _dc_replace(self, idomain=idomain)
+
+    # -- views (thin wrappers over flopy / the surface API) --------------- #
+    def _resolve_line(self, line, x, y) -> dict:
+        """Build a flopy cross-section line from explicit points, x=, y=, or a
+        default West-East line through the grid centre."""
+        if line is not None:
+            return {"line": [tuple(pt) for pt in line]}
+        minx, miny, maxx, maxy = (float(v) for v in self.vor.gdf_vorPolys.total_bounds)
+        if x is not None:
+            return {"line": [(float(x), miny), (float(x), maxy)]}
+        if y is not None:
+            return {"line": [(minx, float(y)), (maxx, float(y))]}
+        ymid = (miny + maxy) / 2.0  # default: West-East section through the centre
+        return {"line": [(minx, ymid), (maxx, ymid)]}
+
+    def vertex_grid(self):
+        """A flopy ``VertexGrid`` carrying this result's geometry."""
+        import flopy
+
+        p = self.vor.get_disv_gridprops()
+        return flopy.discretization.VertexGrid(
+            vertices=p["vertices"], cell2d=p["cell2d"],
+            top=self.top, botm=self.botm, idomain=self.idomain,
+            nlay=self.nlay, ncpl=p["ncpl"], crs=str(getattr(self.vor, "crs", None)),
+        )
+
+    def cross_section(
+        self, line=None, *, x=None, y=None, color_by="layer", ax=None,
+        cmap="tab10", show_grid=True, legend=True, title=None,
+    ):
+        """Draw a layer cross-section. One-liners: ``result.cross_section(y=300)``
+        or ``result.cross_section(x=500)``. Returns the Matplotlib axes.
+
+        Layer coloring delegates to the shared
+        :func:`~myflopy.modflow.mf6.cross_section_plotting.plot_layered_cross_section`
+        renderer (the same core behind the model-aware ``plot_model_cross_section``)."""
+        import matplotlib.pyplot as plt
+
+        from myflopy.modflow.mf6.cross_section_plotting import (
+            ModelCrossSectionStyle,
+            plot_layered_cross_section,
+        )
+
+        vg = self.vertex_grid()
+        line_spec = self._resolve_line(line, x, y)
+
+        if color_by == "thickness":
+            import flopy
+
+            if ax is None:
+                _, ax = plt.subplots(figsize=(9, 4))
+            xsec = flopy.plot.PlotCrossSection(modelgrid=vg, line=line_spec, ax=ax)
+            xsec.plot_array(self.thickness, cmap="viridis")
+            if show_grid:
+                xsec.plot_grid(lw=0.25, color="0.3")
+            ax.set_title(title or "Layer cross-section")
+            ax.set_xlabel(f"distance along section [{self.length_units}]")
+            ax.set_ylabel(f"elevation [{self.length_units}]")
+            return ax
+
+        cm = plt.get_cmap(cmap)
+        colors = [cm(i % 10) for i in range(self.nlay)]  # matplotlib RGBA tuples
+        style = ModelCrossSectionStyle(
+            figsize=(9, 4), grid_linewidth=0.25, grid_color="0.3",
+            layer_alpha=0.75, title_fontsize=12, label_fontsize=10,
+            legend_loc="upper right", legend_frameon=True, legend_fontsize=8,
+        )
+        _, ax = plot_layered_cross_section(
+            vg, line_spec, ax=ax, style=style,
+            layer_colors=colors, layer_labels=self.names,
+            show_grid=show_grid, show_layers=True, show_head=False,
+            show_legend=legend, title=title or "Layer cross-section",
+            xlabel=f"distance along section [{self.length_units}]",
+            ylabel=f"elevation [{self.length_units}]",
+        )
+        return ax
+
+    @property
+    def surface_names(self) -> list[str]:
+        """Plottable surface names: the model top plus each layer's bottom contact."""
+        return ["top"] + list(self.names)
+
+    def _surface_z(self, name) -> np.ndarray:
+        """Elevation array for a surface name (``"top"`` or a layer's bottom)."""
+        if name == "top":
+            return self.top
+        return self.botm[self.names.index(name)]
+
+    def _resolve_surface_names(self, layer) -> list[str]:
+        """Normalize the ``layer`` selector to a list of valid surface names."""
+        valid = self.surface_names
+        if isinstance(layer, str) and layer == "all":
+            return valid
+        names = list(layer) if isinstance(layer, (list, tuple)) else [layer]
+        bad = [n for n in names if n not in valid]
+        if bad:
+            raise KeyError(f"no surface named {bad!r}; choose from {valid} or 'all'.")
+        return names
+
+    @staticmethod
+    def _rgb(rgba) -> str:
+        r, g, b = (int(round(255 * c)) for c in rgba[:3])
+        return f"rgb({r},{g},{b})"
+
+    def surface_3d(
+        self, layer="top", *, resolution=120, colorscale="Earth_r",
+        color_by=None, opacity=None, height=None, html_path=None, browser=False,
+    ):
+        """Interactive 3D surface(s) of one or more layers (plotly).
+
+        ``layer`` selects which surface(s) to draw and may be:
+
+        * ``"top"`` or any layer name -- that layer's *bottom* contact (default ``"top"``),
+        * a list of names, e.g. ``["top", "clay", "bedrock"]``, overlaid in one scene,
+        * ``"all"`` -- the model top plus every layer bottom.
+
+        Discover the choices with ``result.surface_names``. A single surface with
+        relief is shaded by elevation (``colorscale``); a flat surface or several
+        surfaces get distinct solid colors. Override with
+        ``color_by="elevation"`` / ``"surface"`` and tune ``opacity``.
+
+        ``height`` sets the figure height in pixels (default ``None`` = fill the
+        container / browser window). ``html_path`` writes a standalone,
+        self-contained HTML file; ``browser=True`` opens the figure in your
+        default web browser. The figure is always returned, so it still displays
+        inline in a notebook."""
+        import plotly.graph_objects as go
+
+        from myflopy.modflow.utils.surfaces import InterpolatedSurface
+
+        names = self._resolve_surface_names(layer)
+        crs = str(getattr(self.vor, "crs", None))
+        xs = np.asarray(self.vor.centroids[0])
+        ys = np.asarray(self.vor.centroids[1])
+
+        # Each surface is built by the shared InterpolatedSurface.surface_trace
+        # so there is one go.Surface builder across the toolkit; we keep the
+        # interpolated z-array to set a common elevation scale below.
+        grids = []
+        for name in names:
+            isurf = InterpolatedSurface(
+                xs=xs, ys=ys, zs=np.asarray(self._surface_z(name)),
+                surf_type="lyr", resolution=resolution, crs=crs,
+            )
+            grids.append((name, isurf, isurf.surface))
+
+        # Overall elevation span -> colour mode, shared colour range and z-axis.
+        zmin = min(float(np.nanmin(zz)) for *_, zz in grids)
+        zmax = max(float(np.nanmax(zz)) for *_, zz in grids)
+        flat = zmax - zmin < 1e-6
+        if color_by is None:
+            color_by = "elevation" if (len(names) == 1 and not flat) else "surface"
+        if opacity is None:
+            opacity = 1.0 if len(names) == 1 else 0.85
+        zaxis = dict(title=f"elev [{self.length_units}]")
+        aspectmode = "manual"
+        if flat:
+            # A perfectly flat surface has zero vertical extent; a lone flat
+            # go.Surface then fails to render in hardware-WebGL viewers (its faces
+            # get a 0/0 colour and the trace has no z-depth), while multi-surface
+            # scenes dodge this because their combined z-range is non-zero. Give
+            # the sheet a faint, non-planar relief and a real z-axis so it always
+            # draws; ``cube`` aspect keeps the near-flat sheet prominent.
+            mid = 0.5 * (zmin + zmax)
+            pad = max(1.0, abs(mid) * 0.01)
+            gx0, gy0 = grids[0][1].xy_meshgrid
+            xspan = float(np.nanmax(gx0) - np.nanmin(gx0)) or 1.0
+            yspan = float(np.nanmax(gy0) - np.nanmin(gy0)) or 1.0
+            ripple = (
+                ((gx0 - np.nanmin(gx0)) / xspan - 0.5)
+                + ((gy0 - np.nanmin(gy0)) / yspan - 0.5)
+            ) * (0.5 * pad)                      # ~+/-pad/2 of imperceptible relief
+            grids = [(n, s, zz + ripple) for (n, s, zz) in grids]
+            zmin, zmax = mid - pad, mid + pad
+            zaxis["range"] = [zmin, zmax]
+            aspectmode = "cube"
+
+        fig = go.Figure()
+        if color_by == "elevation":
+            for i, (name, isurf, zz) in enumerate(grids):
+                fig.add_trace(isurf.surface_trace(
+                    surface=zz, colorscale=colorscale, name=name,
+                    cmin=zmin, cmax=zmax, opacity=opacity, showscale=(i == 0),
+                    colorbar=dict(title=f"elev [{self.length_units}]"),
+                ))
+        else:  # one solid color per surface, distinguished by a legend
+            import matplotlib.pyplot as plt
+
+            cmap = plt.get_cmap("tab10")
+            for i, (name, isurf, zz) in enumerate(grids):
+                c = self._rgb(cmap(i % 10))
+                fig.add_trace(isurf.surface_trace(
+                    surface=zz, colorscale=[[0, c], [1, c]], name=name,
+                    cmin=zmin, cmax=zmax, opacity=opacity,
+                    showscale=False, showlegend=True,
+                ))
+
+        multi = len(names) > 1
+        scene = dict(aspectmode=aspectmode, zaxis=zaxis)
+        if aspectmode == "manual":
+            scene["aspectratio"] = dict(x=1, y=0.6, z=0.45)
+        fig.update_layout(
+            title=("layer surfaces" if multi else f"{names[0]} surface"),
+            autosize=True, height=height, margin=dict(l=0, r=0, t=40, b=0),
+            showlegend=(color_by == "surface" and multi), scene=scene,
+        )
+        if html_path is not None:
+            fig.write_html(
+                str(html_path), include_plotlyjs=True,
+                default_height=(f"{height}px" if height else "100vh"),
+                default_width="100%",
+            )
+        if browser:
+            fig.show(renderer="browser")
+        return fig
+
+    def _resolve_layer_indices(self, layers) -> list[int]:
+        """Normalize a layer selector to sorted, unique layer indices.
+
+        Accepts ``None``/``"all"`` (every layer), a single layer name or integer
+        index, or a list mixing names and indices."""
+        if layers is None or (isinstance(layers, str) and layers == "all"):
+            return list(range(self.nlay))
+        items = list(layers) if isinstance(layers, (list, tuple)) else [layers]
+        idx = []
+        for it in items:
+            if isinstance(it, (int, np.integer)) and not isinstance(it, bool):
+                i = int(it)
+                if not 0 <= i < self.nlay:
+                    raise IndexError(f"layer index {i} out of range [0, {self.nlay}).")
+                idx.append(i)
+            elif it in self.names:
+                idx.append(self.names.index(it))
+            else:
+                raise KeyError(f"no layer named {it!r}; choose from {self.names} or an index.")
+        return sorted(set(idx))
+
+    def vtk_3d(
+        self, layers=None, *, color_by="layer", scale=8, cmap="tab10",
+        html_path=None, width=900, height=580, browser=False,
+    ):
+        """Interactive 3D of the layered grid (flopy VTK → pyvista). Writes a
+        standalone, self-contained HTML scene and returns an ``IFrame`` for
+        inline display (drag to rotate, scroll to zoom).
+
+        ``layers`` selects which layers to show: ``None``/``"all"`` (default) for
+        every layer, a single layer name or index, or a list mixing them
+        (e.g. ``["sand", "clay"]`` or ``[0, 2]``). Colors stay keyed to each
+        layer's position, so a subset keeps the same colors it has in the full
+        stack.
+
+        ``html_path`` overrides where the standalone scene is written;
+        ``browser=True`` opens that file in your default web browser."""
+        import os
+        import tempfile
+        from pathlib import Path
+
+        import flopy
+        import pyvista as pv
+        from flopy.export.vtk import Vtk
+        from IPython.display import IFrame
+
+        sel = self._resolve_layer_indices(layers)
+        p = self.vor.get_disv_gridprops()
+        ws = Path(tempfile.mkdtemp(prefix="layer_view_"))
+        sim = flopy.mf6.MFSimulation(sim_name="layerview", sim_ws=str(ws))
+        flopy.mf6.ModflowTdis(sim)
+        flopy.mf6.ModflowIms(sim)
+        gwf = flopy.mf6.ModflowGwf(sim, modelname="layers")
+        flopy.mf6.ModflowGwfdisv(
+            gwf, nlay=self.nlay, ncpl=p["ncpl"], nvert=len(p["vertices"]),
+            vertices=p["vertices"], cell2d=p["cell2d"],
+            top=self.top, botm=self.botm, idomain=self.idomain,
+        )
+        vtk = Vtk(model=gwf, vertical_exageration=1, binary=True, smooth=False)
+        vtk.add_model(gwf)
+        # Always attach a per-cell layer index so a subset can be selected.
+        vtk.add_array(np.repeat(np.arange(self.nlay)[:, None], p["ncpl"], axis=1), "layer")
+        mesh = vtk.to_pyvista()
+        if isinstance(mesh, pv.MultiBlock):
+            mesh = mesh.combine()
+        if len(sel) != self.nlay:  # keep only the requested layers' cells
+            layer_cell = np.asarray(mesh.cell_data["layer"]).astype(int)
+            mesh = mesh.extract_cells(np.isin(layer_cell, sel))
+        if color_by == "layer":
+            scalars, use_cmap = "layer", cmap
+        else:
+            mesh["elevation"] = mesh.points[:, 2]
+            scalars, use_cmap = "elevation", "terrain"
+        mesh_kwargs = dict(show_edges=True, cmap=use_cmap)
+        if color_by == "layer":
+            # Discrete colors keyed to each layer's global index; label only the
+            # layers actually shown.
+            mesh_kwargs.update(
+                n_colors=self.nlay,
+                clim=[-0.5, self.nlay - 0.5],
+                annotations={float(i): self.names[i] for i in sel},
+                scalar_bar_args=dict(title="layer", n_labels=0),
+            )
+        plotter = pv.Plotter(off_screen=True, window_size=(width - 40, height - 40))
+        plotter.add_mesh(mesh, scalars=scalars, **mesh_kwargs)
+        plotter.set_scale(zscale=scale)
+        plotter.add_axes()
+        plotter.camera_position = "yz"
+        if html_path is not None:
+            html_path = Path(html_path)
+        else:
+            # Encode the selection so multiple vtk_3d calls in one notebook write
+            # distinct files instead of clobbering a single shared scene.
+            tag = "all" if len(sel) == self.nlay else "-".join(self.names[i] for i in sel)
+            tag = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in tag)
+            html_path = Path.cwd() / f"layer_vtk_3d_{tag}.html"
+        plotter.export_html(str(html_path))
+        if browser:
+            import webbrowser
+
+            webbrowser.open(html_path.resolve().as_uri())
+        try:
+            src = os.path.relpath(html_path, Path.cwd())
+        except ValueError:
+            src = str(html_path)
+        return IFrame(src=src, width=width, height=height)
+
+    def thickness_map(self, *, layer=None, ax=None):
+        """Per-cell thickness choropleth (total, or a single named layer)."""
+        import matplotlib.pyplot as plt
+
+        if layer is None:
+            values = self.thickness.sum(axis=0)
+            title = "total thickness"
+        else:
+            values = self.thickness[self.names.index(layer)]
+            title = f"{layer!r} thickness"
+        gdf = self.vor.gdf_vorPolys.copy().assign(_thickness=values)
+        if ax is None:
+            _, ax = plt.subplots()
+        gdf.plot(column="_thickness", ax=ax, legend=True)
+        ax.set_title(f"{title} [{self.length_units}]")
+        ax.set_aspect("equal")
+        return ax
+
+    def views(self, *, line=None, x=None, y=None, surface="all", layers=None):
+        """Show all four views at once: thickness map, cross-section, 3D surface,
+        and 3D grid. Renders inline (call from a notebook). ``surface`` chooses
+        which contact(s) the 3D surface plot shows (default ``"all"``; see
+        :meth:`surface_3d`); ``layers`` chooses which layers the VTK grid shows
+        (default all; see :meth:`vtk_3d`)."""
+        import matplotlib.pyplot as plt
+        from IPython.display import display
+
+        self.thickness_map()
+        plt.show()
+        self.cross_section(line=line, x=x, y=y)
+        plt.show()
+        display(self.surface_3d(surface))
+        display(self.vtk_3d(layers))
+
+
+class LayerStack:
+    """Assemble a vertical layer stack from a top + ordered named layers."""
+
+    def __init__(self, vor, top, *, length_units: str = "feet", time_units: str = "days"):
+        self.vor = vor
+        self._top = _coerce_surface(top)
+        self._layers: list[_Layer] = []
+        self.length_units = length_units
+        self.time_units = time_units
+
+    @classmethod
+    def from_modflow(
+        cls,
+        vor,
+        source,
+        *,
+        names: list[str] | None = None,
+        resample: bool = True,
+        length_units: str = "feet",
+        time_units: str = "days",
+    ) -> "LayerStack":
+        """Build a stack on ``vor`` from an existing MODFLOW model's top/botm.
+
+        ``source`` is a flopy model or modelgrid; its top and per-layer bottoms
+        become this stack's surfaces (interpolated onto ``vor`` when
+        ``resample=True``, used verbatim when ``False``). Name the layers with
+        ``names`` (defaults to ``layer1..N``). Edit the returned stack like any
+        other -- e.g. ``.replace(...)`` a bottom, then ``.build()`` / ``.to_disv()``.
+        """
+        top_s, botm_s = modflow_surfaces(source, resample=resample)
+        if names is None:
+            names = [f"layer{i + 1}" for i in range(len(botm_s))]
+        if len(names) != len(botm_s):
+            raise ValueError(f"{len(names)} names given for {len(botm_s)} layers.")
+        stack = cls(vor, top=top_s, length_units=length_units, time_units=time_units)
+        for name, surface in zip(names, botm_s):
+            stack.add(name, bottom=surface)
+        return stack
+
+    # -- authoring -------------------------------------------------------- #
+    def add(
+        self,
+        name: str,
+        *,
+        bottom=None,
+        thickness=None,
+        min_thickness: float | None = None,
+        pinch: str | None = None,
+        fill: str | None = None,
+    ) -> "LayerStack":
+        """Append a named layer. Returns ``self`` for chaining."""
+        if any(layer.name == name for layer in self._layers):
+            raise ValueError(f"layer {name!r} already exists.")
+        surface = _make_surface(bottom, thickness, fill)
+        self._layers.append(_Layer(name, surface, min_thickness, pinch))
+        return self
+
+    def insert_below(
+        self, name: str, new_name: str, *, bottom=None, thickness=None,
+        min_thickness: float | None = None, pinch: str | None = None, fill: str | None = None,
+    ) -> "LayerStack":
+        """Insert a new layer directly below the existing layer ``name``."""
+        if any(layer.name == new_name for layer in self._layers):
+            raise ValueError(f"layer {new_name!r} already exists.")
+        surface = _make_surface(bottom, thickness, fill)
+        self._layers.insert(
+            self._index(name) + 1, _Layer(new_name, surface, min_thickness, pinch)
+        )
+        return self
+
+    def replace(
+        self, name: str, *, bottom=None, thickness=None,
+        min_thickness=_UNSET, pinch=_UNSET, fill=None,
+    ) -> "LayerStack":
+        """Update an existing layer in place; unspecified fields are kept."""
+        idx = self._index(name)
+        layer = self._layers[idx]
+        if bottom is not None or thickness is not None:
+            surface = _make_surface(bottom, thickness, fill)
+        else:
+            surface = layer.surface if fill is None else _dc_replace(layer.surface, fill=fill)
+        self._layers[idx] = _Layer(
+            name,
+            surface,
+            layer.min_thickness if min_thickness is _UNSET else min_thickness,
+            layer.pinch if pinch is _UNSET else pinch,
+        )
+        return self
+
+    def remove(self, name: str) -> "LayerStack":
+        """Remove a layer by name."""
+        del self._layers[self._index(name)]
+        return self
+
+    @property
+    def names(self) -> list[str]:
+        return [layer.name for layer in self._layers]
+
+    def _index(self, name: str) -> int:
+        for i, layer in enumerate(self._layers):
+            if layer.name == name:
+                return i
+        raise KeyError(f"no layer named {name!r} (have {self.names}).")
+
+    # -- compilation ------------------------------------------------------ #
+    def _layer_surfaces(self) -> LayerSurfaces:
+        surfaces = [self._top] + [layer.surface for layer in self._layers]
+        labels = ["top"] + self.names
+        return LayerSurfaces(surfaces, labels=labels)
+
+    def _per_layer_config(self, default_min_thickness, default_pinch):
+        min_thk = [
+            default_min_thickness if layer.min_thickness is None else layer.min_thickness
+            for layer in self._layers
+        ]
+        pinch = [
+            default_pinch if layer.pinch is None else layer.pinch
+            for layer in self._layers
+        ]
+        return min_thk, pinch
+
+    def refresh(self) -> "LayerStack":
+        """Rebuild the cached raster of every derived (contour) surface now."""
+        for surface in [self._top] + [layer.surface for layer in self._layers]:
+            if getattr(surface, "is_derived", False):
+                surface.resolve_source(refresh=True, warn=False)
+        return self
+
+    def cache_status(self) -> dict[str, str]:
+        """Map ``name -> "missing"/"fresh"/"stale"`` for each derived surface."""
+        named = [("top", self._top)] + [(l.name, l.surface) for l in self._layers]
+        return {
+            name: surface.cache_status()
+            for name, surface in named
+            if getattr(surface, "is_derived", False)
+        }
+
+    def build(
+        self,
+        *,
+        default_min_thickness: float = 1.0,
+        default_pinch: str = "passthrough",
+        reconcile="bottom",
+        min_sep: float = 0.1,
+        method: str = "area",
+        refresh: bool = False,
+    ) -> LayerBuildResult:
+        """Resolve, reconcile, and pinch out the stack into DISV-ready arrays.
+
+        A stale derived (contour) surface is reused with a warning; pass
+        ``refresh=True`` to rebuild its cache first.
+        """
+        if not self._layers:
+            raise ValueError("Add at least one layer with .add(...) before build().")
+        ls = self._layer_surfaces()
+        rec_on, which = _reconcile_args(reconcile)
+        gdf = ls.sample(
+            self.vor, reconcile=rec_on, which=which, min_sep=min_sep,
+            method=method, length_units=self.length_units, refresh=refresh,
+        )
+        top, botm = ls._split_top_botm(gdf)
+        thickness = ls._thickness(gdf)
+        min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
+        ls._validate_pinch_invariant(
+            min_thk, pinch, thickness.shape[0],
+            {"reconcile": rec_on, "min_sep": min_sep},
+        )
+        idomain = ls._idomain_from_thickness(thickness, min_thk, pinch)
+        return LayerBuildResult(
+            top=top, botm=botm, idomain=idomain, thickness=thickness,
+            names=self.names, min_thickness=min_thk, pinch=pinch,
+            length_units=self.length_units, time_units=self.time_units,
+            vor=self.vor,
+        )
+
+    def qc(
+        self,
+        *,
+        default_min_thickness: float = 1.0,
+        default_pinch: str = "passthrough",
+        reconcile="bottom",
+        min_sep: float = 0.1,
+        method: str = "area",
+        refresh: bool = False,
+    ) -> LayerQCReport:
+        """Build the stack and run QC, including reconcile diagnostics.
+
+        On top of :meth:`LayerBuildResult.qc` (NaN coverage, isolated active
+        cells, thickness), this samples the surfaces *without* reconciling and
+        reports, per layer, how many cells reconcile had to move and the largest
+        move -- showing where surfaces were crossing before reconcile fixed them.
+        Returns a :class:`LayerQCReport`."""
+        result = self.build(
+            default_min_thickness=default_min_thickness, default_pinch=default_pinch,
+            reconcile=reconcile, min_sep=min_sep, method=method, refresh=refresh,
+        )
+        report = result.qc()
+        ls = self._layer_surfaces()
+        raw = ls.sample(
+            self.vor, reconcile=False, method=method,
+            length_units=self.length_units, refresh=refresh,
+        )
+        _, raw_botm = ls._split_top_botm(raw)
+        adjusted, max_shift = [], []
+        for k in range(result.nlay):
+            shift = np.abs(np.asarray(raw_botm[k], float) - np.asarray(result.botm[k], float))
+            finite = shift[np.isfinite(shift)]
+            adjusted.append(int((finite > 1e-6).sum()))
+            max_shift.append(float(finite.max()) if finite.size else 0.0)
+        report.reconcile_adjusted = adjusted
+        report.reconcile_max_shift = max_shift
+        return report
+
+    # -- one-liner views (build with defaults, then view the result) ------ #
+    def cross_section(self, line=None, *, x=None, y=None, **kwargs):
+        """Build and draw a layer cross-section, e.g. ``stack.cross_section(y=300)``."""
+        return self.build().cross_section(line, x=x, y=y, **kwargs)
+
+    def surface_3d(self, layer="top", **kwargs):
+        """Build and show one or more layer surfaces in interactive 3D (plotly).
+
+        ``layer`` may be a single name, a list of names, or ``"all"`` -- see
+        :meth:`LayerBuildResult.surface_3d`."""
+        return self.build().surface_3d(layer, **kwargs)
+
+    def vtk_3d(self, layers=None, **kwargs):
+        """Build and show the layered grid in interactive 3D (VTK → pyvista).
+
+        ``layers`` selects a subset of layers to show -- see
+        :meth:`LayerBuildResult.vtk_3d`."""
+        return self.build().vtk_3d(layers, **kwargs)
+
+    def views(self, **kwargs):
+        """Build and show all four views: thickness map, cross-section, 3D
+        surface, and 3D grid."""
+        return self.build().views(**kwargs)
+
+    def preview(self, *, layer: str | None = None, ax=None, **build_kwargs):
+        """Plot a per-cell thickness map (total, or a single named layer).
+
+        Builds the stack and draws a choropleth on the grid cells -- a quick
+        visual check before committing to ``to_disv``. Returns the Matplotlib
+        axes. ``build_kwargs`` are forwarded to :meth:`build`.
+        """
+        return self.build(**build_kwargs).thickness_map(layer=layer, ax=ax)
+
+    def to_disv(
+        self,
+        vor=None,
+        *,
+        name: str = "disv",
+        attach: bool = True,
+        default_min_thickness: float = 1.0,
+        default_pinch: str = "passthrough",
+        reconcile="bottom",
+        min_sep: float = 0.1,
+        method: str = "area",
+        refresh: bool = False,
+    ):
+        """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain)."""
+        if not self._layers:
+            raise ValueError("Add at least one layer before to_disv().")
+        vor = self.vor if vor is None else vor
+        ls = self._layer_surfaces()
+        rec_on, which = _reconcile_args(reconcile)
+        min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
+        return ls.to_disv(
+            vor,
+            pinch_out=True,
+            minimum_thickness=min_thk,
+            pinch=pinch,
+            length_units=self.length_units,
+            name=name,
+            attach=attach,
+            reconcile=rec_on,
+            which=which,
+            min_sep=min_sep,
+            method=method,
+            refresh=refresh,
+        )
+
+
+__all__ = [
+    "LayerStack",
+    "LayerBuildResult",
+    "LayerQCReport",
+    "modflow_surfaces",
+    "Raster",
+    "Flat",
+    "Contours",
+    "Points",
+    "Array",
+    "Isopach",
+    "Min",
+    "Max",
+    "Clamp",
+    "Where",
+]
