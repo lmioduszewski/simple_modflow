@@ -119,6 +119,7 @@ _SLOW_TESTS = {
     "test_pest_run_results_reopen_completed_artifact_and_compare_heads",
     "test_native_pstfrom_parameterize_build_and_forward_run_end_to_end",
     "test_run_ies_end_to_end_and_assess_with_ies_results",
+    "test_ies_capture_field_and_spatial_maps_end_to_end",
     # test_workspace.py -- executes MF6
     "test_run_builds_writes_executes_and_reopens_with_flopy_310",
     "test_project_multi_model_run_uses_per_model_subdirs",

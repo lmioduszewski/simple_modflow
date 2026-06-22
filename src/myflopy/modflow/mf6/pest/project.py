@@ -133,6 +133,7 @@ class PestProject:
         self._forecast_specs: list = []
         self._native_parameter_specs: list[NativeParameterSpec] = []
         self._native_parameter_frames: dict[str, object] = {}
+        self._capture_field_specs: dict[str, dict] = {}
         self._prepared_observations: list[dict] = []
         self._prepared_parameters: dict[str, dict] = {}
         self._parameter_frames: dict[str, object] = {}
@@ -174,6 +175,7 @@ class PestProject:
         correlation: float | None = None,
         temporal: float | None = None,
         name: str | None = None,
+        capture: bool = False,
         **extra,
     ) -> NativeParameterSpec:
         """Declare a calibration parameter that compiles to ``pf.add_parameters``.
@@ -262,6 +264,7 @@ class PestProject:
             correlation=correlation,
             temporal=temporal,
             name=name,
+            capture=capture,
             extra=extra,
         )
         self._native_parameter_specs.append(spec)
@@ -505,6 +508,7 @@ class PestProject:
             "pst_file": Path(filename).name if filename is not None else None,
             "observation_sets": observation_sets,
             "parameter_sets": parameter_sets,
+            "capture_fields": list(self._capture_field_specs.values()),
         }
         metadata_path = self.template_workspace / METADATA_FILENAME
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -674,6 +678,36 @@ class PestProject:
         self.pst.observation_data.loc[names, "weight"] = 0.0
         self.pst.pestpp_options["forecasts"] = ",".join(names)
 
+    def _add_capture_field_observations(self, spec: NativeParameterSpec):
+        """Record a parameter's resolved per-cell field as zero-weight observations."""
+
+        recipe = spec.recipe
+        prefix = f"{spec.name}field"
+        for filename in spec.resolved_files:
+            if recipe.family == "array":
+                self.pf.add_observations(filename, prefix=prefix)
+            else:
+                self.pf.add_observations(
+                    filename, prefix=prefix, index_cols=[0, 1], use_cols=[recipe.use_col]
+                )
+        self._capture_field_specs[spec.name] = {
+            "prefix": prefix,
+            "target": recipe.canonical,
+            "family": recipe.family,
+            "name": spec.name,
+        }
+
+    def _finalize_capture_fields(self):
+        """Zero the weights of captured-field observations after the pst is built."""
+
+        if not self._capture_field_specs:
+            return
+        obs = self.pst.observation_data
+        index = obs.index.to_series()
+        for info in self._capture_field_specs.values():
+            mask = index.str.contains(f"oname:{info['prefix'].lower()}_", regex=False)
+            obs.loc[mask.to_numpy(), "weight"] = 0.0
+
     def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
         """Compile the declarations into a runnable PEST(++) control file.
 
@@ -716,6 +750,8 @@ class PestProject:
         with self._quiet_pyemu_context():
             for spec in self._native_parameter_specs:
                 add_native_parameter(self, spec)
+                if spec.capture:
+                    self._add_capture_field_observations(spec)
         self.pf.mod_sys_cmds.append(self._resolve_exe())
         self._attach_native_observation_postprocessors()
         self._write_project_metadata(filename=target_name)
@@ -727,6 +763,7 @@ class PestProject:
         self.pst.model_command = [f'"{sys.executable}" forward_run.py']
         finalize_observations(self, self._prepared_observations)
         self._apply_forecasts()
+        self._finalize_capture_fields()
         self.pst.control_data.noptmax = int(noptmax)
         with self._quiet_pyemu_context():
             self.pst.write(self.template_workspace / target_name, version=2)
@@ -935,8 +972,8 @@ class PestProject:
                     worker_root=str(master.parent),
                     master_dir=str(master),
                 )
-            return IesResults(master, case_name=self.name)
+            return IesResults(master, case_name=self.name, model=self.model)
 
         with self._augmented_path(exe_dir):
             pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
-        return IesResults(self.template_workspace, case_name=self.name)
+        return IesResults(self.template_workspace, case_name=self.name, model=self.model)

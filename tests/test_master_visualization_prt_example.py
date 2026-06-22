@@ -161,10 +161,11 @@ def test_canonical_master_notebook_set_uses_one_builder():
     # Only the numbered canonical run set (canonical_00..canonical_04) uses the
     # shared mf.build_canonical_model() builder. canonical_model_template.ipynb is
     # an editable scaffold that demonstrates the builder API directly, so it is
-    # intentionally excluded here.
+    # intentionally excluded here, as are the modern PEST notebooks
+    # (canonical_05/06), which calibrate a compact demo via build_calibration_demo.
     paths = sorted(
         path
-        for path in notebook_root.glob("canonical_[0-9]*.ipynb")
+        for path in notebook_root.glob("canonical_0[0-4]*.ipynb")
         if not path.name.endswith(".executed.ipynb")
     )
     assert len(paths) == 5
@@ -187,6 +188,25 @@ def test_canonical_master_notebook_set_uses_one_builder():
         "PEST",
     ):
         assert required.lower() in combined.lower()
+
+
+def test_modern_pest_notebooks_use_the_declarative_facade():
+    notebook_root = ROOT / "examples" / "mf6" / "notebooks"
+    pest_paths = sorted(notebook_root.glob("canonical_0[5-6]*.ipynb"))
+    assert len(pest_paths) == 2
+    for path in pest_paths:
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        assert "build_calibration_demo" in source
+        assert "PestProject" in source
+        assert "parameterize" in source
+    combined = "\n".join(
+        "\n".join("".join(cell.get("source", [])) for cell in json.loads(path.read_text(encoding="utf-8"))["cells"])
+        for path in pest_paths
+    )
+    # The setup notebook builds; the IES notebook runs the ensemble and maps fields.
+    for required in ("observe", "forecast", "settings", "run_ies", "plot_field"):
+        assert required in combined
 
 
 def test_canonical_pest_notebook_covers_full_build_run_and_review_workflow():

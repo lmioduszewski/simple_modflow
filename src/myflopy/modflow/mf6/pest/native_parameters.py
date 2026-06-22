@@ -129,6 +129,11 @@ class NativeParameterSpec:
         (Phase 2 -- recorded but not yet wired).
     name
         Parameter group / name base. Defaults to a slug of ``target``.
+    capture
+        Also record the *resolved* model-input field (after multipliers are
+        applied) as zero-weight observations, so each realization's per-cell
+        property field is carried in the ensembles. Enables spatial parameter
+        maps via ``IesResults.plot_field`` / ``IesResults.field``.
     """
 
     target: str
@@ -141,7 +146,9 @@ class NativeParameterSpec:
     correlation: float | None = None
     temporal: float | None = None
     name: str | None = None
+    capture: bool = False
     extra: dict = field(default_factory=dict)
+    resolved_files: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.recipe = resolve_target(self.target)
@@ -201,6 +208,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
 
     recipe = spec.recipe
     files = _resolve_files(project.template_workspace, project.model.name, recipe)
+    spec.resolved_files = list(files)
 
     if recipe.family == "array":
         # Normalize MF6's wrapped array layout so pyEMU can read any cell count.

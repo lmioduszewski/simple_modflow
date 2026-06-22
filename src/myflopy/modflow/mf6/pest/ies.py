@@ -22,6 +22,7 @@ PESTPP-IES output files this reads (``<case>`` is the control-file stem):
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from functools import cached_property
@@ -171,6 +172,10 @@ class IesResults:
     case_name
         Control-file stem (e.g. ``"calib"`` for ``calib.pst``). Auto-discovered
         from the single ``.pst`` in ``workspace`` when omitted.
+    model
+        Optional myflopy model (carrying the grid) used for spatial parameter
+        maps (:meth:`plot_field`). Populated automatically when the run is
+        launched via :meth:`PestProject.run_ies`.
 
     Notes
     -----
@@ -180,15 +185,34 @@ class IesResults:
     specific iteration.
     """
 
-    def __init__(self, workspace, *, case_name: str | None = None):
+    def __init__(self, workspace, *, case_name: str | None = None, model=None):
         self.workspace = Path(workspace)
         self.pyemu = _import_pyemu()
         self.case = case_name or self._discover_case()
         self.pst = self.pyemu.Pst(str(self.workspace / f"{self.case}.pst"))
+        self.model = model
         try:
             self.pst.try_parse_name_metadata()
         except Exception:  # pragma: no cover - metadata parsing is best-effort
             pass
+
+    @cached_property
+    def _metadata(self) -> dict:
+        """The myflopy PEST metadata written at build time, if present."""
+
+        path = self.workspace / "myflopy_pest_metadata.json"
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):  # pragma: no cover - best effort
+            return {}
+
+    @property
+    def capture_fields(self) -> list[dict]:
+        """Captured parameter-field definitions available for spatial maps."""
+
+        return list(self._metadata.get("capture_fields", []))
 
     # -- discovery --------------------------------------------------------
 
@@ -440,6 +464,135 @@ class IesResults:
             return pd.DataFrame()
         return pd.DataFrame(rows).set_index("forecast")
 
+    # -- spatial parameter maps ------------------------------------------
+
+    _ARR_RE = re.compile(r"arr_i:(\d+)_j:(\d+)")
+
+    def _capture_info(self, target: str) -> dict:
+        """Resolve a captured-field definition by target or parameter name."""
+
+        fields = self.capture_fields
+        if not fields:
+            raise ValueError(
+                "No captured parameter fields are available. Re-run the setup with "
+                "cal.parameterize(..., capture=True) to record per-cell fields."
+            )
+        key = str(target).strip().lower()
+        for info in fields:
+            if key in (str(info.get("target", "")).lower(), str(info.get("name", "")).lower()):
+                return info
+        available = [f.get("target") for f in fields]
+        raise KeyError(f"No captured field for {target!r}. Available: {available}")
+
+    def _field_cell_index(self, prefix: str, layer: int) -> dict[str, int]:
+        """Map captured-field observation names to cell ids for one layer."""
+
+        if self.model is None:
+            raise ValueError(
+                "Spatial maps need the model grid. Open the run via "
+                "cal.run_ies(...) (which passes the model), or pass model=... to IesResults."
+            )
+        ncpl = int(self.model.vor.ncpl)
+        token = f"oname:{prefix.lower()}_"
+        mapping: dict[str, int] = {}
+        for name in self.pst.observation_data.index:
+            if token not in name:
+                continue
+            match = self._ARR_RE.search(name)
+            if not match:
+                continue
+            flat = int(match.group(1))
+            if flat // ncpl == int(layer):
+                mapping[name] = flat % ncpl
+        if not mapping:
+            raise ValueError(f"No captured field cells found for layer {layer}.")
+        return mapping
+
+    def field(self, target: str, *, layer: int = 0) -> pd.DataFrame:
+        """Return per-cell prior/posterior statistics for a captured field.
+
+        Requires the parameter to have been declared with
+        ``cal.parameterize(..., capture=True)``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Indexed by ``cell`` with columns ``prior_mean``, ``prior_std``,
+            ``posterior_mean``, ``posterior_std``, ``change``
+            (``posterior_mean / prior_mean``), and ``base`` (the
+            minimum-error-variance realization) when available.
+        """
+
+        info = self._capture_info(target)
+        if info.get("family") != "array":
+            raise NotImplementedError(
+                f"Spatial maps currently support array fields (K, K33); "
+                f"{info.get('target')!r} is a list field."
+            )
+        cells = self._field_cell_index(info["prefix"], layer)
+        names = list(cells.keys())
+        prior = self.prior._df.loc[:, names]
+        posterior = self.posterior._df.loc[:, names]
+        frame = pd.DataFrame({
+            "cell": [cells[name] for name in names],
+            "prior_mean": prior.mean().to_numpy(),
+            "prior_std": prior.std().to_numpy(),
+            "posterior_mean": posterior.mean().to_numpy(),
+            "posterior_std": posterior.std().to_numpy(),
+        })
+        if "base" in posterior.index:
+            frame["base"] = posterior.loc["base"].to_numpy()
+        frame["change"] = frame["posterior_mean"] / frame["prior_mean"]
+        return frame.sort_values("cell").reset_index(drop=True)
+
+    def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
+                   layer: int = 0, **choropleth_kwargs) -> go.Figure:
+        """Map a captured parameter field on the model grid (Voronoi choropleth).
+
+        This answers "property patterns -- plausible or laughable?": it shows the
+        spatial pattern of a calibrated property and how history matching changed
+        it. Requires ``cal.parameterize(..., capture=True)``.
+
+        Parameters
+        ----------
+        target
+            A captured target name, e.g. ``"k"``.
+        stat
+            ``"mean"`` (ensemble mean field), ``"std"`` (posterior spread --
+            where the property is still uncertain), ``"base"`` (the
+            minimum-error-variance realization), or ``"change"``
+            (posterior_mean / prior_mean -- where calibration moved the property).
+        which
+            ``"prior"`` or ``"posterior"`` for ``stat`` in {``"mean"``, ``"std"``}.
+        layer
+            Model layer to map (default 0).
+        **choropleth_kwargs
+            Forwarded to the Voronoi choropleth builder.
+        """
+
+        frame = self.field(target, layer=layer)
+        column = {
+            "mean": f"{which}_mean",
+            "std": f"{which}_std",
+            "base": "base",
+            "change": "change",
+        }.get(str(stat).lower())
+        if column is None or column not in frame.columns:
+            raise ValueError(
+                f"Unknown stat {stat!r} (or unavailable). Use 'mean', 'std', 'base', or 'change'."
+            )
+
+        ncpl = int(self.model.vor.ncpl)
+        values = np.full(ncpl, np.nan)
+        values[frame["cell"].to_numpy(dtype=int)] = frame[column].to_numpy(dtype=float)
+
+        from myflopy.modflow.mf6.grid.plotting import build_choropleth
+
+        choro = build_choropleth(
+            self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
+        )
+        return choro.plot()
+
     def best(self, *, criterion: str = "base") -> str:
         """Return the label of the single 'best' realization to carry forward.
 
@@ -505,6 +658,15 @@ class IesResults:
             pass
         for name in self.forecast_names:
             figures.append(self.forecast(name).plot())
+        if self.model is not None:
+            for info in self.capture_fields:
+                if info.get("family") != "array":
+                    continue
+                try:
+                    figures.append(self.plot_field(info["target"], stat="mean", which="posterior"))
+                    figures.append(self.plot_field(info["target"], stat="change"))
+                except Exception:  # pragma: no cover - field maps are best-effort in the bundle
+                    pass
 
         parts = ["<html><head><meta charset='utf-8'><title>IES review: "
                  f"{self.case}</title></head><body>", f"<h1>PESTPP-IES review: {self.case}</h1>",
@@ -516,10 +678,12 @@ class IesResults:
         return html_path
 
 
-def open_ies_run(workspace, *, case_name: str | None = None) -> IesResults:
+def open_ies_run(workspace, *, case_name: str | None = None, model=None) -> IesResults:
     """Open a completed PESTPP-IES run directory for assessment.
 
     Convenience wrapper around :class:`IesResults` mirroring ``open_pest_run``.
+    Pass ``model=`` (a myflopy model carrying the grid) to enable spatial
+    parameter maps via :meth:`IesResults.plot_field`.
     """
 
-    return IesResults(workspace, case_name=case_name)
+    return IesResults(workspace, case_name=case_name, model=model)

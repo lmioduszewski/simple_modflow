@@ -1337,6 +1337,58 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     assert ies.settings.n_forecasts == 1
 
 
+def test_ies_capture_field_and_spatial_maps_end_to_end():
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+    import plotly.graph_objects as go
+
+    workspace = _project_temp_dir("ies_capture")
+    model, vor = _build_two_cell_pest_forward_model("ies_capture", workspace / "model")
+    Recharge(model=model, vor=vor, rch_dict={0: [[(0, 0), 0.001], [(0, 1), 0.001]]})
+    success, _ = model.run_simulation()
+    assert success is True
+
+    obs_path = _write_gpkg(
+        workspace / "cap_obs.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["OBS_A", "OBS_B"], "layer": [0, 0], "weight": [1.0, 1.0]},
+            geometry=[Point(0.5, 0.5), Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    targets = HeadTargets(
+        locations=obs_path,
+        values=pd.DataFrame({"per": [0], "OBS_A": [9.5], "OBS_B": [8.75]}),
+        time_column="per",
+    )
+
+    cal = PestProject(
+        model=model,
+        name="cap_demo",
+        workspace=workspace / "template",
+        start_datetime="2024-01-01",
+    )
+    cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0), capture=True)
+    cal.observe(targets)
+    pst = cal.build("cap_demo.pst", noptmax=0)
+
+    # The resolved K field is captured as zero-weight observations.
+    captured = pst.observation_data[pst.observation_data.index.str.contains("oname:kfield", regex=False)]
+    assert len(captured) == int(model.vor.ncpl)
+    assert bool((captured["weight"] == 0).all())
+
+    ies = cal.run_ies(reals=6, iterations=1)
+
+    assert any(info["target"] == "k" for info in ies.capture_fields)
+    field = ies.field("k")
+    assert len(field) == int(model.vor.ncpl)
+    assert {"prior_mean", "posterior_mean", "posterior_std", "change"}.issubset(field.columns)
+
+    assert isinstance(ies.plot_field("k", stat="mean", which="posterior"), go.Figure)
+    assert isinstance(ies.plot_field("k", stat="change"), go.Figure)
+    assert isinstance(ies.plot_field("k", stat="std"), go.Figure)
+
+
 def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
     pytest.importorskip("pyemu")
     workspace = _project_temp_dir("pest_run_results")
