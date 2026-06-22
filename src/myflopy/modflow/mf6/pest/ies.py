@@ -556,6 +556,248 @@ class IesResults:
             return pd.DataFrame()
         return pd.DataFrame(rows).set_index("forecast")
 
+    # -- phi & weight diagnostics ----------------------------------------
+
+    def plot_phi_distribution(self, *, measured: bool = False, bins: int = 25,
+                              backend: str = "plotly"):
+        """Histogram of objective-function (phi) values: prior vs posterior.
+
+        Purpose
+        -------
+        Shows the *spread* of misfit across the ensemble before and after history
+        matching (grey = prior / iteration 0, blue = posterior / final
+        iteration), on a log scale. This is the "did we learn, and did we learn
+        too much?" plot.
+
+        What to look for
+        ----------------
+        - A clear shift to **lower** phi from prior to posterior means the
+          ensemble assimilated information from the data.
+        - A posterior that **collapses to a narrow spike at very low phi** is a
+          warning sign of over-fitting (especially if forecast distributions also
+          collapse) -- with an imperfect model you should not expect to drive phi
+          to zero. As a rule of thumb the achievable phi is around the number of
+          nonzero-weight observations (``self.pst.nnz_obs``).
+
+        Parameters
+        ----------
+        measured
+            Use the 'measured+noise' phi (each realization vs its noisy data copy)
+            instead of the 'actual' phi (vs the raw observed values).
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        frame = self.phi_measured if measured else self.phi
+        cols = list(frame.columns[6:])
+        prior = np.log10(np.asarray(frame.iloc[0][cols], dtype=float))
+        posterior = np.log10(np.asarray(frame.iloc[-1][cols], dtype=float))
+        edges = np.histogram_bin_edges(np.concatenate([prior, posterior]), bins=bins)
+        title = "Phi distribution: prior vs posterior" + (" (measured+noise)" if measured else "")
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _new_mpl_axes(figsize=(6.5, 4))
+            ax.hist(prior, bins=edges, color=_MPL_PRIOR, alpha=0.55, label="prior")
+            ax.hist(posterior, bins=edges, color=_MPL_POST, alpha=0.6, label="posterior")
+            ax.set_xlabel(r"$\log_{10}\phi$")
+            ax.set_ylabel("realizations")
+            ax.set_title(title)
+            ax.legend()
+            sns.despine(fig)
+            return fig
+
+        size = (edges[-1] - edges[0]) / bins
+        fig = go.Figure()
+        fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1], size=size),
+                          name="prior", marker_color=_PRIOR_COLOR)
+        fig.add_histogram(x=posterior, xbins=dict(start=edges[0], end=edges[-1], size=size),
+                          name="posterior", marker_color=_POST_COLOR)
+        fig.update_layout(barmode="overlay", title=title, template="plotly_white",
+                          xaxis_title="log10(phi)", yaxis_title="realizations")
+        return fig
+
+    def parameters_at_bounds(self, *, which: str = "posterior", tol: float = 0.01) -> pd.DataFrame:
+        """Return, by parameter group, how many parameters are pinned at a bound.
+
+        A parameter counts as "at a bound" when its ensemble-mean value sits
+        within ``tol`` (a fraction of the bound range, measured in the
+        parameter's transform space) of its lower or upper bound.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Indexed by parameter group with columns ``n_parameters``,
+            ``n_at_lower``, ``n_at_upper`` and ``pct_at_bound``.
+        """
+
+        ensemble = (self.posterior_parameters if which == "posterior" else self.prior_parameters)._df
+        par = self.pst.parameter_data.loc[[c for c in ensemble.columns if c in self.pst.parameter_data.index]]
+        means = ensemble[par.index].mean()
+        lower = par["parlbnd"].astype(float)
+        upper = par["parubnd"].astype(float)
+        is_log = par["partrans"].astype(str).str.lower().eq("log")
+
+        value, low, high = means.copy(), lower.copy(), upper.copy()
+        log_mask = is_log & (lower > 0) & (upper > 0) & (means > 0)
+        value[log_mask] = np.log10(means[log_mask])
+        low[log_mask] = np.log10(lower[log_mask])
+        high[log_mask] = np.log10(upper[log_mask])
+        span = (high - low).replace(0, np.nan)
+        position = (value - low) / span
+        at_lower = position <= tol
+        at_upper = position >= (1.0 - tol)
+
+        summary = pd.DataFrame({
+            "pargp": par["pargp"].to_numpy(),
+            "at_lower": at_lower.to_numpy(),
+            "at_upper": at_upper.to_numpy(),
+        })
+        grouped = summary.groupby("pargp").agg(
+            n_parameters=("pargp", "size"),
+            n_at_lower=("at_lower", "sum"),
+            n_at_upper=("at_upper", "sum"),
+        )
+        grouped["pct_at_bound"] = 100.0 * (grouped["n_at_lower"] + grouped["n_at_upper"]) / grouped["n_parameters"]
+        return grouped.sort_values("pct_at_bound", ascending=False)
+
+    def plot_parameters_at_bounds(self, *, which: str = "posterior", tol: float = 0.01,
+                                  backend: str = "plotly"):
+        """Bar chart of the percentage of parameters at their bounds, by group.
+
+        Purpose
+        -------
+        Parameters pinned at their bounds are trying to move further than you
+        allowed them to. A quick health check on the prior.
+
+        What to look for
+        ----------------
+        A large fraction of a group at its bounds usually means the **prior is
+        too tight** (widen the bounds) or those parameters are **compensating for
+        structural error** elsewhere in the model. A few at bounds is normal; a
+        whole group at bounds deserves investigation.
+
+        Parameters
+        ----------
+        which
+            ``"posterior"`` (default) or ``"prior"``.
+        tol
+            Closeness to a bound (fraction of the bound range) that counts as
+            "at" the bound.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        table = self.parameters_at_bounds(which=which, tol=tol)
+        groups = table.index.tolist()
+        pct = table["pct_at_bound"].to_numpy(dtype=float)
+        title = f"Parameters at bounds ({which})"
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.5 * len(groups) + 1)))
+            ax.barh(groups, pct, color=_MPL_POST)
+            ax.set_xlabel("% of parameters at a bound")
+            ax.set_title(title)
+            ax.invert_yaxis()
+            sns.despine(fig)
+            return fig
+
+        fig = go.Figure(go.Bar(x=pct, y=groups, orientation="h", marker_color=_POST_COLOR))
+        fig.update_layout(title=title, template="plotly_white",
+                          xaxis_title="% of parameters at a bound", yaxis_title="parameter group")
+        return fig
+
+    def phi_contributions(self, *, realization: str = "base") -> pd.Series:
+        """Return the phi (misfit) contributed by each observation group.
+
+        Computed for one realization (default the ``base`` / minimum-error-
+        variance one) as the sum of squared weighted residuals within each
+        nonzero-weight observation group.
+
+        Returns
+        -------
+        pandas.Series
+            Indexed by observation group, sorted from largest contribution down.
+        """
+
+        obs = self.pst.observation_data
+        obs = obs.loc[obs["weight"].astype(float) > 0]
+        ensemble = self.posterior._df
+        if realization in ensemble.index:
+            simulated = ensemble.loc[realization]
+        else:
+            simulated = ensemble.mean()
+        names = [name for name in obs.index if name in simulated.index]
+        obs = obs.loc[names]
+        residual = obs["weight"].astype(float) * (simulated[names].astype(float) - obs["obsval"].astype(float))
+        contribution = pd.Series((residual.to_numpy() ** 2), index=names)
+        by_group = contribution.groupby(obs["obgnme"].to_numpy()).sum()
+        return by_group.sort_values(ascending=False)
+
+    def plot_phi_contributions(self, *, realization: str = "base", kind: str = "bar",
+                               max_groups: int = 20, backend: str = "plotly"):
+        """Plot the misfit (phi) contributed by each observation group.
+
+        Purpose
+        -------
+        Shows *which observations the objective function is actually made of* --
+        the basis for "visibility weighting". Groups that dominate phi dominate
+        the calibration.
+
+        What to look for
+        ----------------
+        - One or two groups **dominating** total phi means those observations
+          (often high-magnitude or densely sampled) are steering the fit; consider
+          re-weighting so groups contribute more evenly toward your model purpose.
+        - A group with stubbornly high contribution is something the model
+          **cannot fit** -- worth understanding before you trust forecasts that
+          depend on it.
+
+        Parameters
+        ----------
+        realization
+            Realization to evaluate (default the ``base`` realization).
+        kind
+            ``"bar"`` (default) or ``"pie"``.
+        max_groups
+            Cap the number of groups shown (largest contributors first).
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        contributions = self.phi_contributions(realization=realization).head(max_groups)
+        labels = [str(name) for name in contributions.index]
+        values = contributions.to_numpy(dtype=float)
+        title = "Phi contribution by observation group"
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            if str(kind).lower() == "pie":
+                fig, ax = _new_mpl_axes(figsize=(5.5, 5.5))
+                ax.pie(values, labels=labels, autopct="%1.0f%%", textprops={"fontsize": 8})
+                ax.set_title(title)
+                return fig
+            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
+            ax.barh(labels, values, color=_MPL_POST)
+            ax.set_xlabel("phi contribution")
+            ax.set_title(title)
+            ax.invert_yaxis()
+            sns.despine(fig)
+            return fig
+
+        if str(kind).lower() == "pie":
+            fig = go.Figure(go.Pie(labels=labels, values=values))
+            fig.update_layout(title=title, template="plotly_white")
+            return fig
+        fig = go.Figure(go.Bar(x=values, y=labels, orientation="h", marker_color=_POST_COLOR))
+        fig.update_layout(title=title, template="plotly_white",
+                          xaxis_title="phi contribution", yaxis_title="observation group")
+        return fig
+
     # -- spatial parameter maps ------------------------------------------
 
     _ARR_RE = re.compile(r"arr_i:(\d+)_j:(\d+)")
@@ -759,11 +1001,16 @@ class IesResults:
         """
 
         html_path = Path(html_path)
-        figures = [self.plot_phi()]
+        figures = [self.plot_phi(), self.plot_phi_distribution()]
         try:
             figures.append(self.plot_vs_obs(max_groups=max_groups))
         except ValueError:
             pass
+        for diagnostic in (self.plot_phi_contributions, self.plot_parameters_at_bounds):
+            try:
+                figures.append(diagnostic())
+            except Exception:  # pragma: no cover - diagnostics are best-effort in the bundle
+                pass
         for name in self.forecast_names:
             figures.append(self.forecast(name).plot())
         if self.model is not None:

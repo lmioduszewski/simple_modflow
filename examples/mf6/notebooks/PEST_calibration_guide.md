@@ -180,16 +180,21 @@ ies = cal.run_ies(reals=50, iterations=3, bad_phi_sigma=1.5, workers=10)
 Each cycle, look at these. myflopy gives one method per item:
 
 ```python
-ies.plot_phi()                 # did misfit drop? quickly early but not TOO quickly (overfit)?
-ies.plot_vs_obs()              # prior(grey)/posterior(blue) vs measured(red) — does blue bracket red?
-ies.forecasts()                # prior→posterior uncertainty table for every forecast
-ies.forecast("spring").plot()  # the payoff: posterior forecast distribution
+ies.plot_phi()                  # did misfit drop? quickly early but not TOO quickly (overfit)?
+ies.plot_phi_distribution()     # spread of phi: prior vs posterior — collapse to ~0 = overfitting
+ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red) — does blue bracket red?
+ies.plot_phi_contributions()    # which observation groups make up the misfit (visibility weighting)
+ies.plot_parameters_at_bounds() # % of parameters pinned at bounds — prior too tight / compensating?
+ies.forecasts()                 # prior→posterior uncertainty table for every forecast
+ies.forecast("spring").plot()   # the payoff: posterior forecast distribution
 ies.plot_field("k", stat="mean")     # property patterns — plausible or laughable?
 ies.plot_field("k", stat="std")      # where is K still uncertain?
 ies.plot_field("k", stat="change")   # where did calibration move K? (posterior/prior)
-ies.best()                     # the single realization to carry forward (the "base" / min-error-variance one)
-ies.report("review.html")      # all of the above bundled into one HTML
+ies.best()                      # the single realization to carry forward (the "base" / min-error-variance one)
+ies.report("review.html")       # all of the above bundled into one HTML
 ```
+
+Every plot takes `backend="matplotlib"` for static matplotlib/seaborn output instead of interactive Plotly.
 
 What you're checking for:
 - **Phi**: should drop fast at first. If it collapses to near-zero, you're

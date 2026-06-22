@@ -1337,6 +1337,17 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     assert isinstance(ies.plot_vs_obs(backend="matplotlib"), MplFigure)
     assert isinstance(fc.plot(backend="matplotlib"), MplFigure)
 
+    # phi & weight diagnostics (both backends)
+    assert isinstance(ies.plot_phi_distribution(), go.Figure)
+    assert isinstance(ies.plot_phi_distribution(backend="matplotlib"), MplFigure)
+    bounds_table = ies.parameters_at_bounds()
+    assert "pct_at_bound" in bounds_table.columns and not bounds_table.empty
+    assert isinstance(ies.plot_parameters_at_bounds(backend="matplotlib"), MplFigure)
+    contributions = ies.phi_contributions()
+    assert not contributions.empty
+    assert isinstance(ies.plot_phi_contributions(), go.Figure)
+    assert isinstance(ies.plot_phi_contributions(kind="pie", backend="matplotlib"), MplFigure)
+
     # base realization is the recommended single parameter set
     assert ies.best() == "base"
 
