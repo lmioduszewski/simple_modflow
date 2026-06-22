@@ -798,6 +798,198 @@ class IesResults:
                           xaxis_title="phi contribution", yaxis_title="observation group")
         return fig
 
+    # -- prior Monte Carlo & prior-data conflict -------------------------
+
+    def conflict(self, *, coverage: float = 1.0) -> pd.DataFrame:
+        """Detect prior-data conflict: observations the prior ensemble can't reach.
+
+        For every nonzero-weight observation, compares the measured value against
+        the range the *prior* simulated ensemble can produce. An observation is
+        "in conflict" when the measured value falls outside that range -- meaning
+        no plausible parameter set reproduces it, so history matching cannot
+        either (the problem is in the model, bounds, or weights, not the
+        parameters).
+
+        Parameters
+        ----------
+        coverage
+            Central fraction of the prior ensemble treated as "reachable".
+            ``1.0`` (default) uses the full min-max range; ``0.95`` uses the
+            2.5-97.5 percentile band (more robust to a few extreme realizations).
+
+        Returns
+        -------
+        pandas.DataFrame
+            Indexed by observation name with columns ``obgnme``, ``time``,
+            ``measured``, ``prior_lo``, ``prior_hi``, ``prior_mean`` and
+            ``in_conflict``.
+        """
+
+        obs = self.pst.observation_data
+        obs = obs.loc[obs["weight"].astype(float) > 0]
+        prior = self.prior._df
+        names = [name for name in obs.index if name in prior.columns]
+        obs = obs.loc[names]
+        sims = prior[names].astype(float)
+        alpha = (1.0 - float(coverage)) / 2.0
+        lo = sims.quantile(alpha)
+        hi = sims.quantile(1.0 - alpha)
+        measured = obs["obsval"].astype(float)
+        meta = self._observation_metadata().loc[names]
+        return pd.DataFrame(
+            {
+                "obgnme": obs["obgnme"].to_numpy(),
+                "time": meta["_time"].to_numpy(),
+                "measured": measured.to_numpy(),
+                "prior_lo": lo.to_numpy(),
+                "prior_hi": hi.to_numpy(),
+                "prior_mean": sims.mean().to_numpy(),
+                "in_conflict": ((measured < lo) | (measured > hi)).to_numpy(),
+            },
+            index=names,
+        )
+
+    def plot_prior_vs_obs(self, *, groups: list[str] | None = None, max_groups: int = 12,
+                          show_conflict: bool = True, coverage: float = 1.0, backend: str = "plotly"):
+        """Plot the prior ensemble (grey spaghetti) against the measured data.
+
+        Purpose
+        -------
+        The prior Monte Carlo check, done *before* history matching: each grey
+        line is one prior realization's simulated equivalent through time; red
+        markers are the measured observations. It answers "does the prior even
+        contain the data?" -- the cheap go/no-go gate before calibrating.
+
+        What to look for
+        ----------------
+        - The grey envelope should **bracket** the red markers. Then there is a
+          plausible parameter set that reproduces the data, and history matching
+          has something to find.
+        - Any red marker **outside** the grey envelope is **prior-data conflict**
+          (highlighted in orange when ``show_conflict``): no plausible parameter
+          set reaches it. Fix the model / bounds / weights before history
+          matching -- don't try to calibrate your way out of it.
+
+        Parameters
+        ----------
+        groups
+            Observation groups to plot (default: all nonzero-weight groups,
+            capped at ``max_groups``).
+        max_groups
+            Maximum number of groups when ``groups`` is not given.
+        show_conflict
+            Highlight observations in prior-data conflict (default ``True``).
+        coverage
+            Passed to :meth:`conflict` for the conflict test.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        obs = self._observation_metadata()
+        nnz_groups = list(self.pst.nnz_obs_groups)
+        chosen = groups if groups is not None else nnz_groups[:max_groups]
+        if not chosen:
+            raise ValueError("No nonzero-weight observation groups to plot.")
+        prior = self.prior._df
+        conflict = self.conflict(coverage=coverage) if show_conflict else None
+
+        def _group_data(group):
+            group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
+            names = group_obs.index.tolist()
+            times = group_obs["_time"].to_numpy()
+            measured = group_obs["obsval"].to_numpy(dtype=float)
+            if conflict is not None:
+                flags = conflict["in_conflict"].reindex(names).fillna(False).to_numpy(dtype=bool)
+            else:
+                flags = np.zeros(len(names), dtype=bool)
+            return names, times, measured, flags
+
+        if _normalize_backend(backend) == "matplotlib":
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+
+            with sns.axes_style("whitegrid"):
+                fig, axes = plt.subplots(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+            for ax, group in zip(axes[:, 0], chosen):
+                names, times, measured, flags = _group_data(group)
+                for real in prior.index:
+                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)
+                ax.plot(times[~flags], measured[~flags], "^", color=_MPL_MEAS, ms=7, label="measured")
+                if flags.any():
+                    ax.plot(times[flags], measured[flags], "X", color="darkorange", ms=10, label="prior-data conflict")
+                ax.set_title(group, loc="left", fontsize=9)
+                ax.set_ylabel("value")
+            axes[-1, 0].set_xlabel("time")
+            fig.suptitle("Prior ensemble vs measured observations")
+            fig.tight_layout()
+            return fig
+
+        fig = make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
+        for row, group in enumerate(chosen, start=1):
+            names, times, measured, flags = _group_data(group)
+            first = True
+            for real in prior.index:
+                fig.add_scatter(x=times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
+                                line=dict(color=_PRIOR_COLOR, width=1), row=row, col=1,
+                                name="prior", legendgroup="prior", showlegend=first and row == 1, hoverinfo="skip")
+                first = False
+            fig.add_scatter(x=times[~flags], y=measured[~flags], mode="markers",
+                            marker=dict(color=_MEAS_COLOR, size=8, symbol="triangle-up"),
+                            row=row, col=1, name="measured", legendgroup="measured", showlegend=row == 1)
+            if flags.any():
+                fig.add_scatter(x=times[flags], y=measured[flags], mode="markers",
+                                marker=dict(color="darkorange", size=11, symbol="x"),
+                                row=row, col=1, name="prior-data conflict", legendgroup="conflict", showlegend=row == 1)
+        fig.update_layout(title="Prior ensemble vs measured observations",
+                          template="plotly_white", height=260 * len(chosen))
+        return fig
+
+    def plot_conflict(self, *, coverage: float = 1.0, backend: str = "plotly"):
+        """Bar chart of the percentage of observations in prior-data conflict, by group.
+
+        Purpose
+        -------
+        Summarizes :meth:`conflict` so you can see *where* the prior fails to
+        bracket the data.
+
+        What to look for
+        ----------------
+        Groups with a high conflict percentage are where the model (or its prior /
+        weights) most needs revisiting before history matching. Zero across the
+        board is the green light to proceed.
+
+        Parameters
+        ----------
+        coverage
+            Passed to :meth:`conflict`.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        table = self.conflict(coverage=coverage)
+        grouped = table.groupby("obgnme")["in_conflict"].agg(["sum", "size"])
+        grouped["pct"] = 100.0 * grouped["sum"] / grouped["size"]
+        grouped = grouped.sort_values("pct", ascending=False)
+        labels = [str(name) for name in grouped.index]
+        pct = grouped["pct"].to_numpy(dtype=float)
+        title = "Prior-data conflict by observation group"
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
+            ax.barh(labels, pct, color="darkorange")
+            ax.set_xlabel("% of observations in prior-data conflict")
+            ax.set_title(title)
+            ax.invert_yaxis()
+            sns.despine(fig)
+            return fig
+
+        fig = go.Figure(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
+        fig.update_layout(title=title, template="plotly_white",
+                          xaxis_title="% in prior-data conflict", yaxis_title="observation group")
+        return fig
+
     # -- spatial parameter maps ------------------------------------------
 
     _ARR_RE = re.compile(r"arr_i:(\d+)_j:(\d+)")

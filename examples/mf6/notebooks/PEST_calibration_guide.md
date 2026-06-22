@@ -146,6 +146,17 @@ fall outside the prior, you have **prior-data conflict** — the model as built
 can't reproduce the data with plausible parameters. That's a modeling problem to
 fix (structure, bounds, weights), not something to calibrate away.
 
+```python
+prior = cal.prior(reals=50)      # run the prior ensemble once (NOPTMAX=-1), no iterations
+prior.plot_prior_vs_obs()        # grey prior spaghetti vs measured (conflicts highlighted orange)
+prior.conflict()                 # table: which observations the prior can't reach
+prior.plot_conflict()            # % of observations in prior-data conflict, by group
+```
+
+If the grey envelope brackets the red markers, you have a green light to history
+match. If not, fix the conflict first — calibrating into prior-data conflict
+injects bias.
+
 ### Run it
 
 ```python

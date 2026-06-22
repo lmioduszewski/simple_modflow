@@ -1257,6 +1257,58 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     assert np.allclose(rch.iloc[:, 2].to_numpy(), [0.0005, 0.0005])
 
 
+def test_prior_monte_carlo_and_conflict_end_to_end():
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+    import plotly.graph_objects as go
+    from matplotlib.figure import Figure as MplFigure
+
+    workspace = _project_temp_dir("prior_mc")
+    model, vor = _build_two_cell_pest_forward_model("prior_mc", workspace / "model")
+    Recharge(model=model, vor=vor, rch_dict={0: [[(0, 0), 0.001], [(0, 1), 0.001]]})
+    success, _ = model.run_simulation()
+    assert success is True
+
+    obs_path = _write_gpkg(
+        workspace / "prior_obs.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["OBS_A", "OBS_B"], "layer": [0, 0], "weight": [1.0, 1.0]},
+            geometry=[Point(0.5, 0.5), Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    targets = HeadTargets(
+        locations=obs_path,
+        values=pd.DataFrame({"per": [0], "OBS_A": [9.5], "OBS_B": [8.75]}),
+        time_column="per",
+    )
+
+    cal = PestProject(
+        model=model,
+        name="prior_demo",
+        workspace=workspace / "template",
+        start_datetime="2024-01-01",
+    )
+    cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
+    cal.observe(targets)
+    cal.build("prior_demo.pst", noptmax=0)
+
+    # Prior Monte Carlo: run the prior ensemble once (NOPTMAX=-1), no iterations.
+    prior = cal.prior(reals=6)
+
+    assert prior.iterations == [0]
+    assert prior.prior._df.shape[0] >= 6
+
+    conflict = prior.conflict()
+    assert {"measured", "prior_lo", "prior_hi", "in_conflict"}.issubset(conflict.columns)
+    assert len(conflict) == 2
+
+    assert isinstance(prior.plot_prior_vs_obs(), go.Figure)
+    assert isinstance(prior.plot_prior_vs_obs(backend="matplotlib"), MplFigure)
+    assert isinstance(prior.plot_conflict(), go.Figure)
+    assert isinstance(prior.plot_conflict(backend="matplotlib"), MplFigure)
+
+
 def test_run_ies_end_to_end_and_assess_with_ies_results():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")

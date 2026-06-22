@@ -943,26 +943,114 @@ class PestProject:
             Reader/visualizer for the completed run.
         """
 
-        if self.pst is None:
-            raise ValueError("Call build() before run_ies().")
         from myflopy.modflow.mf6.pest.ies import IesResults
 
+        results_dir = self._launch_pestpp_ies(
+            reals=reals,
+            noptmax=iterations,
+            workers=workers,
+            exe=exe,
+            master_suffix="ies_master",
+            master_dir=master_dir,
+            noise=noise,
+            bad_phi_sigma=bad_phi_sigma,
+            pestpp_options=pestpp_options,
+        )
+        return IesResults(results_dir, case_name=self.name, model=self.model)
+
+    def prior(
+        self,
+        *,
+        reals: int = 50,
+        workers: int | None = None,
+        noise: bool = True,
+        master_dir: str | Path | None = None,
+        exe: str = "pestpp-ies",
+        **pestpp_options,
+    ):
+        """Run the prior parameter ensemble once (prior Monte Carlo).
+
+        Before history matching, this draws ``reals`` parameter sets from the
+        prior and runs the model once for each -- "everything the model could
+        plausibly do given only expert knowledge, without looking at the data."
+        It is the cheap go/no-go check that the *prior brackets the observations*;
+        if it does not, you have prior-data conflict (a model problem, not
+        something history matching can fix), and history matching is premature.
+
+        Mechanically this is PESTPP-IES with ``NOPTMAX=-1`` (evaluate the prior
+        ensemble and stop). Call :meth:`build` first.
+
+        Parameters
+        ----------
+        reals
+            Number of prior realizations (``ies_num_reals``). 50 is plenty for a
+            visual bracketing check.
+        workers
+            Parallel agents (``None``/``1`` runs serially).
+        noise
+            Generate the measurement-noise ensemble too (default ``True``).
+        master_dir
+            Master directory for a parallel run (default ``<name>_prior_master``).
+        exe
+            PEST++ IES executable (resolved next to the MF6 binary, then ``PATH``).
+        **pestpp_options
+            Additional ``pst.pestpp_options`` passed straight through.
+
+        Returns
+        -------
+        IesResults
+            Use :meth:`~...ies.IesResults.plot_prior_vs_obs` (grey prior spaghetti
+            vs measured) and :meth:`~...ies.IesResults.conflict` to inspect it.
+        """
+
+        from myflopy.modflow.mf6.pest.ies import IesResults
+
+        results_dir = self._launch_pestpp_ies(
+            reals=reals,
+            noptmax=-1,
+            workers=workers,
+            exe=exe,
+            master_suffix="prior_master",
+            master_dir=master_dir,
+            noise=noise,
+            bad_phi_sigma=None,
+            pestpp_options=pestpp_options,
+        )
+        return IesResults(results_dir, case_name=self.name, model=self.model)
+
+    def _launch_pestpp_ies(
+        self,
+        *,
+        reals: int,
+        noptmax: int,
+        workers: int | None,
+        exe: str,
+        master_suffix: str,
+        master_dir: str | Path | None = None,
+        noise: bool = True,
+        bad_phi_sigma: float | None = None,
+        pestpp_options: dict | None = None,
+    ) -> Path:
+        """Configure options, write the pst, run PESTPP-IES, and return the results dir."""
+
+        if self.pst is None:
+            raise ValueError("Call build() before running PESTPP-IES.")
         case = f"{self.name}.pst"
         self.pst.pestpp_options["ies_num_reals"] = int(reals)
         if not noise:
             self.pst.pestpp_options["ies_no_noise"] = True
         if bad_phi_sigma is not None:
             self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
-        for key, value in pestpp_options.items():
+        for key, value in (pestpp_options or {}).items():
             self.pst.pestpp_options[key] = value
-        self.pst.control_data.noptmax = int(iterations)
+        self.pst.control_data.noptmax = int(noptmax)
         with self._quiet_pyemu_context():
             self.pst.write(str(self.template_workspace / case), version=2)
 
         exe_name, exe_dir = self._resolve_pestpp(exe)
         pyemu = self.pyemu or _import_pyemu()
         if workers and int(workers) > 1:
-            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_ies_master"
+            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_{master_suffix}"
             with self._augmented_path(exe_dir):
                 pyemu.os_utils.start_workers(
                     str(self.template_workspace),
@@ -972,8 +1060,8 @@ class PestProject:
                     worker_root=str(master.parent),
                     master_dir=str(master),
                 )
-            return IesResults(master, case_name=self.name, model=self.model)
+            return master
 
         with self._augmented_path(exe_dir):
             pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
-        return IesResults(self.template_workspace, case_name=self.name, model=self.model)
+        return self.template_workspace
