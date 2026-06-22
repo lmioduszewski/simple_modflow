@@ -218,7 +218,8 @@ def test_pest_notebooks_calibrate_the_canonical_model():
     for required in ("parameterize", "observe", "forecast", "settings", "run_ies"):
         assert required in combined
 
-    # The uncertainty notebook exercises the prior Monte Carlo + IES diagnostics.
+    # The uncertainty notebook exercises the prior Monte Carlo + IES diagnostics
+    # and the spatially-varying-K "property pattern" maps.
     ies_source = sources["canonical_06_pest_ies_uncertainty.ipynb"]
     for required in (
         "cal.prior",
@@ -227,5 +228,9 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "plot_phi_distribution",
         "plot_phi_contributions",
         "parameters_at_bounds",
+        "style='grid'",
+        "capture=True",
+        "plot_field",
+        "build_choropleth",
     ):
         assert required in ies_source
