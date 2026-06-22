@@ -145,6 +145,34 @@ def _infer_compare_value_columns(
     )
 
 
+# Matplotlib/seaborn colors mirroring the Plotly defaults, for backend="matplotlib".
+_MPL_MODEL = "#1f77b4"
+_MPL_BASELINE = "0.6"
+_MPL_TARGET = "crimson"
+
+
+def _normalize_backend(backend: str) -> str:
+    """Map friendly backend names to ``"plotly"`` or ``"matplotlib"``."""
+
+    value = str(backend).strip().lower()
+    if value in ("plotly", "go"):
+        return "plotly"
+    if value in ("matplotlib", "mpl", "seaborn", "sns"):
+        return "matplotlib"
+    raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
+
+
+def _mpl_axes(**kwargs):
+    """Create a seaborn-styled matplotlib figure/axes without global side effects."""
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    with sns.axes_style("whitegrid"):
+        fig, ax = plt.subplots(**kwargs)
+    return fig, ax
+
+
 class CalibrationPlot(f.Fig):
 
     @classmethod
@@ -221,21 +249,21 @@ class CalibrationPlot(f.Fig):
         xaxis_title: str = "Observed",
         yaxis_title: str = "Simulated",
         add_stats: bool = False,
+        backend: str = "plotly",
     ):
-        """Build a target-vs-simulated cross plot from compare-style DataFrames."""
+        """Build a target-vs-simulated cross plot from compare-style DataFrames.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
 
         frame = _require_compare_columns(
             compare,
             {target_column, simulated_column},
             caller="CalibrationPlot.from_obs_vs_sim(...)",
         ).dropna(subset=[target_column, simulated_column])
-        fig = cls()
-        fig.add_scattergl(
-            x=frame[target_column],
-            y=frame[simulated_column],
-            mode="markers",
-            name="Model",
-        )
+
+        baseline = None
         values = [frame[target_column], frame[simulated_column]]
         if baseline_compare is not None:
             baseline = _require_compare_columns(
@@ -243,21 +271,50 @@ class CalibrationPlot(f.Fig):
                 {target_column, simulated_column},
                 caller="CalibrationPlot.from_obs_vs_sim(..., baseline_compare=...)",
             ).dropna(subset=[target_column, simulated_column])
+            values.extend([baseline[target_column], baseline[simulated_column]])
+        merged_values = pd.concat(values, axis=0).dropna()
+        one_to_one = (float(merged_values.min()), float(merged_values.max())) if not merged_values.empty else None
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _mpl_axes(figsize=(5.5, 5.5))
+            ax.scatter(frame[target_column], frame[simulated_column], s=22, color=_MPL_MODEL, alpha=0.75, label="Model")
+            if baseline is not None:
+                ax.scatter(baseline[target_column], baseline[simulated_column], s=22, color=_MPL_BASELINE, alpha=0.75, label="Baseline")
+            if one_to_one is not None:
+                ax.plot(one_to_one, one_to_one, color=_MPL_TARGET, ls="--", lw=1, label="1:1 line")
+                ax.set_aspect("equal", adjustable="box")
+            ax.set_xlabel(xaxis_title)
+            ax.set_ylabel(yaxis_title)
+            ax.set_title(title)
+            ax.legend()
+            if add_stats and not frame.empty:
+                stats = calculate_calibration_statistics(frame[target_column], frame[simulated_column])
+                text = "\n".join(f"{key} = {value:.3g}" for key, value in stats.items())
+                ax.text(0.03, 0.97, text, transform=ax.transAxes, va="top", ha="left", fontsize=8,
+                        bbox=dict(boxstyle="round", facecolor="white", alpha=0.7))
+            sns.despine(fig)
+            return fig
+
+        fig = cls()
+        fig.add_scattergl(
+            x=frame[target_column],
+            y=frame[simulated_column],
+            mode="markers",
+            name="Model",
+        )
+        if baseline is not None:
             fig.add_scattergl(
                 x=baseline[target_column],
                 y=baseline[simulated_column],
                 mode="markers",
                 name="Baseline",
             )
-            values.extend([baseline[target_column], baseline[simulated_column]])
-
-        merged_values = pd.concat(values, axis=0).dropna()
-        if not merged_values.empty:
-            lower = float(merged_values.min())
-            upper = float(merged_values.max())
+        if one_to_one is not None:
             fig.add_scattergl(
-                x=[lower, upper],
-                y=[lower, upper],
+                x=list(one_to_one),
+                y=list(one_to_one),
                 mode="lines",
                 name="1:1 line",
             )
@@ -284,8 +341,13 @@ class CalibrationPlot(f.Fig):
         baseline_label: str = "Baseline",
         yaxis_title: str = "Head",
         title: str | None = None,
+        backend: str = "plotly",
     ):
-        """Build a time-series plot of targets and simulated heads for one target."""
+        """Build a time-series plot of targets and simulated heads for one target.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
 
         frame = _require_compare_columns(
             compare,
@@ -306,6 +368,32 @@ class CalibrationPlot(f.Fig):
             raise ValueError(f"No compare rows found for observation name {name!r}.")
         frame = _sort_compare_by_time(frame)
 
+        baseline = None
+        if baseline_compare is not None:
+            baseline = _require_compare_columns(
+                baseline_compare,
+                {"name", "time", simulated_column},
+                caller="CalibrationPlot.from_timeseries(..., baseline_compare=...)",
+            )
+            baseline_names = baseline["name"].astype(str)
+            baseline = _sort_compare_by_time(baseline.loc[baseline_names.str.lower() == key].copy())
+        resolved_title = title or str(frame["name"].iloc[0])
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _mpl_axes(figsize=(8, 4))
+            ax.plot(frame["time"], frame[target_column], "o-", color=_MPL_TARGET, label=target_label)
+            ax.plot(frame["time"], frame[simulated_column], "o-", color=_MPL_MODEL, label=simulated_label)
+            if baseline is not None:
+                ax.plot(baseline["time"], baseline[simulated_column], "o-", color=_MPL_BASELINE, label=baseline_label)
+            ax.set_xlabel("Time / period")
+            ax.set_ylabel(yaxis_title)
+            ax.set_title(resolved_title)
+            ax.legend()
+            sns.despine(fig)
+            return fig
+
         fig = cls()
         fig.add_scattergl(
             x=frame["time"],
@@ -319,15 +407,7 @@ class CalibrationPlot(f.Fig):
             mode="lines+markers",
             name=simulated_label,
         )
-        if baseline_compare is not None:
-            baseline = _require_compare_columns(
-                baseline_compare,
-                {"name", "time", simulated_column},
-                caller="CalibrationPlot.from_timeseries(..., baseline_compare=...)",
-            )
-            baseline_names = baseline["name"].astype(str)
-            baseline = baseline.loc[baseline_names.str.lower() == key].copy()
-            baseline = _sort_compare_by_time(baseline)
+        if baseline is not None:
             fig.add_scattergl(
                 x=baseline["time"],
                 y=baseline[simulated_column],
@@ -335,7 +415,7 @@ class CalibrationPlot(f.Fig):
                 name=baseline_label,
             )
         fig.update_layout(
-            title=title or str(frame["name"].iloc[0]),
+            title=resolved_title,
             xaxis_title="Time / period",
             yaxis_title=yaxis_title,
         )
@@ -349,20 +429,43 @@ class CalibrationPlot(f.Fig):
         baseline_compare: pd.DataFrame | None = None,
         title: str = "Residual MAE by period",
         yaxis_title: str = "Mean absolute error",
+        backend: str = "plotly",
     ):
-        """Build a by-period residual summary plot from compare-style data."""
+        """Build a by-period residual summary plot from compare-style data.
 
-        frame = _require_compare_columns(
-            compare,
-            {"time", "abs_residual"},
-            caller="CalibrationPlot.from_residuals_by_period(...)",
-        )
-        current_stats = (
-            frame.groupby("time")
-            .agg(mae=("abs_residual", "mean"))
-            .reset_index()
-        )
-        current_stats = _sort_compare_by_time(current_stats.rename(columns={"mae": "value"}))
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
+
+        def _period_mae(data, caller):
+            stats = (
+                _require_compare_columns(data, {"time", "abs_residual"}, caller=caller)
+                .groupby("time")
+                .agg(mae=("abs_residual", "mean"))
+                .reset_index()
+            )
+            return _sort_compare_by_time(stats.rename(columns={"mae": "value"}))
+
+        current_stats = _period_mae(compare, "CalibrationPlot.from_residuals_by_period(...)")
+        baseline_stats = None
+        if baseline_compare is not None:
+            baseline_stats = _period_mae(
+                baseline_compare, "CalibrationPlot.from_residuals_by_period(..., baseline_compare=...)"
+            )
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _mpl_axes(figsize=(7, 4))
+            ax.plot(current_stats["time"], current_stats["value"], "o-", color=_MPL_MODEL, label="Model MAE")
+            if baseline_stats is not None:
+                ax.plot(baseline_stats["time"], baseline_stats["value"], "o-", color=_MPL_BASELINE, label="Baseline MAE")
+            ax.set_xlabel("Time / period")
+            ax.set_ylabel(yaxis_title)
+            ax.set_title(title)
+            ax.legend()
+            sns.despine(fig)
+            return fig
 
         fig = cls()
         fig.add_scattergl(
@@ -371,19 +474,7 @@ class CalibrationPlot(f.Fig):
             mode="lines+markers",
             name="Model MAE",
         )
-
-        if baseline_compare is not None:
-            baseline = _require_compare_columns(
-                baseline_compare,
-                {"time", "abs_residual"},
-                caller="CalibrationPlot.from_residuals_by_period(..., baseline_compare=...)",
-            )
-            baseline_stats = (
-                baseline.groupby("time")
-                .agg(mae=("abs_residual", "mean"))
-                .reset_index()
-            )
-            baseline_stats = _sort_compare_by_time(baseline_stats.rename(columns={"mae": "value"}))
+        if baseline_stats is not None:
             fig.add_scattergl(
                 x=baseline_stats["time"],
                 y=baseline_stats["value"],

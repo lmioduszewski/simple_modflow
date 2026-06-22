@@ -2107,17 +2107,23 @@ class BoundHeadTargetPlots:
 
         return self.bound_targets.calibration_plot(type=type)
 
-    def obs_vs_sim(self, *, baseline=None, ax=None):
-        """Return a target-vs-simulated cross plot for one or two models."""
+    def obs_vs_sim(self, *, baseline=None, ax=None, backend: str = "plotly"):
+        """Return a target-vs-simulated cross plot for one or two models.
+
+        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.targets.compare(self.model)
         baseline_frame = None if baseline is None else self.targets.compare(baseline)
-        return CalibrationPlot.from_obs_vs_sim(current, baseline_compare=baseline_frame)
+        return CalibrationPlot.from_obs_vs_sim(current, baseline_compare=baseline_frame, backend=backend)
 
-    def timeseries(self, name: str | None = None, *, baseline=None, ax=None):
-        """Return a time-series plot for one target location."""
+    def timeseries(self, name: str | None = None, *, baseline=None, ax=None, backend: str = "plotly"):
+        """Return a time-series plot for one target location.
+
+        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
@@ -2127,10 +2133,14 @@ class BoundHeadTargetPlots:
             current,
             name=name,
             baseline_compare=baseline_frame,
+            backend=backend,
         )
 
-    def residuals_by_period(self, *, baseline=None):
-        """Return a by-period residual summary plot."""
+    def residuals_by_period(self, *, baseline=None, backend: str = "plotly"):
+        """Return a by-period residual summary plot.
+
+        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
@@ -2139,6 +2149,7 @@ class BoundHeadTargetPlots:
         return CalibrationPlot.from_residuals_by_period(
             current,
             baseline_compare=baseline_frame,
+            backend=backend,
         )
 
 
@@ -2432,7 +2443,7 @@ class BoundNamedSeriesTargetPlots:
         self.title = title
         self.yaxis_title = yaxis_title
 
-    def obs_vs_sim(self, *, baseline=None):
+    def obs_vs_sim(self, *, baseline=None, backend: str = "plotly"):
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
@@ -2444,9 +2455,10 @@ class BoundNamedSeriesTargetPlots:
             simulated_column=self.simulated_column,
             title=self.title,
             yaxis_title=self.yaxis_title,
+            backend=backend,
         )
 
-    def timeseries(self, name: str | None = None, *, baseline=None):
+    def timeseries(self, name: str | None = None, *, baseline=None, backend: str = "plotly"):
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
@@ -2459,14 +2471,15 @@ class BoundNamedSeriesTargetPlots:
             simulated_column=self.simulated_column,
             yaxis_title=self.yaxis_title,
             title=None,
+            backend=backend,
         )
 
-    def residuals_by_period(self, *, baseline=None):
+    def residuals_by_period(self, *, baseline=None, backend: str = "plotly"):
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
         baseline_frame = None if baseline is None else self.bound_targets.targets.compare(baseline)
-        return CalibrationPlot.from_residuals_by_period(current, baseline_compare=baseline_frame)
+        return CalibrationPlot.from_residuals_by_period(current, baseline_compare=baseline_frame, backend=backend)
 
 
 class TargetRegistry:

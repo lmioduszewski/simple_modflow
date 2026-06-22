@@ -310,6 +310,13 @@ def test_model_bound_targets_registry_and_calibration_plot():
     assert period_fig.layout.title.text == "Residual MAE by period"
     assert len(period_fig.data) == 1
 
+    # The same plots are available as static matplotlib/seaborn figures.
+    from matplotlib.figure import Figure as MplFigure
+
+    assert isinstance(bound.plot.obs_vs_sim(backend="matplotlib"), MplFigure)
+    assert isinstance(bound.plot.timeseries("OBS_A", backend="matplotlib"), MplFigure)
+    assert isinstance(bound.plot.residuals_by_period(backend="matplotlib"), MplFigure)
+
     baseline_model = _fake_model_with_heads()
     baseline_model.all_heads = baseline_model.all_heads.copy()
     baseline_model.all_heads.loc[:, "elev"] = [9.8, 9.3, 10.0, 9.0]

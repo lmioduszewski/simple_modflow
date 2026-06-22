@@ -698,8 +698,13 @@ class PestRunResults:
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
+        backend: str = "plotly",
     ):
-        """Return a by-period residual summary plot for baseline vs calibrated fits."""
+        """Return a by-period residual summary plot for baseline vs calibrated fits.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
         current = residual_compare.rename(
@@ -719,6 +724,7 @@ class PestRunResults:
         return CalibrationPlot.from_residuals_by_period(
             current,
             baseline_compare=baseline,
+            backend=backend,
         )
 
     def plot_obs_vs_sim(
@@ -726,8 +732,13 @@ class PestRunResults:
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
+        backend: str = "plotly",
     ):
-        """Return an observed-vs-simulated plot for baseline and calibrated fits."""
+        """Return an observed-vs-simulated plot for baseline and calibrated fits.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
         current = residual_compare.rename(
@@ -747,6 +758,7 @@ class PestRunResults:
         return CalibrationPlot.from_obs_vs_sim(
             current,
             baseline_compare=baseline,
+            backend=backend,
         )
 
     def plot_well_timeseries(
@@ -755,8 +767,13 @@ class PestRunResults:
         targets: HeadTargets | None = None,
         *,
         prefix: str | None = None,
+        backend: str = "plotly",
     ):
-        """Return one observation location through time for baseline and calibrated runs."""
+        """Return one observation location through time for baseline and calibrated runs.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
+        """
 
         residual_compare = self.compare_head_targets(targets, prefix=prefix)
         current = residual_compare.rename(
@@ -777,6 +794,7 @@ class PestRunResults:
             current,
             name=name,
             baseline_compare=baseline,
+            backend=backend,
         )
 
     def export_review(
