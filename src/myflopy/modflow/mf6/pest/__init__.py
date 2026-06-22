@@ -1,5 +1,6 @@
 """Public exports for the first ``myflopy`` PEST slice."""
 
+from .ies import IesForecast, IesResults, IesSettings, open_ies_run
 from .native_parameters import NativeParameterSpec
 from .project import PestProject
 from .results import PestRunResults, PestRunReview, open_pest_run
@@ -23,6 +24,9 @@ __all__ = [
     "DrnFlowObservationSpec",
     "ExpGeoStruct",
     "HeadTargetObservationSpec",
+    "IesForecast",
+    "IesResults",
+    "IesSettings",
     "KPilotPointParameter",
     "LakeStageObservationSpec",
     "NativeParameterSpec",
@@ -30,6 +34,7 @@ __all__ = [
     "PestRunResults",
     "PestRunReview",
     "PestSettings",
+    "open_ies_run",
     "SfrFlowObservationSpec",
     "SfrStageObservationSpec",
     "VectorParameterSource",

@@ -1229,6 +1229,93 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     assert np.allclose(rch.iloc[:, 2].to_numpy(), [0.0005, 0.0005])
 
 
+def test_run_ies_end_to_end_and_assess_with_ies_results():
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+    import plotly.graph_objects as go
+
+    from myflopy.modflow.mf6.pest.ies import IesForecast, IesResults
+
+    workspace = _project_temp_dir("run_ies")
+    model, vor = _build_two_cell_pest_forward_model("run_ies", workspace / "model")
+    Recharge(model=model, vor=vor, rch_dict={0: [[(0, 0), 0.001], [(0, 1), 0.001]]})
+    success, _ = model.run_simulation()
+    assert success is True
+
+    obs_path = _write_gpkg(
+        workspace / "ies_obs.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["OBS_A", "OBS_B"], "layer": [0, 0], "weight": [1.0, 1.0]},
+            geometry=[Point(0.5, 0.5), Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    targets = HeadTargets(
+        locations=obs_path,
+        values=pd.DataFrame({"per": [0], "OBS_A": [9.5], "OBS_B": [8.75]}),
+        time_column="per",
+    )
+    fore_path = _write_gpkg(
+        workspace / "ies_fore.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["PRED"], "layer": [0], "weight": [1.0]},
+            geometry=[Point(1.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    forecast = HeadTargets(
+        locations=fore_path,
+        values=pd.DataFrame({"per": [0], "PRED": [9.0]}),
+        time_column="per",
+    )
+
+    cal = PestProject(
+        model=model,
+        name="run_ies_demo",
+        workspace=workspace / "template",
+        start_datetime="2024-01-01",
+    )
+    cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
+    cal.parameterize("recharge", style="grid", bounds=(0.5, 1.5), physical=(0.0, 1e-2))
+    cal.observe(targets)
+    cal.forecast(forecast)
+    cal.build("run_ies_demo.pst", noptmax=0)
+
+    ies = cal.run_ies(reals=6, iterations=2, noise=True)
+
+    assert isinstance(ies, IesResults)
+    assert ies.iterations[0] == 0
+    assert ies.posterior_iteration >= 1
+    # prior and posterior observation ensembles share columns; >= reals rows
+    assert ies.prior._df.shape[0] >= 6
+    assert ies.posterior._df.shape[1] == ies.prior._df.shape[1]
+    assert ies.noise is not None
+
+    # forecast access + uncertainty summary
+    assert len(ies.forecast_names) == 1
+    fc = ies.forecast("pred")
+    assert isinstance(fc, IesForecast)
+    summary = fc.summary()
+    assert {"prior_std", "posterior_std", "truth"}.issubset(summary.index)
+    assert not ies.forecasts().empty
+
+    # headline plots are Plotly figures
+    assert isinstance(ies.plot_phi(), go.Figure)
+    assert isinstance(ies.plot_vs_obs(), go.Figure)
+    assert isinstance(fc.plot(), go.Figure)
+
+    # base realization is the recommended single parameter set
+    assert ies.best() == "base"
+
+    # one-shot HTML report
+    report = ies.report(workspace / "ies_report.html")
+    assert report.exists()
+
+    # settings snapshot reflects the run configuration
+    assert ies.settings.num_reals == 6
+    assert ies.settings.n_forecasts == 1
+
+
 def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
     pytest.importorskip("pyemu")
     workspace = _project_temp_dir("pest_run_results")

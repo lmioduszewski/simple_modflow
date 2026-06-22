@@ -721,6 +721,10 @@ class PestProject:
         self._write_project_metadata(filename=target_name)
         with self._quiet_pyemu_context():
             self.pst = self.pf.build_pst(filename=target_name)
+        # Pin the forward-run interpreter to this environment's Python so PEST++
+        # workers use the venv that has numpy/flopy/pyemu/myflopy, not a bare
+        # "python" that may resolve elsewhere.
+        self.pst.model_command = [f'"{sys.executable}" forward_run.py']
         finalize_observations(self, self._prepared_observations)
         self._apply_forecasts()
         self.pst.control_data.noptmax = int(noptmax)
@@ -817,3 +821,122 @@ class PestProject:
             n_forecasts=n_forecasts,
             noptmax=noptmax,
         )
+
+    # -- running PEST++ ---------------------------------------------------
+
+    def _resolve_pestpp(self, exe: str):
+        """Return ``(exe_name, exe_dir)`` for a PEST++ tool next to the MF6 binary."""
+
+        name = exe[:-4] if str(exe).lower().endswith(".exe") else str(exe)
+        mf6 = Path(self._resolve_exe())
+        if mf6.is_absolute() and mf6.parent.exists() and (mf6.parent / f"{name}.exe").exists():
+            return name, str(mf6.parent)
+        return name, None
+
+    @contextlib.contextmanager
+    def _augmented_path(self, exe_dir):
+        """Temporarily prepend ``exe_dir`` to ``PATH`` so PEST++ tools resolve."""
+
+        import os
+
+        original = os.environ.get("PATH", "")
+        if exe_dir and exe_dir not in original:
+            os.environ["PATH"] = exe_dir + os.pathsep + original
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = original
+
+    def run_ies(
+        self,
+        *,
+        reals: int = 50,
+        iterations: int = 3,
+        workers: int | None = None,
+        noise: bool = True,
+        bad_phi_sigma: float | None = None,
+        master_dir: str | Path | None = None,
+        exe: str = "pestpp-ies",
+        **pestpp_options,
+    ):
+        """Run iterative ensemble smoother history matching with PESTPP-IES.
+
+        This is the one-line entry point to ensemble calibration and "free"
+        uncertainty analysis. It sets sensible PESTPP-IES options on the built
+        control file, launches the run (serial, or parallel across ``workers``
+        agents), and returns an :class:`~myflopy.modflow.mf6.pest.ies.IesResults`
+        for assessing the outcome (phi convergence, ensembles vs observations,
+        posterior forecast distributions).
+
+        Call :meth:`build` first. Reasonable defaults make ``cal.run_ies()`` a
+        valid first call; tune from there.
+
+        Parameters
+        ----------
+        reals
+            Number of realizations in the ensemble (``ies_num_reals``). More is
+            better for posterior coverage but costs more model runs; 50 is a
+            reasonable starting point, production runs often use 100-300.
+        iterations
+            Number of smoother iterations (``NOPTMAX``). 3 is a common default;
+            PESTPP-IES may stop earlier if it converges.
+        workers
+            Number of parallel agents. ``None``/``1`` runs serially in the
+            template workspace; ``>1`` deploys a master + worker pool.
+        noise
+            Whether to carry measurement noise into the posterior (recommended).
+            Set ``False`` to disable (``ies_no_noise``).
+        bad_phi_sigma
+            Optional adaptive rejection threshold (``ies_bad_phi_sigma``);
+            values of 1.5 (aggressive) to 2.5 (tolerant) help highly nonlinear
+            problems by dropping lagging realizations.
+        master_dir
+            Master directory for a parallel run (default ``<name>_ies_master``
+            beside the template workspace).
+        exe
+            PEST++ IES executable name (resolved next to the MF6 binary, then on
+            ``PATH``).
+        **pestpp_options
+            Any additional ``pst.pestpp_options`` to set (e.g.
+            ``ies_localizer="loc.mat"``), passed straight through.
+
+        Returns
+        -------
+        IesResults
+            Reader/visualizer for the completed run.
+        """
+
+        if self.pst is None:
+            raise ValueError("Call build() before run_ies().")
+        from myflopy.modflow.mf6.pest.ies import IesResults
+
+        case = f"{self.name}.pst"
+        self.pst.pestpp_options["ies_num_reals"] = int(reals)
+        if not noise:
+            self.pst.pestpp_options["ies_no_noise"] = True
+        if bad_phi_sigma is not None:
+            self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
+        for key, value in pestpp_options.items():
+            self.pst.pestpp_options[key] = value
+        self.pst.control_data.noptmax = int(iterations)
+        with self._quiet_pyemu_context():
+            self.pst.write(str(self.template_workspace / case), version=2)
+
+        exe_name, exe_dir = self._resolve_pestpp(exe)
+        pyemu = self.pyemu or _import_pyemu()
+        if workers and int(workers) > 1:
+            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_ies_master"
+            with self._augmented_path(exe_dir):
+                pyemu.os_utils.start_workers(
+                    str(self.template_workspace),
+                    exe_name,
+                    case,
+                    num_workers=int(workers),
+                    worker_root=str(master.parent),
+                    master_dir=str(master),
+                )
+            return IesResults(master, case_name=self.name)
+
+        with self._augmented_path(exe_dir):
+            pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
+        return IesResults(self.template_workspace, case_name=self.name)
