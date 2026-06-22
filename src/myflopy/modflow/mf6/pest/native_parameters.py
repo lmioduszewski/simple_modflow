@@ -185,16 +185,26 @@ def _resolve_files(template_workspace: Path, model_name: str, recipe: _Recipe) -
     """Return external input filenames (relative to the template) for a recipe."""
 
     stub = recipe.file_stub.format(model=model_name)
+    workspace = Path(template_workspace)
     if "*" in stub:
-        matches = sorted(p.name for p in Path(template_workspace).glob(stub))
+        matches = sorted(p.name for p in workspace.glob(stub))
     else:
-        candidate = Path(template_workspace) / stub
-        matches = [candidate.name] if candidate.exists() else []
+        candidate = workspace / stub
+        if candidate.exists():
+            matches = [candidate.name]
+        else:
+            # Multi-layer DISV/DIS arrays are externalized one file per layer,
+            # e.g. ``<model>.npf_k_layer1.txt``. Match those precisely so that
+            # resolving ``k`` never picks up ``k33`` (``npf_k_layer*`` requires
+            # ``_layer`` immediately after ``npf_k``).
+            base = stub[:-4] if stub.endswith(".txt") else stub
+            matches = sorted(p.name for p in workspace.glob(f"{base}_layer*.txt"))
     if not matches:
         raise FileNotFoundError(
             f"No external input file found for target {recipe.canonical!r} "
-            f"(looked for {stub!r} in {template_workspace}). Did the model build "
-            "with this package, and was set_all_data_external() applied?"
+            f"(looked for {stub!r} or per-layer '{stub[:-4]}_layer*.txt' in "
+            f"{template_workspace}). Did the model build with this package, and "
+            "was set_all_data_external() applied?"
         )
     return matches
 

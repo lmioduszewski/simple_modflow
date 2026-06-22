@@ -41,7 +41,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 - `forward_run.py` — injected forward run: applies K/drain params, regenerates output CSVs
 - `results.py` — `PestRunResults`, `PestRunReview`, `open_pest_run` for post-run analysis
 - `geostats.py` — `ExpGeoStruct` / `build_geostruct` for pilot point kriging
-- Demo files: `gold_standard_demo.py`, `synthetic_demo.py`
+- The PEST notebooks (`canonical_04/05/06`) calibrate the **canonical valley
+  model itself** (perturb its K/recharge as "truth", then calibrate back). The
+  old standalone demo models (`gold_standard_demo`, `synthetic_demo`,
+  `modern_pest_demo.build_calibration_demo`) were retired in favor of one model
+  everywhere.
 
 ### What's missing / next steps for PEST
 1. **`RechargeMultiplierParameter`** — recharge is a primary calibration target, not yet parameterized

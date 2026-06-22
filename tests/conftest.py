@@ -84,10 +84,7 @@ def canonical_run(canonical_model):
 # unchanged. Update the lists below if heavy tests are renamed or added.
 
 # Whole modules whose every test runs a PEST build (all >1s).
-_SLOW_MODULES = {
-    "test_synthetic_pest_demo",
-    "test_gold_standard_pest_demo",
-}
+_SLOW_MODULES: set[str] = set()
 
 # Individual heavy tests living in otherwise-fast modules. Any test using the
 # ``canonical_run`` fixture is also marked automatically (see below), so this
@@ -121,6 +118,7 @@ _SLOW_TESTS = {
     "test_run_ies_end_to_end_and_assess_with_ies_results",
     "test_ies_capture_field_and_spatial_maps_end_to_end",
     "test_prior_monte_carlo_and_conflict_end_to_end",
+    "test_canonical_calibration_demo_builds_native_pst_with_multilayer_k",
     # test_workspace.py -- executes MF6
     "test_run_builds_writes_executes_and_reopens_with_flopy_310",
     "test_project_multi_model_run_uses_per_model_subdirs",

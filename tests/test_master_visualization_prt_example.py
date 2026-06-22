@@ -158,17 +158,17 @@ def test_master_notebook_documents_full_integration_surface():
 
 def test_canonical_master_notebook_set_uses_one_builder():
     notebook_root = ROOT / "examples" / "mf6" / "notebooks"
-    # Only the numbered canonical run set (canonical_00..canonical_04) uses the
-    # shared mf.build_canonical_model() builder. canonical_model_template.ipynb is
-    # an editable scaffold that demonstrates the builder API directly, so it is
-    # intentionally excluded here, as are the modern PEST notebooks
-    # (canonical_05/06), which calibrate a compact demo via build_calibration_demo.
+    # The numbered model run set (canonical_00..canonical_03) builds the shared
+    # mf.build_canonical_model() model directly. The PEST notebooks
+    # (canonical_04/05/06) calibrate the same model via
+    # build_canonical_calibration_demo, and canonical_model_template.ipynb is an
+    # editable scaffold -- all are intentionally excluded here.
     paths = sorted(
         path
-        for path in notebook_root.glob("canonical_0[0-4]*.ipynb")
+        for path in notebook_root.glob("canonical_0[0-3]*.ipynb")
         if not path.name.endswith(".executed.ipynb")
     )
-    assert len(paths) == 5
+    assert len(paths) == 4
     combined = ""
     for path in paths:
         notebook = json.loads(path.read_text(encoding="utf-8"))
@@ -185,60 +185,47 @@ def test_canonical_master_notebook_set_uses_one_builder():
         "visual",
         "PRT",
         "parallel",
-        "PEST",
     ):
         assert required.lower() in combined.lower()
 
 
-def test_modern_pest_notebooks_use_the_declarative_facade():
+def test_pest_notebooks_calibrate_the_canonical_model():
     notebook_root = ROOT / "examples" / "mf6" / "notebooks"
-    pest_paths = sorted(notebook_root.glob("canonical_0[5-6]*.ipynb"))
-    assert len(pest_paths) == 2
+    pest_paths = sorted(
+        path
+        for path in notebook_root.glob("canonical_0[4-6]*.ipynb")
+        if not path.name.endswith(".executed.ipynb")
+    )
+    assert len(pest_paths) == 3
+    sources = {}
     for path in pest_paths:
         notebook = json.loads(path.read_text(encoding="utf-8"))
         source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-        assert "build_calibration_demo" in source
+        # Every PEST notebook calibrates the canonical model itself; the old
+        # standalone demo models are gone.
+        assert "build_canonical_calibration_demo" in source
+        assert "gold_standard" not in source
+        assert "build_calibration_demo(" not in source
         assert "PestProject" in source
-        assert "parameterize" in source
-    combined = "\n".join(
-        "\n".join("".join(cell.get("source", [])) for cell in json.loads(path.read_text(encoding="utf-8"))["cells"])
-        for path in pest_paths
-    )
-    # The setup notebook builds; the IES notebook runs the ensemble and maps fields.
-    for required in ("observe", "forecast", "settings", "run_ies", "plot_field"):
+        assert not any(
+            output.get("output_type") == "error"
+            for cell in notebook["cells"]
+            for output in cell.get("outputs", [])
+        )
+        sources[path.name] = source
+
+    combined = "\n".join(sources.values())
+    for required in ("parameterize", "observe", "forecast", "settings", "run_ies"):
         assert required in combined
 
-
-def test_canonical_pest_notebook_covers_full_build_run_and_review_workflow():
-    path = ROOT / "examples" / "mf6" / "notebooks" / "canonical_04_pest_and_results.ipynb"
-    notebook = json.loads(path.read_text(encoding="utf-8"))
-    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-
-    assert sum(cell["cell_type"] == "markdown" for cell in notebook["cells"]) >= 9
-    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) >= 9
-    assert not any(
-        output.get("output_type") == "error"
-        for cell in notebook["cells"]
-        for output in cell.get("outputs", [])
-    )
+    # The uncertainty notebook exercises the prior Monte Carlo + IES diagnostics.
+    ies_source = sources["canonical_06_pest_ies_uncertainty.ipynb"]
     for required in (
-        "build_canonical_model",
-        "build_and_optionally_run_gold_standard_demo",
-        "RUN_PESTPP",
-        "NOPTMAX",
-        "N_WORKERS",
-        "forward_run.py",
-        "parameter_data",
-        "observation_data",
-        "load_head_targets",
-        "load_lake_stage_targets",
-        "load_sfr_stage_targets",
-        "load_sfr_flow_targets",
-        "load_drn_flow_targets",
-        "review()",
-        "plot_obs_vs_sim",
-        "plot_residuals_by_period",
-        "plot_well_timeseries",
-        "export_review",
+        "cal.prior",
+        "plot_prior_vs_obs",
+        "conflict",
+        "plot_phi_distribution",
+        "plot_phi_contributions",
+        "parameters_at_bounds",
     ):
-        assert required in source
+        assert required in ies_source

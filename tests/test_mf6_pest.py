@@ -1727,3 +1727,40 @@ def test_pest_run_results_raise_clean_error_when_saved_targets_are_missing():
         results.load_head_targets()
     with pytest.raises(FileNotFoundError, match="No saved head-target metadata"):
         results.compare_head_targets()
+
+
+def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path):
+    """The canonical calibration demo wires the canonical valley model into a
+    native PstFrom build, including multi-layer DISV K resolved per layer."""
+
+    from myflopy.modflow.mf6.canonical_calibration import (
+        build_canonical_calibration_demo,
+    )
+    from myflopy.modflow.mf6.pest import PestProject
+
+    demo = build_canonical_calibration_demo(tmp_path / "model", n_head_wells=8)
+    assert demo.model.gwf.modelgrid.nlay == 4
+    assert demo.head_targets.locations_gdf.shape[0] == 8
+    assert demo.forecast_targets.locations_gdf.shape[0] == 1
+    assert demo.start_k_factor == 3.0
+
+    cal = PestProject(
+        model=demo.model,
+        name="cc",
+        workspace=tmp_path / "template",
+        start_datetime="2024-01-01",
+    )
+    kspec = cal.parameterize("k", style="constant", bounds=(0.1, 10.0), physical=(0.1, 300.0))
+    cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
+    cal.observe(demo.head_targets)
+    cal.forecast(demo.forecast_targets)
+    pst = cal.build("cc.pst", noptmax=0)
+
+    # Two adjustable parameters: one constant K multiplier + one constant recharge.
+    assert pst.npar_adj == 2
+    # Eight wells x every stress period of nonzero-weight head observations.
+    assert pst.nnz_obs == 8 * demo.model.nper
+    # The multi-layer DISV K array resolves to one external file per layer
+    # (npf_k_layer1..4), and never grabs the k33 files.
+    assert len(kspec.resolved_files) == demo.model.gwf.modelgrid.nlay
+    assert all("npf_k_layer" in name and "k33" not in name for name in kspec.resolved_files)
