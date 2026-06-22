@@ -41,6 +41,34 @@ _NOISE_COLOR = "rgba(214,39,40,0.45)"
 _MEAS_COLOR = "rgb(214,39,40)"
 _TRUTH_COLOR = "rgb(214,39,40)"
 
+# Matplotlib/seaborn equivalents (used when backend="matplotlib").
+_MPL_PRIOR = "0.6"
+_MPL_POST = "#1f77b4"
+_MPL_MEAS = "crimson"
+_MPL_TRUTH = "crimson"
+
+
+def _normalize_backend(backend: str) -> str:
+    """Map friendly backend names to ``"plotly"`` or ``"matplotlib"``."""
+
+    value = str(backend).strip().lower()
+    if value in ("plotly", "go"):
+        return "plotly"
+    if value in ("matplotlib", "mpl", "seaborn", "sns"):
+        return "matplotlib"
+    raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
+
+
+def _new_mpl_axes(**kwargs):
+    """Create a seaborn-styled matplotlib figure/axes without global side effects."""
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    with sns.axes_style("whitegrid"):
+        fig, ax = plt.subplots(**kwargs)
+    return fig, ax
+
 # Trailing ``:<value>`` time token in a pyEMU long observation name.
 _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
 
@@ -136,16 +164,35 @@ class IesForecast:
             data["uncertainty_reduction"] = float(1.0 - np.std(self.posterior) / prior_std)
         return pd.Series(data)
 
-    def plot(self, *, bins: int = 20, title: str | None = None) -> go.Figure:
+    def plot(self, *, bins: int = 20, title: str | None = None, backend: str = "plotly"):
         """Overlay prior and posterior histograms with the truth/target line.
 
         Grey is the prior forecast distribution, blue the posterior. A vertical
         red line marks the target/known value when one is available.
+
+        ``backend`` selects ``"plotly"`` (interactive, default) or
+        ``"matplotlib"`` (static matplotlib/seaborn).
         """
 
         prior = np.asarray(self.prior, dtype=float)
         posterior = np.asarray(self.posterior, dtype=float)
         edges = np.histogram_bin_edges(np.concatenate([prior, posterior]), bins=bins)
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _new_mpl_axes(figsize=(6, 4))
+            ax.hist(prior, bins=edges, density=True, color=_MPL_PRIOR, alpha=0.55, label="prior")
+            ax.hist(posterior, bins=edges, density=True, color=_MPL_POST, alpha=0.6, label="posterior")
+            if self.truth is not None:
+                ax.axvline(float(self.truth), color=_MPL_TRUTH, linestyle="--")
+            ax.set_xlabel("forecast value")
+            ax.set_ylabel("probability density")
+            ax.set_title(title or f"Forecast: {self.name}")
+            ax.legend()
+            sns.despine(fig)
+            return fig
+
         fig = go.Figure()
         fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1],
                           size=(edges[-1] - edges[0]) / bins), name="prior",
@@ -324,7 +371,7 @@ class IesResults:
 
     # -- plots ------------------------------------------------------------
 
-    def plot_phi(self, *, log: bool = True, measured: bool = False) -> go.Figure:
+    def plot_phi(self, *, log: bool = True, measured: bool = False, backend: str = "plotly"):
         """Plot objective-function (phi) convergence across iterations.
 
         One faint line per realization shows how its misfit dropped each
@@ -338,19 +385,40 @@ class IesResults:
             Use a log-scaled phi axis (default ``True``; recommended).
         measured
             Plot the 'measured+noise' phi instead of the 'actual' phi.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"`` (static
+            matplotlib/seaborn).
         """
 
         frame = self.phi_measured if measured else self.phi
         realization_cols = list(frame.columns[6:])
         x = frame["iteration"].to_numpy()
+        title = "Phi convergence" + (" (measured+noise)" if measured else "")
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = _new_mpl_axes(figsize=(7, 4))
+            for col in realization_cols:
+                ax.plot(x, frame[col], color="0.5", lw=0.8, alpha=0.4)
+            ax.plot(x, frame["mean"], color=_MPL_POST, lw=2.5, label="mean phi")
+            if log:
+                ax.set_yscale("log")
+            ax.set_xlabel("iteration")
+            ax.set_ylabel("phi")
+            ax.set_title(title)
+            ax.legend()
+            sns.despine(fig)
+            return fig
+
         fig = go.Figure()
         for col in realization_cols:
             fig.add_scatter(x=x, y=frame[col], mode="lines", line=dict(color="rgba(80,80,80,0.35)", width=1),
                             name=str(col), showlegend=False, hoverinfo="skip")
         fig.add_scatter(x=x, y=frame["mean"], mode="lines+markers",
                         line=dict(color=_POST_COLOR.replace("0.55", "1.0"), width=3), name="mean phi")
-        fig.update_layout(title="Phi convergence" + (" (measured+noise)" if measured else ""),
-                          xaxis_title="iteration", yaxis_title="phi", template="plotly_white")
+        fig.update_layout(title=title, xaxis_title="iteration", yaxis_title="phi",
+                          template="plotly_white")
         if log:
             fig.update_yaxes(type="log")
         return fig
@@ -363,7 +431,7 @@ class IesResults:
         return obs
 
     def plot_vs_obs(self, *, groups: list[str] | None = None, max_groups: int = 12,
-                    iteration: int | None = None) -> go.Figure:
+                    iteration: int | None = None, backend: str = "plotly"):
         """Plot prior and posterior ensembles against the measured observations.
 
         For every nonzero-weight observation group (one timeseries each), grey
@@ -380,6 +448,9 @@ class IesResults:
             Maximum number of groups to draw when ``groups`` is not given.
         iteration
             Posterior iteration to plot (default: the highest available).
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"`` (static
+            matplotlib/seaborn).
         """
 
         obs = self._observation_metadata()
@@ -390,7 +461,28 @@ class IesResults:
 
         prior = self.prior._df
         posterior = self.obs_ensemble(iteration if iteration is not None else self.posterior_iteration)._df
-        noise = self.noise._df if self.noise is not None else None
+
+        if _normalize_backend(backend) == "matplotlib":
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+
+            with sns.axes_style("whitegrid"):
+                fig, axes = plt.subplots(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+            for ax, group in zip(axes[:, 0], chosen):
+                group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
+                names = group_obs.index.tolist()
+                times = group_obs["_time"].to_numpy()
+                for real in prior.index:
+                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)
+                for real in posterior.index:
+                    ax.plot(times, posterior.loc[real, names].to_numpy(dtype=float), color=_MPL_POST, lw=0.8, alpha=0.5)
+                ax.plot(times, group_obs["obsval"].to_numpy(dtype=float), "^", color=_MPL_MEAS, ms=7)
+                ax.set_title(group, loc="left", fontsize=9)
+                ax.set_ylabel("value")
+            axes[-1, 0].set_xlabel("time")
+            fig.suptitle("Simulated ensemble vs measured observations")
+            fig.tight_layout()
+            return fig
 
         fig = make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
         for row, group in enumerate(chosen, start=1):
@@ -546,7 +638,7 @@ class IesResults:
         return frame.sort_values("cell").reset_index(drop=True)
 
     def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
-                   layer: int = 0, **choropleth_kwargs) -> go.Figure:
+                   layer: int = 0, backend: str = "plotly", **choropleth_kwargs):
         """Map a captured parameter field on the model grid (Voronoi choropleth).
 
         This answers "property patterns -- plausible or laughable?": it shows the
@@ -566,8 +658,11 @@ class IesResults:
             ``"prior"`` or ``"posterior"`` for ``stat`` in {``"mean"``, ``"std"``}.
         layer
             Model layer to map (default 0).
+        backend
+            ``"plotly"`` (interactive map, default) or ``"matplotlib"`` (static
+            matplotlib choropleth of the Voronoi cells).
         **choropleth_kwargs
-            Forwarded to the Voronoi choropleth builder.
+            Forwarded to the Plotly Voronoi choropleth builder (``backend="plotly"``).
         """
 
         frame = self.field(target, layer=layer)
@@ -585,6 +680,19 @@ class IesResults:
         ncpl = int(self.model.vor.ncpl)
         values = np.full(ncpl, np.nan)
         values[frame["cell"].to_numpy(dtype=int)] = frame[column].to_numpy(dtype=float)
+        label = f"{target} {stat}" + (f" ({which})" if stat in ("mean", "std") else "")
+
+        if _normalize_backend(backend) == "matplotlib":
+            import matplotlib.pyplot as plt
+
+            gdf = self.model.vor.gdf_vorPolys.copy()
+            gdf["value"] = values
+            fig, ax = plt.subplots(figsize=(6, 6))
+            cmap = "RdBu_r" if str(stat).lower() == "change" else "viridis"
+            gdf.plot(column="value", ax=ax, legend=True, cmap=cmap)
+            ax.set_title(label)
+            ax.set_axis_off()
+            return fig
 
         from myflopy.modflow.mf6.grid.plotting import build_choropleth
 

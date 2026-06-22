@@ -1320,10 +1320,15 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     assert {"prior_std", "posterior_std", "truth"}.issubset(summary.index)
     assert not ies.forecasts().empty
 
-    # headline plots are Plotly figures
+    # headline plots are Plotly figures by default, matplotlib on request
+    from matplotlib.figure import Figure as MplFigure
+
     assert isinstance(ies.plot_phi(), go.Figure)
     assert isinstance(ies.plot_vs_obs(), go.Figure)
     assert isinstance(fc.plot(), go.Figure)
+    assert isinstance(ies.plot_phi(backend="matplotlib"), MplFigure)
+    assert isinstance(ies.plot_vs_obs(backend="matplotlib"), MplFigure)
+    assert isinstance(fc.plot(backend="matplotlib"), MplFigure)
 
     # base realization is the recommended single parameter set
     assert ies.best() == "base"
@@ -1387,6 +1392,11 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
     assert isinstance(ies.plot_field("k", stat="mean", which="posterior"), go.Figure)
     assert isinstance(ies.plot_field("k", stat="change"), go.Figure)
     assert isinstance(ies.plot_field("k", stat="std"), go.Figure)
+
+    from matplotlib.figure import Figure as MplFigure
+
+    assert isinstance(ies.plot_field("k", stat="mean", backend="matplotlib"), MplFigure)
+    assert isinstance(ies.plot_field("k", stat="change", backend="matplotlib"), MplFigure)
 
 
 def test_pest_run_results_reopen_completed_artifact_and_compare_heads():
