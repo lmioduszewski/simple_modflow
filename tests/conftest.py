@@ -119,6 +119,7 @@ _SLOW_TESTS = {
     "test_ies_capture_field_and_spatial_maps_end_to_end",
     "test_prior_monte_carlo_and_conflict_end_to_end",
     "test_canonical_calibration_demo_builds_native_pst_with_multilayer_k",
+    "test_grid_k_parameterization_on_voronoi_with_capture",
     # test_workspace.py -- executes MF6
     "test_run_builds_writes_executes_and_reopens_with_flopy_310",
     "test_project_multi_model_run_uses_per_model_subdirs",

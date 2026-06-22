@@ -1010,7 +1010,7 @@ class IesResults:
         available = [f.get("target") for f in fields]
         raise KeyError(f"No captured field for {target!r}. Available: {available}")
 
-    def _field_cell_index(self, prefix: str, layer: int) -> dict[str, int]:
+    def _field_cell_index(self, info: dict, layer: int) -> dict[str, int]:
         """Map captured-field observation names to cell ids for one layer."""
 
         if self.model is None:
@@ -1019,17 +1019,34 @@ class IesResults:
                 "cal.run_ies(...) (which passes the model), or pass model=... to IesResults."
             )
         ncpl = int(self.model.vor.ncpl)
-        token = f"oname:{prefix.lower()}_"
+        # JSON round-trips the int layer keys to strings.
+        layer_prefixes = {int(k): v for k, v in (info.get("layer_prefixes") or {}).items()}
         mapping: dict[str, int] = {}
-        for name in self.pst.observation_data.index:
-            if token not in name:
-                continue
-            match = self._ARR_RE.search(name)
-            if not match:
-                continue
-            flat = int(match.group(1))
-            if flat // ncpl == int(layer):
-                mapping[name] = flat % ncpl
+        if layer_prefixes:
+            # Multi-layer DISV: one capture file per layer, each indexed
+            # 0..ncpl-1, so the array index *is* the cell id.
+            prefix = layer_prefixes.get(int(layer))
+            if prefix is None:
+                raise ValueError(
+                    f"No captured field for layer {layer}. "
+                    f"Captured layers: {sorted(layer_prefixes)}."
+                )
+            token = f"oname:{prefix.lower()}_"
+            for name in self.pst.observation_data.index:
+                if token not in name:
+                    continue
+                match = self._ARR_RE.search(name)
+                if match:
+                    mapping[name] = int(match.group(1))
+        else:
+            # Legacy single flattened array: flat = layer * ncpl + cell.
+            token = f"oname:{info['prefix'].lower()}_"
+            for name in self.pst.observation_data.index:
+                if token not in name:
+                    continue
+                match = self._ARR_RE.search(name)
+                if match and int(match.group(1)) // ncpl == int(layer):
+                    mapping[name] = int(match.group(1)) % ncpl
         if not mapping:
             raise ValueError(f"No captured field cells found for layer {layer}.")
         return mapping
@@ -1055,7 +1072,7 @@ class IesResults:
                 f"Spatial maps currently support array fields (K, K33); "
                 f"{info.get('target')!r} is a list field."
             )
-        cells = self._field_cell_index(info["prefix"], layer)
+        cells = self._field_cell_index(info, layer)
         names = list(cells.keys())
         prior = self.prior._df.loc[:, names]
         posterior = self.posterior._df.loc[:, names]

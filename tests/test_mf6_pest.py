@@ -1764,3 +1764,39 @@ def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path
     # (npf_k_layer1..4), and never grabs the k33 files.
     assert len(kspec.resolved_files) == demo.model.gwf.modelgrid.nlay
     assert all("npf_k_layer" in name and "k33" not in name for name in kspec.resolved_files)
+
+
+def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
+    """Native grid K builds one geostatistical parameter per Voronoi cell, per
+    selected layer, and capture records a non-colliding per-layer K field."""
+
+    from myflopy.modflow.mf6.canonical_calibration import (
+        build_canonical_calibration_demo,
+    )
+    from myflopy.modflow.mf6.pest import PestProject
+
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
+    )
+    cal = PestProject(
+        model=demo.model, name="gk", workspace=tmp_path / "tmpl",
+        start_datetime="2024-01-01",
+    )
+    kspec = cal.parameterize("k", style="grid", layers=[0, 1], correlation=600.0,
+                             bounds=(0.02, 50.0), physical=(0.001, 300.0), capture=True)
+    cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
+    cal.observe(demo.head_targets)
+    pst = cal.build("gk.pst", noptmax=0)
+
+    ncpl = int(demo.model.vor.ncpl)
+    # Two unconfined layer files -> one grid parameter per cell on each, + recharge.
+    assert len(kspec.resolved_files) == 2
+    assert all("npf_k_layer" in name for name in kspec.resolved_files)
+    assert pst.npar_adj == 2 * ncpl + 1
+    assert pst.parameter_data["pargp"].nunique() == 3  # kl1, kl2, recharge
+
+    # Capture obs: per-cell K field per layer, distinct (non-colliding) names,
+    # all zero-weight.
+    capture = pst.observation_data.index.str.contains("kfield")
+    assert int(capture.sum()) == 2 * ncpl
+    assert (pst.observation_data.loc[capture, "weight"] == 0.0).all()

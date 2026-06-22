@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import re
+
 import numpy as np
+import pandas as pd
 
 
 # --- recipe registry -------------------------------------------------------
@@ -143,6 +146,7 @@ class NativeParameterSpec:
     transform: str = "log"
     additive: bool | None = None
     zones: Any = None
+    layers: tuple[int, ...] | None = None
     correlation: float | None = None
     temporal: float | None = None
     name: str | None = None
@@ -218,6 +222,16 @@ def add_native_parameter(project, spec: NativeParameterSpec):
 
     recipe = spec.recipe
     files = _resolve_files(project.template_workspace, project.model.name, recipe)
+    if spec.layers is not None and recipe.family == "array":
+        wanted = {int(layer) for layer in spec.layers}
+        selected = [
+            name
+            for name in files
+            if (match := re.search(r"_layer(\d+)\.txt$", name))
+            and (int(match.group(1)) - 1) in wanted
+        ]
+        if selected:
+            files = selected
     spec.resolved_files = list(files)
 
     if recipe.family == "array":
@@ -225,11 +239,12 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         for filename in files:
             _flatten_array_file(Path(project.template_workspace) / filename)
 
-    if recipe.family == "array" and spec.style in _SPATIAL_STYLES:
+    if recipe.family == "array" and spec.style == "pilotpoints":
         raise NotImplementedError(
-            f"style={spec.style!r} on array target {recipe.canonical!r} needs a "
-            "Voronoi cell spatial reference, which is Phase 2. Use style='constant' "
-            "or style='zone' for now, or the legacy KPilotPointParameter path."
+            f"style='pilotpoints' on array target {recipe.canonical!r} is not "
+            "wired for Voronoi grids yet. Use style='grid' -- one geostatistically "
+            "correlated multiplier per cell, drawn against the model's spatial "
+            "reference -- or style='constant'/'zone'."
         )
 
     kwargs: dict[str, Any] = {
@@ -254,9 +269,20 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         kwargs["geostruct"] = project._geostruct_for(spec)
     kwargs.update(spec.extra)
 
-    # pyEMU accepts a single filename or a list; pass the list for multi-period
-    # list packages so one parameter scales every stress period uniformly.
-    filenames = files if len(files) > 1 else files[0]
-    frame = project.pf.add_parameters(filenames, **kwargs)
+    # List/constant: pass the file list so one parameter scales every file
+    # together (recharge across stress periods, or one constant K multiplier
+    # across all layers). Grid array parameters instead get an independent
+    # parameter set *per layer file*, so each layer's K field varies on its own.
+    if recipe.family == "array" and spec.style == "grid" and len(files) > 1:
+        frames = []
+        for index, filename in enumerate(files, start=1):
+            layer_kwargs = dict(kwargs)
+            layer_kwargs["par_name_base"] = f"{spec.name}l{index}"
+            layer_kwargs["pargp"] = f"{spec.name}l{index}"
+            frames.append(project.pf.add_parameters(filename, **layer_kwargs))
+        frame = pd.concat(frames, ignore_index=True)
+    else:
+        filenames = files if len(files) > 1 else files[0]
+        frame = project.pf.add_parameters(filenames, **kwargs)
     project._native_parameter_frames[spec.name] = frame
     return frame

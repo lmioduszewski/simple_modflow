@@ -54,6 +54,8 @@ class CanonicalCalibrationDemo:
     forecast_targets: HeadTargets
     start_k_factor: float
     workspace: Path
+    truth_k: np.ndarray | None = None
+    start_k_constant: float | None = None
 
 
 def _truth_head_targets(model, cells, prefix: str, *, layer: int = 0) -> HeadTargets:
@@ -81,6 +83,8 @@ def build_canonical_calibration_demo(
     config: CanonicalModelConfig | None = None,
     n_head_wells: int = 16,
     start_k_factor: float = 3.0,
+    start_k_constant: float | None = None,
+    start_k_layers: tuple[int, ...] | None = None,
     seed: int = 2026,
 ) -> CanonicalCalibrationDemo:
     """Build the canonical model as truth, sample observations, perturb the start.
@@ -137,10 +141,20 @@ def build_canonical_calibration_demo(
     head_targets = _truth_head_targets(truth, well_cells, "obs", layer=0)
     forecast_targets = _truth_head_targets(truth, [forecast_cell], "fore_lakehead", layer=0)
 
-    # Reset K to the wrong, uniformly-too-high starting value -- the model to
-    # calibrate. set_all_data_external() later splits this into per-layer files.
+    # Reset K to the wrong starting value -- the model to calibrate.
+    # set_all_data_external() later splits this into per-layer files.
     truth_k = np.asarray(truth.gwf.npf.k.get_data(), dtype=float)
-    truth.gwf.npf.k.set_data(truth_k * float(start_k_factor))
+    if start_k_constant is not None:
+        # Flat-constant start: the spatial K pattern must be recovered from
+        # scratch (use with grid/pilot-point K). Only the named layers are
+        # flattened; the rest stay at truth so the model is otherwise correct.
+        start_k = truth_k.copy()
+        layers = range(start_k.shape[0]) if start_k_layers is None else start_k_layers
+        for layer in layers:
+            start_k[int(layer)] = float(start_k_constant)
+        truth.gwf.npf.k.set_data(start_k)
+    else:
+        truth.gwf.npf.k.set_data(truth_k * float(start_k_factor))
     truth.run_simulation()
 
     return CanonicalCalibrationDemo(
@@ -149,4 +163,6 @@ def build_canonical_calibration_demo(
         forecast_targets=forecast_targets,
         start_k_factor=float(start_k_factor),
         workspace=workspace,
+        truth_k=truth_k,
+        start_k_constant=start_k_constant,
     )

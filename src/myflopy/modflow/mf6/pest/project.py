@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -172,6 +173,7 @@ class PestProject:
         transform: str = "log",
         additive: bool | None = None,
         zones=None,
+        layers=None,
         correlation: float | None = None,
         temporal: float | None = None,
         name: str | None = None,
@@ -202,10 +204,13 @@ class PestProject:
             - ``"grid"`` -- one multiplier per list entry / cell;
             - ``"pilotpoints"`` -- geostatistical pilot points.
 
-            ``None`` uses the recipe default (``"constant"``). ``"grid"`` and
-            ``"pilotpoints"`` on *array* targets (K, K33) require a cell spatial
-            reference and are not yet available on the native path (Phase 2);
-            they work for list targets (recharge, GHB, DRN, ...) today.
+            ``None`` uses the recipe default (``"constant"``). ``"grid"`` on
+            *array* targets (K, K33) builds one geostatistically-correlated
+            multiplier per Voronoi/DISV cell, drawn against the model's spatial
+            reference (the modelgrid is used automatically); pass ``correlation=``
+            for the variogram range and ``layers=`` to restrict which layers.
+            ``"grid"`` also works for list targets. ``"pilotpoints"`` on array
+            targets is not wired for Voronoi grids yet.
         bounds
             ``(lower, upper)`` bounds on the adjustable value. For a multiplier
             these are factors (e.g. ``(0.2, 5)`` = 5x down to 5x up); for an
@@ -226,6 +231,11 @@ class PestProject:
         zones
             Zone array for ``style="zone"`` (and to mask inactive cells). Values
             map one parameter per distinct zone.
+        layers
+            For multi-layer *array* targets, restrict the parameter to these
+            zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
+            aquifers); other layers keep their input value. Defaults to all
+            layers.
         correlation
             Variogram range (model length units) for ``grid``/``pilotpoints``
             spatial correlation. Ignored for ``constant``/``zone``.
@@ -261,6 +271,7 @@ class PestProject:
             transform=transform,
             additive=additive,
             zones=zones,
+            layers=tuple(layers) if layers is not None else None,
             correlation=correlation,
             temporal=temporal,
             name=name,
@@ -362,12 +373,19 @@ class PestProject:
         self.pyemu = _import_pyemu()
         from pyemu.utils.pst_from import PstFrom
 
+        # Spatial reference enables geostatistical (grid / pilot-point)
+        # parameters. Default to the model's (DISV/Voronoi) modelgrid -- pyEMU
+        # reads cell centroids from it to build spatially-correlated parameters.
+        spatial_reference = self.spatial_reference
+        if spatial_reference is None:
+            spatial_reference = getattr(self.model.gwf, "modelgrid", None)
+
         self.pf = PstFrom(
             original_d=self.original_workspace,
             new_d=self.template_workspace,
             remove_existing=True,
             longnames=self.longnames,
-            spatial_reference=self.spatial_reference,
+            spatial_reference=spatial_reference,
             zero_based=self.zero_based,
             start_datetime=self.start_datetime,
             echo=False,
@@ -682,16 +700,26 @@ class PestProject:
         """Record a parameter's resolved per-cell field as zero-weight observations."""
 
         recipe = spec.recipe
-        prefix = f"{spec.name}field"
+        base = f"{spec.name}field"
+        # Each external array file is captured under its own prefix so that
+        # multi-layer DISV K (one file per layer, each indexed 0..ncpl-1) does
+        # not collide -- a single shared prefix would make layer 1 and layer 2
+        # produce identical observation names.
+        layer_prefixes: dict[int, str] = {}
         for filename in spec.resolved_files:
             if recipe.family == "array":
+                match = re.search(r"_layer(\d+)\.txt$", str(filename))
+                layer = int(match.group(1)) - 1 if match else 0
+                prefix = f"{base}l{layer}" if match else base
+                layer_prefixes[layer] = prefix
                 self.pf.add_observations(filename, prefix=prefix)
             else:
                 self.pf.add_observations(
-                    filename, prefix=prefix, index_cols=[0, 1], use_cols=[recipe.use_col]
+                    filename, prefix=base, index_cols=[0, 1], use_cols=[recipe.use_col]
                 )
         self._capture_field_specs[spec.name] = {
-            "prefix": prefix,
+            "prefix": base,
+            "layer_prefixes": layer_prefixes,
             "target": recipe.canonical,
             "family": recipe.family,
             "name": spec.name,
@@ -705,8 +733,10 @@ class PestProject:
         obs = self.pst.observation_data
         index = obs.index.to_series()
         for info in self._capture_field_specs.values():
-            mask = index.str.contains(f"oname:{info['prefix'].lower()}_", regex=False)
-            obs.loc[mask.to_numpy(), "weight"] = 0.0
+            prefixes = list(info.get("layer_prefixes", {}).values()) or [info["prefix"]]
+            for prefix in prefixes:
+                mask = index.str.contains(f"oname:{prefix.lower()}_", regex=False)
+                obs.loc[mask.to_numpy(), "weight"] = 0.0
 
     def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
         """Compile the declarations into a runnable PEST(++) control file.
@@ -1018,6 +1048,31 @@ class PestProject:
         )
         return IesResults(results_dir, case_name=self.name, model=self.model)
 
+    def _inject_geostatistical_prior(self, reals: int) -> None:
+        """Draw a geostatistically-correlated prior parameter ensemble.
+
+        Grid / pilot-point parameters carry a variogram (``correlation=``). A
+        plain bounds-based prior would treat each cell independently, so prior
+        realizations come out as per-cell spatial noise and IES cannot recover a
+        coherent field. Drawing from the prior covariance instead yields *smooth*
+        prior realizations (handed to PESTPP-IES via ``ies_par_en``) -- this is
+        what makes posterior property-pattern maps meaningful rather than
+        laughable. No-op when there are no geostatistical parameters.
+        """
+
+        spatial = [
+            spec
+            for spec in self._native_parameter_specs
+            if spec.style in {"grid", "pilotpoints"} and spec.correlation is not None
+        ]
+        if not spatial or self.pf is None:
+            return
+        with self._quiet_pyemu_context():
+            ensemble = self.pf.draw(num_reals=int(reals), use_specsim=False)
+        ensemble_path = self.template_workspace / f"{self.name}.prior_par.csv"
+        ensemble.to_csv(ensemble_path)
+        self.pst.pestpp_options["ies_par_en"] = ensemble_path.name
+
     def _launch_pestpp_ies(
         self,
         *,
@@ -1043,6 +1098,7 @@ class PestProject:
             self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
         for key, value in (pestpp_options or {}).items():
             self.pst.pestpp_options[key] = value
+        self._inject_geostatistical_prior(int(reals))
         self.pst.control_data.noptmax = int(noptmax)
         with self._quiet_pyemu_context():
             self.pst.write(str(self.template_workspace / case), version=2)
