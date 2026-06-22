@@ -1,4 +1,31 @@
-"""Build the authoritative package-rich canonical myflopy model."""
+"""Build the authoritative package-rich canonical myflopy model.
+
+The canonical model is a small but realistic **intermontane alluvial valley**.
+Its conceptual story drives where every boundary condition goes, so each one
+produces a *visibly distinct* signal that the diagnostic notebooks can read:
+
+* The valley runs **west -> east**. Ground and the regional water table both
+  decline down-valley and keep declining *past* the terminal lake toward a low
+  general-head boundary at the valley mouth.
+* Two tributary streams enter at the up-valley flanks, **converge** into one
+  main stem, and the main stem **discharges into a terminal lake** (SFR -> LAK
+  via MVR).
+* Because the regional water table is high up-valley (mountain-front recharge)
+  and low down-valley (the GHB underflow boundary plus deep pumping), the
+  streams **gain** from the aquifer in the headwaters and **lose** to it near
+  the lake -- the lake is perched over a declining regional water table.
+
+Layering (icelltype ``(1, 1, 0, 0)``):
+
+==== ======================================== ===========
+lay  role                                      converts?
+==== ======================================== ===========
+L1   upper unconfined alluvium                 yes
+L2   lower unconfined alluvium (main aquifer)  yes
+L3   lacustrine-clay aquitard                  no
+L4   confined basin-fill aquifer               no
+==== ======================================== ===========
+"""
 
 from __future__ import annotations
 
@@ -23,7 +50,7 @@ from myflopy.modflow.mf6.observations import (
     SfrFlowTargets,
     SfrStageTargets,
 )
-from myflopy.modflow.mf6.sfr import SFRBuilder
+from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection
 from myflopy.modflow.mf6.uzf import UZFBuilder
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -84,7 +111,7 @@ def build_transient_model(
     config: CanonicalModelConfig | None = None,
     name: str = "viz_prt_master",
 ) -> SimulationBase:
-    """Build a package-rich transient multilayer GWF model for result review."""
+    """Build the package-rich transient valley GWF model for result review."""
 
     config = CanonicalModelConfig() if config is None else config
     workspace = Path(workspace)
@@ -94,15 +121,27 @@ def build_transient_model(
     centers = np.asarray(vor.points, dtype=float)
     width = config.ncol * config.cell_size
     height = config.nrow * config.cell_size
-    x = centers[:, 0] / width
-    y = centers[:, 1] / height
-    top = 137.0 - 24.0 * x + 3.5 * np.sin(np.pi * y)
+    # xn: 0 at the up-valley (west) head, 1 at the (east) valley mouth.
+    # yn: 0..1 across the valley; yn == 0.5 is the valley axis.
+    xn = centers[:, 0] / width
+    yn = centers[:, 1] / height
+    across = 2.0 * np.abs(yn - 0.5)  # 0 on the axis, 1 at either wall
+
+    def nearest_cell(x_fraction: float, y_fraction: float) -> int:
+        return int(np.argmin((xn - x_fraction) ** 2 + (yn - y_fraction) ** 2))
+
+    # --- Valley topography ---------------------------------------------------
+    # A strong down-valley slope (the dominant gradient) plus a gentle
+    # cross-valley "U" so the upper layers stay wet across the whole domain.
+    axis_top = 150.0 - 52.0 * xn
+    cross_relief = 14.0 * across ** 1.3 * (1.0 - 0.25 * xn)
+    top = axis_top + cross_relief
     bottom = np.vstack(
         [
-            top - 18.0,
-            top - 40.0,
-            top - 49.0,
-            top - 82.0,
+            top - 28.0,  # base of L1, upper unconfined alluvium
+            top - 52.0,  # base of L2, lower unconfined (main) aquifer
+            top - 64.0,  # base of L3, 12 ft lacustrine-clay aquitard
+            top - 100.0,  # base of L4, confined basin-fill aquifer
         ]
     )
     vor.gdf_topbtm = gpd.GeoDataFrame(
@@ -124,28 +163,46 @@ def build_transient_model(
         ],
     )
 
+    # --- Regional water table ------------------------------------------------
+    # Declines from a high up-valley head to a low head at the mouth and keeps
+    # declining past the lake. This is what makes the streams gain in the
+    # headwaters and lose near the (perched) lake.
+    regional = 146.0 - 60.0 * xn + 0.45 * cross_relief
     initial = np.vstack(
-        [
-            128.0 - 23.0 * x - 0.55 * layer + 1.2 * np.sin(np.pi * y)
-            for layer in range(config.nlay)
-        ]
-    )
-    paleochannel = 115.0 * np.exp(-((y - (0.70 - 0.12 * x)) / 0.075) ** 2)
-    low_k_barrier = np.where((x > 0.44) & (x < 0.51) & (y < 0.62), 0.18, 1.0)
-    aquifer_pattern = (38.0 + 34.0 * x + paleochannel) * low_k_barrier
-    conductivity = np.vstack(
-        [
-            aquifer_pattern,
-            aquifer_pattern * 0.75,
-            np.maximum(aquifer_pattern * 0.0015, 0.03),
-            aquifer_pattern * 0.50,
-        ]
+        [np.maximum(bottom[layer] + 1.0, regional - 0.6 * layer) for layer in range(config.nlay)]
     )
     InitialConditions(model=model, vor=vor, nlay=config.nlay, strt=initial)
+
+    # --- Hydraulic conductivity ----------------------------------------------
+    # A high-K paleochannel ribbon down the valley axis channels flow toward the
+    # streams and lake; L3 is a distinct low-K lacustrine aquitard. A cross-
+    # valley bedrock constriction near mid-valley forces the regional water
+    # table to step down, so the lower valley + lake drain below the streambed
+    # (the streams gain above the narrows and lose below it).
+    paleochannel = 30.0 * np.exp(-((yn - 0.5) / 0.13) ** 2)
+    # Coarser, more transmissive basin fill toward the mouth lets the low GHB
+    # head propagate up-valley; a low-K constriction makes the step.
+    constriction = np.where((xn > 0.52) & (xn < 0.60), 0.06, 1.0)
+    aquifer = (12.0 + 18.0 * xn + paleochannel) * constriction
+    conductivity = np.vstack(
+        [
+            aquifer,
+            aquifer * 0.85,
+            np.full_like(aquifer, 0.02),  # lacustrine clay aquitard
+            np.maximum(aquifer * 0.55, 0.5),
+        ]
+    )
     KFlow(
         model=model,
         k=conductivity,
-        k33_vert=np.maximum(conductivity * 0.05, 0.002),
+        k33_vert=np.vstack(
+            [
+                aquifer * 0.1,
+                aquifer * 0.1,
+                np.full_like(aquifer, 0.0015),
+                np.maximum(aquifer * 0.05, 0.05),
+            ]
+        ),
         icelltype=list(CANONICAL_MODEL_CONTRACT.icelltype),
         save_specific_discharge=True,
     )
@@ -158,137 +215,134 @@ def build_transient_model(
         iconvert=list(CANONICAL_MODEL_CONTRACT.icelltype),
     )
 
-    left_cells = [row * config.ncol for row in range(config.nrow)]
-    right_cells = [row * config.ncol + config.ncol - 1 for row in range(config.nrow)]
-    stress_period_data = {}
-    for period in range(config.nper):
-        seasonal = 2.2 * np.sin(period * 2.0 * np.pi / max(config.nper - 1, 1))
-        records = []
-        for layer in range(config.nlay):
-            records.extend(
-                [
-                    (
-                        (layer, cell),
-                        max(
-                            float(bottom[layer, cell] + 0.5),
-                            float(129.0 + seasonal - 0.45 * layer + 1.5 * y[cell]),
-                        ),
-                    )
-                    for cell in left_cells
-                ]
-            )
-        stress_period_data[period] = records
-    CHD(model=model, stress_period_data=stress_period_data)
+    # --- CHD: up-valley regional inflow (west edge) --------------------------
+    west_cells = [row * config.ncol for row in range(config.nrow)]
+    chd_data = {
+        period: [
+            ((layer, cell), float(max(bottom[layer, cell] + 0.5, top[cell] - 6.0)))
+            for layer in range(config.nlay)
+            for cell in west_cells
+        ]
+        for period in range(config.nper)
+    }
+    CHD(model=model, stress_period_data=chd_data)
 
-    ghb_data = {}
-    for period in range(config.nper):
-        ghb_data[period] = [
+    # --- GHB: underflow leaving at the valley mouth (east edge) --------------
+    # Heads are well below the lake stage so the regional gradient continues
+    # down-valley past the lake.
+    east_cells = [row * config.ncol + config.ncol - 1 for row in range(config.nrow)]
+    ghb_data = {
+        period: [
             (
                 (layer, cell),
-                max(
-                    float(bottom[layer, cell] + 1.0),
-                    float(104.0 - 0.7 * layer + 0.8 * np.cos(period * 2.0 * np.pi / config.nper)),
-                ),
-                750.0,
+                float(max(bottom[layer, cell] + 1.0, 80.0 + 0.3 * cross_relief[cell] - 0.4 * layer)),
+                4000.0,
             )
             for layer in range(config.nlay)
-            for cell in right_cells
+            for cell in east_cells
         ]
+        for period in range(config.nper)
+    }
     GHB(model=model, stress_period_data=ghb_data)
 
-    mountain_front_cells = [
-        row * config.ncol + col
-        for row in range(config.nrow)
-        for col in range(max(1, config.ncol // 12))
-    ]
+    # --- RCH: mountain-front recharge on the two valley walls ----------------
+    wall = np.flatnonzero(across >= 0.62)
     mountain_front_recharge = {
         period: [
-            ((0, cell), float(2.2e-4 + 1.2e-4 * np.sin(period * 2.0 * np.pi / config.nper)))
-            for cell in mountain_front_cells
+            (
+                (0, int(cell)),
+                float((3.2e-4 - 1.6e-4 * xn[cell]) * (1.0 + 0.35 * np.sin(period * 2.0 * np.pi / config.nper))),
+            )
+            for cell in wall
         ]
         for period in range(config.nper)
     }
     Recharge(model=model, rch_dict=mountain_front_recharge)
 
-    unconfined_well = (config.nrow // 3) * config.ncol + (2 * config.ncol // 3)
-    confined_well = (2 * config.nrow // 3) * config.ncol + (3 * config.ncol // 4)
+    # --- WEL: shallow (L2) and deep (L4) valley-floor pumping ----------------
+    # Period 0 is a no-pump steady-state baseline so drawdown/capture is the
+    # difference between any pumping period and period 0.
+    shallow_well = nearest_cell(0.58, 0.44)
+    deep_well = nearest_cell(0.52, 0.55)
     well_data = {
         period: [
             (
-                (1, unconfined_well),
-                -2200.0 - (4200.0 if period in {2, 3} else 0.0),
-                "unconfined_supply",
+                (1, shallow_well),
+                0.0 if period == 0 else -2400.0 - (3800.0 if period in {2, 3} else 0.0),
+                "shallow_supply",
             ),
             (
-                (3, confined_well),
-                -3200.0 - (5600.0 if period in {3, 4} else 0.0),
-                "confined_supply",
+                (3, deep_well),
+                0.0 if period == 0 else -3000.0 - (5200.0 if period in {3, 4} else 0.0),
+                "deep_supply",
             ),
         ]
         for period in range(config.nper)
     }
     Wells(model=model, stress_period_data=well_data)
 
-    unconfined_seepage_cells = np.flatnonzero(
-        (x > 0.48) & (x < 0.66) & (y > 0.66) & (y < 0.88)
+    # --- DRN: toe-of-slope springs in the gaining upper valley ---------------
+    north_spring_cells = np.flatnonzero(
+        (xn > 0.12) & (xn < 0.48) & (yn > 0.76) & (yn < 0.86)
     )[::2].tolist()
-    confined_seepage_cells = np.flatnonzero(
-        (x > 0.72) & (x < 0.91) & (y > 0.08) & (y < 0.30)
+    south_spring_cells = np.flatnonzero(
+        (xn > 0.12) & (xn < 0.48) & (yn > 0.14) & (yn < 0.24)
     )[::2].tolist()
-    drain_cells = [*unconfined_seepage_cells, *confined_seepage_cells]
     drain_data = {
         period: (
             [
-                ((0, cell), float(top[cell] - 12.0), 70.0 + 5.0 * (cell % 7))
-                for cell in unconfined_seepage_cells
+                ((0, cell), float(regional[cell] - 1.0), 60.0 + 4.0 * (cell % 7))
+                for cell in north_spring_cells
             ]
             + [
-                ((3, cell), float(top[cell] - 21.0), 12.0 + 1.5 * (cell % 5))
-                for cell in confined_seepage_cells
+                ((0, cell), float(regional[cell] - 1.0), 60.0 + 4.0 * (cell % 5))
+                for cell in south_spring_cells
             ]
         )
         for period in range(config.nper)
     }
     Drains(model=model, stress_period_data=drain_data)
     model.add_region_from_cells(
-        "unconfined_seepage_slope",
-        [(0, cell) for cell in unconfined_seepage_cells],
+        "north_seepage_springs",
+        [(0, cell) for cell in north_spring_cells],
         category="seepage",
         package="drn",
         overwrite=True,
     )
     model.add_region_from_cells(
-        "confined_seepage_slope",
-        [(3, cell) for cell in confined_seepage_cells],
+        "south_seepage_springs",
+        [(0, cell) for cell in south_spring_cells],
         category="seepage",
         package="drn",
         overwrite=True,
     )
 
+    # --- LAK / SFR / MVR surface-water network -------------------------------
     inputs = _write_surface_water_inputs(workspace, config)
+    lake_id = "valley_lake"
     lak = LAKBuilder(
         context=ModelContext(grid=vor, domain=idomain),
         nper=config.nper,
         lakes=inputs["lakes"],
         lake_id_field="name",
-        starting_stage={"north_lake": 120.0, "south_lake": 118.0},
-        lake_bottom={"north_lake": 108.0, "south_lake": 106.0},
-        bed_leakance=0.003,
+        starting_stage={lake_id: 101.0},
+        lake_bottom={lake_id: 96.0},
+        bed_leakance=0.11,
         connection_modes="automatic",
-        status={"north_lake": ["ACTIVE"] * config.nper, "south_lake": ["ACTIVE"] * config.nper},
+        status={lake_id: ["ACTIVE"] * config.nper},
         mover=True,
         length_conversion=3.28081,
         time_conversion=86_400.0,
     )
     lak.build().build(model.gwf)
-    for lake_id, cells in lak.lake_cells.items():
+    for built_lake_id, cells in lak.lake_cells.items():
         model.add_region_from_cells(
-            f"lake_zone_{lake_id}",
+            f"lake_zone_{built_lake_id}",
             [(0, cell) for cell in cells],
             category="boundary",
             package="lak",
             tags=["lak"],
-            geometry=lak.lake_table.loc[lake_id, "geometry"],
+            geometry=lak.lake_table.loc[built_lake_id, "geometry"],
             overwrite=True,
         )
     model.add_region_from_cells(
@@ -301,38 +355,53 @@ def build_transient_model(
     )
 
     inflows = {
-        period: [(0, 90_000.0 + 15_000.0 * np.sin(period * 2.0 * np.pi / max(config.nper, 1)))]
+        period: {
+            "north_trib": 18_000.0 + 4_000.0 * np.sin(period * 2.0 * np.pi / max(config.nper, 1)),
+            "south_trib": 12_000.0 + 3_000.0 * np.sin(period * 2.0 * np.pi / max(config.nper, 1)),
+        }
         for period in range(config.nper)
     }
     sfr = SFRBuilder(
         context=ModelContext(grid=vor, domain=idomain),
         nper=config.nper,
-        streams=[inputs["stream"]],
+        streams=inputs["streams"],
+        connection_mode="automatic",
+        connections=(
+            StreamConnection("north_trib", "main_stem"),
+            StreamConnection("south_trib", "main_stem"),
+        ),
         inflow=inflows,
-        width=28.0,
-        gradient=0.0015,
-        roughness=0.028,
-        streambed_k=0.01,
+        width=18.0,
+        gradient=0.0012,
+        roughness=0.030,
+        streambed_k=0.05,
         streambed_thickness=1.5,
         length_conversion=3.28081,
         time_conversion=86_400.0,
         mover=True,
     )
-    stream_id = sfr.stream_ids[0]
-    reach_cells = sfr.stream_cells[stream_id]
-    reach_fraction = np.linspace(0.0, 1.0, len(reach_cells))
-    gw_reference = initial[0, reach_cells]
-    exchange_offset = 1.3 * np.sin(5.0 * np.pi * reach_fraction)
-    reach_elevations = np.minimum.accumulate(gw_reference + exchange_offset)
+    # Streambed tops: a few feet below the regional water table in the
+    # headwaters (gaining) rising above it toward the lake (losing).
+    reach_xn = np.asarray(
+        [xn[int(cellid[1])] for cellid in sfr.reaches["cellid"]], dtype=float
+    )
+    streambed_offset = -4.0 + 9.0 * np.clip((reach_xn - 0.30) / 0.55, 0.0, 1.0)
+    reach_regional = 146.0 - 60.0 * reach_xn
+    reach_tops = (reach_regional + streambed_offset).tolist()
     sfr = sfr.with_updates(
-        reach_top=reach_elevations.tolist(),
-        width=[24.0 + 10.0 * value for value in reach_fraction],
-        streambed_k=[0.004 + 0.014 * abs(np.sin(3.0 * np.pi * value)) for value in reach_fraction],
+        reach_top=reach_tops,
+        width=[14.0 + 12.0 * value for value in reach_xn],
+        streambed_k=[0.02 + 0.10 * value for value in reach_xn],
     )
     sfr.build().build(model.gwf)
+    main_stem = "main_stem"
     model.add_region_from_cells(
         "all_streams",
-        [cellid for cellids in sfr.stream_cells.values() for cellid in [(0, cell) for cell in cellids]],
+        [
+            (0, cell)
+            for cells in sfr.stream_cells.values()
+            for cell in cells
+        ],
         category="boundary",
         package="sfr",
         tags=["sfr"],
@@ -342,40 +411,34 @@ def build_transient_model(
         nper=config.nper,
         moves={
             period: [
-                Move(sfr.connection(stream_id), lak.connection("north_lake"), value=0.20),
-                Move(sfr.connection(stream_id), lak.connection("south_lake"), value=0.15),
+                Move(sfr.connection(main_stem, "downstream"), lak.connection(lake_id), value=1.0)
             ]
             for period in range(config.nper)
         },
     )
     mvr.build().build(model.gwf)
 
-    lake_cells = {
-        int(cell)
-        for values in lak.lake_cells.values()
-        for cell in values
-    }
+    # --- UZF: unsaturated zone + ET across the valley floor ------------------
+    lake_cells = {int(cell) for cells in lak.lake_cells.values() for cell in cells}
     stream_cells = {int(cell) for cells in sfr.stream_cells.values() for cell in cells}
+    floor = (across < 0.62)
     uzf_cells = [
         (0, cell)
         for cell in range(config.ncpl)
-        if cell not in lake_cells and cell not in stream_cells
+        if floor[cell] and cell not in lake_cells and cell not in stream_cells
     ]
     infiltration_pond_cells = [
         cell
         for _layer, cell in uzf_cells
-        if ((x[cell] - 0.31) / 0.075) ** 2 + ((y[cell] - 0.28) / 0.065) ** 2 <= 1.0
+        if ((xn[cell] - 0.27) / 0.07) ** 2 + ((yn[cell] - 0.5) / 0.06) ** 2 <= 1.0
     ]
     pond_cell_set = set(infiltration_pond_cells)
     finf = {
         period: [
             float(
-                (
-                    9.5e-4
-                    if cell in pond_cell_set and period in {1, 2, 3}
-                    else 1.5e-4
-                    + 1.25e-4 * np.sin(period * 2.0 * np.pi / max(config.nper, 1))
-                )
+                5.0e-4
+                if cell in pond_cell_set and period in {1, 2, 3}
+                else 3.0e-5 + 2.0e-5 * np.sin(period * 2.0 * np.pi / max(config.nper, 1))
             )
             for _layer, cell in uzf_cells
         ]
@@ -422,11 +485,13 @@ def build_transient_model(
         model,
         config,
         sfr,
-        unconfined_seepage_cells=unconfined_seepage_cells,
-        confined_seepage_cells=confined_seepage_cells,
+        main_stem=main_stem,
+        lake_id=lake_id,
+        north_spring_cells=north_spring_cells,
+        south_spring_cells=south_spring_cells,
         infiltration_pond_cells=infiltration_pond_cells,
-        unconfined_well=unconfined_well,
-        confined_well=confined_well,
+        shallow_well=shallow_well,
+        deep_well=deep_well,
     )
     OutputControl(
         model=model,
@@ -446,53 +511,60 @@ def _write_gpkg(path: Path, gdf: gpd.GeoDataFrame) -> Path:
 
 
 def _write_surface_water_inputs(workspace: Path, config: CanonicalModelConfig) -> dict[str, object]:
+    """Write the terminal lake and the two converging tributaries to GeoPackages."""
+
     width = config.ncol * config.cell_size
     height = config.nrow * config.cell_size
     crs = "EPSG:2927"
 
-    def rectangle(x0, x1, y0, y1):
-        return Polygon(
-            [
-                (width * x0, height * y0),
-                (width * x0, height * y1),
-                (width * x1, height * y1),
-                (width * x1, height * y0),
-            ]
-        )
+    def point(x_fraction: float, y_fraction: float) -> tuple[float, float]:
+        return (width * x_fraction, height * y_fraction)
 
-    north_lake = _write_gpkg(
-        workspace / "inputs" / "north_lake.gpkg",
-        gpd.GeoDataFrame({"name": ["north_lake"]}, geometry=[rectangle(0.72, 0.88, 0.62, 0.80)], crs=crs),
-    )
-    south_lake = _write_gpkg(
-        workspace / "inputs" / "south_lake.gpkg",
-        gpd.GeoDataFrame({"name": ["south_lake"]}, geometry=[rectangle(0.68, 0.86, 0.20, 0.38)], crs=crs),
-    )
-    stream = _write_gpkg(
-        workspace / "inputs" / "stream.gpkg",
+    def rectangle(x0, x1, y0, y1):
+        return Polygon([point(x0, y0), point(x0, y1), point(x1, y1), point(x1, y0)])
+
+    lake = _write_gpkg(
+        workspace / "inputs" / "valley_lake.gpkg",
         gpd.GeoDataFrame(
-            {"name": ["main_stream"]},
+            {"name": ["valley_lake"]},
+            geometry=[rectangle(0.80, 0.92, 0.40, 0.60)],
+            crs=crs,
+        ),
+    )
+    # Two tributaries meet at the confluence (0.40, 0.50); the main stem carries
+    # the combined flow east to the lake's west shore (0.80, 0.50).
+    confluence = point(0.40, 0.50)
+    north_trib = _write_gpkg(
+        workspace / "inputs" / "north_trib.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["north_trib"]},
             geometry=[
-                LineString(
-                    [
-                        (width * 0.03, height * 0.78),
-                        (width * 0.13, height * 0.69),
-                        (width * 0.23, height * 0.77),
-                        (width * 0.33, height * 0.65),
-                        (width * 0.43, height * 0.73),
-                        (width * 0.53, height * 0.59),
-                        (width * 0.63, height * 0.68),
-                        (width * 0.73, height * 0.53),
-                        (width * 0.83, height * 0.61),
-                        (width * 0.93, height * 0.48),
-                        (width * 0.98, height * 0.52),
-                    ]
-                )
+                LineString([point(0.03, 0.85), point(0.14, 0.78), point(0.26, 0.66), confluence])
             ],
             crs=crs,
         ),
     )
-    return {"lakes": [north_lake, south_lake], "stream": stream}
+    south_trib = _write_gpkg(
+        workspace / "inputs" / "south_trib.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["south_trib"]},
+            geometry=[
+                LineString([point(0.03, 0.15), point(0.14, 0.22), point(0.26, 0.34), confluence])
+            ],
+            crs=crs,
+        ),
+    )
+    main_stem = _write_gpkg(
+        workspace / "inputs" / "main_stem.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["main_stem"]},
+            geometry=[
+                LineString([confluence, point(0.55, 0.50), point(0.68, 0.50), point(0.80, 0.50)])
+            ],
+            crs=crs,
+        ),
+    )
+    return {"lakes": [lake], "streams": [north_trib, south_trib, main_stem]}
 
 
 def _attach_canonical_targets(
@@ -500,11 +572,13 @@ def _attach_canonical_targets(
     config: CanonicalModelConfig,
     sfr: SFRBuilder,
     *,
-    unconfined_seepage_cells: list[int],
-    confined_seepage_cells: list[int],
+    main_stem: str,
+    lake_id: str,
+    north_spring_cells: list[int],
+    south_spring_cells: list[int],
     infiltration_pond_cells: list[int],
-    unconfined_well: int,
-    confined_well: int,
+    shallow_well: int,
+    deep_well: int,
 ) -> None:
     import flopy
 
@@ -513,8 +587,8 @@ def _attach_canonical_targets(
     head_locations = {
         "regional_center": (0, int(selected["center"])),
         "pond_mound": (0, pond_cell),
-        "unconfined_pumping": (1, unconfined_well),
-        "confined_pumping": (3, confined_well),
+        "shallow_pumping": (1, shallow_well),
+        "deep_pumping": (3, deep_well),
     }
     model.targets.heads = HeadTargets(
         locations=[
@@ -533,8 +607,8 @@ def _attach_canonical_targets(
             }
         ),
     )
-    model.targets.lake_stage = LakeStageTargets(locations={"north_lake": 0, "south_lake": 1})
-    reaches = [int(value) for value in sfr.stream_reaches[sfr.stream_ids[0]]]
+    model.targets.lake_stage = LakeStageTargets(locations={lake_id: 0})
+    reaches = [int(value) for value in sfr.stream_reaches[main_stem]]
     model.targets.sfr_stage = SfrStageTargets(
         locations={"sfr_upstream": reaches[0], "sfr_midpoint": reaches[len(reaches) // 2]}
     )
@@ -544,16 +618,16 @@ def _attach_canonical_targets(
     model.targets.drn_flow = DrnFlowTargets(
         locations=[
             {
-                "name": "unconfined_seepage",
+                "name": "north_springs",
                 "group": "seepage",
                 "layer": 0,
-                "cells": unconfined_seepage_cells,
+                "cells": north_spring_cells,
             },
             {
-                "name": "confined_seepage",
+                "name": "south_springs",
                 "group": "seepage",
-                "layer": 3,
-                "cells": confined_seepage_cells,
+                "layer": 0,
+                "cells": south_spring_cells,
             },
         ]
     )
@@ -577,9 +651,10 @@ def representative_cells(config: CanonicalModelConfig) -> dict[str, int | list[i
     center_row = config.nrow // 2
     center = center_row * config.ncol + config.ncol // 2
     cross_section = [center_row * config.ncol + col for col in range(config.ncol)]
+    # PRT release points along the up-valley mountain front and floor.
     releases = [
         row * config.ncol + 2
-        for row in (config.nrow // 4, config.nrow // 2, 3 * config.nrow // 4)
+        for row in (config.nrow // 5, config.nrow // 2, 4 * config.nrow // 5)
     ]
     return {"center": center, "cross_section": cross_section, "releases": releases}
 

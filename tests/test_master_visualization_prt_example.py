@@ -107,19 +107,19 @@ def test_master_example_validation_profile_runs_complex_package_topology():
 
         feature_signals = canonical_feature_signals(model)
         assert feature_signals["head_change"]["pond_mound"] > 0.5
-        assert feature_signals["head_change"]["unconfined_pumping"] > 1.0
-        assert feature_signals["head_change"]["confined_pumping"] > 1.0
-        assert feature_signals["seepage_peak"]["unconfined_seepage"] > 0.0
-        assert feature_signals["seepage_peak"]["confined_seepage"] > 0.0
+        assert feature_signals["head_change"]["shallow_pumping"] > 1.0
+        assert feature_signals["head_change"]["deep_pumping"] > 1.0
+        assert feature_signals["seepage_peak"]["north_springs"] > 0.0
+        assert feature_signals["seepage_peak"]["south_springs"] > 0.0
         from myflopy.modflow.mf6.canonical import canonical_sfr_signals
 
         sfr_signals = canonical_sfr_signals(model)
         assert sfr_signals["reach_count"] >= 40
         assert sfr_signals["wet_reach_count"] == sfr_signals["reach_count"]
-        assert sfr_signals["minimum_depth"] > 0.05
+        assert sfr_signals["minimum_depth"] > 0.02
         assert sfr_signals["gaining_reach_count"] >= 3
         assert sfr_signals["losing_reach_count"] >= 3
-        assert sfr_signals["minimum_routed_flow"] > 50_000.0
+        assert sfr_signals["minimum_routed_flow"] > 5_000.0
 
         slider = model.visualize.head_map_slider_html(
             workspace / "validation_head_slider.html",

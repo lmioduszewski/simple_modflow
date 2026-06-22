@@ -121,8 +121,8 @@ class CanonicalModelContract:
             if cells and np.nanmedian(areas[cells]) >= np.nanmedian(areas) * 0.90:
                 errors.append(f"{region_name} cells must be measurably refined")
         for region_name in (
-            "unconfined_seepage_slope",
-            "confined_seepage_slope",
+            "north_seepage_springs",
+            "south_seepage_springs",
             "infiltration_pond",
         ):
             if not model.get_region_cells(region_name):
@@ -264,15 +264,29 @@ def irregular_voronoi_grid(
         height = nrow * cell_size
         normalized_x = points[:, 0] / width
         normalized_y = points[:, 1] / height
-        stream_y = np.interp(
-            normalized_x,
-            [0.05, 0.35, 0.62, 0.92],
-            [0.72, 0.70, 0.68, 0.56],
+        # Concentrate seeds along the converging stream network so the SFR
+        # corridor and terminal lake resolve on finer cells: two tributaries
+        # meeting the valley axis at the (0.40, 0.50) confluence, then a main
+        # stem running east to the lake.
+        trib_fraction = np.clip((normalized_x - 0.03) / 0.37, 0.0, 1.0)
+        north_y = 0.85 - 0.35 * trib_fraction
+        south_y = 0.15 + 0.35 * trib_fraction
+        main_y = np.full_like(normalized_x, 0.5)
+        far = 10.0
+        distances = np.vstack(
+            [
+                np.where(normalized_x <= 0.41, np.abs(normalized_y - north_y), far),
+                np.where(normalized_x <= 0.41, np.abs(normalized_y - south_y), far),
+                np.where(normalized_x >= 0.39, np.abs(normalized_y - main_y), far),
+            ]
         )
-        near_stream = np.abs(normalized_y - stream_y) < 0.13
+        candidates = np.vstack([north_y, south_y, main_y])
+        choice = np.argmin(distances, axis=0)
+        target_y = candidates[choice, np.arange(len(normalized_x))]
+        near_stream = np.min(distances, axis=0) < 0.15
         points[near_stream, 1] += (
-            stream_y[near_stream] - normalized_y[near_stream]
-        ) * height * 0.42
+            target_y[near_stream] - normalized_y[near_stream]
+        ) * height * 0.55
     points += rng.uniform(-jitter_fraction, jitter_fraction, size=points.shape) * np.asarray(
         [np.median(np.diff(x)), np.median(np.diff(y))]
     )
