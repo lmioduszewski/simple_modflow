@@ -42,11 +42,11 @@ Reference handout:
 
 - `../docs/myflopy_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page
 - `../docs/mp3du_quickstart.md`: focused quickstart for the supported MP3DU particle-tracking API
-- `../docs/local_run_clutter.md`: where example runs, pytest temp workspaces, and scratch MP3DU folders are stored locally
+- `../../docs/local_run_clutter.md`: where example runs, pytest temp workspaces, and scratch MP3DU folders are stored locally
 # Canonical master notebooks
 
 The preferred end-to-end learning path starts at
-`notebooks/CANONICAL_MASTER_NOTEBOOKS.md`. Its five notebooks all use
+`../../docs/CANONICAL_MASTER_NOTEBOOKS.md`. Its five notebooks all use
 `myflopy.build_canonical_model()` so model construction, observations,
 visualization, PRT, parallel splitting, PEST, and completed-run review remain
 aligned.

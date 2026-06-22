@@ -24,7 +24,7 @@ duplicating an existing capability:
 - **Legacy OO API**: `src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`,
   `lakes`, `recharge`, and builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …).
 
-**`myflopy_context.md` is the accurate, code-derived capability map** (rebuilt 2026-06-20).
+**`docs/myflopy_context.md` is the accurate, code-derived capability map** (rebuilt 2026-06-20).
 Treat any "gap" as a hypothesis to re-verify against the code before building.
 
 ## Planned work: PEST / pyemu integration
@@ -55,7 +55,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 
 ### Broader things myflopy could learn from modflow-setup (DOI-USGS)
 > Re-verified against the code on 2026-06-20. **Most items previously listed here are
-> already built** (see `myflopy_context.md`). Genuine remaining gaps only:
+> already built** (see `docs/myflopy_context.md`). Genuine remaining gaps only:
 - **YAML/TOML spec serialization** — thin wrapper over the existing
   `SimulationSpec.to_dict()` / `from_dict()` (round-trip already implemented in `specs.py`)
 - **NHDPlus direct SFR reader** — `SFRBuilder` already builds reaches from any stream
