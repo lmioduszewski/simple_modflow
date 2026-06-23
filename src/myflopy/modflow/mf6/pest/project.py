@@ -22,6 +22,10 @@ from myflopy.modflow.mf6.pest.observations import (
 )
 from myflopy.modflow.mf6.pest.parameters import prepare_parameter_spec, register_parameter_spec
 from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec, add_native_parameter
+from myflopy.modflow.mf6.pest.pilot_points import (
+    add_pilot_point_parameter,
+    register_pilot_point_parameters,
+)
 from myflopy.modflow.mf6.pest.summary import PestSettings
 from myflopy.modflow.mf6.pest.specs import (
     HeadTargetObservationSpec,
@@ -134,6 +138,7 @@ class PestProject:
         self._forecast_specs: list = []
         self._native_parameter_specs: list[NativeParameterSpec] = []
         self._native_parameter_frames: dict[str, object] = {}
+        self._pilot_point_frames: dict[str, list] = {}
         self._capture_field_specs: dict[str, dict] = {}
         self._prepared_observations: list[dict] = []
         self._prepared_parameters: dict[str, dict] = {}
@@ -174,6 +179,8 @@ class PestProject:
         additive: bool | None = None,
         zones=None,
         layers=None,
+        pp_space: int | None = None,
+        pp_points=None,
         correlation: float | None = None,
         temporal: float | None = None,
         name: str | None = None,
@@ -272,6 +279,8 @@ class PestProject:
             additive=additive,
             zones=zones,
             layers=tuple(layers) if layers is not None else None,
+            pp_space=pp_space,
+            pp_points=pp_points,
             correlation=correlation,
             temporal=temporal,
             name=name,
@@ -779,7 +788,10 @@ class PestProject:
         self._prepare_observation_specs()
         with self._quiet_pyemu_context():
             for spec in self._native_parameter_specs:
-                add_native_parameter(self, spec)
+                if spec.recipe.family == "array" and spec.style == "pilotpoints":
+                    add_pilot_point_parameter(self, spec)
+                else:
+                    add_native_parameter(self, spec)
                 if spec.capture:
                     self._add_capture_field_observations(spec)
         self.pf.mod_sys_cmds.append(self._resolve_exe())
@@ -787,6 +799,8 @@ class PestProject:
         self._write_project_metadata(filename=target_name)
         with self._quiet_pyemu_context():
             self.pst = self.pf.build_pst(filename=target_name)
+        if self._pilot_point_frames:
+            register_pilot_point_parameters(self)
         # Pin the forward-run interpreter to this environment's Python so PEST++
         # workers use the venv that has numpy/flopy/pyemu/myflopy, not a bare
         # "python" that may resolve elsewhere.
@@ -1060,15 +1074,19 @@ class PestProject:
         laughable. No-op when there are no geostatistical parameters.
         """
 
+        # Grid parameters live in pyEMU's PstFrom (pf.draw covers them). Pilot
+        # points are PEST template parameters interpolated by IDW, so they are
+        # not in pf -- their prior is drawn from bounds by PESTPP-IES, and the
+        # IDW interpolation itself provides spatial smoothness.
         spatial = [
             spec
             for spec in self._native_parameter_specs
-            if spec.style in {"grid", "pilotpoints"} and spec.correlation is not None
+            if spec.style == "grid" and spec.correlation is not None
         ]
         if not spatial or self.pf is None:
             return
         with self._quiet_pyemu_context():
-            ensemble = self.pf.draw(num_reals=int(reals), use_specsim=False)
+            ensemble = self.draw_prior(int(reals), use_specsim=False)
         ensemble_path = self.template_workspace / f"{self.name}.prior_par.csv"
         ensemble.to_csv(ensemble_path)
         self.pst.pestpp_options["ies_par_en"] = ensemble_path.name

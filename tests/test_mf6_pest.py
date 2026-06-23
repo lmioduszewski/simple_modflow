@@ -1800,3 +1800,45 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
     capture = pst.observation_data.index.str.contains("kfield")
     assert int(capture.sum()) == 2 * ncpl
     assert (pst.observation_data.loc[capture, "weight"] == 0.0).all()
+
+
+def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
+    """Native pilot-point K places points, registers one parameter each, and the
+    IDW forward run applies them and runs MF6 -- pyEMU's pilot points do not work
+    on unstructured grids, so the facade uses inverse-distance weighting."""
+
+    import subprocess
+    from myflopy.modflow.mf6.canonical_calibration import (
+        build_canonical_calibration_demo,
+    )
+    from myflopy.modflow.mf6.pest import PestProject
+
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
+    )
+    cal = PestProject(
+        model=demo.model, name="ppk", workspace=tmp_path / "tmpl",
+        start_datetime="2024-01-01",
+    )
+    cal.parameterize("k", style="pilotpoints", pp_space=8, layers=[0, 1],
+                     bounds=(0.05, 20.0), physical=(0.001, 300.0), capture=True)
+    cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
+    cal.observe(demo.head_targets)
+    pst = cal.build("ppk.pst", noptmax=0)
+
+    # One parameter per pilot point on each of the two layers, plus recharge.
+    assert pst.parameter_data["pargp"].nunique() == 3  # kl0, kl1, recharge
+    n_pp = int((pst.parameter_data["pargp"] == "kl0").sum())
+    assert n_pp >= 10
+    assert int((pst.parameter_data["pargp"] == "kl1").sum()) == n_pp
+    assert pst.npar_adj == 2 * n_pp + 1
+    # Per-cell captured K field on both layers.
+    assert int(pst.observation_data.index.str.contains("kfield").sum()) == 2 * int(demo.model.vor.ncpl)
+
+    # The IDW forward run applies pilot points and runs MF6.
+    result = subprocess.run(
+        [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout[-2000:] + "\n" + result.stderr[-2000:]
+    assert (cal.template_workspace / "hds_simulated_heads.csv").exists()

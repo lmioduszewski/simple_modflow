@@ -147,6 +147,8 @@ class NativeParameterSpec:
     additive: bool | None = None
     zones: Any = None
     layers: tuple[int, ...] | None = None
+    pp_space: int | None = None
+    pp_points: Any = None
     correlation: float | None = None
     temporal: float | None = None
     name: str | None = None
