@@ -69,6 +69,22 @@ def _new_mpl_axes(**kwargs):
         fig, ax = plt.subplots(**kwargs)
     return fig, ax
 
+
+def _new_plotly_fig(*, subplot=None):
+    """Return a figure on the project's shared plotly backend (``figs.Fig``).
+
+    Using ``figs.Fig`` -- the same wrapper as the Choropleth maps and SFR long
+    profiles -- gives every IES plot the project defaults: pan-to-drag and
+    scroll-to-zoom (``_config={'scrollZoom': True}``). ``dragmode='pan'`` is set
+    explicitly here too so it survives the layout copy on the subplot path.
+    """
+
+    import figs
+
+    fig = figs.Fig(subplot=subplot) if subplot is not None else figs.Fig()
+    fig.update_layout(dragmode="pan")
+    return fig
+
 # Trailing ``:<value>`` time token in a pyEMU long observation name.
 _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
 
@@ -193,7 +209,7 @@ class IesForecast:
             sns.despine(fig)
             return fig
 
-        fig = go.Figure()
+        fig = _new_plotly_fig()
         fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1],
                           size=(edges[-1] - edges[0]) / bins), name="prior",
                           marker_color=_PRIOR_COLOR, histnorm="probability density")
@@ -202,7 +218,7 @@ class IesForecast:
                           marker_color=_POST_COLOR, histnorm="probability density")
         fig.update_layout(barmode="overlay", title=title or f"Forecast: {self.name}",
                           xaxis_title="forecast value", yaxis_title="probability density",
-                          template="plotly_white")
+                          dragmode="pan")
         if self.truth is not None:
             fig.add_vline(x=float(self.truth), line_color=_TRUTH_COLOR, line_dash="dash")
         return fig
@@ -411,14 +427,14 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = go.Figure()
+        fig = _new_plotly_fig()
         for col in realization_cols:
             fig.add_scatter(x=x, y=frame[col], mode="lines", line=dict(color="rgba(80,80,80,0.35)", width=1),
                             name=str(col), showlegend=False, hoverinfo="skip")
         fig.add_scatter(x=x, y=frame["mean"], mode="lines+markers",
                         line=dict(color=_POST_COLOR.replace("0.55", "1.0"), width=3), name="mean phi")
         fig.update_layout(title=title, xaxis_title="iteration", yaxis_title="phi",
-                          template="plotly_white")
+                          dragmode="pan")
         if log:
             fig.update_yaxes(type="log")
         return fig
@@ -484,7 +500,7 @@ class IesResults:
             fig.tight_layout()
             return fig
 
-        fig = make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
+        fig = _new_plotly_fig(subplot=make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False))
         for row, group in enumerate(chosen, start=1):
             group_obs = obs.loc[obs["obgnme"] == group].copy()
             group_obs = group_obs.sort_values("_time")
@@ -506,7 +522,7 @@ class IesResults:
                             marker=dict(color=_MEAS_COLOR, size=8, symbol="triangle-up"), row=row, col=1,
                             name="measured", legendgroup="measured", showlegend=row == 1)
         fig.update_layout(title="Simulated ensemble vs measured observations",
-                          template="plotly_white", height=260 * len(chosen))
+                          dragmode="pan", height=260 * len(chosen))
         return fig
 
     def forecast(self, name) -> IesForecast:
@@ -616,12 +632,12 @@ class IesResults:
             return fig
 
         size = (edges[-1] - edges[0]) / bins
-        fig = go.Figure()
+        fig = _new_plotly_fig()
         fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1], size=size),
                           name="prior", marker_color=_PRIOR_COLOR)
         fig.add_histogram(x=posterior, xbins=dict(start=edges[0], end=edges[-1], size=size),
                           name="posterior", marker_color=_POST_COLOR)
-        fig.update_layout(barmode="overlay", title=title, template="plotly_white",
+        fig.update_layout(barmode="overlay", title=title, dragmode="pan",
                           xaxis_title="log10(phi)", yaxis_title="realizations")
         return fig
 
@@ -712,8 +728,8 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = go.Figure(go.Bar(x=pct, y=groups, orientation="h", marker_color=_POST_COLOR))
-        fig.update_layout(title=title, template="plotly_white",
+        fig = _new_plotly_fig().add_trace(go.Bar(x=pct, y=groups, orientation="h", marker_color=_POST_COLOR))
+        fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="% of parameters at a bound", yaxis_title="parameter group")
         return fig
 
@@ -797,11 +813,11 @@ class IesResults:
             return fig
 
         if str(kind).lower() == "pie":
-            fig = go.Figure(go.Pie(labels=labels, values=values))
-            fig.update_layout(title=title, template="plotly_white")
+            fig = _new_plotly_fig().add_trace(go.Pie(labels=labels, values=values))
+            fig.update_layout(title=title, dragmode="pan")
             return fig
-        fig = go.Figure(go.Bar(x=values, y=labels, orientation="h", marker_color=_POST_COLOR))
-        fig.update_layout(title=title, template="plotly_white",
+        fig = _new_plotly_fig().add_trace(go.Bar(x=values, y=labels, orientation="h", marker_color=_POST_COLOR))
+        fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="phi contribution", yaxis_title="observation group")
         return fig
 
@@ -931,7 +947,7 @@ class IesResults:
             fig.tight_layout()
             return fig
 
-        fig = make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
+        fig = _new_plotly_fig(subplot=make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False))
         for row, group in enumerate(chosen, start=1):
             names, times, measured, flags = _group_data(group)
             first = True
@@ -948,7 +964,7 @@ class IesResults:
                                 marker=dict(color="darkorange", size=11, symbol="x"),
                                 row=row, col=1, name="prior-data conflict", legendgroup="conflict", showlegend=row == 1)
         fig.update_layout(title="Prior ensemble vs measured observations",
-                          template="plotly_white", height=260 * len(chosen))
+                          dragmode="pan", height=260 * len(chosen))
         return fig
 
     def plot_conflict(self, *, coverage: float = 1.0, backend: str = "plotly"):
@@ -992,8 +1008,8 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = go.Figure(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
-        fig.update_layout(title=title, template="plotly_white",
+        fig = _new_plotly_fig().add_trace(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
+        fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="% in prior-data conflict", yaxis_title="observation group")
         return fig
 
