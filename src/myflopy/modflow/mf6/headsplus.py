@@ -170,6 +170,64 @@ class HeadsPlus(bf.HeadFile):
         wide.columns = [f"kstpkper_{kstp}_{kper}" for kstp, kper in wide.columns]
         return wide.reset_index()
 
+    def array(
+        self,
+        *,
+        layer: int = 0,
+        per: int | None = -1,
+        kstpkper: tuple[int, int] | None = None,
+        masked: bool = True,
+    ) -> np.ndarray:
+        """Return one layer's head field at one time as a 1-D ``(ncpl,)`` array.
+
+        The quick spatial accessor behind the choropleth maps: it picks a saved
+        time, picks a ``layer``, reshapes to one value per Voronoi cell, and (by
+        default) converts MODFLOW's dry/no-flow sentinel (``1e30``) to ``NaN`` so
+        the result drops straight into a plot or a per-cell calculation.
+
+        Parameters
+        ----------
+        layer
+            Zero-based model layer (0 == layer 1).
+        per
+            Stress period; the *last* saved timestep in that period is returned.
+            ``-1`` (default) or ``None`` returns the last saved time overall.
+            Ignored when ``kstpkper`` is given.
+        kstpkper
+            Exact ``(kstp, kper)`` to read, taking precedence over ``per``.
+        masked
+            Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN``
+            (default ``True``).
+
+        Returns
+        -------
+        numpy.ndarray
+            A ``(ncpl,)`` float array, one head per Voronoi cell.
+        """
+
+        # Use the normalized kstpkper list the class trusts (get_all_heads reads
+        # with these); flopy's raw get_kstpkper() is offset for some files.
+        keys = [tuple(int(v) for v in key) for key in self.kstpkper]
+        if kstpkper is not None:
+            key = tuple(int(v) for v in kstpkper)
+            if key not in keys:
+                raise ValueError(f"kstpkper {key} is unavailable. Available: {keys}")
+        elif per in (None, -1):
+            key = keys[-1]
+        else:
+            matches = [k for k in keys if k[1] == int(per)]
+            if not matches:
+                available = sorted({k[1] for k in keys})
+                raise ValueError(f"Stress period {per} is unavailable. Available periods: {available}")
+            key = matches[-1]
+
+        ncpl = int(self.vor.ncpl)
+        field = _as_layer_cell_heads(self.get_data(kstpkper=key), nlay=self.nlay, ncpl=ncpl)
+        values = np.asarray(field[int(layer)], dtype=float)
+        if masked:
+            values[np.abs(values) > 1.0e29] = np.nan
+        return values
+
     def map(
         self,
         *,

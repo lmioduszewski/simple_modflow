@@ -28,6 +28,17 @@ import base64, mimetypes
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 
 
+# Map the Plotly colorscale names this class understands to the nearest
+# matplotlib colormap, so plot_mpl() honors a Choro's configured colorscale.
+_PLOTLY_TO_MPL_CMAP = {
+    "earth": "gist_earth", "viridis": "viridis", "cividis": "cividis",
+    "blues": "Blues", "reds": "Reds", "greens": "Greens", "greys": "Greys",
+    "hot": "hot", "jet": "jet", "rainbow": "rainbow", "electric": "plasma",
+    "portland": "turbo", "rdbu": "RdBu_r", "bluered": "coolwarm",
+    "picnic": "coolwarm", "ylgnbu": "YlGnBu", "ylorrd": "YlOrRd",
+}
+
+
 def _content_aware_hover(name_dict: dict[str, list]):
     """Build hover metadata with readable significant digits for numeric values."""
 
@@ -815,6 +826,80 @@ class Choro:
         """Return the Plotly figure for notebook display or explicit export."""
 
         return self.choropleth
+
+    def plot_mpl(
+        self,
+        *,
+        ax=None,
+        cmap: str | None = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        colorbar: bool = True,
+        title: str | None = None,
+        outline_regions: tuple[str, ...] = (),
+        edgecolor: str = "none",
+        **plot_kwargs,
+    ):
+        """Render this choropleth with matplotlib -- the static counterpart to
+        :meth:`plot` (Plotly), mirroring ``GridSection.plot_mpl`` / ``.plot``.
+
+        Colors the Voronoi cells by the same ``zs`` the interactive map uses
+        (``custom_zs`` when provided, otherwise the resolved heads / Kh /
+        recharge for this ``type``), so a single ``Choro`` gives both backends.
+
+        Parameters
+        ----------
+        ax
+            Existing matplotlib ``Axes`` to draw into (e.g. one panel of a
+            multi-layer mosaic). A new figure is created when omitted.
+        cmap
+            Matplotlib colormap. Defaults to the nearest equivalent of this
+            Choro's Plotly ``colorscale``.
+        vmin, vmax
+            Color limits; default to the Choro's ``zmin`` / ``zmax`` when set.
+        colorbar
+            Draw the colorbar legend (default ``True``).
+        outline_regions
+            Names of model regions to outline in black for context (requires a
+            parent ``model``), e.g. ``("all_streams", "all_lakes")``.
+        edgecolor
+            Cell edge color (default ``"none"`` for a clean fill).
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The figure the choropleth was drawn on.
+        """
+
+        import matplotlib.pyplot as plt
+
+        values = np.asarray(self.zs, dtype=float)
+        gdf = self.vor.gdf_vorPolys.copy()
+        gdf["_choro"] = values
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(7, 6))
+        else:
+            fig = ax.figure
+
+        cmap = cmap or _PLOTLY_TO_MPL_CMAP.get(str(self.colorscale).lower(), "viridis")
+        vmin = self._zmin if vmin is None else vmin
+        vmax = self._zmax if vmax is None else vmax
+        gdf.plot(column="_choro", ax=ax, cmap=cmap, legend=colorbar,
+                 vmin=vmin, vmax=vmax, edgecolor=edgecolor, **plot_kwargs)
+
+        for name in outline_regions:
+            if self.model is None:
+                continue
+            cells = list(self.model.get_region_cells(name))
+            if cells:
+                gdf.iloc[cells].boundary.plot(ax=ax, color="black", linewidth=0.5)
+
+        ax.set_aspect("equal")
+        ax.set_axis_off()
+        if title:
+            ax.set_title(title)
+        return fig
 
     def dash_selector(self):
 

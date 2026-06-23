@@ -1140,23 +1140,14 @@ class IesResults:
         values[frame["cell"].to_numpy(dtype=int)] = frame[column].to_numpy(dtype=float)
         label = f"{target} {stat}" + (f" ({which})" if stat in ("mean", "std") else "")
 
-        if _normalize_backend(backend) == "matplotlib":
-            import matplotlib.pyplot as plt
-
-            gdf = self.model.vor.gdf_vorPolys.copy()
-            gdf["value"] = values
-            fig, ax = plt.subplots(figsize=(6, 6))
-            cmap = "RdBu_r" if str(stat).lower() == "change" else "viridis"
-            gdf.plot(column="value", ax=ax, legend=True, cmap=cmap)
-            ax.set_title(label)
-            ax.set_axis_off()
-            return fig
-
         from myflopy.modflow.mf6.grid.plotting import build_choropleth
 
         choro = build_choropleth(
             self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
         )
+        if _normalize_backend(backend) == "matplotlib":
+            cmap = "RdBu_r" if str(stat).lower() == "change" else "viridis"
+            return choro.plot_mpl(cmap=cmap, title=label)
         return choro.plot()
 
     def best(self, *, criterion: str = "base") -> str:
