@@ -240,6 +240,21 @@ class SimulationBase:
         return self.model_output_folder_path
 
     @property
+    def pest_runs(self) -> list:
+        """The PEST runs done on this model (``<workspace>/pest``), ready to review.
+
+        Returns a list of :class:`~myflopy.modflow.mf6.pest.runs.PestRunHandle`;
+        call ``.review()`` on one to open it as :class:`IesResults` (phi, ensemble
+        vs. observations, forecasts, parameter-field maps). Empty until a
+        :class:`~myflopy.modflow.mf6.pest.PestProject` has been built/run with its
+        default workspace beside this model.
+        """
+
+        from myflopy.modflow.mf6.pest.runs import find_pest_runs
+
+        return find_pest_runs(self.workspace / "pest", model_name=self.name, model=self)
+
+    @property
     def package_names(self) -> list[str]:
         """Sorted list of package names currently attached to the groundwater model."""
 

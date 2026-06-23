@@ -345,6 +345,19 @@ class Run:
 
         return self.workspace / RUN_MANIFEST_NAME
 
+    @property
+    def pest_runs(self) -> list:
+        """The PEST runs done on this run's model (``<workspace>/pest``).
+
+        Returns a list of :class:`~myflopy.modflow.mf6.pest.runs.PestRunHandle`;
+        call ``.review()`` to open one as :class:`IesResults`. Empty until a
+        calibration has been built/run with its default workspace under this run.
+        """
+
+        from myflopy.modflow.mf6.pest.runs import find_pest_runs
+
+        return find_pest_runs(self.workspace / "pest")
+
     def build(self) -> Run:
         """Build this run's FloPy simulation from its specification."""
 

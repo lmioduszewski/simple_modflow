@@ -44,9 +44,11 @@ if TYPE_CHECKING:
         HeadTargetObservationSpec,
         LakeStageObservationSpec,
         PestProject,
+        PestRunHandle,
         SfrFlowObservationSpec,
         SfrStageObservationSpec,
         VectorParameterSource,
+        find_pest_runs,
     )
     from myflopy.modflow.mf6.prt import (
         ParticleTracking,
@@ -358,6 +360,7 @@ _EXPORTS = {
     "SfrStageObservationSpec": ("myflopy.modflow.mf6.pest", "SfrStageObservationSpec"),
     "SfrFlowObservationSpec": ("myflopy.modflow.mf6.pest", "SfrFlowObservationSpec"),
     "PestProject": ("myflopy.modflow.mf6.pest", "PestProject"),
+    "PestRunHandle": ("myflopy.modflow.mf6.pest", "PestRunHandle"),
     "PRTProject": ("myflopy.modflow.mf6.prt", "PRTProject"),
     "PRTReleasePoints": ("myflopy.modflow.mf6.prt", "PRTReleasePoints"),
     "PRTRunResults": ("myflopy.modflow.mf6.prt", "PRTRunResults"),
@@ -373,6 +376,7 @@ _EXPORTS = {
     ),
     "TriangleGrid": ("myflopy.modflow.mf6.grid.triangle", "TriangleGrid"),
     "VectorParameterSource": ("myflopy.modflow.mf6.pest", "VectorParameterSource"),
+    "find_pest_runs": ("myflopy.modflow.mf6.pest", "find_pest_runs"),
     "open_prt_run": ("myflopy.modflow.mf6.prt", "open_prt_run"),
     "VoronoiGridPlus": ("myflopy.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
     "simple_model_spec": ("myflopy.modflow.mf6.simplemodel", "simple_model_spec"),

@@ -37,6 +37,13 @@ from myflopy.modflow.mf6.pest.specs import (
 METADATA_FILENAME = "myflopy_pest_metadata.json"
 
 
+def _pest_run_slug(name: str) -> str:
+    """Filesystem-safe directory name for a PEST run's default workspace."""
+
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
+    return slug or "pest_run"
+
+
 def _import_pyemu():
     """Import pyEMU lazily with a workflow-oriented error message."""
 
@@ -110,7 +117,8 @@ class PestProject:
         self,
         model,
         name: str,
-        workspace: str | Path,
+        *,
+        workspace: str | Path | None = None,
         start_datetime: str,
         spatial_reference=None,
         zero_based: bool = False,
@@ -118,12 +126,17 @@ class PestProject:
     ):
         """Create a calibration project around an existing model workspace.
 
-        See the class docstring for the full parameter reference and workflow.
+        ``workspace`` is the PEST template directory. When omitted it defaults to
+        ``<model workspace>/pest/<name>`` so the calibration lives beside the
+        model it calibrates and is auto-discoverable via ``model.pest_runs`` /
+        ``run.pest_runs``. See the class docstring for the full reference.
         """
 
         self.model = model
         self.name = str(name)
         self.original_workspace = Path(model.workspace)
+        if workspace is None:
+            workspace = self.original_workspace / "pest" / _pest_run_slug(name)
         self.template_workspace = Path(workspace)
         self.start_datetime = start_datetime
         self.spatial_reference = spatial_reference

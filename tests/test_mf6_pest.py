@@ -1035,12 +1035,14 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
         time_column="per",
     )
 
+    # No explicit workspace: it defaults to <model workspace>/pest/<name>, so the
+    # run is auto-discoverable via model.pest_runs (the workflow integration).
     cal = PestProject(
         model=model,
         name="run_ies_demo",
-        workspace=workspace / "template",
         start_datetime="2024-01-01",
     )
+    assert cal.template_workspace == model.workspace / "pest" / "run_ies_demo"
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
     cal.parameterize("recharge", style="grid", bounds=(0.5, 1.5), physical=(0.0, 1e-2))
     cal.observe(targets)
@@ -1096,6 +1098,17 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     # settings snapshot reflects the run configuration
     assert ies.settings.num_reals == 6
     assert ies.settings.n_forecasts == 1
+
+    # Workflow integration: the completed run is discoverable from the model and
+    # reopens to the same IesResults review.
+    discovered = model.pest_runs
+    assert [run.name for run in discovered] == ["run_ies_demo"]
+    handle = discovered[0]
+    assert handle.model_name == model.name
+    reopened = handle.review(model=model)
+    assert isinstance(reopened, IesResults)
+    assert reopened.iterations == ies.iterations
+    assert isinstance(reopened.plot_phi(), go.Figure)
 
 
 def test_ies_capture_field_and_spatial_maps_end_to_end():
