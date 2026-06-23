@@ -592,7 +592,14 @@ class IesResults:
         cols = list(frame.columns[6:])
         prior = np.log10(np.asarray(frame.iloc[0][cols], dtype=float))
         posterior = np.log10(np.asarray(frame.iloc[-1][cols], dtype=float))
-        edges = np.histogram_bin_edges(np.concatenate([prior, posterior]), bins=bins)
+        # Realizations that failed during an iteration carry a non-finite phi
+        # (a normal IES occurrence); drop them so the histogram range is finite.
+        prior = prior[np.isfinite(prior)]
+        posterior = posterior[np.isfinite(posterior)]
+        combined = np.concatenate([prior, posterior])
+        if combined.size == 0:
+            raise ValueError("No finite phi values available to plot the distribution.")
+        edges = np.histogram_bin_edges(combined, bins=bins)
         title = "Phi distribution: prior vs posterior" + (" (measured+noise)" if measured else "")
 
         if _normalize_backend(backend) == "matplotlib":
