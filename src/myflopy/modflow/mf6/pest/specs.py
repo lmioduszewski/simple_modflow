@@ -67,45 +67,6 @@ class ExpGeoStruct:
 
 
 @dataclass
-class ParameterSpec:
-    """Base calibration-parameter specification."""
-
-    name: str
-    transform: str = "none"
-    bounds: tuple[float, float] | None = None
-    bounds_mode: str = "absolute"
-    geostruct: ExpGeoStruct | None = None
-
-
-@dataclass
-class KPilotPointParameter(ParameterSpec):
-    """Pilot-point hydraulic-conductivity parameter specification."""
-
-    source: VectorParameterSource | None = None
-    layers: list[int] = field(default_factory=lambda: [0])
-    parameter_space: str = "multiplier"
-    pp_spacing: float | None = None
-    pilot_point_path: str | Path | None = None
-    pilot_point_name_column: str = "name"
-
-
-@dataclass
-class DrainElevationParameter(ParameterSpec):
-    """Drain-elevation parameter specification."""
-
-    source: VectorParameterSource | None = None
-    parameter_style: str = "feature_offset"
-
-
-@dataclass
-class DrainConductanceParameter(ParameterSpec):
-    """Drain-conductance parameter specification."""
-
-    source: VectorParameterSource | None = None
-    parameter_style: str = "feature_multiplier"
-
-
-@dataclass
 class HeadTargetObservationSpec:
     """Use :class:`HeadTargets` as a pyEMU-compatible observation source."""
 

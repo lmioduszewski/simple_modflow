@@ -39,12 +39,9 @@ if TYPE_CHECKING:
         plot_particle_pathlines,
     )
     from myflopy.modflow.mf6.pest import (
-        DrainConductanceParameter,
-        DrainElevationParameter,
         DrnFlowObservationSpec,
         ExpGeoStruct,
         HeadTargetObservationSpec,
-        KPilotPointParameter,
         LakeStageObservationSpec,
         PestProject,
         PestRunResults,
@@ -350,13 +347,7 @@ _EXPORTS = {
     "LakeStageTargets": ("myflopy.modflow.mf6.observations", "LakeStageTargets"),
     "SfrStageTargets": ("myflopy.modflow.mf6.observations", "SfrStageTargets"),
     "SfrFlowTargets": ("myflopy.modflow.mf6.observations", "SfrFlowTargets"),
-    "KPilotPointParameter": ("myflopy.modflow.mf6.pest", "KPilotPointParameter"),
     "patch_simulation_plot": ("myflopy.project", "patch_simulation_plot"),
-    "DrainConductanceParameter": (
-        "myflopy.modflow.mf6.pest",
-        "DrainConductanceParameter",
-    ),
-    "DrainElevationParameter": ("myflopy.modflow.mf6.pest", "DrainElevationParameter"),
     "DrnFlowObservationSpec": ("myflopy.modflow.mf6.pest", "DrnFlowObservationSpec"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
     "HeadTargetObservationSpec": (

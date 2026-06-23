@@ -112,8 +112,6 @@ _SLOW_TESTS = {
     "test_region_touching_domain_boundary_builds",
     "test_optimized_triangle_grid_builds_voronoi_safe_mesh_and_runs_mf6",
     # test_mf6_pest.py -- forward run / reopen a completed run
-    "test_pest_forward_run_applies_k_and_drn_parameters_end_to_end",
-    "test_pest_run_results_reopen_completed_artifact_and_compare_heads",
     "test_native_pstfrom_parameterize_build_and_forward_run_end_to_end",
     "test_run_ies_end_to_end_and_assess_with_ies_results",
     "test_ies_capture_field_and_spatial_maps_end_to_end",

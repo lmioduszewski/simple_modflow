@@ -20,7 +20,6 @@ from myflopy.modflow.mf6.pest.observations import (
     prepare_sfr_stage_observations,
     _observation_name,
 )
-from myflopy.modflow.mf6.pest.parameters import prepare_parameter_spec, register_parameter_spec
 from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec, add_native_parameter
 from myflopy.modflow.mf6.pest.pilot_points import (
     add_pilot_point_parameter,
@@ -29,9 +28,6 @@ from myflopy.modflow.mf6.pest.pilot_points import (
 from myflopy.modflow.mf6.pest.summary import PestSettings
 from myflopy.modflow.mf6.pest.specs import (
     HeadTargetObservationSpec,
-    KPilotPointParameter,
-    DrainElevationParameter,
-    DrainConductanceParameter,
     DrnFlowObservationSpec,
     LakeStageObservationSpec,
     SfrFlowObservationSpec,
@@ -49,7 +45,7 @@ def _import_pyemu():
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "pyemu is required for PestProject workflows. Install pyemu in the "
-            "active environment before calling PestProject.build_pst()."
+            "active environment before calling PestProject.build()."
         ) from exc
     return pyemu
 
@@ -148,18 +144,6 @@ class PestProject:
         self.pyemu = None
         self.pf = None
         self.pst = None
-
-    def add_parameter(self, spec):
-        """Register a parameter specification for the project."""
-
-        self._parameter_specs.append(spec)
-        return spec
-
-    def add_observation(self, spec):
-        """Register an observation specification for the project."""
-
-        self._observation_specs.append(spec)
-        return spec
 
     # -- modern declarative facade ----------------------------------------
     #
@@ -453,53 +437,6 @@ class PestProject:
             prepared.append(item)
         self._prepared_observations = prepared
 
-    def _prepare_parameter_specs(self):
-        """Create template/support files for parameter specs before ``build_pst()``."""
-
-        self._prepared_parameters = {}
-        for spec in self._parameter_specs:
-            if not isinstance(
-                spec,
-                (KPilotPointParameter, DrainElevationParameter, DrainConductanceParameter),
-            ):
-                raise TypeError(f"Unsupported parameter spec type: {type(spec).__name__}")
-            prepare_parameter_spec(self, spec)
-
-    def _build_forward_run_config(self):
-        """Build the JSON configuration consumed by the injected forward run."""
-
-        head_target_outputs = [
-            item["forward_run_config"]
-            for item in self._prepared_observations
-            if "forward_run_config" in item
-        ]
-        named_series_outputs = [
-            item["named_series_forward_run_config"]
-            for item in self._prepared_observations
-            if "named_series_forward_run_config" in item
-        ]
-        k_specs = [
-            prepared["config"]
-            for prepared in self._prepared_parameters.values()
-            if prepared["config"]["kind"] == "k_pilotpoints"
-        ]
-        drain_specs = [
-            prepared["config"]
-            for prepared in self._prepared_parameters.values()
-            if prepared["config"]["kind"] in {"drn_elev", "drn_cond"}
-        ]
-        self._forward_run_config = {
-            "model_name": self.model.name,
-            "exe_name": getattr(self.model.sim, "exe_name", "mf6"),
-            "k_specs": k_specs,
-            "drain_specs": drain_specs,
-            "head_target_outputs": head_target_outputs,
-            "named_series_outputs": named_series_outputs,
-        }
-        config_path = self.template_workspace / "pest_forward_config.json"
-        config_path.write_text(json.dumps(self._forward_run_config, indent=2), encoding="utf-8")
-        return config_path
-
     def _write_project_metadata(self, *, filename: str | Path | None = None):
         """Persist reopen-friendly run metadata inside the generated workspace."""
 
@@ -541,85 +478,11 @@ class PestProject:
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return metadata_path
 
-    def _attach_forward_run(self):
-        """Inject the reusable forward-run helper into pyEMU's ``forward_run.py``."""
-
-        helper_path = Path(__file__).with_name("forward_run.py")
-        helper_calls = [
-            "_expand_cellid_columns(frame=None)",
-            "_build_drn_frame(package=None)",
-            "_rebuild_drn_stress_period_data(frame=None)",
-            "_load_parameter_values(path=None)",
-            "_apply_drain_specs(gwf=None, specs=None)",
-            "_interpolate_idw(x=None, y=None, px=None, py=None, values=None)",
-            "_apply_k_specs(gwf=None, specs=None)",
-            "_write_head_target_csv(model_name=None, mapping_csv=None, output_csv=None)",
-            "_read_saved_locations(path=None)",
-            "_load_model_for_named_series(sim_ws='.')",
-            "_write_named_series_target_csv(model=None, kind=None, locations_file=None, output_csv=None)",
-            "_write_simulation_with_retry(sim=None)",
-        ]
-        for call in helper_calls:
-            self.pf.add_py_function(str(helper_path), call, is_pre_cmd=None)
-        self.pf.add_py_function(
-            str(helper_path),
-            "apply_pest_forward_run(config_path='pest_forward_config.json')",
-            is_pre_cmd=True,
-        )
-
-    def _finalize_forward_run_script(self):
-        """Trim noisy default pyEMU helpers from the generated script."""
-
-        forward_run_path = self.template_workspace / "forward_run.py"
-        text = forward_run_path.read_text(encoding="utf-8")
-        filtered = []
-        for line in text.splitlines():
-            if "apply_list_and_array_pars(arr_par_file='mult2model_info.csv'" in line:
-                continue
-            if "print(r'error removing tmp file:" in line:
-                filtered.append("       pass")
-                continue
-            filtered.append(line)
-        forward_run_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
-
-    def _register_parameter_specs(self):
-        """Add template-file parameters to the built control file."""
-
-        for spec in self._parameter_specs:
-            if not isinstance(
-                spec,
-                (KPilotPointParameter, DrainElevationParameter, DrainConductanceParameter),
-            ):
-                raise TypeError(f"Unsupported parameter spec type: {type(spec).__name__}")
-            register_parameter_spec(self, spec)
-
-    def build_pst(self, filename: str | Path | None = None):
-        """Build and return a ``pyemu.Pst`` control object."""
-
-        self._ensure_original_workspace()
-        self._build_pstfrom()
-        self._prepare_observation_specs()
-        self._prepare_parameter_specs()
-        self._build_forward_run_config()
-        self._write_project_metadata(filename=filename)
-        with self._quiet_pyemu_context():
-            self._attach_forward_run()
-            self.pst = self.pf.build_pst(filename=filename)
-        self.pst.model_command = [f'"{sys.executable}" forward_run.py']
-        self._finalize_forward_run_script()
-        with self._quiet_pyemu_context():
-            self._register_parameter_specs()
-        finalize_observations(self, self._prepared_observations)
-        if filename is not None:
-            with self._quiet_pyemu_context():
-                self.pst.write(self.template_workspace / Path(filename).name)
-        return self.pst
-
     def write(self, filename: str | Path | None = None):
         """Write the built control file to disk."""
 
         if self.pst is None:
-            raise ValueError("Call build_pst() before write().")
+            raise ValueError("Call build() before write().")
         target = self.template_workspace / (Path(filename).name if filename else f"{self.name}.pst")
         self.pst.write(target)
         return target
@@ -628,7 +491,7 @@ class PestProject:
         """Draw a prior parameter ensemble using the underlying ``PstFrom``."""
 
         if self.pf is None:
-            raise ValueError("Call build_pst() or build() before draw_prior().")
+            raise ValueError("Call build() before draw_prior().")
         return self.pf.draw(num_reals=num_reals, use_specsim=use_specsim)
 
     # -- native build path ------------------------------------------------

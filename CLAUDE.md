@@ -30,10 +30,15 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 ## Planned work: PEST / pyemu integration
 
 ### What's already built (`src/myflopy/modflow/mf6/pest/`)
-- `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; builds `.pst`, manages forward run
-- `KPilotPointParameter` — pilot point K on Voronoi cells, IDW interpolation, zone-aware (polygon source)
-- `DrainElevationParameter` — adjustable drain elevations (absolute/additive, by feature or group)
-- `DrainConductanceParameter` — adjustable drain conductance (multiplier/absolute, by feature or group)
+- **One unified parameterization API**: `cal.parameterize(target, style=...)` compiling
+  to native `pyemu.utils.PstFrom`. Targets: `k`, `k33`, `recharge`, `chd`, `ghb.cond`/
+  `ghb.bhead`, `drn.cond`/`drn.elev`, `wel`. Styles: `constant`, `zone`, `grid` (one
+  geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
+  (IDW from a `pp_space` net or explicit `pp_points` — `pilot_points.py`; pyEMU's own
+  pilot points are unusable on unstructured grids). The legacy `add_parameter` +
+  `build_pst` + `KPilotPointParameter`/`DrainElevation`/`DrainConductance` specs were
+  RETIRED (deleted 2026-06-22) — do not reintroduce them.
+- `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; native `build()` + `run_ies`/`prior`
 - `HeadTargetObservationSpec` — water level observations at monitoring wells
 - `LakeStageObservationSpec` — LAK package stage observations
 - `SfrStageObservationSpec` / `SfrFlowObservationSpec` — SFR stage and flow observations

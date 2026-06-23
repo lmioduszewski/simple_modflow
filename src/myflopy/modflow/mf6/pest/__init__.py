@@ -6,12 +6,9 @@ from .project import PestProject
 from .results import PestRunResults, PestRunReview, open_pest_run
 from .summary import PestSettings
 from .specs import (
-    DrainConductanceParameter,
-    DrainElevationParameter,
     DrnFlowObservationSpec,
     ExpGeoStruct,
     HeadTargetObservationSpec,
-    KPilotPointParameter,
     LakeStageObservationSpec,
     SfrFlowObservationSpec,
     SfrStageObservationSpec,
@@ -19,15 +16,12 @@ from .specs import (
 )
 
 __all__ = [
-    "DrainConductanceParameter",
-    "DrainElevationParameter",
     "DrnFlowObservationSpec",
     "ExpGeoStruct",
     "HeadTargetObservationSpec",
     "IesForecast",
     "IesResults",
     "IesSettings",
-    "KPilotPointParameter",
     "LakeStageObservationSpec",
     "NativeParameterSpec",
     "PestProject",
