@@ -1,4 +1,5 @@
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 import copy
 from typing import TYPE_CHECKING
 
@@ -878,7 +879,7 @@ class Choro:
         gdf["_choro"] = values
 
         if ax is None:
-            fig, ax = plt.subplots(figsize=(7, 6))
+            fig, ax = mpl_axes(figsize=(7, 6))
         else:
             fig = ax.figure
 

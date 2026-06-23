@@ -1,6 +1,7 @@
 """Quick contour plotting helpers for cell-centered MF6 data."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Sequence
 
@@ -294,7 +295,7 @@ def plot_cell_contours(
     x, y = _cell_center_xy(vor)
     z = _as_cell_values(values, ncpl=len(x), label=label)
     if ax is None:
-        fig, ax = plt.subplots(figsize=(7, 6))
+        fig, ax = mpl_axes(figsize=(7, 6))
     else:
         fig = ax.figure
 

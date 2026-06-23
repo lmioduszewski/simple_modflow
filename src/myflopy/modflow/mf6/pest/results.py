@@ -1,6 +1,7 @@
 """Reopen and evaluate completed ``myflopy`` PEST workspaces."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 import hashlib
 import json
@@ -674,7 +675,7 @@ class PestRunResults:
 
         k_gdf = self.k_geodata()
         if ax is None:
-            _, ax = plt.subplots()
+            _, ax = mpl_axes()
         plot_kwargs = {"column": "k_final", "legend": legend, **kwargs}
         k_gdf.plot(ax=ax, **plot_kwargs)
         ax.set_title("Final K")
@@ -686,7 +687,7 @@ class PestRunResults:
 
         k_gdf = self.k_geodata()
         if ax is None:
-            _, ax = plt.subplots()
+            _, ax = mpl_axes()
         plot_kwargs = {"column": "k_ratio", "legend": legend, **kwargs}
         k_gdf.plot(ax=ax, **plot_kwargs)
         ax.set_title("K final / K initial")

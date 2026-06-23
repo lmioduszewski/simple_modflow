@@ -1,6 +1,7 @@
 """LAK, SFR, and combined surface-water package explorers."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -369,7 +370,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         if value not in {"q", "flow_area", "q_per_area"}:
             raise ValueError("value must be one of: 'q', 'flow_area', 'q_per_area'")
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if summary.empty:
@@ -435,7 +436,7 @@ class LakStageResultsExplorer(StageResultsExplorer):
             ["lake", "per"]
         )
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if frame.empty:
@@ -527,7 +528,7 @@ class LakStageChangeExplorer:
 
         frame = self.get(lake=lake)
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if frame.empty:

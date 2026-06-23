@@ -6,6 +6,7 @@ kernel, or a web server.
 """
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 import base64
 import copy
@@ -504,7 +505,7 @@ def plot_model_head_map(
 
     style = ModelMapStyle() if style is None else style
     if ax is None:
-        fig, ax = plt.subplots(figsize=style.figsize)
+        fig, ax = mpl_axes(figsize=style.figsize)
     else:
         fig = ax.figure
     array = _normalize_head_frame(head_data)
@@ -547,7 +548,7 @@ def plot_particle_pathlines(
     """Plot PRT, MODPATH, or compatible particle pathlines on a FloPy map."""
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = mpl_axes(figsize=(10, 8))
     else:
         fig = ax.figure
     view = PlotMapView(model=model.gwf, modelgrid=model.gwf.modelgrid, layer=head_layer, ax=ax)
@@ -691,7 +692,7 @@ def export_head_layer_mosaic_slider_html(
     def render(value, index):
         data = _head_frame(model, value, resolved_kstpkpers)
         nrows = int(np.ceil(len(layers) / ncols))
-        fig, axes = plt.subplots(
+        fig, axes = mpl_axes(
             nrows,
             ncols,
             figsize=(

@@ -1,6 +1,7 @@
 """Generic result explorer classes behind model.packages."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -175,7 +176,7 @@ class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
             else f"{self.package_name.upper()} {self.value_name}"
         )
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if frame.empty:

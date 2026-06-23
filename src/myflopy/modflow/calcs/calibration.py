@@ -1,4 +1,5 @@
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 from typing import TYPE_CHECKING
 
 from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -169,7 +170,7 @@ def _mpl_axes(**kwargs):
     import seaborn as sns
 
     with sns.axes_style("whitegrid"):
-        fig, ax = plt.subplots(**kwargs)
+        fig, ax = mpl_axes(**kwargs)
     return fig, ax
 
 

@@ -455,7 +455,7 @@ class IesResults:
             import seaborn as sns
 
             with sns.axes_style("whitegrid"):
-                fig, axes = plt.subplots(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+                fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
             for ax, group in zip(axes[:, 0], chosen):
                 group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
                 names = group_obs.index.tolist()
@@ -904,7 +904,7 @@ class IesResults:
             import seaborn as sns
 
             with sns.axes_style("whitegrid"):
-                fig, axes = plt.subplots(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+                fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
             for ax, group in zip(axes[:, 0], chosen):
                 names, times, measured, flags = _group_data(group)
                 for real in prior.index:

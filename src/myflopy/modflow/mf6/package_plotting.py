@@ -1,6 +1,7 @@
 """Plot payload builders and plotting mixins for package explorers."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Iterable
 from pathlib import Path
@@ -571,7 +572,7 @@ class MappedFieldVisualizationMixin:
         resolved_layers = self._mapped_layers(layers)
         ncols = min(int(ncols), len(resolved_layers))
         nrows = int(np.ceil(len(resolved_layers) / ncols))
-        fig, axes = plt.subplots(
+        fig, axes = mpl_axes(
             nrows,
             ncols,
             figsize=figsize or (5.0 * ncols, 4.0 * nrows),

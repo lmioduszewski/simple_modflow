@@ -1,6 +1,7 @@
 """Unified model-splitting and parallel MODFLOW 6 workflow."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 import json
 import os
@@ -666,7 +667,7 @@ class ParallelSplitRun:
         from flopy.plot import PlotMapView
 
         if ax is None:
-            _, ax = plt.subplots(figsize=(10, 8))
+            _, ax = mpl_axes(figsize=(10, 8))
         view = PlotMapView(model=self.source.gwf, modelgrid=self.source.gwf.modelgrid, layer=layer, ax=ax)
         image = view.plot_array(self.mask, cmap=cmap)
         view.plot_grid(linewidth=0.2, color="0.35")

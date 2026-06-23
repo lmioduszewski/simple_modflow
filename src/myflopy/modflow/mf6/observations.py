@@ -15,6 +15,7 @@ target heads through time or stress period.
 """
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -926,7 +927,7 @@ class HeadTargets:
         if not isinstance(self._locations, gpd.GeoDataFrame):
             raise ValueError("plot_locations() requires geospatial target locations.")
         if ax is None:
-            _, ax = plt.subplots()
+            _, ax = mpl_axes()
         self._locations.plot(ax=ax, **kwargs)
         ax.set_title("Head Target Locations")
         return ax

@@ -20,6 +20,7 @@ the existing, tested `LayerSurfaces` engine.
 """
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
@@ -384,7 +385,7 @@ class LayerBuildResult:
             import flopy
 
             if ax is None:
-                _, ax = plt.subplots(figsize=(9, 4))
+                _, ax = mpl_axes(figsize=(9, 4))
             xsec = flopy.plot.PlotCrossSection(modelgrid=vg, line=line_spec, ax=ax)
             xsec.plot_array(self.thickness, cmap="viridis")
             if show_grid:
@@ -669,7 +670,7 @@ class LayerBuildResult:
             title = f"{layer!r} thickness"
         gdf = self.vor.gdf_vorPolys.copy().assign(_thickness=values)
         if ax is None:
-            _, ax = plt.subplots()
+            _, ax = mpl_axes()
         gdf.plot(column="_thickness", ax=ax, legend=True)
         ax.set_title(f"{title} [{self.length_units}]")
         ax.set_aspect("equal")

@@ -6,6 +6,7 @@ while optionally borrowing a matplotlib theme from :mod:`figs`.
 """
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -206,7 +207,7 @@ def plot_layered_cross_section(
 
     with _theme_context(style):
         if ax is None:
-            fig, ax = plt.subplots(figsize=style.figsize)
+            fig, ax = mpl_axes(figsize=style.figsize)
         else:
             fig = ax.figure
 

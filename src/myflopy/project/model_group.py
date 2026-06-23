@@ -1,6 +1,7 @@
 """Group-oriented helpers for comparing multiple models with one lazy API."""
 
 from __future__ import annotations
+from myflopy.viz import mpl_axes
 
 from collections.abc import Mapping, Sequence
 import hashlib
@@ -113,7 +114,7 @@ def _plot_group_choropleth_subplots(
     nrows = int(np.ceil(len(ordered_names) / ncols))
     if figsize is None:
         figsize = (5.0 * ncols, 4.75 * nrows)
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    fig, axes = mpl_axes(nrows=nrows, ncols=ncols, figsize=figsize)
     axes_array = np.atleast_1d(axes).ravel()
 
     all_values = np.concatenate([np.asarray(panel_values[name], dtype=float) for name in ordered_names])
@@ -987,7 +988,7 @@ class GroupCellPackageResults:
         if ordered_names:
             frame = frame.loc[frame["model"].isin(ordered_names)].copy()
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if frame.empty:
@@ -1854,7 +1855,7 @@ class GroupLakStageResults:
 
         frame = self.get(lake=lake)
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = mpl_axes(figsize=(8, 4))
         else:
             fig = ax.figure
         if frame.empty:
