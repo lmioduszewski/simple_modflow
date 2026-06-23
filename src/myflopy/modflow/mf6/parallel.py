@@ -572,6 +572,25 @@ class ParallelSplitRun:
                     RuntimeWarning,
                     stacklevel=2,
                 )
+            except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+                # flopy's HDF5 node-mapping writer can fail on some unstructured
+                # grids (e.g. a DISV mapping record whose width does not match the
+                # HDF5 dataset dtype). The on-disk mapping is only needed to
+                # *reopen* this run later; results are still reconstructed from the
+                # in-memory splitter this session, so warn and continue instead of
+                # failing the whole split.
+                warnings.warn(
+                    f"Could not save the reusable splitter node mapping "
+                    f"({type(exc).__name__}: {exc}). Results can still be "
+                    f"reconstructed from this in-memory run; the on-disk mapping "
+                    f"for reopening later was skipped.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                try:  # drop any partial/corrupt file h5py may have created
+                    mapping_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         (self.workspace / "parallel_split.json").write_text(
             json.dumps(metadata, indent=2),
             encoding="utf-8",
