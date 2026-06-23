@@ -45,7 +45,6 @@ from myflopy.modflow.mf6.pest.observations import (  # noqa: E402
 )
 from myflopy.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
 from myflopy.modflow.mf6.pest.project import PestProject  # noqa: E402
-from myflopy.modflow.mf6.pest.results import PestRunResults, PestRunReview, open_pest_run  # noqa: E402
 from myflopy.modflow.mf6.pest.specs import (  # noqa: E402
     DrnFlowObservationSpec,
     HeadTargetObservationSpec,

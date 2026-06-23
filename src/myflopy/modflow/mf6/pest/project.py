@@ -468,7 +468,6 @@ class PestProject:
             "project_name": self.name,
             "model_name": self.model.name,
             "original_workspace": str(self.original_workspace.resolve()),
-            "forward_run_config_file": "pest_forward_config.json",
             "pst_file": Path(filename).name if filename is not None else None,
             "observation_sets": observation_sets,
             "parameter_sets": parameter_sets,

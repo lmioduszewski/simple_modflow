@@ -43,7 +43,7 @@ if TYPE_CHECKING:
         ParallelSplitResults,
         ParallelSplitRun,
     )
-    from myflopy.modflow.mf6.pest import PestProject, PestRunResults, PestRunReview, open_pest_run
+    from myflopy.modflow.mf6.pest import PestProject
     from myflopy.modflow.mf6.prt import (
         ParticleTracking,
         PRTProject,
@@ -123,8 +123,6 @@ _EXPORTS = {
     "ModelRegion": ("myflopy.modflow.mf6.simulation.regions", "ModelRegion"),
     "OutputControl": ("myflopy.modflow.mf6.simulation.packages", "OutputControl"),
     "PestProject": ("myflopy.modflow.mf6.pest", "PestProject"),
-    "PestRunReview": ("myflopy.modflow.mf6.pest", "PestRunReview"),
-    "PestRunResults": ("myflopy.modflow.mf6.pest", "PestRunResults"),
     "PRTProject": ("myflopy.modflow.mf6.prt", "PRTProject"),
     "PRTReleasePoints": ("myflopy.modflow.mf6.prt", "PRTReleasePoints"),
     "PRTRunResults": ("myflopy.modflow.mf6.prt", "PRTRunResults"),
@@ -156,7 +154,6 @@ _EXPORTS = {
     "UZFBuilder": ("myflopy.modflow.mf6.uzf", "UZFBuilder"),
     "VectorParameterSource": ("myflopy.modflow.mf6.pest", "VectorParameterSource"),
     "VoronoiGridPlus": ("myflopy.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
-    "open_pest_run": ("myflopy.modflow.mf6.pest", "open_pest_run"),
     "open_prt_run": ("myflopy.modflow.mf6.prt", "open_prt_run"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
     "HeadTargetObservationSpec": ("myflopy.modflow.mf6.pest", "HeadTargetObservationSpec"),
