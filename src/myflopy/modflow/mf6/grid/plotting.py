@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import figs as f
+from myflopy import viz as f
 import geopandas as gpd
 import numpy as np
 import pandas as pd

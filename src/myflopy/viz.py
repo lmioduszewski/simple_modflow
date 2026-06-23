@@ -25,12 +25,18 @@ Custom per-plot themes are fine -- keep them next to the plot, sourced from here
 
 from __future__ import annotations
 
-from figs import Fig
+# Re-export the figs primitives the project uses, so `myflopy.viz` is a superset
+# drop-in for `figs`: a module can `from myflopy import viz as f` (or
+# `from myflopy.viz import Fig, create_hover`) and never import figs directly.
+from figs import Fig, Subplot, Template, create_hover
 from figs.mpl import REPORT, Theme, get_mplfig
 from plotly.subplots import make_subplots as _make_subplots
 
 __all__ = [
     "Fig",
+    "Subplot",
+    "Template",
+    "create_hover",
     "subplots",
     "mpl_axes",
     "report_axes",

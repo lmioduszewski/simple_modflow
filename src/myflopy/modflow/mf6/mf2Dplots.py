@@ -6,7 +6,7 @@ import plotly.subplots
 from plotly.subplots import make_subplots
 from pathlib import Path
 from myflopy.modflow.mf6.paths import *
-from figs import Fig, Template
+from myflopy.viz import Fig, Template
 from plotly.colors import DEFAULT_PLOTLY_COLORS as colorsbo
 
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from figs import Fig
+from myflopy.viz import Fig
 from pandas import IndexSlice as idxx
 from plotly.colors import DEFAULT_PLOTLY_COLORS as colors
 

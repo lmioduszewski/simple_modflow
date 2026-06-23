@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 import numpy as np
-import figs as f
+from myflopy import viz as f
 from pathlib import Path
 from pandas import IndexSlice as idxx
 import pandas as pd

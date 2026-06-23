@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 from pandas import IndexSlice as idxx
-from figs import Fig, create_hover
+from myflopy.viz import Fig, create_hover
 import dash
 from dash import dcc
 from dash import html, Input, Output

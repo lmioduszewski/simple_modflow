@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-import figs
+from myflopy import viz as figs
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

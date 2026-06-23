@@ -8,11 +8,11 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 from pandas import IndexSlice as idxx
-from figs import Fig, create_hover
+from myflopy.viz import Fig, create_hover
 from myflopy.modflow.utils.datatypes.surface_data import ModelSurface
 from shapely.geometry import LineString
 from myflopy.modflow.utils.surfaces import InterpolatedSurface
-import figs as f
+from myflopy import viz as f
 import plotly.graph_objs as go
 import numpy as np
 from shapely import line_locate_point

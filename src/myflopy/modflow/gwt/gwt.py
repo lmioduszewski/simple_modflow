@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 from pandas import IndexSlice as idxx
-from figs import Fig, create_hover
+from myflopy.viz import Fig, create_hover
 import numpy as np
 import shapely as shp
 from pathlib import Path

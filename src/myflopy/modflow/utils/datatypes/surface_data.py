@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
 
 from myflopy.modflow.utils.surfaces import InterpolatedSurface
-import figs as f
+from myflopy import viz as f
 import pandas as pd
 import geopandas as gpd
 

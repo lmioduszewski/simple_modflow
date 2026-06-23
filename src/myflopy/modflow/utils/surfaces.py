@@ -7,7 +7,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 from scipy.interpolate import griddata, RBFInterpolator
-import figs as f
+from myflopy import viz as f
 import pandas as pd
 import rasterio
 from pathlib import Path

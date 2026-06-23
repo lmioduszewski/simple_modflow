@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import geopandas as gpd
 import pandas as pd
 
-import figs
+from myflopy import viz as figs
 
 from . import mf2Dplots
 

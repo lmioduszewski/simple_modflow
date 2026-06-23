@@ -1,7 +1,7 @@
 import plotly.graph_objs as go
 import pandas as pd
 import numpy as np
-from figs import Fig
+from myflopy.viz import Fig
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
 
