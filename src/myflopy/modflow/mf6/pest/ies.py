@@ -31,21 +31,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from myflopy import viz
 
 
-# Plotly colors used consistently across the IES plots.
-_PRIOR_COLOR = "rgba(150,150,150,0.45)"
-_POST_COLOR = "rgba(31,119,180,0.55)"
-_NOISE_COLOR = "rgba(214,39,40,0.45)"
-_MEAS_COLOR = "rgb(214,39,40)"
-_TRUTH_COLOR = "rgb(214,39,40)"
-
-# Matplotlib/seaborn equivalents (used when backend="matplotlib").
-_MPL_PRIOR = "0.6"
-_MPL_POST = "#1f77b4"
-_MPL_MEAS = "crimson"
-_MPL_TRUTH = "crimson"
+# Plot colors come from the shared palette (one findable place: myflopy.viz).
+_PRIOR_COLOR = viz.PALETTE.prior
+_POST_COLOR = viz.PALETTE.posterior
+_NOISE_COLOR = viz.PALETTE.noise
+_MEAS_COLOR = viz.PALETTE.measured
+_TRUTH_COLOR = viz.PALETTE.truth
+_MPL_PRIOR = viz.PALETTE.mpl_prior
+_MPL_POST = viz.PALETTE.mpl_posterior
+_MPL_MEAS = viz.PALETTE.mpl_measured
+_MPL_TRUTH = viz.PALETTE.mpl_truth
 
 
 def _normalize_backend(backend: str) -> str:
@@ -58,32 +56,6 @@ def _normalize_backend(backend: str) -> str:
         return "matplotlib"
     raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
 
-
-def _new_mpl_axes(**kwargs):
-    """Create a seaborn-styled matplotlib figure/axes without global side effects."""
-
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    with sns.axes_style("whitegrid"):
-        fig, ax = plt.subplots(**kwargs)
-    return fig, ax
-
-
-def _new_plotly_fig(*, subplot=None):
-    """Return a figure on the project's shared plotly backend (``figs.Fig``).
-
-    Using ``figs.Fig`` -- the same wrapper as the Choropleth maps and SFR long
-    profiles -- gives every IES plot the project defaults: pan-to-drag and
-    scroll-to-zoom (``_config={'scrollZoom': True}``). ``dragmode='pan'`` is set
-    explicitly here too so it survives the layout copy on the subplot path.
-    """
-
-    import figs
-
-    fig = figs.Fig(subplot=subplot) if subplot is not None else figs.Fig()
-    fig.update_layout(dragmode="pan")
-    return fig
 
 # Trailing ``:<value>`` time token in a pyEMU long observation name.
 _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
@@ -197,7 +169,7 @@ class IesForecast:
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
-            fig, ax = _new_mpl_axes(figsize=(6, 4))
+            fig, ax = viz.mpl_axes(figsize=(6, 4))
             ax.hist(prior, bins=edges, density=True, color=_MPL_PRIOR, alpha=0.55, label="prior")
             ax.hist(posterior, bins=edges, density=True, color=_MPL_POST, alpha=0.6, label="posterior")
             if self.truth is not None:
@@ -209,7 +181,7 @@ class IesForecast:
             sns.despine(fig)
             return fig
 
-        fig = _new_plotly_fig()
+        fig = viz.Fig()
         fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1],
                           size=(edges[-1] - edges[0]) / bins), name="prior",
                           marker_color=_PRIOR_COLOR, histnorm="probability density")
@@ -414,7 +386,7 @@ class IesResults:
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
-            fig, ax = _new_mpl_axes(figsize=(7, 4))
+            fig, ax = viz.mpl_axes(figsize=(7, 4))
             for col in realization_cols:
                 ax.plot(x, frame[col], color="0.5", lw=0.8, alpha=0.4)
             ax.plot(x, frame["mean"], color=_MPL_POST, lw=2.5, label="mean phi")
@@ -427,7 +399,7 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = _new_plotly_fig()
+        fig = viz.Fig()
         for col in realization_cols:
             fig.add_scatter(x=x, y=frame[col], mode="lines", line=dict(color="rgba(80,80,80,0.35)", width=1),
                             name=str(col), showlegend=False, hoverinfo="skip")
@@ -500,7 +472,7 @@ class IesResults:
             fig.tight_layout()
             return fig
 
-        fig = _new_plotly_fig(subplot=make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False))
+        fig = viz.subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
         for row, group in enumerate(chosen, start=1):
             group_obs = obs.loc[obs["obgnme"] == group].copy()
             group_obs = group_obs.sort_values("_time")
@@ -621,7 +593,7 @@ class IesResults:
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
-            fig, ax = _new_mpl_axes(figsize=(6.5, 4))
+            fig, ax = viz.mpl_axes(figsize=(6.5, 4))
             ax.hist(prior, bins=edges, color=_MPL_PRIOR, alpha=0.55, label="prior")
             ax.hist(posterior, bins=edges, color=_MPL_POST, alpha=0.6, label="posterior")
             ax.set_xlabel(r"$\log_{10}\phi$")
@@ -632,7 +604,7 @@ class IesResults:
             return fig
 
         size = (edges[-1] - edges[0]) / bins
-        fig = _new_plotly_fig()
+        fig = viz.Fig()
         fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1], size=size),
                           name="prior", marker_color=_PRIOR_COLOR)
         fig.add_histogram(x=posterior, xbins=dict(start=edges[0], end=edges[-1], size=size),
@@ -720,7 +692,7 @@ class IesResults:
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
-            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.5 * len(groups) + 1)))
+            fig, ax = viz.mpl_axes(figsize=(6.5, max(2.5, 0.5 * len(groups) + 1)))
             ax.barh(groups, pct, color=_MPL_POST)
             ax.set_xlabel("% of parameters at a bound")
             ax.set_title(title)
@@ -728,7 +700,7 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = _new_plotly_fig().add_trace(go.Bar(x=pct, y=groups, orientation="h", marker_color=_POST_COLOR))
+        fig = viz.Fig().add_trace(go.Bar(x=pct, y=groups, orientation="h", marker_color=_POST_COLOR))
         fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="% of parameters at a bound", yaxis_title="parameter group")
         return fig
@@ -800,11 +772,11 @@ class IesResults:
             import seaborn as sns
 
             if str(kind).lower() == "pie":
-                fig, ax = _new_mpl_axes(figsize=(5.5, 5.5))
+                fig, ax = viz.mpl_axes(figsize=(5.5, 5.5))
                 ax.pie(values, labels=labels, autopct="%1.0f%%", textprops={"fontsize": 8})
                 ax.set_title(title)
                 return fig
-            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
+            fig, ax = viz.mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
             ax.barh(labels, values, color=_MPL_POST)
             ax.set_xlabel("phi contribution")
             ax.set_title(title)
@@ -813,10 +785,10 @@ class IesResults:
             return fig
 
         if str(kind).lower() == "pie":
-            fig = _new_plotly_fig().add_trace(go.Pie(labels=labels, values=values))
+            fig = viz.Fig().add_trace(go.Pie(labels=labels, values=values))
             fig.update_layout(title=title, dragmode="pan")
             return fig
-        fig = _new_plotly_fig().add_trace(go.Bar(x=values, y=labels, orientation="h", marker_color=_POST_COLOR))
+        fig = viz.Fig().add_trace(go.Bar(x=values, y=labels, orientation="h", marker_color=_POST_COLOR))
         fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="phi contribution", yaxis_title="observation group")
         return fig
@@ -947,7 +919,7 @@ class IesResults:
             fig.tight_layout()
             return fig
 
-        fig = _new_plotly_fig(subplot=make_subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False))
+        fig = viz.subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
         for row, group in enumerate(chosen, start=1):
             names, times, measured, flags = _group_data(group)
             first = True
@@ -1000,7 +972,7 @@ class IesResults:
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
-            fig, ax = _new_mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
+            fig, ax = viz.mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
             ax.barh(labels, pct, color="darkorange")
             ax.set_xlabel("% of observations in prior-data conflict")
             ax.set_title(title)
@@ -1008,7 +980,7 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        fig = _new_plotly_fig().add_trace(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
+        fig = viz.Fig().add_trace(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
         fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="% in prior-data conflict", yaxis_title="observation group")
         return fig
