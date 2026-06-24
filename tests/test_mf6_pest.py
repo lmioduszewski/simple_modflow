@@ -1009,9 +1009,8 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
         time_column="per",
     )
 
-    cal = PestProject(
-        model=model,
-        name="native_demo",
+    cal = model.pest(
+        "native_demo",
         workspace=workspace / "template",
         start_datetime="2024-01-01",
     )
@@ -1072,6 +1071,61 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     assert np.allclose(rch.iloc[:, 2].to_numpy(), [0.0005, 0.0005])
 
 
+def test_named_series_drn_observation_forward_run_end_to_end():
+    # End-to-end proof that named-series (lake/SFR/DRN) observations regenerate
+    # their simulated values in the native forward run. The post-processor
+    # reloads the model (mf.load_mf6_run) and rebuilds the target series -- a path
+    # the head-target forward run never exercises. DRN is the lightest runnable
+    # named-series fixture.
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+    import flopy
+
+    workspace = _project_temp_dir("named_series_drn")
+    model, vor = _build_two_cell_pest_forward_model("ns_drn", workspace / "model")
+    # A drain on the downstream cell seeps groundwater -> a DRN-flow target.
+    flopy.mf6.ModflowGwfdrn(
+        model.gwf,
+        stress_period_data={0: [[(0, 1), 8.0, 1.0]]},
+        save_flows=True,
+        pname="drn",
+    )
+    success, _ = model.run_simulation()
+    assert success is True
+    assert not model.bud("drn").df.empty  # the drain is seeping
+
+    drn_targets = DrnFlowTargets(
+        locations={"seep": [1]},
+        values=pd.DataFrame({"per": [0], "seep": [0.5]}),
+        time_column="per",
+        value_column="flow",
+    )
+
+    cal = model.pest("ns_drn_demo", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
+    cal.observe(drn_targets)  # a bare named-series target set
+    template = cal.template_workspace
+    cal.build("ns_drn_demo.pst", noptmax=0)
+
+    # The named-series post-processor is wired into the forward run (not the
+    # deleted legacy build_pst path).
+    forward_run_text = (template / "forward_run.py").read_text(encoding="utf-8")
+    assert "def write_named_series_targets(" in forward_run_text
+    assert "kind='drn_flow'" in forward_run_text
+
+    # Run it: MF6 + the post-processor that reloads the model and regenerates the
+    # DRN seepage series pyEMU reads back as observations.
+    subprocess.run(
+        [sys.executable, "forward_run.py"],
+        cwd=template, check=True, capture_output=True, text=True,
+    )
+    sim_csv = template / "drn_flow_simulated_drn_flow.csv"
+    assert sim_csv.exists()
+    simulated = pd.read_csv(sim_csv)
+    assert "seep" in simulated.columns
+    assert len(simulated) >= 1
+
+
 def test_prior_monte_carlo_and_conflict_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")
@@ -1098,9 +1152,8 @@ def test_prior_monte_carlo_and_conflict_end_to_end():
         time_column="per",
     )
 
-    cal = PestProject(
-        model=model,
-        name="prior_demo",
+    cal = model.pest(
+        "prior_demo",
         workspace=workspace / "template",
         start_datetime="2024-01-01",
     )
@@ -1166,11 +1219,7 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
 
     # No explicit workspace: it defaults to <model workspace>/pest/<name>, so the
     # run is auto-discoverable via model.pest_runs (the workflow integration).
-    cal = PestProject(
-        model=model,
-        name="run_ies_demo",
-        start_datetime="2024-01-01",
-    )
+    cal = model.pest("run_ies_demo", start_datetime="2024-01-01")
     assert cal.template_workspace == model.workspace / "pest" / "run_ies_demo"
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
     cal.parameterize("recharge", style="grid", bounds=(0.5, 1.5), physical=(0.0, 1e-2))
@@ -1265,9 +1314,8 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
         time_column="per",
     )
 
-    cal = PestProject(
-        model=model,
-        name="cap_demo",
+    cal = model.pest(
+        "cap_demo",
         workspace=workspace / "template",
         start_datetime="2024-01-01",
     )
@@ -1312,9 +1360,8 @@ def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path
     assert demo.forecast_targets.locations_gdf.shape[0] == 1
     assert demo.start_k_factor == 3.0
 
-    cal = PestProject(
-        model=demo.model,
-        name="cc",
+    cal = demo.model.pest(
+        "cc",
         workspace=tmp_path / "template",
         start_datetime="2024-01-01",
     )
@@ -1346,8 +1393,8 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
     demo = build_canonical_calibration_demo(
         tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
     )
-    cal = PestProject(
-        model=demo.model, name="gk", workspace=tmp_path / "tmpl",
+    cal = demo.model.pest(
+        "gk", workspace=tmp_path / "tmpl",
         start_datetime="2024-01-01",
     )
     kspec = cal.parameterize("k", style="grid", layers=[0, 1], correlation=600.0,
@@ -1384,8 +1431,8 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
     demo = build_canonical_calibration_demo(
         tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
     )
-    cal = PestProject(
-        model=demo.model, name="ppk", workspace=tmp_path / "tmpl",
+    cal = demo.model.pest(
+        "ppk", workspace=tmp_path / "tmpl",
         start_datetime="2024-01-01",
     )
     cal.parameterize("k", style="pilotpoints", pp_space=8, layers=[0, 1],
