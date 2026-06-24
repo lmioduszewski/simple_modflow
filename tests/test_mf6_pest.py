@@ -971,6 +971,26 @@ def test_geostruct_for_routes_through_build_geostruct_with_anisotropy(tmp_path):
     assert geostruct.transform == "log"
 
 
+def test_find_pest_runs_dedupes_parallel_master_copies(tmp_path):
+    # Parallel PESTPP-IES clones the template into <run>_ies_master / _prior_master,
+    # each carrying a copy of the metadata. find_pest_runs must list the run once
+    # (with the masters as its execution kinds), not once per metadata copy.
+    import json
+    from myflopy.modflow.mf6.pest.runs import find_pest_runs
+
+    pest = tmp_path / "pest"
+    meta = {"project_name": "calib", "model_name": "m", "pst_file": "calib.pst"}
+    for sub in ("calib", "calib_ies_master", "calib_prior_master"):
+        d = pest / sub
+        d.mkdir(parents=True)
+        (d / "myflopy_pest_metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+        (d / "calib.pst").write_text("", encoding="utf-8")
+
+    runs = find_pest_runs(pest)
+    assert [r.name for r in runs] == ["calib"]  # one run, not three
+    assert runs[0].kinds == ["ies", "prior"]    # masters become its execution kinds
+
+
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")

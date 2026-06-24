@@ -118,6 +118,12 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None) -> list[P
 
     handles: list[PestRunHandle] = []
     for meta_path in sorted(root.rglob(METADATA_FILENAME)):
+        # PESTPP-IES execution dirs (``<run>_ies_master`` / ``<run>_prior_master``,
+        # created for parallel runs) are clones of the template and carry a copy
+        # of its metadata. The run is represented by its template dir, so skip the
+        # master copies to avoid listing the same run several times.
+        if meta_path.parent.name.endswith("_master"):
+            continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (ValueError, OSError):
