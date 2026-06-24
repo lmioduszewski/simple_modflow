@@ -48,9 +48,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   high-level builder, `.flopy(...)` = raw); `mf.mvr` with `mf.Move(mf.MoverConnection("sfr",0),
   mf.MoverConnection("lak",0))`. **MVR is validated**: moved packages must be declared in the
   model AND ordered before the mover (`test_advanced_specs`).
-- **Layers**: build tops/bottoms with `Surface` (`raster`/`from_contours`/`from_points`/
-  `from_array`/constant) + `LayerSurfaces([...]).sample(vor)` / `.attach(vor)` — area-weighted
-  sampling, top-down reconcile, pinch-out → idomain (`surfaces.py`).
+- **Layers** (same facade/engine pattern): use the facade **`mf.LayerStack`** (`layers.py`) —
+  `LayerStack(vor, top=Raster("ground.tif")).add("sand", thickness=20, pinch="inactive")
+  .add("clay", bottom=Contours(...)).build()` → disv-ready top/botm/idomain (plus `.qc()`,
+  `.cross_section()/.surface_3d()/.vtk_3d()`, `from_modflow`). It **compiles to** the
+  `LayerSurfaces` engine (`surfaces.py`: area-weighted sampling, top-down reconcile, pinch-out
+  → idomain), which uses atomic `Surface` objects (`raster`/`from_contours`/`from_points`/
+  `from_array`/constant + algebra). Use `LayerStack`; `LayerSurfaces`/`Surface` are the engine/atoms.
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
