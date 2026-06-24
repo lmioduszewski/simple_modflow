@@ -874,6 +874,66 @@ def test_model_pest_factory_infers_and_requires_start_datetime(tmp_path):
     assert str(cal.start_datetime).startswith("2019-06-01")
 
 
+def test_observe_accepts_named_series_targets_with_default_prefix(tmp_path):
+    # observe() should wrap any high-level target set (not just HeadTargets) in
+    # its matching spec, using the spec's own default prefix.
+    model, _ = _build_two_cell_pest_forward_model("pest_obs_coerce", tmp_path / "ws")
+    cal = model.pest("calib", start_datetime="2020-01-01")
+
+    lake = LakeStageTargets(
+        locations={"deep_lake": 0},
+        values={"per": [0, 1], "deep_lake": [99.5, 100.5]},
+        time_column="per",
+    )
+    spec = cal.observe(lake)  # bare target set: no spec, no prefix
+    assert isinstance(spec, LakeStageObservationSpec)
+    assert spec.targets is lake
+    assert spec.prefix == "stage"  # the spec's own default, not "hds"
+    assert cal._observation_specs == [spec]
+
+    # Unsupported inputs are rejected without pointing at the deleted legacy API.
+    with pytest.raises(TypeError) as excinfo:
+        cal.observe(object())
+    assert "legacy" not in str(excinfo.value).lower()
+    assert "build_pst" not in str(excinfo.value)
+
+
+def test_named_series_observation_postprocessor_is_wired(tmp_path):
+    # The native build wires forward-run post-processors for head targets AND
+    # named-series (lake/SFR/DRN) observations -- the latter was the gap.
+    model, _ = _build_two_cell_pest_forward_model("pest_obs_wire", tmp_path / "ws")
+    cal = model.pest("calib", start_datetime="2020-01-01")
+
+    recorded: list[str] = []
+    cal.pf = SimpleNamespace(
+        add_py_function=lambda path, call, is_pre_cmd: recorded.append(call)
+    )
+    cal._prepared_observations = [
+        {"prefix": "hds", "forward_run_config": {"mapping_csv": "m.csv", "output_csv": "h.csv"}},
+        {
+            "prefix": "lak_stage",
+            "named_series_forward_run_config": {
+                "kind": "lake_stage",
+                "locations_file": "lak_stage_target_locations.gpkg",
+                "output_csv": "lak_stage_simulated_lake_stage.csv",
+            },
+        },
+    ]
+    cal._attach_native_observation_postprocessors()
+
+    assert any("_write_head_target_csv(" in call for call in recorded)
+    series_call = next(call for call in recorded if "write_named_series_targets(" in call)
+    assert "kind='lake_stage'" in series_call
+    assert "locations_file='lak_stage_target_locations.gpkg'" in series_call
+    assert "output_csv='lak_stage_simulated_lake_stage.csv'" in series_call
+
+    # An unknown kind raises a clear error, not one pointing at the deleted build.
+    cal._prepared_observations = [{"prefix": "mystery"}]
+    with pytest.raises(NotImplementedError) as excinfo:
+        cal._attach_native_observation_postprocessors()
+    assert "build_pst" not in str(excinfo.value)
+
+
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")

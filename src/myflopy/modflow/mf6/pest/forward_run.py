@@ -84,53 +84,47 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv):
         hds.close()
 
 
-def _read_saved_locations(path):
-    """Read one saved target-definition table from CSV or GPKG."""
+def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
+    """Regenerate one lake/SFR/DRN simulated-target CSV in the native forward run.
 
-    from pathlib import Path
+    Post-model command for named-series observations (lake stage, SFR stage/flow,
+    DRN seepage): it reloads the just-run MF6 workspace, rebuilds the target set
+    from the saved definition file (the ``*_target_locations`` CSV/GPKG written at
+    build time), and writes the simulated series pyEMU reads back as observations.
 
-    path = Path(path)
-    if path.suffix.lower() == ".gpkg":
-        import geopandas as gpd
-
-        return gpd.read_file(path)
-    frame = pd.read_csv(path)
-    if "cells" in frame.columns:
-        frame["cells"] = frame["cells"].fillna("").apply(
-            lambda text: [int(value) for value in str(text).split(",") if str(value).strip() != ""]
-        )
-    return frame
-
-
-def _load_model_for_named_series(sim_ws="."):
-    """Open the active MF6 workspace through the ``myflopy`` run wrapper."""
+    Self-contained: pyEMU copies only this function's source into the generated
+    forward run, so it loads the model and reads the saved locations inline rather
+    than calling other module-level helpers.
+    """
 
     from pathlib import Path
 
     import myflopy as mf
+
+    locations_path = Path(locations_file)
+    if locations_path.suffix.lower() == ".gpkg":
+        import geopandas as gpd
+
+        locations = gpd.read_file(locations_path)
+    else:
+        locations = pd.read_csv(locations_path)
+        if "cells" in locations.columns:
+            locations["cells"] = locations["cells"].fillna("").apply(
+                lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
+            )
 
     model = mf.load_mf6_run(Path(sim_ws), verbosity_level=0)
     model.load_all()
-    return model
 
-
-def _write_named_series_target_csv(model, kind, locations_file, output_csv):
-    """Write one canonical named-series simulated target CSV from a saved definition."""
-
-    import myflopy as mf
-
-    locations = _read_saved_locations(locations_file)
+    builders = {
+        "lake_stage": mf.LakeStageTargets,
+        "sfr_stage": mf.SfrStageTargets,
+        "sfr_flow": mf.SfrFlowTargets,
+        "drn_flow": mf.DrnFlowTargets,
+    }
     kind_key = str(kind).strip().lower()
-    if kind_key == "lake_stage":
-        targets = mf.LakeStageTargets(locations=locations, values=None)
-    elif kind_key == "sfr_stage":
-        targets = mf.SfrStageTargets(locations=locations, values=None)
-    elif kind_key == "sfr_flow":
-        targets = mf.SfrFlowTargets(locations=locations, values=None)
-    elif kind_key == "drn_flow":
-        targets = mf.DrnFlowTargets(locations=locations, values=None)
-    else:
-        raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
-    simulated = targets.simulated_series(model)
-    simulated.to_csv(output_csv, index=False)
+    if kind_key not in builders:
+        raise ValueError("Unsupported named-series observation kind %r." % (kind,))
+    targets = builders[kind_key](locations=locations, values=None)
+    targets.simulated_series(model).to_csv(output_csv, index=False)
 
