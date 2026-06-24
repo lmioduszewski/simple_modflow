@@ -126,7 +126,17 @@ class NativeParameterSpec:
     zones
         Zone array for ``style="zone"`` (and to mask inactive cells).
     correlation
-        Variogram range for ``grid``/``pilotpoints`` geostatistics (Phase 2).
+        Variogram range (model length units) for ``grid`` geostatistics.
+    anisotropy
+        Anisotropy ratio of the ``grid`` variogram -- how many times farther the
+        property is correlated along the major axis than across it (``1.0`` =
+        isotropic). E.g. ``5`` for K in a buried channel correlated 5x farther
+        down-valley than across.
+    bearing
+        Azimuth (degrees) of the anisotropy major axis. Ignored when
+        ``anisotropy`` is ``1.0``.
+    nugget
+        Nugget (unresolved short-scale variance) of the ``grid`` variogram.
     temporal
         Temporal correlation range (days) for time-varying list packages
         (Phase 2 -- recorded but not yet wired).
@@ -150,6 +160,9 @@ class NativeParameterSpec:
     pp_space: int | None = None
     pp_points: Any = None
     correlation: float | None = None
+    anisotropy: float = 1.0
+    bearing: float = 0.0
+    nugget: float = 0.0
     temporal: float | None = None
     name: str | None = None
     capture: bool = False

@@ -32,7 +32,9 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     register_pilot_point_parameters,
 )
 from myflopy.modflow.mf6.pest.summary import PestSettings
+from myflopy.modflow.mf6.pest.geostats import build_geostruct
 from myflopy.modflow.mf6.pest.specs import (
+    ExpGeoStruct,
     HeadTargetObservationSpec,
     DrnFlowObservationSpec,
     LakeStageObservationSpec,
@@ -205,6 +207,9 @@ class PestProject:
         pp_space: int | None = None,
         pp_points=None,
         correlation: float | None = None,
+        anisotropy: float = 1.0,
+        bearing: float = 0.0,
+        nugget: float = 0.0,
         temporal: float | None = None,
         name: str | None = None,
         capture: bool = False,
@@ -269,8 +274,19 @@ class PestProject:
             aquifers); other layers keep their input value. Defaults to all
             layers.
         correlation
-            Variogram range (model length units) for ``grid``/``pilotpoints``
-            spatial correlation. Ignored for ``constant``/``zone``.
+            Variogram range (model length units) for ``grid`` spatial
+            correlation. Ignored for ``constant``/``zone`` (pilot points provide
+            smoothness via IDW, not a kriged variogram).
+        anisotropy
+            Anisotropy ratio of the ``grid`` variogram -- correlated this many
+            times farther along the major axis than across it (``1.0`` =
+            isotropic). For an alluvial valley, e.g. ``5`` makes K correlate
+            farther down-valley than across it.
+        bearing
+            Azimuth (degrees) of the anisotropy major axis. Ignored when
+            ``anisotropy`` is ``1.0``.
+        nugget
+            Nugget (unresolved short-scale variance) of the ``grid`` variogram.
         temporal
             Temporal correlation range (days) for time-varying list packages.
             Recorded now; wired in a later phase.
@@ -307,6 +323,9 @@ class PestProject:
             pp_space=pp_space,
             pp_points=pp_points,
             correlation=correlation,
+            anisotropy=anisotropy,
+            bearing=bearing,
+            nugget=nugget,
             temporal=temporal,
             name=name,
             capture=capture,
@@ -562,11 +581,24 @@ class PestProject:
         return exe
 
     def _geostruct_for(self, spec: NativeParameterSpec):
-        """Build a pyEMU geostruct from a parameter spec's correlation range."""
+        """Build the pyEMU geostruct for a spatial parameter spec.
 
-        pyemu = self.pyemu or _import_pyemu()
-        vario = pyemu.geostats.ExpVario(contribution=1.0, a=float(spec.correlation))
-        return pyemu.geostats.GeoStruct(variograms=[vario], transform=spec.resolved_transform)
+        Routes through the single :func:`~...geostats.build_geostruct` builder so
+        there is one place that turns a variogram description into a pyEMU
+        ``GeoStruct``. The spec's ``correlation`` is the range; ``anisotropy`` and
+        ``bearing`` shape the ellipse (e.g. K correlated farther down an alluvial
+        valley than across it); ``nugget`` is the unresolved short-scale variance.
+        """
+
+        return build_geostruct(
+            ExpGeoStruct(
+                range=float(spec.correlation),
+                anisotropy=float(spec.anisotropy),
+                bearing=float(spec.bearing),
+                nugget=float(spec.nugget),
+                transform=spec.resolved_transform,
+            )
+        )
 
     def _attach_native_observation_postprocessors(self):
         """Add post-model functions that regenerate simulated observation CSVs."""

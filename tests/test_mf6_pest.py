@@ -934,6 +934,43 @@ def test_named_series_observation_postprocessor_is_wired(tmp_path):
     assert "build_pst" not in str(excinfo.value)
 
 
+def test_parameterize_records_grid_anisotropy(tmp_path):
+    # parameterize() carries the variogram anisotropy/bearing/nugget onto the spec.
+    model, _ = _build_two_cell_pest_forward_model("pest_param_aniso", tmp_path / "ws")
+    cal = model.pest("calib", start_datetime="2020-01-01")
+    spec = cal.parameterize("k", style="grid", correlation=300.0, anisotropy=4.0, bearing=15.0)
+    assert spec.anisotropy == 4.0
+    assert spec.bearing == 15.0
+    assert spec.nugget == 0.0  # isotropic-friendly default
+
+
+def test_geostruct_for_routes_through_build_geostruct_with_anisotropy(tmp_path):
+    # _geostruct_for delegates to the single build_geostruct builder and honours
+    # anisotropy/bearing/nugget -- no longer the isotropic-only inline version.
+    pytest.importorskip("pyemu")
+    from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec
+
+    model, _ = _build_two_cell_pest_forward_model("pest_geostruct", tmp_path / "ws")
+    cal = model.pest("calib", start_datetime="2020-01-01")
+
+    spec = NativeParameterSpec(
+        target="k",
+        style="grid",
+        correlation=500.0,
+        anisotropy=5.0,
+        bearing=30.0,
+        nugget=0.1,
+        transform="log",
+    )
+    geostruct = cal._geostruct_for(spec)
+    vario = geostruct.variograms[0]
+    assert vario.a == 500.0
+    assert vario.anisotropy == 5.0
+    assert vario.bearing == 30.0
+    assert geostruct.nugget == 0.1
+    assert geostruct.transform == "log"
+
+
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")
