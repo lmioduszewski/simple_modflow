@@ -38,29 +38,36 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   pilot points are unusable on unstructured grids). The legacy `add_parameter` +
   `build_pst` + `KPilotPointParameter`/`DrainElevation`/`DrainConductance` specs were
   RETIRED (deleted 2026-06-22) — do not reintroduce them.
-- `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; native `build()` + `run_ies`/`prior`
-- `HeadTargetObservationSpec` — water level observations at monitoring wells
-- `LakeStageObservationSpec` — LAK package stage observations
-- `SfrStageObservationSpec` / `SfrFlowObservationSpec` — SFR stage and flow observations
-- `DrnFlowObservationSpec` — drain zone seepage observations
-- `forward_run.py` — injected forward run: applies K/drain params, regenerates output CSVs
-- `results.py` — `PestRunResults`, `PestRunReview`, `open_pest_run` for post-run analysis
-- `geostats.py` — `ExpGeoStruct` / `build_geostruct` for pilot point kriging
+- `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; native `build()` + `run_ies`/
+  `prior` (`workers=` runs parallel PESTPP-IES agents). **Construct it with
+  `model.pest(name, start_datetime=...)`** (the front door — defaults the workspace to
+  `<model workspace>/pest/<name>`), not by importing `PestProject` directly.
+- **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
+  `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
+  pre-built `*ObservationSpec`). All are wired into the native build + forward run.
+- `forward_run.py` — injected forward run: pyEMU's `apply_list_and_array_pars` for params,
+  plus post-processors that regenerate head + named-series (lake/SFR/DRN) simulated CSVs.
+- **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,
+  `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens
+  one as `IesResults` (`ies.py`, `open_ies_run`) — phi, ensemble-vs-obs, forecasts,
+  parameter-field maps. (The old `results.py` deterministic-review layer was deleted.)
+- `geostats.py` — `ExpGeoStruct` / `build_geostruct`: the **single** geostruct builder
+  (`project._geostruct_for` delegates to it); `grid` style takes `anisotropy`/`bearing`/
+  `nugget` via `parameterize`.
 - The PEST notebooks (`canonical_04/05/06`) calibrate the **canonical valley
-  model itself** (perturb its K/recharge as "truth", then calibrate back). The
-  old standalone demo models (`gold_standard_demo`, `synthetic_demo`,
-  `modern_pest_demo.build_calibration_demo`) were retired in favor of one model
-  everywhere.
+  model itself** (perturb its K/recharge as "truth", then calibrate back); 06 uses
+  pilot-point K. The old standalone demo models (`gold_standard_demo`, `synthetic_demo`,
+  `modern_pest_demo.build_calibration_demo`) were retired in favor of one model everywhere.
 
 ### What's missing / next steps for PEST
-1. **`RechargeMultiplierParameter`** — recharge is a primary calibration target, not yet parameterized
-2. **`KPilotPointParameter` from raster** — currently polygon-zone only; need raster zone support
-3. **Well package parameters** (`WelSpec`) — no adjustable pumping rates
-4. **UZF / GHB / CHD parameters** — not yet covered
-5. **Regularization helpers** — no Tikhonov or preferred-value regularization setup
-6. **Ensemble methods** — `draw_prior` exists but no IES/GLM ensemble smoother wrappers
-7. **Sensitivity / identifiability analysis** helpers
-8. **Parallel PEST++ workers** — not wired up
+> Verify against the code before building — most of the old list is now done
+> (recharge/wel/ghb/chd are `parameterize` targets; IES + parallel workers ship via
+> `run_ies(workers=)`; named-series obs are wired).
+1. **Pilot points / zones from raster** — pilot nets + polygon zones exist; raster-driven
+   zone arrays do not.
+2. **UZF parameters** — not yet a `parameterize` target (GHB/CHD/WEL/DRN already are).
+3. **Regularization helpers** — no Tikhonov or preferred-value regularization setup.
+4. **Sensitivity / identifiability analysis** helpers.
 
 ### Broader things myflopy could learn from modflow-setup (DOI-USGS)
 > Re-verified against the code on 2026-06-20. **Most items previously listed here are
