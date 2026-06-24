@@ -513,7 +513,31 @@ def _validate_concrete_packages(packages: Iterable[PackageSpec]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class GridSpec:
-    """Recipe for obtaining the grid used by one model specification."""
+    """A deferred recipe for the grid a model is built on.
+
+    Rather than a concrete grid object, a ``GridSpec`` describes *how* to build one
+    -- from GeoPackage boundary/refinement/breakline layers (``GridSpec.voronoi``),
+    a Python builder script (``GridSpec.python``), or a serialized dict
+    (``GridSpec.from_dict``). It is resolved into a real grid at run time (or
+    eagerly with ``.resolve(workspace)``).
+
+    Use it two ways:
+
+    - **Deferred** -- ``mf.gwf(...).with_grid(GridSpec.voronoi(...))``; the
+      :class:`~myflopy.workspace.Project` builds the grid into
+      ``run.workspace/_grid/<model>`` and populates ``model.context.grid``. Composes
+      with disv + simple BCs.
+    - **Eager** -- ``vor = GridSpec.voronoi(...).resolve(ws)``; then put ``vor`` in a
+      ``ModelContext`` so the GIS package helpers (``mf.uzf``/``mf.sfr``/``.gpkg``)
+      can resolve cells immediately.
+
+    Examples
+    --------
+    >>> grid = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec("in.gpkg", layer="boundary"),
+    ...                            refinement=mf.GeoPackageSourceSpec("in.gpkg", layer="refine"),
+    ...                            boundary_max_area=200.0)
+    >>> vor = grid.resolve("runs/_grid")     # eager: a concrete VoronoiGridPlus
+    """
 
     name: str
     grid_type: str
@@ -895,11 +919,38 @@ def _grid_from_dict(data: dict[str, Any] | None) -> GridSpec | GridRef | None:
 
 @dataclass(frozen=True, slots=True)
 class ModelContext:
-    """Domain information carried beside a model specification.
+    """The geometry a model is built against -- the bridge to the GIS builders.
 
-    Context is intentionally separate from FloPy package options. It gives
-    data builders and post-build hooks access to geometry, surfaces, dates,
-    domain information, and project-specific metadata.
+    Context rides on the **model** (``mf.gwf(name, context=ctx, ...)``), not on the
+    project, and is kept separate from FloPy package options on purpose: it gives
+    the data-aware package builders and post-build hooks access to the grid,
+    surfaces, dates and active domain. The built model exposes it as
+    ``model.myflopy_context``.
+
+    The GIS package helpers (``mf.uzf``/``mf.sfr``/``mf.lak`` and the ``.gpkg``
+    boundary forms) take ``context=`` so they can map features/cells onto the grid.
+    Because they resolve cells eagerly, build the grid first and put it here.
+
+    Attributes
+    ----------
+    grid
+        The grid object (e.g. a ``VoronoiGridPlus``) features are mapped onto.
+    surfaces
+        Per-cell layer elevations (``vor.gdf_topbtm`` or equivalent) read by
+        surface-aware builders (SFR reach tops, LAK lake-cell layering).
+    domain
+        The active-domain (idomain) array used to pick/validate cells.
+    dates
+        Stress-period datetimes, when time-aware builders need them.
+    metadata
+        Free-form project metadata passed through to hooks.
+
+    Examples
+    --------
+    >>> vor = mf.GridSpec.voronoi(...).resolve("runs/_grid")     # or a VoronoiGridPlus
+    >>> layers = stack.build(attach=True)
+    >>> ctx = mf.ModelContext(grid=vor, domain=layers.idomain, surfaces=vor.gdf_topbtm)
+    >>> flow = mf.gwf("flow", context=ctx, packages=[...])
     """
 
     grid: Any = None
@@ -1440,7 +1491,35 @@ class BuiltSimulation:
 
 @dataclass(frozen=True, slots=True)
 class SimulationSpec:
-    """Definition of a complete simulation containing coupled model specs."""
+    """One complete MF6 simulation: timing, solver(s), and the model(s).
+
+    The top-level declarative object. It holds the simulation-wide packages
+    (``mf.tdis`` and one or more ``mf.ims`` solvers) plus the ``ModelSpec`` models
+    (built with ``mf.gwf``/``mf.gwt``/``mf.gwe``/``mf.prt``) and any inter-model
+    ``exchanges``. ``build_flopy(workspace)`` materializes it into a FloPy
+    simulation; or register it on a :class:`~myflopy.workspace.Project` with
+    ``project.add_simulation(sim)`` and run it via ``project.prepare_run(...)``.
+
+    Parameters
+    ----------
+    name
+        Simulation name (and default run name).
+    models
+        The model specs (``mf.gwf(...)`` etc.).
+    packages
+        Simulation-wide packages -- ``mf.tdis(...)`` and ``mf.ims(...)`` solver(s).
+    exchanges
+        Inter-model exchanges (e.g. ``mf.build_gwf_gwt_exchange("flow", "transport")``).
+    workspace, executable, run_name
+        Optional run location / MF6 executable / run name overrides.
+
+    Examples
+    --------
+    >>> sim = mf.SimulationSpec("baseline", models=(flow,),
+    ...     packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),
+    ...               mf.ims(models=("valley",), complexity="MODERATE")])
+    >>> built = sim.build_flopy("runs/baseline")     # -> FloPy simulation
+    """
 
     name: str
     models: tuple[ModelSpec, ...]

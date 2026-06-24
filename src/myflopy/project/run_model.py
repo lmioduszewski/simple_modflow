@@ -198,7 +198,31 @@ def load_mf6_run(
     crs: str = "EPSG:2927",
     verbosity_level: int = 0,
 ):
-    """Open an MF6 workspace as a lazy, file-backed ``LoadedMf6Run``."""
+    """Open any MF6 workspace as a lazy, file-backed model for inspection.
+
+    Unlike :func:`load_run` (which reopens a myflopy-managed :class:`Run` from its
+    manifest), this loads a *plain* MF6 workspace -- any folder with ``mfsim.nam``,
+    however it was created -- into a :class:`LoadedMf6Run` that lazily exposes the
+    grid, heads, budgets and packages. Handy for post-processing external models or
+    inside a PEST forward run.
+
+    Parameters
+    ----------
+    workspace
+        Directory containing the MF6 simulation files.
+    model_name
+        Which model to load (defaults to the first GWF model).
+    crs
+        CRS to attach to the grid (default ``"EPSG:2927"``).
+    verbosity_level
+        ``0`` silent, higher prints progress.
+
+    Examples
+    --------
+    >>> model = mf.load_mf6_run("path/to/mf6_run")
+    >>> model.load_all()
+    >>> heads = model.hds.array()
+    """
 
     _progress(verbosity_level, f"Opening workspace: {workspace}")
     return LoadedMf6Run(

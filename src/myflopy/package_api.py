@@ -162,7 +162,22 @@ def gwt(
     nc_filerecord: Any = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed GWT model spec wrapping ``flopy.mf6.ModflowGwt``."""
+    """Return a typed GWT (groundwater transport) model spec.
+
+    The solute-transport counterpart of :func:`gwf`: it wraps
+    ``flopy.mf6.ModflowGwt`` and takes the transport packages (``mf.disv`` or a
+    shared grid, plus the MST/ADV/DSP/SSM/IC/OC transport packages) through
+    ``packages``. Couple it to a flow model with a GWF-GWT exchange
+    (:func:`build_gwf_gwt_exchange`) in the same :class:`SimulationSpec`.
+
+    Examples
+    --------
+    >>> transport = mf.gwt("transport", packages=[...])
+    >>> mf.SimulationSpec("sim", models=(flow, transport),
+    ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
+    ...                             mf.ims(models=("transport",)),
+    ...                             mf.build_gwf_gwt_exchange("flow", "transport")])
+    """
 
     options = _model_options(
         model_nam_file=model_nam_file,
@@ -213,7 +228,14 @@ def gwe(
     nc_filerecord: Any = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed GWE model spec wrapping ``flopy.mf6.ModflowGwe``."""
+    """Return a typed GWE (groundwater energy / heat transport) model spec.
+
+    The heat-transport counterpart of :func:`gwf`: it wraps
+    ``flopy.mf6.ModflowGwe`` and takes the energy packages (EST/ADV/CND/SSM/IC/OC)
+    through ``packages``. Couple it to a flow model with a GWF-GWE exchange
+    (:func:`build_gwf_gwe_exchange`) in the same :class:`SimulationSpec`. Use it to
+    model aquifer thermal transport (ATES, heat pumps, thermal plumes).
+    """
 
     options = _model_options(
         model_nam_file=model_nam_file,
@@ -686,7 +708,21 @@ def oc(
 
 
 class _CHDPackage:
-    """Package-first CHD helpers."""
+    """Package-first CHD (constant/specified-head boundary) helpers.
+
+    A CHD pins listed cells to a specified head -- used for fixed boundaries (a
+    lake edge held at stage, a regional head condition). Three entry points:
+
+    - ``mf.chd(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.chd.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells (``edges_only=True`` keeps just boundary cells);
+    - ``mf.chd.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.chd(stress_period_data={0: [[(0, 0), 10.0]]})   # (cellid, head)
+    >>> mf.chd.gpkg("bcs.gpkg", layer="fixed_head", context=ctx, nper=1)
+    """
 
     def __call__(
         self,
@@ -896,7 +932,21 @@ class _DRNPackage:
 
 
 class _WELPackage:
-    """Package-first WEL helpers."""
+    """Package-first WEL (well) helpers.
+
+    A WEL applies a specified volumetric flux to cells -- negative to pump out
+    (extraction), positive to inject. Three entry points:
+
+    - ``mf.wel(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.wel.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      point features mapped onto cells (with per-period rates);
+    - ``mf.wel.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.wel(stress_period_data={0: [[(0, 42), -500.0]]})   # (cellid, rate); negative = pumping
+    >>> mf.wel.gpkg("wells.gpkg", context=ctx, nper=12)
+    """
 
     def __call__(
         self,

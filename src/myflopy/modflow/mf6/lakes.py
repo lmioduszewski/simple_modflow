@@ -202,7 +202,20 @@ def _build_lak_with_tables(model, *, lake_tables=(), **options):
 
 @dataclass(frozen=True, slots=True)
 class LAKBuilder:
-    """Prepare a LAK package from lake polygons and stored configuration."""
+    """Engine that turns lake polygon geometry into an MF6 LAK package.
+
+    Finds the lake cells from each polygon footprint, builds the horizontal +
+    vertical lake-aquifer bed connections, assigns per-lake inputs (stage, bottom,
+    bed leakance, outlets, tables, forcings), and emits a
+    :class:`~myflopy.specs.PackageSpec`. Resolves a mover endpoint via
+    :meth:`connection` and lake ids via :meth:`lake_number`.
+
+    This is the engine under the package-first ``mf.lak(...)`` facade -- prefer that
+    front door for new work; use ``LAKBuilder`` directly only when you need the
+    builder object (e.g. to read ``.lake_cells`` mid-build). Construct it with a
+    :class:`~myflopy.specs.ModelContext` carrying the grid + surfaces, then call
+    :meth:`build`.
+    """
 
     context: ModelContext
     nper: int

@@ -22,7 +22,27 @@ StreamLocation = str | Point
 
 @dataclass(frozen=True, slots=True)
 class StreamConnection:
-    """Declare that water leaves one stream and enters another stream."""
+    """An explicit reach-to-reach link between two named streams.
+
+    Pass these to ``mf.sfr(connections=(...))`` (or ``SFRBuilder``) to disambiguate
+    confluences that automatic geometry-based topology cannot resolve -- e.g. two
+    tributaries meeting a main stem. Water leaves ``source`` (by default at its
+    downstream end) and enters ``receiver`` (by default at its nearest reach).
+
+    Attributes
+    ----------
+    source, receiver
+        Stream ids (the ``stream_id`` attribute values). ``receiver=None`` marks
+        ``source`` as a terminal outflow.
+    source_location, receiver_location
+        Where on each stream to connect: ``"downstream"``/``"upstream"``,
+        ``"nearest"``, ``"intersection"``, or a shapely ``Point``.
+
+    Examples
+    --------
+    >>> mf.sfr(..., connections=(mf.StreamConnection("north_trib", "main_stem"),
+    ...                          mf.StreamConnection("south_trib", "main_stem")))
+    """
 
     source: str
     receiver: str | None
@@ -32,7 +52,23 @@ class StreamConnection:
 
 @dataclass(frozen=True, slots=True)
 class StreamDiversion:
-    """Declare an intentional diversion between two streams."""
+    """An intentional diversion that splits flow from one stream into another.
+
+    Like :class:`StreamConnection` but moves only a portion of the flow (a
+    fraction, an excess, or an up-to amount) -- a canal headgate, a bypass.
+
+    Attributes
+    ----------
+    source, receiver
+        Stream ids for the donor and the diversion channel.
+    amount
+        How much to divert, interpreted per ``priority``.
+    source_location, receiver_location
+        Connection points (see :class:`StreamConnection`).
+    priority
+        Diversion rule: ``"FRACTION"`` (default), ``"EXCESS"``, ``"THRESHOLD"`` or
+        ``"UPTO"`` -- the MF6 SFR CPRIOR options.
+    """
 
     source: str
     receiver: str
@@ -54,7 +90,20 @@ class StreamNetwork:
 
 @dataclass(frozen=True, slots=True)
 class SFRBuilder:
-    """Prepare an SFR package from stream geometry and stored configuration."""
+    """Engine that turns stream centerline geometry into an MF6 SFR package.
+
+    Discretizes each stream line into reaches on the grid, resolves the reach-to-
+    reach topology (geometry-based, with explicit :class:`StreamConnection` /
+    :class:`StreamDiversion` overrides), assigns per-reach properties, and emits a
+    :class:`~myflopy.specs.PackageSpec`. Also resolves semantic mover endpoints via
+    :meth:`connection` / :meth:`outlet_reach`.
+
+    This is the engine under the package-first ``mf.sfr(...)`` facade -- prefer that
+    front door for new work; use ``SFRBuilder`` directly only when you need the
+    builder object (e.g. to read ``.reaches`` / ``.stream_cells`` mid-build).
+    Construct it with a :class:`~myflopy.specs.ModelContext` carrying the grid, then
+    call :meth:`build`.
+    """
 
     context: ModelContext
     nper: int

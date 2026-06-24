@@ -12,7 +12,27 @@ from myflopy.specs import PackageSpec
 
 @dataclass(frozen=True, slots=True)
 class MoverConnection:
-    """One package endpoint that can send or receive moved water."""
+    """One MVR endpoint: a feature in an advanced package that can give/take water.
+
+    Identifies a single provider or receiver for a :class:`Move` by package name
+    and zero-based feature id (an SFR reach number, a LAK lake number, a UZF cell
+    number, etc.). Construct it directly when you know the id, or -- for SFR/LAK --
+    let myflopy resolve it from geometry via ``mf.sfr_connection(...)`` /
+    ``mf.lak_connection(...)``.
+
+    Attributes
+    ----------
+    package
+        The advanced package name (e.g. ``"sfr"``, ``"lak"``, ``"uzf"``). The
+        package must be declared with ``mover=True``.
+    index
+        Zero-based feature id within that package (reach / lake / cell number).
+
+    Examples
+    --------
+    >>> MoverConnection("sfr", 0)          # the first SFR reach
+    >>> mf.sfr_connection(sfr, "main_stem")  # the stream outlet, resolved for you
+    """
 
     package: str
     index: int
@@ -28,7 +48,29 @@ class MoverConnection:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """Move water from one MODFLOW package endpoint to another."""
+    """Route water from one advanced-package feature to another via MVR.
+
+    A move takes available water leaving the ``source`` feature and delivers it to
+    the ``receiver`` -- e.g. a stream's outflow into a lake, or rejected UZF
+    infiltration into a stream. Pass moves to ``mf.mvr(moves=(...))``.
+
+    Attributes
+    ----------
+    source, receiver
+        The provider and receiver :class:`MoverConnection` endpoints.
+    method
+        How ``value`` is interpreted: ``"FACTOR"`` (move this fraction of available
+        water, default), ``"EXCESS"`` (water above ``value``), ``"THRESHOLD"``, or
+        ``"UPTO"`` (at most ``value``).
+    value
+        The factor/rate for ``method`` (default ``1.0`` = all available water).
+
+    Examples
+    --------
+    >>> Move(MoverConnection("sfr", 5), MoverConnection("lak", 0))          # 100% of reach 5 -> lake 0
+    >>> Move(mf.sfr_connection(sfr, "main_stem"),
+    ...      mf.lak_connection(lak, "valley_lake"), value=0.5)              # half the outflow
+    """
 
     source: MoverConnection
     receiver: MoverConnection
@@ -61,7 +103,17 @@ class Move:
 
 @dataclass(frozen=True, slots=True)
 class MVRBuilder:
-    """Prepare an MVR package from semantic package-to-package moves."""
+    """Engine that turns semantic :class:`Move` declarations into an MF6 MVR package.
+
+    Collects the provider/receiver packages from the moves, validates them, and
+    emits a :class:`~myflopy.specs.PackageSpec` with the MVR packagedata +
+    perioddata. ``moves`` may be a flat sequence (applied every period) or a
+    ``{period: [Move, ...]}`` mapping.
+
+    This is the engine under the package-first ``mf.mvr(...)`` facade -- prefer that
+    front door for new work. The moved packages must be declared on the model with
+    ``mover=True`` and ordered before the mover.
+    """
 
     nper: int
     moves: Mapping[int, Sequence[Move]] | Sequence[Move]

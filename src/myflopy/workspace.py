@@ -52,7 +52,27 @@ def load_run(
     executable: str = "mf6",
     load: bool = True,
 ) -> Run:
-    """Load a run workspace and return the standard run object."""
+    """Reopen a previously prepared/executed :class:`Run` from its workspace.
+
+    Reads the run's JSON manifest and (with ``load=True``) the MF6 input files,
+    returning a :class:`Run` you can inspect, re-execute, or read results from --
+    e.g. ``run.model("flow")`` for the model view, or ``run.pest_runs`` for any
+    calibrations done on it. Use this to come back to a run in a later session.
+
+    Parameters
+    ----------
+    workspace
+        The run directory (``<project>/runs/<name>``).
+    executable
+        MF6 executable name/path (default ``"mf6"``).
+    load
+        Eagerly load the FloPy simulation (default ``True``); ``False`` defers it.
+
+    Examples
+    --------
+    >>> run = mf.load_run("project/runs/baseline")
+    >>> heads = run.model("valley").hds.array()
+    """
 
     return Run.load(workspace, executable=executable, load=load)
 

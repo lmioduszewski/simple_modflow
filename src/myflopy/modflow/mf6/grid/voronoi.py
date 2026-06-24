@@ -77,7 +77,31 @@ if TYPE_CHECKING:
 
 
 class VoronoiGridPlus(VoronoiGrid):
-    """Voronoi grid wrapper with convenience methods for MODFLOW modeling."""
+    """An unstructured Voronoi (DISV) grid with MODFLOW-modeling conveniences.
+
+    Extends FloPy's ``VoronoiGrid`` with the geometry and helpers myflopy needs to
+    build and post-process unstructured models: DISV grid properties
+    (:meth:`get_disv_gridprops` -> ``ncpl``/``vertices``/``cell2d``), DISU
+    connectivity (``iac``/``ja``/``cl12``/``hwva``), cell-centroid and adjacency
+    lookups, CRS handling, and the per-cell ``gdf_vorPolys`` / ``gdf_topbtm``
+    GeoDataFrames the surface-aware builders read.
+
+    Build one from a :class:`~myflopy.modflow.mf6.grid.triangle.TriangleGrid`
+    triangulation, or declaratively from GeoPackages via
+    ``mf.GridSpec.voronoi(...).resolve(ws)``. Put the result in a
+    :class:`~myflopy.specs.ModelContext` so the package-first GIS helpers can map
+    features onto its cells, and pass ``get_disv_gridprops()`` to ``mf.disv``.
+
+    Parameters
+    ----------
+    tri
+        A built ``Triangle`` triangulation defining the Voronoi tessellation.
+    crs
+        Coordinate reference system (default ``"EPSG:2927"``); the single source of
+        truth for aligning vector/raster inputs.
+    rasters
+        Optional raster(s) sampled for cell elevations/properties.
+    """
 
     def __init__(
         self,
