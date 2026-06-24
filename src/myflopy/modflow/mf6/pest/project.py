@@ -69,26 +69,27 @@ def _pyemu_warning_class(pyemu_module):
 class PestProject:
     """Build a pyEMU/PEST++ calibration workspace from a ``myflopy`` model.
 
-    ``PestProject`` is the single front door for calibration. The recommended
-    (modern) workflow compiles a few readable declarations straight to native
-    ``pyemu.utils.PstFrom`` and lets pyEMU drive the forward run::
+    ``PestProject`` is the single front door for calibration. It compiles a few
+    readable declarations straight to native ``pyemu.utils.PstFrom`` and lets
+    pyEMU drive the forward run. Construct one with ``model.pest("calib")`` (which
+    seeds the model and a ``<workspace>/pest/<name>`` template directory for you)
+    or directly::
 
-        cal = PestProject(model, "calib", workspace="calib_template",
-                          start_datetime="2020-01-01")
-        cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
+        cal = model.pest("calib", start_datetime="2020-01-01")
+        cal.parameterize("k",        style="pilotpoints", pp_space=8, physical=(1e-3, 100))
         cal.parameterize("recharge", bounds=(0.5, 1.5))
         cal.parameterize("ghb.cond", bounds=(0.1, 10))
         cal.observe(head_targets)          # history-matching targets
         cal.forecast(prediction_targets)   # predictions of interest (zero weight)
         print(cal.settings())              # review the resolved configuration
         pst = cal.build("calib.pst")       # -> native .pst + forward_run.py
+        cal.run_ies()                      # PESTPP-IES ensemble smoother
 
-    Use :meth:`parameterize`, :meth:`observe`, :meth:`forecast`, :meth:`build`
-    and :meth:`settings` for new work. The legacy spec-object path
-    (:meth:`add_parameter`/:meth:`add_observation`/:meth:`build_pst` with
-    :class:`KPilotPointParameter` etc.) is still supported for Voronoi pilot
-    points and named-series (lake/SFR/DRN) observations until those land on the
-    native path.
+    Use :meth:`parameterize` (styles ``constant`` / ``zone`` / ``grid`` /
+    ``pilotpoints`` across every target), :meth:`observe`, :meth:`forecast`,
+    :meth:`build`, :meth:`run_ies`/:meth:`prior` and :meth:`settings`. The runs
+    land beside the model and are reopened for review via ``model.pest_runs`` ->
+    :meth:`~...runs.PestRunHandle.review` (:class:`~...ies.IesResults`).
 
     Parameters
     ----------

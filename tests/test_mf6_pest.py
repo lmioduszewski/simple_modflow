@@ -842,6 +842,38 @@ def test_flatten_array_file_handles_mf6_wrapped_ragged_arrays(tmp_path):
     assert np.allclose(np.sort(loaded), values)
 
 
+def test_model_pest_factory_binds_model_and_default_workspace(tmp_path):
+    # The model is the single front door: model.pest(...) is the write-side
+    # companion to model.pest_runs (the read side). It returns a PestProject
+    # already bound to the model with the auto-discoverable default workspace.
+    model, _ = _build_two_cell_pest_forward_model("pest_factory", tmp_path / "ws")
+
+    cal = model.pest("calib", start_datetime="2021-03-01")
+    assert isinstance(cal, PestProject)
+    assert cal.model is model
+    assert cal.start_datetime == "2021-03-01"
+    # Default workspace lands beside the model so model.pest_runs finds it.
+    assert cal.template_workspace == model.workspace / "pest" / "calib"
+
+    # Extra kwargs thread through to PestProject (e.g. an explicit workspace).
+    custom = tmp_path / "elsewhere"
+    cal2 = model.pest("calib2", start_datetime="2021-03-01", workspace=custom)
+    assert cal2.template_workspace == custom
+
+
+def test_model_pest_factory_infers_and_requires_start_datetime(tmp_path):
+    model, _ = _build_two_cell_pest_forward_model("pest_factory_dt", tmp_path / "ws")
+
+    # No start_datetime and the TDIS carries none -> a clear, actionable error.
+    with pytest.raises(ValueError, match="start_datetime"):
+        model.pest("calib")
+
+    # Once the model's TDIS has a start date, the factory infers it.
+    model.sim.tdis.start_date_time = "2019-06-01"
+    cal = model.pest("calib")
+    assert str(cal.start_datetime).startswith("2019-06-01")
+
+
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     pytest.importorskip("pyemu")
     pytest.importorskip("flopy")

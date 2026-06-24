@@ -254,6 +254,64 @@ class SimulationBase:
 
         return find_pest_runs(self.workspace / "pest", model_name=self.name, model=self)
 
+    def pest(self, name: str, *, start_datetime: str | None = None, **kwargs):
+        """Start a PEST/PEST++ calibration of this model.
+
+        This is the write-side companion to :attr:`pest_runs` (the read side):
+        :attr:`pest_runs` discovers calibrations already done on the model, while
+        ``pest()`` creates a new one. It returns a fresh
+        :class:`~myflopy.modflow.mf6.pest.PestProject` already bound to this model,
+        with its template workspace defaulting to ``<workspace>/pest/<name>`` so the
+        run is auto-discoverable afterwards. The whole loop then lives on the model::
+
+            cal = model.pest("calib", start_datetime="2020-01-01")
+            cal.parameterize("k", style="pilotpoints", pp_space=8)
+            cal.observe(head_targets)
+            cal.build(); cal.run_ies()
+            model.pest_runs[-1].review().plot_phi()   # no imports needed
+
+        Parameters
+        ----------
+        name
+            Calibration name; used as the ``.pst`` stem and the default
+            ``<workspace>/pest/<name>`` template directory.
+        start_datetime
+            Simulation start date (e.g. ``"2020-01-01"``) that pyEMU uses to place
+            time-varying parameters/observations on the time axis. When omitted it
+            is read from the model's TDIS ``start_date_time``; pass it explicitly if
+            the model has none.
+        **kwargs
+            Forwarded to :class:`~myflopy.modflow.mf6.pest.PestProject`
+            (``workspace``, ``spatial_reference``, ``zero_based``, ``longnames``).
+
+        Returns
+        -------
+        PestProject
+            A calibration project bound to this model.
+        """
+
+        from myflopy.modflow.mf6.pest.project import PestProject
+
+        if start_datetime is None:
+            start_datetime = self._tdis_start_datetime()
+            if start_datetime is None:
+                raise ValueError(
+                    "start_datetime could not be read from the model's TDIS; "
+                    "pass start_datetime=... explicitly (e.g. '2020-01-01')."
+                )
+        return PestProject(self, name, start_datetime=start_datetime, **kwargs)
+
+    def _tdis_start_datetime(self) -> str | None:
+        """The TDIS ``start_date_time`` as a string, or ``None`` if unset."""
+
+        tdis = getattr(self.sim, "tdis", None)
+        sdt = getattr(tdis, "start_date_time", None)
+        if sdt is None:
+            return None
+        getter = getattr(sdt, "get_data", None)
+        value = getter() if callable(getter) else sdt
+        return str(value) if value else None
+
     @property
     def package_names(self) -> list[str]:
         """Sorted list of package names currently attached to the groundwater model."""
