@@ -328,7 +328,13 @@ def tdis(
     models inside the same ``SimulationSpec`` share this timing. To use
     different timing, build a separate simulation/run.
 
-    This wraps ``flopy.mf6.ModflowTdis``.
+    ``perioddata`` is one ``(perlen, nstp, tsmult)`` tuple per period. This wraps
+    ``flopy.mf6.ModflowTdis``.
+
+    Examples
+    --------
+    >>> mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])                    # one steady period
+    >>> mf.tdis(nper=12, perioddata=[(30.0, 3, 1.1)] * 12, time_units="days")
     """
 
     values = {"nper": nper, "perioddata": perioddata, **kwargs}
@@ -401,8 +407,18 @@ def ims(
 
     ``mf.ims(name="transport_solver", models=("transport",))``
 
+    ``complexity`` (``"SIMPLE"``/``"MODERATE"``/``"COMPLEX"``) presets the solver
+    tolerances; bump it (and ``outer_maximum``/``inner_maximum``) for stiff models
+    with wetting/drying or many advanced packages (SFR/LAK/UZF). Pair with a GWF
+    ``newtonoptions=...`` for robust water-table convergence.
+
     All named arguments mirror ``flopy.mf6.ModflowIms``. Extra FloPy keyword
     arguments can still be passed through ``**kwargs``.
+
+    Examples
+    --------
+    >>> mf.ims(models=("flow",), complexity="MODERATE",
+    ...        outer_maximum=100, inner_maximum=100, linear_acceleration="BICGSTAB")
     """
 
     values = {"models": tuple(models), "pname": name if pname is None else pname, **kwargs}
@@ -510,7 +526,28 @@ def disv(
     name: str = "disv",
     **options: Any,
 ) -> PackageSpec:
-    """Return a DISV package spec wrapping ``flopy.mf6.ModflowGwfdisv``."""
+    """Vertex discretization (DISV) package: the unstructured grid + layers.
+
+    DISV defines the model geometry from a vertex/cell2d mesh plus per-layer ``top``
+    and ``botm`` (and optional ``idomain``). With a myflopy grid you rarely type the
+    mesh by hand -- pull it from the grid and the layer arrays from a ``LayerStack``::
+
+        gp = vor.get_disv_gridprops()        # ncpl, vertices, cell2d
+        layers = stack.build()               # top, botm, idomain, nlay
+        mf.disv(nlay=layers.nlay, ncpl=gp["ncpl"], nvert=len(gp["vertices"]),
+                vertices=gp["vertices"], cell2d=gp["cell2d"],
+                top=layers.top, botm=layers.botm, idomain=layers.idomain)
+
+    Parameters
+    ----------
+    nlay, ncpl, nvert
+        Number of layers, cells-per-layer, and vertices.
+    vertices, cell2d
+        FloPy vertex and cell2d definition lists (``vor.get_disv_gridprops()``).
+    top, botm, idomain
+        Model-top (ncpl,), layer bottoms (nlay, ncpl), and active-domain array
+        (idomain 0 = inactive / pinched out).
+    """
 
     values = {
         "nlay": nlay,
@@ -528,7 +565,17 @@ def disv(
 
 
 def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
-    """Return an IC package spec wrapping ``flopy.mf6.ModflowGwfic``."""
+    """Initial-conditions (IC) package: the starting head field.
+
+    ``strt`` is the starting head -- a scalar, a per-cell array, or a ``(nlay, ncpl)``
+    array (one value per cell per layer). For Newton/under-relaxation runs a sensible
+    starting head (e.g. near the water table) helps convergence.
+
+    Examples
+    --------
+    >>> mf.ic(strt=9.0)                 # uniform
+    >>> mf.ic(strt=starting_heads)      # per-cell / per-layer array
+    """
 
     return PackageSpec(name, flopy.mf6.ModflowGwfic, {"strt": strt, **options})
 
@@ -543,7 +590,18 @@ def npf(
     name: str = "npf",
     **options: Any,
 ) -> PackageSpec:
-    """Return an NPF package spec wrapping ``flopy.mf6.ModflowGwfnpf``."""
+    """Node-property-flow (NPF) package: hydraulic conductivity.
+
+    ``k`` is horizontal K and ``k33`` vertical K -- each a scalar, per-cell array, or
+    ``(nlay, ncpl)`` array. ``icelltype`` controls confined (0) vs convertible
+    (non-zero, water-table) behavior. ``save_specific_discharge=True`` is needed for
+    particle tracking / Darcy-velocity plots.
+
+    Examples
+    --------
+    >>> mf.npf(k=10.0)                       # uniform K
+    >>> mf.npf(k=k_array, k33=k_array * 0.1, icelltype=1)   # per-cell, convertible
+    """
 
     values = {
         "k": k,
@@ -569,7 +627,17 @@ def sto(
     name: str = "sto",
     **options: Any,
 ) -> PackageSpec:
-    """Return an STO package spec wrapping ``flopy.mf6.ModflowGwfsto``."""
+    """Storage (STO) package: storativity + per-period steady/transient flags.
+
+    Provide ``ss`` (specific storage) and ``sy`` (specific yield) for transient
+    periods, and mark each period steady or transient. A purely steady model still
+    needs STO with ``steady_state={0: True}``.
+
+    Examples
+    --------
+    >>> mf.sto(steady_state={0: True})                          # steady
+    >>> mf.sto(ss=1e-5, sy=0.15, transient={0: True})           # transient
+    """
 
     values = {"save_flows": save_flows, **options}
     for key, value in {
@@ -593,7 +661,17 @@ def oc(
     name: str = "oc",
     **options: Any,
 ) -> PackageSpec:
-    """Return an OC package spec wrapping ``flopy.mf6.ModflowGwfoc``."""
+    """Output-control (OC) package: what to save/print and when.
+
+    To get heads and a cell budget on disk you must name the output files
+    (``head_filerecord`` / ``budget_filerecord``) **and** request them in
+    ``saverecord`` -- MF6 errors if you ask to save heads without a head file.
+
+    Examples
+    --------
+    >>> mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+    ...       saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
+    """
 
     values = dict(options)
     for key, value in {
@@ -662,7 +740,22 @@ class _CHDPackage:
 
 
 class _GHBPackage:
-    """Package-first GHB helpers."""
+    """Package-first GHB (general-head boundary) helpers.
+
+    A GHB is a head-dependent flux that connects model cells to a fixed external
+    head through a conductance -- the workhorse for regional underflow / far-field
+    boundaries. Three entry points:
+
+    - ``mf.ghb(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.ghb.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features (auto-reprojected and mapped onto cells);
+    - same as ``()`` here (the FloPy-native form).
+
+    Examples
+    --------
+    >>> mf.ghb(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})        # (cellid, head, cond)
+    >>> mf.ghb.gpkg("bcs.gpkg", layer="underflow", context=ctx, nper=1)
+    """
 
     def __call__(
         self,
@@ -673,7 +766,11 @@ class _GHBPackage:
         boundnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a GHB package spec from direct stress-period data."""
+        """Return a GHB package spec from direct MF6 stress-period data.
+
+        ``stress_period_data`` is the FloPy mapping ``{period: [[cellid, bhead,
+        cond], ...]}`` (cellid is ``(layer, cell)`` on DISV).
+        """
 
         return ghb_spec(
             stress_period_data,
@@ -725,7 +822,22 @@ class _GHBPackage:
 
 
 class _DRNPackage:
-    """Package-first DRN helpers."""
+    """Package-first DRN (drain) helpers.
+
+    A drain removes water from a cell only when head rises above the drain
+    elevation (one-way, head-dependent) -- used for toe-of-slope springs, tile
+    drains, and seepage faces. Three entry points:
+
+    - ``mf.drn(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.drn.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells;
+    - ``mf.drn.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.drn(stress_period_data={0: [[(0, 12), 95.0, 30.0]]})   # (cellid, elev, cond)
+    >>> mf.drn.gpkg("bcs.gpkg", layer="springs", context=ctx, nper=1)
+    """
 
     def __call__(
         self,
@@ -735,7 +847,10 @@ class _DRNPackage:
         boundnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a DRN package spec from direct stress-period data."""
+        """Return a DRN package spec from direct MF6 stress-period data.
+
+        ``stress_period_data`` is ``{period: [[cellid, elev, cond], ...]}``.
+        """
 
         return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
@@ -840,7 +955,22 @@ class _WELPackage:
 
 
 class _RCHPackage:
-    """Package-first RCH helpers."""
+    """Package-first RCH (recharge) helpers.
+
+    Areally-distributed recharge applied to the top active cell of each column.
+    Entry points:
+
+    - ``mf.rch(context=, nper=, recharge=)`` -- high-level builder; picks the
+      top-active cells from the domain and applies a scalar/per-cell/``{period:}`` rate;
+    - ``mf.rch(stress_period_data=...)`` / ``mf.rch.flopy(...)`` -- direct MF6 records;
+    - ``mf.rch.gpkg(path, context=, nper=)`` -- from GeoPackage features.
+
+    Examples
+    --------
+    >>> ctx = mf.ModelContext(grid=vor, domain=idomain)
+    >>> mf.rch(context=ctx, nper=1, recharge=6.0e-4)                 # uniform rate
+    >>> mf.rch.flopy(stress_period_data={0: [[(0, 3), 6.0e-4]]})     # explicit cells
+    """
 
     def __call__(
         self,
@@ -863,7 +993,8 @@ class _RCHPackage:
         * Direct ``stress_period_data=`` (like ``mf.drn`` / ``mf.wel``) returns a
           list-based RCH spec.
         * The high-level builder form (``context=``, ``nper=``, ``recharge=``)
-          computes the cells from the model domain.
+          computes the cells from the model domain; ``recharge`` is a scalar,
+          per-cell sequence, or ``{period: ...}`` mapping.
         """
 
         if stress_period_data is not None:
@@ -937,7 +1068,15 @@ class _RCHPackage:
 
 
 class _UZFPackage:
-    """Package-first UZF helpers."""
+    """Package-first UZF (unsaturated-zone flow) helpers.
+
+    Call ``mf.uzf(...)`` to build a UZF package from domain-aware inputs (it picks
+    the land-surface cells and wires up infiltration/ET for you), or
+    ``mf.uzf.flopy(...)`` to pass prepared FloPy ``packagedata``/``perioddata``
+    directly. UZF adds a vertical unsaturated column above the water table that
+    delays and attenuates recharge and can route rejected infiltration / discharge
+    to other packages via MVR.
+    """
 
     def __call__(
         self,
@@ -971,7 +1110,46 @@ class _UZFPackage:
         nwavesets: int = 40,
         **options: Any,
     ) -> PackageSpec:
-        """Return a high-level UZF package spec from domain-aware inputs."""
+        """Build a UZF package from domain-aware inputs (delegates to ``UZFBuilder``).
+
+        Cells are selected automatically from the model domain (one UZF column per
+        vertically-connected active cell beneath land surface); pass an explicit
+        ``cells`` list to override. Soil-hydraulic inputs (``vks``/``thtr``/``thts``/
+        ``thti``/``eps``) and the stress inputs (``finf``/``pet``/``extdp``...) accept
+        a scalar (applied everywhere), a per-cell sequence, or a ``{period: ...}``
+        mapping for transient values.
+
+        Parameters
+        ----------
+        context
+            :class:`ModelContext` carrying the grid + domain (idomain) used to pick
+            and order UZF cells. Required for ``cells="all_active"/"surface_only"``.
+        nper
+            Number of stress periods.
+        vks, thtr, thts, thti, eps
+            Saturated K of the unsaturated zone, residual / saturated / initial water
+            content, and the Brooks-Corey exponent.
+        cells
+            ``"all_active"`` (default), ``"surface_only"``, or an explicit list of
+            ``(layer, cell)`` ids.
+        finf, pet, extdp, extwc
+            Infiltration rate, PET, ET extinction depth, and extinction water content
+            (scalar / per-cell / ``{period: ...}``).
+        mover
+            Enable MVR so rejected infiltration / groundwater discharge can be moved
+            to another package.
+
+        Returns
+        -------
+        PackageSpec
+            Pass it to ``mf.gwf(packages=[...])``.
+
+        Examples
+        --------
+        >>> ctx = mf.ModelContext(grid=vor, domain=idomain)
+        >>> mf.uzf(context=ctx, nper=1, vks=0.25, thtr=0.08, thts=0.34, thti=0.17,
+        ...        finf=3.0e-5, pet=1.0e-4, extdp=7.0)
+        """
 
         return UZFBuilder(
             context=context,
@@ -1029,7 +1207,15 @@ class _UZFPackage:
 
 
 class _SFRPackage:
-    """Package-first SFR helpers."""
+    """Package-first SFR (streamflow-routing) helpers.
+
+    Call ``mf.sfr(...)`` to build an SFR network directly from **stream centerline
+    geometry** (a geopackage/shapefile path or a GeoDataFrame): it discretizes each
+    line into reaches on the grid, resolves the reach-to-reach topology, and writes
+    packagedata/connectiondata/perioddata. Use ``mf.sfr.flopy(...)`` to pass prepared
+    FloPy records instead. SFR routes streamflow through the model and can exchange
+    water with the aquifer (gaining/losing) and with lakes via MVR.
+    """
 
     def __call__(
         self,
@@ -1066,7 +1252,47 @@ class _SFRPackage:
         maximum_depth_change: float = 0.01,
         **options: Any,
     ) -> PackageSpec:
-        """Return a high-level SFR package spec from stream geometry."""
+        """Build an SFR package from stream geometry (delegates to ``SFRBuilder``).
+
+        Reaches are cut where each stream line crosses grid cells; ``connection_mode
+        ="automatic"`` infers the topology from geometry. When tributaries meet
+        ambiguously, disambiguate with explicit ``connections`` (and ``diversions``).
+        Reach properties (``width``/``gradient``/``roughness``/``streambed_k``/
+        ``streambed_thickness``) accept a scalar, one value per reach, or one per
+        stream; ``reach_top`` defaults from the grid surface when available.
+
+        Parameters
+        ----------
+        context
+            :class:`ModelContext` carrying the grid the reaches are placed on.
+        nper
+            Number of stress periods.
+        streams
+            Stream centerlines: a geopackage/shapefile path (or list), or a
+            ``GeoDataFrame`` of ``LineString`` rows. ``stream_id`` names the id column.
+        connection_mode, connections, diversions
+            ``"automatic"`` topology from geometry, plus explicit
+            :class:`StreamConnection`/:class:`StreamDiversion` overrides for
+            confluences/splits.
+        inflow, rainfall, evaporation, runoff, status
+            Per-period boundary inputs, keyed by stream id (e.g.
+            ``inflow={0: {"main": 1.0e4}}``).
+        mover
+            Enable MVR so this stream can give/receive water from lakes or UZF.
+        length_conversion, time_conversion
+            Manning's-equation unit conversions (e.g. ``3.28081`` ft/m, ``86400`` s/day).
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> ctx = mf.ModelContext(grid=vor, domain=idomain)
+        >>> mf.sfr(context=ctx, nper=1, streams="streams.gpkg", stream_id="name",
+        ...        connections=(mf.StreamConnection("trib", "main"),),
+        ...        inflow={0: {"trib": 1.0e4}}, width=15.0, gradient=0.001, mover=True)
+        """
 
         return SFRBuilder(
             context=context,
@@ -1129,7 +1355,15 @@ class _SFRPackage:
 
 
 class _LAKPackage:
-    """Package-first LAK helpers."""
+    """Package-first LAK (lake) helpers.
+
+    Call ``mf.lak(...)`` to build a LAK package from **lake polygon geometry** (a
+    geopackage/shapefile path or a GeoDataFrame): it finds the lake cells, builds
+    the lake-aquifer connections, and writes packagedata/connectiondata/perioddata.
+    Use ``mf.lak.flopy(...)`` for prepared FloPy records. A lake is a head-dependent
+    storage that exchanges water with the aquifer through its bed and can connect to
+    streams via MVR and to outlets.
+    """
 
     def __call__(
         self,
@@ -1160,7 +1394,41 @@ class _LAKPackage:
         maximum_stage_change: float = 1.0e-5,
         **options: Any,
     ) -> PackageSpec:
-        """Return a high-level LAK package spec from lake geometry."""
+        """Build a LAK package from lake geometry (delegates to ``LAKBuilder``).
+
+        Lake cells are taken from the polygon footprint(s); ``connection_modes=
+        "automatic"`` builds horizontal + vertical bed connections. Per-lake inputs
+        (``starting_stage``/``lake_bottom``/``bed_leakance``/``status``/forcings) are
+        keyed by lake id (the ``lake_id_field`` attribute, e.g. ``{"valley_lake": 101.0}``).
+
+        Parameters
+        ----------
+        context
+            :class:`ModelContext` with the grid + domain + surfaces (lake-cell layer
+            assignment reads cell-bottom elevations).
+        nper
+            Number of stress periods.
+        lakes
+            Lake polygons: a geopackage/shapefile path (or list), or a GeoDataFrame.
+            ``lake_id_field`` is the attribute naming each lake.
+        starting_stage, lake_bottom, bed_leakance
+            Initial stage, lake-bottom elevation, and bed leakance per lake.
+        outlets, tables
+            Optional lake outlets and stage-volume-area tables.
+        mover
+            Enable MVR so the lake can give/receive water from streams or UZF.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> ctx = mf.ModelContext(grid=vor, domain=idomain, surfaces=vor.gdf_topbtm)
+        >>> mf.lak(context=ctx, nper=1, lakes="lakes.gpkg", lake_id_field="name",
+        ...        starting_stage={"valley_lake": 101.0}, lake_bottom={"valley_lake": 96.0},
+        ...        bed_leakance=0.1, status={"valley_lake": ["ACTIVE"]}, mover=True)
+        """
 
         return LAKBuilder(
             context=context,
@@ -1219,7 +1487,16 @@ class _LAKPackage:
 
 
 class _MVRPackage:
-    """Package-first MVR helpers."""
+    """Package-first MVR (water mover) helpers.
+
+    Call ``mf.mvr(...)`` to declare **moves** between advanced packages by name and
+    id -- e.g. route a stream's outflow into a lake, or rejected UZF infiltration
+    into a stream. Each move is an ``mf.Move(provider, receiver)`` of two
+    ``mf.MoverConnection(package_name, id)`` endpoints. The provider/receiver packages
+    must be declared on the model **with** ``mover=True`` and **before** the mover in
+    the package list (myflopy validates this). Use ``mf.mvr.flopy(...)`` for raw
+    FloPy ``packages``/``perioddata``.
+    """
 
     def __call__(
         self,
@@ -1232,7 +1509,29 @@ class _MVRPackage:
         modelnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a high-level MVR package spec from semantic moves."""
+        """Build an MVR package from semantic moves (delegates to ``MVRBuilder``).
+
+        Parameters
+        ----------
+        nper
+            Number of stress periods.
+        moves
+            Either a flat sequence of :class:`Move` (applied every period) or a
+            ``{period: [Move, ...]}`` mapping for time-varying routing. Each
+            :class:`Move` connects a provider :class:`MoverConnection` to a receiver
+            one (``MoverConnection(package_name, id)``), optionally with a ``value``
+            (FACTOR fraction by default).
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> # send the main stem's outflow (reach 0) into the lake (lake 0)
+        >>> mf.mvr(nper=1, moves=(mf.Move(mf.MoverConnection("sfr", 0),
+        ...                               mf.MoverConnection("lak", 0)),))
+        """
 
         return MVRBuilder(
             nper=nper,

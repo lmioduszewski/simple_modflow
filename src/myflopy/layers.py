@@ -694,7 +694,68 @@ class LayerBuildResult:
 
 
 class LayerStack:
-    """Assemble a vertical layer stack from a top + ordered named layers."""
+    """Author a model's vertical layering from a top surface + named layers.
+
+    ``LayerStack`` is the **friendly facade** for building MODFLOW layer geometry.
+    You declare the model top, then ``.add(...)`` one named layer at a time (by its
+    *bottom* surface or its *thickness*), and ``.build()`` resolves the stack into
+    DISV-ready ``top`` / ``botm`` / ``idomain`` arrays. It is a thin layer over the
+    :class:`~myflopy.surfaces.LayerSurfaces` engine -- it compiles to it (see
+    :meth:`_layer_surfaces`) and never re-implements the sampling / reconcile /
+    pinch-out logic. Each surface is an atomic :class:`~myflopy.surfaces.Surface`
+    (use the aliases :class:`Raster`, :class:`Contours`, :class:`Points`,
+    :class:`Flat`, :class:`Array`).
+
+    What :meth:`build` does for you: samples every surface onto the grid cells
+    (area-weighted by default), resolves them **top-down** so a flat/relative
+    surface stays flat where it fits and is lowered only where it would intrude on
+    the surface above ("flat where possible, fit between"), and turns sub-minimum
+    or inverted thicknesses into **pinch-outs** (idomain) per your per-layer policy.
+
+    Parameters
+    ----------
+    vor
+        The grid (a ``VoronoiGridPlus``/vertex grid) whose cells the surfaces are
+        sampled onto.
+    top
+        The model-top surface -- a :class:`Surface` or any value the aliases accept
+        (a raster path via :class:`Raster`, an array via :class:`Array`, a constant
+        via :class:`Flat`, ...).
+    length_units, time_units
+        Model units (default feet / days); ``length_units`` flows to DISV and is
+        used to convert any surface declaring different ``units=``.
+
+    Examples
+    --------
+    >>> from myflopy import LayerStack
+    >>> from myflopy.layers import Raster, Contours
+    >>> stack = (
+    ...     LayerStack(vor, top=Raster("ground.tif"))   # land surface from a DEM
+    ...     .add("alluvium",   thickness=25)            # 25-ft upper aquifer
+    ...     .add("aquitard",   thickness=8, pinch="inactive")   # pinches out where thin
+    ...     .add("bedrock",    bottom=Contours("bedrock_top.shp"))
+    ... )
+    >>> layers = stack.build()          # -> layers.top, layers.botm, layers.idomain, layers.nlay
+    >>> print(stack.qc())               # NaN/thickness/connectivity report
+    >>> layers.cross_section(x=500)     # quick W-E section to eyeball it
+
+    Feed the result straight into ``mf.disv`` and the model context::
+
+        gp = vor.get_disv_gridprops()
+        ctx = mf.ModelContext(grid=vor, domain=layers.idomain)
+        flow = mf.gwf("flow", context=ctx, packages=[
+            mf.disv(nlay=layers.nlay, ncpl=gp["ncpl"], nvert=len(gp["vertices"]),
+                    vertices=gp["vertices"], cell2d=gp["cell2d"],
+                    top=layers.top, botm=layers.botm, idomain=layers.idomain),
+            ...,
+        ])
+
+    See Also
+    --------
+    from_modflow : Seed an editable stack from an existing model's top/botm.
+    build : Resolve the stack into DISV arrays (the per-layer pinch options).
+    qc : Geometry quality-control report (NaN, thin/pinched, connectivity).
+    """
 
     def __init__(self, vor, top, *, length_units: str = "feet", time_units: str = "days"):
         self.vor = vor
@@ -743,7 +804,40 @@ class LayerStack:
         pinch: str | None = None,
         fill: str | None = None,
     ) -> "LayerStack":
-        """Append a named layer. Returns ``self`` for chaining."""
+        """Append a named layer beneath the current bottom. Returns ``self`` (chainable).
+
+        Define the layer either by its **bottom** surface or its **thickness**
+        (exactly one). Thickness is measured down from the surface above, so layers
+        compose naturally as you stack them.
+
+        Parameters
+        ----------
+        name
+            Layer name (used in QC, plots, and as the surface label).
+        bottom
+            The layer's bottom as a :class:`Surface` / alias (e.g.
+            ``Contours("base.shp")``, ``Array(values)``, ``Flat(90.0)``). Mutually
+            exclusive with ``thickness``.
+        thickness
+            Constant or per-cell thickness below the surface above. Mutually
+            exclusive with ``bottom``.
+        min_thickness
+            Minimum layer thickness; thinner cells are handled per ``pinch``.
+            Defaults to the stack-wide value passed to :meth:`build`.
+        pinch
+            What to do where a layer is thinner than ``min_thickness``:
+            ``"passthrough"`` (keep the cell active, default), ``"inactive"``
+            (idomain 0 -- a true pinch-out), or ``"floor"`` (clamp to the minimum).
+        fill
+            For raster/derived bottoms, how to fill cells with no source data
+            (e.g. ``"propagate"`` to inherit the surface above -> pinch).
+
+        Examples
+        --------
+        >>> stack.add("sand", thickness=20)                       # 20-ft layer
+        >>> stack.add("clay", thickness=5, pinch="inactive")      # pinches out where thin
+        >>> stack.add("bedrock", bottom=Contours("bedrock.shp"))  # bottom from contours
+        """
         if any(layer.name == name for layer in self._layers):
             raise ValueError(f"layer {name!r} already exists.")
         surface = _make_surface(bottom, thickness, fill)
