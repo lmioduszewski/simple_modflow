@@ -15,15 +15,62 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 - **Workspace/project management** — `Project`, `Run`, `load_run` in `workspace.py`
 - **Parallel model workflows** — `ParallelModelWorkflow` in `parallel.py`
 
-## Two API layers + capability map
-This codebase has **two API generations** — check both before adding code, or you risk
-duplicating an existing capability:
-- **Modern declarative spec API** (preferred): `src/myflopy/*.py` — `package_api`, `specs`,
-  `sources`, `geopackage`, `surfaces`, `advanced`, `builders`, `workspace`. Authoritative
-  export list: `src/myflopy/__init__.py`.
-- **Legacy OO API**: `src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`,
-  `lakes`, `recharge`, and builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …).
+## Canonical model-building API: package-first (use this for new work)
+**The package-first API in `package_api.py` is THE preferred, canonical way to build models.**
+Prefer it for all new model-building work; do not reach for the legacy OO path below unless
+you have a specific reason. The OO builder classes (`SFRBuilder`, `LAKBuilder`, `UZFBuilder`,
+`RCHBuilder`, `MVRBuilder`, `GHB`, `Recharge`, …) are the **engine underneath** the
+package-first facade, not a competing API — e.g. `mf.uzf(...)` literally calls
+`UZFBuilder(...).build()`. (The canonical model in `canonical_example.py` is written in the
+older imperative builder style for historical/computed-cell reasons; that does NOT make the
+imperative path "more proven" — package-first is the same engine and is the one to teach.)
 
+### How it fits together (the mental model)
+```
+Project            ← durable workspace + run/scenario lifecycle (workspace.py); holds NO geometry
+  └─ SimulationSpec ← one MF6 simulation: tdis + ims solver + the model(s)
+       └─ ModelSpec = mf.gwf(name, context=…, packages=[…])   ← one model
+            ├─ ModelContext(grid=, domain=, surfaces=, dates=)  ← geometry; rides on the MODEL, not the project
+            └─ packages: mf.disv, mf.npf/ic/sto/oc,
+                         mf.chd/ghb/drn/wel/rch (+ .gpkg / .flopy),
+                         mf.uzf/sfr/lak (+ .flopy), mf.mvr
+```
+- **`Project(root, name=)`** (`workspace.py`): `add_grid/add_package/add_simulation` (reusable
+  libraries), `prepare_run(name, sim)` → `Run` (built in memory; inspect `run.model(...)`),
+  `run.execute()` writes + runs MF6. The Project is the lifecycle wrapper; geometry lives on the model.
+- **`ModelContext`** (`specs.py`) attaches to the **model** via `mf.gwf(..., context=ctx)`, NOT to
+  the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
+  it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
+  take `context=` so they can map features/cells onto the grid.
+- **Package-first surface**: `mf.gwf/gwt/gwe/prt`; `mf.disv`; `mf.ic/npf/sto/oc/tdis/ims`;
+  list BCs `mf.chd/ghb/drn/wel/rch` each with `()` (direct data), `.gpkg(path, context=, nper=)`
+  (from GeoPackage), `.flopy(...)` (raw FloPy escape hatch); advanced `mf.uzf/sfr/lak` (`()` =
+  high-level builder, `.flopy(...)` = raw); `mf.mvr` with `mf.Move(mf.MoverConnection("sfr",0),
+  mf.MoverConnection("lak",0))`. **MVR is validated**: moved packages must be declared in the
+  model AND ordered before the mover (`test_advanced_specs`).
+- **Layers**: build tops/bottoms with `Surface` (`raster`/`from_contours`/`from_points`/
+  `from_array`/constant) + `LayerSurfaces([...]).sample(vor)` / `.attach(vor)` — area-weighted
+  sampling, top-down reconcile, pinch-out → idomain (`surfaces.py`).
+
+### Grid: eager (works now) vs deferred (a known seam)
+- **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
+  `mf.GridSpec.voronoi(...).resolve(workspace)`), put it in `ModelContext(grid=vor, domain=idomain)`,
+  then declare packages. **Required today** for `mf.uzf/sfr/lak/.gpkg` because they resolve cells
+  eagerly at declaration (e.g. `UZFBuilder.build()` bakes resolved data into the `PackageSpec`).
+- **Deferred** (`mf.gwf().with_grid(mf.GridSpec.voronoi(boundary=<gpkg>, refinement=<gpkg>))`):
+  the project builds the grid at run time into `run.workspace/_grid/<model>` and populates
+  `context.grid`. In `ModelSpec.build` the grid resolves BEFORE packages build, and the model
+  carries `model.myflopy_context` — so deferred GIS packages are *feasible*, just not wired: the
+  helpers would need a grid-lazy mode emitting a `PackageSpec` whose `build(model)` resolves against
+  `model.myflopy_context` instead of resolving eagerly. Until then, deferred GridSpec composes only
+  with disv + simple BCs, not with `mf.uzf/sfr/lak`.
+
+Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
+
+## Legacy OO API (the engine; avoid for new model assembly)
+`src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`, `lakes`, `recharge`, and the
+builder classes. Still the engine under the facade and still used by `canonical_example.py`. When
+adding a capability, **grep both layers first** (package-first + these) to avoid duplicating one.
 **`docs/myflopy_context.md` is the accurate, code-derived capability map** (rebuilt 2026-06-20).
 Treat any "gap" as a hypothesis to re-verify against the code before building.
 
