@@ -223,6 +223,30 @@ class LayerBuildResult:
             )
         return "\n".join(lines)
 
+    def attach_to_grid(self, vor=None):
+        """Publish ``top``/``botm`` onto ``vor.gdf_topbtm`` for grid-aware builders.
+
+        Writes a centroid GeoDataFrame with integer columns (``0`` = model top,
+        ``1..nlay`` = layer bottoms) -- the format the surface-aware builders read
+        (SFR reach tops, LAK lake-cell layering). Returns the grid.
+
+        Usually you do not call this directly: pass ``attach=True`` to
+        :meth:`LayerStack.build`.
+        """
+        import geopandas as gpd
+
+        grid = self.vor if vor is None else vor
+        if grid is None:
+            raise ValueError("No grid to attach to; pass vor= or build the stack with a grid.")
+        columns = {0: np.asarray(self.top, dtype=float)}
+        for i in range(self.nlay):
+            columns[i + 1] = np.asarray(self.botm[i], dtype=float)
+        grid.gdf_topbtm = gpd.GeoDataFrame(
+            {"geometry": grid.gdf_vorPolys.geometry, **columns},
+            geometry="geometry", crs=grid.crs,
+        )
+        return grid
+
     # -- QC / validation -------------------------------------------------- #
     def _active_components(self):
         """Union-find over active cells (idomain == 1). Returns ``(labels, sizes)``:
@@ -933,11 +957,17 @@ class LayerStack:
         min_sep: float = 0.1,
         method: str = "area",
         refresh: bool = False,
+        attach: bool = False,
     ) -> LayerBuildResult:
         """Resolve, reconcile, and pinch out the stack into DISV-ready arrays.
 
         A stale derived (contour) surface is reused with a warning; pass
         ``refresh=True`` to rebuild its cache first.
+
+        ``attach=True`` also publishes the result onto ``vor.gdf_topbtm`` (see
+        :meth:`LayerBuildResult.attach_to_grid`) so the surface-aware builders --
+        ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering -- can read the
+        elevations. Use it when your model has SFR/LAK on this grid.
         """
         if not self._layers:
             raise ValueError("Add at least one layer with .add(...) before build().")
@@ -955,12 +985,15 @@ class LayerStack:
             {"reconcile": rec_on, "min_sep": min_sep},
         )
         idomain = ls._idomain_from_thickness(thickness, min_thk, pinch)
-        return LayerBuildResult(
+        result = LayerBuildResult(
             top=top, botm=botm, idomain=idomain, thickness=thickness,
             names=self.names, min_thickness=min_thk, pinch=pinch,
             length_units=self.length_units, time_units=self.time_units,
             vor=self.vor,
         )
+        if attach:
+            result.attach_to_grid(self.vor)
+        return result
 
     def qc(
         self,

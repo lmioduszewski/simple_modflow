@@ -289,6 +289,8 @@ _EXPORTS = {
     "sfr": ("myflopy.package_api", "sfr"),
     "lak": ("myflopy.package_api", "lak"),
     "mvr": ("myflopy.package_api", "mvr"),
+    "sfr_connection": ("myflopy.package_api", "sfr_connection"),
+    "lak_connection": ("myflopy.package_api", "lak_connection"),
     "chd_spec": ("myflopy.advanced", "chd_spec"),
     "drn_spec": ("myflopy.advanced", "drn_spec"),
     "ghb_spec": ("myflopy.advanced", "ghb_spec"),

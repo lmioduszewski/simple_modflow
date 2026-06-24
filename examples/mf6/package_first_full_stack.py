@@ -28,7 +28,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import geopandas as gpd
 import numpy as np
 
 # Make the in-repo src/ importable when myflopy is not pip-installed.
@@ -94,16 +93,9 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
         .add("alluvium", thickness=40.0)     # upper unconfined aquifer
         .add("basin_fill", thickness=60.0)   # lower aquifer
     )
-    layers = stack.build()   # -> disv-ready top / botm / idomain
-
-    # Publish the layer elevations onto the grid (integer columns: 0=top,
-    # 1..nlay=layer bottoms) so the grid-aware builders -- SFR reach tops, LAK
-    # connections -- can read surface elevations.
-    vor.gdf_topbtm = gpd.GeoDataFrame(
-        {"geometry": vor.gdf_vorPolys.geometry,
-         0: layers.top, **{i + 1: layers.botm[i] for i in range(config.nlay)}},
-        geometry="geometry", crs=vor.crs,
-    )
+    # build(attach=True) also publishes the elevations onto vor.gdf_topbtm so the
+    # grid-aware builders (SFR reach tops, LAK lake-cell layering) can read them.
+    layers = stack.build(attach=True)   # -> disv-ready top / botm / idomain
 
     # ------------------------------------------------------------------ #
     # 4. CONTEXT -- geometry the package builders read. Rides on the MODEL.
@@ -145,6 +137,22 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
     # ------------------------------------------------------------------ #
     # 6. MODEL -- one flat, declarative package list. THE readable payoff.
     # ------------------------------------------------------------------ #
+    # The stream + lake are pulled out as handles so the mover can reference them
+    # SEMANTICALLY (mf.sfr_connection / mf.lak_connection) instead of raw indices.
+    sfr = mf.sfr(context=ctx, nper=nper, streams=sw["streams"],
+                 connection_mode="automatic",
+                 connections=(mf.StreamConnection("north_trib", "main_stem"),
+                              mf.StreamConnection("south_trib", "main_stem")),
+                 width=18.0, gradient=0.0012,
+                 roughness=0.030, streambed_k=0.05, streambed_thickness=1.5,
+                 inflow={0: {"north_trib": 15000.0, "south_trib": 10000.0}},
+                 length_conversion=3.28081, time_conversion=86_400.0, mover=True)
+    lak = mf.lak(context=ctx, nper=nper, lakes=sw["lakes"], lake_id_field="name",
+                 starting_stage={"valley_lake": 101.0}, lake_bottom={"valley_lake": 96.0},
+                 bed_leakance=0.11, connection_modes="automatic",
+                 status={"valley_lake": ["ACTIVE"]}, mover=True,
+                 length_conversion=3.28081, time_conversion=86_400.0)
+
     flow = mf.gwf(
         "valley",
         context=ctx,
@@ -166,22 +174,14 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
             mf.uzf(context=ctx, nper=nper, cells=uzf_cells,
                    vks=0.25, thtr=0.08, thts=0.34, thti=0.17, eps=4.0,
                    finf=finf, pet=pet, extdp=7.0),
-            mf.sfr(context=ctx, nper=nper, streams=sw["streams"],
-                   connection_mode="automatic",
-                   connections=(mf.StreamConnection("north_trib", "main_stem"),
-                                mf.StreamConnection("south_trib", "main_stem")),
-                   width=18.0, gradient=0.0012,
-                   roughness=0.030, streambed_k=0.05, streambed_thickness=1.5,
-                   inflow={0: {"north_trib": 15000.0, "south_trib": 10000.0}},
-                   length_conversion=3.28081, time_conversion=86_400.0, mover=True),
-            mf.lak(context=ctx, nper=nper, lakes=sw["lakes"], lake_id_field="name",
-                   starting_stage={"valley_lake": 101.0}, lake_bottom={"valley_lake": 96.0},
-                   bed_leakance=0.11, connection_modes="automatic",
-                   status={"valley_lake": ["ACTIVE"]}, mover=True,
-                   length_conversion=3.28081, time_conversion=86_400.0),
-            # MVR: hand stream water to the lake (by package name + id).
-            mf.mvr(nper=nper, moves=(mf.Move(mf.MoverConnection("sfr", 0),
-                                             mf.MoverConnection("lak", 0)),)),
+            sfr,
+            lak,
+            # MVR: move part of the main stem's OUTFLOW (its final reach, resolved
+            # from geometry) into the lake -- no hard-coded reach numbers. Pass
+            # at=(x, y) instead to target the reach nearest a coordinate.
+            mf.mvr(nper=nper, moves=(mf.Move(mf.sfr_connection(sfr, "main_stem"),
+                                             mf.lak_connection(lak, "valley_lake"),
+                                             value=0.5),)),
             mf.oc(head_filerecord="valley.hds", budget_filerecord="valley.cbc",
                   saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
         ],
@@ -195,8 +195,8 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
         models=(flow,),
         packages=(
             mf.tdis(nper=nper, perioddata=[(1.0, 1, 1.0)] * nper),
-            mf.ims(models=("valley",), complexity="MODERATE",
-                   outer_maximum=100, inner_maximum=100,
+            mf.ims(models=("valley",), complexity="COMPLEX",
+                   outer_maximum=250, inner_maximum=250,
                    linear_acceleration="BICGSTAB"),
         ),
     )

@@ -30,7 +30,7 @@ from myflopy.advanced import (
 from myflopy.builders import build_ims
 from myflopy.geopackage import GeoPackageSource, RowValue
 from myflopy.modflow.mf6.lakes import LAKBuilder, LakeConnection, LakeOutlet, LakeTable, LakeTableBuilder
-from myflopy.modflow.mf6.mvr import MVRBuilder, Move
+from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
@@ -1294,7 +1294,7 @@ class _SFRPackage:
         ...        inflow={0: {"trib": 1.0e4}}, width=15.0, gradient=0.001, mover=True)
         """
 
-        return SFRBuilder(
+        builder = SFRBuilder(
             context=context,
             nper=nper,
             streams=streams,
@@ -1326,7 +1326,11 @@ class _SFRPackage:
             maximum_iterations=maximum_iterations,
             maximum_depth_change=maximum_depth_change,
             options=options,
-        ).build()
+        )
+        # Stash a serializable reach index so movers can be wired semantically
+        # (by stream outlet/head or by nearest reach to a coordinate) -- see
+        # mf.sfr_connection.
+        return builder.build().with_metadata(sfr_index=_sfr_mover_index(builder))
 
     def flopy(
         self,
@@ -1430,7 +1434,7 @@ class _LAKPackage:
         ...        bed_leakance=0.1, status={"valley_lake": ["ACTIVE"]}, mover=True)
         """
 
-        return LAKBuilder(
+        builder = LAKBuilder(
             context=context,
             nper=nper,
             lakes=lakes,
@@ -1456,7 +1460,12 @@ class _LAKPackage:
             maximum_iterations=maximum_iterations,
             maximum_stage_change=maximum_stage_change,
             options=options,
-        ).build()
+        )
+        # Stash lake numbers so movers can target a lake by name (mf.lak_connection).
+        return builder.build().with_metadata(
+            lak_index={"package": builder.name,
+                       "lakes": {str(k): int(v) for k, v in builder.lake_numbers.items()}}
+        )
 
     def flopy(
         self,
@@ -1563,6 +1572,106 @@ class _MVRPackage:
             maxpackages=maxpackages,
             **options,
         )
+
+
+def _sfr_mover_index(builder: SFRBuilder) -> dict[str, Any]:
+    """Serializable reach lookups for wiring movers semantically (see ``sfr_connection``)."""
+
+    reaches = builder.reaches
+    return {
+        "package": builder.name,
+        "outlets": {sid: int(builder.outlet_reach(sid)) for sid in builder.stream_ids},
+        "heads": {sid: int(builder.stream_reaches[sid][0]) for sid in builder.stream_ids},
+        "by_stream": {sid: [int(r) for r in builder.stream_reaches[sid]] for sid in builder.stream_ids},
+        "centroids": {
+            int(row.rno): [float(row.geometry.centroid.x), float(row.geometry.centroid.y)]
+            for row in reaches.itertuples()
+        },
+    }
+
+
+def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream") -> MoverConnection:
+    """Return a mover endpoint for one SFR reach, chosen *semantically*.
+
+    Instead of hard-coding a raw reach number, point at the reach you mean and let
+    myflopy resolve the index from the stream geometry built by ``mf.sfr(...)``.
+
+    Parameters
+    ----------
+    sfr_spec
+        The spec returned by ``mf.sfr(...)`` (carries the reach index).
+    stream_id
+        The stream's id (its ``stream_id`` attribute, e.g. ``"main_stem"``).
+    at
+        Which reach of that stream:
+
+        - ``"downstream"`` / ``"outlet"`` (default) -- the stream's final reach;
+        - ``"upstream"`` / ``"head"`` -- the stream's first reach;
+        - an ``(x, y)`` coordinate -- the reach of that stream nearest the point.
+
+    Returns
+    -------
+    MoverConnection
+        Use it as the source/receiver of an ``mf.Move``.
+
+    Examples
+    --------
+    >>> sfr = mf.sfr(context=ctx, nper=1, streams="streams.gpkg", ...)
+    >>> lak = mf.lak(context=ctx, nper=1, lakes="lakes.gpkg", lake_id_field="name", ...)
+    >>> mf.mvr(nper=1, moves=(
+    ...     mf.Move(mf.sfr_connection(sfr, "main_stem"),            # the stream outlet
+    ...             mf.lak_connection(lak, "valley_lake")),))
+    >>> mf.sfr_connection(sfr, "main_stem", at=(1500.0, 800.0))     # nearest reach to a point
+    """
+
+    index = sfr_spec.metadata.get("sfr_index")
+    if not index:
+        raise ValueError("sfr_connection() needs a spec from mf.sfr(...); this spec has no reach index.")
+    sid = str(stream_id)
+    if isinstance(at, str):
+        key = {"downstream": "outlets", "outlet": "outlets", "end": "outlets",
+               "upstream": "heads", "head": "heads", "start": "heads"}.get(at.lower())
+        if key is None:
+            raise ValueError(f"Unknown reach location {at!r}; use 'downstream'/'upstream' or an (x, y) point.")
+        if sid not in index[key]:
+            raise KeyError(f"No stream {sid!r}; have {sorted(index['outlets'])}.")
+        rno = index[key][sid]
+    else:
+        x, y = at
+        centroids = index["centroids"]
+        candidates = index["by_stream"].get(sid)
+        if not candidates:
+            raise KeyError(f"No stream {sid!r}; have {sorted(index['by_stream'])}.")
+        rno = min(candidates, key=lambda r: (centroids[r][0] - x) ** 2 + (centroids[r][1] - y) ** 2)
+    return MoverConnection(index["package"], int(rno))
+
+
+def lak_connection(lak_spec: PackageSpec, lake_id: str) -> MoverConnection:
+    """Return a mover endpoint for one lake, by name.
+
+    Parameters
+    ----------
+    lak_spec
+        The spec returned by ``mf.lak(...)``.
+    lake_id
+        The lake's id (its ``lake_id_field`` value, e.g. ``"valley_lake"``).
+
+    Returns
+    -------
+    MoverConnection
+
+    Examples
+    --------
+    >>> mf.Move(mf.sfr_connection(sfr, "main_stem"), mf.lak_connection(lak, "valley_lake"))
+    """
+
+    index = lak_spec.metadata.get("lak_index")
+    if not index:
+        raise ValueError("lak_connection() needs a spec from mf.lak(...); this spec has no lake index.")
+    lakes = index["lakes"]
+    if str(lake_id) not in lakes:
+        raise KeyError(f"No lake {lake_id!r}; have {sorted(lakes)}.")
+    return MoverConnection(index["package"], int(lakes[str(lake_id)]))
 
 
 chd = _CHDPackage()

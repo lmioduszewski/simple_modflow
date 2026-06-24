@@ -269,3 +269,56 @@ def test_rch_accepts_stress_period_data():
 
     with pytest.raises(TypeError):
         mf.rch()
+
+
+def test_layerstack_build_attach_publishes_gdf_topbtm():
+    from myflopy.layers import Array, LayerStack
+
+    vor = _two_cell_grid()
+    vor.gdf_topbtm = None  # build(attach=True) should repopulate it
+    result = (
+        LayerStack(vor, top=Array([10.0, 9.0]))
+        .add("upper", thickness=4.0)
+        .add("lower", thickness=6.0)
+        .build(attach=True)
+    )
+    # Integer columns 0=top, 1..nlay=layer bottoms, matching the builder format.
+    assert vor.gdf_topbtm is not None
+    for col in (0, 1, 2):
+        assert col in vor.gdf_topbtm.columns
+    assert np.allclose(vor.gdf_topbtm[0].to_numpy(), result.top)
+    assert np.allclose(vor.gdf_topbtm[2].to_numpy(), result.botm[1])
+
+
+def test_semantic_mover_connections_resolve_reaches_and_lakes():
+    import pytest
+
+    from myflopy.package_api import lak_connection, sfr_connection
+    from myflopy.specs import PackageSpec
+
+    sfr_spec = PackageSpec(
+        "sfr", flopy.mf6.ModflowGwfsfr,
+        metadata={"sfr_index": {
+            "package": "sfr",
+            "outlets": {"main": 7}, "heads": {"main": 2},
+            "by_stream": {"main": [2, 3, 7]},
+            "centroids": {2: [0.0, 0.0], 3: [5.0, 0.0], 7: [10.0, 0.0]},
+        }},
+    )
+    assert sfr_connection(sfr_spec, "main").index == 7              # outlet (default)
+    assert sfr_connection(sfr_spec, "main", at="upstream").index == 2
+    assert sfr_connection(sfr_spec, "main", at=(4.0, 0.0)).index == 3   # nearest reach
+    assert sfr_connection(sfr_spec, "main").package == "sfr"
+
+    lak_spec = PackageSpec(
+        "lak", flopy.mf6.ModflowGwflak,
+        metadata={"lak_index": {"package": "lak", "lakes": {"deep": 0, "shallow": 1}}},
+    )
+    assert lak_connection(lak_spec, "shallow").index == 1
+
+    with pytest.raises(KeyError):
+        sfr_connection(sfr_spec, "nope")
+    with pytest.raises(ValueError):
+        sfr_connection(PackageSpec("sfr", flopy.mf6.ModflowGwfsfr), "main")
+    with pytest.raises(ValueError):
+        lak_connection(PackageSpec("lak", flopy.mf6.ModflowGwflak), "deep")
