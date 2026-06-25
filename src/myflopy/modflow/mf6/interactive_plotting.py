@@ -56,7 +56,27 @@ def _plotly_config(fig, config: dict[str, Any] | None = None) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ModelMapStyle:
-    """Styling controls shared by standalone matplotlib head-map sliders."""
+    """Appearance settings for the matplotlib head-map slider exporters.
+
+    A single bundle of styling knobs passed to the standalone HTML head-map
+    exporters (e.g. :func:`export_head_map_slider_html`) so every rendered frame
+    looks consistent: figure size/DPI, colormap, grid and contour styling, and
+    which overlays (grid, contours, colorbar) to draw. All fields have sensible
+    defaults, so override only what you need.
+
+    Attributes
+    ----------
+    figsize, dpi
+        Matplotlib figure size and resolution for each frame.
+    cmap
+        Colormap for the head field.
+    grid_color, grid_linewidth, show_grid
+        Cell-edge overlay styling and toggle.
+    contour_color, contour_linewidth, contour_levels, show_contours
+        Head-contour overlay styling, level count/values, and toggle.
+    show_colorbar
+        Whether to draw the colorbar.
+    """
 
     figsize: tuple[float, float] = (10, 8)
     cmap: str = "viridis"
@@ -73,7 +93,29 @@ class ModelMapStyle:
 
 @dataclass(frozen=True)
 class StandaloneHtmlSlider:
-    """Description of a generated standalone frame-slider HTML document."""
+    """A handle to a generated standalone frame-slider HTML file and its stats.
+
+    The return value of the ``export_*_slider_html`` functions: a self-contained
+    HTML document with a time/layer slider that pages through pre-rendered frames
+    (heads, cross-sections, ...), shareable without a Python kernel. This object
+    records where it was written (``path``), the per-frame ``labels`` and
+    ``frame_count``, whether frames are inlined as data URIs (``embedded_frames``)
+    or stored alongside in ``frame_directory``, and how many frames were freshly
+    rendered vs reused from cache.
+
+    Attributes
+    ----------
+    path
+        The written HTML document.
+    labels, frame_count
+        Per-frame slider labels and the number of frames.
+    title
+        Document title.
+    embedded_frames, frame_directory
+        Whether frames are inlined, else the directory holding the frame images.
+    rendered_frames, reused_frames
+        Counts of newly rendered vs cache-reused frames.
+    """
 
     path: Path
     labels: tuple[str, ...]
@@ -87,7 +129,24 @@ class StandaloneHtmlSlider:
 
 @dataclass(frozen=True)
 class FrameExportProgress:
-    """Progress event emitted while rendering a standalone slider."""
+    """One progress update emitted while a slider's frames are being rendered.
+
+    Passed to the optional ``progress`` callback of the ``export_*_slider_html``
+    functions once per frame, so callers can show a progress bar or log. Reports
+    which frame (``index`` of ``total``), its ``label``, the ``status`` (e.g.
+    rendered vs reused-from-cache), and the frame's output ``path`` when written.
+
+    Attributes
+    ----------
+    index, total
+        Zero-based frame index and total frame count.
+    label
+        The frame's slider label.
+    status
+        Short status string for this frame.
+    path
+        Output path for the frame, when applicable.
+    """
 
     index: int
     total: int
@@ -98,7 +157,20 @@ class FrameExportProgress:
 
 @dataclass
 class ParticleTrackingScene:
-    """FloPy VTK / PyVista particle-tracking scene."""
+    """An interactive 3-D particle-tracking scene (FloPy VTK / PyVista).
+
+    Wraps the PyVista ``plotter`` and its ``meshes`` for a 3-D rendering of
+    particle pathlines over the model grid, produced by
+    :func:`build_particle_tracking_scene`. Call :meth:`export_html` to write a
+    standalone interactive HTML viewer (requires PyVista's ``trame`` extras).
+
+    Attributes
+    ----------
+    plotter
+        The configured PyVista plotter.
+    meshes
+        The grid/pathline meshes added to the scene.
+    """
 
     plotter: Any
     meshes: tuple[Any, ...]
@@ -452,7 +524,38 @@ def export_cross_section_slider_html(
     progress: bool | Callable[[FrameExportProgress], None] = False,
     **cross_section_kwargs,
 ) -> StandaloneHtmlSlider:
-    """Export existing ``plot_model_cross_section`` styling as a standalone slider."""
+    """Write a self-contained HTML slider of head cross-sections through time.
+
+    Renders the head field along ``line`` for each selected step (reusing the
+    ``plot_model_cross_section`` styling) and packs the frames into one standalone
+    HTML document with a time slider -- shareable without a Python kernel. Frame
+    selection (``frame_indices``/``frame_stride``/``max_frames``), caching
+    (``resume``/``frame_directory``), and ``progress`` callbacks are supported.
+
+    Parameters
+    ----------
+    model
+        The model whose heads are sectioned.
+    line
+        The cross-section line (a 2-point LineString or coordinate pair).
+    output_path
+        Destination HTML file.
+    kstpkpers, head_frames, labels
+        Which time steps (or explicit head frames) to render and their labels.
+    style, title, dpi, interval_ms
+        Cross-section styling and animation/output options.
+    embed_frames, frame_directory, resume
+        Whether to inline frames; else where to store them and whether to reuse.
+    progress
+        ``True`` to print progress, or a :class:`FrameExportProgress` callback.
+    **cross_section_kwargs
+        Extra keyword arguments forwarded to ``plot_model_cross_section``.
+
+    Returns
+    -------
+    StandaloneHtmlSlider
+        A handle to the written document and its render statistics.
+    """
 
     values, resolved_kstpkpers = _resolve_frames(model, kstpkpers=kstpkpers, head_frames=head_frames)
     frame_labels = _frame_labels(model, values, kstpkpers=resolved_kstpkpers, labels=labels)
@@ -501,7 +604,33 @@ def plot_model_head_map(
     vmin: float | None = None,
     vmax: float | None = None,
 ):
-    """Render one FloPy-style head map using the canonical matplotlib style."""
+    """Draw one head map (plan view) for a layer onto a matplotlib axis.
+
+    Renders a single head field as a filled cell map with optional grid and
+    contour overlays, using a :class:`ModelMapStyle`. The static, single-frame
+    building block beneath :func:`export_head_map_slider_html`; call it directly
+    to drop a head map onto your own figure (pass ``ax`` to compose).
+
+    Parameters
+    ----------
+    model
+        The model providing the grid (``model.gwf.modelgrid``).
+    head_data
+        A head array -- per-layer ``(nlay, ncpl)`` or a single layer ``(ncpl,)``.
+    layer
+        Layer index to draw when ``head_data`` is 2-D.
+    ax
+        Existing axis to draw on; a new figure is created when ``None``.
+    style
+        Appearance settings; defaults to :class:`ModelMapStyle`.
+    title, vmin, vmax
+        Title and fixed color limits.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)`` for further composition.
+    """
 
     style = ModelMapStyle() if style is None else style
     if ax is None:
@@ -545,7 +674,35 @@ def plot_particle_pathlines(
     grid_alpha: float = 0.25,
     title: str = "Particle pathlines",
 ):
-    """Plot PRT, MODPATH, or compatible particle pathlines on a FloPy map."""
+    """Draw particle pathlines (plan view) on a matplotlib map, over an optional head field.
+
+    Plots 2-D pathlines from a PRT/MODPATH-style result on top of the model grid,
+    optionally shaded by a head field. Accepts pathlines from any
+    FloPy-compatible source. The static map counterpart to the 3-D
+    :func:`build_particle_tracking_scene`.
+
+    Parameters
+    ----------
+    model
+        The model providing the grid.
+    pathlines
+        Particle pathline records (PRT/MODPATH-compatible).
+    layer
+        Which layer's pathlines to draw, or ``"all"``.
+    ax
+        Existing axis to draw on; a new figure is created when ``None``.
+    head_data, head_layer
+        Optional head field to shade beneath the pathlines, and its layer.
+    pathline_color, pathline_alpha, pathline_linewidth
+        Pathline styling.
+    show_grid, grid_alpha, title
+        Grid overlay toggle/opacity and plot title.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)`` for further composition.
+    """
 
     if ax is None:
         fig, ax = mpl_axes(figsize=(10, 8))
@@ -587,7 +744,38 @@ def export_head_map_slider_html(
     resume: bool = False,
     progress: bool | Callable[[FrameExportProgress], None] = False,
 ) -> StandaloneHtmlSlider:
-    """Export a FloPy-style head map with a standalone browser time slider."""
+    """Write a self-contained HTML slider of plan-view head maps through time.
+
+    Renders one :func:`plot_model_head_map` per selected step for a given layer and
+    packs them into a standalone HTML document with a time slider -- shareable
+    without a Python kernel. By default a shared color scale is computed across all
+    frames so the colormap is comparable step to step. Supports frame
+    selection/caching and ``progress`` callbacks like the other slider exporters.
+
+    Parameters
+    ----------
+    model
+        The model whose heads are mapped.
+    output_path
+        Destination HTML file.
+    layer
+        Layer index to map.
+    kstpkpers, head_frames, labels
+        Which time steps (or explicit head frames) to render and their labels.
+    style, title
+        Map appearance (:class:`ModelMapStyle`) and document title.
+    vmin, vmax, shared_color_scale
+        Fixed color limits, or auto-share one scale across frames.
+    embed_frames, frame_directory, frame_indices, frame_stride, max_frames, resume
+        Frame inlining, caching, and selection controls.
+    progress
+        ``True`` to print progress, or a :class:`FrameExportProgress` callback.
+
+    Returns
+    -------
+    StandaloneHtmlSlider
+        A handle to the written document and its render statistics.
+    """
 
     style = ModelMapStyle() if style is None else style
     values, resolved_kstpkpers = _resolve_frames(model, kstpkpers=kstpkpers, head_frames=head_frames)
@@ -748,7 +936,33 @@ def build_particle_tracking_scene(
     show_edges: bool = True,
     off_screen: bool = True,
 ) -> ParticleTrackingScene:
-    """Build the FloPy VTK / PyVista particle scene used by the training notebooks."""
+    """Build an interactive 3-D PyVista scene of particle pathlines over the grid.
+
+    Exports the model grid and ``pathlines`` to VTK, renders the grid as a
+    translucent wireframe with the pathlines drawn as time-colored tubes, and
+    returns a :class:`ParticleTrackingScene` you can display or write to HTML with
+    :func:`export_particle_tracking_html`. Requires ``pyvista``.
+
+    Parameters
+    ----------
+    model
+        The flow model providing the grid.
+    pathlines
+        Particle pathline records to render.
+    vertical_exaggeration
+        Vertical scale factor for the 3-D view.
+    model_style, model_opacity, show_edges
+        Grid rendering style/opacity and cell-edge toggle.
+    pathline_cmap, pathline_width
+        Colormap and tube width for the time-colored pathlines.
+    off_screen
+        Render without opening a window (required for headless export).
+
+    Returns
+    -------
+    ParticleTrackingScene
+        The configured plotter + meshes.
+    """
 
     try:
         import pyvista as pv
@@ -797,7 +1011,29 @@ def export_particle_tracking_html(
     output_path: str | Path,
     **scene_kwargs,
 ) -> Path:
-    """Build and export a standalone FloPy VTK / PyVista particle scene."""
+    """Render particle pathlines to a standalone interactive 3-D HTML file.
+
+    Convenience wrapper that calls :func:`build_particle_tracking_scene` and writes
+    the resulting PyVista scene to a self-contained interactive HTML viewer (orbit/
+    zoom in a browser, no kernel needed), closing the plotter afterward. Requires
+    ``pyvista`` plus its ``trame`` HTML-export extras.
+
+    Parameters
+    ----------
+    model
+        The flow model providing the grid.
+    pathlines
+        Particle pathline records to render.
+    output_path
+        Destination HTML file.
+    **scene_kwargs
+        Forwarded to :func:`build_particle_tracking_scene` (styling, exaggeration).
+
+    Returns
+    -------
+    pathlib.Path
+        The written HTML file.
+    """
 
     scene = build_particle_tracking_scene(model, pathlines, **scene_kwargs)
     try:
@@ -963,7 +1199,20 @@ smGraph.dataset.simpleModflowRestyleReady = "true";
 
 
 class ModelVisualization:
-    """Model-bound entry point for canonical standalone visualization exports."""
+    """A model's accessor for the standalone HTML visualization exporters.
+
+    Exposed as ``model.viz`` (or similar), this gathers the shareable-HTML export
+    helpers for one model so you can call them as methods instead of importing the
+    module-level functions and passing the model each time -- e.g.
+    ``model.viz.head_map_slider_html("heads.html")`` delegates to
+    :func:`export_head_map_slider_html`. Covers head-map, head-layer-mosaic, and
+    cross-section time sliders.
+
+    Parameters
+    ----------
+    model
+        The model whose results these exporters visualize.
+    """
 
     def __init__(self, model: "SimulationBase"):
         self.model = model

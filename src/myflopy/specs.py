@@ -39,7 +39,25 @@ _ModelT = TypeVar("_ModelT", bound=Mf6Model)
 
 @dataclass(frozen=True, slots=True)
 class PackageRef:
-    """Deferred reference to a project-level reusable package specification."""
+    """A by-key placeholder for a package defined once in a project's library.
+
+    Lets a model's package list point at a shared :class:`PackageSpec` registered
+    on a :class:`~myflopy.workspace.Project` (via ``project.add_package(key,
+    spec)``) instead of inlining it, so several models can reuse the same package
+    definition. The reference is resolved to the real spec when the run is built.
+    Construct one with the :func:`ref` helper rather than directly. It is
+    serializable (``to_dict``/``from_dict``) so a recipe carrying refs round-trips.
+
+    Attributes
+    ----------
+    key
+        The project package-library key this reference resolves to.
+
+    See Also
+    --------
+    ref : The preferred constructor.
+    GridRef : The grid-library equivalent.
+    """
 
     key: str
 
@@ -92,7 +110,25 @@ def ref(key: str) -> PackageRef:
 
 @dataclass(frozen=True, slots=True)
 class GridRef:
-    """Deferred reference to a project-level grid recipe or built grid."""
+    """A by-key placeholder for a grid recipe/built grid in a project's library.
+
+    The grid-library counterpart to :class:`PackageRef`: lets a model use a grid
+    registered once on a :class:`~myflopy.workspace.Project` (via
+    ``project.add_grid(key, ...)``) -- either an unbuilt :class:`GridSpec` recipe
+    or an already-built grid -- instead of carrying its own. Resolved against the
+    project's grid library when the run is built. Construct one with the
+    :func:`grid_ref` helper. Serializable so recipes round-trip.
+
+    Attributes
+    ----------
+    key
+        The project grid-library key this reference resolves to.
+
+    See Also
+    --------
+    grid_ref : The preferred constructor.
+    PackageRef : The package-library equivalent.
+    """
 
     key: str
 
@@ -127,7 +163,25 @@ def grid_ref(key: str) -> GridRef:
 
 
 class ModelType(str, Enum):
-    """MODFLOW 6 model types supported by the default model builders."""
+    """The MODFLOW 6 model kinds a :class:`ModelSpec` can build.
+
+    A string enum naming the four supported model types; each maps to its FloPy
+    constructor (``GWF`` -> ``ModflowGwf``, and likewise GWT/GWE/PRT). It is a
+    ``str`` subclass, so ``ModelType.GWF == "gwf"`` and the member can be used
+    anywhere the lowercase string is expected. The package-first helpers
+    (``mf.gwf``/``mf.gwt``/``mf.gwe``/``mf.prt``) set this for you.
+
+    Members
+    -------
+    GWF
+        Groundwater flow.
+    GWT
+        Groundwater solute transport.
+    GWE
+        Groundwater energy/heat transport.
+    PRT
+        Particle tracking.
+    """
 
     GWF = "gwf"
     GWT = "gwt"
@@ -967,7 +1021,27 @@ class ModelContext:
 
 @dataclass(frozen=True, slots=True)
 class SpecBuildContext:
-    """Filesystem context used while materializing durable specs."""
+    """Filesystem + library context threaded through a spec build.
+
+    Carries the information a :class:`SimulationSpec`/:class:`ModelSpec` needs while
+    it materializes into FloPy objects: where to write (project root, simulation
+    workspace, grid workspace) and the resolved project libraries used to look up
+    :class:`PackageRef`/:class:`GridRef` placeholders. The
+    :class:`~myflopy.workspace.Run` lifecycle constructs and passes this for you;
+    you rarely build one directly. ``build_grids`` toggles whether deferred grid
+    recipes are materialized during the build.
+
+    Attributes
+    ----------
+    project_root, simulation_workspace, grid_workspace
+        Output locations (stored as :class:`~pathlib.Path` when set). When
+        ``grid_workspace`` is unset, per-model grids land under
+        ``<simulation_workspace>/_grid/<model>``.
+    package_specs, grid_specs
+        Resolved project libraries keyed by name, used to resolve refs.
+    build_grids
+        Whether to build deferred :class:`GridSpec` grids during this build.
+    """
 
     project_root: Path | str | None = None
     simulation_workspace: Path | str | None = None
@@ -1026,7 +1100,22 @@ class SpecBuildContext:
 
 @dataclass(frozen=True, slots=True)
 class PostBuildHook:
-    """Named callback run after every package on a model has been built."""
+    """A named callback that runs once a model and all its packages are built.
+
+    An extension point on :class:`ModelSpec`: after the FloPy model and every
+    package have been created, each registered hook's ``callback`` is invoked with
+    ``(model, packages, context)`` and its return value is stored under ``name`` in
+    the :class:`BuiltModel`'s ``hook_results``. Use a hook to attach extra FloPy
+    objects (e.g. an OBS utility package), tweak the assembled model, or compute a
+    derived artifact -- without subclassing the builder.
+
+    Attributes
+    ----------
+    name
+        Key under which the hook's result is recorded in ``hook_results``.
+    callback
+        Callable ``(model, packages, context) -> Any`` run after the build.
+    """
 
     name: str
     callback: Hook
@@ -1039,7 +1128,28 @@ class PostBuildHook:
 
 @dataclass(frozen=True, slots=True)
 class BuiltModel:
-    """A built FloPy model and the package objects created from its spec."""
+    """The result of building one :class:`ModelSpec`: the FloPy model + its parts.
+
+    Returned (inside a :class:`BuiltSimulation`) when a model spec is built. Bundles
+    the live FloPy ``model`` with the package objects created from its spec
+    (``packages``, keyed by package name), the :class:`ModelContext` it carried
+    (geometry/dates), any ``hook_results`` from :class:`PostBuildHook`\\ s, and a
+    back-reference to the parent ``simulation``. Convenience accessors such as
+    ``.gwf`` / ``.gwt`` / ``.sim`` return the model under its concrete FloPy type.
+
+    Attributes
+    ----------
+    model
+        The built FloPy model object.
+    packages
+        Built package objects keyed by package name.
+    context
+        The :class:`ModelContext` (grid/domain/surfaces/dates) for this model.
+    hook_results
+        Values returned by post-build hooks, keyed by hook name.
+    simulation
+        The parent FloPy simulation, when known.
+    """
 
     model: Mf6Model
     packages: dict[str, Any]
@@ -1432,7 +1542,27 @@ class ExchangeSpec:
 
 @dataclass(frozen=True, slots=True)
 class BuiltSimulation:
-    """A built FloPy simulation and the objects created from its specification."""
+    """The result of building a :class:`SimulationSpec`: the FloPy sim + its parts.
+
+    The top-level product of ``SimulationSpec.build(...)`` (and what a
+    :class:`~myflopy.workspace.Run` exposes as ``run.built``). Bundles the live
+    FloPy ``simulation`` with its built models (``models``, each a
+    :class:`BuiltModel`, keyed by model name), the simulation-level packages
+    (``packages`` -- TDIS/IMS), and the inter-model ``exchanges``. Use ``.sim`` to
+    reach the FloPy ``MFSimulation`` for writing/running, or ``run.model(name)`` to
+    reach a specific built model.
+
+    Attributes
+    ----------
+    simulation
+        The built FloPy ``MFSimulation``.
+    models
+        Built models keyed by model name.
+    packages
+        Simulation-level packages (TDIS, IMS) keyed by name.
+    exchanges
+        Inter-model exchange objects keyed by name.
+    """
 
     simulation: Mf6Simulation
     models: dict[str, BuiltModel]

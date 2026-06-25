@@ -375,12 +375,33 @@ def _repair_partition_contiguity(model, mask) -> np.ndarray:
 
 
 class ParallelCompatibilityError(ValueError):
-    """Raised when an MF6 simulation topology cannot be split safely."""
+    """Raised when a simulation's topology can't be split for parallel solving.
+
+    Domain decomposition supports a single foundational GWF model (optionally
+    coupled to GWT/GWE). This error is raised when that contract is violated --
+    multiple connected GWF models, or unsupported model types (e.g. PRT) -- so the
+    workflow fails clearly instead of producing an invalid partition. A
+    :class:`ValueError`.
+    """
 
 
 @dataclass(frozen=True)
 class ParallelEnvironment:
-    """Executables required for serial and MPI-enabled MODFLOW runs."""
+    """The resolved MODFLOW 6 executables available for serial vs MPI runs.
+
+    Captures whether the toolchain needed to run a (possibly partitioned) model is
+    present: the ``mf6`` executable for serial runs and ``mpiexec`` for MPI-parallel
+    runs. ``ParallelModelWorkflow`` discovers these from ``PATH`` and checks
+    ``serial_ready`` / parallel readiness before launching, so a missing binary is
+    reported up front.
+
+    Attributes
+    ----------
+    mf6
+        Path to the MODFLOW 6 executable, or ``None`` if not found.
+    mpiexec
+        Path to the MPI launcher, or ``None`` if not found.
+    """
 
     mf6: str | None
     mpiexec: str | None
@@ -395,7 +416,20 @@ class ParallelEnvironment:
 
 
 class ParallelSplitResults:
-    """Reconstruct partitioned model outputs onto the original model grid."""
+    """Stitch a partitioned run's per-domain outputs back onto the whole grid.
+
+    After a split simulation runs, each subdomain writes its own head/budget
+    output. This helper, reached as ``split_run.results``, reads those partial
+    outputs and reassembles them into arrays indexed by the *original* (unsplit)
+    model grid -- so downstream code sees one coherent result regardless of how
+    many partitions ran. Use ``.array(...)`` to pull a reconstructed array for a
+    model/variable.
+
+    Parameters
+    ----------
+    run
+        The :class:`ParallelSplitRun` whose outputs are being reconstructed.
+    """
 
     def __init__(self, run: "ParallelSplitRun"):
         self.run = run
@@ -446,7 +480,27 @@ class ParallelSplitResults:
 
 
 class ParallelSplitRun:
-    """Prepared split simulation with writing, execution, and result helpers."""
+    """A prepared, partitioned simulation: write it, run it, reassemble its results.
+
+    The object returned by ``ParallelModelWorkflow.split_model(...)``. It holds the
+    partitioned FloPy ``simulation``, the cell-to-subdomain ``mask`` produced by the
+    splitter, and the output ``workspace``, and exposes the run lifecycle: write the
+    partitioned input, execute it serially or under MPI, and -- via ``.results``
+    (a :class:`ParallelSplitResults`) -- reconstruct outputs on the original grid.
+
+    Parameters
+    ----------
+    source
+        The original (unsplit) model/simulation.
+    splitter
+        The FloPy splitter that produced the partition.
+    simulation
+        The partitioned FloPy simulation to run.
+    mask
+        Per-cell subdomain assignment array.
+    workspace
+        Directory for the partitioned input/output files.
+    """
 
     def __init__(self, source, splitter, simulation, mask, workspace: str | Path):
         self.source = source
@@ -678,7 +732,21 @@ class ParallelSplitRun:
 
 
 class ParallelModelWorkflow:
-    """One public model-splitting API for single and coupled simulations."""
+    """The entry point for domain-decomposing a model to run it in parallel.
+
+    Wraps one model (single GWF, or GWF coupled to GWT/GWE) and drives the
+    splitting workflow end to end: inspect the simulation :meth:`topology` and pick
+    the right FloPy split operation, discover the run :attr:`environment`
+    (mf6/mpiexec), then partition the grid into ``nparts`` subdomains via
+    :meth:`split_model`, which returns a :class:`ParallelSplitRun` you write, run
+    (serial or MPI), and whose results reassemble onto the original grid. Raises
+    :class:`ParallelCompatibilityError` for topologies that cannot be split.
+
+    Parameters
+    ----------
+    model
+        The model (or model-like object exposing ``.sim``) to split.
+    """
 
     def __init__(self, model):
         self.model = model

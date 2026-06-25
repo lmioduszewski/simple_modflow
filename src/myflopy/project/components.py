@@ -29,7 +29,15 @@ PACKAGE_ARTIFACT_APPLY_ORDER = {
 
 
 class PackageCompatibilityError(ValueError):
-    """Raised when a stored package artifact is incompatible with a target model."""
+    """Raised when a reused :class:`PackageArtifact` does not fit the target model.
+
+    A captured package definition carries assumptions about the model it came from
+    (grid type, cell count, layer count, time discretization). This error is raised
+    when one of those assumptions is violated as the artifact is applied to a
+    different model -- for example reusing a DISV package built for one Voronoi grid
+    on a model with a different ``ncpl``. A :class:`ValueError`, so existing
+    value-error handling still catches it.
+    """
 
 
 @dataclass(slots=True)

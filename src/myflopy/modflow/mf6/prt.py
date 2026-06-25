@@ -115,7 +115,19 @@ def _copy_grid_to_prt(flow_model: "SimulationBase", prt_model):
 
 @dataclass(frozen=True)
 class PRTReleasePoints:
-    """Normalized PRT release-point package data."""
+    """The set of particle starting locations for a PRT (particle-tracking) run.
+
+    Holds the PRP (particle release point) ``packagedata`` -- one record per
+    released particle, giving its id and starting cell/coordinates -- in the form
+    MF6's PRT model expects. Build it with the :meth:`from_cells` constructor
+    (release particles at given cells) rather than assembling records by hand, then
+    hand it to :class:`PRTProject` / ``ParticleTracking.prt(...)``.
+
+    Attributes
+    ----------
+    packagedata
+        Normalized PRP release records, one tuple per particle.
+    """
 
     packagedata: tuple[tuple[Any, ...], ...]
 
@@ -185,7 +197,25 @@ class PRTReleasePoints:
 
 @dataclass
 class PRTRunResults:
-    """File-backed results from a completed MF6 PRT simulation."""
+    """Read access to the pathlines/output of a finished PRT simulation.
+
+    A file-backed handle to one completed PRT run: it points at the track CSV (and
+    optional budget) in ``workspace`` and exposes the simulated particle pathlines
+    for plotting and analysis, joined back to the originating ``flow_model``'s grid.
+    Created for you by :class:`PRTProject` after a run, or reopened from disk with
+    :func:`open_prt_run` without rebuilding the simulation.
+
+    Attributes
+    ----------
+    flow_model
+        The flow model the particles were tracked through.
+    workspace
+        Directory holding the PRT output files.
+    name
+        PRT model name.
+    track_csv_path, budget_path
+        Paths to the particle-track CSV and (optional) budget output.
+    """
 
     flow_model: "SimulationBase"
     workspace: Path
@@ -237,7 +267,33 @@ class PRTRunResults:
 
 
 class PRTProject:
-    """Build and run an MF6 PRT simulation from a completed flow model."""
+    """Build, run, and collect an MF6 particle-tracking run off an existing flow model.
+
+    The high-level driver for native MF6 PRT: given a completed/loaded flow
+    ``model`` and a set of ``release_points``, it assembles the PRT model (MIP/PRP/OC
+    with the supplied porosity, tracking-time, and termination options), couples it
+    to the flow model, writes and runs it in ``workspace``, and returns a
+    :class:`PRTRunResults` for the pathlines. Construct it through
+    ``model.particles.prt(...)`` (the :class:`ParticleTracking` front door) or
+    directly. For the declarative spec API, see ``mf.prt(...)``.
+
+    Parameters
+    ----------
+    model
+        The flow model to track particles through.
+    workspace
+        Directory to write/run the PRT simulation in.
+    release_points
+        A :class:`PRTReleasePoints` (or raw PRP records) defining where particles start.
+    porosity
+        Aquifer porosity used to convert flow to seepage velocity.
+    perioddata, time_units, release_perioddata, extend_tracking, stoptime, stoptraveltime, track_times
+        Tracking time-discretization and termination controls.
+    drape, local_z, stop_at_weak_sink
+        Particle placement/termination options.
+    name, exe_name
+        PRT model name (<=16 chars) and the MODFLOW executable.
+    """
 
     def __init__(
         self,
@@ -386,7 +442,27 @@ def open_prt_run(
     *,
     name: str | None = None,
 ) -> PRTRunResults:
-    """Open a completed PRT workspace without rebuilding the PRT simulation."""
+    """Reopen a finished PRT run from disk as :class:`PRTRunResults`.
+
+    The review counterpart to :class:`PRTProject`: point it at a ``workspace`` that
+    already contains PRT output and it locates the track/budget files and returns a
+    results handle -- without re-assembling or re-running the PRT simulation. Use it
+    to revisit pathlines from an earlier run.
+
+    Parameters
+    ----------
+    model
+        The flow model the particles were tracked through.
+    workspace
+        Directory containing the completed PRT output.
+    name
+        PRT model name; inferred from ``workspace`` when ``None``.
+
+    Returns
+    -------
+    PRTRunResults
+        A handle to the existing run's pathline output.
+    """
 
     workspace = Path(workspace)
     if name is None:
@@ -409,7 +485,19 @@ def open_prt_run(
 
 
 class ParticleTracking:
-    """Model-bound entry point for MF6 PRT and existing MP3DU workflows."""
+    """A model's particle-tracking front door (native MF6 PRT and legacy MP3DU).
+
+    The small accessor exposed as ``model.particles``: it bundles the
+    particle-tracking workflows available for a flow ``model`` so you do not have to
+    import the project classes yourself. :meth:`prt` builds and runs a native MF6
+    PRT simulation (returning a :class:`PRTProject`), while the MP3DU helpers cover
+    the older MODPATH-style workflow.
+
+    Parameters
+    ----------
+    model
+        The flow model these particle-tracking workflows operate on.
+    """
 
     def __init__(self, model: "SimulationBase"):
         self.model = model

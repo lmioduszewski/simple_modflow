@@ -1130,12 +1130,39 @@ class HeadTargets:
 
 @dataclass
 class LakeStageTargets:
-    """Named lake-stage observation definitions independent of PEST setup.
+    """Observed lake-stage time series tied to named lakes, for review or PEST.
+
+    The lake-stage analogue of :class:`HeadTargets`: it pairs named lakes
+    (``locations`` -- a ``name -> lake`` mapping, zero-based MF6 lake ids) with
+    observed stage ``values`` through time, then aligns them with the model's
+    simulated LAK stage (read from the LAK stage output, or a workspace
+    observation CSV when present). Pass an instance directly to
+    ``cal.observe(...)`` for calibration, or call ``.compare(model)`` /
+    ``.stats(model)`` to review residuals without a PEST workflow. Omitting
+    ``values`` yields an observation *template* useful for capturing simulated
+    series only.
 
     Parameters
     ----------
-    series
-        Mapping of user-facing lake series names to zero-based MF6 lake ids.
+    locations
+        ``name -> lake`` definitions: a dict, ``Series``, list of records, or a
+        DataFrame with ``name``/``lake`` columns. Lake ids are zero-based.
+    values
+        Observed lake-stage table (long or wide). Optional (template mode).
+    time_column, value_column
+        Column names in ``values`` for the period/time index and the stage value.
+    times
+        Optional explicit period/time labels when ``values`` carries none.
+
+    Examples
+    --------
+    >>> LakeStageTargets(locations={"valley_lake": 0},
+    ...                  values=observed_stage_df)        # -> cal.observe(...)
+    >>> LakeStageTargets(locations={"valley_lake": 0}).compare(model)
+
+    See Also
+    --------
+    HeadTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets
     """
 
     locations: dict[str, int] | pd.Series | pd.DataFrame | list | tuple | None = None
@@ -1381,7 +1408,37 @@ class LakeStageTargets:
 
 @dataclass
 class SfrStageTargets:
-    """Named SFR stage targets keyed by zero-based reach number."""
+    """Observed SFR stage time series tied to named reaches, for review or PEST.
+
+    The SFR-stage analogue of :class:`HeadTargets`: it pairs named stream reaches
+    (``locations`` -- a ``name -> reach`` mapping, zero-based reach numbers) with
+    observed stage ``values`` through time, then aligns them with the model's
+    simulated SFR stage. Pass an instance straight to ``cal.observe(...)`` for
+    calibration, or use ``.compare(model)`` / ``.stats(model)`` to review
+    residuals without PEST. Omitting ``values`` yields an observation *template*.
+
+    Parameters
+    ----------
+    locations
+        ``name -> reach`` definitions: a dict, ``Series``, list of records, or a
+        DataFrame with ``name``/``reach`` columns. Reach numbers are zero-based.
+    values
+        Observed stage table (long or wide). Optional (template mode).
+    time_column, value_column
+        Column names in ``values`` for the period/time index and the stage value.
+    times
+        Optional explicit period/time labels when ``values`` carries none.
+
+    Examples
+    --------
+    >>> SfrStageTargets(locations={"gage_main": 12},
+    ...                 values=observed_stage_df)        # -> cal.observe(...)
+    >>> SfrStageTargets(locations={"gage_main": 12}).compare(model)
+
+    See Also
+    --------
+    SfrFlowTargets, HeadTargets, LakeStageTargets
+    """
 
     locations: dict[str, int] | pd.Series | pd.DataFrame | list | tuple | None = None
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None
@@ -1506,7 +1563,37 @@ class SfrStageTargets:
 
 @dataclass
 class SfrFlowTargets:
-    """Named SFR flow targets keyed by zero-based reach number."""
+    """Observed SFR flow time series tied to named reaches, for review or PEST.
+
+    The streamflow analogue of :class:`SfrStageTargets`: it pairs named stream
+    reaches (``locations`` -- a ``name -> reach`` mapping, zero-based reach
+    numbers, typically gage reaches) with observed flow ``values`` through time,
+    then aligns them with simulated SFR flow. Use it for gaged-discharge
+    calibration targets. Pass an instance to ``cal.observe(...)`` /
+    ``cal.forecast(...)``, or call ``.compare(model)`` / ``.stats(model)`` for
+    standalone residual review. Omitting ``values`` yields a capture template.
+
+    Parameters
+    ----------
+    locations
+        ``name -> reach`` definitions: a dict, ``Series``, list of records, or a
+        DataFrame with ``name``/``reach`` columns. Reach numbers are zero-based.
+    values
+        Observed flow table (long or wide). Optional (template mode).
+    time_column, value_column
+        Column names in ``values`` for the period/time index and the flow value.
+    times
+        Optional explicit period/time labels when ``values`` carries none.
+
+    Examples
+    --------
+    >>> SfrFlowTargets(locations={"outlet_gage": 27},
+    ...                values=observed_q_df)             # -> cal.observe(...)
+
+    See Also
+    --------
+    SfrStageTargets, DrnFlowTargets, HeadTargets
+    """
 
     locations: dict[str, int] | pd.Series | pd.DataFrame | list | tuple | None = None
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None
@@ -1774,7 +1861,42 @@ def _resolve_drn_zone_cells(locations: pd.DataFrame, model) -> pd.DataFrame:
 
 @dataclass
 class DrnFlowTargets:
-    """Named seepage-zone targets aggregated from DRN budget cells."""
+    """Observed seepage/discharge targets aggregated from DRN budget cells.
+
+    Sums the simulated DRN flow over a *group* of drain cells to form one flow
+    series per named seepage zone, then aligns it with observed discharge -- the
+    pattern for calibrating spring/seep or drain-discharge measurements where the
+    field datum is a lumped flux over many cells. Unlike the SFR/LAK targets,
+    ``locations`` maps each ``name`` to a set of drain cells (via geometry or an
+    explicit cell list), and the comparison aggregates the DRN cell-by-cell
+    budget. Pass an instance to ``cal.observe(...)`` / ``cal.forecast(...)``, or
+    call ``.compare(model)`` / ``.stats(model)`` for standalone review.
+
+    Parameters
+    ----------
+    locations
+        Seepage-zone definitions mapping ``name`` to its member drain cells --
+        a GeoDataFrame of points/polygons to spatially match, or a table with a
+        ``name`` column plus ``cell``/``node`` ids.
+    values
+        Observed discharge table (long or wide). Optional (capture template).
+    name_column, group_column, weight_column
+        Column names in ``locations`` for the zone id, observation group, and
+        observation weight.
+    time_column, value_column
+        Column names in ``values`` for the period/time index and the flow value.
+    times
+        Optional explicit period/time labels when ``values`` carries none.
+
+    Examples
+    --------
+    >>> DrnFlowTargets(locations=seep_zones_gdf,
+    ...                values=observed_seepage_df)       # -> cal.observe(...)
+
+    See Also
+    --------
+    SfrFlowTargets, HeadTargets, LakeStageTargets
+    """
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple | None = None

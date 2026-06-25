@@ -185,7 +185,21 @@ def _default_sto_transient(config: "SimpleModelConfig") -> dict[int, bool]:
 
 @dataclass(slots=True)
 class SimpleModelConfig:
-    """Compact inputs for :func:`simple_model_spec`."""
+    """Compact, all-in-one description of a basic single-GWF MF6 model.
+
+    Gathers everything :func:`simple_model_spec` needs to assemble a runnable
+    flow model in one flat dataclass: the Voronoi grid (``vor``), discretization
+    (``nlay``/``grid_type``/``top``/``bottom``/``idomain``), time stepping
+    (``nper``/``per_len``/``num_steps``/...), aquifer properties (``k``/``k33_vert``/
+    storage), initial heads, and an optional perimeter boundary (CHD/GHB/DRN via
+    ``boundary_mode``/``boundary_cells``/...). Most fields have sensible defaults,
+    so a minimal config is just a grid plus a name. This is a convenience
+    front-end; for full multi-package or multi-physics models use the
+    package-first API (``mf.gwf(...)`` with explicit package specs).
+
+    The notable fields are grouped above; see :func:`simple_model_spec` for how
+    they are translated into a :class:`~myflopy.specs.SimulationSpec`.
+    """
     vor: "Vor"
     name: str = "simplemodel"
     nper: int = 1
@@ -400,7 +414,27 @@ def _flow_package_specs(
 
 
 def simple_model_spec(config: SimpleModelConfig) -> SimulationSpec:
-    """Translate a compact config into a composable, runnable simulation spec."""
+    """Build a runnable single-GWF :class:`SimulationSpec` from a config.
+
+    The convenience bridge from a flat :class:`SimpleModelConfig` to the
+    declarative spec API: it resolves top/botm and initial heads, assembles the
+    DIS(V)/NPF/IC/STO/OC packages plus any perimeter boundary, wraps them in a
+    GWF :class:`~myflopy.specs.ModelSpec` with the grid attached via
+    :class:`~myflopy.specs.ModelContext`, and returns a
+    :class:`~myflopy.specs.SimulationSpec` (TDIS + IMS + the model) ready to
+    build/run. Use it for quick single-model setups; reach for ``mf.gwf(...)``
+    with explicit packages when you need full control or multiple packages/models.
+
+    Parameters
+    ----------
+    config
+        The compact model description.
+
+    Returns
+    -------
+    SimulationSpec
+        A composable, runnable simulation spec for the configured model.
+    """
 
     top, bottom = _resolve_top_and_bottom(config)
     initial_heads = _resolve_initial_heads(config, bottom)

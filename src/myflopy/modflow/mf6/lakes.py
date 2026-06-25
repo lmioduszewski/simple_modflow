@@ -22,7 +22,27 @@ from myflopy.specs import ModelContext, PackageSpec
 
 @dataclass(frozen=True, slots=True)
 class LakeConnection:
-    """One explicit connection between a lake and a groundwater cell."""
+    """One lake-to-aquifer connection record (one cell a lake exchanges water with).
+
+    Each LAK lake connects to the groundwater system through a set of cells; this
+    dataclass is one such connection. ``LAKBuilder`` normally generates these from
+    a lake's polygon footprint (vertical connections to the cells under the lake,
+    horizontal connections around its edge), so you build them by hand only when
+    defining a lake's connectivity explicitly.
+
+    Parameters
+    ----------
+    cellid
+        The connected groundwater cell as ``(layer, cell)`` (zero-based, DISV).
+    connection_type
+        ``"VERTICAL"`` (lake bottom, default) or ``"HORIZONTAL"`` (lake edge).
+    bed_leakance
+        Lakebed leakance for this connection; ``None`` defers to the lake default.
+    bottom_elevation, top_elevation
+        Elevations bounding the connection face.
+    connection_length, connection_width
+        Geometric length/width of the connection (used for horizontal faces).
+    """
 
     cellid: tuple[int, int]
     connection_type: str = "VERTICAL"
@@ -41,7 +61,29 @@ class LakeConnection:
 
 @dataclass(frozen=True, slots=True)
 class LakeOutlet:
-    """A semantic LAK outlet definition keyed by stable lake IDs."""
+    """A lake outlet that discharges water, keyed by stable lake names (not ids).
+
+    Defines how a lake sheds water -- to another lake or out of the model -- using
+    the human-readable lake names you gave ``mf.lak(...)`` rather than fragile
+    zero-based ids; ``LAKBuilder`` resolves the names to MF6 outlet records.
+    ``outlet_type`` selects the discharge law (a weir/manning/specified relation).
+
+    Parameters
+    ----------
+    source
+        Name of the lake the outlet drains.
+    receiver
+        Name of the receiving lake, or ``None`` to discharge out of the model.
+    outlet_type
+        Discharge relation: ``"SPECIFIED"`` (use ``rate``, default), ``"MANNING"``,
+        or ``"WEIR"``.
+    invert
+        Outlet invert elevation.
+    width, roughness, slope
+        Channel geometry/roughness used by the ``MANNING``/``WEIR`` relations.
+    rate
+        Specified outflow rate (scalar, or per-period series) for ``"SPECIFIED"``.
+    """
 
     source: str
     receiver: str | None = None
@@ -61,7 +103,27 @@ class LakeOutlet:
 
 @dataclass(frozen=True, slots=True)
 class LakeTable:
-    """Prepared stage-volume-area data for one lake."""
+    """Validated stage / volume / surface-area bathymetry table for one lake.
+
+    A LAK lake-table (``laktab``) records, for a series of stages, the lake's
+    stored volume and wetted surface area -- letting MF6 represent non-prismatic
+    (real) lake bathymetry. This immutable object holds the validated ``rows``
+    (each ``(stage, volume, area)``, stage-ascending) and the output ``filename``.
+    Build one from area/top/bottom, explicit rows, or a DEM footprint via
+    :class:`LakeTableBuilder` rather than constructing it directly.
+
+    Parameters
+    ----------
+    rows
+        Sequence of ``(stage, volume, surface_area)`` triples, ascending in stage.
+    filename
+        Optional name for the written ``laktab`` file.
+
+    Raises
+    ------
+    ValueError
+        If ``rows`` is empty or any row does not have exactly three values.
+    """
 
     rows: tuple[tuple[float, float, float], ...]
     filename: str | None = None
@@ -94,7 +156,35 @@ class LakeTable:
 
 @dataclass(frozen=True, slots=True)
 class LakeTableBuilder:
-    """Build explicit, rectangular, or DEM-derived lake tables."""
+    """Build a :class:`LakeTable` from explicit rows, a prism, or a DEM footprint.
+
+    Produces the stage/volume/area bathymetry for a lake three ways, in priority
+    order: pass ``rows`` directly; or give a ``dem`` + ``footprint`` + ``stages``
+    to integrate real volume/area from terrain; or give ``area`` + ``top`` +
+    ``bottom`` (+ ``stage_step``) for a simple prismatic lake. ``build()`` returns
+    a validated :class:`LakeTable`.
+
+    Parameters
+    ----------
+    rows
+        Explicit ``(stage, volume, area)`` rows -- highest priority when given.
+    area, top, bottom, stage_step
+        Prismatic-lake inputs: constant surface ``area`` between ``bottom`` and
+        ``top``, sampled every ``stage_step``.
+    storage_coefficient
+        Multiplier applied to computed volumes (e.g. for specific yield).
+    dem, footprint, stages, footprint_buffer
+        DEM-derived inputs: raster ``dem`` clipped to ``footprint`` (a geometry or
+        vector file, optionally buffered), integrated at each of ``stages``.
+    filename
+        Optional name for the written ``laktab`` file.
+
+    Examples
+    --------
+    >>> LakeTableBuilder(area=5.0e5, top=102.0, bottom=96.0).build()
+    >>> LakeTableBuilder(dem="bathy.tif", footprint="lake.shp",
+    ...                  stages=[96, 98, 100, 102]).build()
+    """
 
     rows: Sequence[Sequence[float]] | None = None
     area: float | None = None

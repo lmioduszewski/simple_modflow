@@ -80,7 +80,28 @@ class StreamDiversion:
 
 @dataclass(frozen=True, slots=True)
 class StreamNetwork:
-    """Grid-independent stream topology resolved by an :class:`SFRBuilder`."""
+    """The resolved stream-to-stream topology of an SFR network (grid-independent).
+
+    A snapshot of how the named streams connect, produced by
+    :class:`SFRBuilder` while assembling reaches. It captures the logical wiring --
+    which streams flow into which (``connections``), which split off as diversions
+    (``diversions``), and which streams could not be linked automatically
+    (``unresolved``) -- separately from the per-reach, grid-dependent records. Use
+    it to inspect or validate connectivity (e.g. confirm tributaries reach the
+    main stem) before the SFR package is built.
+
+    Attributes
+    ----------
+    stream_ids
+        Names of all streams in the network.
+    connections
+        Resolved confluences as :class:`StreamConnection` records.
+    diversions
+        Resolved splits as :class:`StreamDiversion` records.
+    unresolved
+        Stream ids whose downstream link could not be inferred and need an
+        explicit connection.
+    """
 
     stream_ids: tuple[str, ...]
     connections: tuple[StreamConnection, ...]

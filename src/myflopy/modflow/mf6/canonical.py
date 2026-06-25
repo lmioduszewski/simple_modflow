@@ -35,7 +35,19 @@ CANONICAL_PACKAGE_NAMES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class CanonicalModelContract:
-    """Rules shared by every canonical example and integration workflow."""
+    """The invariants every build of the canonical valley model must satisfy.
+
+    The canonical alluvial-valley model is reused as the single fixture across
+    examples, integration tests, and PEST notebooks, so its shape must stay stable.
+    This frozen dataclass pins those expectations -- layer count and roles,
+    icelltype profile, minimum cell/period/SFR-reach counts (with stricter
+    ``full_profile`` thresholds), and the required package and target sets -- and
+    :meth:`validate` raises ``AssertionError`` listing every violation on a built
+    model. The shared instance is :data:`CANONICAL_MODEL_CONTRACT`.
+
+    Attributes are the thresholds/role lists above; see the field defaults for the
+    canonical values.
+    """
 
     nlay: int = 4
     minimum_full_ncpl: int = 10_000
@@ -136,7 +148,26 @@ CANONICAL_MODEL_CONTRACT = CanonicalModelContract()
 
 
 def canonical_head_signals(model) -> dict[str, object]:
-    """Summarize visual head signals after a canonical model run."""
+    """Summarize the head response of a run canonical model into a few scalars.
+
+    Reads the head output of a built+run canonical model and reduces it to the
+    per-layer signals the examples/tests assert on: how many time frames were
+    written, the spatial head range in each layer at the final step, and the
+    temporal change/maximum drawdown per layer (with MF6 dry/inactive sentinels
+    masked out). Use it to confirm the model produced the intended hydraulic
+    behavior; not a general post-processor.
+
+    Parameters
+    ----------
+    model
+        A built and *run* canonical model (exposing ``gwf.output.head()``).
+
+    Returns
+    -------
+    dict
+        ``frame_count`` plus per-layer ``spatial_range_by_layer``,
+        ``temporal_range_by_layer``, and ``maximum_drawdown_by_layer`` arrays.
+    """
 
     reader = model.gwf.output.head()
     frames = np.stack(
@@ -155,7 +186,24 @@ def canonical_head_signals(model) -> dict[str, object]:
 
 
 def canonical_feature_signals(model) -> dict[str, object]:
-    """Summarize canonical pond, pumping, and seepage signals after a run."""
+    """Summarize the canonical model's head-change and seepage responses after a run.
+
+    Pulls the simulated series at the canonical model's observation features and
+    reduces them to two compact signals the examples/tests check: the head-change
+    range at each head target (capturing pond/pumping influence) and the peak
+    magnitude of each DRN seepage series. Expects the canonical model's target
+    set (``model.targets.heads`` / ``model.targets.drn_flow``).
+
+    Parameters
+    ----------
+    model
+        A built and *run* canonical model with the canonical target set attached.
+
+    Returns
+    -------
+    dict
+        ``head_change`` (per head target) and ``seepage_peak`` (per DRN series).
+    """
 
     heads = model.targets.heads.targets.simulated_heads(model)
     head_change = {
@@ -173,7 +221,28 @@ def canonical_feature_signals(model) -> dict[str, object]:
 
 
 def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
-    """Summarize the routed-flow, stage, and exchange signals of the canonical stream."""
+    """Summarize the canonical stream's routing, stage, and GW-exchange after a run.
+
+    Walks the SFR long-profile and budget for one stress period and reduces them
+    to the stream signals the examples/tests assert on: reach counts (total/wet/
+    dry), wetted-depth extremes, the split of losing vs gaining reaches (using the
+    MF6 sign convention where stream->aquifer flow is positive), and the
+    routed-flow range. Confirms the canonical valley produces the intended
+    gaining/losing stream behavior.
+
+    Parameters
+    ----------
+    model
+        A built and *run* canonical model with an SFR package.
+    per
+        Stress period to summarize (default 0).
+
+    Returns
+    -------
+    dict
+        Reach counts, min/max wetted depth, losing/gaining reach counts, and
+        min/max routed flow for the period.
+    """
 
     profile = model.packages.sfr.results.long_profile(per=per)
     stage = profile["stage"].to_numpy(dtype=float)
@@ -207,7 +276,31 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
 
 
 def canonical_partition_mask(model, nparts: int) -> np.ndarray:
-    """Return balanced routed vertical bands that preserve physical lakes."""
+    """Build a domain-decomposition mask for the canonical model that keeps lakes whole.
+
+    A purpose-built partitioner for splitting the canonical valley model for
+    parallel runs: it lays out ``nparts`` balanced vertical bands across the grid,
+    then adjusts them so each physical lake stays within a single subdomain and
+    every partition remains spatially contiguous. Returns the per-cell subdomain
+    assignment expected by the parallel split workflow.
+
+    Parameters
+    ----------
+    model
+        The canonical model to partition.
+    nparts
+        Number of subdomains (must be >= 2).
+
+    Returns
+    -------
+    numpy.ndarray
+        Per-cell integer subdomain ids.
+
+    Raises
+    ------
+    ValueError
+        If ``nparts`` is less than 2.
+    """
 
     if nparts < 2:
         raise ValueError("nparts must be at least 2")

@@ -374,7 +374,28 @@ class Recharge:
 
 
 class Wells:
-    """Create the MF6 WEL package using the shared package conventions."""
+    """Legacy WEL-package wrapper that attaches a well package to a model object.
+
+    Part of the legacy OO package layer used with :class:`SimulationBase`:
+    constructing it builds a :class:`flopy.mf6.ModflowGwfwel` package (with
+    myflopy's shared naming/``save_flows`` conventions and the project artifact
+    catalog), attaches it to ``model`` as ``model.wel``, and exposes the wrapped
+    package. For new work prefer the package-first ``mf.wel(...)`` /
+    :func:`~myflopy.advanced.wel_spec` path instead.
+
+    Parameters
+    ----------
+    model
+        The :class:`SimulationBase` to attach the WEL package to.
+    stress_period_data
+        FloPy WEL stress-period data ``{per: [(cellid, q, ...), ...]}``.
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``True``).
+    artifact_id, artifact_catalog, artifact_description, artifact_tags, artifact_metadata, artifact_overwrite
+        Optional project artifact-catalog bookkeeping for the built package.
+    """
 
     def __init__(
             self,

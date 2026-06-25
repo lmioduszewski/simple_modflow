@@ -66,7 +66,16 @@ class ParticleTrackingResult(Mapping[str, Any]):
 
 
 class ParticleTrackingInput:
-    """Build and optionally run mod-PATH3DU inputs for one MODFLOW 6 model."""
+    """Assemble (and optionally run) mod-PATH3DU particle inputs for one MF6 model.
+
+    The legacy, external-tool path to particle tracking: it translates a flow
+    model and a set of release locations into the input files mod-PATH3DU expects
+    -- mapping GIS attribute columns to release fields via ``_DEFAULT_FIELD_ALIASES``
+    and assigning boundary-package IFACE codes via ``_DEFAULT_IFACE_OVERRIDES`` --
+    then can invoke the mod-PATH3DU executable. Prefer the native MF6
+    :class:`~myflopy.modflow.mf6.prt.PRTProject` (``model.particles.prt(...)``) for
+    new work; use this when you specifically need mod-PATH3DU.
+    """
 
     _DEFAULT_FIELD_ALIASES = {
         "CELLID_ATTR": ("cells", "Node", "node", "P3D_CellID", "CELLID", "cellid"),

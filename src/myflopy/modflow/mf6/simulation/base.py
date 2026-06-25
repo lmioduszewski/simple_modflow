@@ -63,7 +63,21 @@ if TYPE_CHECKING:
 
 
 class SimulationBase:
-    """Primary legacy MF6 model-construction and run-exploration object."""
+    """The legacy stateful model object: build, run, and explore one MF6 model.
+
+    The original imperative entry point that predates the declarative spec API
+    (:class:`~myflopy.specs.SimulationSpec`). An instance owns a model's FloPy
+    simulation, its Voronoi grid, and -- after a run -- convenient access to
+    outputs (heads, budgets, lists, observation CSVs via ``_OUTPUT_SUFFIXES``)
+    plus plotting/visualization helpers. The OO builder classes
+    (``SFRBuilder``/``LAKBuilder``/...) and ``canonical_example.py`` are built on
+    this object.
+
+    For new model assembly prefer the package-first API (``mf.gwf(...)`` on a
+    :class:`~myflopy.workspace.Project`); reach for ``SimulationBase`` when working
+    with existing legacy code paths or loading a previously built run to explore
+    its results.
+    """
 
     _OUTPUT_SUFFIXES = {".cbc", ".hds", ".lst", ".bud", ".obs.csv", ".grb"}
 

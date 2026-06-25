@@ -71,7 +71,29 @@ class PreparedRegion:
 
 @dataclass(slots=True)
 class MeshBuildProfile:
-    """Preset cleanup and optimization settings for :meth:`TriangleGrid.build_mesh`."""
+    """A named bundle of mesh cleanup + smoothing settings for triangulation.
+
+    Groups the knobs that control how :meth:`TriangleGrid.build_mesh` cleans input
+    geometry and relaxes the triangulation -- snapping/simplifying tolerances,
+    minimum feature area, target segment length, and Laplacian-style optimization
+    (iterations, damping, minimum move). Rather than tuning each by hand, pick a
+    built-in preset with :meth:`from_name` (``"fast"``, ``"balanced"``,
+    ``"smooth"``, ``"clean"``, ``"baseline"``) and override individual fields as
+    needed. Higher quality (more iterations, shorter segments) costs build time.
+
+    Attributes
+    ----------
+    name
+        Profile label.
+    cleanup
+        Run geometry cleanup before triangulating.
+    snap_tolerance, simplify_tolerance, min_feature_area, target_segment_length
+        Geometry-cleanup tolerances applied to the input regions/boundary.
+    resample_domain_boundary, resample_region_sources
+        Whether/which sources to resample to ``target_segment_length``.
+    optimization_iterations, damping, min_move
+        Mesh-smoothing controls applied after triangulation.
+    """
 
     name: str
     cleanup: bool = True
@@ -140,7 +162,26 @@ class MeshBuildProfile:
 
 
 class TriangleGrid(Triangle):
-    """Higher-level Triangle wrapper used to generate Voronoi-ready meshes."""
+    """High-level wrapper over FloPy's Triangle for building Voronoi-ready meshes.
+
+    Extends ``flopy.utils.triangle.Triangle`` with a declarative,
+    geometry-driven workflow: declare the model domain and refinement regions
+    (from shapes/lines/points), build a quality-controlled triangular mesh (via
+    a :class:`MeshBuildProfile`), and produce the triangulation that
+    :class:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus` dualizes into the
+    Voronoi cells used for DISV/DISU grids. The triangulation is the intermediate
+    step; you usually consume its Voronoi dual rather than the triangles directly.
+
+    Parameters
+    ----------
+    angle
+        Minimum interior angle constraint passed to Triangle (higher = better
+        shaped, more cells).
+    region_point_tolerance
+        Tolerance for matching region marker points to regions.
+    domain_clip_tolerance
+        Tolerance for clipping geometry to the domain boundary.
+    """
 
     def __init__(
         self,

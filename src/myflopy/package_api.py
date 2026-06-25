@@ -282,7 +282,30 @@ def prt(
     save_flows: bool | None = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed PRT model spec wrapping ``flopy.mf6.ModflowPrt``."""
+    """Return a typed PRT (particle tracking) model spec.
+
+    The particle-tracking counterpart of :func:`gwf`: it wraps
+    ``flopy.mf6.ModflowPrt`` and takes the PRT packages (MIP/PRP/OC) through
+    ``packages``. Couple it to a flow model with a GWF-PRT exchange
+    (:func:`build_gwf_prt_exchange`) in the same :class:`SimulationSpec` so
+    particles advect through that model's flow field. Use it for advective
+    pathlines, capture zones, and travel-time analysis. ``context`` carries the
+    grid/geometry exactly as for a flow model; the higher-level
+    :class:`~myflopy.modflow.mf6.prt.PRTProject` wraps this for common setups.
+
+    Parameters
+    ----------
+    name
+        Model name (also the FloPy model name).
+    packages
+        PRT package specs to attach (e.g. ``mf.disv`` plus MIP/PRP/OC).
+    context
+        Geometry/dates :class:`ModelContext` shared with the paired flow model.
+    grid
+        Optional deferred grid (e.g. ``mf.GridSpec.voronoi(...)``).
+    **kwargs
+        Additional ``ModflowPrt`` options.
+    """
 
     return ModelSpec(
         name,

@@ -74,7 +74,24 @@ from myflopy.specs import ModelContext
 
 @dataclass(frozen=True)
 class CanonicalModelConfig:
-    """Size and timing controls for the master example model."""
+    """Grid size and time-stepping knobs for the canonical valley example model.
+
+    Selects the resolution and temporal extent of the canonical alluvial-valley
+    model that :func:`build_canonical_model` assembles -- horizontal extent
+    (``nrow``/``ncol`` of the irregular Voronoi grid, ``cell_size``), ``nlay``, and
+    the stress-period schedule (``nper``/``period_length``/``steps_per_period``).
+    The defaults are the full demonstration profile; use the smaller
+    :meth:`validation` profile (50x50) for fast automated tests.
+
+    Attributes
+    ----------
+    nrow, ncol, cell_size
+        Grid resolution and cell size used to generate the Voronoi mesh.
+    nlay
+        Number of layers (the canonical contract expects 4).
+    nper, period_length, steps_per_period
+        Stress-period count, length, and sub-stepping.
+    """
 
     nrow: int = 100
     ncol: int = 100
@@ -111,7 +128,34 @@ def build_transient_model(
     config: CanonicalModelConfig | None = None,
     name: str = "viz_prt_master",
 ) -> SimulationBase:
-    """Build the package-rich transient valley GWF model for result review."""
+    """Assemble the canonical transient alluvial-valley GWF model in ``workspace``.
+
+    Builds the project's reference model end to end -- the irregular Voronoi grid,
+    layered valley surfaces, and the full package set (NPF/IC/STO/OC plus the
+    surface-water network: GHB/DRN/RCH/UZF/SFR/LAK/MVR) sized and timed by
+    ``config`` -- and returns the assembled :class:`SimulationBase` (not yet run).
+    This single model is reused across the examples, the integration tests
+    (validated against :class:`CanonicalModelContract`), and the PEST notebooks.
+    Exported under the alias ``build_canonical_model``.
+
+    Built in the legacy imperative builder style for its computed-cell geometry;
+    that is historical, not a recommendation -- new model assembly should use the
+    package-first API.
+
+    Parameters
+    ----------
+    workspace
+        Directory to build the model in.
+    config
+        Size/timing controls; defaults to the full :class:`CanonicalModelConfig`.
+    name
+        Model name (must satisfy MF6 length limits).
+
+    Returns
+    -------
+    SimulationBase
+        The assembled (unrun) canonical model.
+    """
 
     config = CanonicalModelConfig() if config is None else config
     workspace = Path(workspace)

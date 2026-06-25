@@ -247,7 +247,23 @@ def _simulation_plot_compat(sim, model_list=None, SelPackList=None, **kwargs):
 
 
 def patch_simulation_plot(sim):
-    """Patch broken FloPy simulation plotting on loaded MF6 simulations."""
+    """Replace a loaded simulation's ``.plot`` with a compatibility shim, in place.
+
+    FloPy's ``MFSimulation.plot`` can raise on simulations reloaded from disk
+    (e.g. unstructured grids or partially populated output). This binds a
+    forgiving ``_simulation_plot_compat`` method onto ``sim`` so ``sim.plot(...)``
+    works after a reload. Applied automatically by the run loaders; call it
+    yourself only on a hand-loaded simulation.
+
+    Parameters
+    ----------
+    sim
+        The FloPy ``MFSimulation`` to patch (mutated in place).
+
+    Returns
+    -------
+    The same ``sim``, for chaining.
+    """
     sim.plot = MethodType(_simulation_plot_compat, sim)
     return sim
 

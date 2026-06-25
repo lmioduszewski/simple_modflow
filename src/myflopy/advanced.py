@@ -1,4 +1,19 @@
-"""Readable package-spec factories for advanced MODFLOW 6 GWF packages."""
+"""Low-level ``*_spec`` factories: the raw-FloPy escape hatch for package specs.
+
+Each function here wraps a FloPy GWF package constructor in a serializable
+:class:`~myflopy.specs.PackageSpec` -- the data form of the package-first API.
+They take native FloPy inputs verbatim (``stress_period_data`` dicts, ``recarray``
+package/connection data, period data) and add only myflopy's conventions: a
+consistent ``pname``/``filename``, ``save_flows`` on by default, and the standard
+output file records for the advanced packages.
+
+You normally reach these through the package-first facade's ``.flopy(...)`` form,
+e.g. ``mf.ghb.flopy(stress_period_data=...)`` calls :func:`ghb_spec`, and
+``mf.uzf.flopy(...)`` calls :func:`uzf_spec`. Use them directly only when you want
+the raw FloPy data path and not the high-level GIS-aware builders (``mf.uzf(...)``,
+``mf.sfr(...)``, ``mf.lak(...)``) that resolve cells from a grid for you. The
+returned spec is built at run time by ``PackageSpec.build(model)``.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +56,24 @@ def wel_spec(
     boundnames: bool = True,
     **options,
 ) -> PackageSpec:
-    """Return a WEL package specification."""
+    """Return a WEL (well) package spec from raw FloPy stress-period data.
+
+    The data form behind ``mf.wel.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfwel` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy stress-period mapping ``{per: [(cellid, q, [aux...], [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``True``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     values = _named_options(
         name,
@@ -63,7 +95,22 @@ def chd_spec(
     boundnames: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a CHD package specification."""
+    """Return a CHD (constant-head) package spec from raw FloPy stress-period data.
+
+    The data form behind ``mf.chd.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfchd` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, head, [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     values = _named_options(
         name,
@@ -84,7 +131,22 @@ def drn_spec(
     boundnames: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a DRN package specification."""
+    """Return a DRN (drain) package spec from raw FloPy stress-period data.
+
+    The data form behind ``mf.drn.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfdrn` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, elev, cond, [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     values = _named_options(
         name,
@@ -106,7 +168,24 @@ def ghb_spec(
     boundnames: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a GHB package specification."""
+    """Return a GHB (general-head boundary) package spec from raw FloPy data.
+
+    The data form behind ``mf.ghb.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfghb` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, bhead, cond, [aux...], [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     values = _named_options(
         name,
@@ -128,7 +207,24 @@ def rch_spec(
     boundnames: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a list-based RCH package specification."""
+    """Return a list-based RCH (recharge) package spec from raw FloPy data.
+
+    The data form behind ``mf.rch.flopy(...)``. Builds the list (cell-by-cell)
+    form of :class:`flopy.mf6.ModflowGwfrch`; ``maxbound`` is inferred from the
+    largest period's record count. (For the array form, or recharge derived from
+    GIS/PRISM rasters, use the ``mf.rch(...)`` / ``RCHBuilder`` high-level path.)
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, recharge, [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     values = _named_options(
         name,
@@ -153,7 +249,32 @@ def uzf_spec(
     simulate_et: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a UZF package specification from prepared UZF data."""
+    """Return a UZF package spec from already-prepared UZF cell data.
+
+    The raw-data form behind ``mf.uzf.flopy(...)``. Expects the FloPy UZF
+    ``packagedata`` (one record per UZF cell, including vertical connectivity)
+    and ``perioddata`` already assembled -- unlike ``mf.uzf(...)`` /
+    ``UZFBuilder``, which derive cell records from a grid and infiltration inputs
+    for you. Sets ``nuzfcells`` (defaulting to ``len(packagedata)``), enables
+    ``save_flows``, and wires the standard UZF budget/convergence output records.
+
+    Parameters
+    ----------
+    packagedata
+        FloPy UZF packagedata records (one per UZF cell).
+    perioddata
+        FloPy UZF stress-period data (infiltration, PET, extinction depth, ...).
+    nuzfcells
+        Cell count; defaults to ``len(packagedata)``.
+    name
+        Package name used for ``pname`` and the output filenames.
+    mover
+        Enable MVR participation (rejected infiltration as a provider).
+    simulate_et
+        Enable evapotranspiration simulation.
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     count = len(packagedata) if nuzfcells is None else nuzfcells
     values = _named_options(
@@ -186,7 +307,35 @@ def lak_spec(
     mover: bool = False,
     **options,
 ) -> PackageSpec:
-    """Return a LAK package specification from prepared lake data."""
+    """Return a LAK package spec from already-prepared lake data.
+
+    The raw-data form behind ``mf.lak.flopy(...)``. Expects the FloPy LAK
+    ``packagedata`` (one record per lake), ``connectiondata`` (lake-to-cell
+    connections), and ``perioddata`` already assembled -- unlike ``mf.lak(...)`` /
+    ``LAKBuilder``, which resolve lake-cell connections from a grid and lake
+    geometry for you. Sets ``nlakes`` (defaulting to ``len(packagedata)``),
+    enables ``save_flows``, and wires the standard stage/budget/convergence
+    output records.
+
+    Parameters
+    ----------
+    packagedata
+        FloPy LAK packagedata records (one per lake).
+    connectiondata
+        FloPy LAK connection records (lake-to-cell).
+    perioddata
+        FloPy LAK stress-period data (status, stage, withdrawals, ...).
+    nlakes
+        Lake count; defaults to ``len(packagedata)``.
+    name
+        Package name used for ``pname`` and the output filenames.
+    noutlets, ntables
+        Number of lake outlets and lake-bathymetry tables.
+    mover
+        Enable MVR participation (lake outflow as a provider/receiver).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     count = len(packagedata) if nlakes is None else nlakes
     values = _named_options(
@@ -221,7 +370,34 @@ def sfr_spec(
     diversions=None,
     **options,
 ) -> PackageSpec:
-    """Return an SFR package specification from prepared stream data."""
+    """Return an SFR package spec from already-prepared stream-reach data.
+
+    The raw-data form behind ``mf.sfr.flopy(...)``. Expects the FloPy SFR
+    ``packagedata`` (one record per reach), ``connectiondata`` (reach-to-reach
+    topology), and ``perioddata`` already assembled -- unlike ``mf.sfr(...)`` /
+    ``SFRBuilder``, which build reaches and connectivity from a stream centerline
+    on a grid for you. Sets ``nreaches`` (defaulting to ``len(packagedata)``),
+    enables ``save_flows``, and wires the stage/budget output records.
+
+    Parameters
+    ----------
+    packagedata
+        FloPy SFR packagedata records (one per reach).
+    connectiondata
+        FloPy SFR reach-to-reach connection records.
+    perioddata
+        FloPy SFR stress-period data (inflow, runoff, status, ...).
+    nreaches
+        Reach count; defaults to ``len(packagedata)``.
+    name
+        Package name used for ``pname`` and the output filenames.
+    mover
+        Enable MVR participation (reach outflow as a provider/receiver).
+    diversions
+        Optional SFR diversion records.
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
 
     count = len(packagedata) if nreaches is None else nreaches
     values = _named_options(
@@ -261,7 +437,37 @@ def mvr_spec(
     maxpackages: int | None = None,
     **options,
 ) -> PackageSpec:
-    """Return an MVR spec that declares and validates package dependencies."""
+    """Return an MVR (water mover) spec, validating its package dependencies.
+
+    The raw-data form behind ``mf.mvr.flopy(...)``. Takes the FloPy MVR
+    ``packages`` declarations and ``perioddata`` mover records directly -- unlike
+    ``mf.mvr(moves=...)`` / ``MVRBuilder``, which assemble these from semantic
+    :class:`~myflopy.modflow.mf6.mvr.Move` objects. Validates that package names
+    are unique, that every mover record references a declared package, and that
+    ``maxmvr``/``maxpackages`` are large enough (both inferred when omitted). The
+    returned spec carries ``requires=`` so the run ordering check ensures the
+    moved packages are built before the mover.
+
+    Parameters
+    ----------
+    packages
+        MVR package declarations, e.g. ``[["sfr"], ["lak"]]``.
+    perioddata
+        Mover records per period: ``{per: [(pname1, id1, pname2, id2, mvrtype,
+        value), ...]}``.
+    name
+        Package name used for ``pname`` and the output filenames.
+    maxmvr, maxpackages
+        Upper bounds; inferred from ``perioddata``/``packages`` when ``None``.
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+
+    Raises
+    ------
+    ValueError
+        On duplicate package names, references to undeclared packages, or
+        ``maxmvr``/``maxpackages`` smaller than required.
+    """
 
     required = _package_names(packages)
     if len(set(required)) != len(required):

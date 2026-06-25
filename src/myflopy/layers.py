@@ -123,7 +123,21 @@ class _Layer:
 
 @dataclass
 class LayerQCReport:
-    """Findings from :meth:`LayerBuildResult.qc` -- problems caught before MF6 runs."""
+    """Diagnostics for a built layer stack -- the problems to fix before MF6 runs.
+
+    The structured result of QC-ing a :class:`LayerBuildResult` (via
+    ``result.qc()`` or :meth:`LayerStack.qc`). It counts the geometry pathologies
+    that make a DISV grid fail or behave oddly -- cells with no source coverage
+    (NaN top/bottom), active cells bounded by a NaN surface or with non-positive
+    thickness (fatal), overly thin cells, pinched-out cells, isolated active cells
+    with no connection, and how many disconnected active components exist. When
+    produced by ``LayerStack.qc`` it also reports how much top-down reconciliation
+    moved each surface. Check :attr:`ok` for a fatal/clean verdict, or ``str(report)``
+    for a human-readable per-layer breakdown.
+
+    The integer/list fields hold counts (per layer where noted); see the inline
+    field comments. ``isolated_active`` lists ``(layer, cell)`` pairs.
+    """
 
     nlay: int
     ncpl: int
@@ -184,7 +198,20 @@ class LayerQCReport:
 
 @dataclass
 class LayerBuildResult:
-    """Output of :meth:`LayerStack.build`, shaped for ``mf.disv``."""
+    """The disv-ready arrays produced by :meth:`LayerStack.build`.
+
+    Bundles the discretization arrays a layer stack resolves to -- ``top``
+    ``(ncpl,)``, ``botm`` ``(nlay, ncpl)``, ``idomain`` ``(nlay, ncpl)`` (1 active,
+    -1 pass-through, 0 inactive), and the derived ``thickness`` -- alongside the
+    per-layer metadata (``names``, ``min_thickness``, ``pinch`` policy, units) and a
+    back-reference to the ``vor`` grid. Feed ``.top``/``.botm``/``.idomain`` straight
+    into ``mf.disv(...)``. Inspect quality with :meth:`report` (a per-layer
+    thickness/pinch summary) or ``.qc()`` (a :class:`LayerQCReport`), and publish the
+    surfaces onto the grid for the GIS-aware builders with :meth:`attach_to_grid`
+    (or ``LayerStack.build(attach=True)``).
+
+    The array shapes and idomain encoding are noted in the inline field comments.
+    """
 
     top: np.ndarray          # (ncpl,)
     botm: np.ndarray         # (nlay, ncpl)
