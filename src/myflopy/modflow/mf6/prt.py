@@ -274,8 +274,8 @@ class PRTProject:
     with the supplied porosity, tracking-time, and termination options), couples it
     to the flow model, writes and runs it in ``workspace``, and returns a
     :class:`PRTRunResults` for the pathlines. Construct it through
-    ``model.particles.prt(...)`` (the :class:`ParticleTracking` front door) or
-    directly. For the declarative spec API, see ``mf.prt(...)``.
+    ``model.particle_tracking.prt(...)`` (the :class:`ParticleTracking` front door)
+    or directly. For the declarative spec API, see ``mf.prt(...)``.
 
     Parameters
     ----------
@@ -487,7 +487,7 @@ def open_prt_run(
 class ParticleTracking:
     """A model's particle-tracking front door (native MF6 PRT and legacy MP3DU).
 
-    The small accessor exposed as ``model.particles``: it bundles the
+    The small accessor exposed as ``model.particle_tracking``: it bundles the
     particle-tracking workflows available for a flow ``model`` so you do not have to
     import the project classes yourself. :meth:`prt` builds and runs a native MF6
     PRT simulation (returning a :class:`PRTProject`), while the MP3DU helpers cover
