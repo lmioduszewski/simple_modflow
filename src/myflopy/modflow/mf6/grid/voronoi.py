@@ -734,15 +734,23 @@ class VoronoiGridPlus(VoronoiGrid):
         ValueError
             If an input array's cell axis does not match ``ncpl``.
 
+        Notes
+        -----
+        ``.ugrid.plot()`` draws one value per cell, so plot only a 1-D
+        ``(ncpl,)`` field. For a 2-D ``(nlay, ncpl)`` input, select a layer first
+        (``uda.isel(layer=0).ugrid.plot()``); xugrid does not facet over the layer
+        dimension. The 2-D array still writes to NetCDF whole.
+
         Examples
         --------
         >>> uda = vor.to_xugrid(model.hds.array(layer=0), name="head")
-        >>> uda.ugrid.plot()                      # unstructured choropleth
+        >>> uda.ugrid.plot()                      # unstructured choropleth (1-D field)
         >>> uda.ugrid.to_netcdf("heads.nc")       # UGRID NetCDF for QGIS/ParaView
 
-        >>> # several fields, including a layered one
-        >>> uds = vor.to_xugrid({"head": heads_2d, "k": k_2d})   # (nlay, ncpl)
-        >>> uds.ugrid.to_netcdf("model.nc")
+        >>> # several fields, including a layered (nlay, ncpl) one
+        >>> k_2d = np.vstack([k_layer0, k_layer1])
+        >>> uds = vor.to_xugrid({"head": heads_2d, "k": k_2d})
+        >>> uds.ugrid.to_netcdf("model.nc")       # share; isel a layer to plot
         """
 
         try:

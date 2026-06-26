@@ -89,6 +89,33 @@ def test_ugrid2d_topology(vor):
     assert str(grid.crs).upper().endswith(str(vor.crs).split(":")[-1])
 
 
+def test_plot_requires_single_field(vor):
+    """The documented reduce-then-plot rule: isel a (time, layer, cell) array
+    down to one field to plot; plotting the full array raises."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import xarray as xr
+
+    ncpl = int(vor.ncpl)
+    grid = vor.ugrid2d()
+    face_dim = grid.face_dimension
+    uda = xu.UgridDataArray(
+        xr.DataArray(
+            np.random.rand(1, 2, ncpl),
+            dims=("time", "layer", face_dim),
+            coords={"time": [0], "layer": [0, 1]},
+            name="head",
+        ),
+        grid,
+    )
+    # Reduced to one (cell,) field -> plots.
+    art = uda.isel(time=-1, layer=0).ugrid.plot()
+    assert art is not None
+    # The full (time, layer, cell) array cannot be plotted directly.
+    with pytest.raises(ValueError, match="non-topology dimensions"):
+        uda.ugrid.plot()
+
+
 # --------------------------------------------------------------------------- #
 # model.to_xugrid() -- needs a real MF6 run, so these are slow.
 # --------------------------------------------------------------------------- #

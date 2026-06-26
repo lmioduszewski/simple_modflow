@@ -513,6 +513,13 @@ class SimulationBase:
         xugrid.UgridDataArray
             Dims ``("time", "layer", <face_dim>)`` with ``kstp``/``kper`` coords.
 
+        Notes
+        -----
+        Keep the full ``(time, layer, cell)`` shape for analysis/NetCDF, but
+        reduce to a single field (``.isel(time=-1, layer=0)``) before
+        ``.ugrid.plot()`` -- it draws one value per cell and does not facet over
+        ``time``/``layer``.
+
         Examples
         --------
         >>> uda = model.to_xugrid()

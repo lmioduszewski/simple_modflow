@@ -267,11 +267,30 @@ class HeadsPlus(bf.HeadFile):
         ValueError
             If a requested ``times`` key is not a saved output time.
 
+        Notes
+        -----
+        **Analysis vs. plotting shape.** The result keeps its full
+        ``(time, layer, cell)`` shape -- that is what you want for differencing,
+        aggregation, and NetCDF export. But ``.ugrid.plot()`` draws *one value per
+        cell*, so reduce to a single field first with ``.isel(time=-1, layer=0)``
+        (or ``.sel(...)``). xugrid does **not** facet over extra dimensions, so
+        ``.ugrid.plot(col="layer")`` will not work; plot several layers by looping
+        and passing ``ax=`` (see Examples). The same applies to NetCDF if you only
+        want one slice -- though the full 3-D array also writes fine.
+
         Examples
         --------
         >>> uda = model.to_xugrid()                  # (time, layer, cell)
-        >>> uda.isel(time=-1, layer=0).ugrid.plot()  # last-time top-layer map
-        >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")
+        >>> uda.isel(time=-1, layer=0).ugrid.plot()  # one map: last time, top layer
+        >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")   # share all layers
+
+        Plot every layer as its own subplot:
+
+        >>> import matplotlib.pyplot as plt
+        >>> final = uda.isel(time=-1)                       # (layer, cell)
+        >>> fig, axes = plt.subplots(1, final.sizes["layer"])
+        >>> for k, ax in zip(final["layer"].values, axes):
+        ...     final.sel(layer=k).ugrid.plot(ax=ax)
         """
 
         try:
