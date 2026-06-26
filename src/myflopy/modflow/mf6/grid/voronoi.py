@@ -628,6 +628,67 @@ class VoronoiGridPlus(VoronoiGrid):
         """Write the Voronoi polygons to a shapefile or other GeoPandas target."""
         return self.gdf_vorPolys.to_file(filepath)
 
+    def ugrid2d(self):
+        """Return this grid's topology as an :class:`xugrid.Ugrid2d` (no data).
+
+        Builds the UGRID 2-D unstructured mesh -- nodes (cell vertices), faces
+        (cells), and the face-node connectivity -- from :meth:`get_disv_gridprops`,
+        carrying the grid :attr:`crs`. This is the shared topology builder behind
+        :meth:`to_xugrid` and ``HeadsPlus.to_xugrid`` / ``model.to_xugrid``; call
+        it directly when you want to attach your own ``xarray`` data on the face
+        dimension (``grid.face_dimension``).
+
+        Returns
+        -------
+        xugrid.Ugrid2d
+            The mesh topology, with ``n_face == ncpl`` and ``n_node == nvert``.
+
+        Raises
+        ------
+        ImportError
+            If the optional ``xugrid`` package is not installed.
+        """
+
+        try:
+            import xugrid as xu
+        except ImportError as err:  # pragma: no cover - optional dependency
+            raise ImportError(
+                "ugrid2d() requires the optional 'xugrid' package. Install it "
+                "with `pip install xugrid xarray`."
+            ) from err
+
+        gp = self.get_disv_gridprops()
+        nvert = int(gp["nvert"])
+        ncpl = int(gp["ncpl"])
+
+        # Node coordinates, placed at their vertex id so connectivity lines up.
+        node_x = np.full(nvert, np.nan, dtype=float)
+        node_y = np.full(nvert, np.nan, dtype=float)
+        for iv, x, y in gp["vertices"]:
+            node_x[int(iv)] = float(x)
+            node_y[int(iv)] = float(y)
+
+        # Ragged face -> node connectivity, padded to a rectangular array.
+        fill_value = -1
+        rows = [
+            [int(v) for v in cell[4:4 + int(cell[3])]]
+            for cell in gp["cell2d"]
+        ]
+        max_nodes = max(len(row) for row in rows)
+        face_node_connectivity = np.full((ncpl, max_nodes), fill_value, dtype=np.int64)
+        for i, row in enumerate(rows):
+            face_node_connectivity[i, : len(row)] = row
+
+        return xu.Ugrid2d(
+            node_x,
+            node_y,
+            fill_value,
+            face_node_connectivity,
+            name="mesh2d",
+            is_projected=True,
+            crs=self.crs,
+        )
+
     def to_xugrid(self, data=None, *, name: str = "data", layer_dim: str = "layer"):
         """Export this DISV grid (and optional per-cell data) as an xugrid object.
 
@@ -693,37 +754,8 @@ class VoronoiGridPlus(VoronoiGrid):
                 "packages. Install them with `pip install xugrid xarray`."
             ) from err
 
-        gp = self.get_disv_gridprops()
-        nvert = int(gp["nvert"])
-        ncpl = int(gp["ncpl"])
-
-        # Node coordinates, placed at their vertex id so connectivity lines up.
-        node_x = np.full(nvert, np.nan, dtype=float)
-        node_y = np.full(nvert, np.nan, dtype=float)
-        for iv, x, y in gp["vertices"]:
-            node_x[int(iv)] = float(x)
-            node_y[int(iv)] = float(y)
-
-        # Ragged face -> node connectivity, padded to a rectangular array.
-        fill_value = -1
-        rows = [
-            [int(v) for v in cell[4:4 + int(cell[3])]]
-            for cell in gp["cell2d"]
-        ]
-        max_nodes = max(len(row) for row in rows)
-        face_node_connectivity = np.full((ncpl, max_nodes), fill_value, dtype=np.int64)
-        for i, row in enumerate(rows):
-            face_node_connectivity[i, : len(row)] = row
-
-        grid = xu.Ugrid2d(
-            node_x,
-            node_y,
-            fill_value,
-            face_node_connectivity,
-            name="mesh2d",
-            is_projected=True,
-            crs=self.crs,
-        )
+        grid = self.ugrid2d()
+        ncpl = int(self.ncpl)
         face_dim = grid.face_dimension
 
         def _face_dataarray(values, varname):

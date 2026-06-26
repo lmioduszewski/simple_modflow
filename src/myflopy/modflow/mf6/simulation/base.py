@@ -497,6 +497,31 @@ class SimulationBase:
 
         return get_all_heads(self)
 
+    def to_xugrid(self, *, layers=None, times=None, name: str = "head", masked: bool = True):
+        """Export simulated heads as an xugrid ``(time, layer, cell)`` object.
+
+        Convenience that stacks this model's saved heads across all layers and
+        output times into one :class:`xugrid.UgridDataArray` on the Voronoi mesh
+        -- so you never assemble a ``(nlay, ncpl)`` array by hand. The result
+        plugs into xarray slicing, native unstructured plotting, and UGRID-NetCDF
+        sharing (QGIS/ParaView). Delegates to
+        :meth:`~myflopy.modflow.mf6.headsplus.HeadsPlus.to_xugrid`; see it for the
+        full parameter list.
+
+        Returns
+        -------
+        xugrid.UgridDataArray
+            Dims ``("time", "layer", <face_dim>)`` with ``kstp``/``kper`` coords.
+
+        Examples
+        --------
+        >>> uda = model.to_xugrid()
+        >>> uda.isel(time=-1, layer=0).ugrid.plot()       # water table map
+        >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")  # share all layers
+        """
+
+        return self.hds.to_xugrid(layers=layers, times=times, name=name, masked=masked)
+
     @property
     def srf(self):
         """Surface/top-of-model values used by plotting and summaries."""

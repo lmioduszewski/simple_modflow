@@ -228,6 +228,98 @@ class HeadsPlus(bf.HeadFile):
             values[np.abs(values) > 1.0e29] = np.nan
         return values
 
+    def to_xugrid(self, *, layers=None, times=None, name: str = "head", masked: bool = True):
+        """Export simulated heads across layers and time as an xugrid object.
+
+        Stacks the saved head field into a single ``(time, layer, cell)``
+        :class:`xugrid.UgridDataArray` on this model's Voronoi mesh -- the
+        convenience behind ``model.to_xugrid()``. Unlike :meth:`array` (one
+        layer at one time), this returns the whole history at once, ready for
+        xarray-style slicing (``uda.isel(time=-1, layer=0)``), native unstructured
+        plotting (``.ugrid.plot()``), and UGRID-NetCDF sharing
+        (``.ugrid.to_netcdf(...)``). Uses the same normalized ``kstpkper`` and
+        dry-cell masking as :meth:`array`, and the grid topology from
+        :meth:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus.ugrid2d`.
+
+        Parameters
+        ----------
+        layers
+            Zero-based layers to include (default: all ``nlay`` layers).
+        times
+            ``(kstp, kper)`` keys to include (default: every saved time). Order is
+            preserved; an unavailable key raises ``ValueError``.
+        name
+            Variable name for the head field (default ``"head"``).
+        masked
+            Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN`` (default).
+
+        Returns
+        -------
+        xugrid.UgridDataArray
+            Dims ``("time", "layer", <face_dim>)``, with ``kstp``/``kper`` as
+            coordinates on the ``time`` axis and the zero-based layer index on
+            ``layer``.
+
+        Raises
+        ------
+        ImportError
+            If the optional ``xugrid`` / ``xarray`` packages are not installed.
+        ValueError
+            If a requested ``times`` key is not a saved output time.
+
+        Examples
+        --------
+        >>> uda = model.to_xugrid()                  # (time, layer, cell)
+        >>> uda.isel(time=-1, layer=0).ugrid.plot()  # last-time top-layer map
+        >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")
+        """
+
+        try:
+            import xarray as xr
+            import xugrid as xu
+        except ImportError as err:  # pragma: no cover - optional dependency
+            raise ImportError(
+                "to_xugrid() requires the optional 'xugrid' and 'xarray' "
+                "packages. Install them with `pip install xugrid xarray`."
+            ) from err
+
+        ncpl = int(self.vor.ncpl)
+        available = [tuple(int(v) for v in key) for key in self.kstpkper]
+        if times is None:
+            keys = available
+        else:
+            keys = [tuple(int(v) for v in key) for key in times]
+            missing = [key for key in keys if key not in available]
+            if missing:
+                raise ValueError(
+                    f"to_xugrid(): kstpkper {missing} unavailable. "
+                    f"Available: {available}"
+                )
+        lays = list(range(self.nlay)) if layers is None else [int(layer) for layer in layers]
+
+        data = np.empty((len(keys), len(lays), ncpl), dtype=float)
+        for ti, key in enumerate(keys):
+            field = _as_layer_cell_heads(self.get_data(kstpkper=key), nlay=self.nlay, ncpl=ncpl)
+            for li, layer in enumerate(lays):
+                data[ti, li, :] = np.asarray(field[layer], dtype=float)
+        if masked:
+            data[np.abs(data) > 1.0e29] = np.nan
+
+        grid = self.vor.ugrid2d()
+        face_dim = grid.face_dimension
+        array = xr.DataArray(
+            data,
+            dims=("time", "layer", face_dim),
+            coords={
+                "time": np.arange(len(keys)),
+                "kstp": ("time", [key[0] for key in keys]),
+                "kper": ("time", [key[1] for key in keys]),
+                "layer": lays,
+            },
+            name=name,
+        )
+        return xu.UgridDataArray(array, grid)
+
     def map(
         self,
         *,
