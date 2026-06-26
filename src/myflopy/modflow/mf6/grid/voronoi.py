@@ -628,6 +628,136 @@ class VoronoiGridPlus(VoronoiGrid):
         """Write the Voronoi polygons to a shapefile or other GeoPandas target."""
         return self.gdf_vorPolys.to_file(filepath)
 
+    def to_xugrid(self, data=None, *, name: str = "data", layer_dim: str = "layer"):
+        """Export this DISV grid (and optional per-cell data) as an xugrid object.
+
+        Builds a UGRID 2-D unstructured-mesh representation of the Voronoi grid --
+        nodes (cell vertices), faces (cells), and the face-node connectivity --
+        wrapped in an `xugrid <https://deltares.github.io/xugrid/>`_ object. xugrid
+        is xarray extended for unstructured grids, so the result plugs directly
+        into xarray-style analysis, unstructured plotting/cross-sections, and a
+        UGRID-NetCDF export that QGIS, ParaView, and other tools can open -- which
+        makes DISV results far easier to share than raw MODFLOW binaries.
+
+        The grid topology is taken from :meth:`get_disv_gridprops` and the grid's
+        :attr:`crs` is carried onto the mesh.
+
+        Parameters
+        ----------
+        data
+            Optional per-cell values to attach on the face dimension. One of:
+
+            - ``None`` (default) -- return just the mesh topology;
+            - a 1-D array of length ``ncpl`` -- one field, e.g. a head layer
+              (``model.hds.array(layer=0)``) or a K array;
+            - a 2-D array shaped ``(nlay, ncpl)`` -- a layered field, given the
+              extra ``layer_dim`` dimension;
+            - a ``dict`` of ``{variable_name: array}`` -- several fields at once
+              (each 1-D or 2-D as above).
+        name
+            Variable name used when ``data`` is a single array (ignored for a
+            ``dict``). Defaults to ``"data"``.
+        layer_dim
+            Dimension name given to the first axis of 2-D ``(nlay, ncpl)`` inputs.
+
+        Returns
+        -------
+        xugrid.UgridDataArray | xugrid.UgridDataset
+            A ``UgridDataArray`` when ``data`` is a single array, otherwise a
+            ``UgridDataset`` (also for ``data=None`` -- topology only).
+
+        Raises
+        ------
+        ImportError
+            If the optional ``xugrid`` / ``xarray`` packages are not installed.
+        ValueError
+            If an input array's cell axis does not match ``ncpl``.
+
+        Examples
+        --------
+        >>> uda = vor.to_xugrid(model.hds.array(layer=0), name="head")
+        >>> uda.ugrid.plot()                      # unstructured choropleth
+        >>> uda.ugrid.to_netcdf("heads.nc")       # UGRID NetCDF for QGIS/ParaView
+
+        >>> # several fields, including a layered one
+        >>> uds = vor.to_xugrid({"head": heads_2d, "k": k_2d})   # (nlay, ncpl)
+        >>> uds.ugrid.to_netcdf("model.nc")
+        """
+
+        try:
+            import xarray as xr
+            import xugrid as xu
+        except ImportError as err:  # pragma: no cover - optional dependency
+            raise ImportError(
+                "to_xugrid() requires the optional 'xugrid' and 'xarray' "
+                "packages. Install them with `pip install xugrid xarray`."
+            ) from err
+
+        gp = self.get_disv_gridprops()
+        nvert = int(gp["nvert"])
+        ncpl = int(gp["ncpl"])
+
+        # Node coordinates, placed at their vertex id so connectivity lines up.
+        node_x = np.full(nvert, np.nan, dtype=float)
+        node_y = np.full(nvert, np.nan, dtype=float)
+        for iv, x, y in gp["vertices"]:
+            node_x[int(iv)] = float(x)
+            node_y[int(iv)] = float(y)
+
+        # Ragged face -> node connectivity, padded to a rectangular array.
+        fill_value = -1
+        rows = [
+            [int(v) for v in cell[4:4 + int(cell[3])]]
+            for cell in gp["cell2d"]
+        ]
+        max_nodes = max(len(row) for row in rows)
+        face_node_connectivity = np.full((ncpl, max_nodes), fill_value, dtype=np.int64)
+        for i, row in enumerate(rows):
+            face_node_connectivity[i, : len(row)] = row
+
+        grid = xu.Ugrid2d(
+            node_x,
+            node_y,
+            fill_value,
+            face_node_connectivity,
+            name="mesh2d",
+            is_projected=True,
+            crs=self.crs,
+        )
+        face_dim = grid.face_dimension
+
+        def _face_dataarray(values, varname):
+            array = np.asarray(values, dtype=float)
+            if array.ndim == 1:
+                if array.shape[0] != ncpl:
+                    raise ValueError(
+                        f"to_xugrid(): '{varname}' has length {array.shape[0]}, "
+                        f"expected ncpl={ncpl}."
+                    )
+                dims = (face_dim,)
+            elif array.ndim == 2:
+                if array.shape[-1] != ncpl:
+                    raise ValueError(
+                        f"to_xugrid(): '{varname}' last axis is {array.shape[-1]}, "
+                        f"expected ncpl={ncpl}."
+                    )
+                dims = (layer_dim, face_dim)
+            else:
+                raise ValueError(
+                    f"to_xugrid(): '{varname}' must be 1-D (ncpl,) or 2-D "
+                    f"(nlay, ncpl); got {array.ndim} dimensions."
+                )
+            return xr.DataArray(array, dims=dims, name=varname)
+
+        if data is None:
+            return xu.UgridDataset(grids=[grid])
+        if isinstance(data, dict):
+            dataset = xr.Dataset(
+                {key: _face_dataarray(values, key) for key, values in data.items()}
+            )
+            return xu.UgridDataset(dataset, grids=[grid])
+        return xu.UgridDataArray(_face_dataarray(data, name), grid)
+
     def get_domain(self):
         """Return the overall polygonal domain of the Voronoi grid."""
         return surface_get_domain(self)
