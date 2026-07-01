@@ -341,6 +341,25 @@ def test_rectangular_requires_lake_top():
         builder.validate()
 
 
+def test_rectangular_interior_connects_all_faces():
+    # A permeable-fill (gravel) basin connects through interior faces too, not just the
+    # perimeter -- reproduces the legacy all-faces connectivity and stabilizes a small
+    # basin that drains near-empty. The lake covers cells 3 & 4 (see _rect_builder).
+    edges = _horizontals(_rect_builder(), "basin")                          # default: edges only
+    filled = _horizontals(_rect_builder(rectangular_interior=True), "basin")  # all faces
+
+    # Edges-only skips the shared 3<->4 face; interior adds it (2 faces x 2 layers).
+    assert len(edges) == 6
+    assert len(filled) == 10
+    assert len(filled) > len(edges)
+
+    # A per-lake mapping works too, and the face geometry is unchanged (telev == lake_top
+    # / layer boundary, never the starting stage).
+    mapped = _horizontals(_rect_builder(rectangular_interior={"basin": True}), "basin")
+    assert len(mapped) == 10
+    assert {c.top_elevation for c in filled} == {11.0, 8.0}
+
+
 def test_bathy_connects_only_up_exposed_steps_and_spans_layers():
     grid = _grid()
     lakes = gpd.GeoDataFrame(

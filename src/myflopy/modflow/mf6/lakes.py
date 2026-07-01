@@ -321,6 +321,7 @@ class LAKBuilder:
     lake_top: Any = None
     only_vertical: Any = False
     only_layer: Any = None
+    rectangular_interior: Any = False
     bed_leakance: Any = 1.0
     connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy"
     tables: Mapping[str, LakeTable | LakeTableBuilder] = field(default_factory=dict)
@@ -502,6 +503,20 @@ class LAKBuilder:
             return value.get(lake_id)
         return value
 
+    def _rectangular_interior(self, lake_id: str) -> bool:
+        """Whether a rectangular lake also connects through its interior faces.
+
+        Default ``False`` = edges only (lined trench/vault: no interior exposed face).
+        ``True`` (or a per-lake mapping) connects every cell to every neighbor, matching
+        a permeable-fill basin (e.g. clean gravel) that is hydraulically continuous with
+        the aquifer through all faces -- which also spreads the lake-stage coupling over
+        many connections and stabilizes a small basin that drains near-empty.
+        """
+        value = self.rectangular_interior
+        if isinstance(value, Mapping):
+            return bool(value.get(lake_id, False))
+        return bool(value)
+
     def _top(self, lake_id: str, cell: int) -> float:
         """Facility top elevation for rectangular lakes (the connection ``telev``)."""
         value = self._lake_value(self.lake_top, lake_id, name="lake_top")
@@ -622,11 +637,12 @@ class LAKBuilder:
         lake_bottom = self._bottom(lake_id, cell)
         surfaces = self._surfaces().loc[cell].to_numpy(dtype=float)
         only_layer = self._only_layer(lake_id)
+        interior = self._rectangular_interior(lake_id)
         result = []
         for adjacent, length, width in self._adjacent_with_metrics(cell):
             if mode == "rectangular":
-                if adjacent in lake_cells:  # flat bottom -> no interior horizontals
-                    continue
+                if adjacent in lake_cells and not interior:
+                    continue  # lined basin: no interior face (permeable fill -> interior=True)
                 face_bottom = lake_bottom
                 face_top = self._top(lake_id, cell)
             else:  # bathy: exposed step only where this cell is deeper than the neighbor

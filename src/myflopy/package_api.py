@@ -1454,6 +1454,7 @@ class _LAKPackage:
         lake_top: Any = None,
         only_vertical: Any = False,
         only_layer: Any = None,
+        rectangular_interior: Any = False,
         bed_leakance: Any = 1.0,
         connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy",
         tables: Mapping[str, LakeTable | LakeTableBuilder] | None = None,
@@ -1519,6 +1520,12 @@ class _LAKPackage:
         only_layer
             Restrict a lake's connections to a single model layer (special cases only);
             an int or per-lake mapping. Default ``None`` = all layers a face spans.
+        rectangular_interior
+            For ``"rectangular"`` lakes, ``True`` (or a per-lake mapping) connects every
+            cell to every neighbor (interior faces too), modeling a permeable-fill basin
+            (e.g. clean gravel) that is hydraulically continuous with the aquifer through
+            all faces. Default ``False`` = edges only (lined trench/vault). All-faces also
+            spreads the lake-stage coupling, stabilizing a small basin that drains empty.
         outlets, tables
             Optional lake outlets and stage-volume-area tables.
         mover
@@ -1546,6 +1553,7 @@ class _LAKPackage:
             lake_top=lake_top,
             only_vertical=only_vertical,
             only_layer=only_layer,
+            rectangular_interior=rectangular_interior,
             bed_leakance=bed_leakance,
             connection_modes=connection_modes,
             tables={} if tables is None else tables,
