@@ -971,6 +971,61 @@ def _grid_from_dict(data: dict[str, Any] | None) -> GridSpec | GridRef | None:
     return GridSpec.from_dict(data)
 
 
+# MF6 Manning/weir conversion factors. LENGTH_CONVERSION scales a length in METERS to
+# the model's length units; TIME_CONVERSION scales a time in SECONDS to the model's time
+# units. Used by SFR (and LAK outlets) so the streamflow equations run in model units.
+_MF6_LENGTH_TO_MODEL = {
+    "meters": 1.0, "meter": 1.0, "m": 1.0,
+    "feet": 3.28081, "foot": 3.28081, "ft": 3.28081,
+    "centimeters": 100.0, "centimeter": 100.0, "cm": 100.0,
+}
+_MF6_TIME_TO_MODEL = {
+    "seconds": 1.0, "second": 1.0, "sec": 1.0, "s": 1.0,
+    "minutes": 60.0, "minute": 60.0, "min": 60.0,
+    "hours": 3600.0, "hour": 3600.0, "hr": 3600.0, "h": 3600.0,
+    "days": 86400.0, "day": 86400.0, "d": 86400.0,
+    "years": 31557600.0, "year": 31557600.0, "yr": 31557600.0,
+}
+
+
+def mf6_length_conversion(units: str | None) -> float:
+    """Return MF6 ``LENGTH_CONVERSION`` (meters -> model units) for a unit name.
+
+    ``feet`` -> 3.28081, ``meters`` -> 1.0, ``centimeters`` -> 100.0. ``None`` or
+    ``"unknown"`` -> 1.0. Raises ``ValueError`` for an unrecognized unit.
+    """
+    if units is None:
+        return 1.0
+    key = str(units).strip().lower()
+    if key in ("", "unknown"):
+        return 1.0
+    try:
+        return _MF6_LENGTH_TO_MODEL[key]
+    except KeyError as error:
+        raise ValueError(
+            f"Unknown length unit {units!r}; expected feet, meters, or centimeters."
+        ) from error
+
+
+def mf6_time_conversion(units: str | None) -> float:
+    """Return MF6 ``TIME_CONVERSION`` (seconds -> model units) for a unit name.
+
+    ``days`` -> 86400, ``hours`` -> 3600, ``minutes`` -> 60, ``seconds`` -> 1.0,
+    ``years`` -> 31557600. ``None`` or ``"unknown"`` -> 1.0. Raises for unrecognized.
+    """
+    if units is None:
+        return 1.0
+    key = str(units).strip().lower()
+    if key in ("", "unknown"):
+        return 1.0
+    try:
+        return _MF6_TIME_TO_MODEL[key]
+    except KeyError as error:
+        raise ValueError(
+            f"Unknown time unit {units!r}; expected seconds, minutes, hours, days, or years."
+        ) from error
+
+
 @dataclass(frozen=True, slots=True)
 class ModelContext:
     """The geometry a model is built against -- the bridge to the GIS builders.
@@ -1011,6 +1066,8 @@ class ModelContext:
     surfaces: Any = None
     dates: Any = None
     domain: Any = None
+    length_units: str = "feet"
+    time_units: str = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def with_metadata(self, **updates: Any) -> ModelContext:

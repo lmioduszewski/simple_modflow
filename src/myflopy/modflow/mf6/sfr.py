@@ -14,7 +14,12 @@ import pandas as pd
 from shapely.geometry import Point
 
 from myflopy.advanced import sfr_spec
-from myflopy.specs import ModelContext, PackageSpec
+from myflopy.specs import (
+    ModelContext,
+    PackageSpec,
+    mf6_length_conversion,
+    mf6_time_conversion,
+)
 
 
 StreamLocation = str | Point
@@ -151,8 +156,8 @@ class SFRBuilder:
     status: Any = None
     name: str = "sfr"
     mover: bool = False
-    length_conversion: float = 1.0
-    time_conversion: float = 1.0
+    length_conversion: float | None = None  # None -> derive from context.length_units
+    time_conversion: float | None = None     # None -> derive from context.time_units
     maximum_picard_iterations: int = 1
     maximum_iterations: int = 1000
     maximum_depth_change: float = 0.01
@@ -702,6 +707,24 @@ class SFRBuilder:
                 if setting[0] not in valid_reaches:
                     raise ValueError(f"SFR period {period} references unknown reach {setting[0]}.")
 
+    def resolved_length_conversion(self) -> float:
+        """SFR ``LENGTH_CONVERSION`` -- explicit value, else from context units.
+
+        Manning's streamflow equation is defined in SI; this factor converts it to the
+        model's length units. Left at ``None`` (the default) it is taken from
+        ``context.length_units`` (default ``"feet"`` -> 3.28081), so a feet/days model
+        gets the right constant without the caller remembering to set it.
+        """
+        if self.length_conversion is not None:
+            return self.length_conversion
+        return mf6_length_conversion(getattr(self.context, "length_units", "feet"))
+
+    def resolved_time_conversion(self) -> float:
+        """SFR ``TIME_CONVERSION`` -- explicit value, else from context units."""
+        if self.time_conversion is not None:
+            return self.time_conversion
+        return mf6_time_conversion(getattr(self.context, "time_units", "days"))
+
     def build(self) -> PackageSpec:
         """Validate stored configuration and return its package spec."""
 
@@ -713,8 +736,8 @@ class SFRBuilder:
             name=self.name,
             mover=self.mover,
             diversions=self.diversiondata,
-            length_conversion=self.length_conversion,
-            time_conversion=self.time_conversion,
+            length_conversion=self.resolved_length_conversion(),
+            time_conversion=self.resolved_time_conversion(),
             maximum_picard_iterations=self.maximum_picard_iterations,
             maximum_iterations=self.maximum_iterations,
             maximum_depth_change=self.maximum_depth_change,

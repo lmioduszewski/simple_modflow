@@ -17,7 +17,12 @@ from rasterio.features import geometry_mask
 from shapely.geometry.base import BaseGeometry
 
 from myflopy.advanced import lak_spec
-from myflopy.specs import ModelContext, PackageSpec
+from myflopy.specs import (
+    ModelContext,
+    PackageSpec,
+    mf6_length_conversion,
+    mf6_time_conversion,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,8 +335,8 @@ class LAKBuilder:
     name: str = "lak"
     mover: bool = False
     boundnames: bool = True
-    length_conversion: float = 1.0
-    time_conversion: float = 1.0
+    length_conversion: float | None = None  # None -> derive from context.length_units
+    time_conversion: float | None = None      # None -> derive from context.time_units
     maximum_iterations: int = 100
     maximum_stage_change: float = 1.0e-5
     options: Mapping[str, Any] = field(default_factory=dict)
@@ -877,8 +882,14 @@ class LAKBuilder:
             boundnames=self.boundnames,
             tables=table_records or None,
             outlets=self.outletdata or None,
-            length_conversion=self.length_conversion,
-            time_conversion=self.time_conversion,
+            length_conversion=(
+                self.length_conversion if self.length_conversion is not None
+                else mf6_length_conversion(getattr(self.context, "length_units", "feet"))
+            ),
+            time_conversion=(
+                self.time_conversion if self.time_conversion is not None
+                else mf6_time_conversion(getattr(self.context, "time_units", "days"))
+            ),
             maximum_iterations=self.maximum_iterations,
             maximum_stage_change=self.maximum_stage_change,
             **dict(self.options),

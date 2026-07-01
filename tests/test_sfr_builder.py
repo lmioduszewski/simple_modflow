@@ -154,6 +154,43 @@ def test_sfr_builder_preserves_explicit_unit_conversions():
     assert spec.options["time_conversion"] == 86_400.0
 
 
+def test_sfr_builder_defaults_to_feet_days_from_context_units():
+    # The default ModelContext is feet/days, so Manning's runs in the model's units
+    # without the caller setting the conversions. (The old SI 1.0/1.0 default silently
+    # ran Manning's in meters/seconds -> bogus stream stage on a feet/days model.)
+    spec = _builder().build()
+
+    assert spec.options["length_conversion"] == pytest.approx(3.28081)
+    assert spec.options["time_conversion"] == pytest.approx(86_400.0)
+
+
+def test_sfr_builder_derives_conversions_from_context_units():
+    ctx = ModelContext(
+        grid=_grid(), domain=np.ones((1, 6), dtype=int),
+        length_units="meters", time_units="seconds",
+    )
+    spec = _builder(context=ctx).build()
+
+    assert spec.options["length_conversion"] == pytest.approx(1.0)
+    assert spec.options["time_conversion"] == pytest.approx(1.0)
+
+
+def test_mf6_unit_conversion_helpers():
+    from myflopy.specs import mf6_length_conversion, mf6_time_conversion
+
+    assert mf6_length_conversion("feet") == pytest.approx(3.28081)
+    assert mf6_length_conversion("FEET") == pytest.approx(3.28081)  # case-insensitive
+    assert mf6_length_conversion("meters") == 1.0
+    assert mf6_length_conversion("unknown") == 1.0
+    assert mf6_time_conversion("days") == 86_400.0
+    assert mf6_time_conversion("hours") == 3600.0
+    assert mf6_time_conversion("seconds") == 1.0
+    with pytest.raises(ValueError):
+        mf6_length_conversion("furlongs")
+    with pytest.raises(ValueError):
+        mf6_time_conversion("fortnights")
+
+
 def test_sfr_builder_writes_real_flopy_310_package(tmp_path):
     builder = _builder(connection_mode="explicit", connections=(StreamConnection("tributary", "main"), StreamConnection("main", None)))
     grid = builder.grid
