@@ -85,6 +85,7 @@ def find_adjacent_cells(vor, cell_id: int) -> list[int]:
     """
     Return neighboring cell ids from the DISU connectivity vectors.
     """
+    cell_id = int(cell_id)  # tolerate numpy ints / float-typed ids from spatial joins
     start_index = int(np.sum(vor.iac[:cell_id]))
     num_connections = int(vor.iac[cell_id])
     connections = vor.ja[start_index:start_index + num_connections]
@@ -365,14 +366,27 @@ def adjust_top_btm_overlaps(
     """
     elev_df = vor.reconcile_surfaces(min_sep=min_sep) if elev_df is None else elev_df
     cells_to_adjust = vor.get_vor_cells_as_series(shp_path)
+    # get_vor_cells_as_series returns one row per geometry, each holding a LIST of
+    # intersected cell ids; flatten to unique individual cells.
+    cell_ids: list[int] = []
+    for value in cells_to_adjust:
+        if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+            cell_ids.extend(int(cell) for cell in value)
+        else:
+            cell_ids.append(int(value))
+    cell_ids = sorted(dict.fromkeys(cell_ids))
     new_bottoms = {}
 
-    for cell_id in cells_to_adjust:
+    for cell_id in cell_ids:
         adjacent_cells = vor.find_adjacent_cells(cell_id)
         ja_cell_tops = elev_df[0].loc[adjacent_cells]
         ja_min = ja_cell_tops.min()
         new_bottoms[cell_id] = ja_min - buffer
 
     new_bottoms = pd.Series(new_bottoms, name=layer_bottom_name)
-    elev_df[layer_bottom_name].update(new_bottoms)
+    # Update on a copy then assign back: chained `df[col].update(...)` operates on
+    # a copy under copy-on-write (pandas 3.0) and would silently drop the change.
+    column = elev_df[layer_bottom_name].copy()
+    column.update(new_bottoms)
+    elev_df[layer_bottom_name] = column
     return vor.reconcile_surfaces(df=elev_df)
