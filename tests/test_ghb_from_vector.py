@@ -51,12 +51,14 @@ def test_ghb_from_vector_tolerates_missing_optional_fields(tmp_path):
     assert all(rec[1] == 95.0 for rec in spd[0])
 
 
-def test_ghb_from_vector_selects_all_cells_in_polygon_not_just_edges(tmp_path):
-    """A GHB *zone* polygon must apply to every cell it covers, not only the
-    perimeter cells. `from_polygons` used to hard-code edges_only=True, which
-    silently dropped the interior cells of a wide polygon -- e.g. it produced 24
-    of the 46 discharge cells the legacy `get_ghb_from_shp` selected, letting the
-    modeled water table mound tens of feet where those boundaries were missing.
+def test_ghb_from_vector_selects_all_cells_in_polygon_not_just_grid_edge(tmp_path):
+    """A GHB *zone* polygon must apply to every cell it covers by default, not only
+    the cells on the model grid edge. `from_polygons` used to hard-code
+    edges_only=True (which keeps only polygon cells on the domain boundary via
+    get_grid_edge), so a wide zone lost its interior cells -- e.g. 24 of the 46
+    discharge cells the legacy `get_ghb_from_shp` selected -- and the modeled water
+    table mounded tens of feet where those boundaries went missing. The default is
+    now all cells; edges_only=True is still available for true edge boundaries.
     """
     vor = rectangular_voronoi(CanonicalModelConfig(nrow=8, ncol=8, nlay=3, nper=1))
     ncpl = int(vor.ncpl)
@@ -68,23 +70,25 @@ def test_ghb_from_vector_selects_all_cells_in_polygon_not_just_edges(tmp_path):
         .build(attach=True)
     )
 
-    # A central block wide enough to contain interior (non-perimeter) cells.
+    # A strip along the left model edge, several columns wide: its left column sits
+    # on the grid edge; the inner columns do not.
     xmin, ymin, xmax, ymax = vor.gdf_vorPolys.total_bounds
-    bx0, by0 = xmin + (xmax - xmin) * 0.30, ymin + (ymax - ymin) * 0.30
-    bx1, by1 = xmin + (xmax - xmin) * 0.70, ymin + (ymax - ymin) * 0.70
+    strip = box(xmin, ymin, xmin + (xmax - xmin) * 0.4, ymax)
     shp = tmp_path / "ghb_zone.gpkg"
     gpd.GeoDataFrame(
         {"name": ["zone"], "elev": [95.0], "cond": [100.0], "layer": [1],
-         "geometry": [box(bx0, by0, bx1, by1)]},
+         "geometry": [strip]},
         crs=vor.crs,
     ).to_file(shp)
 
-    all_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_vector()          # default
-    edge_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_polygons(edges_only=True)
+    all_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_vector()                     # all cells
+    edge_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_polygons(edges_only=True)   # grid-edge only
 
     all_ids = {rec[0] for rec in all_cells[0]}
     edge_ids = {rec[0] for rec in edge_cells[0]}
 
-    # The default (all-cells) is a strict superset of the perimeter-only selection.
-    assert edge_ids < all_ids
-    assert len(all_ids) > len(edge_ids)  # interior cells are included by default
+    # edges_only keeps only the polygon cells on the model grid edge: a nonempty,
+    # strict subset. The default (all cells in the zone) is what the legacy did.
+    assert edge_ids                       # the strip touches the grid edge
+    assert edge_ids < all_ids             # strict subset
+    assert len(all_ids) > len(edge_ids)   # interior columns included only by default
