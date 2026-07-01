@@ -178,6 +178,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self.y_coords_by_node = []
         self._gdf_vorPolys = None
         self._iac = None
+        self._ia = None
         self._nja = None
         self._idomain_path = None
         self._idomain = None
@@ -202,6 +203,7 @@ class VoronoiGridPlus(VoronoiGrid):
         "_latlon",
         "_gdf_vorPolys",
         "_iac",
+        "_ia",
         "_nja",
         "_ja",
         "_cl12",
@@ -297,6 +299,7 @@ class VoronoiGridPlus(VoronoiGrid):
             validate=validate,
         )
         self._iac = iac
+        self._ia = None  # invalidate the row-pointer cache; recomputed from iac on demand
         self._ja = ja
         self._cl12 = cl12
         self._hwva = hwva
@@ -309,6 +312,22 @@ class VoronoiGridPlus(VoronoiGrid):
         if self._iac is None:
             self.get_disu_connectivity()
         return self._iac
+
+    @property
+    def ia(self):
+        """Return the CRS row pointer ``ia = [0, cumsum(iac)]`` for the ``ja`` arrays.
+
+        ``ia[cell]`` is the offset of ``cell``'s block in ``ja``/``cl12``/``hwva``
+        (the diagonal/self entry is first). Cached so per-cell connection lookups are
+        O(1) instead of recomputing ``sum(iac[:cell])`` -- an O(N) scan -- every call,
+        which is O(N^2) when sweeping every cell of a large lake footprint.
+        """
+        if self._ia is None:
+            iac = self.iac
+            ia = np.zeros(len(iac) + 1, dtype=np.int64)
+            np.cumsum(iac, out=ia[1:])
+            self._ia = ia
+        return self._ia
 
     @property
     def ja(self):

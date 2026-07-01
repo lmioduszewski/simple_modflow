@@ -86,7 +86,7 @@ def find_adjacent_cells(vor, cell_id: int) -> list[int]:
     Return neighboring cell ids from the DISU connectivity vectors.
     """
     cell_id = int(cell_id)  # tolerate numpy ints / float-typed ids from spatial joins
-    start_index = int(np.sum(vor.iac[:cell_id]))
+    start_index = int(vor.ia[cell_id])  # O(1) via cached row pointer, not sum(iac[:cell])
     num_connections = int(vor.iac[cell_id])
     connections = vor.ja[start_index:start_index + num_connections]
     return [int(cell) for cell in connections if int(cell) != cell_id]

@@ -519,7 +519,7 @@ class LAKBuilder:
 
     def _adjacent_with_metrics(self, cell: int) -> list[tuple[int, float, float]]:
         adjacent = list(self.grid.find_adjacent_cells(cell))
-        start = int(sum(self.grid.iac[:cell]))
+        start = int(self.grid.ia[cell])  # O(1) row pointer; sum(iac[:cell]) was O(N^2) over a lake
         return [
             (int(other), float(self.grid.cl12[start + index + 1]), float(self.grid.hwva[start + index + 1]))
             for index, other in enumerate(adjacent)
