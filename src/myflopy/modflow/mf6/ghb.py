@@ -187,6 +187,7 @@ class GHB(Boundaries):
             fields: dict = None,
             elev_reference: dict = None,
             reference_offset: float | int = 0,
+            edges_only: bool = False,
             register_regions: bool = False,
             region_name_prefix: str | None = None,
             combined_region_name: str | None = None,
@@ -220,7 +221,9 @@ class GHB(Boundaries):
 
             for name, row, active_cells in self.iter_polygon_boundary_features(
                 name_field=fields["name"],
-                edges_only=True,
+                edges_only=edges_only,  # default False = every cell in the polygon (as
+                                        # the legacy get_ghb_from_shp did); True selects
+                                        # only perimeter cells for edge-boundary polygons.
             ):  # FOR EACH GHB BOUDARY
                 # conductance + layer are required; the others are optional and
                 # may be absent from the source attributes (e.g. an elevation-only
