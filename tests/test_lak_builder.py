@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest import mock
+
 import flopy
 import geopandas as gpd
 import numpy as np
@@ -209,3 +211,58 @@ def test_lak_builder_writes_real_flopy_310_package(tmp_path):
 
     assert (tmp_path / "flow.lak").exists()
     assert (tmp_path / "lak_natural.lak.tab").exists()
+
+
+def _wide_lake_builder() -> LAKBuilder:
+    """A single lake covering >1 cell -- exercises per-cell sidewall building."""
+    grid = _grid()
+    # Spans cells 3 (centre 0.5,1.5) and 4 (centre 1.5,1.5) on the top row.
+    lakes = gpd.GeoDataFrame(
+        {"name": ["wide"]},
+        geometry=[Polygon([(0.05, 1.05), (1.95, 1.05), (1.95, 1.95), (0.05, 1.95)])],
+        crs=grid.crs,
+    )
+    return LAKBuilder(
+        context=ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int)),
+        nper=1,
+        lakes=lakes,
+        lake_id_field="name",
+        starting_stage={"wide": 11.0},
+        lake_bottom={"wide": 8.0},
+        bed_leakance=0.1,
+    )
+
+
+def test_lake_cells_is_cached_not_recomputed_per_cell():
+    """lake_cells does a full-grid intersection per lake; building connections must
+    not recompute it once per lake cell (that O(cells x lakes x grid) blowup hung
+    automatic builds over large lakes)."""
+    builder = _wide_lake_builder()
+    assert len(builder.lake_cells["wide"]) >= 2  # multi-cell, so per-cell recompute would show
+
+    # Cached: repeated access returns the same object (no recompute).
+    assert builder.lake_cells is builder.lake_cells
+
+    original = gpd.GeoSeries.intersection
+    calls = {"n": 0}
+
+    def counting_intersection(self, *args, **kwargs):
+        calls["n"] += 1
+        return original(self, *args, **kwargs)
+
+    object.__setattr__(builder, "_lake_cells", None)  # force one recompute
+    with mock.patch.object(gpd.GeoSeries, "intersection", counting_intersection):
+        _ = builder.connections  # calls _sidewall_connections for every lake cell
+
+    # One intersection for the single lake -- NOT one per lake cell.
+    assert calls["n"] == 1
+
+
+def test_lake_cells_cache_is_not_shared_after_with_updates():
+    builder = _wide_lake_builder()
+    _ = builder.lake_cells  # populate the cache
+    assert builder._lake_cells is not None
+
+    updated = builder.with_updates(nper=2)
+    assert updated._lake_cells is None  # a fresh builder recomputes from its own inputs
+    assert updated.lake_cells == builder.lake_cells

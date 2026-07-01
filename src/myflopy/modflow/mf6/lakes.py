@@ -339,6 +339,9 @@ class LAKBuilder:
     _bottom_cache: dict[tuple[str, int], float] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    _lake_cells: dict[str, list[int]] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.context.grid is None:
@@ -424,11 +427,17 @@ class LAKBuilder:
 
     @property
     def lake_cells(self) -> dict[str, list[int]]:
+        # Cached: each access does a full-grid geometry intersection per lake, and
+        # connection building reads this once per lake cell -- recomputing it there
+        # made an automatic build over a large lake O(cells x lakes x grid) and hang.
+        if self._lake_cells is not None:
+            return self._lake_cells
         polygons = self.grid.gdf_vorPolys.geometry
         result = {}
         for lake_id, row in self.lake_table.iterrows():
             intersections = polygons.intersection(row.geometry)
             result[lake_id] = [int(cell) for cell in intersections.index[intersections.area > 0.0]]
+        object.__setattr__(self, "_lake_cells", result)
         return result
 
     def _lake_value(self, value: Any, lake_id: str, *, name: str, default: Any = None) -> Any:
