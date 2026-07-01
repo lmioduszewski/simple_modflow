@@ -5,6 +5,7 @@ from unittest import mock
 import flopy
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 from rasterio.transform import from_origin
@@ -72,8 +73,9 @@ def _builder(**updates) -> LAKBuilder:
         "lake_id_field": "name",
         "starting_stage": "stage",
         "lake_bottom": "bottom",
+        "lake_top": {"trench": 10.0},  # rectangular facilities need an explicit flat top
         "bed_leakance": 0.1,
-        "connection_modes": {"natural": "automatic", "trench": "rectangular"},
+        "connection_modes": {"natural": "bathy", "trench": "rectangular"},
         "status": {"natural": ["ACTIVE", "ACTIVE"], "trench": ["ACTIVE", "INACTIVE"]},
     }
     values.update(updates)
@@ -266,3 +268,118 @@ def test_lake_cells_cache_is_not_shared_after_with_updates():
     updated = builder.with_updates(nper=2)
     assert updated._lake_cells is None  # a fresh builder recomputes from its own inputs
     assert updated.lake_cells == builder.lake_cells
+
+
+# --- connection geometry: bathy vs rectangular ------------------------------
+# Regression coverage for the connection-generation rewrite. The bug being pinned:
+# horizontal faces were clipped to the (transient) starting stage instead of the
+# facility top / neighbor bottom, which choked lake-aquifer leakage and let lakes
+# mound tens of feet above their rim. Grid _grid() is 3x2, surfaces [12, 8, 0]
+# -> layer 0 = [8, 12], layer 1 = [0, 8]. Cells: bottom row 0,1,2 / top row 3,4,5.
+
+
+def _horizontals(builder, lake_id):
+    return [c for lid, c in builder.connections
+            if lid == lake_id and c.connection_type == "HORIZONTAL"]
+
+
+def _verticals(builder, lake_id):
+    return [c for lid, c in builder.connections
+            if lid == lake_id and c.connection_type == "VERTICAL"]
+
+
+def _rect_builder(**updates) -> LAKBuilder:
+    grid = _grid()
+    lakes = gpd.GeoDataFrame(
+        {"name": ["basin"]},
+        geometry=[Polygon([(0.05, 1.05), (1.95, 1.05), (1.95, 1.95), (0.05, 1.95)])],
+        crs=grid.crs,
+    )  # covers cells 3 and 4 (top row, left + middle)
+    values = dict(
+        context=ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int)),
+        nper=1,
+        lakes=lakes,
+        lake_id_field="name",
+        starting_stage={"basin": 7.0},   # deliberately BELOW lake_top
+        lake_bottom={"basin": 6.0},
+        lake_top={"basin": 11.0},
+        bed_leakance=0.1,
+        connection_modes="rectangular",
+    )
+    values.update(updates)
+    return LAKBuilder(**values)
+
+
+def test_rectangular_telev_is_lake_top_edges_only_and_multilayer():
+    builder = _rect_builder()
+    horizontals = _horizontals(builder, "basin")
+
+    # telev comes from lake_top (11) / layer boundary (8) -- NEVER the start stage (7).
+    tops = {c.top_elevation for c in horizontals}
+    assert 7.0 not in tops
+    assert tops == {11.0, 8.0}
+
+    # Edges only: the shared 3<->4 interior face is skipped. Perimeter faces are
+    # 3->0, 4->1, 4->5 (3 faces); the box [6, 11] spans both layers -> 6 horizontals.
+    assert len(horizontals) == 6
+    assert {c.cellid[0] for c in horizontals} == {0, 1}  # both layers
+
+    # belev is clipped to each layer: layer 0 -> max(8,6)=8, layer 1 -> max(0,6)=6.
+    assert {c.bottom_elevation for c in horizontals} == {8.0, 6.0}
+    assert len(_verticals(builder, "basin")) == 2  # one per lake cell
+
+
+def test_rectangular_vault_has_no_horizontals():
+    builder = _rect_builder(only_vertical=True)
+    assert _horizontals(builder, "basin") == []
+    assert len(_verticals(builder, "basin")) == 2
+
+
+def test_rectangular_requires_lake_top():
+    builder = _rect_builder(lake_top=None)
+    with pytest.raises(ValueError, match="lake_top is required"):
+        builder.validate()
+
+
+def test_bathy_connects_only_up_exposed_steps_and_spans_layers():
+    grid = _grid()
+    lakes = gpd.GeoDataFrame(
+        {"name": ["nat"]},
+        geometry=[Polygon([(0.05, 1.05), (1.95, 1.05), (1.95, 1.95), (0.05, 1.95)])],
+        crs=grid.crs,
+    )  # cells 3 and 4
+    # Per-cell lake bottom: cell 3 is deep (2), cell 4 shallow (9); neighbors high (10).
+    lake_bottom = pd.Series({0: 10.0, 1: 10.0, 2: 10.0, 3: 2.0, 4: 9.0, 5: 10.0})
+    builder = LAKBuilder(
+        context=ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int)),
+        nper=1,
+        lakes=lakes,
+        lake_id_field="name",
+        starting_stage={"nat": 10.0},
+        lake_bottom={"nat": lake_bottom},
+        bed_leakance=0.1,
+        connection_modes="bathy",
+    )
+    by_cell: dict[int, list] = {}
+    for connection in _horizontals(builder, "nat"):
+        by_cell.setdefault(connection.cellid[1], []).append(connection)
+
+    # Cell 3 (deepest) has an exposed step toward BOTH neighbors 0 and 4; the face
+    # [2, neighbor_bottom] crosses both model layers -> 2 neighbors x 2 layers = 4.
+    assert len(by_cell[3]) == 4
+    assert {c.cellid[0] for c in by_cell[3]} == {0, 1}
+    # telev tracks the neighbor's lake bottom (9 from cell 4), not the stage.
+    assert any(c.top_elevation == 9.0 for c in by_cell[3])
+
+    # Cell 4 (lb 9) connects only UP to the higher neighbors 1 and 5 -- never toward
+    # the deeper lake cell 3 -- and only in the single overlapping layer.
+    assert len(by_cell[4]) == 2
+    assert {c.cellid[0] for c in by_cell[4]} == {0}
+
+
+def test_bathy_scalar_bottom_makes_no_exposed_steps():
+    # A flat (scalar) bottom in bathy mode has no steps -> vertical connections only.
+    builder = _rect_builder(connection_modes="bathy", lake_bottom={"basin": 6.0},
+                            lake_top=None)
+    assert _horizontals(builder, "basin") == []
+    assert len(_verticals(builder, "basin")) == 2

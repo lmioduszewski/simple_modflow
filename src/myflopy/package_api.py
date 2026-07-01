@@ -1451,8 +1451,11 @@ class _LAKPackage:
         lake_id_field: str | None = None,
         starting_stage: Any = None,
         lake_bottom: Any = None,
+        lake_top: Any = None,
+        only_vertical: Any = False,
+        only_layer: Any = None,
         bed_leakance: Any = 1.0,
-        connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "automatic",
+        connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy",
         tables: Mapping[str, LakeTable | LakeTableBuilder] | None = None,
         outlets: tuple[LakeOutlet, ...] = (),
         stage: Any = None,
@@ -1473,10 +1476,27 @@ class _LAKPackage:
     ) -> PackageSpec:
         """Build a LAK package from lake geometry (delegates to ``LAKBuilder``).
 
-        Lake cells are taken from the polygon footprint(s); ``connection_modes=
-        "automatic"`` builds horizontal + vertical bed connections. Per-lake inputs
-        (``starting_stage``/``lake_bottom``/``bed_leakance``/``status``/forcings) are
-        keyed by lake id (the ``lake_id_field`` attribute, e.g. ``{"valley_lake": 101.0}``).
+        Lake cells are taken from the polygon footprint(s); ``connection_modes`` picks
+        how the bed connections are generated per lake:
+
+        * ``"bathy"`` (default; alias ``"automatic"``) -- natural lakes. Needs a
+          *per-cell* ``lake_bottom`` (a raster ``Path`` or a cell-indexed ``Series``).
+          One vertical connection per cell, plus a horizontal connection toward each
+          neighbor whose lake bottom is *higher* (the exposed step), clipped to every
+          layer the exposed face spans.
+        * ``"rectangular"`` -- box facilities (infiltration trenches / vaults). Needs a
+          flat ``lake_bottom`` and an explicit ``lake_top`` per lake. Vertical
+          connections everywhere (flat-bottom infiltration); horizontal connections
+          only on the *perimeter* (cells bordering non-lake cells), spanning
+          ``lake_bottom -> lake_top`` clipped to each layer. Set ``only_vertical`` for a
+          vault (concrete walls -> no horizontals).
+
+        Connection ``telev``/``belev`` are pure geometry and never depend on the
+        (transient) starting stage -- MF6 wets/dries each face per timestep.
+
+        Per-lake inputs (``starting_stage``/``lake_bottom``/``lake_top``/
+        ``bed_leakance``/``status``/forcings) are keyed by lake id (the
+        ``lake_id_field`` attribute, e.g. ``{"valley_lake": 101.0}``).
 
         Parameters
         ----------
@@ -1490,6 +1510,15 @@ class _LAKPackage:
             ``lake_id_field`` is the attribute naming each lake.
         starting_stage, lake_bottom, bed_leakance
             Initial stage, lake-bottom elevation, and bed leakance per lake.
+        lake_top
+            Facility top per lake -- **required for ``"rectangular"``** lakes; the
+            horizontal-connection ``telev``. Ignored by ``"bathy"``.
+        only_vertical
+            ``True`` (or a per-lake mapping) to build vault lakes with vertical
+            connections only (no horizontal sidewall exchange).
+        only_layer
+            Restrict a lake's connections to a single model layer (special cases only);
+            an int or per-lake mapping. Default ``None`` = all layers a face spans.
         outlets, tables
             Optional lake outlets and stage-volume-area tables.
         mover
@@ -1514,6 +1543,9 @@ class _LAKPackage:
             lake_id_field=lake_id_field,
             starting_stage=starting_stage,
             lake_bottom=lake_bottom,
+            lake_top=lake_top,
+            only_vertical=only_vertical,
+            only_layer=only_layer,
             bed_leakance=bed_leakance,
             connection_modes=connection_modes,
             tables={} if tables is None else tables,

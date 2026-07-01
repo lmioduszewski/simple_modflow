@@ -371,8 +371,9 @@ def build_transient_model(
         lake_id_field="name",
         starting_stage={lake_id: 101.0},
         lake_bottom={lake_id: 96.0},
+        lake_top={lake_id: 101.0},  # flat-bottom lake -> rectangular; rim at the stage
         bed_leakance=0.11,
-        connection_modes="automatic",
+        connection_modes="rectangular",
         status={lake_id: ["ACTIVE"] * config.nper},
         mover=True,
         length_conversion=3.28081,

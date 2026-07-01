@@ -189,6 +189,7 @@ def _attach_lak(
     *,
     starting_stage,
     lake_bottom,
+    lake_top=None,
     bed_leakance=1.0,
     status="ACTIVE",
     mover=False,
@@ -197,6 +198,11 @@ def _attach_lak(
     region_tags=None,
     overwrite_regions=False,
 ):
+    if lake_top is None:
+        # Rectangular facilities need an explicit flat top (the horizontal telev).
+        # These smoke tests only check that things build/run, so default the rim to
+        # the starting stage.
+        lake_top = starting_stage
     builder = LAKBuilder(
         context=_model_context(model, vor),
         nper=model.nper,
@@ -204,6 +210,7 @@ def _attach_lak(
         lake_id_field="name",
         starting_stage=starting_stage,
         lake_bottom=lake_bottom,
+        lake_top=lake_top,
         bed_leakance=bed_leakance,
         connection_modes="rectangular",
         status=status,

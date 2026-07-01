@@ -313,8 +313,11 @@ class LAKBuilder:
     lake_id_field: str | None = None
     starting_stage: Any = None
     lake_bottom: Any = None
+    lake_top: Any = None
+    only_vertical: Any = False
+    only_layer: Any = None
     bed_leakance: Any = 1.0
-    connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "automatic"
+    connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy"
     tables: Mapping[str, LakeTable | LakeTableBuilder] = field(default_factory=dict)
     outlets: tuple[LakeOutlet, ...] = ()
     stage: Any = None
@@ -468,12 +471,43 @@ class LAKBuilder:
             mode = mode[lake_id]
         if isinstance(mode, str):
             mode = mode.lower()
-            if mode not in {"automatic", "rectangular"}:
-                raise ValueError("Generated connection modes must be 'automatic' or 'rectangular'.")
+            if mode == "automatic":  # retained alias for the natural-lake mode
+                mode = "bathy"
+            if mode not in {"bathy", "rectangular"}:
+                raise ValueError(
+                    "Generated connection modes must be 'bathy' or 'rectangular' "
+                    "(legacy alias 'automatic' == 'bathy')."
+                )
             return mode
         if not all(isinstance(item, LakeConnection) for item in mode):
             raise ValueError("Explicit connection modes must contain LakeConnection objects.")
         return tuple(mode)
+
+    def _only_vertical(self, lake_id: str) -> bool:
+        """Vault case for a lake: skip all horizontal connections (concrete walls)."""
+        value = self.only_vertical
+        if isinstance(value, Mapping):
+            return bool(value.get(lake_id, False))
+        return bool(value)
+
+    def _only_layer(self, lake_id: str) -> int | None:
+        """Restrict a lake's connections to a single model layer (special cases only)."""
+        value = self.only_layer
+        if isinstance(value, Mapping):
+            return value.get(lake_id)
+        return value
+
+    def _top(self, lake_id: str, cell: int) -> float:
+        """Facility top elevation for rectangular lakes (the connection ``telev``)."""
+        value = self._lake_value(self.lake_top, lake_id, name="lake_top")
+        if isinstance(value, Path):
+            sampled = self.grid.get_raster_vals_at_centroids([value], [lake_id])
+            value = sampled.loc[cell, lake_id]
+        elif isinstance(value, (Mapping, pd.Series)):
+            if cell not in value:
+                raise ValueError(f"lake_top for '{lake_id}' is missing cell {cell}.")
+            value = value[cell]
+        return float(value)
 
     def _surfaces(self) -> pd.DataFrame:
         surfaces = self.context.surfaces
@@ -490,9 +524,11 @@ class LAKBuilder:
         values = np.asarray(domain)
         return values.ndim < 2 or bool(values[layer, cell] > 0)
 
-    def _layer_containing(self, cell: int, elevation: float) -> int | None:
+    def _layer_containing(self, cell: int, elevation: float, only_layer: int | None = None) -> int | None:
         surfaces = self._surfaces().loc[cell].to_numpy(dtype=float)
         for layer, (top, bottom) in enumerate(zip(surfaces, surfaces[1:])):
+            if only_layer is not None and layer != only_layer:
+                continue
             if top >= elevation >= bottom and self._active(layer, cell):
                 return layer
         return None
@@ -534,25 +570,23 @@ class LAKBuilder:
             for index, other in enumerate(adjacent)
         ]
 
-    def _vertical_connection(self, lake_id: str, cell: int) -> LakeConnection:
-        bottom = self._bottom(lake_id, cell)
-        layer = self._layer_containing(cell, bottom)
-        if layer is None:
-            raise ValueError(f"Lake '{lake_id}' bottom {bottom} does not intersect active cell {cell}.")
-        return LakeConnection(
-            cellid=(layer, cell),
-            connection_type="VERTICAL",
-            bed_leakance=self._leakance(lake_id, "vertical"),
-            bottom_elevation=bottom,
-            top_elevation=bottom,
-        )
+    def _vertical_connection(self, lake_id: str, cell: int, mode: str) -> LakeConnection | None:
+        """One vertical (lake-bottom) connection for a cell.
 
-    def _rectangular_vertical_connection(self, lake_id: str, cell: int) -> LakeConnection | None:
+        ``bathy``: at the layer containing the cell's lake bottom.
+        ``rectangular``: the flat-bottom infiltration face; the connection spans
+        ``lake_bottom -> lake_top`` and lands in the layer holding the lake bottom.
+        MF6 ignores ``belev``/``telev`` for vertical connections, but they are set to
+        the physical extent for readability and parity with the legacy output.
+        """
         bottom = self._bottom(lake_id, cell)
-        top = float(self._lake_value(self.starting_stage, lake_id, name="starting_stage"))
-        layer = self._layer_containing(cell, 0.5 * (top + bottom))
+        only_layer = self._only_layer(lake_id)
+        layer = self._layer_containing(cell, bottom, only_layer)
         if layer is None:
-            return None
+            if mode == "rectangular":
+                return None
+            raise ValueError(f"Lake '{lake_id}' bottom {bottom} does not intersect active cell {cell}.")
+        top = self._top(lake_id, cell) if mode == "rectangular" else bottom
         return LakeConnection(
             cellid=(layer, cell),
             connection_type="VERTICAL",
@@ -561,35 +595,61 @@ class LAKBuilder:
             top_elevation=top,
         )
 
-    def _sidewall_connections(self, lake_id: str, cell: int, *, rectangular: bool) -> list[LakeConnection]:
+    def _sidewall_connections(self, lake_id: str, cell: int, mode: str) -> list[LakeConnection]:
+        """Horizontal (sidewall) connections for one lake cell.
+
+        For each adjacent cell we work out the vertical extent of face exposed to the
+        lake, then clip it to every model layer it spans -- so a single neighbor can
+        yield connections in more than one layer. The exposed face is:
+
+        * ``rectangular`` (trench/vault): edges only -- skip neighbors that are also
+          lake cells (a flat bottom has no interior face); the face runs from the flat
+          ``lake_bottom`` up to the facility ``lake_top``.
+        * ``bathy`` (natural lake): connect toward a neighbor only where this cell's
+          lake bottom is *below* the neighbor's (an exposed step); the face runs from
+          this cell's lake bottom up to the neighbor's lake bottom.
+
+        ``belev``/``telev`` are the face clipped to each layer's [bottom, top]; the
+        connection geometry never depends on the (transient) lake stage -- MF6 wets
+        and dries the face itself each timestep.
+        """
         lake_cells = set(self.lake_cells[lake_id])
-        bottom = self._bottom(lake_id, cell)
-        stage = float(self._lake_value(self.starting_stage, lake_id, name="starting_stage"))
+        lake_bottom = self._bottom(lake_id, cell)
         surfaces = self._surfaces().loc[cell].to_numpy(dtype=float)
+        only_layer = self._only_layer(lake_id)
         result = []
         for adjacent, length, width in self._adjacent_with_metrics(cell):
-            if not rectangular and adjacent in lake_cells:
-                continue
+            if mode == "rectangular":
+                if adjacent in lake_cells:  # flat bottom -> no interior horizontals
+                    continue
+                face_bottom = lake_bottom
+                face_top = self._top(lake_id, cell)
+            else:  # bathy: exposed step only where this cell is deeper than the neighbor
+                neighbor_bottom = self._bottom(lake_id, adjacent)
+                if lake_bottom >= neighbor_bottom:
+                    continue
+                face_bottom = lake_bottom
+                face_top = neighbor_bottom
             for layer, (cell_top, cell_bottom) in enumerate(zip(surfaces, surfaces[1:])):
+                if only_layer is not None and layer != only_layer:
+                    continue
                 if not self._active(layer, cell):
                     continue
-                top = min(cell_top, stage)
-                connection_bottom = max(cell_bottom, bottom)
-                if top <= connection_bottom:
+                belev = max(cell_bottom, face_bottom)
+                telev = min(cell_top, face_top)
+                if telev <= belev:
                     continue
                 result.append(
                     LakeConnection(
                         cellid=(layer, cell),
                         connection_type="HORIZONTAL",
                         bed_leakance=self._leakance(lake_id, "horizontal"),
-                        bottom_elevation=float(connection_bottom),
-                        top_elevation=float(top),
+                        bottom_elevation=float(belev),
+                        top_elevation=float(telev),
                         connection_length=length,
                         connection_width=width,
                     )
                 )
-                if not rectangular:
-                    break
         return result
 
     @property
@@ -604,19 +664,16 @@ class LAKBuilder:
             if not isinstance(mode, str):
                 result.extend((lake_id, connection) for connection in mode)
                 continue
+            only_vertical = self._only_vertical(lake_id)
             for cell in self.lake_cells[lake_id]:
-                vertical = (
-                    self._rectangular_vertical_connection(lake_id, cell)
-                    if mode == "rectangular"
-                    else self._vertical_connection(lake_id, cell)
-                )
+                vertical = self._vertical_connection(lake_id, cell, mode)
                 if vertical is not None:
                     result.append((lake_id, vertical))
+                if only_vertical:  # vault: concrete sidewalls, no horizontal exchange
+                    continue
                 result.extend(
                     (lake_id, connection)
-                    for connection in self._sidewall_connections(
-                        lake_id, cell, rectangular=mode == "rectangular"
-                    )
+                    for connection in self._sidewall_connections(lake_id, cell, mode)
                 )
         object.__setattr__(self, "_connections", tuple(result))
         return self._connections
@@ -772,10 +829,20 @@ class LAKBuilder:
                 self.lake_number(outlet.receiver)
         for lake_id in self.lake_ids:
             stage = float(self._lake_value(self.starting_stage, lake_id, name="starting_stage"))
-            if isinstance(self._connection_mode(lake_id), str):
-                bottoms = [self._bottom(lake_id, cell) for cell in self.lake_cells[lake_id]]
+            mode = self._connection_mode(lake_id)
+            if isinstance(mode, str):
+                cells = self.lake_cells[lake_id]
+                bottoms = [self._bottom(lake_id, cell) for cell in cells]
                 if stage < min(bottoms):
                     raise ValueError(f"starting_stage is below lake_bottom for lake '{lake_id}'.")
+                if mode == "rectangular":
+                    # Rectangular facilities need an explicit flat top; the connection
+                    # telev is lake_top, never the (transient) starting stage.
+                    tops = [self._top(lake_id, cell) for cell in cells]
+                    if any(top <= bottom for top, bottom in zip(tops, bottoms)):
+                        raise ValueError(
+                            f"lake_top must be above lake_bottom for rectangular lake '{lake_id}'."
+                        )
             table = self.prepared_tables.get(lake_id)
             if table is not None and not table.minimum_stage <= stage <= table.maximum_stage:
                 raise ValueError(f"starting_stage is outside the lake table range for lake '{lake_id}'.")
