@@ -222,11 +222,14 @@ class GHB(Boundaries):
                 name_field=fields["name"],
                 edges_only=True,
             ):  # FOR EACH GHB BOUDARY
-                boundary_height = row[fields['height_over_btm']]
+                # conductance + layer are required; the others are optional and
+                # may be absent from the source attributes (e.g. an elevation-only
+                # GHB shapefile), so read them defensively -> None when missing.
                 conductance = row[fields['conductance']]
                 layer = row[fields['layer']]
-                min_elev = row[fields['min_elev']]
-                elev = row[fields['elevation']]
+                boundary_height = row.get(fields['height_over_btm'])
+                min_elev = row.get(fields['min_elev'])
+                elev = row.get(fields['elevation'])
                 min_elev = min_elev if min_elev is not None else 0
                 # adjust layer number for zero-based indexing
                 layer_idx = layer - 1
