@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import flopy
@@ -9,6 +10,93 @@ import flopy
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+
+def _first_timestep_length(perlen: float, nstp, tsmult: float) -> float:
+    """Length of the *first* sub-step MF6's TDIS would take for one period.
+
+    Mirrors MF6's geometric time-step series so an ATS period can start where
+    the equivalent fixed-step period would have started.
+    """
+    nstp = int(nstp) if nstp else 1
+    if tsmult in (0, 1) or nstp <= 1:
+        return perlen / nstp
+    return perlen * (tsmult - 1.0) / (tsmult ** nstp - 1.0)
+
+
+def _resolve_ats_periods(ats, nper: int) -> dict[int, dict]:
+    """Normalise the ``ats`` argument to ``{period_1based: overrides_dict}``.
+
+    ``ats`` may be:
+      * ``None``/``False`` -> no ATS (``{}``)
+      * ``True``           -> every period
+      * an iterable of 1-based period numbers
+      * a mapping ``{period_1based: {overrides}}``
+    """
+    if ats is None or ats is False:
+        return {}
+    if ats is True:
+        return {p: {} for p in range(1, nper + 1)}
+    if isinstance(ats, Mapping):
+        periods = {int(p): (dict(ov) if ov else {}) for p, ov in ats.items()}
+    else:
+        periods = {int(p): {} for p in ats}
+    for p in periods:
+        if not (1 <= p <= nper):
+            raise ValueError(f"ats period {p} is out of range 1..{nper}")
+    return periods
+
+
+def _build_ats_records(
+    period_data: list,
+    ats_periods: dict[int, dict],
+    dt0, dtmin, dtmax, dtadj, dtfailadj,
+) -> tuple[list, list]:
+    """Build ATS period records.
+
+    Returns ``(flopy_records, human_records)`` where ``flopy_records`` use the
+    0-based ``iperats`` index FloPy expects (it writes ``iperats + 1`` to the
+    MF6 file) and ``human_records`` carry the 1-based period number for display.
+    Any of ``dt0/dtmin/dtmax`` left ``None`` is auto-derived from that period's
+    ``[perlen, nstp, tsmult]`` record.
+    """
+    flopy_records, human_records = [], []
+    for p in sorted(ats_periods):
+        rec = period_data[p - 1]
+        perlen = rec[0]
+        nstp = rec[1] if len(rec) > 1 else 1
+        tsmult = rec[2] if len(rec) > 2 else 1.0
+        ov = ats_periods[p]
+
+        _dt0 = ov.get("dt0", dt0)
+        if _dt0 is None:
+            _dt0 = _first_timestep_length(perlen, nstp, tsmult)
+        _dtmin = ov.get("dtmin", dtmin)
+        if _dtmin is None:
+            _dtmin = perlen * 1e-5
+        _dtmax = ov.get("dtmax", dtmax)
+        if _dtmax is None:
+            _dtmax = perlen
+        _dtadj = ov.get("dtadj", dtadj)
+        _dtfailadj = ov.get("dtfailadj", dtfailadj)
+
+        flopy_records.append([p - 1, _dt0, _dtmin, _dtmax, _dtadj, _dtfailadj])
+        human_records.append([p, _dt0, _dtmin, _dtmax, _dtadj, _dtfailadj])
+    return flopy_records, human_records
+
+
+def _set_maxats(sim, n: int):
+    """Set ``maxats`` on the ATS package FloPy auto-creates from ``ats_perioddata``.
+
+    FloPy does not size the ``MAXATS`` dimension from the record list, so the
+    written file would otherwise declare ``MAXATS 1`` regardless of how many
+    ATS periods were supplied. Returns the ATS package (or ``None``).
+    """
+    for pkg in sim.sim_package_list:
+        if "ats" in (getattr(pkg, "package_type", "") or "").lower():
+            pkg.maxats.set_data(n)
+            return pkg
+    return None
 
 
 class DisuGrid:
@@ -119,7 +207,13 @@ class TemporalDiscretization:
             per_len: int = 1,
             period_data: list = None,
             num_steps=10,
-            multiplier=1.1
+            multiplier=1.1,
+            ats=None,
+            ats_dt0: float | None = None,
+            ats_dtmin: float | None = None,
+            ats_dtmax: float | None = None,
+            ats_dtadj: float = 2.0,
+            ats_dtfailadj: float = 5.0,
     ):
         """Parameters
         ----------
@@ -135,17 +229,63 @@ class TemporalDiscretization:
             Default number of timesteps per period when ``period_data`` is omitted.
         multiplier
             Default timestep multiplier when ``period_data`` is omitted.
+        ats
+            Enable MF6 Adaptive Time Stepping. ATS lets MF6 shrink the time step
+            when the solver struggles (and retry a *failed* step at a smaller dt
+            instead of giving up) and grow it back on easy stretches -- ideal when
+            only a few stress periods are numerically hard (e.g. flashy inflows into
+            a lake). Accepts:
+
+              * ``None``/``False`` -- no ATS (default; unchanged behaviour).
+              * ``True`` -- ATS on every period (quiet periods take big steps, hard
+                ones auto-subdivide). The simplest "set it and forget it" choice.
+              * an iterable of **1-based** period numbers -- ATS on only those
+                periods, e.g. ``ats=[8, 10]``.
+              * a mapping ``{period_1based: {overrides}}`` -- per-period control,
+                e.g. ``ats={8: {"dtmin": 1e-4}}``. Overrides may set any of
+                ``dt0/dtmin/dtmax/dtadj/dtfailadj``.
+        ats_dt0
+            Initial step for ATS periods. ``None`` -> the first sub-step the
+            equivalent fixed-step period would have taken.
+        ats_dtmin
+            Minimum allowed step for ATS periods. ``None`` -> ``perlen * 1e-5``.
+        ats_dtmax
+            Maximum allowed step for ATS periods. ``None`` -> ``perlen`` (a full
+            period in one step when nothing is straining the solver).
+        ats_dtadj
+            Factor to grow/shrink the step by based on solver effort (must be 0, 1,
+            or > 1; 0/1 disables growth). Default ``2.0``.
+        ats_dtfailadj
+            Divisor applied to retry a *failed* step at a smaller dt (must be 0 or
+            > 1; 0 means a failed step stops the run). Default ``5.0``.
         """
         nper = model.nper
         if period_data is None:
             period_data = [[per_len, num_steps, multiplier] for _ in range(nper)]
         model.num_steps = num_steps
         model.per_len = per_len
+
+        ats_periods = _resolve_ats_periods(ats, nper)
+        ats_records = None
+        self.ats = None
+        self.ats_perioddata = None
+        if ats_periods:
+            ats_records, self.ats_perioddata = _build_ats_records(
+                period_data, ats_periods,
+                ats_dt0, ats_dtmin, ats_dtmax, ats_dtadj, ats_dtfailadj,
+            )
+
         self.tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
             model.sim,
             pname="tdis",
             time_units=time_units,
             nper=nper,
             perioddata=period_data,
+            ats_perioddata=ats_records,
             filename=f"{model.name}.tdis"
         )
+
+        if ats_records:
+            # FloPy auto-creates the ATS package but leaves MAXATS at 1; size it.
+            self.ats = _set_maxats(model.sim, len(ats_records))
+            model.ats_perioddata = self.ats_perioddata
