@@ -111,7 +111,7 @@ def test_first_timestep_length_matches_geometric_series():
 
 
 def test_resolve_ats_periods_true_selects_all():
-    assert _resolve_ats_periods(True, 3) == {1: {}, 2: {}, 3: {}}
+    assert _resolve_ats_periods(True, 3) == {0: {}, 1: {}, 2: {}}
 
 
 def test_resolve_ats_periods_none_and_false_select_nothing():
@@ -120,35 +120,37 @@ def test_resolve_ats_periods_none_and_false_select_nothing():
 
 
 def test_resolve_ats_periods_iterable_and_mapping():
+    # zero-based period indices
     assert _resolve_ats_periods([2, 4], 5) == {2: {}, 4: {}}
     resolved = _resolve_ats_periods({8: {"dtmin": 1e-4}}, 10)
     assert resolved == {8: {"dtmin": 1e-4}}
+    # index 0 is valid (first period); the whole range is 0..nper-1
+    assert _resolve_ats_periods([0], 5) == {0: {}}
 
 
-@pytest.mark.parametrize("bad", [0, 6, -1])
+@pytest.mark.parametrize("bad", [5, 6, -1])
 def test_resolve_ats_periods_out_of_range_raises(bad):
     with pytest.raises(ValueError, match="out of range"):
         _resolve_ats_periods([bad], 5)
 
 
-def test_build_ats_records_offbyone_and_human_mapping():
+def test_build_ats_records_zero_based_iperats_passthrough():
     period_data = [[1.0, 10, 1.1]] * 4
-    flopy_recs, human_recs = _build_ats_records(
-        period_data, {2: {}, 4: {}},
+    records = _build_ats_records(
+        period_data, {1: {}, 3: {}},
         dt0=None, dtmin=None, dtmax=None, dtadj=2.0, dtfailadj=5.0,
     )
-    # FloPy records carry the 0-based index (period-1); human carry 1-based.
-    assert [r[0] for r in flopy_recs] == [1, 3]
-    assert [r[0] for r in human_recs] == [2, 4]
+    # zero-based iperats passes straight through (FloPy adds 1 on write).
+    assert [r[0] for r in records] == [1, 3]
 
 
 def test_build_ats_records_autoderives_defaults():
     period_data = [[2.0, 4, 1.0]]  # perlen=2, nstp=4, tsmult=1 -> first step 0.5
-    flopy_recs, _ = _build_ats_records(
-        period_data, {1: {}},
+    records = _build_ats_records(
+        period_data, {0: {}},
         dt0=None, dtmin=None, dtmax=None, dtadj=2.0, dtfailadj=5.0,
     )
-    _, dt0, dtmin, dtmax, dtadj, dtfailadj = flopy_recs[0]
+    _, dt0, dtmin, dtmax, dtadj, dtfailadj = records[0]
     assert dt0 == pytest.approx(0.5)          # perlen/nstp
     assert dtmin == pytest.approx(2.0 * 1e-5)  # perlen * 1e-5
     assert dtmax == pytest.approx(2.0)         # perlen
@@ -157,16 +159,16 @@ def test_build_ats_records_autoderives_defaults():
 
 def test_build_ats_records_scalar_and_per_period_overrides():
     period_data = [[1.0, 10, 1.1]] * 3
-    flopy_recs, _ = _build_ats_records(
-        period_data, {1: {}, 2: {"dtmin": 9e-3, "dtadj": 3.0}},
+    records = _build_ats_records(
+        period_data, {0: {}, 1: {"dtmin": 9e-3, "dtadj": 3.0}},
         dt0=0.02, dtmin=1e-3, dtmax=0.5, dtadj=2.0, dtfailadj=4.0,
     )
-    # period 1: scalar defaults
-    assert flopy_recs[0][1:] == [0.02, 1e-3, 0.5, 2.0, 4.0]
-    # period 2: per-period overrides win over scalars
-    assert flopy_recs[1][2] == 9e-3   # dtmin overridden
-    assert flopy_recs[1][4] == 3.0    # dtadj overridden
-    assert flopy_recs[1][1] == 0.02   # dt0 still from scalar
+    # period 0: scalar defaults
+    assert records[0][1:] == [0.02, 1e-3, 0.5, 2.0, 4.0]
+    # period 1: per-period overrides win over scalars
+    assert records[1][2] == 9e-3   # dtmin overridden
+    assert records[1][4] == 3.0    # dtadj overridden
+    assert records[1][1] == 0.02   # dt0 still from scalar
 
 
 # --------------------------------------------------------------------------- #
@@ -189,34 +191,34 @@ def test_ats_true_writes_every_period_with_correct_maxats(tmp_path):
     assert "ATS6" in tdis_text.upper()
     maxats, periods = _ats_file_records(model.model_output_folder_path)
     assert maxats == 4
-    assert periods == [1, 2, 3, 4]
-    # human-facing record carries 1-based periods
-    assert [r[0] for r in td.ats_perioddata] == [1, 2, 3, 4]
+    assert periods == [1, 2, 3, 4]   # MF6 file is 1-based
+    # myflopy-facing records are zero-based
+    assert [r[0] for r in td.ats_perioddata] == [0, 1, 2, 3]
 
 
-def test_ats_list_writes_only_selected_1based_periods(tmp_path):
-    # The off-by-one, end to end: ask for MF6 periods 2 and 4.
+def test_ats_zero_based_input_writes_1based_file_periods(tmp_path):
+    # myflopy zero-based indices 1 and 3 (the 2nd and 4th stress periods)...
     model, td = _writable_model(
-        tmp_path, 5, [[1.0, 10, 1.1]] * 5, ats=[2, 4]
+        tmp_path, 5, [[1.0, 10, 1.1]] * 5, ats=[1, 3]
     )
     model.sim.write_simulation(silent=True)
     maxats, periods = _ats_file_records(model.model_output_folder_path)
     assert maxats == 2
-    assert periods == [2, 4]
-    # and the model exposes the resolved records
+    assert periods == [2, 4]   # ...are written 1-based (2 and 4) in the MF6 file
+    # and the model exposes the resolved (zero-based) records
     assert model.ats_perioddata == td.ats_perioddata
-    assert [r[0] for r in td.ats_perioddata] == [2, 4]
+    assert [r[0] for r in td.ats_perioddata] == [1, 3]
 
 
 def test_ats_mapping_overrides_reach_the_file(tmp_path):
     model, td = _writable_model(
-        tmp_path, 3, [[1.0, 10, 1.1]] * 3,
+        tmp_path, 4, [[1.0, 10, 1.1]] * 4,
         ats={3: {"dtmin": 1.5e-4, "dtmax": 0.4}},
     )
     model.sim.write_simulation(silent=True)
     maxats, periods = _ats_file_records(model.model_output_folder_path)
     assert maxats == 1
-    assert periods == [3]
+    assert periods == [4]   # zero-based 3 -> 1-based 4 in the file
     # dtmin/dtmax overrides captured in the human record
     _, _dt0, dtmin, dtmax, _adj, _fail = td.ats_perioddata[0]
     assert dtmin == pytest.approx(1.5e-4)
@@ -227,7 +229,12 @@ def test_ats_mapping_overrides_reach_the_file(tmp_path):
 # Slow: run MF6 and prove ATS subdivides the targeted period                  #
 # --------------------------------------------------------------------------- #
 def test_ats_subdivides_targeted_period_when_run(tmp_path):
-    """MF6 honours ATS: the ATS period is forced to >=4 steps, others take 1."""
+    """MF6 honours ATS: the ATS period is forced to >=4 steps, others take 1.
+
+    ATS targets zero-based period 1 (= "STRESS PERIOD 2" in MF6's 1-based
+    listing), the same period the WEL injects into (flopy stress_period_data
+    key 1 is also zero-based).
+    """
     import flopy
     import re
 
@@ -238,11 +245,11 @@ def test_ats_subdivides_targeted_period_when_run(tmp_path):
     DisvGrid(vor=grid, model=model, top=[10.0] * 6, bottom=[0.0] * 6, nlay=1)
     gwf = model.gwf
     # TDIS must exist before packages that key data by stress period (STO/WEL).
-    # All periods 1 step; ATS on period 2 with dtmax=0.3 forces >=4 substeps.
+    # All periods 1 step; ATS on zero-based period 1 with dtmax=0.3 -> >=4 substeps.
     TemporalDiscretization(
         model=model,
         period_data=[[1.0, 1, 1.0]] * 3,
-        ats={2: {"dt0": 0.3, "dtmin": 1e-4, "dtmax": 0.3, "dtadj": 1.0}},
+        ats={1: {"dt0": 0.3, "dtmin": 1e-4, "dtmax": 0.3, "dtadj": 1.0}},
     )
     flopy.mf6.ModflowGwfic(gwf, strt=8.0)
     flopy.mf6.ModflowGwfnpf(gwf, icelltype=1, k=1.0, save_flows=True)

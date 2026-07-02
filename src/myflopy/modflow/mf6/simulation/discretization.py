@@ -25,25 +25,29 @@ def _first_timestep_length(perlen: float, nstp, tsmult: float) -> float:
 
 
 def _resolve_ats_periods(ats, nper: int) -> dict[int, dict]:
-    """Normalise the ``ats`` argument to ``{period_1based: overrides_dict}``.
+    """Normalise the ``ats`` argument to ``{period: overrides_dict}``.
 
-    ``ats`` may be:
+    Stress periods are **zero-based** throughout myflopy (like FloPy's own
+    ``stress_period_data`` keys). ``ats`` may be:
       * ``None``/``False`` -> no ATS (``{}``)
       * ``True``           -> every period
-      * an iterable of 1-based period numbers
-      * a mapping ``{period_1based: {overrides}}``
+      * an iterable of zero-based period indices
+      * a mapping ``{period: {overrides}}``
     """
     if ats is None or ats is False:
         return {}
     if ats is True:
-        return {p: {} for p in range(1, nper + 1)}
+        return {p: {} for p in range(nper)}
     if isinstance(ats, Mapping):
         periods = {int(p): (dict(ov) if ov else {}) for p, ov in ats.items()}
     else:
         periods = {int(p): {} for p in ats}
     for p in periods:
-        if not (1 <= p <= nper):
-            raise ValueError(f"ats period {p} is out of range 1..{nper}")
+        if not (0 <= p < nper):
+            raise ValueError(
+                f"ats stress period {p} is out of range 0..{nper - 1} "
+                f"(stress periods are zero-based)"
+            )
     return periods
 
 
@@ -51,18 +55,18 @@ def _build_ats_records(
     period_data: list,
     ats_periods: dict[int, dict],
     dt0, dtmin, dtmax, dtadj, dtfailadj,
-) -> tuple[list, list]:
-    """Build ATS period records.
+) -> list:
+    """Build ATS period records with zero-based ``iperats``.
 
-    Returns ``(flopy_records, human_records)`` where ``flopy_records`` use the
-    0-based ``iperats`` index FloPy expects (it writes ``iperats + 1`` to the
-    MF6 file) and ``human_records`` carry the 1-based period number for display.
-    Any of ``dt0/dtmin/dtmax`` left ``None`` is auto-derived from that period's
-    ``[perlen, nstp, tsmult]`` record.
+    Stress periods are zero-based throughout myflopy. FloPy's ``ats_perioddata``
+    ``iperats`` column is likewise zero-based (FloPy writes ``iperats + 1`` to the
+    1-based MF6 input file), so the zero-based period index passes straight
+    through. Any of ``dt0/dtmin/dtmax`` left ``None`` is auto-derived from that
+    period's ``[perlen, nstp, tsmult]`` record.
     """
-    flopy_records, human_records = [], []
+    records = []
     for p in sorted(ats_periods):
-        rec = period_data[p - 1]
+        rec = period_data[p]
         perlen = rec[0]
         nstp = rec[1] if len(rec) > 1 else 1
         tsmult = rec[2] if len(rec) > 2 else 1.0
@@ -80,9 +84,8 @@ def _build_ats_records(
         _dtadj = ov.get("dtadj", dtadj)
         _dtfailadj = ov.get("dtfailadj", dtfailadj)
 
-        flopy_records.append([p - 1, _dt0, _dtmin, _dtmax, _dtadj, _dtfailadj])
-        human_records.append([p, _dt0, _dtmin, _dtmax, _dtadj, _dtfailadj])
-    return flopy_records, human_records
+        records.append([p, _dt0, _dtmin, _dtmax, _dtadj, _dtfailadj])
+    return records
 
 
 def _set_maxats(sim, n: int):
@@ -239,11 +242,15 @@ class TemporalDiscretization:
               * ``None``/``False`` -- no ATS (default; unchanged behaviour).
               * ``True`` -- ATS on every period (quiet periods take big steps, hard
                 ones auto-subdivide). The simplest "set it and forget it" choice.
-              * an iterable of **1-based** period numbers -- ATS on only those
-                periods, e.g. ``ats=[8, 10]``.
-              * a mapping ``{period_1based: {overrides}}`` -- per-period control,
-                e.g. ``ats={8: {"dtmin": 1e-4}}``. Overrides may set any of
+              * an iterable of **zero-based** period indices -- ATS on only those
+                periods, e.g. ``ats=[7, 9]`` for the 8th and 10th stress periods.
+              * a mapping ``{period: {overrides}}`` -- per-period control,
+                e.g. ``ats={7: {"dtmin": 1e-4}}``. Overrides may set any of
                 ``dt0/dtmin/dtmax/dtadj/dtfailadj``.
+
+            Stress periods are zero-based here (as everywhere in myflopy, and as
+            in FloPy's own ``stress_period_data`` keys); MF6's listing prints them
+            1-based, so myflopy period ``p`` is "PERIOD ``p + 1``" in the .lst.
         ats_dt0
             Initial step for ATS periods. ``None`` -> the first sub-step the
             equivalent fixed-step period would have taken.
@@ -270,10 +277,11 @@ class TemporalDiscretization:
         self.ats = None
         self.ats_perioddata = None
         if ats_periods:
-            ats_records, self.ats_perioddata = _build_ats_records(
+            ats_records = _build_ats_records(
                 period_data, ats_periods,
                 ats_dt0, ats_dtmin, ats_dtmax, ats_dtadj, ats_dtfailadj,
             )
+            self.ats_perioddata = ats_records
 
         self.tdis = flopy.mf6.modflow.mftdis.ModflowTdis(
             model.sim,
