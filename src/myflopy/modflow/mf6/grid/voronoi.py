@@ -668,13 +668,9 @@ class VoronoiGridPlus(VoronoiGrid):
             If the optional ``xugrid`` package is not installed.
         """
 
-        try:
-            import xugrid as xu
-        except ImportError as err:  # pragma: no cover - optional dependency
-            raise ImportError(
-                "ugrid2d() requires the optional 'xugrid' package. Install it "
-                "with `pip install xugrid xarray`."
-            ) from err
+        from myflopy._optional import require
+
+        xu = require("xugrid", feature="ugrid2d() unstructured-grid export")
 
         gp = self.get_disv_gridprops()
         nvert = int(gp["nvert"])

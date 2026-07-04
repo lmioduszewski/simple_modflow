@@ -8,14 +8,9 @@ from myflopy.modflow.mf6.pest.specs import ExpGeoStruct
 def _import_pyemu():
     """Import ``pyemu`` lazily with a clear error message."""
 
-    try:
-        import pyemu
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "pyemu is required for myflopy PEST workflows. Install pyemu "
-            "in the active Python environment before building a PestProject."
-        ) from exc
-    return pyemu
+    from myflopy._optional import require
+
+    return require("pyemu", feature="myflopy PEST workflows")
 
 
 def build_geostruct(spec: ExpGeoStruct):

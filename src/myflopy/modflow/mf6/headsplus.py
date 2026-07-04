@@ -293,14 +293,10 @@ class HeadsPlus(bf.HeadFile):
         ...     final.sel(layer=k).ugrid.plot(ax=ax)
         """
 
-        try:
-            import xarray as xr
-            import xugrid as xu
-        except ImportError as err:  # pragma: no cover - optional dependency
-            raise ImportError(
-                "to_xugrid() requires the optional 'xugrid' and 'xarray' "
-                "packages. Install them with `pip install xugrid xarray`."
-            ) from err
+        from myflopy._optional import require
+
+        xu = require("xugrid", feature="to_xugrid() unstructured-grid export")
+        import xarray as xr  # guaranteed present: xarray is a xugrid dependency
 
         ncpl = int(self.vor.ncpl)
         available = [tuple(int(v) for v in key) for key in self.kstpkper]

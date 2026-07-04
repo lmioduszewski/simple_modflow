@@ -44,6 +44,16 @@ parallel = [
   "pymetis>=2023.1",
   "scikit-learn>=1.3",
 ]
+# PEST/PEST++ calibration workflow. Installs the pyEMU Python toolkit; the
+# PEST++ executables themselves (pestpp-ies, pestpp-glm, ...) are separate
+# binaries and must be installed on PATH independently (they are not on PyPI).
+pest = [
+  "pyemu>=1.3",
+]
+# Unstructured-grid xarray interchange (VoronoiGridPlus.to_xugrid / NetCDF).
+xugrid = [
+  "xugrid>=0.9",
+]
 
 [tool.setuptools]
 include-package-data = false

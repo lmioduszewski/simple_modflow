@@ -75,14 +75,9 @@ def _pest_run_slug(name: str) -> str:
 def _import_pyemu():
     """Import pyEMU lazily with a workflow-oriented error message."""
 
-    try:
-        import pyemu
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "pyemu is required for PestProject workflows. Install pyemu in the "
-            "active environment before calling PestProject.build()."
-        ) from exc
-    return pyemu
+    from myflopy._optional import require
+
+    return require("pyemu", feature="PestProject workflows")
 
 
 def _pyemu_warning_class(pyemu_module):

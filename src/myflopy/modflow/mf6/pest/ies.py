@@ -62,13 +62,9 @@ _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
 
 
 def _import_pyemu():
-    try:
-        import pyemu
-    except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
-        raise ModuleNotFoundError(
-            "pyemu is required to read PESTPP-IES results."
-        ) from exc
-    return pyemu
+    from myflopy._optional import require
+
+    return require("pyemu", feature="reading PESTPP-IES results")
 
 
 def _parse_time(obsnme: str) -> float | None:
