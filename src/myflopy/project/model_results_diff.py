@@ -209,11 +209,137 @@ class BudgetResultDiff(_ResultDiffBase):
         ).reset_index(drop=True)
 
 
-class ResultsDiff:
-    """Results-tier facade: ``diff.results.heads`` / ``diff.results.budget``.
+class CellBudgetResultDiff(_ResultDiffBase):
+    """Per-package cell-budget difference vs the reference model.
 
-    Compares computed outputs (heads, volumetric budget) between models. Requires
-    completed runs; accessors raise if outputs are missing.
+    Wraps a grouped cell-budget accessor (GHB/DRN/… leakage, SFR/LAK exchange,
+    UZF recharge/saturation) and adds Δ summary stats + a within-tolerance flag on
+    its value column (``q``, ``gwrch``, ``sat``, …).
+    """
+
+    def __init__(self, diff, accessor):
+        super().__init__(diff)
+        self._accessor = accessor
+        self.package_name = accessor.package_name
+        self.value_name = accessor.value_name
+
+    def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
+        """Return aligned per-cell budget differences (value / reference / diff)."""
+
+        frame = self._accessor.compare(per=per, layer=layer, cells=cells)
+        if frame.empty:
+            return frame
+        if model_name is not None:
+            frame = frame[frame["model"].isin(self._targets(model_name))]
+        return frame.reset_index(drop=True)
+
+    def summary(
+        self,
+        *,
+        model_name=None,
+        atol: float = _DEFAULT_ATOL,
+        rtol: float = _DEFAULT_RTOL,
+        per=None,
+        layer=None,
+        cells=None,
+    ) -> pd.DataFrame:
+        """One row per model: max/mean/RMSE of the per-cell flow Δ, where the max
+        is, and whether every cell is within tolerance."""
+
+        data = self.get(model_name=model_name, per=per, layer=layer, cells=cells)
+        diff_column = f"{self.value_name}_diff"
+        reference_column = f"reference_{self.value_name}"
+        columns = [
+            "model", "package", "value", "n", "max_abs_diff", "mean_abs_diff",
+            "rmse", "argmax_cell", "within_tolerance",
+        ]
+        if data.empty or diff_column not in data.columns:
+            return pd.DataFrame(columns=columns)
+        rows = []
+        for name, sub in data.groupby("model"):
+            diff = sub[diff_column].to_numpy(dtype=float)
+            reference = (
+                sub[reference_column].to_numpy(dtype=float)
+                if reference_column in sub.columns
+                else np.zeros_like(diff)
+            )
+            abs_diff = np.abs(diff)
+            imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
+            rows.append(
+                {
+                    "model": name,
+                    "package": self.package_name,
+                    "value": self.value_name,
+                    "n": int(abs_diff.size),
+                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else 0.0,
+                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else 0.0,
+                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else 0.0,
+                    "argmax_cell": (
+                        int(sub["cell"].iloc[imax])
+                        if "cell" in sub.columns and abs_diff.size
+                        else -1
+                    ),
+                    "within_tolerance": bool(
+                        np.all(_within_tolerance(diff, reference, atol, rtol))
+                    ),
+                }
+            )
+        return pd.DataFrame(rows, columns=columns)
+
+
+# Packages with a per-cell budget diff via group.packages.<pkg>.results.q.
+_CELL_BUDGET_PACKAGES = ("ghb", "drn", "chd", "wel", "rch", "sfr", "lak")
+
+
+class _ResultsPackageNamespace:
+    """``diff.results.packages.<pkg>`` -> :class:`CellBudgetResultDiff`."""
+
+    def __init__(self, diff):
+        self._diff = diff
+        self.group = diff.group
+
+    def __getattr__(self, name: str) -> CellBudgetResultDiff:
+        pkg = str(name).lower()
+        try:
+            accessor = getattr(self.group.packages, pkg)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"No grouped results accessor for package {name!r}."
+            ) from exc
+        cell = getattr(getattr(accessor, "results", None), "q", None)
+        if cell is None:
+            raise AttributeError(f"Package {name!r} has no cell-budget results.")
+        return CellBudgetResultDiff(self._diff, cell)
+
+    def __dir__(self):
+        return sorted(set(super().__dir__()) | set(_CELL_BUDGET_PACKAGES))
+
+
+class _ResultsUzfNamespace:
+    """``diff.results.uzf.gwrch`` / ``.sat`` -> :class:`CellBudgetResultDiff`."""
+
+    def __init__(self, diff):
+        self._diff = diff
+        self.group = diff.group
+
+    def _uzf_results(self):
+        return self.group.packages.uzf.results
+
+    @property
+    def gwrch(self) -> CellBudgetResultDiff:
+        return CellBudgetResultDiff(self._diff, self._uzf_results().gwrch)
+
+    @property
+    def sat(self) -> CellBudgetResultDiff:
+        return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
+
+
+class ResultsDiff:
+    """Results-tier facade for :class:`~myflopy.project.model_diff.ModelDiff`.
+
+    Compares computed outputs between models -- ``heads``, the overall ``budget``,
+    per-package cell budgets (``packages.<pkg>``), and ``uzf`` recharge/saturation.
+    Requires completed runs; accessors raise if outputs are missing.
     """
 
     def __init__(self, diff):
@@ -227,3 +353,11 @@ class ResultsDiff:
     @property
     def budget(self) -> BudgetResultDiff:
         return BudgetResultDiff(self._diff)
+
+    @property
+    def packages(self) -> _ResultsPackageNamespace:
+        return _ResultsPackageNamespace(self._diff)
+
+    @property
+    def uzf(self) -> _ResultsUzfNamespace:
+        return _ResultsUzfNamespace(self._diff)

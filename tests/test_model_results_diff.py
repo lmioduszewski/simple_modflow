@@ -12,6 +12,7 @@ import pytest
 
 from myflopy.project.model_config import ModelConfig
 from myflopy.project.model_group import ModelGroup
+from myflopy.project.model_results_diff import CellBudgetResultDiff
 
 
 class _FakeHeads:
@@ -158,6 +159,64 @@ def test_results_self_reference_errors():
         diff.results.heads.summary(model_name="ghost")
 
 
+# --- per-package cell budget + UZF (5b) --------------------------------------
+class _FakeCellAccessor:
+    def __init__(self, package_name, value_name, frame):
+        self.package_name = package_name
+        self.value_name = value_name
+        self._frame = frame
+
+    def compare(self, **kwargs):
+        return self._frame.copy()
+
+
+def _cell_frame(rows):
+    """rows: (cell, q, reference_q)."""
+    frame = pd.DataFrame(rows, columns=["cell", "q", "reference_q"])
+    frame["model"] = "variant"
+    frame["reference_model"] = "ref"
+    frame["per"] = 0
+    frame["layer"] = 0
+    frame["q_diff"] = frame["q"].astype(float) - frame["reference_q"].astype(float)
+    return frame
+
+
+def _bare_diff(names=("ref", "variant")):
+    return ModelGroup({n: _FakeModel(n) for n in names}, reference="ref").diff()
+
+
+def test_cell_budget_summary_stats_and_tolerance():
+    frame = _cell_frame([(10, -5.0, -5.0), (11, -8.0, -5.0)])  # 3.0 diff at cell 11
+    cbd = CellBudgetResultDiff(_bare_diff(), _FakeCellAccessor("ghb", "q", frame))
+    row = cbd.summary().iloc[0]
+    assert row["package"] == "ghb" and row["value"] == "q"
+    assert row["max_abs_diff"] == pytest.approx(3.0)
+    assert row["argmax_cell"] == 11
+    assert not bool(row["within_tolerance"])
+
+
+def test_cell_budget_identical_within_tolerance():
+    frame = _cell_frame([(10, -5.0, -5.0), (11, -8.0, -8.0)])
+    cbd = CellBudgetResultDiff(_bare_diff(), _FakeCellAccessor("drn", "q", frame))
+    assert bool(cbd.summary().iloc[0]["within_tolerance"])
+
+
+def test_results_packages_namespace_resolves():
+    diff = _bare_diff()
+    ghb = diff.results.packages.ghb
+    assert isinstance(ghb, CellBudgetResultDiff)
+    assert ghb.package_name == "ghb"
+    with pytest.raises(AttributeError):
+        _ = diff.results.packages.definitely_not_a_package
+
+
+def test_results_uzf_namespace_resolves():
+    diff = _bare_diff()
+    assert diff.results.uzf.gwrch.value_name == "gwrch"
+    assert diff.results.uzf.sat.value_name == "sat"
+    assert diff.results.uzf.gwrch.package_name == "uzf"
+
+
 @pytest.mark.slow
 def test_results_diff_end_to_end_identical_on_canonical(canonical_run):
     """Real reader path: a run vs a fresh reload of its own outputs must read as
@@ -176,6 +235,13 @@ def test_results_diff_end_to_end_identical_on_canonical(canonical_run):
     budget = diff.results.budget.summary()
     assert not budget.empty
     assert bool(budget["within_tolerance"].all())
+
+    # per-package cell budget + UZF on real outputs (identical -> within tolerance)
+    ghb_cells = diff.results.packages.ghb.summary()
+    assert not ghb_cells.empty
+    assert bool(ghb_cells["within_tolerance"].all())
+    uzf = diff.results.uzf.gwrch.summary()
+    assert bool(uzf["within_tolerance"].all())
 
     report = diff.report(results=True)
     assert "Results differences" in report
