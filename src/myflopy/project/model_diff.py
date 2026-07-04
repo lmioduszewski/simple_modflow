@@ -569,6 +569,18 @@ class ModelDiff:
 
         return ConfigDiff(self)
 
+    @property
+    def results(self):
+        """Results-tier diff (heads, budget, ...) vs the reference.
+
+        Compares computed outputs, so both models must have completed runs. See
+        :class:`~myflopy.project.model_results_diff.ResultsDiff`.
+        """
+
+        from myflopy.project.model_results_diff import ResultsDiff
+
+        return ResultsDiff(self)
+
     def package(self, name: str):
         """Return the diff accessor for one package.
 
@@ -600,12 +612,17 @@ class ModelDiff:
             return pd.DataFrame(columns=_SUMMARY_COLUMNS)
         return pd.concat(frames, ignore_index=True)
 
-    def report(self) -> str:
-        """Return a readable Markdown 'faithful-copy' report."""
+    def report(self, *, results: bool = False) -> str:
+        """Return a readable Markdown 'faithful-copy' report.
 
-        return self._render_report()
+        By default this covers how the models are *set up* (packages, config,
+        connection geometry). Pass ``results=True`` to also compare computed
+        outputs (heads, budget) -- this reads output files and requires runs.
+        """
 
-    def _render_report(self, *, model_name=None) -> str:
+        return self._render_report(results=results)
+
+    def _render_report(self, *, model_name=None, results: bool = False) -> str:
         reference = self.group.reference
         summary = self.summary(model_name=model_name)
         config = self.config
@@ -621,11 +638,21 @@ class ModelDiff:
                     connection_summary.iloc[0]["identical"]
                 ):
                     connection_rows.append(connection_summary.iloc[0])
+            results_block = self._results_report_block(name) if results else None
             package_identical = block.empty or bool(block["identical"].all())
             config_identical = config_diffs.empty
             connections_identical = len(connection_rows) == 0
-            if package_identical and config_identical and connections_identical:
+            results_identical = results_block is None or results_block["identical"]
+            if (
+                package_identical
+                and config_identical
+                and connections_identical
+                and results_identical
+            ):
                 lines.append(f"## `{name}` -- identical to reference")
+                if results_block is not None and results_block["lines"]:
+                    lines.append("")
+                    lines.extend(results_block["lines"])
                 lines.append("")
                 continue
             lines.append(f"## `{name}` -- differs from reference")
@@ -675,7 +702,52 @@ class ModelDiff:
                         f"| {row['shared']} |"
                     )
                 lines.append("")
+            if results_block is not None and results_block["lines"]:
+                lines.extend(results_block["lines"])
+                lines.append("")
         return "\n".join(lines)
+
+    def _results_report_block(self, model_name: str) -> dict:
+        """Build the optional 'Results differences' report lines for one model.
+
+        Returns ``{"identical": bool, "lines": [...]}``. Results require completed
+        runs; if outputs are missing the block notes that and does not affect the
+        identical decision.
+        """
+
+        results = self.results
+        try:
+            heads = results.heads.summary(model_name=model_name)
+            budget = results.budget.summary(model_name=model_name)
+        except Exception:
+            return {"identical": True, "lines": ["_Results differences: outputs unavailable (models not run)._"]}
+
+        heads_ok = heads.empty or bool(heads["within_tolerance"].all())
+        budget_ok = budget.empty or bool(budget["within_tolerance"].all())
+        lines = ["Results differences:", ""]
+        lines.append("| output | within tolerance | detail |")
+        lines.append("|---|---|---|")
+        if not heads.empty:
+            row = heads.iloc[0]
+            lines.append(
+                f"| heads | {bool(row['within_tolerance'])} "
+                f"| max|Δ|={row['max_abs_diff']:.4g} at cell {row['argmax_cell']} "
+                f"layer {row['argmax_layer']} kstpkper {row['argmax_kstpkper']} |"
+            )
+        breached = budget[~budget["within_tolerance"]] if not budget.empty else budget
+        if not budget.empty:
+            if breached.empty:
+                lines.append("| budget | True | all terms within tolerance |")
+            else:
+                worst = breached.reindex(
+                    breached["max_abs_diff"].abs().sort_values(ascending=False).index
+                ).iloc[0]
+                lines.append(
+                    f"| budget | False "
+                    f"| {worst['term']} Δtotal={worst['diff_total']:.4g} "
+                    f"({worst['pct_change']:.1f}%) |"
+                )
+        return {"identical": heads_ok and budget_ok, "lines": lines}
 
     def __repr__(self) -> str:
         return (
