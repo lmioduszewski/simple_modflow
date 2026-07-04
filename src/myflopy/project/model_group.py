@@ -2386,6 +2386,18 @@ class ModelGroup:
 
         return GroupBudget(self, package=package)
 
+    def diff(self):
+        """Return a :class:`~myflopy.project.model_diff.ModelDiff` for this group.
+
+        Reference-star: every other model is compared against the group's
+        reference. See :class:`~myflopy.project.model_diff.ModelDiff` for the
+        structural + value difference tiers, ``summary()``, and ``report()``.
+        """
+
+        from myflopy.project.model_diff import ModelDiff
+
+        return ModelDiff(self)
+
     def _configure_shared_grid(self):
         """Enable shared lazy grid reuse across models with identical grids."""
 

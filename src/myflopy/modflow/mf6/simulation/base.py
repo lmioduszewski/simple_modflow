@@ -1026,6 +1026,43 @@ class SimulationBase:
             ]
         )
 
+    def diff(
+        self,
+        other,
+        *others,
+        crs: str = "EPSG:2927",
+        shared_grid: bool = False,
+        verbosity_level: int = 0,
+    ):
+        """Diff this model against one or more others (this model is the reference).
+
+        ``other`` / ``others`` may be model objects or workspace paths (each is
+        loaded lazily), and a single list/tuple is accepted too -- so
+        ``model.diff(other)``, ``model.diff(a, b)``, and ``model.diff([a, b])``
+        all work. Returns a
+        :class:`~myflopy.project.model_diff.ModelDiff` whose reference is this
+        model; every other model is compared against it (reference-star). For
+        explicit reference control or a reusable, named comparison, build a
+        :class:`~myflopy.project.model_group.ModelGroup` and call its ``.diff()``.
+        """
+
+        from myflopy.project.model_group import ModelGroup
+
+        extra: list = []
+        for item in (other, *others):
+            if isinstance(item, (list, tuple)):
+                extra.extend(item)
+            else:
+                extra.append(item)
+        group = ModelGroup(
+            [self, *extra],
+            reference=self.name,
+            crs=crs,
+            shared_grid=shared_grid,
+            verbosity_level=verbosity_level,
+        )
+        return group.diff()
+
     def _summary_ncpl(self) -> int | None:
         """Return the cell count shown by :meth:`summary`.
 
