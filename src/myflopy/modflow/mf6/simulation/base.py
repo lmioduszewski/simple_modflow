@@ -1063,6 +1063,23 @@ class SimulationBase:
         )
         return group.diff()
 
+    @property
+    def config(self):
+        """Return a normalized configuration view of this model.
+
+        A :class:`~myflopy.project.model_config.ModelConfig` capturing the
+        scalar settings that control how the run behaves -- TDIS timing
+        (including per-period ``perlen``/``nstp``/``tsmult``), the IMS solver
+        block, OC save/print records, and every package's OPTIONS -- as one
+        comparable ``(section, setting, value)`` table (``config.settings()``).
+        This is what the :class:`~myflopy.project.model_diff.ModelDiff` config
+        tier diffs across models.
+        """
+
+        from myflopy.project.model_config import ModelConfig
+
+        return ModelConfig.from_model(self)
+
     def _summary_ncpl(self) -> int | None:
         """Return the cell count shown by :meth:`summary`.
 

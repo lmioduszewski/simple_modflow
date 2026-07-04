@@ -14,15 +14,21 @@ import pytest
 
 from myflopy.project import model_diff as md
 from myflopy.project import model_group as mg
+from myflopy.project.model_config import ModelConfig
 from myflopy.project.model_group import ModelGroup
+
+
+def _empty_config() -> ModelConfig:
+    return ModelConfig(pd.DataFrame(columns=["section", "setting", "value"]))
 
 
 class _FakeModel:
     """Minimal stand-in exposing only what the diff engine reads."""
 
-    def __init__(self, name: str, package_names):
+    def __init__(self, name: str, package_names, config: ModelConfig | None = None):
         self.name = name
         self.package_names = list(package_names)
+        self.config = config if config is not None else _empty_config()
 
 
 def _ghb(model_name: str, rows):
@@ -241,6 +247,9 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
     spd[0] = kept
     ghb.stress_period_data.set_data(spd)
 
+    # Perturb the solver configuration too (config tier).
+    variant.ims.outer_dvclose = 0.5
+
     # Door 1: model.diff(other) -- this model is the reference.
     diff = reference.diff(variant)
     summary = diff.summary()
@@ -257,6 +266,13 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
     assert dropped_cell in set(
         only_ref.loc[only_ref["membership"] == "only_in_reference", "cell"]
     )
+
+    # Config tier detects the solver change, and model.config works on a real model.
+    config_diffs = diff.config.settings()
+    assert (config_diffs["setting"] == "outer_dvclose").any()
+    assert not bool(diff.config.summary().iloc[0]["identical"])
+    assert "ims" in reference.config.sections
+    assert "Configuration differences" in diff.report()
 
     # Door 2: ModelGroup(...).diff() gives the same reference-star result.
     group_summary = (

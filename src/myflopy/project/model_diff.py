@@ -252,6 +252,99 @@ class _FocusedModelDiff:
         return self._diff.package(package).values(model_name=self.model_name, **kwargs)
 
 
+_CONFIG_ABSENT = "<absent>"
+
+
+def _config_values_equal(left, right) -> bool:
+    """Compare two normalized config values robustly."""
+
+    if left is right:
+        return True
+    try:
+        return bool(left == right)
+    except Exception:  # pragma: no cover - defensive
+        return repr(left) == repr(right)
+
+
+class ConfigDiff:
+    """Configuration-tier difference: tdis / ims / oc / package OPTIONS.
+
+    Compares each model's normalized settings (``model.config``) against the
+    reference model's, surfacing every setting whose value differs or is present
+    in only one model. This answers "are these runs configured the same?" --
+    solver block, timing (including per-period ``nstp``/``tsmult``), and package
+    options -- the part a value/structural cell diff cannot see.
+    """
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.group = diff.group
+
+    def _targets(self, model_name=None) -> list[str]:
+        if model_name is not None:
+            name = str(model_name)
+            if name not in self.group.models:
+                raise KeyError(f"Model {name!r} is not in the group.")
+            if name == self.group.reference:
+                raise ValueError("The reference model cannot be diffed against itself.")
+            return [name]
+        return [name for name in self.group.models if name != self.group.reference]
+
+    def _settings_map(self, model_name: str) -> dict:
+        frame = self.group.models[model_name].config.settings()
+        return {
+            (row.section, row.setting): row.value
+            for row in frame.itertuples(index=False)
+        }
+
+    def settings(self, *, model_name=None, section=None) -> pd.DataFrame:
+        """Return the settings that differ from the reference model.
+
+        Columns: ``model, section, setting, reference_value, model_value``. A
+        setting present in only one model shows ``'<absent>'`` on the other side.
+        Optionally restrict to one ``section`` (e.g. ``"ims"`` or ``"tdis"``).
+        """
+
+        wanted_section = None if section is None else str(section).lower()
+        reference_map = self._settings_map(self.group.reference)
+        rows = []
+        for name in self._targets(model_name):
+            model_map = self._settings_map(name)
+            for key in sorted(set(reference_map) | set(model_map)):
+                section_name, setting = key
+                if wanted_section is not None and section_name != wanted_section:
+                    continue
+                ref_value = reference_map.get(key, _CONFIG_ABSENT)
+                model_value = model_map.get(key, _CONFIG_ABSENT)
+                if _config_values_equal(ref_value, model_value):
+                    continue
+                rows.append(
+                    {
+                        "model": name,
+                        "section": section_name,
+                        "setting": setting,
+                        "reference_value": ref_value,
+                        "model_value": model_value,
+                    }
+                )
+        return pd.DataFrame(
+            rows,
+            columns=["model", "section", "setting", "reference_value", "model_value"],
+        )
+
+    def summary(self, *, model_name=None) -> pd.DataFrame:
+        """Per-model count of differing configuration settings."""
+
+        differences = self.settings(model_name=model_name)
+        rows = []
+        for name in self._targets(model_name):
+            count = 0 if differences.empty else int((differences["model"] == name).sum())
+            rows.append(
+                {"model": name, "settings_differing": count, "identical": count == 0}
+            )
+        return pd.DataFrame(rows, columns=["model", "settings_differing", "identical"])
+
+
 class ModelDiff:
     """Reference-star difference across a :class:`ModelGroup` (the ``diff`` verb)."""
 
@@ -285,6 +378,12 @@ class ModelDiff:
         """Namespace for per-package diffs: ``diff.packages.ghb.cells()`` etc."""
 
         return _PackageDiffNamespace(self)
+
+    @property
+    def config(self) -> ConfigDiff:
+        """Configuration-tier diff (tdis / ims / oc / package options)."""
+
+        return ConfigDiff(self)
 
     def package(self, name: str) -> PackageDiff:
         """Return the :class:`PackageDiff` for one BC package."""
@@ -325,34 +424,49 @@ class ModelDiff:
     def _render_report(self, *, model_name=None) -> str:
         reference = self.group.reference
         summary = self.summary(model_name=model_name)
+        config = self.config
         targets = [model_name] if model_name is not None else self.model_names
         lines = [f"# Model diff -- reference: `{reference}`", ""]
-        if summary.empty:
-            lines.append("_No comparable BC packages found in the group._")
-            return "\n".join(lines)
         for name in targets:
             block = summary[summary["model"] == name]
-            if not block.empty and bool(block["identical"].all()):
+            config_diffs = config.settings(model_name=name)
+            package_identical = block.empty or bool(block["identical"].all())
+            config_identical = config_diffs.empty
+            if package_identical and config_identical:
                 lines.append(f"## `{name}` -- identical to reference")
                 lines.append("")
                 continue
             lines.append(f"## `{name}` -- differs from reference")
             lines.append("")
-            lines.append(
-                "| package | present (ref/model) | only-ref cells | only-model cells "
-                "| shared | value cells changed |"
-            )
-            lines.append("|---|---|---|---|---|---|")
-            for _, row in block.iterrows():
+            if not package_identical:
+                lines.append("Package differences:")
+                lines.append("")
                 lines.append(
-                    f"| {row['package']} "
-                    f"| {row['present_in_reference']}/{row['present_in_model']} "
-                    f"| {row['cells_only_in_reference']} "
-                    f"| {row['cells_only_in_model']} "
-                    f"| {row['cells_shared']} "
-                    f"| {row['value_cells_changed']} |"
+                    "| package | present (ref/model) | only-ref cells | only-model cells "
+                    "| shared | value cells changed |"
                 )
-            lines.append("")
+                lines.append("|---|---|---|---|---|---|")
+                for _, row in block.iterrows():
+                    lines.append(
+                        f"| {row['package']} "
+                        f"| {row['present_in_reference']}/{row['present_in_model']} "
+                        f"| {row['cells_only_in_reference']} "
+                        f"| {row['cells_only_in_model']} "
+                        f"| {row['cells_shared']} "
+                        f"| {row['value_cells_changed']} |"
+                    )
+                lines.append("")
+            if not config_identical:
+                lines.append("Configuration differences:")
+                lines.append("")
+                lines.append("| section | setting | reference | model |")
+                lines.append("|---|---|---|---|")
+                for _, row in config_diffs.iterrows():
+                    lines.append(
+                        f"| {row['section']} | {row['setting']} "
+                        f"| {row['reference_value']} | {row['model_value']} |"
+                    )
+                lines.append("")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
