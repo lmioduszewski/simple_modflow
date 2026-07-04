@@ -24,12 +24,17 @@ myflopy API.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.package_tables import build_cell_package_input_table
+from myflopy.modflow.mf6.package_tables import (
+    build_cell_package_input_table,
+    build_lak_connection_table,
+    build_sfr_reach_table,
+)
 from myflopy.project.model_group import GroupPackageInputs
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -38,6 +43,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # Cell-based stress-period BC packages the Phase-1 diff understands. These match
 # the packages the ModelGroup exposes as GroupPackageInputs accessors.
 _DIFF_PACKAGES: tuple[str, ...] = ("rch", "chd", "drn", "ghb", "wel")
+
+# Advanced packages diffed by connection/reach geometry (Phase 3).
+_CONNECTION_PACKAGES: tuple[str, ...] = ("lak", "sfr")
+_LAK_IDENTITY = (
+    "lake", "layer", "cell", "claktype", "belev", "telev", "connlen", "connwidth",
+)
+_SFR_IDENTITY = ("reach", "layer", "cell", "rlen")
 
 _SUMMARY_COLUMNS = [
     "package",
@@ -215,17 +227,179 @@ class PackageDiff:
         return int(nonzero.sum())
 
 
+class ConnectionDiff:
+    """Connection/reach geometry set difference for an advanced package.
+
+    LAK connections have no stable per-connection key (a cell carries one
+    vertical plus N horizontal connections, and their order is not guaranteed),
+    so the comparison is a **multiset** difference of full geometry tuples: a
+    connection whose geometry changed appears as one ``only_in_reference`` row
+    (the old geometry) and one ``only_in_model`` row (the new). SFR reaches are
+    handled the same way, keyed by reach number plus geometry. Float geometry is
+    rounded (``round_to``) so build noise does not read as a difference.
+    """
+
+    _package_name: str = ""
+    _identity_columns: tuple = ()
+    _row_label: str = "connections"
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.group = diff.group
+
+    @staticmethod
+    def _build_table(model):  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def _targets(self, model_name=None) -> list[str]:
+        if model_name is not None:
+            name = str(model_name)
+            if name not in self.group.models:
+                raise KeyError(f"Model {name!r} is not in the group.")
+            if name == self.group.reference:
+                raise ValueError("The reference model cannot be diffed against itself.")
+            return [name]
+        return [name for name in self.group.models if name != self.group.reference]
+
+    def _counter(self, model_name, *, round_to):
+        """Return ``(present, Counter-of-geometry-tuples, columns)`` for a model."""
+
+        model = self.group.models[model_name]
+        try:
+            table = type(self)._build_table(model)
+        except Exception:
+            return _package_present(model, self._package_name), Counter(), ()
+        if table is None or table.empty:
+            return _package_present(model, self._package_name), Counter(), ()
+        columns = tuple(col for col in self._identity_columns if col in table.columns)
+        frame = table.loc[:, list(columns)].copy()
+        for column in columns:
+            if pd.api.types.is_float_dtype(frame[column]):
+                frame[column] = frame[column].round(round_to)
+        tuples = [tuple(row) for row in frame.itertuples(index=False, name=None)]
+        return True, Counter(tuples), columns
+
+    def rows(self, *, model_name=None, round_to: int = 6, include_shared: bool = False):
+        """Return the connections/reaches that differ from the reference network.
+
+        Columns: ``model``, the geometry columns, and ``membership``
+        (``only_in_reference`` / ``only_in_model`` / ``shared``).
+        """
+
+        _, ref_counter, ref_columns = self._counter(self.group.reference, round_to=round_to)
+        collected: list[tuple] = []
+        columns = ref_columns
+        for name in self._targets(model_name):
+            _, counter, model_columns = self._counter(name, round_to=round_to)
+            if not columns:
+                columns = model_columns
+            for tup, count in sorted((ref_counter - counter).items()):
+                collected.extend([(name, *tup, "only_in_reference")] * count)
+            for tup, count in sorted((counter - ref_counter).items()):
+                collected.extend([(name, *tup, "only_in_model")] * count)
+            if include_shared:
+                for tup, count in sorted((ref_counter & counter).items()):
+                    collected.extend([(name, *tup, "shared")] * count)
+        resolved = list(columns) if columns else list(self._identity_columns)
+        return pd.DataFrame(collected, columns=["model", *resolved, "membership"])
+
+    def summary(self, *, model_name=None, round_to: int = 6) -> pd.DataFrame:
+        """Per-model connection/reach difference counts vs the reference."""
+
+        ref_present, ref_counter, _ = self._counter(self.group.reference, round_to=round_to)
+        rows = []
+        for name in self._targets(model_name):
+            present, counter, _ = self._counter(name, round_to=round_to)
+            only_ref = int(sum((ref_counter - counter).values()))
+            only_model = int(sum((counter - ref_counter).values()))
+            shared = int(sum((ref_counter & counter).values()))
+            identical = (ref_present == present) and only_ref == 0 and only_model == 0
+            rows.append(
+                {
+                    "package": self._package_name,
+                    "model": name,
+                    "present_in_reference": ref_present,
+                    "present_in_model": present,
+                    "only_in_reference": only_ref,
+                    "only_in_model": only_model,
+                    "shared": shared,
+                    "identical": identical,
+                }
+            )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "package", "model", "present_in_reference", "present_in_model",
+                "only_in_reference", "only_in_model", "shared", "identical",
+            ],
+        )
+
+
+class LakConnectionDiff(ConnectionDiff):
+    """LAK lake-connection geometry difference (``diff.packages.lak``)."""
+
+    _package_name = "lak"
+    _identity_columns = _LAK_IDENTITY
+    _row_label = "connections"
+
+    @staticmethod
+    def _build_table(model):
+        return build_lak_connection_table(model)
+
+    def connections(self, **kwargs) -> pd.DataFrame:
+        """Per-connection geometry set difference vs the reference lake network."""
+
+        return self.rows(**kwargs)
+
+
+class SfrReachDiff(ConnectionDiff):
+    """SFR reach geometry difference (``diff.packages.sfr``)."""
+
+    _package_name = "sfr"
+    _identity_columns = _SFR_IDENTITY
+    _row_label = "reaches"
+
+    @staticmethod
+    def _build_table(model):
+        return build_sfr_reach_table(model)
+
+    def reaches(self, **kwargs) -> pd.DataFrame:
+        """Per-reach geometry set difference vs the reference stream network."""
+
+        return self.rows(**kwargs)
+
+    # A reach is a stream's connection to a cell; expose both names.
+    connections = reaches
+
+
+def _resolve_package_diff(diff: "ModelDiff", name: str):
+    """Return the right diff accessor for a package name (BC vs connection)."""
+
+    pkg = str(name).lower()
+    if pkg in _DIFF_PACKAGES:
+        return PackageDiff(diff, pkg)
+    if pkg == "lak":
+        return LakConnectionDiff(diff)
+    if pkg == "sfr":
+        return SfrReachDiff(diff)
+    raise AttributeError(
+        f"ModelDiff does not diff package {name!r}; supported: "
+        f"{', '.join((*_DIFF_PACKAGES, *_CONNECTION_PACKAGES))}."
+    )
+
+
 class _PackageDiffNamespace:
-    """Attribute access ``diff.packages.<package>`` -> :class:`PackageDiff`."""
+    """Attribute access ``diff.packages.<package>`` -> a package diff accessor."""
 
     def __init__(self, diff: "ModelDiff"):
         self._diff = diff
 
-    def __getattr__(self, name: str) -> PackageDiff:
-        return self._diff.package(name)
+    def __getattr__(self, name: str):
+        return _resolve_package_diff(self._diff, name)
 
     def __dir__(self):
-        return sorted(set(super().__dir__()) | set(self._diff.package_names))
+        known = set(self._diff.package_names) | set(self._diff.connection_package_names)
+        return sorted(set(super().__dir__()) | known)
 
 
 class _FocusedModelDiff:
@@ -374,6 +548,16 @@ class ModelDiff:
         ]
 
     @property
+    def connection_package_names(self) -> list[str]:
+        """Connection-based packages (lak/sfr) present in at least one model."""
+
+        return [
+            pkg
+            for pkg in _CONNECTION_PACKAGES
+            if any(_package_present(model, pkg) for model in self.group.models.values())
+        ]
+
+    @property
     def packages(self) -> _PackageDiffNamespace:
         """Namespace for per-package diffs: ``diff.packages.ghb.cells()`` etc."""
 
@@ -385,15 +569,15 @@ class ModelDiff:
 
         return ConfigDiff(self)
 
-    def package(self, name: str) -> PackageDiff:
-        """Return the :class:`PackageDiff` for one BC package."""
+    def package(self, name: str):
+        """Return the diff accessor for one package.
 
-        pkg = str(name).lower()
-        if pkg not in _DIFF_PACKAGES:
-            raise AttributeError(
-                f"ModelDiff does not diff package {name!r}; supported: {', '.join(_DIFF_PACKAGES)}."
-            )
-        return PackageDiff(self, pkg)
+        BC packages (rch/chd/drn/ghb/wel) yield a :class:`PackageDiff` (cell
+        structural + value tiers); ``lak``/``sfr`` yield a connection/reach
+        geometry diff (:class:`LakConnectionDiff` / :class:`SfrReachDiff`).
+        """
+
+        return _resolve_package_diff(self, name)
 
     def model(self, name: str) -> _FocusedModelDiff:
         """Focus the diff on a single non-reference model."""
@@ -430,9 +614,17 @@ class ModelDiff:
         for name in targets:
             block = summary[summary["model"] == name]
             config_diffs = config.settings(model_name=name)
+            connection_rows = []
+            for pkg in self.connection_package_names:
+                connection_summary = self.package(pkg).summary(model_name=name)
+                if not connection_summary.empty and not bool(
+                    connection_summary.iloc[0]["identical"]
+                ):
+                    connection_rows.append(connection_summary.iloc[0])
             package_identical = block.empty or bool(block["identical"].all())
             config_identical = config_diffs.empty
-            if package_identical and config_identical:
+            connections_identical = len(connection_rows) == 0
+            if package_identical and config_identical and connections_identical:
                 lines.append(f"## `{name}` -- identical to reference")
                 lines.append("")
                 continue
@@ -465,6 +657,22 @@ class ModelDiff:
                     lines.append(
                         f"| {row['section']} | {row['setting']} "
                         f"| {row['reference_value']} | {row['model_value']} |"
+                    )
+                lines.append("")
+            if connection_rows:
+                lines.append("Connection differences:")
+                lines.append("")
+                lines.append(
+                    "| package | present (ref/model) | only-ref | only-model | shared |"
+                )
+                lines.append("|---|---|---|---|---|")
+                for row in connection_rows:
+                    lines.append(
+                        f"| {row['package']} "
+                        f"| {row['present_in_reference']}/{row['present_in_model']} "
+                        f"| {row['only_in_reference']} "
+                        f"| {row['only_in_model']} "
+                        f"| {row['shared']} |"
                     )
                 lines.append("")
         return "\n".join(lines)

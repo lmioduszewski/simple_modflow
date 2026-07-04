@@ -274,6 +274,13 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
     assert "ims" in reference.config.sections
     assert "Configuration differences" in diff.report()
 
+    # Connection tier works on real LAK/SFR networks: unperturbed here, so the
+    # lake connections and stream reaches must read as identical.
+    assert bool(diff.packages.lak.summary().iloc[0]["identical"])
+    assert diff.packages.lak.connections().empty
+    assert bool(diff.packages.sfr.summary().iloc[0]["identical"])
+    assert diff.packages.sfr.reaches().empty
+
     # Door 2: ModelGroup(...).diff() gives the same reference-star result.
     group_summary = (
         ModelGroup({"reference": reference, "variant": variant}, reference="reference")
