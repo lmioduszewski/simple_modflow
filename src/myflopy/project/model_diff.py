@@ -731,7 +731,7 @@ class ModelDiff:
             row = heads.iloc[0]
             lines.append(
                 f"| heads | {bool(row['within_tolerance'])} "
-                f"| max|Δ|={row['max_abs_diff']:.4g} at cell {row['argmax_cell']} "
+                f"| max|diff|={row['max_abs_diff']:.4g} at cell {row['argmax_cell']} "
                 f"layer {row['argmax_layer']} kstpkper {row['argmax_kstpkper']} |"
             )
         breached = budget[~budget["within_tolerance"]] if not budget.empty else budget
@@ -744,7 +744,7 @@ class ModelDiff:
                 ).iloc[0]
                 lines.append(
                     f"| budget | False "
-                    f"| {worst['term']} Δtotal={worst['diff_total']:.4g} "
+                    f"| {worst['term']} diff_total={worst['diff_total']:.4g} "
                     f"({worst['pct_change']:.1f}%) |"
                 )
         return {"identical": heads_ok and budget_ok, "lines": lines}
