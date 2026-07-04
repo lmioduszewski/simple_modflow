@@ -206,7 +206,9 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         assert "build_canonical_calibration_demo" in source
         assert "gold_standard" not in source
         assert "build_calibration_demo(" not in source
-        assert "PestProject" in source
+        # PEST projects are constructed via the model.pest(...) front door, not
+        # by importing PestProject directly.
+        assert "model.pest(" in source
         assert not any(
             output.get("output_type") == "error"
             for cell in notebook["cells"]
@@ -228,7 +230,7 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "plot_phi_distribution",
         "plot_phi_contributions",
         "parameters_at_bounds",
-        "style='grid'",
+        "style='pilotpoints'",
         "capture=True",
         "plot_field",
         "build_choropleth",
