@@ -1925,6 +1925,79 @@ class GroupLakStageResults:
         return None
 
 
+class GroupSfrStageResults:
+    """Grouped accessor for SFR reach stages and stage comparisons.
+
+    Mirrors :class:`GroupLakStageResults` for streams (keyed by ``reach``),
+    reading ``model.outputs.sfr.stage``.
+    """
+
+    def __init__(self, group: "ModelGroup"):
+        self.group = group
+
+    def get(
+        self,
+        *,
+        model_name: str | None = None,
+        reach: int | None = None,
+        per: int | None = None,
+    ) -> pd.DataFrame:
+        """Return aligned SFR reach stages for all models."""
+
+        rows: list[pd.DataFrame] = []
+        for current_model_name, model in self.group.models.items():
+            stage_data = np.asarray(model.outputs.sfr.stage.get(), dtype=float)
+            if stage_data.ndim == 1:
+                stage_data = stage_data.reshape(-1, 1)
+            periods = pd.DataFrame(stage_data, columns=list(range(stage_data.shape[1])))
+            periods["per"] = periods.index.astype(int)
+            frame = periods.melt(id_vars="per", var_name="reach", value_name="stage")
+            frame["reach"] = frame["reach"].astype(int)
+            frame["model"] = current_model_name
+            rows.append(frame[["model", "per", "reach", "stage"]])
+
+        if not rows:
+            return pd.DataFrame(columns=["model", "per", "reach", "stage"])
+        combined = pd.concat(rows, ignore_index=True)
+        if model_name is not None:
+            combined = combined.loc[combined["model"] == str(model_name)].copy()
+        if reach is not None:
+            combined = combined.loc[combined["reach"] == int(reach)].copy()
+        if per is not None:
+            combined = combined.loc[combined["per"] == int(per)].copy()
+        return combined.reset_index(drop=True)
+
+    def compare(
+        self,
+        *,
+        model_name: str | None = None,
+        reach: int | None = None,
+        per: int | None = None,
+    ) -> pd.DataFrame:
+        """Compare SFR reach stages against the reference model."""
+
+        columns = [
+            "model", "reference_model", "per", "reach",
+            "stage", "reference_stage", "stage_diff",
+        ]
+        data = self.get(reach=reach, per=per)
+        if data.empty:
+            return pd.DataFrame(columns=columns)
+
+        reference = self.group.reference
+        ref = (
+            data.loc[data["model"] == reference, ["per", "reach", "stage"]]
+            .rename(columns={"stage": "reference_stage"})
+            .copy()
+        )
+        comp = data.loc[data["model"] != reference].merge(ref, on=["per", "reach"], how="inner")
+        comp["reference_model"] = reference
+        comp["stage_diff"] = comp["stage"].astype(float) - comp["reference_stage"].astype(float)
+        if model_name is not None:
+            comp = comp.loc[comp["model"] == str(model_name)].copy()
+        return comp[columns]
+
+
 class GroupLakConnections:
     """Grouped accessor for lake-connection geometry."""
 
@@ -2127,6 +2200,12 @@ class GroupSfrResultsNamespace(GroupCellPackageResultsNamespace):
         """Return grouped SFR exchange helpers with normalized map behavior."""
 
         return self._result_accessor
+
+    @property
+    def stage(self) -> "GroupSfrStageResults":
+        """Return grouped SFR reach-stage helpers."""
+
+        return GroupSfrStageResults(self._result_accessor.group)
 
 
 class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):

@@ -12,7 +12,11 @@ import pytest
 
 from myflopy.project.model_config import ModelConfig
 from myflopy.project.model_group import ModelGroup
-from myflopy.project.model_results_diff import CellBudgetResultDiff
+from myflopy.project.model_results_diff import (
+    CellBudgetResultDiff,
+    MvrResultDiff,
+    StageResultDiff,
+)
 
 
 class _FakeHeads:
@@ -217,6 +221,64 @@ def test_results_uzf_namespace_resolves():
     assert diff.results.uzf.gwrch.package_name == "uzf"
 
 
+# --- LAK/SFR stage + MVR (5c) ------------------------------------------------
+class _FakeStageAccessor:
+    def __init__(self, frame, entity):
+        self._frame = frame
+        self._entity = entity
+
+    def compare(self, **kwargs):  # ignores per/entity filters for the test
+        return self._frame.copy()
+
+
+def _stage_frame(entity, rows):
+    """rows: (per, feature, stage, reference_stage)."""
+    frame = pd.DataFrame(rows, columns=["per", entity, "stage", "reference_stage"])
+    frame["model"] = "variant"
+    frame["reference_model"] = "ref"
+    frame["stage_diff"] = frame["stage"].astype(float) - frame["reference_stage"].astype(float)
+    return frame[
+        ["model", "reference_model", "per", entity, "stage", "reference_stage", "stage_diff"]
+    ]
+
+
+def test_lake_stage_diff_flags_overtop_location():
+    # lake 1 rises 0.46 in period 8 (facility-stage style)
+    frame = _stage_frame("lake", [(0, 0, 10.0, 10.0), (8, 1, 388.21, 387.75)])
+    sd = StageResultDiff(_bare_diff(), _FakeStageAccessor(frame, "lake"), entity="lake")
+    row = sd.summary().iloc[0]
+    assert row["max_abs_diff"] == pytest.approx(0.46)
+    assert row["argmax_lake"] == 1
+    assert row["argmax_per"] == 8
+    assert not bool(row["within_tolerance"])
+
+
+def test_sfr_reach_stage_diff_within_tolerance():
+    frame = _stage_frame("reach", [(0, 5, 3.0, 3.0), (1, 5, 3.0, 3.0)])
+    sd = StageResultDiff(_bare_diff(), _FakeStageAccessor(frame, "reach"), entity="reach")
+    summary = sd.summary()
+    assert "argmax_reach" in summary.columns
+    assert bool(summary.iloc[0]["within_tolerance"])
+
+
+def test_mvr_summary_empty_and_columns_without_mover_output():
+    diff = _bare_diff()
+    summary = diff.results.mvr.summary()
+    assert summary.empty
+    assert list(summary.columns) == MvrResultDiff._COLUMNS
+
+
+def test_results_lak_sfr_mvr_namespaces_resolve():
+    diff = _bare_diff()
+    assert isinstance(diff.results.lak.stage, StageResultDiff)
+    assert diff.results.lak.stage._entity == "lake"
+    assert isinstance(diff.results.sfr.stage, StageResultDiff)
+    assert diff.results.sfr.stage._entity == "reach"
+    assert isinstance(diff.results.lak.flow, CellBudgetResultDiff)
+    assert diff.results.sfr.flow.package_name == "sfr"
+    assert isinstance(diff.results.mvr, MvrResultDiff)
+
+
 @pytest.mark.slow
 def test_results_diff_end_to_end_identical_on_canonical(canonical_run):
     """Real reader path: a run vs a fresh reload of its own outputs must read as
@@ -242,6 +304,21 @@ def test_results_diff_end_to_end_identical_on_canonical(canonical_run):
     assert bool(ghb_cells["within_tolerance"].all())
     uzf = diff.results.uzf.gwrch.summary()
     assert bool(uzf["within_tolerance"].all())
+
+    # LAK/SFR stage + SFR flow on real outputs (identical -> within tolerance)
+    lak_stage = diff.results.lak.stage.summary()
+    assert not lak_stage.empty
+    assert bool(lak_stage["within_tolerance"].all())
+    sfr_stage = diff.results.sfr.stage.summary()
+    assert not sfr_stage.empty
+    assert bool(sfr_stage["within_tolerance"].all())
+    assert bool(diff.results.sfr.flow.summary()["within_tolerance"].all())
+
+    # MVR (canonical routes lake -> stream via the mover); if terms are present,
+    # a run vs a reload of itself must be within tolerance.
+    mvr = diff.results.mvr.summary()
+    if not mvr.empty:
+        assert bool(mvr["within_tolerance"].all())
 
     report = diff.report(results=True)
     assert "Results differences" in report

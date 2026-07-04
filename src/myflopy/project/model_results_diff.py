@@ -334,12 +334,171 @@ class _ResultsUzfNamespace:
         return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
 
 
+class StageResultDiff(_ResultDiffBase):
+    """Stage-difference results (LAK lakes or SFR reaches) vs the reference.
+
+    Wraps a grouped stage accessor keyed by a feature id (``lake`` or ``reach``)
+    and adds per-model Δstage stats, the worst feature/period, and a
+    within-tolerance flag.
+    """
+
+    def __init__(self, diff, accessor, *, entity: str):
+        super().__init__(diff)
+        self._accessor = accessor
+        self._entity = entity  # "lake" | "reach"
+
+    def get(self, *, model_name=None, per=None, entity=None) -> pd.DataFrame:
+        """Return aligned stage differences (per / feature / stage_diff)."""
+
+        kwargs = {"per": per}
+        if entity is not None:
+            kwargs[self._entity] = entity
+        frame = self._accessor.compare(**kwargs)
+        if model_name is not None and not frame.empty:
+            frame = frame[frame["model"].isin(self._targets(model_name))]
+        return frame.reset_index(drop=True)
+
+    # A stage series over stress periods; alias reads naturally for timeseries use.
+    timeseries = get
+
+    def summary(
+        self,
+        *,
+        model_name=None,
+        atol: float = _DEFAULT_ATOL,
+        rtol: float = _DEFAULT_RTOL,
+        per=None,
+    ) -> pd.DataFrame:
+        data = self.get(model_name=model_name, per=per)
+        argmax_column = f"argmax_{self._entity}"
+        columns = [
+            "model", "n", "max_abs_diff", "mean_abs_diff", "rmse",
+            argmax_column, "argmax_per", "within_tolerance",
+        ]
+        if data.empty or "stage_diff" not in data.columns:
+            return pd.DataFrame(columns=columns)
+        rows = []
+        for name, sub in data.groupby("model"):
+            diff = sub["stage_diff"].to_numpy(dtype=float)
+            reference = sub["reference_stage"].to_numpy(dtype=float)
+            abs_diff = np.abs(diff)
+            imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
+            rows.append(
+                {
+                    "model": name,
+                    "n": int(abs_diff.size),
+                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else 0.0,
+                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else 0.0,
+                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else 0.0,
+                    argmax_column: int(sub[self._entity].iloc[imax]) if abs_diff.size else -1,
+                    "argmax_per": int(sub["per"].iloc[imax]) if abs_diff.size else -1,
+                    "within_tolerance": bool(
+                        np.all(_within_tolerance(diff, reference, atol, rtol))
+                    ),
+                }
+            )
+        return pd.DataFrame(rows, columns=columns)
+
+
+class MvrResultDiff(_ResultDiffBase):
+    """Mover (MVR) difference vs the reference model.
+
+    MF6 realizes the mover as ``FROM-MVR`` / ``TO-MVR`` budget terms in the
+    packages it moves water between (no standalone MVR output), so this compares
+    those terms per package and direction across models.
+    """
+
+    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "wel", "rch")
+    _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
+    _COLUMNS = [
+        "model", "package", "direction", "value", "n",
+        "max_abs_diff", "mean_abs_diff", "rmse", "argmax_cell", "within_tolerance",
+    ]
+
+    def _cell_diff(self, package: str, term: str) -> CellBudgetResultDiff:
+        from myflopy.project.model_group import GroupCellPackageResults
+
+        accessor = GroupCellPackageResults(
+            self.group, package, budget_text=term, value_name="q"
+        )
+        return CellBudgetResultDiff(self._diff, accessor)
+
+    def get(self, *, package: str, direction: str = "from_mvr", model_name=None, **kwargs):
+        """Return per-cell mover flow differences for one package + direction."""
+
+        term = dict(self._DIRECTIONS)[direction]
+        return self._cell_diff(package.lower(), term).get(model_name=model_name, **kwargs)
+
+    def summary(
+        self, *, model_name=None, atol: float = _DEFAULT_ATOL, rtol: float = _DEFAULT_RTOL
+    ) -> pd.DataFrame:
+        """Per (model, package, direction) mover-flow Δ stats + within tolerance.
+
+        Packages without a mover term (or without results) are skipped.
+        """
+
+        frames = []
+        for package in self._MOVER_PACKAGES:
+            for direction, term in self._DIRECTIONS:
+                try:
+                    part = self._cell_diff(package, term).summary(
+                        model_name=model_name, atol=atol, rtol=rtol
+                    )
+                except Exception:
+                    continue
+                if part.empty:
+                    continue
+                part = part.copy()
+                part["direction"] = direction
+                frames.append(part)
+        if not frames:
+            return pd.DataFrame(columns=self._COLUMNS)
+        return pd.concat(frames, ignore_index=True)[self._COLUMNS]
+
+
+class _ResultsLakNamespace:
+    """``diff.results.lak.stage`` / ``.flow``."""
+
+    def __init__(self, diff):
+        self._diff = diff
+        self.group = diff.group
+
+    @property
+    def stage(self) -> StageResultDiff:
+        from myflopy.project.model_group import GroupLakStageResults
+
+        return StageResultDiff(self._diff, GroupLakStageResults(self.group), entity="lake")
+
+    @property
+    def flow(self) -> CellBudgetResultDiff:
+        return CellBudgetResultDiff(self._diff, self.group.packages.lak.results.q)
+
+
+class _ResultsSfrNamespace:
+    """``diff.results.sfr.stage`` / ``.flow``."""
+
+    def __init__(self, diff):
+        self._diff = diff
+        self.group = diff.group
+
+    @property
+    def stage(self) -> StageResultDiff:
+        from myflopy.project.model_group import GroupSfrStageResults
+
+        return StageResultDiff(self._diff, GroupSfrStageResults(self.group), entity="reach")
+
+    @property
+    def flow(self) -> CellBudgetResultDiff:
+        return CellBudgetResultDiff(self._diff, self.group.packages.sfr.results.q)
+
+
 class ResultsDiff:
     """Results-tier facade for :class:`~myflopy.project.model_diff.ModelDiff`.
 
     Compares computed outputs between models -- ``heads``, the overall ``budget``,
-    per-package cell budgets (``packages.<pkg>``), and ``uzf`` recharge/saturation.
-    Requires completed runs; accessors raise if outputs are missing.
+    per-package cell budgets (``packages.<pkg>``), ``uzf`` recharge/saturation,
+    lake/stream ``lak``/``sfr`` (stage + flow), and the mover (``mvr``). Requires
+    completed runs; accessors raise if outputs are missing.
     """
 
     def __init__(self, diff):
@@ -361,3 +520,15 @@ class ResultsDiff:
     @property
     def uzf(self) -> _ResultsUzfNamespace:
         return _ResultsUzfNamespace(self._diff)
+
+    @property
+    def lak(self) -> _ResultsLakNamespace:
+        return _ResultsLakNamespace(self._diff)
+
+    @property
+    def sfr(self) -> _ResultsSfrNamespace:
+        return _ResultsSfrNamespace(self._diff)
+
+    @property
+    def mvr(self) -> MvrResultDiff:
+        return MvrResultDiff(self._diff)
