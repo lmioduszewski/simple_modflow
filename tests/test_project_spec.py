@@ -2,9 +2,18 @@ from pathlib import Path
 
 import geopandas as gpd
 import myflopy as mf
+import pytest
 from shapely.geometry import LineString, Point, Polygon
 
+from myflopy.builders import build_gwf_gwt_exchange
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+from myflopy.specs import ExchangeSpec, PostBuildHook
+
+
+def _example_post_build_hook(model, packages, context):
+    """Module-level hook callback (importable, so it serializes by reference)."""
+
+    return {"ran": True}
 
 
 def _basic_simulation() -> mf.SimulationSpec:
@@ -211,6 +220,83 @@ def test_package_ref_round_trip_and_model_package_lookup():
     assert loaded.package_names == ("npf/base",)
     assert loaded.package("npf").key == "npf/base"
     assert loaded.package("npf/base").key == "npf/base"
+
+
+def test_model_spec_post_build_hooks_round_trip():
+    model = mf.ModelSpec(
+        "gwf",
+        "gwf",
+        hooks=(PostBuildHook("record", _example_post_build_hook),),
+    )
+
+    payload = model.to_dict()
+    assert payload["hooks"] == [
+        {
+            "name": "record",
+            "callback": "tests.test_project_spec:_example_post_build_hook",
+        }
+    ]
+
+    loaded = mf.ModelSpec.from_dict(payload)
+    assert len(loaded.hooks) == 1
+    assert loaded.hooks[0].name == "record"
+    # Resolved back to the very same importable function object.
+    assert loaded.hooks[0].callback is _example_post_build_hook
+
+
+def test_simulation_spec_exchanges_round_trip():
+    gwf = mf.gwf("flow").with_package(mf.ic(strt=1.0)).with_package(mf.npf(k=1.0))
+    gwt = mf.gwt("transport")
+    exchange = ExchangeSpec(
+        "flow-transport",
+        build_gwf_gwt_exchange,
+        models=("flow", "transport"),
+        options={"print_flows": True},
+    )
+    simulation = mf.SimulationSpec(
+        "coupled",
+        models=(gwf, gwt),
+        packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
+        exchanges=(exchange,),
+    )
+
+    payload = simulation.to_dict()
+    assert payload["exchanges"] == [
+        {
+            "name": "flow-transport",
+            "builder": "myflopy.builders:build_gwf_gwt_exchange",
+            "models": ["flow", "transport"],
+            "options": {"print_flows": True},
+        }
+    ]
+
+    loaded = mf.SimulationSpec.from_dict(payload)
+    assert len(loaded.exchanges) == 1
+    restored = loaded.exchanges[0]
+    assert restored.name == "flow-transport"
+    assert restored.builder is build_gwf_gwt_exchange
+    assert restored.models == ("flow", "transport")
+    assert restored.options == {"print_flows": True}
+
+
+def test_exchange_with_non_importable_builder_fails_loud():
+    """A lambda/closure builder cannot serialize; to_dict must say so clearly,
+    replacing the old blanket 'exchanges cannot be serialized' guard."""
+
+    exchange = ExchangeSpec(
+        "bad",
+        lambda simulation, models, **options: None,
+        models=("flow", "transport"),
+    )
+    simulation = mf.SimulationSpec(
+        "coupled",
+        models=(mf.gwf("flow"), mf.gwt("transport")),
+        packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),),
+        exchanges=(exchange,),
+    )
+
+    with pytest.raises(ValueError, match="cannot be serialized"):
+        simulation.to_dict()
 
 
 def test_voronoi_grid_pickles_leanly(tmp_path):

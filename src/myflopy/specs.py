@@ -1187,6 +1187,24 @@ class PostBuildHook:
 
         return self.callback(model, packages, context)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready representation of this hook.
+
+        The ``callback`` must be an importable (module-level) function;
+        lambdas and closures raise via :func:`_callable_ref`.
+        """
+
+        return {
+            "name": self.name,
+            "callback": _callable_ref(self.callback),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PostBuildHook:
+        """Recreate a hook from :meth:`to_dict` output."""
+
+        return cls(name=data["name"], callback=_resolve_callable(data["callback"]))
+
 
 @dataclass(frozen=True, slots=True)
 class BuiltModel:
@@ -1457,12 +1475,12 @@ class ModelSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a durable JSON-ready representation of this model recipe."""
+        """Return a durable JSON-ready representation of this model recipe.
 
-        if self.hooks:
-            raise ValueError(
-                "ModelSpec with post-build hooks cannot be serialized yet."
-            )
+        Post-build hooks are serialized by importable reference; a hook whose
+        callback is a lambda or closure raises via :func:`_callable_ref`.
+        """
+
         payload: dict[str, Any] = {
             "kind": "ModelSpec",
             "name": self.name,
@@ -1477,6 +1495,8 @@ class ModelSpec:
             payload["builder"] = _callable_ref(self.builder)
         if self.grid is not None:
             payload["grid"] = self.grid.to_dict()
+        if self.hooks:
+            payload["hooks"] = [hook.to_dict() for hook in self.hooks]
         return payload
 
     @classmethod
@@ -1499,6 +1519,9 @@ class ModelSpec:
             ),
             context=ModelContext(
                 metadata=_spec_value(dict(context_data.get("metadata", {}))),
+            ),
+            hooks=tuple(
+                PostBuildHook.from_dict(hook) for hook in data.get("hooks", ())
             ),
             grid=_grid_from_dict(data.get("grid")),
         )
@@ -1590,6 +1613,31 @@ class ExchangeSpec:
         """Return a copy with selected exchange options added or replaced."""
 
         return replace(self, options={**self.options, **overrides})
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready representation of this exchange.
+
+        The ``builder`` must be an importable (module-level) callable;
+        lambdas and closures raise via :func:`_callable_ref`.
+        """
+
+        return {
+            "name": self.name,
+            "builder": _callable_ref(self.builder),
+            "models": list(self.models),
+            "options": _json_value(self.options),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExchangeSpec:
+        """Recreate an exchange from :meth:`to_dict` output."""
+
+        return cls(
+            name=data["name"],
+            builder=_resolve_callable(data["builder"]),
+            models=tuple(data.get("models", ())),
+            options=_spec_value(dict(data.get("options", {}))),
+        )
 
     def __repr__(self) -> str:
         return (
@@ -2014,15 +2062,19 @@ class SimulationSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a durable JSON-ready representation of this simulation recipe."""
+        """Return a durable JSON-ready representation of this simulation recipe.
 
-        if self.exchanges:
-            raise ValueError("SimulationSpec with exchanges cannot be serialized yet.")
+        Inter-model exchanges are serialized by importable builder reference; an
+        exchange whose builder is a lambda or closure raises via
+        :func:`_callable_ref`.
+        """
+
         payload: dict[str, Any] = {
             "kind": "SimulationSpec",
             "name": self.name,
             "models": [model.to_dict() for model in self.models],
             "packages": [package.to_dict() for package in self.packages],
+            "exchanges": [exchange.to_dict() for exchange in self.exchanges],
             "options": _json_value(self.options),
             "builder": _callable_ref(self.builder),
             "executable": self.executable,
@@ -2048,6 +2100,10 @@ class SimulationSpec:
             packages=tuple(
                 _package_entry_from_dict(package)
                 for package in data.get("packages", ())
+            ),
+            exchanges=tuple(
+                ExchangeSpec.from_dict(exchange)
+                for exchange in data.get("exchanges", ())
             ),
             options=_spec_value(dict(data.get("options", {}))),
             builder=(
