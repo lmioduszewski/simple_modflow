@@ -121,14 +121,22 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 4. **Sensitivity / identifiability analysis** helpers.
 
 ### Broader things myflopy could learn from modflow-setup (DOI-USGS)
-> Re-verified against the code on 2026-06-20. **Most items previously listed here are
-> already built** (see `docs/myflopy_context.md`). Genuine remaining gaps only:
-- **YAML/TOML spec serialization** — thin wrapper over the existing
-  `SimulationSpec.to_dict()` / `from_dict()` (round-trip already implemented in `specs.py`)
+> Re-verified against the code on 2026-06-20; PEST/serialization/sampling rows refreshed
+> 2026-07-03. **Most items previously listed here are already built** (see
+> `docs/myflopy_context.md`). Genuine remaining gaps only:
+- **YAML/TOML spec serialization** — thin file-format wrapper over
+  `SimulationSpec.to_dict()` / `from_dict()`. The round-trip is now **complete** in
+  `specs.py` (incl. inter-model exchanges + post-build hooks); only the YAML/TOML wrapper
+  is missing.
 - **NHDPlus direct SFR reader** — `SFRBuilder` already builds reaches from any stream
   centerline LineString table; only national NHDPlus ingestion is missing
-- **Area-weighted raster resampling** — sampling is point-at-centroid today
-- **Reading existing MODFLOW array files** as source data
+- **Reading existing MODFLOW array files** as source data — a raw array-file *source* is
+  missing (existing-model *surfaces* import via `LayerStack.from_modflow`). Note
+  **area-weighted raster sampling is done and the default** (`grid/surfaces.py`
+  `_area_weighted_sample`) — not a gap.
+- **`GridSpec.structured` / `from_geopackage` resolution** — the constructors exist but
+  **fail fast** (unwired); myflopy resolves `voronoi` + `python` only. Use
+  `GridSpec.from_object` for a built structured/existing grid.
 - **LGR parent-child model pairs** — absent (niche for a Voronoi-first toolkit)
 
 Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/wel/rch`,
