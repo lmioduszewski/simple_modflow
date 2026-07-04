@@ -5,6 +5,7 @@ from myflopy.viz import mpl_axes
 
 from collections.abc import Mapping, Sequence
 import hashlib
+import warnings
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -37,6 +38,16 @@ from myflopy.modflow.mf6.package_explorer import (
 )
 
 TResultsNamespace = TypeVar("TResultsNamespace")
+
+
+def _warn_deprecated(old: str, new: str) -> None:
+    """Emit a ``DeprecationWarning`` steering callers from ``old`` to ``new``."""
+
+    warnings.warn(
+        f"{old} is deprecated and will be removed in a future release; use {new}.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 def _coerce_kstpkper(model, per: int | None = None, kstpkper: tuple[int, int] | None = None):
@@ -534,6 +545,35 @@ class GroupPackageInputs:
             layer=layer,
             cells=cells,
         )
+
+    def summary(
+        self,
+        *,
+        model_name: str | None = None,
+        per: int | None = None,
+        layer: int | Sequence[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return a per-model summary of this package's input coverage.
+
+        Mirrors the single-model ``model.packages.<pkg>.inputs.summary()`` verb:
+        one row per model with the number of applied cells and stress periods.
+        """
+
+        data = self.get(model_name=model_name, per=per, layer=layer)
+        columns = ["model", "package", "cells", "periods"]
+        if data.empty:
+            return pd.DataFrame(columns=columns)
+        rows = []
+        for current_model_name, sub in data.groupby("model"):
+            rows.append(
+                {
+                    "model": current_model_name,
+                    "package": self.package_name,
+                    "cells": int(sub["cell"].nunique()) if "cell" in sub.columns else 0,
+                    "periods": int(sub["per"].nunique()) if "per" in sub.columns else 0,
+                }
+            )
+        return pd.DataFrame(rows, columns=columns)
 
     def compare(
         self,
@@ -2235,37 +2275,37 @@ class GroupPackages:
     def rch(self) -> GroupPackageAccessor:
         """Grouped recharge input helpers."""
 
-        return GroupPackageAccessor(self.group.rch)
+        return GroupPackageAccessor(self.group._rch)
 
     @property
     def chd(self) -> GroupPackageAccessor:
         """Grouped constant-head input helpers."""
 
-        return GroupPackageAccessor(self.group.chd)
+        return GroupPackageAccessor(self.group._chd)
 
     @property
     def drn(self) -> GroupPackageAccessor:
         """Grouped drain input helpers."""
 
-        return GroupPackageAccessor(self.group.drn)
+        return GroupPackageAccessor(self.group._drn)
 
     @property
     def ghb(self) -> GroupPackageAccessor:
         """Grouped general-head-boundary input helpers."""
 
-        return GroupPackageAccessor(self.group.ghb)
+        return GroupPackageAccessor(self.group._ghb)
 
     @property
     def wel(self) -> GroupPackageAccessor:
         """Grouped well package input helpers."""
 
-        return GroupPackageAccessor(self.group.wel)
+        return GroupPackageAccessor(self.group._wel)
 
     @property
     def uzf(self) -> GroupUzfPackageAccessor:
         """Grouped UZF input helpers."""
 
-        return GroupUzfPackageAccessor(self.group.uzf)
+        return GroupUzfPackageAccessor(self.group._uzf)
 
     @property
     def sfr(self) -> GroupResultsOnlyPackageAccessor[GroupSfrResultsNamespace]:
@@ -2350,13 +2390,59 @@ class ModelGroup:
 
         self.hds = GroupHeads(self)
         self.outputs = GroupOutputs(self)
-        self.rch = GroupPackageInputs(self, "rch")
-        self.chd = GroupPackageInputs(self, "chd")
-        self.drn = GroupPackageInputs(self, "drn")
-        self.ghb = GroupPackageInputs(self, "ghb")
-        self.wel = GroupPackageInputs(self, "wel")
-        self.uzf = GroupUzfInputs(self)
+        self._rch = GroupPackageInputs(self, "rch")
+        self._chd = GroupPackageInputs(self, "chd")
+        self._drn = GroupPackageInputs(self, "drn")
+        self._ghb = GroupPackageInputs(self, "ghb")
+        self._wel = GroupPackageInputs(self, "wel")
+        self._uzf = GroupUzfInputs(self)
         self.packages = GroupPackages(self)
+
+    # -- deprecated flat input shortcuts --------------------------------------
+    # These duplicate ``group.packages.<pkg>.inputs`` (which mirrors the
+    # single-model ``model.packages.<pkg>.inputs``) and have no single-model
+    # equivalent, so they are deprecated in favor of the mirrored path.
+    @property
+    def rch(self) -> "GroupPackageInputs":
+        """Deprecated. Use ``group.packages.rch.inputs``."""
+
+        _warn_deprecated("ModelGroup.rch", "group.packages.rch.inputs")
+        return self._rch
+
+    @property
+    def chd(self) -> "GroupPackageInputs":
+        """Deprecated. Use ``group.packages.chd.inputs``."""
+
+        _warn_deprecated("ModelGroup.chd", "group.packages.chd.inputs")
+        return self._chd
+
+    @property
+    def drn(self) -> "GroupPackageInputs":
+        """Deprecated. Use ``group.packages.drn.inputs``."""
+
+        _warn_deprecated("ModelGroup.drn", "group.packages.drn.inputs")
+        return self._drn
+
+    @property
+    def ghb(self) -> "GroupPackageInputs":
+        """Deprecated. Use ``group.packages.ghb.inputs``."""
+
+        _warn_deprecated("ModelGroup.ghb", "group.packages.ghb.inputs")
+        return self._ghb
+
+    @property
+    def wel(self) -> "GroupPackageInputs":
+        """Deprecated. Use ``group.packages.wel.inputs``."""
+
+        _warn_deprecated("ModelGroup.wel", "group.packages.wel.inputs")
+        return self._wel
+
+    @property
+    def uzf(self) -> "GroupUzfInputs":
+        """Deprecated. Use ``group.packages.uzf.inputs``."""
+
+        _warn_deprecated("ModelGroup.uzf", "group.packages.uzf.inputs")
+        return self._uzf
 
     @property
     def run_ids(self) -> list[str]:

@@ -132,7 +132,9 @@ def test_model_packages_exposes_registry_backed_wel_accessors():
 
 def test_model_group_exposes_wel_package_accessor_without_full_initialization():
     group = _DummyModel()
-    group.wel = "wel-inputs"
+    # GroupPackages reads the private input accessor; the public ``group.wel``
+    # shortcut is deprecated in favor of ``group.packages.wel.inputs``.
+    group._wel = "wel-inputs"
     packages = GroupPackages(group)
 
     assert packages.wel.inputs == "wel-inputs"
