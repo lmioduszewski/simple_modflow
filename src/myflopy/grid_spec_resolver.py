@@ -517,8 +517,10 @@ def resolve_grid_spec(
 
     if spec.method != "voronoi":
         raise NotImplementedError(
-            "GridSpec.resolve currently wires Python and generated Voronoi specs. "
-            f"Received method={spec.method!r}."
+            "GridSpec.resolve currently wires Python (GridSpec.python) and "
+            "generated Voronoi (GridSpec.voronoi) specs only. To use an existing "
+            "or structured grid, wrap a built grid with GridSpec.from_object(grid) "
+            f"or load one with GridSpec.from_pickle(path). Received method={spec.method!r}."
         )
     if spec.engine != "triangle_voronoi_plus":
         raise NotImplementedError(

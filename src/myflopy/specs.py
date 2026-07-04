@@ -695,17 +695,22 @@ class GridSpec:
         crs: str | None = None,
         **options: Any,
     ) -> GridSpec:
-        """Return a grid spec that loads an existing grid from a GeoPackage."""
+        """Load an existing grid from a GeoPackage. **Not implemented yet.**
 
-        if id_column is not None:
-            options = {**options, "id_column": id_column}
-        return cls(
-            name=name,
-            grid_type=grid_type,
-            method="existing",
-            source=GeoPackageSourceSpec(path, layer=layer),
-            crs=crs,
-            options=options,
+        Planned API. :meth:`resolve` currently wires only generated Voronoi
+        grids (:meth:`voronoi`) and Python grid builders (:meth:`python`), so a
+        spec created here would raise at resolve time -- far from this call.
+        This constructor therefore fails fast. To use an existing grid today,
+        wrap a built grid object with :meth:`from_object`, or load a pickled
+        grid with :meth:`from_pickle`.
+        """
+
+        raise NotImplementedError(
+            "GridSpec.from_geopackage(...) is not implemented yet: myflopy "
+            "resolves only generated Voronoi grids (GridSpec.voronoi) and Python "
+            "grid builders (GridSpec.python). To use an existing grid today, wrap "
+            "a built grid object with GridSpec.from_object(grid), or load one with "
+            "GridSpec.from_pickle(path)."
         )
 
     @classmethod
@@ -723,23 +728,23 @@ class GridSpec:
         crs: str | None = None,
         **options: Any,
     ) -> GridSpec:
-        """Return a spec for a simple structured DIS grid."""
+        """Build a simple structured DIS grid. **Not implemented yet.**
 
-        return cls(
-            name=name,
-            grid_type="dis",
-            method="structured",
-            crs=crs,
-            options={
-                "nlay": nlay,
-                "nrow": nrow,
-                "ncol": ncol,
-                "delr": delr,
-                "delc": delc,
-                "top": top,
-                "botm": botm,
-                **options,
-            },
+        Planned API. myflopy is Voronoi/DISV-first: :meth:`resolve` wires only
+        generated Voronoi grids (:meth:`voronoi`) and Python grid builders
+        (:meth:`python`), and the downstream package/visualization stack assumes
+        an unstructured grid view. A spec created here would raise at resolve
+        time, so this constructor fails fast instead. To use a structured grid
+        today, build it yourself (e.g. via FloPy) and wrap it with
+        :meth:`from_object`, or generate the geometry in a :meth:`python` builder.
+        """
+
+        raise NotImplementedError(
+            "GridSpec.structured(...) is not implemented yet: myflopy resolves "
+            "only generated Voronoi grids (GridSpec.voronoi) and Python grid "
+            "builders (GridSpec.python). To use a structured grid today, build it "
+            "yourself and wrap it with GridSpec.from_object(grid), or construct "
+            "the geometry in a GridSpec.python(...) builder."
         )
 
     @classmethod
