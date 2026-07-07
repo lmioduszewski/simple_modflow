@@ -1,12 +1,18 @@
 # MP3DU Quickstart
 
-The supported particle-tracking API in `myflopy` is:
+> **Note:** MF6 PRT (`model.particle_tracking.prt(...)`) is the preferred
+> integrated particle-tracking engine — see
+> [interactive_visualization_and_prt.md](interactive_visualization_and_prt.md).
+> On a live model, MP3DU is also reachable model-bound as
+> `model.particle_tracking.mp3du(particles=..., execute=...)`.
+
+The supported standalone MP3DU API in `myflopy` is:
 
 - `ParticleTrackingInput`
 - `prepare_particle_tracking`
 - `run_particle_tracking`
 
-Those are the only recommended entry points for new MP3DU workflows.
+Those are the recommended entry points for standalone MP3DU workflows.
 
 ## Recommended One-Liner
 
@@ -104,4 +110,4 @@ result["endpoint_summary"]
 
 - Some MP3DU `IFACE` package names are not accepted by the current executable build, even if the MF6 model contains those packages.
 - Particles that enter sink/source-controlled flow paths may terminate quickly. `endpoint_summary` is the first place to check why.
-- Legacy FloPy helpers for the native MODFLOW `PRT` model still exist in `myflopy.modflow.mp3du.legacy_prt`, but they are not part of the supported MP3DU API and remain constrained by current MODFLOW PRT support for many DISV grids.
+- Legacy FloPy helpers for the native MODFLOW `PRT` model still exist in `myflopy.modflow.mp3du.legacy_prt` for compatibility only. For MF6 PRT use the supported `model.particle_tracking.prt(...)` / `PRTProject` workflow instead (it handles DISV grids).

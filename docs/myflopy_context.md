@@ -8,6 +8,10 @@
 > against the code and refreshed on **2026-07-03** (post the 2026-06-22 PEST unification):
 > the legacy `KPilotPointParameter`/`build_pst` API is gone, IES + workers ship, and
 > exchanges + hooks now serialize.
+> **Refreshed 2026-07-07:** added the inspection/diff stack (`diff()`, `model.config`,
+> ModelDiff tiers), the viz front door + unified view grammar, the sectioned hover
+> system, the colorscale policy, map-mosaic view sync, ATS, and `to_xugrid`. The
+> forward roadmap now lives in `docs/implementation_plan_2026-07.md` (rev. 3).
 >
 > **Discipline to avoid that again:** before building anything, `grep` the codebase for
 > the capability **in both API layers** (see below). Treat every "gap" in this file as a
@@ -80,11 +84,36 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | GWF / GWT / GWE / PRT models + exchanges | ✅ | `package_api.py` `gwf/gwt/gwe/prt`; `builders.py` `build_gwf_{gwt,gwe,prt,gwf}_exchange` |
+| GWT/GWE **package helpers** (adv/dsp/mst/ssm/cnc…; est/cnd/ctp…) | ❌ | raw `PackageSpec(flopy.mf6.ModflowGwt*, ...)` only; `mf.ic/oc/disv` hardcode GWF classes — plan §5.3 |
+| GWT/GWE **results tier** (conc/temp reader, maps, group/diff, obs) | ❌ | no concentration/temperature reader exists anywhere — plan §6.0–6.2 |
+| MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
+| PRT derived cell maps (travel-time / endpoints choropleths) | ❌ | pathlines/scene/map exist; grammar-integrated cell maps are plan §6.3 |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
 | Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |
 | Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
 | Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |
+| Adaptive time stepping (ATS; zero-based `ats=` periods) | ✅ | `simulation/discretization.py` (`TemporalDiscretization(ats=...)`) |
+| xarray/ugrid interchange (`to_xugrid`, NetCDF-ready) | ✅ | `grid/voronoi.py` `VoronoiGridPlus.to_xugrid`, `headsplus.py` `HeadsPlus.to_xugrid` (extra: `xugrid`) |
 | Canonical model contract (standardized signals) | ✅ | `canonical.py`, `canonical_example.py` |
+
+### Visualization front door, grammar, hover, colors
+| Capability | Status | Where |
+|---|---|---|
+| Plotting front door (`viz.Fig/subplots/mpl_axes/PALETTE`, figs backend) | ✅ | `viz.py` — import every figure from here, not raw plotly/matplotlib |
+| Unified view grammar: `map/plot/xs` + `mosaic/animate` on every leaf (model / group / diff), `backend="plotly"\|"mpl"` | ✅ | `package_plotting.py` (`SpatialView`, composers), `viz.mosaic` |
+| Map mosaics framed to data + **synced pan/zoom** (`sync_views=`) | ✅ | `viz.py` (`shared_map_view`, `_map_sync_post_script`), `Choro.map_view` |
+| **Sectioned hover** (`HoverSpec`/`HoverStyle`; layer/surface tables, dry marking; `hover_*` sugar on every map verb) | ✅ | `utils/datatypes/hover.py`; defaults wired on all choropleth paths; LAK/SFR maps join feature stage |
+| **Colorscale policy** (diverging only for signed q-like + diff maps; `'earth'` otherwise) | ✅ | `package_registry.py` + call sites; pinned by `tests/test_colorscale_policy.py` |
+| Choropleth engine (plotly + mpl backends, contours, hillshade) | ✅ | `utils/datatypes/choros.py` (`Choro`), `simulation/accessors.py` `build_choro` |
+
+### Inspection & comparison
+| Capability | Status | Where |
+|---|---|---|
+| Package explorers (`model.packages.<pkg>.inputs/.results`, normalized tables + maps) | ✅ | `package_explorer.py` facade over the `package_*` family; registry in `package_registry.py` |
+| Single-model config inspector (`model.config.settings/ims/tdis/section`) | ✅ | `project/model_config.py`, `simulation/base.py` |
+| **ONE `diff()` verb** — `model.diff(other)` / `group.diff()`, reference-star N-way | ✅ | `project/model_diff.py` (setup: packages + config + LAK/SFR connections), `project/model_results_diff.py` (heads, budget, per-package q, UZF, stage, MVR) |
+| Grouped multi-model access (`group.hds/bud/packages`, member + Δ maps) | ✅ | `project/model_group.py` (`ModelGroup`) — full single↔group symmetry |
+| Diff usage guide | ✅ | `docs/model_diff_cheatsheet.md` |
 
 ### Serialization
 | Capability | Status | Where |
@@ -110,18 +139,38 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 
 ## The genuinely short gap list (verify each before building)
 
-1. **YAML/TOML serialization** — thin `yaml.dump(spec.to_dict())` / `from_dict(yaml.load(...))` wrapper. `to_dict`/`from_dict` are now complete (incl. exchanges + hooks); only the file-format wrapper is missing. *(Low effort.)*
-2. **PEST raster-driven zones/pilot points**, Tikhonov/preferred-value **regularization**, **identifiability**, **UZF parameters** — the real PEST roadmap. (IES + prior MC + PEST++ workers already ship via `run_ies(workers=)`.)
-3. **NHDPlus SFR reader** — only piece of "SFR from streams" not already covered by `SFRBuilder`.
-4. **`GridSpec.structured`/`from_geopackage` resolution** and a **raw MF6 array-file source reader** — both currently fail-fast / missing; niche for a Voronoi-first tool.
-5. **LGR** — absent; likely not worth it for a Voronoi-first toolkit.
+> The sequenced roadmap for all of these is `docs/implementation_plan_2026-07.md` (rev. 3).
+
+1. **RIV / EVT / MAW / HFB / CSUB packages** — zero support in either layer (plan §5.1–5.4;
+   RIV and EVT first). Also `mf.dis`/`mf.disu` passthroughs (§5.5).
+2. **GWT/GWE integration** — package helpers (§5.3: `mf.adv/dsp/mst/ssm/cnc/...`,
+   `mf.est/cnd/ctp/...`, model-type dispatch for `mf.ic/oc/disv`) AND the results tier
+   (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,
+   group/diff, `ConcTargets` → PEST).
+3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**
+   (field-map hover/colors, uncertainty maps, prior/posterior mosaics — §6.4).
+4. **YAML/TOML serialization** — thin wrapper over the complete `to_dict`/`from_dict`
+   round-trip (§5.6). *(Low effort.)*
+5. **PEST raster-driven zones/pilot points**, Tikhonov/preferred-value **regularization**,
+   **identifiability**, **UZF parameters** (§5.8). (IES + prior MC + PEST++ workers
+   already ship via `run_ies(workers=)`.)
+6. **NHDPlus SFR reader** — only piece of "SFR from streams" not already covered by `SFRBuilder`.
+7. **`GridSpec.structured`/`from_geopackage` resolution** and a **raw MF6 array-file source
+   reader** — both currently fail-fast / missing; niche for a Voronoi-first tool.
+8. **LGR** — absent; likely not worth it for a Voronoi-first toolkit.
 
 ## Already done — do NOT rebuild
 GIS-driven BCs (CHD/GHB/DRN/WEL/RCH via `GeoPackageSource` + `mf.*.gpkg`), edge/perimeter
 BCs, recharge from GIS/PRISM, CRS reprojection (vector + raster), **area-weighted raster
 sampling** (default), layer surfaces + reconcile + **pinch-out/idomain**, **SFR from
 centerline** (`SFRBuilder`), LAK/MVR/UZF builders, full spec `to_dict`/`from_dict`
-(**incl. exchanges + hooks**), multi-physics + exchanges, parallel split, viz, and the
-**unified PEST** stack — `cal.parameterize` (constant/zone/grid/pilotpoints), pilot points
-on Voronoi, PESTPP-IES + prior MC + parallel workers, and run review (`open_ies_run`).
+(**incl. exchanges + hooks**), multi-physics model shells + exchanges, parallel split,
+ATS, `to_xugrid`, and the **unified PEST** stack — `cal.parameterize`
+(constant/zone/grid/pilotpoints), pilot points on Voronoi, PESTPP-IES + prior MC +
+parallel workers, and run review (`open_ies_run`).
+Also done (2026-06/07): the **viz front door + unified view grammar** (`map/plot/xs` +
+`mosaic/animate` everywhere, synced map mosaics), the **sectioned hover system**
+(`HoverSpec`, defaults on every choropleth, LAK/SFR stage joins), the **colorscale
+policy**, the **inspection/diff stack** (ONE `diff()` verb, `model.config`, ModelDiff
+setup + results tiers), and full single↔group explorer symmetry.
 (The old version of this file wrongly listed several of these as missing.)

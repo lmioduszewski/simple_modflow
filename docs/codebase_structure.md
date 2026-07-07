@@ -36,7 +36,36 @@ working on it.
 
 - [src/myflopy/__init__.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/__init__.py)
   Top-level lazy public API. This is where names like `Project`, `Run`,
-  `SimulationSpec`, `ModelGroup`, and `TriangleGrid` are exported.
+  `SimulationSpec`, `ModelGroup`, `TriangleGrid`, `HoverSpec`, and `LayerStack`
+  are exported.
+
+### The declarative (package-first) layer — top-level modules
+
+- [src/myflopy/package_api.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/package_api.py)
+  THE preferred model-building surface: `mf.gwf/gwt/gwe/prt`, `mf.disv/ic/npf/
+  sto/oc/tdis/ims`, list BCs (`mf.chd/ghb/drn/wel/rch` with `()`/`.gpkg`/`.flopy`),
+  advanced `mf.uzf/sfr/lak/mvr`, mover connections.
+- [src/myflopy/specs.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/specs.py)
+  `PackageSpec`, `ModelSpec`, `ModelContext`, `ExchangeSpec`, `SimulationSpec`,
+  `GridSpec`, refs, hooks, and the complete `to_dict`/`from_dict` round-trip.
+- [src/myflopy/workspace.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/workspace.py)
+  `Project` / `Run` lifecycle (package + grid libraries, prepare/run/reopen).
+- [src/myflopy/geopackage.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/geopackage.py)
+  `GeoPackageSource` — the GIS-features-to-cells pipeline behind `mf.*.gpkg`.
+- [src/myflopy/sources.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/sources.py)
+  Declarative data sources (`RasterSource`, `ShapeSource`, `TableSource`, ...).
+- [src/myflopy/layers.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/layers.py) and
+  [src/myflopy/surfaces.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/surfaces.py)
+  `LayerStack` (facade) compiling to the `LayerSurfaces`/`Surface` engine —
+  disv-ready top/botm/idomain from rasters/contours/points, QC, cross sections.
+- [src/myflopy/advanced.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/advanced.py) /
+  [src/myflopy/builders.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/builders.py) /
+  [src/myflopy/grid_spec_resolver.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/grid_spec_resolver.py)
+  `*_spec` factories, exchange/IMS builders, and deferred `GridSpec` resolution.
+- [src/myflopy/viz.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/viz.py)
+  The plotting **front door** (figs backend): `viz.Fig`, `viz.subplots`,
+  `viz.mosaic` (map view fitting + `sync_views` live pan/zoom linking),
+  `viz.mpl_axes`, `PALETTE`. Import every figure from here.
 
 ### `modflow`
 
@@ -98,14 +127,30 @@ This is the main MF6 implementation area.
 - [src/myflopy/modflow/mf6/heads_plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/heads_plotting.py)
   Heads plotting and choropleth presentation helpers for `HeadsPlus`.
 - [src/myflopy/modflow/mf6/observations.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/observations.py)
-  Reusable observation-target layer, currently centered on `HeadTargets` so the
-  same target dataset can drive plotting, residual statistics, and PEST setup.
-- [src/myflopy/modflow/mf6/headsplus.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/headsplus.py)
-  Backward-compatible entry point for the heads API.
-- [src/myflopy/modflow/mf6/archive](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/archive)
-  Legacy or archived MF6 code. Avoid unless you intentionally need older logic.
-- [src/myflopy/modflow/mf6/maybe junk](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/maybe%20junk)
-  Explicitly non-primary code. Treat as experimental or deprecated.
+  Reusable observation-target layer: `HeadTargets`, `LakeStageTargets`,
+  `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, their model-bound
+  wrappers (`model.targets`), and the `TargetRegistry`. The same target datasets
+  drive plotting, residual statistics, and PEST setup.
+- [src/myflopy/modflow/mf6/package_registry.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/package_registry.py)
+  Registry metadata (`FieldSpec`/`ResultSpec`) behind the package explorers —
+  default value columns, budget terms, and the **colorscale policy** defaults.
+- [src/myflopy/modflow/mf6/package_inputs.py / package_results.py / package_tables.py / package_budget.py / package_plotting.py / package_surface_water.py / package_model.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/package_plotting.py)
+  The `package_*` family implementing the explorers behind `model.packages...`
+  (`package_explorer.py` is the compatibility facade). `package_plotting.py`
+  holds the unified view grammar (`SpatialView`: `map/plot/xs` + `mosaic/animate`)
+  and the map payload builders; `package_surface_water.py` holds the LAK/SFR
+  explorers plus the `join_lak_stage`/`join_sfr_stage` hover joins.
+- [src/myflopy/modflow/mf6/interactive_plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/interactive_plotting.py)
+  Standalone HTML exports: matplotlib frame sliders, Plotly map/cross-section
+  animations, and PyVista/Trame particle scenes (`model.visualize`).
+- [src/myflopy/modflow/mf6/prt.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/prt.py)
+  MF6 PRT: `PRTProject`, `PRTReleasePoints`, `PRTRunResults`, `open_prt_run`,
+  and the `model.particle_tracking` namespace.
+- [src/myflopy/modflow/mf6/parallel.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/parallel.py)
+  Parallel model splitting and MPI runs (`ParallelModelWorkflow`).
+- [src/myflopy/modflow/mf6/canonical.py / canonical_example.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/canonical_example.py)
+  The authoritative canonical valley model + its contract (used by tests and
+  the canonical notebook set).
 
 #### `modflow/mf6/grid`
 
@@ -152,9 +197,10 @@ Shared model-building and model-access infrastructure.
 - [src/myflopy/modflow/mf6/simulation/runtime.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/runtime.py)
   Shared model write/run execution helper.
 - [src/myflopy/modflow/mf6/pest](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/pest)
-  The first reusable pyEMU/PEST layer. This is where `PestProject`,
-  calibration parameter specs, support-file builders, and forward-run helpers
-  now live.
+  The pyEMU/PEST++ layer: `PestProject` (front door: `model.pest(name, ...)`),
+  the unified `cal.parameterize(target, style=...)` API, Voronoi pilot points,
+  observations, `run_ies(workers=)`, forward-run injection, and run review
+  (`model.pest_runs`, `open_ies_run` / `IesResults`).
 
 #### `modflow/utils`
 
@@ -162,28 +208,44 @@ Low-level support utilities used across the package.
 
 - [src/myflopy/modflow/utils/outputs.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/outputs.py)
   Output-specific helper objects such as UZF, LAK, and SFR output accessors.
+- [src/myflopy/modflow/utils/datatypes/choros.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/datatypes/choros.py)
+  The `Choro` choropleth engine (plotly + `plot_mpl` backends, contours,
+  hillshade, map view fitting). Despite the folder name, this is core viz.
+- [src/myflopy/modflow/utils/datatypes/hover.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/datatypes/hover.py)
+  The sectioned hover engine: `HoverSpec`/`HoverStyle`/`Fields`/`LayerTable` +
+  the per-plot default factories (`head_hover`, `lak_hover`, `sfr_hover`,
+  `cell_input_hover`, `result_hover`, `compare_hover`, `surface_water_hover`).
+- [src/myflopy/modflow/utils/datatypes/xsections.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/datatypes/xsections.py)
+  Cross-section construction and rendering (`XSection`).
 - [src/myflopy/modflow/utils/datatypes](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/datatypes)
-  Reusable datatype and reader helpers.
+  Remaining datatype and reader helpers (`readers.py`, `locs.py`, ...).
 - [src/myflopy/modflow/utils/validators.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/validators.py)
   Common validation helpers.
 
 ### `project`
 
-Project organization lives in `workspace.py`; reusable package artifacts,
-file-backed result loading, and grouped-model comparison live under `project`.
+Reusable package artifacts, file-backed result loading, grouped-model
+comparison, and the diff stack live under `project` (the `Project`/`Run`
+lifecycle itself is top-level `workspace.py`, above).
 
-- [src/myflopy/specs.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/specs.py)
-  Executable `PackageSpec`, `ModelSpec`, `ExchangeSpec`, and `SimulationSpec`
-  definitions.
-- [src/myflopy/workspace.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/workspace.py)
-  Clean `Project` workspace and `Run` lifecycle API.
 - [src/myflopy/project/components.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/components.py)
   Reusable package artifact capture, validation, derivation, and application.
 - [src/myflopy/project/run_model.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/run_model.py)
-  `LoadedMf6Run`: lazy file-backed model loader for existing MF6 directories.
+  `LoadedMf6Run`: lazy file-backed model loader for existing MF6 directories
+  (`mf.load_mf6_run(path)`).
 - [src/myflopy/project/model_group.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_group.py)
-  `ModelGroup`: grouped multi-model API for comparing heads, budgets, inputs,
-  package tables, and selected outputs.
+  `ModelGroup`: grouped multi-model API mirroring the single-model surface —
+  `group.hds`, `group.bud`, `group.packages.<pkg>.inputs/.results`, member maps
+  and mosaics, and the entry to `group.diff()`.
+- [src/myflopy/project/model_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_diff.py)
+  The `ModelDiff` setup tiers behind the ONE `diff()` verb: package structural +
+  value diffs, config diff, LAK/SFR connection-geometry diff, `report()`.
+- [src/myflopy/project/model_results_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_results_diff.py)
+  The results tier: Δheads, Δbudget, per-package Δq, UZF, LAK/SFR stage, MVR —
+  all with `within_tolerance` summaries and Δ maps.
+- [src/myflopy/project/model_config.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_config.py)
+  Single-model configuration inspector behind `model.config`
+  (settings/ims/tdis/sections).
 
 ## `examples`
 
@@ -197,22 +259,43 @@ file-backed result loading, and grouped-model comparison live under `project`.
 
 ## `tests`
 
-- [tests/test_workspace.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_workspace.py)
-  Clean `Project` and `Run` lifecycle coverage.
-- [tests/test_core_specs.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_core_specs.py)
-  Executable specification and coupled-model composition coverage.
+~50 files; the fast inner loop is `pytest -m "not slow"` (binary-running /
+PEST / parallel tests are auto-marked `slow` in `conftest.py`). Highlights:
+
+- [tests/test_workspace.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_workspace.py) /
+  [tests/test_core_specs.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_core_specs.py) /
+  [tests/test_package_api.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_package_api.py) /
+  [tests/test_project_spec.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_project_spec.py)
+  Project/Run lifecycle, spec round-trips, and the package-first surface.
 - [tests/test_mf6_refactor_smoke.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mf6_refactor_smoke.py)
-  Broad MF6 smoke/integration coverage, including notebook presence and larger
-  workflow tests.
-- [tests/test_mesh_optimization.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mesh_optimization.py)
-  Mesh cleanup, quality reporting, and optimization regression coverage.
-- [tests/test_mf6_pest.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mf6_pest.py)
-  First-slice calibration coverage for `HeadTargets`, bounds logic,
-  `PestProject`, and forward-run reapplication of `K` and `DRN` parameters.
+  Broad MF6 smoke/integration coverage and larger workflow tests.
+- [tests/test_model_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_model_diff.py) /
+  [tests/test_model_results_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_model_results_diff.py) /
+  [tests/test_model_config.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_model_config.py) /
+  [tests/test_model_group_symmetry.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_model_group_symmetry.py)
+  The diff stack, config inspector, and single↔group symmetry.
+- [tests/test_view_grammar_composers.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_view_grammar_composers.py) /
+  [tests/test_hover_spec.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_hover_spec.py) /
+  [tests/test_hover_integration.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_hover_integration.py) /
+  [tests/test_colorscale_policy.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_colorscale_policy.py)
+  The unified grammar composers (incl. synced map mosaics), the sectioned hover
+  engine + wiring, and the colorscale policy.
+- [tests/test_mesh_optimization.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mesh_optimization.py) /
+  [tests/test_layers.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_layers.py) /
+  [tests/test_surfaces.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_surfaces.py)
+  Grid building/optimization and the layer-surface stack.
+- [tests/test_mf6_pest.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mf6_pest.py) /
+  [tests/test_mf6_prt.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_mf6_prt.py) /
+  [tests/test_parallel_model.py](C:/Users/lukem/Python/Projects/simple_modflow/tests/test_parallel_model.py)
+  PEST/PESTPP-IES end-to-end, MF6 PRT, and parallel splitting (slow-heavy).
 
 ## How To Find Code Quickly
 
-- If you are building a new model: start in [simulation/base.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/base.py:1) and [simulation/packages.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/packages.py:1).
+- If you are building a new model: use the package-first API — start in
+  [package_api.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/package_api.py:1)
+  and [specs.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/specs.py:1)
+  (see `docs/preferred_api.md`). The OO engine underneath is
+  [simulation/base.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/base.py:1) and [simulation/packages.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/packages.py:1).
 - If you are building package data from shapefiles or geopackages: prefer the
   vector-builder classes `DRNFromVector`, `GHBFromVector`, `CHDFromVector`,
   `RCHFromVector`, and `KFromVector`.
@@ -226,11 +309,25 @@ file-backed result loading, and grouped-model comparison live under `project`.
   and [project/model_group.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_group.py:1).
 - If you are working on reusable package snapshots: start in [project/components.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/components.py:1).
 - If you are working on heads logic: start in [headsplus.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/headsplus.py:1), then look at [heads_observations.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/heads_observations.py:1) and [heads_plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/heads_plotting.py:1).
+- If you are diffing two models or checking a faithful copy: start with the
+  [ModelDiff cheat sheet](model_diff_cheatsheet.md), then
+  [project/model_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_diff.py:1) and
+  [project/model_results_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_results_diff.py:1).
+- If you are changing how maps look (hover, colors, mosaics): start in
+  [utils/datatypes/hover.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/utils/datatypes/hover.py:1),
+  [package_registry.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/package_registry.py:1)
+  (colorscale defaults), and [viz.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/viz.py:1)
+  (front door, `viz.mosaic`, view sync).
+- If you are calibrating: `model.pest(name, ...)` is the front door; the layer
+  lives in [modflow/mf6/pest/](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/pest).
 
 ## Notes On Legacy Areas
 
-- `archive/` and `maybe junk/` under `mf6` are not part of the preferred
-  workflow path.
+- Legacy and experimental code now lives in `attic/` at the **repository root**
+  (moved out of the importable `src/` tree); it is not part of any workflow
+  path. Small compatibility facades (`mfsimbase.py`, `voronoiplus.py`,
+  `package_explorer.py`) remain importable inside `src/`.
 - Older workflow helpers still exist in some modules because backward
-  compatibility matters, but new development should prefer the catalog/run/group
-  architecture plus `SimulationBase`.
+  compatibility matters, but new development should prefer the package-first
+  spec API (`package_api.py` + `Project`/`Run`) with `SimulationBase` as the
+  live-model engine underneath.

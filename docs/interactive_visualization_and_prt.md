@@ -9,6 +9,36 @@
 The Matplotlib and PyVista HTML exports are standalone files. They do not need
 JupyterLab or a running Python kernel after export.
 
+## The Unified View Grammar (start here for everyday maps)
+
+Every result/input leaf — single model, `ModelGroup`, or `group.diff()` — shares
+the same verbs: `get`/`summary` plus `map` / `plot` / `xs` and the composers
+`mosaic` / `animate`, each with `backend="plotly"|"mpl"`:
+
+```python
+model.hds.map(per=8, layer=0)                       # heads choropleth
+model.hds.mosaic(kind="map", by="layer")            # small multiples, shared scale
+model.packages.lak.results.mosaic(field="q")        # one panel per model (groups)
+group.diff().hds.map("variant")                     # Δhead map vs the reference
+viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mix)
+```
+
+- **Map mosaics start framed to the data** (the union of the panels' extents),
+  and by default panels **pan and zoom together** (`sync_views=True`, a JS
+  handler injected on `show()`/`write_html()`; notebook-inline shows the shared
+  start view without live linking). `sync_views=False` keeps the shared start
+  view but lets panels move independently.
+- **Hover is sectioned and styled** (`HoverSpec`/`HoverStyle`, exported at the
+  top level): a bold primary value, labeled field blocks, an optional per-layer
+  / surface-elevation table with dry-cell marking, and a muted footer. Call-site
+  sugar works on every map verb: `hover_layers="active"|"active+strip"|"all"`,
+  `hover_surfaces=True`, `hover_fields=["stage"]`, or a full `hover=HoverSpec(...)`.
+  LAK/SFR exchange maps automatically include the feature's stage.
+- **Colorscales follow one policy:** diverging red/white/blue only for signed
+  gaining/losing "q"-like fields (gaining = blue) and for diff maps
+  (negative = red, positive = blue); everything else uses the house
+  brown-to-blue `earth` scale.
+
 ## Install 3D Support
 
 ```powershell
@@ -90,8 +120,10 @@ standalone animation.
 Plotly frame selection is applied before traces are built, and the DISV GeoJSON
 is stored only on the base trace rather than repeated in every animation frame.
 Each animation frame explicitly updates that base trace with its own result
-values and hover table. Standard head-map hover includes time step, stress
-period, cell number, coordinates, heads by layer, model top, and layer bottoms.
+values and hover table. (These standalone animation exports carry per-frame
+hover tables — time step, stress period, cell, heads by layer, model top, layer
+bottoms; the interactive grammar maps above use the newer sectioned
+`HoverSpec` hover instead.)
 The shared colorscale and colorbar live on a persistent layout-level
 `coloraxis`, while map view remains locked so user pan and zoom are preserved.
 For renderer compatibility and reliable repeated playback, each frame carries a

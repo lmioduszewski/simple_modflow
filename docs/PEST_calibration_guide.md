@@ -45,7 +45,8 @@ conductances, pumping. Two shapes:
 In myflopy you *declare* what to adjust; it compiles to native pyEMU:
 
 ```python
-cal = PestProject(model, "calib", workspace="calib_template", start_datetime="2020-01-01")
+cal = model.pest("calib", start_datetime="2020-01-01")   # the front door; workspace
+                                                          # defaults to <model ws>/pest/calib
 
 # bounds = how far the multiplier can move; physical = hard limits on the final value
 cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
@@ -260,9 +261,9 @@ on the roadmap.
 ## The whole workflow, start to finish
 
 ```python
-from myflopy.modflow.mf6.pest import PestProject
-
-cal = PestProject(model, "calib", workspace="calib_template", start_datetime="2020-01-01")
+# model.pest(...) is the front door (returns a PestProject); the workspace
+# defaults to <model workspace>/pest/<name>
+cal = model.pest("calib", start_datetime="2020-01-01")
 
 # 1-2-3: prior, likelihood, forecasts
 cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100), capture=True)
