@@ -228,6 +228,12 @@ class DRN(Boundaries):
 
     @staticmethod
     def update_drn_dict(drn_dict: dict, update_dict: dict, update_existing_only: bool = True):
+        """Update a DRN stress-period dict with new per-cell elevations/conductances.
+
+        Overwrites matching cells per period; with ``update_existing_only=False``,
+        also appends cells that are new to a period.
+        """
+
         assert all(key in drn_dict.keys() for key in update_dict.keys()), 'update_dict keys must be in drn_dict keys'
         for key, updater in update_dict.items():
             updated = pd.DataFrame(drn_dict[key]).set_index(0)

@@ -18,6 +18,8 @@ class CleanupStats:
 
 
 def iter_polygons(geometry: Polygon | MultiPolygon | GeometryCollection):
+    """Yield each constituent ``Polygon`` of a polygon/multipolygon/collection (raises otherwise)."""
+
     if isinstance(geometry, Polygon):
         yield geometry
         return
@@ -35,6 +37,8 @@ def iter_polygons(geometry: Polygon | MultiPolygon | GeometryCollection):
 
 
 def polygon_vertex_count(geometry: Polygon | MultiPolygon | GeometryCollection) -> int:
+    """Total vertex count across all exterior and interior rings of a polygonal geometry."""
+
     total = 0
     for polygon in iter_polygons(geometry):
         total += len(polygon.exterior.coords)
@@ -43,6 +47,8 @@ def polygon_vertex_count(geometry: Polygon | MultiPolygon | GeometryCollection) 
 
 
 def _resample_linestring(line: LineString, target_segment_length: float) -> LineString:
+    """Re-sample a line to roughly even ``target_segment_length`` segments (no-op if short/disabled)."""
+
     if target_segment_length <= 0 or line.length <= target_segment_length:
         return line
 
@@ -66,6 +72,8 @@ def resample_polygon_boundaries(
     *,
     target_segment_length: float,
 ) -> Polygon | MultiPolygon:
+    """Densify each polygon's boundary to ~``target_segment_length`` spacing (no-op if disabled)."""
+
     if target_segment_length <= 0:
         return geometry
 
@@ -84,6 +92,8 @@ def resample_linear_geometry(
     *,
     target_segment_length: float,
 ) -> LineString | MultiLineString:
+    """Re-sample a line/multiline to ~``target_segment_length`` segments (no-op if disabled)."""
+
     if target_segment_length <= 0:
         return geometry
     if isinstance(geometry, LineString):
@@ -103,6 +113,8 @@ def cleanup_polygonal_geometry(
     min_feature_area: float = 0.0,
     target_segment_length: float | None = None,
 ) -> tuple[Polygon | MultiPolygon, CleanupStats]:
+    """Clean a polygonal geometry (snap, simplify, drop tiny features, re-sample) with before/after stats."""
+
     polygons_in = sum(1 for _ in iter_polygons(geometry))
     vertices_in = polygon_vertex_count(geometry)
 

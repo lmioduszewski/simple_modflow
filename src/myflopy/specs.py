@@ -62,6 +62,8 @@ class PackageRef:
     key: str
 
     def __post_init__(self) -> None:
+        """Strip the key and reject an empty one (on this frozen dataclass)."""
+
         key = self.key.strip()
         if not key:
             raise ValueError("PackageRef key cannot be empty.")
@@ -133,6 +135,8 @@ class GridRef:
     key: str
 
     def __post_init__(self) -> None:
+        """Strip the key and reject an empty one (on this frozen dataclass)."""
+
         key = self.key.strip()
         if not key:
             raise ValueError("GridRef key cannot be empty.")
@@ -219,6 +223,12 @@ def _builder_label(builder: Builder | None) -> str:
 
 
 def _callable_ref(builder: Builder) -> str:
+    """Serialize a builder callable to a ``"module:qualname"`` reference.
+
+    Raises if the callable is not importable (e.g. a local/lambda), since such a
+    reference could not be resolved back later.
+    """
+
     module = getattr(builder, "__module__", None)
     qualname = getattr(builder, "__qualname__", None)
     if not module or not qualname or "<locals>" in qualname:
@@ -229,6 +239,8 @@ def _callable_ref(builder: Builder) -> str:
 
 
 def _resolve_callable(reference: str) -> Builder:
+    """Import and return the callable named by a ``"module:qualname"`` reference."""
+
     module_name, _, qualname = reference.partition(":")
     if not module_name or not qualname:
         raise ValueError(f"Invalid builder reference: {reference!r}")
@@ -239,6 +251,12 @@ def _resolve_callable(reference: str) -> Builder:
 
 
 def _json_value(value: Any) -> Any:
+    """Recursively convert a spec field to a JSON-serializable value.
+
+    Sources serialize via ``to_dict``, paths to POSIX strings, tuples/lists/dicts
+    element-wise; primitives pass through and anything else raises.
+    """
+
     if isinstance(value, (DataSourceSpec, LiteralSource)):
         return value.to_dict()
     if isinstance(value, Path):
@@ -258,6 +276,12 @@ def _json_value(value: Any) -> Any:
 
 
 def _spec_value(value: Any) -> Any:
+    """Recursively rehydrate a deserialized value, rebuilding tagged source specs.
+
+    The inverse of :func:`_json_value`: any ``{"kind": "...Source", ...}`` dict
+    becomes a source spec; lists/dicts are walked; everything else passes through.
+    """
+
     if isinstance(value, dict) and "kind" in value:
         kind = value["kind"]
         if kind.endswith("Source"):
@@ -377,6 +401,8 @@ class PackageSpec:
     inputs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
+
         object.__setattr__(self, "requires", tuple(self.requires))
 
     def build(self, target: Any) -> Any | None:
@@ -446,6 +472,8 @@ class PackageSpec:
         return {key: _summarize_value(value) for key, value in self.options.items()}
 
     def __repr__(self) -> str:
+        """Compact representation: name, builder, status, inputs, and option summary."""
+
         status = "enabled" if self.enabled else "disabled"
         pieces = [
             f"name={self.name!r}",
@@ -490,12 +518,16 @@ PackageEntry: TypeAlias = PackageSpec | PackageRef
 
 
 def _package_entry(value: PackageEntry | str) -> PackageEntry:
+    """Normalize a package entry: a bare string becomes a :class:`PackageRef`."""
+
     if isinstance(value, str):
         return PackageRef(value)
     return value
 
 
 def _package_entry_from_dict(data: dict[str, Any]) -> PackageEntry:
+    """Rebuild a package entry from a payload, dispatching on its ``kind`` tag."""
+
     kind = data.get("kind")
     if kind == "PackageRef":
         return PackageRef.from_dict(data)
@@ -505,6 +537,8 @@ def _package_entry_from_dict(data: dict[str, Any]) -> PackageEntry:
 
 
 def _package_entry_label(package: PackageEntry) -> str:
+    """The display identity of an entry: a ref's key, else a concrete package's name."""
+
     if isinstance(package, PackageRef):
         return package.key
     return package.name
@@ -536,10 +570,18 @@ def _package_entry_matches(package: PackageEntry, name: str) -> bool:
 
 
 def _package_entry_is_enabled(package: PackageEntry) -> bool:
+    """Whether an entry is enabled -- concrete packages carry the flag; refs are always on."""
+
     return package.enabled if isinstance(package, PackageSpec) else True
 
 
 def _validate_concrete_packages(packages: Iterable[PackageSpec]) -> None:
+    """Validate a resolved package list: unique names, satisfied ``requires``, correct order.
+
+    Raises if names collide, an enabled package requires a missing/disabled one,
+    or a required dependency is declared after the package that needs it.
+    """
+
     packages = tuple(packages)
     _require_unique_names(packages, item_type="package")
     available = {package.name for package in packages if package.enabled}
@@ -616,6 +658,8 @@ class GridSpec:
     pickle_path: str | None = None
 
     def __post_init__(self) -> None:
+        """Freeze the source sequences (breaklines/points/inputs) to tuples for immutability."""
+
         object.__setattr__(self, "breaklines", tuple(self.breaklines))
         object.__setattr__(self, "points", tuple(self.points))
         object.__setattr__(self, "inputs", tuple(self.inputs))
@@ -667,7 +711,40 @@ class GridSpec:
         options: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> GridSpec:
-        """Return a spec backed by a project-local Python grid builder."""
+        """Return a grid spec backed by a project-local Python builder script.
+
+        The escape hatch for grids you build with your own code: the spec records
+        the ``script`` path and the ``function`` name to call; :meth:`resolve`
+        imports the script and invokes it to produce the grid object.
+
+        Parameters
+        ----------
+        script : Path or str
+            Path to a Python file containing the grid-builder function.
+        function : str
+            Name of the callable in ``script`` that returns the grid (required).
+        name : str, default "grid"
+            Grid name.
+        grid_type : str, default "disv"
+            Discretization type the builder produces.
+        inputs : Iterable, optional
+            Input files the builder needs (validated to exist at resolve time).
+        crs : str, optional
+            CRS metadata for the produced grid.
+        options : dict, optional
+            Keyword options forwarded to the builder function.
+        metadata : dict, optional
+            Free-form provenance metadata.
+
+        Returns
+        -------
+        GridSpec
+
+        Examples
+        --------
+        >>> mf.GridSpec.python("build_grid.py", function="make_grid",
+        ...                    inputs=[mf.ShapeSource("domain.shp")])
+        """
 
         if not function:
             raise ValueError("GridSpec.python requires a function name.")
@@ -764,7 +841,50 @@ class GridSpec:
         voronoi_options: dict[str, Any] | None = None,
         **engine_options: Any,
     ) -> GridSpec:
-        """Return a spec for a generated DISV/Voronoi grid."""
+        """Return a durable spec for a generated DISV/Voronoi grid.
+
+        Records *where* the grid geometry comes from (boundary + refinement /
+        breakline / point sources) and *how* to mesh it, so the grid can be built
+        later with :meth:`resolve` (or by a :class:`Project` at run time). The
+        engine builds a :class:`TriangleGrid` and wraps it in a
+        :class:`VoronoiGridPlus`.
+
+        Parameters
+        ----------
+        boundary : DataSourceSpec
+            The model-domain polygon source (required).
+        name : str, default "grid"
+            Grid name.
+        refinement : DataSourceSpec, optional
+            Polygon source whose features refine the mesh (smaller cells inside).
+        breaklines : Iterable[DataSourceSpec], optional
+            Line sources buffered into refinement regions (e.g. streams, faults).
+        points : Iterable[DataSourceSpec], optional
+            Point sources pinned as fixed mesh vertices.
+        crs : str, optional
+            Target CRS for the grid (sources are reprojected to it).
+        engine : str, default "triangle_voronoi_plus"
+            Meshing engine identifier.
+        options, triangle_options, mesh_options, voronoi_options : dict, optional
+            Advanced per-stage option dicts forwarded to the Triangle / mesh /
+            Voronoi stages.
+        **engine_options
+            Convenience options routed to the right stage by name (e.g.
+            ``min_angle``, ``maximum_area``, ``profile``, ``idomain``).
+
+        Returns
+        -------
+        GridSpec
+            A durable grid recipe; call ``.resolve(workspace)`` for an eager grid,
+            or pass it to ``mf.gwf(...).with_grid(...)`` / ``project.add_grid(...)``.
+
+        Examples
+        --------
+        >>> spec = mf.GridSpec.voronoi(boundary=mf.ShapeSource("domain.shp"),
+        ...                            refinement=mf.ShapeSource("wellfield.shp"),
+        ...                            maximum_area=1.0e5, min_angle=30)
+        >>> vor = spec.resolve(workspace="runs/_grid")
+        """
 
         merged_options = {**({} if options is None else options)}
         merged_mesh_options = {**({} if mesh_options is None else mesh_options)}
@@ -1113,6 +1233,8 @@ class SpecBuildContext:
     build_grids: bool = True
 
     def __post_init__(self) -> None:
+        """Coerce the workspace fields to ``Path`` and copy the spec-library dicts."""
+
         for name in ("project_root", "simulation_workspace", "grid_workspace"):
             value = getattr(self, name)
             if value is not None:
@@ -1320,6 +1442,12 @@ class ModelSpec:
     grid: GridSpec | GridRef | Any = None
 
     def __post_init__(self) -> None:
+        """Normalize and validate the model spec's fields on construction.
+
+        Coerces ``model_type`` to the enum, normalizes package/hook/grid entries,
+        freezes them to tuples, and requires unique package + hook names.
+        """
+
         object.__setattr__(self, "model_type", ModelType(self.model_type))
         object.__setattr__(
             self,
@@ -1537,6 +1665,8 @@ class ModelSpec:
         )
 
     def __repr__(self) -> str:
+        """Compact representation: name, model type, package names, options, and hooks."""
+
         return (
             "ModelSpec("
             f"name={self.name!r}, "
@@ -1594,6 +1724,8 @@ class ExchangeSpec:
     options: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Freeze ``models`` to a tuple and require at least two participants."""
+
         object.__setattr__(self, "models", tuple(self.models))
         if len(self.models) < 2:
             raise ValueError("An exchange must reference at least two models.")
@@ -1640,6 +1772,8 @@ class ExchangeSpec:
         )
 
     def __repr__(self) -> str:
+        """Compact representation: name, builder, participating models, and options."""
+
         return (
             "ExchangeSpec("
             f"name={self.name!r}, "
@@ -1774,6 +1908,12 @@ class SimulationSpec:
     lineage: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
+        """Normalize and validate the simulation spec's fields on construction.
+
+        Freezes models/packages/exchanges/lineage to tuples (normalizing package
+        entries) and requires unique model and simulation-package names.
+        """
+
         object.__setattr__(self, "models", tuple(self.models))
         object.__setattr__(
             self,
@@ -2119,6 +2259,8 @@ class SimulationSpec:
         )
 
     def __repr__(self) -> str:
+        """Compact representation: name, model names, package names, and exchange names."""
+
         return (
             "SimulationSpec("
             f"name={self.name!r}, "

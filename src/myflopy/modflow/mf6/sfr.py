@@ -167,6 +167,8 @@ class SFRBuilder:
     _reaches: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        """Validate the grid, ``nper``, and ``connection_mode``, and freeze the sequence fields."""
+
         if self.context.grid is None:
             raise ValueError("ModelContext.grid is required for SFRBuilder.")
         if self.nper < 1:
@@ -184,6 +186,8 @@ class SFRBuilder:
 
     @property
     def grid(self):
+        """The Voronoi grid carried by the model context."""
+
         return self.context.grid
 
     @property
@@ -246,6 +250,12 @@ class SFRBuilder:
         return max(float(np.sqrt(np.median(areas)) * 0.05), 1.0e-9)
 
     def _automatic_connections(self) -> tuple[list[StreamConnection], list[str]]:
+        """Discover downstream connections by snapping each stream's end to the nearest stream.
+
+        Returns ``(connections, unresolved)``; streams with no neighbor within
+        ``tolerance`` are unresolved, and an ambiguous nearest tie raises.
+        """
+
         explicit_sources = {connection.source for connection in self.connections}
         connections: list[StreamConnection] = []
         unresolved: list[str] = []
@@ -271,6 +281,12 @@ class SFRBuilder:
         return connections, unresolved
 
     def _node_connections(self) -> tuple[list[StreamConnection], list[str]]:
+        """Build connections from the ``from_node``/``to_node`` fields (topology table).
+
+        Returns ``(connections, unresolved)``; a stream whose to-node matches
+        several from-nodes raises as ambiguous.
+        """
+
         if self.from_node is None or self.to_node is None:
             raise ValueError("from_node and to_node fields are required for connection_mode='nodes'.")
         for field_name in (self.from_node, self.to_node):
@@ -353,6 +369,8 @@ class SFRBuilder:
 
     @staticmethod
     def _validate_no_cycles(connections: Sequence[StreamConnection]) -> None:
+        """Raise if the downstream routing graph contains a cycle."""
+
         downstream = {item.source: item.receiver for item in connections if item.receiver is not None}
         for start in downstream:
             seen = set()
@@ -379,6 +397,8 @@ class SFRBuilder:
         return ordered
 
     def _layer_for_cell(self, stream_id: str, cell: int) -> int:
+        """The model layer a reach sits in: a constant, a per-stream map, a field, or ``top_active``."""
+
         if isinstance(self.reach_layer, int):
             return self.reach_layer
         if isinstance(self.reach_layer, Mapping):
@@ -440,14 +460,20 @@ class SFRBuilder:
 
     @property
     def total_nreaches(self) -> int:
+        """The total number of generated reaches across all streams."""
+
         return len(self.reaches)
 
     @property
     def stream_ids(self) -> tuple[str, ...]:
+        """The distinct stream IDs, in reach order."""
+
         return tuple(self.reaches["stream_id"].drop_duplicates())
 
     @property
     def stream_reaches(self) -> dict[str, list[int]]:
+        """Map each stream ID to its ordered list of reach numbers."""
+
         return {
             stream_id: group["rno"].astype(int).tolist()
             for stream_id, group in self.reaches.groupby("stream_id", sort=False)
@@ -455,6 +481,8 @@ class SFRBuilder:
 
     @property
     def stream_cells(self) -> dict[str, list[int]]:
+        """Map each stream ID to the grid cells its reaches occupy, in order."""
+
         return {
             stream_id: [int(cellid[1]) for cellid in group["cellid"]]
             for stream_id, group in self.reaches.groupby("stream_id", sort=False)
@@ -473,6 +501,12 @@ class SFRBuilder:
         return MoverConnection(self.name, self._reach_at(str(stream_id), location))
 
     def _point_for_location(self, stream_id: str, location: StreamLocation, *, other: str | None = None) -> Point:
+        """Resolve a stream location keyword/Point to a coordinate on the stream line.
+
+        Supports an explicit ``Point``, ``upstream``/``downstream`` ends, and
+        ``nearest``/``intersection`` against ``other`` (required for those).
+        """
+
         line = self.stream_table.loc[stream_id].geometry
         if isinstance(location, Point):
             return location
@@ -493,6 +527,8 @@ class SFRBuilder:
         raise ValueError(f"Unsupported stream location: {location!r}")
 
     def _reach_at(self, stream_id: str, location: StreamLocation, *, other: str | None = None) -> int:
+        """The reach number on ``stream_id`` closest to the resolved ``location`` point."""
+
         point = self._point_for_location(stream_id, location, other=other)
         reaches = self.reaches[self.reaches["stream_id"] == stream_id]
         distances = reaches.geometry.distance(point)
@@ -583,6 +619,12 @@ class SFRBuilder:
         raise ValueError(f"{name} must contain one value per reach or stream.")
 
     def _default_reach_tops(self) -> list[float]:
+        """Per-reach streambed-top elevations from the grid surface, enforced monotone downstream.
+
+        Samples each reach cell's layer top, then clamps so a reach is never higher
+        than the reach above it in the same stream.
+        """
+
         if getattr(self.grid, "gdf_topbtm", None) is None:
             raise ValueError("reach_top is required when grid surface elevations are unavailable.")
         values = []
@@ -633,6 +675,12 @@ class SFRBuilder:
         ]
 
     def _period_setting(self, value: Any, keyword: str) -> dict[int, list[list[Any]]]:
+        """Expand an inflow/rainfall/etc setting into per-period MF6 ``[reach, keyword, amount]`` rows.
+
+        Accepts a per-period mapping, a per-reach/location mapping, a scalar
+        (applied to the first reach), or explicit row tuples.
+        """
+
         if value is None:
             return {period: [] for period in range(self.nper)}
         period_values = value if isinstance(value, Mapping) and all(isinstance(key, int) for key in value) else {period: value for period in range(self.nper)}
@@ -677,6 +725,8 @@ class SFRBuilder:
 
     @property
     def diversiondata(self) -> list[list[Any]] | None:
+        """MF6 SFR ``diversions`` records (source reach, index, receiver, priority), or ``None``."""
+
         rows = [
             [source, idiv, receiver, diversion.priority.upper()]
             for diversion, source, receiver, idiv in self.resolved_diversions

@@ -61,6 +61,8 @@ class RCHBuilder:
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate ``nper >= 1`` and that a string ``cells`` selector is a known keyword."""
+
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
         if isinstance(self.cells, str) and self.cells not in {"top_active", "all_active", "surface_only"}:
@@ -109,6 +111,8 @@ class RCHBuilder:
         return tuple(selected)
 
     def _normalize_cell(self, cell: int | CellId) -> CellId:
+        """Coerce a cell spec to a ``(layer, cell)`` pair (a bare int lands on ``self.layer``)."""
+
         if isinstance(cell, Real):
             return (int(self.layer), int(cell))
         if not isinstance(cell, Sequence) or isinstance(cell, str) or len(cell) != 2:
@@ -117,9 +121,13 @@ class RCHBuilder:
         return (int(layer), int(node))
 
     def _cell_lookup_keys(self, cellid: CellId) -> tuple[Any, ...]:
+        """The keys to try when looking up a cell in a user mapping: the pair, then the bare cell."""
+
         return (cellid, cellid[1])
 
     def _name_for_cell(self, cellid: CellId) -> str:
+        """The boundname for a cell -- from ``name_by_cell`` if present, else ``<name>_<layer>_<cell>``."""
+
         if not self.name_by_cell:
             return f"{self.name}_{cellid[0]}_{cellid[1]}"
         for key in self._cell_lookup_keys(cellid):
@@ -129,9 +137,13 @@ class RCHBuilder:
 
     @staticmethod
     def _period_keys(value: Mapping[Any, Any], nper: int) -> bool:
+        """Whether a mapping is keyed by stress-period indices (all int keys in ``range(nper)``)."""
+
         return bool(value) and all(isinstance(key, int) and key in range(nper) for key in value)
 
     def _value_for_cell(self, value: Any, cellid: CellId, selected_cells: tuple[CellId, ...]) -> Any:
+        """Resolve one cell's recharge from a cell mapping, a scalar/field, or a per-cell sequence."""
+
         if isinstance(value, Mapping):
             for key in self._cell_lookup_keys(cellid):
                 if key in value:
@@ -145,6 +157,8 @@ class RCHBuilder:
         return values[selected_cells.index(cellid)]
 
     def _value_for_period_cell(self, period: int, cellid: CellId, selected_cells: tuple[CellId, ...]) -> Any:
+        """Resolve one cell's recharge for a given period (unwrapping a per-period mapping first)."""
+
         value = self.recharge
         if isinstance(value, Mapping) and self._period_keys(value, self.nper):
             if period not in value:
@@ -439,6 +453,8 @@ class RechargeFromShp(Boundaries):
 
     @staticmethod
     def add_to_rch_dict(rch_dict: dict, rch_to_add: dict, replace: bool = True) -> dict:
+        """Merge ``rch_to_add`` into a stress-period RCH dict (``replace`` overwrites collisions)."""
+
         return merge_stress_period_data(rch_dict, rch_to_add, replace=replace)
 
 
@@ -454,6 +470,12 @@ class RechargeFromPrism(Boundaries):
             et_dict: dict = None,
             period_months: list = None,
     ):
+        """Build recharge from PRISM-scaled station precipitation minus monthly ET.
+
+        Scales a weather-station precip series to each Voronoi cell by a PRISM
+        raster ratio, then subtracts per-month ET; validates the precip length,
+        ET months/lengths, and period-months on assignment.
+        """
 
         super().__init__(model, vor)
         self.bound_type = 'rch'
@@ -483,10 +505,14 @@ class RechargeFromPrism(Boundaries):
 
     @property
     def weather_station_precip(self):
+        """The per-stress-period weather-station precipitation series."""
+
         return self._weather_station_precip
 
     @weather_station_precip.setter
     def weather_station_precip(self, value):
+        """Set the station precip series, asserting one value per stress period."""
+
         assert len(value) == self.model.nper, \
             'length of weather station precip must equal number of stress periods'
         self._weather_station_precip = value
@@ -499,6 +525,8 @@ class RechargeFromPrism(Boundaries):
 
     @et_dict.setter
     def et_dict(self, value):
+        """Set the month->per-cell ET dict, asserting month keys (1-12) and one value per cell."""
+
         assert isinstance(value, dict), 'et_dict must be a dict'
         assert all(month in range(1, 13) for month in value.keys()), \
             'keys of et_dict must be month integers between 1 and 12'
@@ -524,6 +552,8 @@ class RechargeFromPrism(Boundaries):
 
     @period_months.setter
     def period_months(self, value):
+        """Set the per-period month list, asserting one month (1-12) per stress period."""
+
         assert len(value) == self.model.nper, \
             'length of period_months must equal number of stress periods'
         assert all(month in range(1, 13) for month in value), \

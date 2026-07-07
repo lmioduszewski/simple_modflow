@@ -99,6 +99,8 @@ class ContourSurfaceInterpolator:
         location: str = "myflopy_interp",
         clip: bool = True,
     ):
+        """Configure a GRASS contour-to-raster interpolation (see the class docstring for parameters)."""
+
         self.contours = Path(contours)
         self.out = Path(out)
         self.region_raster = region_raster
@@ -116,6 +118,8 @@ class ContourSurfaceInterpolator:
 
     @property
     def location_path(self) -> Path:
+        """The GRASS location directory for this interpolation (``grassdata/location``)."""
+
         return self.grassdata / self.location
 
     def run(self) -> Path:
@@ -149,6 +153,8 @@ class ContourSurfaceInterpolator:
         return self.out
 
     def _start_session(self, gsetup) -> None:
+        """Open a GRASS session in the location, creating the location first if needed."""
+
         try:
             self.session = gsetup.init(self.grassdata, self.location)
         except Exception:
@@ -156,6 +162,8 @@ class ContourSurfaceInterpolator:
             self.session = gsetup.init(self.grassdata, self.location)
 
     def _create_location(self) -> None:
+        """Create the GRASS location for this EPSG via the GRASS binary (raises on failure)."""
+
         grass_bin = self.grass_bin or _default_grass_bin()
         cmd = [str(grass_bin), "-c", "epsg:" + self.epsg, "-e", str(self.location_path)]
         result = subprocess.run(cmd, capture_output=True)
@@ -166,6 +174,8 @@ class ContourSurfaceInterpolator:
             )
 
     def _set_region(self, r, g, v) -> None:
+        """Set the GRASS computational region + mask from the region raster or vector."""
+
         if self.region_raster:
             r.in_gdal(overwrite=True, input=str(self.region_raster), output="Region", flags="o")
         elif self.region_vector:

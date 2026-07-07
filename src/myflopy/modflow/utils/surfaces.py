@@ -102,6 +102,8 @@ class InterpolatedSurface:
 
     @clip.setter
     def clip(self, val):
+        """Set the clip region from ``None``, a shapefile/GeoPackage ``Path``, or a Polygon."""
+
         if val is None:
             self._clip = None
         elif isinstance(val, Path):
@@ -116,10 +118,14 @@ class InterpolatedSurface:
 
     @property
     def interpolator(self):
+        """The interpolation method used to build the surface raster."""
+
         return self._interpolator
 
     @interpolator.setter
     def interpolator(self, val):
+        """Set the interpolation method (ignored with a warning if unsupported)."""
+
         if val is not None:
             if val not in self._interpolators:
                 print(f'interpolator must be one of {self._interpolators}')
@@ -128,6 +134,8 @@ class InterpolatedSurface:
 
     @property
     def kstpkper(self):
+        """The ``(timestep, period)`` sampled for a head surface (defaults to the model's first)."""
+
         if self._kstpkper is None:
             if self.model:
                 self._kstpkper = self.model.kstpkper[0]
@@ -138,6 +146,8 @@ class InterpolatedSurface:
 
     @kstpkper.setter
     def kstpkper(self, val):
+        """Set the sampled ``(timestep, period)`` tuple (rejects a non-length-2 value)."""
+
         if val is not None:
             if len(val) == 2:
                 assert isinstance(val, tuple), (
@@ -149,6 +159,8 @@ class InterpolatedSurface:
 
     @property
     def xs(self):
+        """Cell-centroid x-coordinates (clipped to the clip region when set; cached)."""
+
         if self._xs is None:
             if self.clip:
                 self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
@@ -160,6 +172,8 @@ class InterpolatedSurface:
 
     @property
     def ys(self):
+        """Cell-centroid y-coordinates (clipped to the clip region when set; cached)."""
+
         if self._ys is None:
             if self.clip:
                 self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
@@ -171,6 +185,12 @@ class InterpolatedSurface:
 
     @property
     def zs(self):
+        """Per-cell surface values to interpolate: heads (``hds``) or a layer elevation (``lyr``).
+
+        Head surfaces read the selected ``kstpkper``/``layer`` (inactive-cell
+        sentinels become NaN); layer surfaces read ``gdf_topbtm``. Cached.
+        """
+
         cells = slice(None) if self._clipped_cells is None else self._clipped_cells
         if self._zs is None:
             if self.surf_type == 'hds':
@@ -185,10 +205,14 @@ class InterpolatedSurface:
 
     @zs.setter
     def zs(self, val):
+        """Override the per-cell surface values with a caller-supplied array."""
+
         self._zs = val
 
     @property
     def xys(self):
+        """The cell-centroid points as a list of ``(x, y)`` tuples (cached)."""
+
         if self._xys is None:
             xys = list(zip(self.xs, self.ys))
             self._xys = xys
@@ -196,6 +220,8 @@ class InterpolatedSurface:
 
     @property
     def xy_meshgrid(self):
+        """A ``(grid_x, grid_y)`` regular meshgrid over the data extent at ``resolution`` (cached)."""
+
         if self._meshgrid is None:
             xs = self.xs
             ys = self.ys
@@ -208,6 +234,8 @@ class InterpolatedSurface:
 
     @property
     def hds(self):
+        """The model's :class:`HeadsPlus` reader, opened from its ``.hds`` output (cached)."""
+
         if self._hds is None:
             if self.model:
                 hds = Hp(
@@ -289,6 +317,7 @@ class InterpolatedSurface:
 
     @property
     def memfile(self):
+        """An in-memory single-band GeoTIFF (:class:`MemoryFile`) of the interpolated surface."""
 
         grid_z = self.surface
         try:
@@ -411,6 +440,7 @@ class InterpolatedSurface:
             dst.write(clipped_image)
 
     def plot_heatmap(self):
+        """Show the clipped interpolated surface as a Plotly heatmap."""
 
         clipped_image = self.clip_raster_with_polygon(polygon=self.clip)[0]
         fig = f.Fig()

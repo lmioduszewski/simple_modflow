@@ -48,6 +48,12 @@ class CellBudgetResultsExplorer(SpatialView):
         budget_text: str,
         value_name: str,
     ):
+        """Bind one cell-based result term: its MF6 ``budget_text`` and output column.
+
+        ``value_name`` is the normalized column (e.g. ``"q"``) and doubles as the
+        SpatialView value label; ``package_name`` is lowercased.
+        """
+
         self.model = model
         self.package_name = str(package_name).lower()
         self.budget_text = str(budget_text)
@@ -228,11 +234,15 @@ class StageResultsExplorer(SpatialView):
     value_name = "stage"
 
     def __init__(self, model: "SimulationBase", package_name: str, builder):
+        """Bind a stage result explorer; ``builder(model)`` yields its normalized table."""
+
         self.model = model
         self.package_name = str(package_name).lower()
         self._builder = builder
 
     def _series_default_agg(self) -> str:
+        """Collapse cells within a plotted line by mean (stage repeats per connected cell)."""
+
         return "mean"  # stage repeats per connected cell; summing is meaningless
 
     def get(
@@ -315,10 +325,14 @@ class CellPackageResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """Registry-declared result fields, always including ``"q"`` (the default term)."""
+
         names = self.fields["field"].tolist()
         return names if "q" in names else ["q", *names]  # .q always resolves
 
     def __init__(self, model: "SimulationBase", package_name: str):
+        """Bind a cell-based results namespace to ``model`` for one package."""
+
         self.model = model
         self.package_name = str(package_name).lower()
 
@@ -418,10 +432,14 @@ class UzfResultsNamespace(FieldMappable):
     _default_field = "gwrch"
 
     def _field_names(self):
+        """Registry-declared UZF result fields, defaulting to ``["gwrch", "sat"]``."""
+
         names = self.fields["field"].tolist()
         return names or ["gwrch", "sat"]
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the UZF results namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -517,6 +535,8 @@ class PackageBudgetTermExplorer:
         term: str | Iterable[str],
         label: str,
     ):
+        """Pin a parent budget namespace to one term (or family) under a display ``label``."""
+
         self._namespace = namespace
         self.term = term
         self.label = label

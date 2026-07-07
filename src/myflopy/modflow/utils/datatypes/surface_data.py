@@ -17,6 +17,8 @@ class ModelSurface:
             self,
             model: SimulationBase = None,
     ):
+        """Bind an interpolated-surface factory to ``model`` (caching its timing)."""
+
         self._model = model
         self._surfaces = {}
         self.nper = model.gwf.modeltime.nper
@@ -44,6 +46,8 @@ class ModelSurface:
         return surf
 
     def lyr(self, layer=0, plot: bool = False, **kwargs):
+        """An interpolated layer-elevation surface for ``layer`` (optionally plotted)."""
+
         surf = InterpolatedSurface(model=self.model, layer=layer, surf_type='lyr', **kwargs)
         if plot:
             surf.plot()
@@ -51,5 +55,7 @@ class ModelSurface:
 
     @property
     def model(self):
+        """The bound MODFLOW simulation."""
+
         return self._model
 

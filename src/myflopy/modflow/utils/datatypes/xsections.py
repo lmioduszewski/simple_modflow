@@ -210,16 +210,26 @@ class XSection:
 
     @property
     def model(self):
+        """The MODFLOW simulation this cross-section is taken from."""
+
         return self._model
 
     @property
     def all_heads(self):
+        """The model's full head table (loaded and cached on first access)."""
+
         if self._all_heads is None:
             self._all_heads = self.model.hds.all_heads
         return self._all_heads
 
     @property
     def model_top(self):
+        """Model-top elevation per cell, read from the DISV grid (cached).
+
+        Loaded from the written simulation's ``disv`` package the first time it is
+        needed, so it reflects the model as run.
+        """
+
         if self._model_top is None:
             sim = MFSimulation.load(
                 sim_name=self.model.sim.name_file.filename[:-4],
@@ -232,6 +242,8 @@ class XSection:
 
     @property
     def vor(self):
+        """The model's Voronoi grid (cached)."""
+
         if self._vor is None:
             self._vor = self.model.vor
         return self._vor
@@ -244,21 +256,29 @@ class XSection:
 
     @property
     def kstpkper(self):
+        """The ``(timestep, stress_period)`` sampled (defaults to the model's first)."""
+
         if self._kstpkper is None:
             self._kstpkper = self.model.kstpkper[0]
         return self._kstpkper
 
     @kstpkper.setter
     def kstpkper(self, kstpkper):
+        """Set the sampled timestep, asserting it exists in the model output."""
+
         assert kstpkper in self.model.kstpkper, f'{kstpkper} is not a valid kstpkper'
         self._kstpkper = kstpkper
 
     @property
     def layer(self):
+        """The layer(s) drawn in the section, stored as a list of zero-based indices."""
+
         return self._layer
 
     @layer.setter
     def layer(self, layer):
+        """Set the section layer(s); a bare int is wrapped to a list and each is validated."""
+
         if isinstance(layer, int):
             layer = [layer]
         assert isinstance(layer, list), f'{layer} is not a integer or list'
@@ -268,10 +288,14 @@ class XSection:
 
     @property
     def cells(self):
+        """The cell(s) that define the section line (a single cell or an ordered path)."""
+
         return self._cells
 
     @cells.setter
     def cells(self, cells):
+        """Set the defining cells; a bare int is wrapped to a list and validated against the grid."""
+
         if isinstance(cells, int):
             cells = [cells]
         assert all(isinstance(cell, int) for cell in cells), 'cells must be one or more integers'
@@ -280,17 +304,23 @@ class XSection:
 
     @property
     def x_or_y(self):
+        """Orientation of a single-cell section line: ``'x'`` (E-W) or ``'y'`` (N-S); default ``'x'``."""
+
         if self._x_or_y is None:
             self._x_or_y = 'x'
         return self._x_or_y
 
     @x_or_y.setter
     def x_or_y(self, xy):
+        """Set the single-cell section orientation (must be ``'x'`` or ``'y'``)."""
+
         assert xy in ['x', 'y'], f'{xy} is not x or y'
         self._x_or_y = xy
 
     @property
     def x_min_max(self):
+        """``(xmin, xmax)`` of the model domain, used to span an E-W section line (cached)."""
+
         if self._x_min_max is None:
             xmin, ymin, xmax, ymax = self.vor.get_domain().bounds
             self._x_min_max = xmin, xmax
@@ -298,6 +328,8 @@ class XSection:
 
     @property
     def y_min_max(self):
+        """``(ymin, ymax)`` of the model domain, used to span a N-S section line (cached)."""
+
         if self._y_min_max is None:
             xmin, ymin, xmax, ymax = self.vor.get_domain().bounds
             self._y_min_max = ymin, ymax
@@ -305,19 +337,26 @@ class XSection:
 
     @property
     def extrapolate_beyond_section_ends(self):
+        """Whether the section is extended past its end cells (not yet implemented)."""
+
         return self._extrapolate_beyond_section_ends
 
     @extrapolate_beyond_section_ends.setter
     def extrapolate_beyond_section_ends(self, val):
+        """Set the beyond-ends extrapolation flag (must be a bool)."""
+
         assert isinstance(val, bool), f'{val} is not a bool'
         self._extrapolate_beyond_section_ends = val
 
     @property
     def num_points(self):
+        """Number of equally spaced sample points taken along the section line."""
+
         return self._num_points
 
     @property
     def overlapping_cells(self):
+        """Grid cells the section line passes through, ordered along the line (cached)."""
 
         if self._overlapping_cells is None:
             ov = self.vor.get_vor_cells_as_series(self.xsect_linestring)[0]
@@ -326,11 +365,19 @@ class XSection:
 
     @num_points.setter
     def num_points(self, num_points):
+        """Set the number of sample points along the section (must be an integer)."""
+
         assert isinstance(num_points, int), f'{num_points} is not an integer'
         self._num_points = num_points
 
     @property
     def xsect_linestring(self):
+        """The section's ``LineString`` in model coordinates, built from ``cells`` (cached).
+
+        A single cell yields a full-width horizontal or vertical line through the
+        cell centroid (per ``x_or_y``); multiple cells yield a polyline through
+        their centroids in order.
+        """
 
         if self._xsect_linestring is None:
 

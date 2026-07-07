@@ -8,6 +8,8 @@ from typing import Any, ClassVar
 
 
 def _path_text(path: Path | str) -> str:
+    """Serialize a path as a forward-slash string for portable JSON/YAML output."""
+
     return str(Path(path).as_posix())
 
 
@@ -51,9 +53,13 @@ class DataSourceSpec:
     kind: ClassVar[str] = "DataSourceSpec"
 
     def __post_init__(self) -> None:
+        """Coerce ``path`` to a :class:`~pathlib.Path` (on this frozen dataclass)."""
+
         object.__setattr__(self, "path", Path(self.path))
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a ``kind``-tagged dict, omitting default ``external``/``metadata``."""
+
         payload = {
             "kind": self.kind,
             "path": _path_text(self.path),
@@ -66,6 +72,8 @@ class DataSourceSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataSourceSpec:
+        """Rebuild a source spec, dispatching on its ``kind`` tag to the right subclass."""
+
         kind = data.get("kind")
         try:
             source_type = _SOURCE_TYPES[kind]
@@ -75,6 +83,8 @@ class DataSourceSpec:
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> DataSourceSpec:
+        """Construct this concrete class from an already-dispatched payload dict."""
+
         return cls(
             path=data["path"],
             external=bool(data.get("external", False)),
@@ -108,6 +118,8 @@ class TableSource(DataSourceSpec):
     kind: ClassVar[str] = "TableSource"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding ``table`` when set."""
+
         payload = DataSourceSpec.to_dict(self)
         if self.table is not None:
             payload["table"] = self.table
@@ -115,6 +127,8 @@ class TableSource(DataSourceSpec):
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> TableSource:
+        """Rebuild a :class:`TableSource` from a payload dict."""
+
         return cls(
             path=data["path"],
             table=data.get("table"),
@@ -150,6 +164,8 @@ class ShapeSource(DataSourceSpec):
     kind: ClassVar[str] = "ShapeSource"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding ``crs`` when set."""
+
         payload = DataSourceSpec.to_dict(self)
         if self.crs is not None:
             payload["crs"] = self.crs
@@ -157,6 +173,8 @@ class ShapeSource(DataSourceSpec):
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> ShapeSource:
+        """Rebuild a :class:`ShapeSource` from a payload dict."""
+
         return cls(
             path=data["path"],
             crs=data.get("crs"),
@@ -205,6 +223,8 @@ class GeoPackageSourceSpec(DataSourceSpec):
     kind: ClassVar[str] = "GeoPackageSource"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding ``layer``/``query``/``crs``/``fields`` when set."""
+
         payload = DataSourceSpec.to_dict(self)
         if self.layer is not None:
             payload["layer"] = self.layer
@@ -218,6 +238,8 @@ class GeoPackageSourceSpec(DataSourceSpec):
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> GeoPackageSourceSpec:
+        """Rebuild a :class:`GeoPackageSourceSpec` from a payload dict."""
+
         return cls(
             path=data["path"],
             layer=data.get("layer"),
@@ -265,6 +287,8 @@ class RasterSource(DataSourceSpec):
     kind: ClassVar[str] = "RasterSource"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding any set ``band``/``map_to``/``method``/``crs``."""
+
         payload = DataSourceSpec.to_dict(self)
         for key in ("band", "map_to", "method", "crs"):
             value = getattr(self, key)
@@ -274,6 +298,8 @@ class RasterSource(DataSourceSpec):
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> RasterSource:
+        """Rebuild a :class:`RasterSource` from a payload dict."""
+
         return cls(
             path=data["path"],
             band=data.get("band"),
@@ -315,6 +341,8 @@ class LiteralSource:
     kind: ClassVar[str] = "LiteralSource"
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the inline value to a ``kind``-tagged dict (omitting empty metadata)."""
+
         payload = {
             "kind": self.kind,
             "value": self.value,
@@ -325,6 +353,8 @@ class LiteralSource:
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> LiteralSource:
+        """Rebuild a :class:`LiteralSource` from a payload dict."""
+
         return cls(
             value=data.get("value"),
             metadata=dict(data.get("metadata", {})),

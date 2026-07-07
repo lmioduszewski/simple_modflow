@@ -32,6 +32,8 @@ class PackageExplorer:
     """Namespace for one package's preferred exploration helpers."""
 
     def __init__(self, model: "SimulationBase", package_name: str):
+        """Bind a generic package explorer (``.inputs`` / ``.results``) to ``model``."""
+
         self.model = model
         self.package_name = str(package_name).lower()
 
@@ -57,11 +59,15 @@ class StaticArrayPackageExplorer:
         package_name: str,
         fields: Mapping[str, dict[str, str]],
     ):
+        """Bind a static-array explorer to ``model`` for a package's declared array ``fields``."""
+
         self.model = model
         self.package_name = str(package_name).lower()
         self._fields = dict(fields)
 
     def _available_field_items(self) -> list[tuple[str, dict[str, str]]]:
+        """The declared ``(field_name, metadata)`` pairs that actually exist on the package."""
+
         package = self.model.package(self.package_name)
         available = []
         for field_name, metadata in self._fields.items():
@@ -115,6 +121,8 @@ class StaticArrayPackageExplorer:
         )
 
     def _field(self, field_name: str) -> StaticArrayFieldExplorer:
+        """A field-pinned explorer for one static array (raises if unknown or absent on the package)."""
+
         metadata = self._fields.get(str(field_name))
         if metadata is None:
             raise AttributeError(
@@ -143,6 +151,8 @@ class UzfPackageExplorer:
     """Top-level UZF package explorer namespace."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the top-level UZF explorer (``.inputs`` / ``.results``) to ``model``."""
+
         self.model = model
 
     @property
@@ -172,6 +182,8 @@ class ModelPackages:
     """
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the preferred ``model.packages`` exploration namespace to ``model``."""
+
         self.model = model
 
     def __getattr__(self, package_name: str) -> PackageExplorer:

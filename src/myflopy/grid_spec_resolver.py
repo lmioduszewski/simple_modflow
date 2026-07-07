@@ -55,6 +55,8 @@ _TRIANGLE_OPTION_KEYS = {
 def _source_path(
     source: DataSourceSpec, project_root: Path | str | None = None
 ) -> Path:
+    """Resolve a source's path to absolute, anchoring relative non-external paths to the project root."""
+
     path = Path(source.path)
     if path.is_absolute() or source.external or project_root is None:
         return path
@@ -62,6 +64,8 @@ def _source_path(
 
 
 def _project_path(value: Path | str, project_root: Path | str | None = None) -> Path:
+    """Resolve ``value`` to an absolute path, anchoring a relative one to the project root."""
+
     path = Path(value)
     if path.is_absolute() or project_root is None:
         return path
@@ -73,6 +77,8 @@ def _resolved_project_root(
     *,
     fallback: Path | str | None = None,
 ) -> Path:
+    """The project root to use: the given value, else ``fallback``, else the CWD."""
+
     if project_root is not None:
         return Path(project_root)
     if fallback is not None:
@@ -81,6 +87,12 @@ def _resolved_project_root(
 
 
 def _path_option(value: Any, project_root: Path | str | None = None) -> Any:
+    """Recursively resolve any path-like option value(s) against the project root.
+
+    Sources, paths, and strings become absolute paths; lists/tuples are mapped
+    element-wise; anything else is returned unchanged.
+    """
+
     if isinstance(value, DataSourceSpec):
         return _source_path(value, project_root)
     if isinstance(value, Path):
@@ -95,6 +107,8 @@ def _path_option(value: Any, project_root: Path | str | None = None) -> Any:
 
 
 def _input_path(value: Any, project_root: Path | str | None = None) -> Path | None:
+    """The local path an input value should exist at, or ``None`` for external sources."""
+
     if isinstance(value, DataSourceSpec):
         if value.external:
             return None
@@ -105,6 +119,8 @@ def _input_path(value: Any, project_root: Path | str | None = None) -> Path | No
 
 
 def _validate_inputs(inputs: tuple[Any, ...], project_root: Path | str | None) -> None:
+    """Raise ``FileNotFoundError`` if any local (non-external) grid input is missing."""
+
     for value in inputs:
         path = _input_path(value, project_root)
         if path is not None and not path.exists():
@@ -112,6 +128,13 @@ def _validate_inputs(inputs: tuple[Any, ...], project_root: Path | str | None) -
 
 
 def _load_builder(script: Path, function: str) -> Any:
+    """Import ``function`` from a standalone grid-builder ``script`` and return it.
+
+    Loads the script under a hash-derived module name (its own directory on
+    ``sys.path`` during import) and returns the named callable; raises if the
+    module cannot load, the function is absent, or it is not callable.
+    """
+
     module_hash = hashlib.sha1(str(script.resolve()).encode()).hexdigest()[:12]
     module_name = f"_myflopy_grid_builder_{module_hash}"
     module_spec = importlib.util.spec_from_file_location(module_name, script)
@@ -146,6 +169,13 @@ def _read_source(
     *,
     target_crs: str | None = None,
 ) -> gpd.GeoDataFrame:
+    """Read a grid data source into a GeoDataFrame, reprojected to ``target_crs``.
+
+    Handles GeoPackage (with optional layer/query), shapefile, and CSV table
+    sources (geometry from a WKT column or x/y columns); applies the source's
+    declared CRS when the file has none.
+    """
+
     path = _source_path(source, project_root)
     if isinstance(source, GeoPackageSourceSpec):
         kwargs = {} if source.layer is None else {"layer": source.layer}
@@ -188,6 +218,8 @@ def _read_source(
 
 
 def _source_value(source: DataSourceSpec, key: str, default: Any = None) -> Any:
+    """The column name a source maps to logical ``key`` (via its ``fields`` map), else ``default``."""
+
     fields = getattr(source, "fields", {})
     if isinstance(fields, dict) and key in fields:
         return fields[key]
@@ -195,6 +227,8 @@ def _source_value(source: DataSourceSpec, key: str, default: Any = None) -> Any:
 
 
 def _row_value(row: Any, source: DataSourceSpec, key: str, default: Any = None) -> Any:
+    """One row's value for logical ``key`` (resolved through the source's field map), else ``default``."""
+
     field = _source_value(source, key)
     if field is not None and field in row:
         value = row[field]
@@ -204,10 +238,14 @@ def _row_value(row: Any, source: DataSourceSpec, key: str, default: Any = None) 
 
 
 def _coalesce(value: Any, default: Any) -> Any:
+    """``value`` unless it is ``None``, in which case ``default``."""
+
     return default if value is None else value
 
 
 def _option(options: dict[str, Any], *names: str, default: Any = None) -> Any:
+    """The first of ``names`` present in ``options`` (an alias lookup), else ``default``."""
+
     for name in names:
         if name in options:
             return options[name]
@@ -220,6 +258,8 @@ def _union_geometry(
     *,
     target_crs: str | None,
 ) -> shp.Geometry:
+    """The unioned geometry of all features in ``source`` (raises if the source is empty)."""
+
     gdf = _read_source(source, project_root, target_crs=target_crs)
     if gdf.empty:
         raise ValueError(
@@ -236,6 +276,13 @@ def _add_refinement_source(
     options: dict[str, Any],
     target_crs: str | None,
 ) -> None:
+    """Add each polygon in a refinement source to the triangle grid as a max-area region.
+
+    Cell-size targets come from the source's ``area`` field or
+    ``options['refinement_max_area']`` (one is required); per-feature label and
+    priority fall back to option defaults.
+    """
+
     gdf = _read_source(source, project_root, target_crs=target_crs)
     if gdf.empty:
         return
@@ -277,6 +324,13 @@ def _add_breakline_source(
     options: dict[str, Any],
     target_crs: str | None,
 ) -> None:
+    """Add each line in a breakline source to the triangle grid as a buffered region.
+
+    Lines are buffered (``breakline_buffer``/``line_buffer``) into refinement
+    polygons with an optional negative post-clip buffer; cell-size targets come
+    from the source's ``area`` field or ``options['breakline_max_area']``.
+    """
+
     gdf = _read_source(source, project_root, target_crs=target_crs)
     if gdf.empty:
         return
@@ -327,6 +381,12 @@ def _add_point_source(
     project_root: Path | str | None,
     target_crs: str | None,
 ) -> None:
+    """Add each feature of a point source to the triangle grid as a fixed mesh vertex.
+
+    Points and multipoints contribute their coordinates directly; other
+    geometries contribute a representative point.
+    """
+
     gdf = _read_source(source, project_root, target_crs=target_crs)
     points = []
     for geometry in gdf.geometry:
@@ -345,6 +405,12 @@ def _add_point_source(
 
 
 def _build_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Filter ``options`` to mesh-build keys, defaulting/resolving the ``profile``.
+
+    A missing profile defaults to ``"balanced"`` and a string profile is
+    resolved to a :class:`MeshBuildProfile`.
+    """
+
     build_options = {
         key: value for key, value in options.items() if key in _BUILD_OPTION_KEYS
     }
@@ -356,6 +422,8 @@ def _build_options(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def _triangle_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]:
+    """Merge the spec's Triangle options with matching top-level options (spec wins)."""
+
     triangle_options = dict(spec.triangle_options)
     if "min_angle" in options and "angle" not in triangle_options:
         triangle_options["angle"] = options["min_angle"]
@@ -366,6 +434,8 @@ def _triangle_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]
 
 
 def _mesh_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]:
+    """Merge the spec's mesh options with matching top-level options, then build-filter them."""
+
     mesh_options = dict(spec.mesh_options)
     for key in _BUILD_OPTION_KEYS:
         if key in options and key not in mesh_options:
@@ -379,6 +449,8 @@ def _voronoi_options(
     *,
     project_root: Path | str | None,
 ) -> dict[str, Any]:
+    """Merge the spec's Voronoi options with top-level options; default CRS/name, resolve paths."""
+
     voronoi_options = dict(spec.voronoi_options)
     for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters"):
         if key in options and key not in voronoi_options:
@@ -399,6 +471,15 @@ def _resolve_voronoi(
     build: bool,
     return_triangle: bool,
 ) -> TriangleGrid | VoronoiGridPlus | tuple[VoronoiGridPlus, TriangleGrid]:
+    """Resolve a Voronoi :class:`GridSpec` into the built grid object(s).
+
+    Builds a :class:`TriangleGrid` from the boundary + refinement/breakline/point
+    sources, then (when ``build``) meshes it and wraps it in a
+    :class:`VoronoiGridPlus`. With ``build=False`` the prepared (unmeshed)
+    triangle grid is returned; ``return_triangle`` additionally returns the
+    triangle grid alongside the Voronoi grid.
+    """
+
     options = dict(spec.options)
     triangle_options = _triangle_options(spec, options)
     model_ws = workspace or _option(
@@ -471,6 +552,12 @@ def _resolve_python(
     project_root: Path | str | None,
     workspace: Path | str | None,
 ) -> Any:
+    """Resolve a Python :class:`GridSpec` by importing and calling its builder function.
+
+    Validates the script/function and declared inputs exist, then invokes the
+    builder to produce the grid object.
+    """
+
     if spec.script is None:
         raise ValueError("Python GridSpec requires a script.")
     if spec.function is None:

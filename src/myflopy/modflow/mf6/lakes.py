@@ -58,6 +58,8 @@ class LakeConnection:
     connection_width: float = 0.0
 
     def __post_init__(self) -> None:
+        """Uppercase and validate ``connection_type`` (VERTICAL or HORIZONTAL)."""
+
         connection_type = self.connection_type.upper()
         if connection_type not in {"VERTICAL", "HORIZONTAL"}:
             raise ValueError("connection_type must be 'VERTICAL' or 'HORIZONTAL'.")
@@ -100,6 +102,8 @@ class LakeOutlet:
     rate: Any = None
 
     def __post_init__(self) -> None:
+        """Uppercase and validate ``outlet_type`` (SPECIFIED, MANNING, or WEIR)."""
+
         outlet_type = self.outlet_type.upper()
         if outlet_type not in {"SPECIFIED", "MANNING", "WEIR"}:
             raise ValueError("outlet_type must be 'SPECIFIED', 'MANNING', or 'WEIR'.")
@@ -134,6 +138,12 @@ class LakeTable:
     filename: str | None = None
 
     def __post_init__(self) -> None:
+        """Coerce, validate, and freeze the ``(stage, volume, area)`` rows.
+
+        Requires at least one 3-tuple row with strictly increasing stages,
+        nondecreasing volumes, and non-negative areas.
+        """
+
         rows = tuple(tuple(float(value) for value in row) for row in self.rows)
         if not rows:
             raise ValueError("A lake table must contain at least one row.")
@@ -152,10 +162,14 @@ class LakeTable:
 
     @property
     def minimum_stage(self) -> float:
+        """The lowest stage in the table (first row)."""
+
         return self.rows[0][0]
 
     @property
     def maximum_stage(self) -> float:
+        """The highest stage in the table (last row)."""
+
         return self.rows[-1][0]
 
 
@@ -204,6 +218,8 @@ class LakeTableBuilder:
     filename: str | None = None
 
     def _footprint_geometry(self) -> BaseGeometry:
+        """Resolve ``footprint`` (geometry or vector file) to one geometry, applying any buffer."""
+
         if isinstance(self.footprint, BaseGeometry):
             geometry = self.footprint
         elif isinstance(self.footprint, Path):
@@ -214,6 +230,12 @@ class LakeTableBuilder:
         return geometry.buffer(self.footprint_buffer) if self.footprint_buffer else geometry
 
     def _build_from_dem(self) -> LakeTable:
+        """Integrate stage/volume/area from a DEM clipped to the footprint at each stage.
+
+        For every stage, sums inundation depth × cell area for volume (times the
+        storage coefficient) and wetted cell area for surface area.
+        """
+
         if self.stages is None:
             raise ValueError("DEM-derived lake tables require stages.")
         geometry = self._footprint_geometry()
@@ -353,6 +375,8 @@ class LAKBuilder:
     )
 
     def __post_init__(self) -> None:
+        """Validate a grid is present and ``nper >= 1``, and freeze tables/outlets."""
+
         if self.context.grid is None:
             raise ValueError("ModelContext.grid is required for LAKBuilder.")
         if self.nper < 1:
@@ -367,6 +391,8 @@ class LAKBuilder:
 
     @property
     def grid(self):
+        """The Voronoi grid carried by the model context."""
+
         return self.context.grid
 
     @property
@@ -415,13 +441,19 @@ class LAKBuilder:
 
     @property
     def lake_ids(self) -> tuple[str, ...]:
+        """The stable string lake IDs in build order."""
+
         return tuple(self.lake_table.index)
 
     @property
     def lake_numbers(self) -> dict[str, int]:
+        """Map each stable lake ID to its zero-based MF6 lake number."""
+
         return self.lake_table["lake_number"].astype(int).to_dict()
 
     def lake_number(self, lake_id: str) -> int:
+        """The zero-based MF6 lake number for a stable ``lake_id`` (raises if unknown)."""
+
         try:
             return self.lake_numbers[str(lake_id)]
         except KeyError as error:
@@ -436,6 +468,8 @@ class LAKBuilder:
 
     @property
     def lake_cells(self) -> dict[str, list[int]]:
+        """Map each lake ID to the grid cells its polygon covers (cached; intersection is costly)."""
+
         # Cached: each access does a full-grid geometry intersection per lake, and
         # connection building reads this once per lake cell -- recomputing it there
         # made an automatic build over a large lake O(cells x lakes x grid) and hang.
@@ -450,6 +484,13 @@ class LAKBuilder:
         return result
 
     def _lake_value(self, value: Any, lake_id: str, *, name: str, default: Any = None) -> Any:
+        """Resolve a per-lake parameter for ``lake_id`` from many input shapes.
+
+        Accepts ``None`` (uses ``default``), a column name / literal string, a
+        per-lake mapping, a path, a scalar, or a one-per-lake sequence; raises if a
+        required value is missing.
+        """
+
         if value is None:
             if default is None:
                 raise ValueError(f"{name} is required.")
@@ -470,6 +511,12 @@ class LAKBuilder:
         return values[self.lake_number(lake_id)]
 
     def _connection_mode(self, lake_id: str) -> str | Sequence[LakeConnection]:
+        """The connection strategy for a lake: ``"bathy"``/``"rectangular"`` or explicit connections.
+
+        Resolves a per-lake mapping, normalizes the legacy ``"automatic"`` alias to
+        ``"bathy"``, and validates explicit connection lists.
+        """
+
         mode = self.connection_modes
         if isinstance(mode, Mapping):
             if lake_id not in mode:
@@ -530,6 +577,8 @@ class LAKBuilder:
         return float(value)
 
     def _surfaces(self) -> pd.DataFrame:
+        """The per-cell top/bottom elevation table (context surfaces, else the grid's), geometry dropped."""
+
         surfaces = self.context.surfaces
         if surfaces is None:
             surfaces = getattr(self.grid, "gdf_topbtm", None)
@@ -538,6 +587,8 @@ class LAKBuilder:
         return surfaces.drop(columns="geometry", errors="ignore")
 
     def _active(self, layer: int, cell: int) -> bool:
+        """Whether ``(layer, cell)`` is active in the context's idomain (True if none set)."""
+
         domain = self.context.domain
         if domain is None:
             return True
@@ -545,6 +596,11 @@ class LAKBuilder:
         return values.ndim < 2 or bool(values[layer, cell] > 0)
 
     def _layer_containing(self, cell: int, elevation: float, only_layer: int | None = None) -> int | None:
+        """The active layer whose top/bottom bracket ``elevation`` at ``cell`` (or ``None``).
+
+        ``only_layer`` restricts the search to a single layer.
+        """
+
         surfaces = self._surfaces().loc[cell].to_numpy(dtype=float)
         for layer, (top, bottom) in enumerate(zip(surfaces, surfaces[1:])):
             if only_layer is not None and layer != only_layer:
@@ -554,6 +610,8 @@ class LAKBuilder:
         return None
 
     def _bottom(self, lake_id: str, cell: int) -> float:
+        """The lakebed bottom elevation at ``cell`` for a lake (raster/mapping/scalar), cached."""
+
         key = (lake_id, cell)
         if key in self._bottom_cache:
             return self._bottom_cache[key]
@@ -570,6 +628,12 @@ class LAKBuilder:
         return resolved
 
     def _leakance(self, lake_id: str, connection_type: str, explicit: float | None = None) -> float:
+        """The (positive) lakebed leakance for one lake + connection type (explicit wins).
+
+        Resolves per-lake and per-connection-type mappings; raises if the resolved
+        value is missing or not positive.
+        """
+
         if explicit is not None:
             return float(explicit)
         if isinstance(self.bed_leakance, Mapping) and (lake_id, connection_type.lower()) in self.bed_leakance:
@@ -583,6 +647,12 @@ class LAKBuilder:
         return float(value)
 
     def _adjacent_with_metrics(self, cell: int) -> list[tuple[int, float, float]]:
+        """Neighbors of ``cell`` as ``(other, connection_length, connection_width)`` triples.
+
+        Reads the grid's CRS/connection arrays (``ia``/``cl12``/``hwva``) via O(1)
+        row pointers so building a large lake stays linear.
+        """
+
         adjacent = list(self.grid.find_adjacent_cells(cell))
         start = int(self.grid.ia[cell])  # O(1) row pointer; sum(iac[:cell]) was O(N^2) over a lake
         return [
@@ -740,11 +810,19 @@ class LAKBuilder:
         ]
 
     def _period_setting(self, value: Any, keyword: str) -> dict[int, list[list[Any]]]:
+        """Expand a stage/rainfall/etc setting into per-period MF6 ``[lake, keyword, amount]`` rows.
+
+        Accepts a scalar (applied to all lakes/periods), a per-period mapping, a
+        per-lake mapping (scalar or per-period series), or a per-period sequence.
+        """
+
         result = {period: [] for period in range(self.nper)}
         if value is None:
             return result
 
         def at_period(current: Any, period: int) -> Any:
+            """Pick one period's value from a scalar, per-period mapping, or sequence."""
+
             if isinstance(current, Mapping) and current and all(isinstance(key, int) for key in current):
                 return current.get(period)
             if isinstance(current, Sequence) and not isinstance(current, (str, bytes)):
@@ -779,6 +857,8 @@ class LAKBuilder:
 
     @property
     def outletdata(self) -> list[list[Any]]:
+        """MF6 LAK ``outlets`` records, resolving source/receiver lake names to numbers."""
+
         rows = []
         for outlet_number, outlet in enumerate(self.outlets):
             rows.append(
@@ -829,6 +909,8 @@ class LAKBuilder:
 
     @property
     def prepared_tables(self) -> dict[str, LakeTable]:
+        """Per-lake built :class:`LakeTable` objects (builders resolved; unknown lakes raise)."""
+
         result = {}
         for lake_id, table in self.tables.items():
             if lake_id not in self.lake_numbers:

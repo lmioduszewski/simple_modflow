@@ -62,6 +62,8 @@ _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
 
 
 def _import_pyemu():
+    """Import pyEMU (a required optional dependency for reading PESTPP-IES results)."""
+
     from myflopy._optional import require
 
     return require("pyemu", feature="reading PESTPP-IES results")
@@ -94,6 +96,8 @@ class IesSettings:
     pestpp_options: dict
 
     def __str__(self) -> str:
+        """A multi-line human-readable summary of the run's configuration and outputs."""
+
         ies_opts = {k: v for k, v in self.pestpp_options.items() if str(k).startswith("ies_")}
         lines = [
             f"PESTPP-IES run: {self.case}",
@@ -107,6 +111,8 @@ class IesSettings:
         return "\n".join(lines)
 
     def __repr__(self) -> str:
+        """Same as :meth:`__str__` (the settings summary)."""
+
         return self.__str__()
 
 
@@ -128,6 +134,8 @@ class IesForecast:
         """Return prior/posterior mean, std, and 5/50/95 percentiles."""
 
         def _stats(values, tag):
+            """Mean/std/5-50-95 percentiles of an ensemble, keyed by ``<tag>_<stat>``."""
+
             values = np.asarray(values, dtype=float)
             return {
                 f"{tag}_mean": float(np.mean(values)),
@@ -217,6 +225,12 @@ class IesResults:
     """
 
     def __init__(self, workspace, *, case_name: str | None = None, model=None):
+        """Open a completed PESTPP-IES run in ``workspace``, loading its ``.pst`` control file.
+
+        Discovers the case name if not given, imports pyEMU, and best-effort
+        parses observation-name metadata.
+        """
+
         self.workspace = Path(workspace)
         self.pyemu = _import_pyemu()
         self.case = case_name or self._discover_case()
@@ -248,6 +262,8 @@ class IesResults:
     # -- discovery --------------------------------------------------------
 
     def _discover_case(self) -> str:
+        """The case name from the workspace's ``.pst`` files, preferring one with phi output."""
+
         pst_files = sorted(self.workspace.glob("*.pst"))
         if not pst_files:
             raise FileNotFoundError(f"No .pst control file found in {self.workspace}.")
@@ -517,6 +533,8 @@ class IesResults:
         return IesForecast(name=obsnme, prior=prior, posterior=posterior, truth=truth)
 
     def _resolve_forecast_name(self, name) -> str:
+        """Resolve a forecast selector (exact name or index) to a full observation name."""
+
         names = self.forecast_names
         if isinstance(name, str):
             if name in names:
@@ -885,6 +903,8 @@ class IesResults:
         conflict = self.conflict(coverage=coverage) if show_conflict else None
 
         def _group_data(group):
+            """The time-ordered observation names/times/ensembles for one observation group."""
+
             group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
             names = group_obs.index.tolist()
             times = group_obs["_time"].to_numpy()

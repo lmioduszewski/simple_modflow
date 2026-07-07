@@ -159,6 +159,8 @@ def budget_obs_df(
     b_obs["cells"] = Boundaries(model, model.vor, shp_gpkg=shp_gpkg, crs=crs).intersections
 
     def drop_non_pkg_cells(cells):
+        """Keep only the cells that belong to this package's cells."""
+
         return [cell for cell in cells if cell in pkg_cells]
 
     b_obs["cells"] = b_obs["cells"].apply(drop_non_pkg_cells)

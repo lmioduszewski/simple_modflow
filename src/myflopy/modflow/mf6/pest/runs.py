@@ -74,12 +74,16 @@ class PestRunHandle:
         return open_ies_run(target, case_name=self.case or None, model=model or self._model)
 
     def __repr__(self) -> str:
+        """Show the run name, model, and the execution kinds discovered on disk."""
+
         kinds = ", ".join(self.kinds) or "built (not run)"
         model = f" on {self.model_name}" if self.model_name else ""
         return f"<PestRun {self.name!r}{model}: {kinds}>"
 
 
 def _master_kind(dirname: str) -> str:
+    """Classify a PEST master directory name as ``"prior"``, ``"ies"``, or ``"run"``."""
+
     lower = dirname.lower()
     if "prior" in lower:
         return "prior"

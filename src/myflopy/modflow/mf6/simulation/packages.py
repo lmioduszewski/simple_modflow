@@ -410,6 +410,8 @@ class Wells:
             artifact_metadata: dict | None = None,
             artifact_overwrite: bool = False,
     ):
+        """Build and wrap a GWF WEL package from ``stress_period_data`` (see the class docstring)."""
+
         package = _build_gwf_package(
             flopy.mf6.ModflowGwfwel,
             model,

@@ -148,6 +148,8 @@ class GHB(Boundaries):
 
     @property
     def line_ghb(self):
+        """A line-driven GHB :class:`Boundaries` built from ``line_shp`` (cached)."""
+
         if self._line_ghb is None:
             assert isinstance(self.line_shp, Path), 'No line shapefile provided. Set the line_shp attribute'
             line_ghb = Boundaries(self.model, self.vor, self.line_shp, self.uid, self.crs, bound_type='ghb')
@@ -298,12 +300,16 @@ class GHB(Boundaries):
         return self.from_polygons(**kwargs)
 
     def add_to_dict(self, existing_dict: dict = None, dict_to_add: dict = None):
+        """Merge a validated GHB stress-period dict into ``existing_dict`` (replacing collisions)."""
+
         assert self._verify_boundary_dict_structure(dict_to_add), 'dict to add not valid or missing'
         if existing_dict is None:
             return dict_to_add
         return merge_stress_period_data(existing_dict, dict_to_add, replace=True)
 
     def _verify_boundary_dict_structure(self, dict_to_check: dict = None):
+        """Validate a boundary dict: every period, layer, and cell id is within the model grid."""
+
         if dict_to_check is None:
             return dict_to_check
         for per, period_list in dict_to_check.items():

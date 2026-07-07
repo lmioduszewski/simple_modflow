@@ -26,6 +26,8 @@ class ModelOutputs:
     """
 
     def __init__(self, model):
+        """Bind the package-output accessor namespace (``.lak`` / ``.sfr`` / ``.uzf``) to ``model``."""
+
         self.model = model
 
     @property

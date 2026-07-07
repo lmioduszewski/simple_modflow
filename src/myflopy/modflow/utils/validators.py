@@ -35,6 +35,7 @@ def package_name_validator(model: SimulationBase, package: str):
 
 
 def valid_list_of_cell_ints(model: SimulationBase = None, cells: list = None):
+    """Assert ``cells`` is a list of ints, each a valid grid cell when ``model`` is given."""
 
     assert all(isinstance(loc, int) for loc in cells), 'cells must be a list of ints'
     if model:

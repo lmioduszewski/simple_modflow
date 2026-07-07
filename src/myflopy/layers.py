@@ -166,6 +166,8 @@ class LayerQCReport:
         )
 
     def __str__(self) -> str:
+        """Render a human-readable multi-line QC summary (status, warnings, per-layer stats)."""
+
         head = "OK" if self.ok else "PROBLEMS FOUND"
         lines = [
             f"LayerStack QC [{head}]: {self.nlay} layers, {self.ncpl} cells, "
@@ -226,6 +228,8 @@ class LayerBuildResult:
 
     @property
     def nlay(self) -> int:
+        """Number of layers (rows of ``botm``)."""
+
         return self.botm.shape[0]
 
     @property
@@ -289,12 +293,16 @@ class LayerBuildResult:
         parent = list(range(nlay * ncpl))
 
         def find(a):
+            """Union-find root of flat cell index ``a``, with path compression."""
+
             while parent[a] != a:
                 parent[a] = parent[parent[a]]
                 a = parent[a]
             return a
 
         def union(a, b):
+            """Merge the union-find sets containing flat cell indices ``a`` and ``b``."""
+
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[ra] = rb
@@ -487,6 +495,8 @@ class LayerBuildResult:
 
     @staticmethod
     def _rgb(rgba) -> str:
+        """Format a 0-1 RGBA tuple as a Plotly ``rgb(r,g,b)`` string (0-255)."""
+
         r, g, b = (int(round(255 * c)) for c in rgba[:3])
         return f"rgb({r},{g},{b})"
 
@@ -809,6 +819,12 @@ class LayerStack:
     """
 
     def __init__(self, vor, top, *, length_units: str = "feet", time_units: str = "days"):
+        """Start an editable layer stack on grid ``vor`` with the model-top surface ``top``.
+
+        Layers are added below the top with :meth:`add`; ``length_units`` /
+        ``time_units`` are carried onto the built :class:`LayerBuildResult`.
+        """
+
         self.vor = vor
         self._top = _coerce_surface(top)
         self._layers: list[_Layer] = []
@@ -934,9 +950,13 @@ class LayerStack:
 
     @property
     def names(self) -> list[str]:
+        """The layer names, top-to-bottom (excluding the model top)."""
+
         return [layer.name for layer in self._layers]
 
     def _index(self, name: str) -> int:
+        """The position of the layer named ``name`` (raises ``KeyError`` if absent)."""
+
         for i, layer in enumerate(self._layers):
             if layer.name == name:
                 return i
@@ -944,11 +964,15 @@ class LayerStack:
 
     # -- compilation ------------------------------------------------------ #
     def _layer_surfaces(self) -> LayerSurfaces:
+        """Compile to the :class:`LayerSurfaces` engine: the top plus each layer bottom, labeled."""
+
         surfaces = [self._top] + [layer.surface for layer in self._layers]
         labels = ["top"] + self.names
         return LayerSurfaces(surfaces, labels=labels)
 
     def _per_layer_config(self, default_min_thickness, default_pinch):
+        """Resolve each layer's ``(min_thickness, pinch)``, filling unset ones with the defaults."""
+
         min_thk = [
             default_min_thickness if layer.min_thickness is None else layer.min_thickness
             for layer in self._layers
@@ -988,13 +1012,53 @@ class LayerStack:
     ) -> LayerBuildResult:
         """Resolve, reconcile, and pinch out the stack into DISV-ready arrays.
 
-        A stale derived (contour) surface is reused with a warning; pass
-        ``refresh=True`` to rebuild its cache first.
+        Samples every surface onto the grid, reconciles crossing surfaces, applies
+        the per-layer pinch policy, and returns the ``top``/``botm``/``idomain``
+        arrays ready for ``mf.disv(...)``. A stale derived (contour) surface is
+        reused with a warning; pass ``refresh=True`` to rebuild its cache first.
 
-        ``attach=True`` also publishes the result onto ``vor.gdf_topbtm`` (see
-        :meth:`LayerBuildResult.attach_to_grid`) so the surface-aware builders --
-        ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering -- can read the
-        elevations. Use it when your model has SFR/LAK on this grid.
+        Parameters
+        ----------
+        default_min_thickness : float, default 1.0
+            Minimum layer thickness used where a layer does not set its own.
+        default_pinch : str, default "passthrough"
+            Default thin-layer policy: ``"passthrough"`` (idomain -1),
+            ``"inactive"`` (idomain 0, a true pinch-out), or ``"floor"`` (clamp to
+            the minimum).
+        reconcile : str, default "bottom"
+            How crossing surfaces are reconciled (e.g. push conflicts to the
+            ``"bottom"``).
+        min_sep : float, default 0.1
+            Minimum vertical separation enforced between reconciled surfaces.
+        method : str, default "area"
+            Raster sampling method: ``"area"`` (area-weighted) or ``"centroid"``.
+        refresh : bool, default False
+            Rebuild any stale derived (contour) surface caches before sampling.
+        attach : bool, default False
+            Also publish the result onto ``vor.gdf_topbtm`` (see
+            :meth:`LayerBuildResult.attach_to_grid`) so surface-aware builders --
+            ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering -- can read the
+            elevations. Use it when your model has SFR/LAK on this grid.
+
+        Returns
+        -------
+        LayerBuildResult
+            Bundles ``top`` ``(ncpl,)``, ``botm`` / ``idomain`` ``(nlay, ncpl)``,
+            derived ``thickness``, and per-layer metadata.
+
+        Raises
+        ------
+        ValueError
+            If no layers have been added with :meth:`add`.
+
+        Examples
+        --------
+        >>> layers = (mf.LayerStack(vor, top=mf.Raster("ground.tif"))
+        ...           .add("sand", thickness=20)
+        ...           .add("clay", bottom=mf.Contours("base.shp"), pinch="inactive")
+        ...           .build(attach=True))
+        >>> mf.disv(nlay=layers.nlay, ..., top=layers.top, botm=layers.botm,
+        ...         idomain=layers.idomain)
         """
         if not self._layers:
             raise ValueError("Add at least one layer with .add(...) before build().")

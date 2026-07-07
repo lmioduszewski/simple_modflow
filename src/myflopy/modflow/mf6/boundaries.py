@@ -111,6 +111,8 @@ class Boundaries:
 
     @property
     def inactive_cells(self):
+        """The grid cells excluded by idomain (from ``idomain``/``idomain_path``), or ``None`` (cached)."""
+
         if self._inactive_cells is None:
             if self.idomain is None and self.idomain_path is None:
                 return None
@@ -248,6 +250,8 @@ class Boundaries:
 
     @property
     def boundary_dict(self):
+        """The assembled MF6 stress-period boundary data dict for this boundary type."""
+
         return self._boundary_dict
 
     def _register_region(
@@ -261,6 +265,8 @@ class Boundaries:
         metadata: dict | None = None,
         overwrite: bool = False,
     ):
+        """Register a named model region for these boundary cells (no-op without a bound model)."""
+
         if self.model is None:
             return None
         return self.model.add_region_from_cells(
@@ -287,6 +293,12 @@ class Boundaries:
         metadata_by_name: dict[str, dict] | None = None,
         overwrite: bool = False,
     ):
+        """Register one model region per named boundary group (plus an optional combined region).
+
+        Returns a ``{group_name: region}`` map (with a ``"__combined__"`` entry
+        when ``combined_region_name`` is given); a no-op without a bound model.
+        """
+
         if self.model is None:
             return {}
 

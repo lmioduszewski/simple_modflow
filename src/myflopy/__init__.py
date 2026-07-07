@@ -479,6 +479,8 @@ __all__ = list(__preferred__)
 
 
 def __getattr__(name: str) -> Any:
+    """Lazily import a public ``myflopy`` export (or subpackage) on first attribute access."""
+
     if name == "modflow":
         return import_module("myflopy.modflow")
     if name == "project":
@@ -493,4 +495,6 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__():
+    """Advertise the lazily-exported names for tab-completion."""
+
     return sorted(list(globals().keys()) + __all__)

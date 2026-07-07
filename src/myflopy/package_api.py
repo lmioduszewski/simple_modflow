@@ -106,11 +106,62 @@ def gwf(
     nc_filerecord: Any = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed GWF model spec wrapping ``flopy.mf6.ModflowGwf``.
+    """Return a typed GWF (groundwater-flow) model spec wrapping ``flopy.mf6.ModflowGwf``.
 
-    The model-level arguments mirror FloPy's GWF constructor. Package specs
-    such as ``mf.disv(...)`` and ``mf.npf(...)`` are supplied through
-    ``packages`` and are built after the model is created.
+    The primary model constructor of the package-first API. Discretization and
+    physics (``mf.disv``, ``mf.npf``, ``mf.ic``, ``mf.sto``, ``mf.oc``) and boundary
+    conditions (``mf.chd``, ``mf.ghb``, ``mf.rch``, ``mf.sfr``, ``mf.lak``, ...) are
+    passed as ``PackageSpec`` objects through ``packages`` and built after the model
+    is created. Geometry rides on the model via ``context`` (not the project).
+
+    Parameters
+    ----------
+    name : str
+        Model name -- the FloPy model name, and the key that IMS solvers
+        (``mf.ims(models=(name,))``) and inter-model exchanges reference.
+    packages : Iterable[PackageSpec]
+        Package specs to attach, e.g. ``[mf.disv(...), mf.npf(...), mf.ic(...),
+        mf.oc(...)]``. Built in order after the model; ``requires`` ordering is
+        validated.
+    context : ModelContext, optional
+        Geometry/dates for this model -- ``grid``, ``domain`` (idomain),
+        ``surfaces``, ``dates``. Reachable afterward as ``model.myflopy_context``;
+        GIS-aware helpers (``mf.rch``, ``mf.sfr``, ``mf.lak``, ``mf.X.gpkg``) read it.
+    hooks : Iterable[PostBuildHook]
+        Post-build callables run against the built model (e.g. attaching
+        observations).
+    grid : GridSpec or grid object, optional
+        A deferred ``mf.GridSpec.voronoi(...)`` resolved at run time, or an
+        already-built grid. Composes with ``mf.disv`` + simple BCs (see the deferred
+        vs eager grid seam in the project docs).
+    newtonoptions : str or Sequence[str], optional
+        MF6 Newton-Raphson formulation, e.g. ``"NEWTON"`` or
+        ``"NEWTON UNDER_RELAXATION"`` -- strongly recommended for water-table /
+        wetting-and-drying models.
+    print_input, print_flows, save_flows : bool, optional
+        Listing/output flags forwarded to ``ModflowGwf``.
+    model_nam_file, version, exe_name, model_rel_path, list : optional
+        FloPy model bookkeeping (defaults ``version="mf6"``, ``exe_name="mf6"``).
+    nc_mesh2d_filerecord, nc_structured_filerecord, nc_filerecord : optional
+        NetCDF output file records passed through to FloPy.
+    **kwargs
+        Any additional ``flopy.mf6.ModflowGwf`` constructor option.
+
+    Returns
+    -------
+    ModelSpec
+        A declarative model spec; add it to a :class:`SimulationSpec`
+        (``mf.simulation(flow)`` or ``mf.SimulationSpec(...)``).
+
+    Examples
+    --------
+    >>> ctx = mf.ModelContext(grid=vor, domain=idomain)
+    >>> flow = mf.gwf("valley", context=ctx, newtonoptions="NEWTON",
+    ...               packages=[mf.disv(...), mf.npf(k=10.0, icelltype=1),
+    ...                         mf.ic(strt=100.0), mf.sto(steady_state={0: True}),
+    ...                         mf.oc(head_filerecord="valley.hds",
+    ...                               saverecord=[("HEAD", "ALL")])])
+    >>> sim = mf.simulation(flow)
     """
 
     options = _model_options(
@@ -162,13 +213,38 @@ def gwt(
     nc_filerecord: Any = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed GWT (groundwater transport) model spec.
+    """Return a typed GWT (groundwater solute-transport) model spec.
 
     The solute-transport counterpart of :func:`gwf`: it wraps
     ``flopy.mf6.ModflowGwt`` and takes the transport packages (``mf.disv`` or a
     shared grid, plus the MST/ADV/DSP/SSM/IC/OC transport packages) through
     ``packages``. Couple it to a flow model with a GWF-GWT exchange
     (:func:`build_gwf_gwt_exchange`) in the same :class:`SimulationSpec`.
+
+    Parameters
+    ----------
+    name : str
+        Model name (the FloPy model name; referenced by IMS and the GWF-GWT exchange).
+    packages : Iterable[PackageSpec]
+        Transport package specs to attach (discretization + MST/ADV/DSP/SSM/IC/OC).
+    context : ModelContext, optional
+        Geometry/dates, typically the same grid as the paired flow model.
+    hooks : Iterable[PostBuildHook]
+        Post-build callables run against the built model.
+    grid : GridSpec or grid object, optional
+        Optional deferred/explicit grid (usually shared with the flow model).
+    dependent_variable_scaling : bool, optional
+        Scale the transport dependent variable (concentration) for the solver.
+    print_input, print_flows, save_flows : bool, optional
+        Listing/output flags forwarded to ``ModflowGwt``.
+    model_nam_file, version, exe_name, model_rel_path, list, nc_*_filerecord : optional
+        FloPy model bookkeeping / NetCDF output records.
+    **kwargs
+        Any additional ``flopy.mf6.ModflowGwt`` constructor option.
+
+    Returns
+    -------
+    ModelSpec
 
     Examples
     --------
@@ -228,13 +304,46 @@ def gwe(
     nc_filerecord: Any = None,
     **kwargs: Any,
 ) -> ModelSpec:
-    """Return a typed GWE (groundwater energy / heat transport) model spec.
+    """Return a typed GWE (groundwater energy / heat-transport) model spec.
 
     The heat-transport counterpart of :func:`gwf`: it wraps
     ``flopy.mf6.ModflowGwe`` and takes the energy packages (EST/ADV/CND/SSM/IC/OC)
     through ``packages``. Couple it to a flow model with a GWF-GWE exchange
     (:func:`build_gwf_gwe_exchange`) in the same :class:`SimulationSpec`. Use it to
     model aquifer thermal transport (ATES, heat pumps, thermal plumes).
+
+    Parameters
+    ----------
+    name : str
+        Model name (the FloPy model name; referenced by IMS and the GWF-GWE exchange).
+    packages : Iterable[PackageSpec]
+        Energy-transport package specs to attach (discretization + EST/ADV/CND/SSM/IC/OC).
+    context : ModelContext, optional
+        Geometry/dates, typically the same grid as the paired flow model.
+    hooks : Iterable[PostBuildHook]
+        Post-build callables run against the built model.
+    grid : GridSpec or grid object, optional
+        Optional deferred/explicit grid (usually shared with the flow model).
+    dependent_variable_scaling : bool, optional
+        Scale the transport dependent variable (temperature) for the solver.
+    print_input, print_flows, save_flows : bool, optional
+        Listing/output flags forwarded to ``ModflowGwe``.
+    model_nam_file, version, exe_name, model_rel_path, list, nc_*_filerecord : optional
+        FloPy model bookkeeping / NetCDF output records.
+    **kwargs
+        Any additional ``flopy.mf6.ModflowGwe`` constructor option.
+
+    Returns
+    -------
+    ModelSpec
+
+    Examples
+    --------
+    >>> energy = mf.gwe("heat", context=ctx, packages=[...])
+    >>> mf.SimulationSpec("sim", models=(flow, energy),
+    ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
+    ...                             mf.ims(models=("heat",)),
+    ...                             mf.build_gwf_gwe_exchange("flow", "heat")])
     """
 
     options = _model_options(
@@ -367,14 +476,35 @@ def tdis(
     name: str = "tdis",
     **kwargs: Any,
 ) -> PackageSpec:
-    """Return the simulation-wide TDIS package spec.
+    """Return the simulation-wide TDIS (time-discretization) package spec.
 
     MODFLOW 6 has one TDIS package per simulation. GWF, GWT, GWE, and PRT
     models inside the same ``SimulationSpec`` share this timing. To use
     different timing, build a separate simulation/run.
 
-    ``perioddata`` is one ``(perlen, nstp, tsmult)`` tuple per period. This wraps
-    ``flopy.mf6.ModflowTdis``.
+    Parameters
+    ----------
+    nper : int, default 1
+        Number of stress periods (must match ``len(perioddata)``).
+    perioddata : sequence of tuple, default ((1.0, 1, 1.0),)
+        One ``(perlen, nstp, tsmult)`` tuple per period -- period length, number of
+        time steps, and time-step multiplier.
+    time_units : str, optional
+        Time unit label, e.g. ``"days"`` / ``"seconds"``.
+    start_date_time : str, optional
+        ISO start datetime for the simulation.
+    ats_perioddata : optional
+        Adaptive-time-step (ATS) records passed through to FloPy.
+    filename, pname : str, optional
+        FloPy file name / package name overrides.
+    name : str, default "tdis"
+        Spec name.
+    **kwargs
+        Extra ``flopy.mf6.ModflowTdis`` options.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -457,8 +587,32 @@ def ims(
     with wetting/drying or many advanced packages (SFR/LAK/UZF). Pair with a GWF
     ``newtonoptions=...`` for robust water-table convergence.
 
-    All named arguments mirror ``flopy.mf6.ModflowIms``. Extra FloPy keyword
-    arguments can still be passed through ``**kwargs``.
+    Parameters
+    ----------
+    models : Iterable[str]
+        Names of the models this solver solves (registered to each).
+    name : str, default "ims"
+        Solver package name (also its ``pname``).
+    complexity : str, optional
+        Tolerance preset: ``"SIMPLE"`` / ``"MODERATE"`` / ``"COMPLEX"``.
+    outer_maximum, inner_maximum : int, optional
+        Maximum outer (nonlinear) and inner (linear) iterations -- raise for stiff
+        models.
+    outer_dvclose, inner_dvclose, outer_hclose, inner_hclose : float, optional
+        Outer/inner dependent-variable (or head) convergence tolerances.
+    linear_acceleration : str, optional
+        Linear solver, e.g. ``"CG"`` or ``"BICGSTAB"``.
+    under_relaxation, under_relaxation_gamma, ... : optional
+        Under-relaxation and backtracking controls (see FloPy).
+    **kwargs
+        Any other ``flopy.mf6.ModflowIms`` option.
+
+    All remaining named arguments mirror ``flopy.mf6.ModflowIms`` one-to-one and
+    are only forwarded when not ``None``.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -533,6 +687,41 @@ def simulation(
 
     Extra simulation-level packages are appended via ``packages=``; couplings
     via ``exchanges=``.
+
+    Parameters
+    ----------
+    *models : ModelSpec
+        One or more model specs (``mf.gwf(...)`` etc.). At least one is required.
+    name : str, default "sim"
+        Simulation name.
+    tdis : PackageSpec, optional
+        Timing package; defaults to a single steady period (``mf.tdis()``).
+    solver : PackageSpec or Iterable[PackageSpec], optional
+        IMS solver(s); defaults to one ``mf.ims`` per model (each solving only
+        that model).
+    complexity : str, optional, default "SIMPLE"
+        Solver complexity preset used for the default per-model IMS.
+    exchanges : Iterable, optional
+        Inter-model exchange specs (e.g. ``mf.build_gwf_gwt_exchange(...)``).
+    packages : Iterable[PackageSpec], optional
+        Extra simulation-level packages to append.
+    **options
+        Additional :class:`SimulationSpec` fields (e.g. ``workspace``).
+
+    Returns
+    -------
+    SimulationSpec
+
+    Raises
+    ------
+    ValueError
+        If no model specs are given.
+
+    Examples
+    --------
+    >>> mf.simulation(flow)                                      # steady, one IMS
+    >>> mf.simulation(flow, tdis=mf.tdis(nper=12, perioddata=spd))
+    >>> mf.simulation(flow, transport, solver=[flow_ims, transport_ims])
     """
 
     if not models:
@@ -592,6 +781,14 @@ def disv(
     top, botm, idomain
         Model-top (ncpl,), layer bottoms (nlay, ncpl), and active-domain array
         (idomain 0 = inactive / pinched out).
+    name : str, default "disv"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwfdisv`` options (e.g. ``xorigin``/``angrot``).
+
+    Returns
+    -------
+    PackageSpec
     """
 
     values = {
@@ -612,9 +809,20 @@ def disv(
 def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
     """Initial-conditions (IC) package: the starting head field.
 
-    ``strt`` is the starting head -- a scalar, a per-cell array, or a ``(nlay, ncpl)``
-    array (one value per cell per layer). For Newton/under-relaxation runs a sensible
-    starting head (e.g. near the water table) helps convergence.
+    Parameters
+    ----------
+    strt : float or array-like
+        Starting head -- a scalar, a per-cell array ``(ncpl,)``, or a
+        ``(nlay, ncpl)`` array. A sensible value (near the water table) helps
+        Newton / under-relaxation runs converge.
+    name : str, default "ic"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwfic`` options.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -637,10 +845,28 @@ def npf(
 ) -> PackageSpec:
     """Node-property-flow (NPF) package: hydraulic conductivity.
 
-    ``k`` is horizontal K and ``k33`` vertical K -- each a scalar, per-cell array, or
-    ``(nlay, ncpl)`` array. ``icelltype`` controls confined (0) vs convertible
-    (non-zero, water-table) behavior. ``save_specific_discharge=True`` is needed for
-    particle tracking / Darcy-velocity plots.
+    Parameters
+    ----------
+    k : float or array-like
+        Horizontal hydraulic conductivity -- a scalar, per-cell array, or
+        ``(nlay, ncpl)`` array.
+    k33 : float or array-like, optional
+        Vertical (z) hydraulic conductivity; defaults to isotropic (``k``) in MF6.
+    icelltype : int or array-like, optional
+        Cell type: 0 = confined, non-zero = convertible (water-table). Use a
+        convertible type for unconfined / wetting-and-drying layers.
+    save_flows : bool, default True
+        Save cell-by-cell flows.
+    save_specific_discharge : bool, default False
+        Save the Darcy velocity -- required for particle tracking / velocity plots.
+    name : str, default "npf"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwfnpf`` options.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -674,9 +900,30 @@ def sto(
 ) -> PackageSpec:
     """Storage (STO) package: storativity + per-period steady/transient flags.
 
-    Provide ``ss`` (specific storage) and ``sy`` (specific yield) for transient
-    periods, and mark each period steady or transient. A purely steady model still
-    needs STO with ``steady_state={0: True}``.
+    A purely steady model still needs STO with ``steady_state={0: True}``.
+
+    Parameters
+    ----------
+    ss : float or array-like, optional
+        Specific storage (used in transient periods).
+    sy : float or array-like, optional
+        Specific yield (used in transient periods for convertible cells).
+    iconvert : int or array-like, optional
+        Convertible-storage flag per cell (non-zero enables ``sy``).
+    steady_state : dict, optional
+        ``{period: True}`` marking steady-state stress periods.
+    transient : dict, optional
+        ``{period: True}`` marking transient stress periods.
+    save_flows : bool, default True
+        Save cell-by-cell storage flows.
+    name : str, default "sto"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwfsto`` options.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -711,6 +958,25 @@ def oc(
     To get heads and a cell budget on disk you must name the output files
     (``head_filerecord`` / ``budget_filerecord``) **and** request them in
     ``saverecord`` -- MF6 errors if you ask to save heads without a head file.
+
+    Parameters
+    ----------
+    head_filerecord : str, optional
+        Output head file name (e.g. ``"model.hds"``).
+    budget_filerecord : str, optional
+        Output cell-budget file name (e.g. ``"model.cbc"``).
+    saverecord : list, optional
+        What/when to save, e.g. ``[("HEAD", "ALL"), ("BUDGET", "LAST")]``.
+    printrecord : list, optional
+        What/when to print to the listing file.
+    name : str, default "oc"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwfoc`` options.
+
+    Returns
+    -------
+    PackageSpec
 
     Examples
     --------
@@ -755,7 +1021,28 @@ class _CHDPackage:
         boundnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a CHD package spec from direct stress-period data."""
+        """Return a CHD package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, head], ...]}`` where ``cellid`` is
+            ``(layer, cell)`` on a DISV grid.
+        name : str, default "chd"
+            Package name (also its slot in the model).
+        boundnames : bool, default False
+            Enable named boundaries in the package.
+        **options
+            Extra ``flopy.mf6.ModflowGwfchd`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.chd(stress_period_data={0: [[(0, 0), 10.0]]})
+        """
 
         return chd_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
@@ -777,7 +1064,48 @@ class _CHDPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a CHD package spec from GeoPackage features."""
+        """Return a CHD package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of boundary features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods the boundary spans.
+        head : str or CellSurfaceOffset, default "head"
+            Specified head -- a feature attribute column name, a constant, or a
+            :class:`CellSurfaceOffset` (relative to a cell surface).
+        layer : str, optional
+            GeoPackage layer/table name (defaults to the first/only layer).
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer (see ``layer_base``).
+        period_field : str, optional
+            Attribute column giving a feature's stress period (``None`` = all periods).
+        layer_base : int, default 1
+            Index base of ``layer_field`` values (1 = one-based GIS convention).
+        period_base : int, default 0
+            Index base of ``period_field`` values (0 = zero-based).
+        name : str, default "chd"
+            Package name.
+        edges_only : bool, default False
+            Keep only cells on the grid boundary (a domain-edge head condition).
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfchd`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.chd.gpkg("bcs.gpkg", layer="fixed_head", context=ctx, nper=1)
+        """
 
         return _source(
             path,
@@ -827,8 +1155,28 @@ class _GHBPackage:
     ) -> PackageSpec:
         """Return a GHB package spec from direct MF6 stress-period data.
 
-        ``stress_period_data`` is the FloPy mapping ``{period: [[cellid, bhead,
-        cond], ...]}`` (cellid is ``(layer, cell)`` on DISV).
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, bhead, cond], ...]}`` where ``cellid``
+            is ``(layer, cell)`` on a DISV grid, ``bhead`` the boundary head, and
+            ``cond`` the conductance.
+        name : str, default "ghb"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfghb`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.ghb(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})
         """
 
         return ghb_spec(
@@ -858,7 +1206,40 @@ class _GHBPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a GHB package spec from GeoPackage features."""
+        """Return a GHB package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of boundary features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods the boundary spans.
+        head : str or CellSurfaceOffset, default "head"
+            Boundary head -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset`.
+        conductance : str or CellSurfaceOffset, default "conductance"
+            Boundary conductance -- an attribute column or a constant.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "ghb"
+            Package name.
+        edges_only : bool, default False
+            Keep only grid-boundary cells (a far-field underflow condition).
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfghb`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.ghb.gpkg("bcs.gpkg", layer="underflow", context=ctx, nper=1)
+        """
 
         return _source(
             path,
@@ -908,7 +1289,25 @@ class _DRNPackage:
     ) -> PackageSpec:
         """Return a DRN package spec from direct MF6 stress-period data.
 
-        ``stress_period_data`` is ``{period: [[cellid, elev, cond], ...]}``.
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, elev, cond], ...]}`` -- drain
+            elevation and conductance per ``(layer, cell)``.
+        name : str, default "drn"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfdrn`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.drn(stress_period_data={0: [[(0, 12), 95.0, 30.0]]})
         """
 
         return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
@@ -932,7 +1331,40 @@ class _DRNPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a DRN package spec from GeoPackage features."""
+        """Return a DRN package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of drain features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        elevation : str or CellSurfaceOffset, default "elevation"
+            Drain elevation -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (e.g. cell-top minus an offset for a seepage face).
+        conductance : str or CellSurfaceOffset, default "conductance"
+            Drain conductance -- an attribute column or a constant.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "drn"
+            Package name.
+        edges_only : bool, default False
+            Keep only grid-boundary cells.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfdrn`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.drn.gpkg("bcs.gpkg", layer="springs", context=ctx, nper=1)
+        """
 
         return _source(
             path,
@@ -980,7 +1412,30 @@ class _WELPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a WEL package spec from direct stress-period data."""
+        """Return a WEL package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, rate], ...]}`` -- a volumetric flux
+            per ``(layer, cell)``; **negative to pump out**, positive to inject.
+        name : str, default "wel"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfwel`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.wel(stress_period_data={0: [[(0, 42), -500.0]]})   # extraction
+        """
 
         return wel_spec(
             stress_period_data,
@@ -1007,7 +1462,36 @@ class _WELPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a WEL package spec from GeoPackage features."""
+        """Return a WEL package spec built from GeoPackage point features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of well point features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the wells are mapped onto.
+        nper : int
+            Number of stress periods.
+        rate : str or CellSurfaceOffset, default "rate"
+            Pumping/injection rate -- an attribute column or a constant (negative =
+            pumping). Use ``period_field`` for per-period rates.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "wel"
+            Package name.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfwel`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.wel.gpkg("wells.gpkg", context=ctx, nper=12)
+        """
 
         return _source(
             path,
@@ -1059,15 +1543,56 @@ class _RCHPackage:
         name: str = "rch",
         **options: Any,
     ) -> PackageSpec:
-        """Return an RCH package spec.
+        """Return an RCH package spec, either from direct data or the domain-aware builder.
 
-        Two forms, mirroring the other stress packages:
+        Two mutually exclusive forms:
 
-        * Direct ``stress_period_data=`` (like ``mf.drn`` / ``mf.wel``) returns a
-          list-based RCH spec.
-        * The high-level builder form (``context=``, ``nper=``, ``recharge=``)
-          computes the cells from the model domain; ``recharge`` is a scalar,
-          per-cell sequence, or ``{period: ...}`` mapping.
+        * **Direct** -- pass ``stress_period_data=`` (like ``mf.drn`` / ``mf.wel``)
+          for a list-based RCH spec.
+        * **Builder** -- pass ``context=``, ``nper=``, and ``recharge=`` to compute the
+          recharge cells from the model domain automatically.
+
+        Parameters
+        ----------
+        stress_period_data : dict, optional
+            Direct form: ``{period: [[cellid, recharge], ...]}``.
+        context : ModelContext, optional
+            Builder form: carries the grid/domain used to select recharge cells.
+        nper : int, optional
+            Builder form: number of stress periods.
+        recharge : scalar, sequence, or {period: ...}, optional
+            Builder form: the recharge rate (L/T) -- a constant, one value per
+            selected cell, or a per-period mapping.
+        cells : str or sequence, default "top_active"
+            Which cells receive recharge: ``"top_active"`` (top active cell per
+            column), ``"all_active"``, ``"surface_only"``, or an explicit list of
+            ``int`` / ``(layer, cell)`` ids.
+        layer : int, default 0
+            Layer used when ``cells`` are given as bare cell ints.
+        name_by_cell : mapping, optional
+            Optional ``{cell: boundname}`` mapping (builder form).
+        boundnames : bool, default False
+            Enable named boundaries.
+        name : str, default "rch"
+            Package name.
+        **options
+            Extra ``flopy.mf6.ModflowGwfrch`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Raises
+        ------
+        TypeError
+            If neither ``stress_period_data`` nor the full builder trio
+            (``context``/``nper``/``recharge``) is given.
+
+        Examples
+        --------
+        >>> ctx = mf.ModelContext(grid=vor, domain=idomain)
+        >>> mf.rch(context=ctx, nper=1, recharge=6.0e-4)              # uniform, top-active cells
+        >>> mf.rch(stress_period_data={0: [[(0, 3), 6.0e-4]]})        # explicit cells
         """
 
         if stress_period_data is not None:
@@ -1099,7 +1624,27 @@ class _RCHPackage:
         boundnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a direct FloPy-style RCH spec from stress-period data."""
+        """Return a direct (list-based) FloPy-style RCH spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, recharge], ...]}``.
+        name : str, default "rch"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfrch`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.rch.flopy(stress_period_data={0: [[(0, 3), 6.0e-4]]})
+        """
 
         return rch_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
@@ -1120,7 +1665,35 @@ class _RCHPackage:
         boundnames: bool = True,
         **options: Any,
     ) -> PackageSpec:
-        """Return a list-based RCH package spec from GeoPackage features."""
+        """Return a list-based RCH package spec built from GeoPackage features.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of recharge-zone features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        recharge : str or CellSurfaceOffset, default "recharge"
+            Recharge rate (L/T) -- an attribute column or a constant.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "rch"
+            Package name.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfrch`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.rch.gpkg("recharge_zones.gpkg", context=ctx, nper=12)
+        """
 
         return _source(
             path,
@@ -1266,7 +1839,32 @@ class _UZFPackage:
         simulate_et: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a direct FloPy-style UZF spec from prepared package data."""
+        """Return a direct FloPy-style UZF spec from prepared package data (escape hatch).
+
+        Use this when you already have MF6 UZF records; otherwise prefer the
+        domain-aware ``mf.uzf(...)`` builder.
+
+        Parameters
+        ----------
+        packagedata : list
+            FloPy UZF ``packagedata`` (one row per UZF cell: iuzno, cellid, ...).
+        perioddata : dict
+            FloPy UZF ``perioddata`` keyed by stress period.
+        nuzfcells : int, optional
+            Number of UZF cells (inferred from ``packagedata`` when omitted).
+        name : str, default "uzf"
+            Package name.
+        mover : bool, default False
+            Enable MVR routing of rejected infiltration / discharge.
+        simulate_et : bool, default False
+            Enable evapotranspiration simulation.
+        **options
+            Extra ``flopy.mf6.ModflowGwfuzf`` options.
+
+        Returns
+        -------
+        PackageSpec
+        """
 
         return uzf_spec(
             packagedata,
@@ -1417,7 +2015,34 @@ class _SFRPackage:
         diversions: Any = None,
         **options: Any,
     ) -> PackageSpec:
-        """Return a direct FloPy-style SFR spec from prepared package data."""
+        """Return a direct FloPy-style SFR spec from prepared package data (escape hatch).
+
+        Use this when you already have MF6 SFR records; otherwise prefer the
+        geometry-driven ``mf.sfr(...)`` builder.
+
+        Parameters
+        ----------
+        packagedata : list
+            FloPy SFR ``packagedata`` (one row per reach).
+        connectiondata : list
+            FloPy SFR ``connectiondata`` (reach-to-reach topology).
+        perioddata : dict
+            FloPy SFR ``perioddata`` keyed by stress period.
+        nreaches : int, optional
+            Total reach count (inferred from ``packagedata`` when omitted).
+        name : str, default "sfr"
+            Package name.
+        mover : bool, default False
+            Enable MVR exchange with lakes/UZF.
+        diversions : list, optional
+            FloPy SFR ``diversions`` records.
+        **options
+            Extra ``flopy.mf6.ModflowGwfsfr`` options.
+
+        Returns
+        -------
+        PackageSpec
+        """
 
         return sfr_spec(
             packagedata,
@@ -1593,7 +2218,36 @@ class _LAKPackage:
         mover: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return a direct FloPy-style LAK spec from prepared package data."""
+        """Return a direct FloPy-style LAK spec from prepared package data (escape hatch).
+
+        Use this when you already have MF6 LAK records; otherwise prefer the
+        geometry-driven ``mf.lak(...)`` builder.
+
+        Parameters
+        ----------
+        packagedata : list
+            FloPy LAK ``packagedata`` (one row per lake).
+        connectiondata : list
+            FloPy LAK ``connectiondata`` (lake-aquifer connections).
+        perioddata : dict
+            FloPy LAK ``perioddata`` keyed by stress period.
+        nlakes : int, optional
+            Number of lakes (inferred from ``packagedata`` when omitted).
+        name : str, default "lak"
+            Package name.
+        noutlets : int, default 0
+            Number of lake outlets.
+        ntables : int, default 0
+            Number of stage-volume-area tables.
+        mover : bool, default False
+            Enable MVR exchange with streams/UZF.
+        **options
+            Extra ``flopy.mf6.ModflowGwflak`` options.
+
+        Returns
+        -------
+        PackageSpec
+        """
 
         return lak_spec(
             packagedata,
@@ -1675,7 +2329,30 @@ class _MVRPackage:
         maxpackages: int | None = None,
         **options: Any,
     ) -> PackageSpec:
-        """Return a direct FloPy-style MVR spec from package and period data."""
+        """Return a direct FloPy-style MVR spec from package and period data (escape hatch).
+
+        Use this when you already have MF6 mover records; otherwise prefer the
+        semantic ``mf.mvr(moves=...)`` form.
+
+        Parameters
+        ----------
+        packages : list
+            FloPy MVR ``packages`` (the provider/receiver package names).
+        perioddata : dict
+            FloPy MVR ``perioddata`` keyed by stress period.
+        name : str, default "mvr"
+            Package name.
+        maxmvr : int, optional
+            Maximum number of movers (auto-sized from ``perioddata`` when omitted).
+        maxpackages : int, optional
+            Maximum number of packages involved (auto-sized when omitted).
+        **options
+            Extra ``flopy.mf6.ModflowGwfmvr`` options.
+
+        Returns
+        -------
+        PackageSpec
+        """
 
         return mvr_spec(
             packages,

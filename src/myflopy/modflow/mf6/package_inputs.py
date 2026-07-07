@@ -48,14 +48,20 @@ class CellPackageInputsExplorer(FieldMappable):
     """
 
     def __init__(self, model: "SimulationBase", package_name: str):
+        """Bind a cell-based input explorer to ``model`` for one package (name lowercased)."""
+
         self.model = model
         self.package_name = str(package_name).lower()
 
     @property
     def _default_field(self) -> str:
+        """The registry-declared preferred input field (drives bare ``inputs.map()``)."""
+
         return get_default_package_value_column(self.package_name)
 
     def _field_names(self) -> list[str]:
+        """The registry-declared input field names for this package."""
+
         return get_package_input_field_names(self.package_name)
 
     def __getattr__(self, field_name: str) -> "CellPackageInputFieldExplorer":
@@ -123,6 +129,8 @@ class CellPackageInputFieldExplorer(SpatialView):
     """Field-specific view over a cell package's normalized input table."""
 
     def __init__(self, inputs: CellPackageInputsExplorer, field_spec: FieldSpec):
+        """Pin a package inputs explorer to one field described by ``field_spec``."""
+
         self.inputs = inputs
         self.field_spec = field_spec
         self.field_name = field_spec.name
@@ -217,6 +225,8 @@ class UzfFieldInputsExplorer(SpatialView):
     """Normalized explorer for one UZF perioddata field."""
 
     def __init__(self, model: "SimulationBase", field_name: str):
+        """Bind an explorer to one UZF perioddata field (e.g. ``finf``, ``pet``)."""
+
         self.model = model
         self.field_name = str(field_name)
 
@@ -317,9 +327,13 @@ class UzfInputsNamespace(FieldMappable):
     _default_field = "finf"
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the UZF inputs namespace to ``model``."""
+
         self.model = model
 
     def _field_names(self) -> list[str]:
+        """The registry-declared UZF perioddata field names."""
+
         return get_package_input_field_names("uzf")
 
     @property
@@ -445,6 +459,8 @@ class StaticArrayFieldExplorer(SpatialView):
         label: str | None = None,
         colorscale: str = "Viridis",
     ):
+        """Bind a static layer/cell array field (IC/NPF/STO) with a label and colorscale."""
+
         self.model = model
         self.package_name = str(package_name).lower()
         self.field_name = str(field_name)
@@ -452,6 +468,8 @@ class StaticArrayFieldExplorer(SpatialView):
         self.colorscale = colorscale
 
     def _array(self) -> np.ndarray:
+        """Read this field from its package and broadcast it to a ``(nlay, ncpl)`` array."""
+
         package = self.model.package(self.package_name)
         data = getattr(package, self.field_name)
         values = getattr(data, "array", None)

@@ -38,10 +38,14 @@ class PrismPrecipScaling:
 
     @property
     def weather_station(self):
+        """The weather-station location point used as the PRISM scaling reference."""
+
         return self._weather_station
 
     @weather_station.setter
     def weather_station(self, weather_station):
+        """Set the station from a shapefile/GeoPackage ``Path`` (first point; CRS must match the grid)."""
+
         assert isinstance(weather_station, Path), "weather_station must be a Path object"
         weather_station = read_shp_gpkg(weather_station)
         if len(weather_station) > 1:

@@ -24,6 +24,8 @@ from typing import Callable, Sequence
 
 
 def _hash_file(path: Path) -> str | None:
+    """The SHA-256 hex digest of a file's contents (``None`` if the file is missing)."""
+
     if not path.exists():
         return None
     h = hashlib.sha256()
@@ -43,6 +45,8 @@ class DerivedRaster:
         params: dict,
         produce: Callable[[], None],
     ):
+        """Bind an output raster path to its ``sources``, ``params``, and a ``produce()`` builder."""
+
         self.out = Path(out)
         self.sources = [Path(s) for s in sources]
         self.params = dict(params)
@@ -50,9 +54,13 @@ class DerivedRaster:
 
     @property
     def sidecar(self) -> Path:
+        """The path of the ``.provenance.json`` sidecar next to the output raster."""
+
         return self.out.with_suffix(self.out.suffix + ".provenance.json")
 
     def _current_key(self) -> dict:
+        """The current provenance key: source content hashes plus the build parameters."""
+
         key = {
             "sources": {str(s): _hash_file(s) for s in self.sources},
             "params": self.params,
@@ -61,6 +69,8 @@ class DerivedRaster:
         return json.loads(json.dumps(key, default=str, sort_keys=True))
 
     def _cached_key(self):
+        """The provenance key stored in the sidecar, or ``None`` if absent/unreadable."""
+
         if not self.sidecar.exists():
             return None
         try:
@@ -75,6 +85,8 @@ class DerivedRaster:
         return "fresh" if self._cached_key() == self._current_key() else "stale"
 
     def _write(self) -> None:
+        """Produce the raster and write its current provenance key to the sidecar."""
+
         self.produce()
         self.sidecar.write_text(
             json.dumps(self._current_key(), indent=2, sort_keys=True)

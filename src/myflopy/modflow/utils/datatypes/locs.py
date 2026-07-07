@@ -45,36 +45,51 @@ class ObservationLocations:
 
     @property
     def package(self):
+        """The MODFLOW package these locations are associated with."""
+
         return self._package
 
     @package.setter
     def package(self, package: str):
+        """Set the associated package name."""
+
         self._package = package
 
     @property
     def locs(self):
+        """The resolved observation cell locations."""
+
         return self._locs
 
     @locs.setter
     def locs(self, locs):
+        """Set the locations, resolving a path/geometry to grid cells via validation."""
+
         locs = self._validate_and_return_locs(locs)
         self._locs = locs
 
     @property
     def names(self):
+        """The observation location names."""
+
         return self._names
 
     @names.setter
     def names(self, names):
+        """Set the observation location names."""
+
         self._names = names
 
     def filter_cells_by_pkg(self, pkg: str, cells):
+        """Restrict ``cells`` to those active in a package's first-period budget (zero-based)."""
 
         filter_per = self.model.kstpkper[0]  # use first stress period as basis for filtering
         pkg_cells = self.model.bud(pkg).df.loc[idxx[:, filter_per], :].index.get_level_values(0).to_list()
         pkg_cells = [i - 1 for i in pkg_cells]
 
     def _validate_and_return_locs(self, locs):
+        """Resolve ``locs`` (a shapefile/GeoPackage path or existing cells) to observation cell indices."""
+
 
         if isinstance(locs, Path):
             try:

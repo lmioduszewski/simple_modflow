@@ -20,6 +20,8 @@ from dataclasses import dataclass
 
 
 def _gaussian_kernel_1d(sigma: float, radius: int) -> np.ndarray:
+    """A normalized 1-D Gaussian kernel of half-width ``radius`` and spread ``sigma``."""
+
     if sigma <= 0:
         raise ValueError("sigma must be > 0")
     x = np.arange(-radius, radius + 1, dtype=np.float64)
@@ -29,6 +31,8 @@ def _gaussian_kernel_1d(sigma: float, radius: int) -> np.ndarray:
 
 
 def _convolve1d_reflect(arr: np.ndarray, kernel: np.ndarray, axis: int) -> np.ndarray:
+    """Convolve ``arr`` along ``axis`` with ``kernel`` using reflect-padded edges."""
+
     radius = (kernel.size - 1) // 2
     pad_width = [(0, 0)] * arr.ndim
     pad_width[axis] = (radius, radius)
@@ -51,6 +55,8 @@ def _gaussian_smooth_nodata_aware(
     sigma: float,
     radius: Optional[int] = None,
 ) -> np.ndarray:
+    """A separable 2-D Gaussian smooth that ignores nodata cells (normalized by valid weight)."""
+
     data = data.astype(np.float64, copy=False)
 
     if radius is None:
@@ -288,6 +294,7 @@ def sample_raster_cells_crossed_by_lines(
 class RasterData:
 
     def __init__(self, raster_path: Path, point: shp.Point = None, vor: Vor = None):
+        """Wrap a raster for sampling at a point or across a Voronoi grid's cells."""
 
         self.raster_path = raster_path
         self.point = point
@@ -295,6 +302,8 @@ class RasterData:
 
     @property
     def raster_elevs(self):
+        """The raster's cell values (elevations) read from the file."""
+
         with rasterio.open(self.raster_path) as src:
             elevations = src.read(1)
         return elevations

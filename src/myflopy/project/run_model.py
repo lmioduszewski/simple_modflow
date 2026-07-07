@@ -290,6 +290,12 @@ class LoadedMf6Run(SimulationBase):
         crs: str = "EPSG:2927",
         verbosity_level: int = 0,
     ):
+        """Prepare a lazy, file-backed model view over a completed MF6 run ``workspace``.
+
+        Infers the model name/grid type and discovers package types from filenames
+        without loading FloPy; the simulation, grid, and outputs load on first use.
+        """
+
         workspace = Path(workspace)
         if not workspace.exists():
             raise FileNotFoundError(f"Run workspace does not exist: {workspace}")
@@ -355,6 +361,8 @@ class LoadedMf6Run(SimulationBase):
 
     @sim.setter
     def sim(self, value):
+        """Set the cached FloPy simulation object."""
+
         self._sim = value
 
     @property
@@ -366,6 +374,8 @@ class LoadedMf6Run(SimulationBase):
 
     @gwf.setter
     def gwf(self, value):
+        """Set the cached FloPy groundwater-flow model object."""
+
         self._gwf = value
 
     @property

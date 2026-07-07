@@ -191,6 +191,12 @@ class TriangleGrid(Triangle):
         *args,
         **kwargs,
     ):
+        """Initialize a TriangleGrid with a minimum ``angle`` and region/domain tolerances.
+
+        Starts with no domain or regions declared; ``None`` tolerances auto-scale
+        to the domain extent when the mesh is built.
+        """
+
         super().__init__(angle=angle, *args, **kwargs)
         self.domain_spec: DomainSpec | None = None
         self.region_specs: list[RegionSpec] = []
@@ -218,6 +224,8 @@ class TriangleGrid(Triangle):
         center_coords: tuple = (0, 0),
         radians_step: float = 0.1,
     ) -> Polygon:
+        """A circular polygon of ``radius`` about ``center_coords``, sampled every ``radians_step``."""
+
         theta = np.arange(0.0, 2 * np.pi, radians_step)
         x = radius * np.cos(theta) + center_coords[0]
         y = radius * np.sin(theta) + center_coords[1]
@@ -230,6 +238,8 @@ class TriangleGrid(Triangle):
         y_dist=100,
         origin=(0, 0),
     ) -> Polygon:
+        """An axis-aligned rectangle of ``x_dist`` by ``y_dist`` with its lower-left at ``origin``."""
+
         x_min, y_min = origin[0], origin[1]
         x_max, y_max = x_min + x_dist, y_min + y_dist
         polygon_coords = ((x_min, y_min), (x_min, y_max), (x_max, y_max), (x_max, y_min))
@@ -237,6 +247,8 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _coerce_geometry(geometry: Any):
+        """Coerce a path / GeoDataFrame / shapely geometry / coord list to one shapely geometry."""
+
         if isinstance(geometry, Path):
             return read_shp_gpkg(geometry).union_all()
         if isinstance(geometry, gpd.GeoDataFrame | gpd.GeoSeries):
@@ -250,6 +262,8 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _iter_polygons(geometry: Polygon | MultiPolygon | GeometryCollection):
+        """Yield each constituent ``Polygon`` of a polygon/multipolygon/collection geometry."""
+
         if isinstance(geometry, Polygon):
             yield geometry
             return
@@ -276,6 +290,13 @@ class TriangleGrid(Triangle):
         simplify_tolerance=None,
         densify_dist: int | None = None,
     ) -> Polygon | MultiPolygon:
+        """Turn arbitrary region input into a clean polygon/multipolygon for meshing.
+
+        Coerces the geometry, optionally clips it to ``domain``, buffers points/lines
+        into areas, simplifies/densifies, and drops empty pieces; raises if nothing
+        with positive area remains.
+        """
+
         geometry = cls._coerce_geometry(geometry)
 
         if domain is not None:
@@ -311,6 +332,12 @@ class TriangleGrid(Triangle):
         geometry: Polygon | None = None,
         max_area: float | int | None = None,
     ) -> float:
+        """The minimum spacing between region marker points (explicit tolerance, else auto-scaled).
+
+        Auto-scales from the domain/region extent and ``max_area`` so markers are
+        distinct without crowding.
+        """
+
         if self.region_point_tolerance is not None:
             return float(self.region_point_tolerance)
 
@@ -333,12 +360,16 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _point_tuple(point: Point | tuple[float, float]) -> tuple[float, float]:
+        """Normalize a shapely ``Point`` or coordinate pair to an ``(x, y)`` float tuple."""
+
         if isinstance(point, Point):
             return (point.x, point.y)
         return (float(point[0]), float(point[1]))
 
     @staticmethod
     def _sample_candidate_grid(geometry: Polygon, sample_count: int = 5) -> list[tuple[float, float]]:
+        """Interior points from a ``sample_count`` x ``sample_count`` grid over the geometry's bounds."""
+
         xmin, ymin, xmax, ymax = geometry.bounds
         xs = np.linspace(xmin, xmax, sample_count)
         ys = np.linspace(ymin, ymax, sample_count)
@@ -352,6 +383,8 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _inward_shells(geometry: Polygon) -> list[Polygon]:
+        """The geometry plus progressively inward-buffered copies, for finding a deep interior point."""
+
         shells = [geometry]
         if geometry.is_empty:
             return shells
@@ -374,6 +407,8 @@ class TriangleGrid(Triangle):
         geometry: Polygon,
         point_hint: tuple[float, float] | None = None,
     ) -> list[tuple[float, float]]:
+        """De-duplicated candidate interior points for a region marker (hint, reps, centroids, grid)."""
+
         candidates: list[tuple[float, float]] = []
 
         if point_hint is not None:
@@ -405,6 +440,11 @@ class TriangleGrid(Triangle):
         point_hint: tuple[float, float] | None = None,
         max_area: float | int | None = None,
     ) -> tuple[float, float]:
+        """A unique interior marker point for a region, at least ``spacing`` from existing markers.
+
+        Raises if no candidate lies inside the geometry and clear of every existing point.
+        """
+
         spacing = self._region_point_spacing(geometry=geometry, max_area=max_area)
         for candidate in self._candidate_points(geometry, point_hint=point_hint):
             point = Point(candidate)
@@ -422,6 +462,12 @@ class TriangleGrid(Triangle):
         label: str,
         priority: int,
     ) -> Polygon:
+        """The largest part of ``polygon`` not already claimed by higher-priority regions.
+
+        Subtracts the union of ``occupied_geometries`` (with a small buffer) and
+        raises if no unique area remains.
+        """
+
         if not occupied_geometries:
             return polygon
 
@@ -443,6 +489,8 @@ class TriangleGrid(Triangle):
         max_area: float | int | None,
         label: str,
     ):
+        """Record the domain geometry and, when ``max_area`` is set, add a background sizing region."""
+
         self.domain_spec = DomainSpec(geometry=geometry, label=label, max_area=max_area)
         if max_area is not None:
             domain_region_geometry = self._domain_background_geometry(geometry, max_area=max_area)
@@ -461,6 +509,12 @@ class TriangleGrid(Triangle):
         *,
         max_area: float | int,
     ) -> Polygon | MultiPolygon:
+        """An inset copy of the domain used as the background sizing region.
+
+        Buffered inward so its marker point stays clear of the domain boundary
+        (where a coincident region point would make Triangle abort).
+        """
+
         polygons = list(self._iter_polygons(geometry))
         if not polygons:
             return geometry
@@ -1179,6 +1233,8 @@ class TriangleGrid(Triangle):
         return prepared
 
     def _sync_triangle_inputs(self):
+        """Rebuild the underlying Triangle inputs (polygons, regions, nodes) from the current specs."""
+
         self._polygons = []
         self._holes = []
         self._regions = []
@@ -1216,6 +1272,8 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _geometry_coordinate_tuples(geometry: Polygon | MultiPolygon | GeometryCollection) -> list[tuple[float, float]]:
+        """Every exterior and interior-ring vertex of a geometry as ``(x, y)`` tuples."""
+
         coords: list[tuple[float, float]] = []
         for polygon in TriangleGrid._iter_polygons(geometry):
             coords.extend((float(x), float(y)) for x, y in polygon.exterior.coords)
@@ -1230,6 +1288,8 @@ class TriangleGrid(Triangle):
         excluded: list[tuple[float, float]] | None = None,
         digits: int = 8,
     ) -> list[tuple[float, float]]:
+        """Drop duplicate node points (and any coinciding with ``excluded``), rounded to ``digits``."""
+
         seen = set()
         if excluded:
             seen.update((round(float(x), digits), round(float(y), digits)) for x, y in excluded)
@@ -1250,6 +1310,8 @@ class TriangleGrid(Triangle):
         min_spacing: float,
         excluded: list[tuple[float, float]] | None = None,
     ) -> list[tuple[float, float]]:
+        """Greedily thin points so no two accepted points are closer than ``min_spacing``."""
+
         if min_spacing <= 0:
             return points
 
@@ -1268,6 +1330,8 @@ class TriangleGrid(Triangle):
         *,
         max_points: int,
     ) -> list[tuple[float, float]]:
+        """Downsample to at most ``max_points`` points by even index selection (no-op if under)."""
+
         if max_points <= 0 or len(points) <= max_points:
             return points
 
@@ -1304,12 +1368,16 @@ class TriangleGrid(Triangle):
         )
 
     def _build_triangle_mesh(self, verbose=False):
+        """Prepare inputs, ensure the workspace exists, and run the underlying Triangle build."""
+
         self.prepare()
         Path(self.model_ws).mkdir(parents=True, exist_ok=True)
         return super().build(verbose=verbose)
 
     @staticmethod
     def _build_voronoi_for_mesh(mesh):
+        """Wrap a triangulation in a :class:`VoronoiGridPlus`, silencing benign numpy warnings."""
+
         from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
         with warnings.catch_warnings():
@@ -1344,6 +1412,8 @@ class TriangleGrid(Triangle):
 
     @staticmethod
     def _mesh_report_is_safe_for_voronoi(report: dict[str, float | int | str]) -> bool:
+        """True if a mesh report has no duplicate/zero-area triangles and the Voronoi built."""
+
         return (
             int(report.get("duplicate_vertex_count", 0)) == 0
             and int(report.get("zero_area_triangle_count", 0)) == 0
@@ -1355,6 +1425,12 @@ class TriangleGrid(Triangle):
         baseline: dict[str, float | int | str],
         candidate: dict[str, float | int | str],
     ) -> list[str]:
+        """Reasons a ``candidate`` mesh is worse than ``baseline`` (empty if it is acceptable).
+
+        Flags Voronoi-unsafe meshes and regressions in tiny/sliver counts, minimum
+        angle, and edge/neighbor-area ratios beyond tolerance.
+        """
+
         reasons: list[str] = []
         if not TriangleGrid._mesh_report_is_safe_for_voronoi(candidate):
             reasons.append("voronoi_unsafe")
@@ -1396,6 +1472,8 @@ class TriangleGrid(Triangle):
         protected_geometries: list[Polygon] | None = None,
         tolerance: float = 1e-6,
     ) -> list[tuple[float, float]]:
+        """The ``(x, y)`` coordinates of mesh vertices free to move (not on a protected geometry)."""
+
         _, free_ids = get_fixed_and_free_vertex_ids(
             node=node,
             protected_geometries=protected_geometries,
@@ -1412,6 +1490,8 @@ class TriangleGrid(Triangle):
         protected_labels: list[str] | None = None,
         protect_sources: tuple[str, ...] | None = None,
     ) -> list[str]:
+        """The set of region labels to protect from optimization: explicit labels plus any from ``protect_sources``."""
+
         labels = [] if protected_labels is None else list(dict.fromkeys(protected_labels))
         if protect_sources:
             self.prepare()

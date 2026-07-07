@@ -67,6 +67,12 @@ class CooperJacob:
         return drawdown
 
     def get_ds(self, qs, Ss, rs, times, ks=None, bs=None, Ts=None):
+        """Cooper-Jacob drawdowns over ``times`` for each ``(q, S, r)`` well set.
+
+        Transmissivity comes from ``Ts`` or ``ks * bs``; pumping is converted from
+        gpm to ft³/day when ``gpm_ft_day`` is set.
+        """
+
         if Ts is None:
             Ts = [k * b for k, b in zip(ks, bs)]
         if self.gpm_ft_day:

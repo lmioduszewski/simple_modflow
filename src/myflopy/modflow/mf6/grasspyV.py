@@ -139,6 +139,8 @@ class SurfaceInterpFromShp:
 
     @property
     def gisenv(self):
+        """The current GRASS GIS environment settings (``g.gisenv``)."""
+
         return g.gisenv()
 
     def import_vector_contours(self, shp_gpkg_path=None, grass_vector_name=None, info=True):

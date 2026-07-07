@@ -37,6 +37,8 @@ def build_idomain(vor, idomain_path: Path):
 
 
 def coerce_per_dates(per_dates):
+    """Coerce a list of period dates to a pandas ``DatetimeIndex`` (asserting an existing index)."""
+
     if per_dates is not None:
         if isinstance(per_dates, list):
             try:
@@ -49,12 +51,16 @@ def coerce_per_dates(per_dates):
 
 
 def build_model_times(gwf):
+    """Map each ``(timestep, period)`` to its cumulative simulation time (``totim``)."""
+
     times = gwf.modeltime.totim
     steps = gwf.modeltime.kper_kstp
     return {(step[1], step[0]): float(time) for step, time in zip(steps, times)}
 
 
 def build_ncpl_arr(modelgrid) -> np.ndarray:
+    """The per-layer cell count as an ``(nlay,)`` array (broadcasting a scalar ``ncpl``)."""
+
     return (
         np.full(modelgrid.nlay, modelgrid.ncpl, dtype=int)
         if isinstance(modelgrid.ncpl, (int, np.integer))
@@ -63,10 +69,14 @@ def build_ncpl_arr(modelgrid) -> np.ndarray:
 
 
 def build_offsets(ncpl_arr: np.ndarray) -> np.ndarray:
+    """Cumulative node offsets per layer (a leading 0), for flat node <-> layer indexing."""
+
     return np.concatenate(([0], np.cumsum(ncpl_arr)))
 
 
 def build_node_to_lni(ncpl_arr: np.ndarray, offsets: np.ndarray) -> dict[int, tuple[int, int]]:
+    """Map each flat node number to its ``(layer, in-layer index)`` pair."""
+
     out = {}
     for layer, ncpl in enumerate(ncpl_arr):
         start = offsets[layer]

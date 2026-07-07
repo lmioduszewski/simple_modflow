@@ -53,6 +53,8 @@ class ModelCrossSectionStyle:
 
 
 def _theme_context(style: ModelCrossSectionStyle):
+    """A matplotlib theme context for the figs house style (a no-op if disabled/unavailable)."""
+
     if not style.use_figs_theme:
         return nullcontext()
     try:
@@ -63,6 +65,8 @@ def _theme_context(style: ModelCrossSectionStyle):
 
 
 def _normalize_line(line) -> dict:
+    """Normalize a section line (dict, ``LineString``, or coord sequence) to a ``{"line": coords}`` dict."""
+
     if isinstance(line, dict):
         return line
 
@@ -76,6 +80,8 @@ def _normalize_line(line) -> dict:
 
 
 def _resolve_layer_array(grid) -> np.ndarray:
+    """A ``(nlay, ncpl)`` layer-index array for coloring the section by layer."""
+
     nlay = grid.nlay
     if hasattr(grid, "ncpl"):
         ncpl = grid.ncpl
@@ -89,6 +95,8 @@ def _resolve_head_data(
     kstpkper: tuple | None,
     head_data,
 ):
+    """Resolve the head array to overlay: explicit ``head_data``, else read at ``kstpkper``, else ``None``."""
+
     if head_data is not None:
         return np.asarray(head_data)
     if kstpkper is None:
@@ -97,6 +105,8 @@ def _resolve_head_data(
 
 
 def _resolve_head_surface(head_data, head_layer: int):
+    """The single head surface for the water-table line: the array itself, or its ``head_layer`` slice."""
+
     if head_data is None:
         return None
     arr = np.asarray(head_data)
@@ -108,6 +118,8 @@ def _resolve_head_surface(head_data, head_layer: int):
 
 
 def _resolve_layer_colors(nlay: int, layer_colors: Sequence[str] | None, style: ModelCrossSectionStyle) -> list[str]:
+    """Exactly ``nlay`` layer fill colors from the explicit list, the style, or defaults (last repeated)."""
+
     if layer_colors is not None:
         colors = list(layer_colors)
     elif style.layer_colors:
@@ -121,6 +133,8 @@ def _resolve_layer_colors(nlay: int, layer_colors: Sequence[str] | None, style: 
 
 
 def _resolve_layer_labels(nlay: int, layer_labels: Sequence[str] | None) -> list[str]:
+    """Exactly ``nlay`` layer labels from the explicit list, padded with ``Layer N`` defaults."""
+
     if layer_labels is None:
         return [f"Layer {i + 1}" for i in range(nlay)]
     labels = list(layer_labels)
@@ -138,6 +152,8 @@ def _build_legend_handles(
     head_linewidth: float,
     include_head: bool,
 ) -> list:
+    """Legend handles for the section: a color patch per layer, plus the head line when included."""
+
     handles = [
         mpatches.Patch(color=color, label=label)
         for color, label in zip(layer_colors, layer_labels)

@@ -217,6 +217,8 @@ def _mover_column_groups(model) -> tuple[np.ndarray, ...]:
         return ()
 
     def feature_columns(package_name, feature_id) -> set[int]:
+        """The grid columns (cells) an SFR reach or LAK lake feature occupies."""
+
         if isinstance(package_name, bytes):
             package_name = package_name.decode()
         package = model.get_package(str(package_name))
@@ -279,6 +281,8 @@ def _preserve_lake_partitions(model, mask) -> np.ndarray:
 
 
 def _partition_components(model, mask, partition: int, *, neighbors=None) -> list[set[int]]:
+    """The connected components (via grid neighbors) of the cells assigned to ``partition``."""
+
     if neighbors is None:
         neighbors = model.modelgrid.neighbors(reset=False, fast=True)
     remaining = set(int(node) for node in np.flatnonzero(mask == partition))
@@ -408,10 +412,14 @@ class ParallelEnvironment:
 
     @property
     def serial_ready(self) -> bool:
+        """True if the MODFLOW 6 executable was found (a serial run is possible)."""
+
         return self.mf6 is not None
 
     @property
     def parallel_ready(self) -> bool:
+        """True if both MODFLOW 6 and an MPI launcher were found (a parallel run is possible)."""
+
         return self.mf6 is not None and self.mpiexec is not None
 
 
@@ -432,6 +440,8 @@ class ParallelSplitResults:
     """
 
     def __init__(self, run: "ParallelSplitRun"):
+        """Bind the results reader to a partitioned :class:`ParallelSplitRun`."""
+
         self.run = run
 
     def array(
@@ -503,6 +513,8 @@ class ParallelSplitRun:
     """
 
     def __init__(self, source, splitter, simulation, mask, workspace: str | Path):
+        """Hold a partitioned simulation, its cell mask, and workspace, and wire the results reader."""
+
         self.source = source
         self.splitter = splitter
         self.simulation = simulation
@@ -512,17 +524,25 @@ class ParallelSplitRun:
 
     @property
     def partition_ids(self) -> tuple[int, ...]:
+        """The sorted distinct subdomain ids present in the partition mask."""
+
         return tuple(int(value) for value in sorted(np.unique(self.mask)))
 
     @property
     def nparts(self) -> int:
+        """The number of subdomains the model was split into."""
+
         return len(self.partition_ids)
 
     @property
     def environment(self) -> ParallelEnvironment:
+        """The discovered MF6/MPI executables as a :class:`ParallelEnvironment`."""
+
         return ParallelEnvironment(mf6=_find_executable("mf6"), mpiexec=_find_executable("mpiexec"))
 
     def partition_model_name(self, base_name: str, partition_id: int) -> str:
+        """The FloPy split-model name for one partition (``<base>_<zero-padded id>``)."""
+
         digits = int(getattr(self.splitter, "_fdigits", len(str(max(self.partition_ids)))))
         return f"{base_name}_{partition_id:0{digits}d}"
 
@@ -749,10 +769,14 @@ class ParallelModelWorkflow:
     """
 
     def __init__(self, model):
+        """Bind the parallel workflow to the ``model`` (or ``.sim``-exposing object) to split."""
+
         self.model = model
 
     @property
     def environment(self) -> ParallelEnvironment:
+        """The discovered MF6/MPI executables as a :class:`ParallelEnvironment`."""
+
         return ParallelEnvironment(mf6=_find_executable("mf6"), mpiexec=_find_executable("mpiexec"))
 
     def topology(self) -> dict[str, Any]:

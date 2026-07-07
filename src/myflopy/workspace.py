@@ -43,6 +43,8 @@ class ModelView(SimulationBase):
     """
 
     def __init__(self, *, run: "Run", model_name: str):
+        """Build a model view over one model of a completed ``run``."""
+
         self._initialize_from_built_run(run, model_name)
 
 
@@ -176,6 +178,8 @@ class ProjectLayout:
     grids_dir_name: str = "grids"
 
     def __post_init__(self) -> None:
+        """Coerce ``root`` to a :class:`~pathlib.Path` (on this frozen dataclass)."""
+
         object.__setattr__(self, "root", Path(self.root))
 
     @classmethod
@@ -187,26 +191,38 @@ class ProjectLayout:
 
     @property
     def manifest_path(self) -> Path:
+        """Path to the project manifest file under the project root."""
+
         return self.root / PROJECT_MANIFEST_NAME
 
     @property
     def specs_dir(self) -> Path:
+        """Directory holding all durable spec files."""
+
         return self.root / self.specs_dir_name
 
     @property
     def project_spec_path(self) -> Path:
+        """Path to the serialized project spec file."""
+
         return self.specs_dir / PROJECT_SPEC_NAME
 
     @property
     def simulation_specs_dir(self) -> Path:
+        """Directory holding one JSON file per durable simulation spec."""
+
         return self.specs_dir / self.simulations_dir_name
 
     @property
     def package_specs_dir(self) -> Path:
+        """Directory holding durable project package specs."""
+
         return self.specs_dir / self.packages_dir_name
 
     @property
     def inputs_dir(self) -> Path:
+        """Directory holding project-owned input data files."""
+
         return self.root / self.inputs_dir_name
 
     def simulation_spec_path(self, name: str) -> Path:
@@ -234,6 +250,8 @@ class ProjectLayout:
 
     @property
     def grid_specs_dir(self) -> Path:
+        """Directory holding durable project grid specs."""
+
         return self.specs_dir / self.grids_dir_name
 
     def grid_spec_path(self, key: str) -> Path:
@@ -264,6 +282,8 @@ class ProjectLayout:
             path.mkdir(parents=True, exist_ok=True)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the root and directory names for the project manifest."""
+
         return {
             "root": str(self.root.as_posix()),
             "specs_dir": self.specs_dir_name,
@@ -295,6 +315,8 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     """Return stable, readable provenance for a simulation specification."""
 
     def package_metadata(package: PackageSpec | PackageRef) -> dict[str, Any]:
+        """The provenance metadata of a concrete package (empty for a bare ref)."""
+
         return package.metadata if isinstance(package, PackageSpec) else {}
 
     return {
@@ -357,6 +379,8 @@ class Run:
     )
 
     def __post_init__(self) -> None:
+        """Coerce ``workspace`` to a :class:`~pathlib.Path`."""
+
         self.workspace = Path(self.workspace)
 
     @property
@@ -405,7 +429,26 @@ class Run:
         return self.workspace
 
     def execute(self, *, silent: bool = True) -> tuple[bool, list[str]]:
-        """Write and execute the simulation with FloPy 3.10."""
+        """Write the MF6 input files (if needed) and run the simulation.
+
+        Records the run's success and MF6 report in the manifest.
+
+        Parameters
+        ----------
+        silent : bool, default True
+            Suppress MF6's console output during the run.
+
+        Returns
+        -------
+        tuple[bool, list[str]]
+            ``(success, report)`` -- whether MF6 converged, and its captured
+            output lines.
+
+        Examples
+        --------
+        >>> ok, report = run.execute()
+        >>> if not ok: print("\\n".join(report[-20:]))
+        """
 
         if (
             self.status not in {"written", "completed", "failed"}
@@ -472,10 +515,31 @@ class Run:
         """Return the preferred myflopy GWF model view for this run.
 
         Built GWF models return a live :class:`ModelView` with myflopy helper
-        methods. Reopened/file-backed GWF models return ``LoadedMf6Run``.
+        methods (``.hds``, ``.packages``, ``.cor(...)``, ``.diff(...)``, ...).
+        Reopened/file-backed GWF models return a ``LoadedMf6Run``.
 
         Use :meth:`flopy_model` when you need a raw FloPy model object or are
         working with a non-GWF model type.
+
+        Parameters
+        ----------
+        name : str, optional
+            Model name; may be omitted when the run has exactly one model.
+
+        Returns
+        -------
+        SimulationBase
+            A :class:`ModelView` (built) or ``LoadedMf6Run`` (reopened).
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is omitted but the run has multiple models.
+
+        Examples
+        --------
+        >>> model = run.model("valley")
+        >>> heads = model.hds.array()
         """
 
         name = self._default_model_name() if name is None else name
@@ -592,10 +656,33 @@ class Run:
 
 
 class Project:
-    """Workspace and in-memory specification registry for related runs.
+    """Durable workspace + in-memory spec registry for a family of related runs.
 
-    Run manifests and MF6 files are durable. The Python specification registry
-    is intentionally in-memory because its builders may be arbitrary callables.
+    The lifecycle wrapper of the package-first API. A project holds reusable
+    ``grid``/``package``/``simulation`` libraries (via ``add_grid`` / ``add_package``
+    / ``add_simulation``) and turns a simulation spec into a :class:`Run` with
+    ``prepare_run(name, sim)`` -- built in memory so you can inspect
+    ``run.model(...)`` before ``run.execute()`` writes and runs MF6. Run manifests
+    and MF6 files are durable on disk; the Python spec registry is in-memory
+    because its builders may be arbitrary callables. Geometry lives on the model
+    (``ModelContext``), not the project.
+
+    Parameters
+    ----------
+    root : Path or str
+        Project root directory (created lazily; runs land under ``<root>/runs``).
+    name : str, optional
+        Project name (defaults to the root directory name).
+    layout : ProjectLayout, optional
+        Custom on-disk directory layout (defaults to one rooted at ``root``).
+
+    Examples
+    --------
+    >>> project = mf.Project("runs/valley", name="valley")
+    >>> sim = mf.simulation(flow)                 # a SimulationSpec
+    >>> run = project.prepare_run("baseline", sim)
+    >>> run.model("valley").hds                   # inspect before running
+    >>> ok, report = run.execute()                # writes + runs MF6
     """
 
     def __init__(
@@ -605,6 +692,13 @@ class Project:
         name: str | None = None,
         layout: ProjectLayout | None = None,
     ):
+        """Open (or define) a project at ``root`` with empty spec registries.
+
+        Uses ``layout`` if given (else a default rooted at ``root``); ``name``
+        defaults to the root directory name. Packages/grids/simulations start
+        empty and are populated via ``add_*``.
+        """
+
         self.layout = layout or ProjectLayout(Path(root))
         self.root = self.layout.root
         self.name = name or self.root.name
@@ -696,9 +790,35 @@ class Project:
 
         The returned run is built but **not** written or executed -- no MF6 input
         files exist yet -- so you can inspect it with ``run.model(...)`` (and your
-        plotting/explorer tools) before committing to ``run.execute()``. Pass
-        ``build=False`` to defer building (for example when staging several runs
-        to build/execute selectively later).
+        plotting/explorer tools) before committing to ``run.execute()``.
+
+        Parameters
+        ----------
+        name : str
+            Run name; its workspace is ``<project>/runs/<name>``.
+        simulation : SimulationSpec or str
+            The simulation spec to build, or the name of one registered via
+            :meth:`add_simulation`.
+        executable : str, default "mf6"
+            MF6 executable name/path used when the run is executed.
+        metadata : dict, optional
+            Arbitrary metadata recorded in the run manifest.
+        overwrite : bool, default False
+            Allow reusing/overwriting an existing run workspace of the same name.
+        build : bool, default True
+            Build the FloPy simulation now; ``False`` defers building (e.g. when
+            staging several runs to build/execute selectively later).
+
+        Returns
+        -------
+        Run
+            A built (unless ``build=False``), unexecuted run.
+
+        Examples
+        --------
+        >>> run = project.prepare_run("baseline", sim)
+        >>> run.model("valley")        # inspect
+        >>> run.execute()              # write + run MF6
         """
 
         spec = (
@@ -804,6 +924,8 @@ class Project:
         grid_keys = set(self.grids)
 
         def check_packages(packages, where: str) -> None:
+            """Record an issue for any package ref whose key is not defined in the project."""
+
             for package in packages:
                 if isinstance(package, PackageRef) and package.key not in package_keys:
                     issues.append(

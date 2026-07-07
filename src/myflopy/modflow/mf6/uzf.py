@@ -18,6 +18,8 @@ CellSelection = str | Sequence[CellId]
 
 
 def _is_scalar(value: Any) -> bool:
+    """True for a single scalar UZF input (a number or field-name string, not a per-cell sequence)."""
+
     return isinstance(value, Real) or isinstance(value, str)
 
 
@@ -60,6 +62,8 @@ class UZFBuilder:
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate ``nper``, the ``cells`` keyword, and that a domain exists for auto cell selection."""
+
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
         if isinstance(self.cells, str) and self.cells not in {"all_active", "surface_only"}:
@@ -128,6 +132,8 @@ class UZFBuilder:
         return tuple(cellid for cellid in self.uzf_cells if top_by_column[cellid[1]] == cellid)
 
     def _validate_explicit_cells(self, cells: tuple[CellId, ...]) -> None:
+        """Assert each explicit ``(layer, cell)`` is in range and active in the domain (no-op if none)."""
+
         domain = self.domain
         if domain is None:
             return

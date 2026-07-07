@@ -77,14 +77,20 @@ class RegionRegistry:
     """Registry of named regions and groups attached to one model."""
 
     def __init__(self, model):
+        """Create an empty region/group registry bound to ``model``."""
+
         self.model = model
         self._regions: dict[str, ModelRegion] = {}
         self._groups: dict[str, RegionGroup] = {}
 
     def __contains__(self, name: str) -> bool:
+        """Whether ``name`` is a registered region or group."""
+
         return name in self._regions or name in self._groups
 
     def __getitem__(self, name: str) -> ModelRegion | RegionGroup:
+        """The registered region or group named ``name`` (see :meth:`get`)."""
+
         return self.get(name)
 
     def add(self, region: ModelRegion, *, overwrite: bool = False) -> ModelRegion:
@@ -318,6 +324,12 @@ class RegionRegistry:
         *,
         stack: list[str],
     ):
+        """Recursively add a region/group's cells to ``resolved_cells`` (with per-cell provenance).
+
+        ``stack`` tracks the resolution path to detect and reject cyclic group
+        references.
+        """
+
         if name in self._regions:
             region = self._regions[name]
             for cell in region.cells:
@@ -335,6 +347,8 @@ class RegionRegistry:
             self._resolve_into(member_name, resolved_cells, trace, stack=next_stack)
 
     def _group_contains(self, group_name: str, target_name: str) -> bool:
+        """Whether ``group_name`` contains ``target_name`` directly or transitively via subgroups."""
+
         group = self.get_group(group_name)
         for member_name in group.members:
             if member_name == target_name:
@@ -344,6 +358,8 @@ class RegionRegistry:
         return False
 
     def _assert_no_cycle(self, group_name: str, member_name: str):
+        """Raise if adding ``member_name`` to ``group_name`` would create a cyclic group relationship."""
+
         if member_name in self._groups and self._group_contains(member_name, group_name):
             raise ValueError(
                 f"Cannot add {member_name!r} to {group_name!r}; that would create a cyclic group relationship"

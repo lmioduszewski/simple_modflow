@@ -239,6 +239,8 @@ def build_grid_section(vor: VoronoiGridPlus, line: shp.LineString | Path):
 
 
 def _as_linestring(geometry) -> shp.LineString:
+    """Coerce a ``LineString`` or ``MultiLineString`` to a single merged ``LineString`` (raises otherwise)."""
+
     if isinstance(geometry, shp.LineString):
         return geometry
 
@@ -266,6 +268,8 @@ class GridSection:
     """
 
     def __init__(self, vor, line: shp.LineString | shp.MultiLineString | Path):
+        """Build a cross-section of grid ``vor`` along ``line`` (a geometry or vector file)."""
+
         self.vor = vor
         props = vor.get_disv_gridprops()
         self.grid = VertexGrid(

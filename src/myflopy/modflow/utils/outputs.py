@@ -12,6 +12,8 @@ class LakStageOutput:
     """Lake stage output accessor hosted under ``model.outputs.lak``."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the lake stage-output accessor to ``model``."""
+
         self.model = model
 
     def get(self):
@@ -26,6 +28,8 @@ class SFRStageOutput:
     """Stream stage output accessor hosted under ``model.outputs.sfr``."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the stream stage-output accessor to ``model``."""
+
         self.model = model
 
     def get(self):
@@ -46,6 +50,8 @@ class LakOutputData:
     """Namespace for LAK-specific output helpers."""
 
     def __init__(self, model: SimulationBase):
+        """Bind the LAK output namespace (``.bud`` / ``.stage``) to ``model``."""
+
         self.model = model
 
     @property
@@ -70,6 +76,8 @@ class SFROutputData:
     """Namespace for SFR-specific output helpers."""
 
     def __init__(self, model: SimulationBase):
+        """Bind the SFR output namespace (``.bud`` / ``.stage``) to ``model``."""
+
         self.model = model
 
     @property
@@ -93,11 +101,15 @@ class UzfOutputData:
     """Namespace for UZF-specific output helpers."""
 
     def __init__(self, model: SimulationBase):
+        """Bind the UZF output namespace to ``model``."""
+
         self.model = model
         self._ifno_to_cellid = None
 
     @property
     def ifno_to_cellid(self):
+        """Map each UZF ``ifno`` to its ``(layer, cell)`` (vertex grids only; cached)."""
+
         if self._ifno_to_cellid is None:
             if self.model.modelgrid.grid_type == 'vertex':
                 ifno_to_cellid = pd.DataFrame(self.model.uzf.packagedata.get_data().cellid.tolist())

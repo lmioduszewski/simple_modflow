@@ -109,6 +109,8 @@ class CanonicalModelConfig:
 
     @property
     def ncpl(self) -> int:
+        """Cells per layer (``nrow * ncol``)."""
+
         return self.nrow * self.ncol
 
 
@@ -172,6 +174,8 @@ def build_transient_model(
     across = 2.0 * np.abs(yn - 0.5)  # 0 on the axis, 1 at either wall
 
     def nearest_cell(x_fraction: float, y_fraction: float) -> int:
+        """The cell nearest a fractional ``(x, y)`` position (0-1) within the domain."""
+
         return int(np.argmin((xn - x_fraction) ** 2 + (yn - y_fraction) ** 2))
 
     # --- Valley topography ---------------------------------------------------
@@ -548,6 +552,8 @@ def build_transient_model(
 
 
 def _write_gpkg(path: Path, gdf: gpd.GeoDataFrame) -> Path:
+    """Write a GeoDataFrame to a GeoPackage at ``path`` (overwriting any existing file)."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
@@ -563,9 +569,13 @@ def _write_surface_water_inputs(workspace: Path, config: CanonicalModelConfig) -
     crs = "EPSG:2927"
 
     def point(x_fraction: float, y_fraction: float) -> tuple[float, float]:
+        """Model coordinates for a fractional ``(x, y)`` position (0-1) within the domain."""
+
         return (width * x_fraction, height * y_fraction)
 
     def rectangle(x0, x1, y0, y1):
+        """A rectangle polygon spanning the fractional bounds ``[x0, x1] x [y0, y1]``."""
+
         return Polygon([point(x0, y0), point(x0, y1), point(x1, y1), point(x1, y0)])
 
     lake = _write_gpkg(
@@ -625,6 +635,8 @@ def _attach_canonical_targets(
     shallow_well: int,
     deep_well: int,
 ) -> None:
+    """Register the canonical model's head/stage/flow observation targets on ``model``."""
+
     import flopy
 
     selected = representative_cells(config)

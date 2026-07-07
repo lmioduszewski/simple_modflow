@@ -191,12 +191,16 @@ class ParticleTrackingScene:
 
 
 def _figure_to_data_uri(fig: "Figure", *, dpi: int) -> str:
+    """Render a matplotlib figure to a base64 PNG ``data:`` URI for inline embedding."""
+
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def _write_figure_png(fig: "Figure", path: Path, *, dpi: int) -> Path:
+    """Save a figure to ``path`` as PNG via an atomic temp-file replace."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     fig.savefig(temporary, format="png", dpi=dpi, bbox_inches="tight")
@@ -205,6 +209,8 @@ def _write_figure_png(fig: "Figure", path: Path, *, dpi: int) -> Path:
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically via a temp-file replace."""
+
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(text, encoding="utf-8")
     temporary.replace(path)
@@ -212,6 +218,8 @@ def _write_text_atomic(path: Path, text: str) -> None:
 
 @contextmanager
 def _export_lock(output_path: Path):
+    """An exclusive-file-lock context so two exports cannot write the same output at once."""
+
     lock_path = output_path.with_suffix(f"{output_path.suffix}.lock")
     try:
         descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -229,6 +237,8 @@ def _export_lock(output_path: Path):
 
 
 def _emit_progress(progress, event: FrameExportProgress) -> None:
+    """Report a frame-export progress event via a callback, or a printed line if ``progress`` is truthy."""
+
     if callable(progress):
         progress(event)
     elif progress:
@@ -243,6 +253,8 @@ def _select_sequence(
     frame_stride: int = 1,
     max_frames: int | None = None,
 ) -> tuple[list[Any], list[str]]:
+    """Subselect ``(values, labels)`` by explicit indices, stride, and a max-frame cap (validated)."""
+
     if frame_stride < 1:
         raise ValueError("frame_stride must be at least 1.")
     if max_frames is not None and max_frames < 1:
@@ -259,6 +271,8 @@ def _select_sequence(
 
 
 def _slider_html(*, frames: Sequence[str], labels: Sequence[str], title: str, interval_ms: int) -> str:
+    """Build a standalone HTML page embedding image ``frames`` with a browser-side play/slider."""
+
     frame_json = json.dumps(list(frames))
     label_json = json.dumps([str(label) for label in labels])
     safe_title = html.escape(title)
@@ -438,6 +452,12 @@ def _resolve_frames(
     kstpkpers: Sequence[tuple[int, int]] | None,
     head_frames: Sequence[Any] | None,
 ) -> tuple[list[Any], list[tuple[int, int]] | None]:
+    """Resolve the animation frames: explicit ``head_frames`` arrays, else the model's saved kstpkper.
+
+    Returns ``(values, resolved_kstpkpers)`` where the second is ``None`` when
+    frames are supplied directly.
+    """
+
     if head_frames is not None:
         values = [_normalize_head_frame(frame) for frame in head_frames]
         if not values:
@@ -458,6 +478,8 @@ def _frame_labels(
     kstpkpers: Sequence[tuple[int, int]] | None,
     labels: Sequence[str] | None,
 ) -> list[str]:
+    """Per-frame display labels: explicit ``labels``, else the kstpkper, else ``Frame N``."""
+
     if labels is not None:
         return [str(label) for label in labels]
     if kstpkpers is None:
@@ -466,6 +488,8 @@ def _frame_labels(
 
 
 def _normalize_head_frame(values):
+    """Squeeze a single-row middle axis so a head array is ``(nlay, ncpl)``."""
+
     array = np.asarray(values)
     if array.ndim == 3 and array.shape[1] == 1:
         return array[:, 0, :]
@@ -473,11 +497,15 @@ def _normalize_head_frame(values):
 
 
 def _head_frame(model: "SimulationBase", value, resolved_kstpkpers):
+    """One normalized head array: ``value`` itself, or read from the model at that kstpkper."""
+
     data = value if resolved_kstpkpers is None else model.gwf.output.head().get_data(kstpkper=value)
     return _normalize_head_frame(data)
 
 
 def _clean_head_values(values):
+    """Mask non-finite and MODFLOW dry/no-data sentinels (``|value| >= 1e29``) in a head array."""
+
     array = np.asarray(values, dtype=float)
     return np.ma.masked_where(~np.isfinite(array) | (np.abs(array) >= 1.0e29), array)
 
@@ -488,6 +516,8 @@ def _shared_head_limits(
     resolved_kstpkpers,
     layers: Sequence[int],
 ) -> tuple[float | None, float | None]:
+    """The shared (min, max) head across all frames and ``layers``, for a fixed color scale."""
+
     minimum = np.inf
     maximum = -np.inf
     for value in values:
@@ -570,6 +600,8 @@ def export_cross_section_slider_html(
         resolved_kstpkpers = values
 
     def render(value, index):
+        """Render one cross-section frame figure for the slider export."""
+
         kwargs = dict(cross_section_kwargs)
         kwargs["title"] = frame_labels[index]
         if resolved_kstpkpers is None:
@@ -795,6 +827,8 @@ def export_head_map_slider_html(
         vmax = shared_max if vmax is None else vmax
 
     def render(value, index):
+        """Render one head-map frame figure for the slider export."""
+
         data = _head_frame(model, value, resolved_kstpkpers)
         return plot_model_head_map(
             model,
@@ -878,6 +912,8 @@ def export_head_layer_mosaic_slider_html(
         vmax = shared_max if vmax is None else vmax
 
     def render(value, index):
+        """Render one multi-layer head-mosaic frame figure for the slider export."""
+
         data = _head_frame(model, value, resolved_kstpkpers)
         nrows = int(np.ceil(len(layers) / ncols))
         fig, axes = mpl_axes(
@@ -1049,6 +1085,8 @@ def _select_plotly_frames(
     frame_stride: int = 1,
     max_frames: int | None = None,
 ):
+    """Subselect a Plotly figure's animation frames by indices/stride/max (no-op if unfiltered)."""
+
     frames = list(fig.frames)
     if not frames:
         return fig
@@ -1215,21 +1253,33 @@ class ModelVisualization:
     """
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the visualization exporters to a flow ``model``."""
+
         self.model = model
 
     def cross_section_slider_html(self, line, output_path, **kwargs) -> StandaloneHtmlSlider:
+        """Export a standalone HTML cross-section frame-slider along ``line`` through time."""
+
         return export_cross_section_slider_html(self.model, line, output_path, **kwargs)
 
     def head_map_slider_html(self, output_path, **kwargs) -> StandaloneHtmlSlider:
+        """Export a standalone HTML head-map frame-slider through time."""
+
         return export_head_map_slider_html(self.model, output_path, **kwargs)
 
     def head_layer_mosaic_slider_html(self, output_path, **kwargs) -> StandaloneHtmlSlider:
+        """Export a standalone HTML multi-layer head-mosaic frame-slider through time."""
+
         return export_head_layer_mosaic_slider_html(self.model, output_path, **kwargs)
 
     def particle_tracking_scene(self, pathlines, **kwargs) -> ParticleTrackingScene:
+        """Build a 3D PyVista particle-tracking scene from ``pathlines`` and the model grid."""
+
         return build_particle_tracking_scene(self.model, pathlines, **kwargs)
 
     def particle_tracking_html(self, pathlines, output_path, **kwargs) -> Path:
+        """Export a standalone 3D HTML particle-tracking scene to ``output_path``."""
+
         return export_particle_tracking_html(self.model, pathlines, output_path, **kwargs)
 
     def plotly_cross_section_animation(

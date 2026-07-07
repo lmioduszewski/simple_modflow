@@ -38,6 +38,8 @@ class MoverConnection:
     index: int
 
     def __post_init__(self) -> None:
+        """Lowercase the package name and validate a non-negative zero-based ``index``."""
+
         if not self.package:
             raise ValueError("package is required.")
         if int(self.index) < 0:
@@ -78,6 +80,8 @@ class Move:
     value: float = 1.0
 
     def __post_init__(self) -> None:
+        """Validate the endpoints are connections and uppercase/validate the transfer ``method``."""
+
         if not isinstance(self.source, MoverConnection):
             raise ValueError("source must be a MoverConnection.")
         if not isinstance(self.receiver, MoverConnection):
@@ -124,6 +128,8 @@ class MVRBuilder:
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate that ``nper`` is at least 1."""
+
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
 

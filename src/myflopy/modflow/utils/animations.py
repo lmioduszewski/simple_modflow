@@ -19,12 +19,16 @@ class Animation:
     :type model: SimulationBase
     """
     def __init__(self, model: SimulationBase, periods=None, redraw: bool = False):
+        """Build Plotly animation controls over ``periods`` (the model's kstpkper by default)."""
+
         self.model = model
         self.periods = list(model.kstpkper if periods is None else periods)
         self.redraw = bool(redraw)
 
     @property
     def updatemenus(self):
+        """The Plotly play/pause button ``updatemenus`` config for the animation."""
+
         updatemenus = [{
             'type': 'buttons',
             'buttons': [
@@ -46,6 +50,8 @@ class Animation:
 
     @property
     def sliders(self):
+        """The Plotly ``sliders`` config with one frame step per period."""
+
         sliders = [{
             'active': 0,
             'yanchor': 'top',

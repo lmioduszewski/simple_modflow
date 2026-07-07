@@ -439,6 +439,8 @@ class CalibrationPlot(f.Fig):
         """
 
         def _period_mae(data, caller):
+            """Per-period mean absolute residual from a compare frame, sorted by time."""
+
             stats = (
                 _require_compare_columns(data, {"time", "abs_residual"}, caller=caller)
                 .groupby("time")
@@ -558,20 +560,28 @@ class CalibrationPlot(f.Fig):
 
     @property
     def model(self):
+        """The bound MODFLOW simulation used to generate simulated values."""
+
         return self._model
 
     @model.setter
     def model(self, value):
+        """Set the source model, asserting it is a :class:`SimulationBase` (or ``None``)."""
+
         if value is not None:
             assert isinstance(value, SimulationBase), 'model must be a SimulationBase object'
         self._model = value
 
     @property
     def loc_shp_gpkg(self):
+        """Path to the observation-location shapefile/GeoPackage used to sample simulated heads."""
+
         return self._loc_shp_gpkg
 
     @loc_shp_gpkg.setter
     def loc_shp_gpkg(self, value):
+        """Set the observation-location file, asserting it is a :class:`~pathlib.Path` (or ``None``)."""
+
         if value is not None:
             assert isinstance(value, Path), 'loc_shp_gpkg must be a Path object'
         self._loc_shp_gpkg = value
@@ -612,6 +622,8 @@ class CalibrationPlot(f.Fig):
 
     @simulated.setter
     def simulated(self, value):
+        """Set simulated data directly; ignored when ``loc_shp_gpkg`` is set (generated instead)."""
+
         if self.loc_shp_gpkg is not None:
             if self._verbose:
                 print('path to shapefile or geopackage provided, '
@@ -623,10 +635,14 @@ class CalibrationPlot(f.Fig):
 
     @property
     def lak_obs_dict(self):
+        """Mapping of lake observation name to lake id, folded into simulated data."""
+
         return self._lak_obs_dict
 
     @lak_obs_dict.setter
     def lak_obs_dict(self, value):
+        """Set the lake-observation dict, asserting each lake id exists in the LAK package."""
+
         if value is not None:
             assert isinstance(value, dict), 'lak_obs_dict must be a dictionary'
             for lak_id in value.values():
@@ -636,10 +652,14 @@ class CalibrationPlot(f.Fig):
 
     @property
     def observed(self):
+        """The observed target data (long-format, indexed by kstpkper/layer)."""
+
         return self._observed
 
     @observed.setter
     def observed(self, value):
+        """Set observed data from a DataFrame or an Excel ``Path`` (aligned to model kstpkper)."""
+
         if isinstance(value, Path):
             obs_data = pd.read_excel(value)
             assert len(obs_data) == self.model.nper, \
@@ -806,6 +826,7 @@ class CalibrationPlot(f.Fig):
         )
 
     def add_heads(self):
+        """Add observed vs simulated head time-series traces, one per location and layer."""
 
         locs = list(self.observed.index.get_level_values(0).unique())
         layers = list(self.observed.index.get_level_values(1).unique())

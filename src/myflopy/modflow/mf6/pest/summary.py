@@ -44,6 +44,8 @@ class PestSettings:
         return pd.DataFrame(self.observations)
 
     def __str__(self) -> str:
+        """A multi-line human-readable summary of the calibration's params/obs/forecasts and build state."""
+
         lines: list[str] = []
         lines.append(f"PEST calibration: {self.name}  (model: {self.model_name})")
         lines.append(f"  template : {self.template_workspace}")
@@ -89,4 +91,6 @@ class PestSettings:
         return "\n".join(lines)
 
     def __repr__(self) -> str:
+        """Same as :meth:`__str__` (the calibration summary)."""
+
         return self.__str__()

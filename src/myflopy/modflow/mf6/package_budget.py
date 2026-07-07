@@ -501,6 +501,8 @@ def build_lak_budget_result_table(
         ].copy()
 
         def _first_non_null(series: pd.Series):
+            """The first non-null value of a series (NaN if all are null)."""
+
             values = series.dropna()
             if values.empty:
                 return np.nan

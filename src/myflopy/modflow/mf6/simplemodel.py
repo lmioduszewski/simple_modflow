@@ -15,10 +15,14 @@ if TYPE_CHECKING:
 
 
 def _is_sequence(value: Any) -> bool:
+    """True if ``value`` is a list or tuple (a per-cell/per-layer array, not a scalar)."""
+
     return isinstance(value, (list, tuple))
 
 
 def _coerce_cell_values(values: Any, expected_len: int, name: str) -> list:
+    """Broadcast a scalar to ``expected_len`` cells, or validate a sequence's length."""
+
     if _is_sequence(values):
         result = list(values)
         if len(result) != expected_len:
@@ -28,6 +32,8 @@ def _coerce_cell_values(values: Any, expected_len: int, name: str) -> list:
 
 
 def _coerce_layer_offsets(values: Any, nlay: int) -> list[float]:
+    """Broadcast a scalar drain-bottom offset to ``nlay``, or validate a per-layer list."""
+
     if _is_sequence(values):
         result = list(values)
         if len(result) != nlay:
@@ -37,12 +43,21 @@ def _coerce_layer_offsets(values: Any, nlay: int) -> list[float]:
 
 
 def _surface_columns(vor: "Vor") -> list:
+    """The non-geometry surface columns of the grid's ``gdf_topbtm`` (empty if absent)."""
+
     if getattr(vor, "gdf_topbtm", None) is None:
         return []
     return [column for column in vor.gdf_topbtm.columns if column != "geometry"]
 
 
 def _resolve_top_and_bottom(config: "SimpleModelConfig") -> tuple[list, list | list[list]]:
+    """Resolve model top and per-layer bottoms from the config or the grid surfaces.
+
+    Falls back to the grid's ``gdf_topbtm`` columns when ``top``/``bottom`` are
+    unset, and returns cell arrays sized to the grid (a flat bottom for DISU, one
+    array per layer for DISV).
+    """
+
     top = config.top
     bottom = config.bottom
     surface_columns = _surface_columns(config.vor)
@@ -89,12 +104,16 @@ def _resolve_top_and_bottom(config: "SimpleModelConfig") -> tuple[list, list | l
 
 
 def _flatten_bottom_cells(bottom: list | list[list], *, grid_type: str) -> list:
+    """Flatten the bottom arrays to one list of cell elevations (per-layer arrays concatenated)."""
+
     if grid_type == "disu":
         return list(bottom)
     return [cell for layer_values in bottom for cell in layer_values]
 
 
 def _resolve_initial_heads(config: "SimpleModelConfig", bottom: list | list[list]):
+    """The initial-head array: the config's if given, else each cell bottom + saturated thickness."""
+
     if config.initial_heads is not None:
         return config.initial_heads
 
@@ -103,6 +122,8 @@ def _resolve_initial_heads(config: "SimpleModelConfig", bottom: list | list[list
 
 
 def _resolve_boundary_cells(config: "SimpleModelConfig") -> list[int]:
+    """The perimeter boundary cells: the config's if given, else the grid's edge cells."""
+
     if config.boundary_cells is not None:
         return list(config.boundary_cells)
     return list(config.vor.get_grid_edge())
@@ -114,6 +135,8 @@ def _resolve_boundary_heads(
     top: list[float],
     layer_idx: int,
 ) -> list[float]:
+    """Boundary heads for one layer's ``cells``: cell tops by default, else the config value(s)."""
+
     boundary_head = config.boundary_head
 
     if boundary_head is None:
@@ -176,10 +199,14 @@ def build_constant_head_stress_period_data(
 
 
 def _default_sto_steady(config: "SimpleModelConfig") -> dict[int, bool]:
+    """Default STO steady-state flags: only the first stress period is steady."""
+
     return {0: True}
 
 
 def _default_sto_transient(config: "SimpleModelConfig") -> dict[int, bool]:
+    """Default STO transient flags: every period after the first (empty for a single period)."""
+
     return {} if config.nper <= 1 else {per: True for per in range(1, config.nper)}
 
 
@@ -234,6 +261,8 @@ class SimpleModelConfig:
     output_print_record: tuple | None = None
 
     def __post_init__(self):
+        """Normalize ``grid_type`` and validate name length, ``nlay``/``nper``, and DISU limits."""
+
         self.grid_type = str(self.grid_type).lower()
         if self.grid_type not in {"disu", "disv"}:
             raise ValueError("grid_type must be either 'disu' or 'disv'")

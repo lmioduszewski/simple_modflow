@@ -20,6 +20,8 @@ def _protected_vertex_ids(
     protected_geometries: list[Polygon] | None,
     tolerance: float,
 ) -> set[int]:
+    """Vertex ids lying (within ``tolerance``) on any protected geometry's boundary -- held fixed."""
+
     protected: set[int] = set()
     if not protected_geometries:
         return protected
@@ -41,6 +43,8 @@ def get_fixed_and_free_vertex_ids(
     protected_geometries: list[Polygon] | None = None,
     tolerance: float = 1e-6,
 ) -> tuple[set[int], list[int]]:
+    """Split mesh vertices into fixed (boundary/protected) and free-to-move id sets."""
+
     fixed = {int(row["ivert"]) for row in node if int(row["boundary_marker"]) != 0}
     fixed.update(_protected_vertex_ids(node, protected_geometries, tolerance))
     free_ids = sorted(int(row["ivert"]) for row in node if int(row["ivert"]) not in fixed)
@@ -48,6 +52,8 @@ def get_fixed_and_free_vertex_ids(
 
 
 def _coord_key(x: float, y: float, digits: int = 8) -> tuple[float, float]:
+    """A rounded ``(x, y)`` tuple usable as a dict key for coordinate matching."""
+
     return (round(float(x), digits), round(float(y), digits))
 
 
@@ -57,6 +63,8 @@ def map_voronoi_cells_to_vertex_ids(
     vor_points,
     digits: int = 8,
 ) -> dict[int, int]:
+    """Map each mesh vertex id to the Voronoi cell (seed point) at the same coordinate."""
+
     point_lookup = {
         _coord_key(point[0], point[1], digits=digits): idx
         for idx, point in enumerate(np.asarray(vor_points, dtype=float))
@@ -80,6 +88,13 @@ def cvt_relaxed_full_seed_points(
     protected_geometries: list[Polygon] | None = None,
     tolerance: float = 1e-6,
 ) -> RelaxationResult:
+    """One damped centroidal-Voronoi (CVT) relaxation step over the free mesh vertices.
+
+    Moves each free vertex a ``damping`` fraction toward its Voronoi cell centroid
+    (clamped to the domain), holding fixed/protected vertices, and reports how many
+    moved beyond ``min_move``.
+    """
+
     damping = float(np.clip(damping, 0.0, 1.0))
     coords = {
         int(row["ivert"]): np.array([float(row["x"]), float(row["y"])], dtype=float)

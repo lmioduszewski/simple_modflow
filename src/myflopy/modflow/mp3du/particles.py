@@ -46,6 +46,8 @@ class ParticleTrackingResult(Mapping[str, Any]):
     diagnostics_file: Path | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """The result fields as a plain dict (for mapping-style access)."""
+
         return {
             "json_file": self.json_file,
             "path_file": self.path_file,
@@ -56,12 +58,18 @@ class ParticleTrackingResult(Mapping[str, Any]):
         }
 
     def __getitem__(self, key: str) -> Any:
+        """Mapping-style access to a result field by name."""
+
         return self.to_dict()[key]
 
     def __iter__(self) -> Iterator[str]:
+        """Iterate the result field names."""
+
         return iter(self.to_dict())
 
     def __len__(self) -> int:
+        """The number of result fields."""
+
         return len(self.to_dict())
 
 
@@ -133,6 +141,13 @@ class ParticleTrackingInput:
         generated_particle_release_time: float = 0.0,
         generated_particle_label_prefix: str = "cell_",
     ):
+        """Configure a mod-PATH3DU particle-tracking input build for ``model``.
+
+        Resolves executable paths and stores the release source (a particle
+        shapefile or explicit cells), field mapping, IFACE overrides, and the
+        numeric tracking options; see the class docstring for the workflow.
+        """
+
         self.model = model
         mp3du_default = _MODULE_DIR / "mp3du.exe"
         writegsf_default = _MODULE_DIR / "writep3dgsf.exe"
@@ -168,6 +183,8 @@ class ParticleTrackingInput:
 
     @staticmethod
     def _coerce_iface_overrides(iface_overrides: dict[str, int] | None) -> dict[str, int]:
+        """Merge user IFACE overrides (upper-cased) onto the package defaults."""
+
         overrides = dict(ParticleTrackingInput._DEFAULT_IFACE_OVERRIDES)
         if iface_overrides:
             for key, value in iface_overrides.items():
@@ -176,6 +193,8 @@ class ParticleTrackingInput:
 
     @property
     def model_output_files(self):
+        """The MF6 output filenames MP3DU reads (grb/tdis/hds/cbc/gsf), inferred if unset (cached)."""
+
         if self._model_output_files is None:
             model_name = self.model.name
             self._model_output_files = {
@@ -189,6 +208,8 @@ class ParticleTrackingInput:
 
     @property
     def output_path(self) -> Path:
+        """The directory MP3DU inputs/outputs are written to (the model's output folder by default)."""
+
         if self._output_path is None:
             self._output_path = self.model.model_output_folder_path
         self._output_path.mkdir(parents=True, exist_ok=True)
@@ -196,10 +217,14 @@ class ParticleTrackingInput:
 
     @property
     def porosities_by_layer(self):
+        """Per-layer aquifer porosities used to convert flow to velocity."""
+
         return self._porosities_by_layer
 
     @porosities_by_layer.setter
     def porosities_by_layer(self, val):
+        """Set per-layer porosities, asserting one numeric value per model layer."""
+
         assert isinstance(val, list), "porosities_by_layer must be a list of porosities, one per layer"
         assert len(val) == self.model.gwf.modelgrid.nlay, "number of porosities must match number of layers"
         for por in val:
@@ -208,6 +233,8 @@ class ParticleTrackingInput:
 
     @property
     def variables(self):
+        """The MP3DU transport variables block (velocity method, porosity, retardation, dispersion)."""
+
         if self._variables is None:
             porosities = self.porosities_by_layer
             self._variables = {
@@ -222,21 +249,29 @@ class ParticleTrackingInput:
 
     @property
     def particle_field_map(self) -> dict[str, Any]:
+        """The resolved mapping of MP3DU release fields to source-attribute columns (cached)."""
+
         if self._resolved_particle_field_map is None:
             self._resolved_particle_field_map = self._resolve_particle_field_map()
         return self._resolved_particle_field_map
 
     @property
     def particle_input_path(self) -> Path:
+        """The path to the resolved particle-release input file (cached)."""
+
         if self._resolved_particle_input_path is None:
             self._resolved_particle_input_path = self._resolve_particle_input_path()
         return self._resolved_particle_input_path
 
     def _require_model(self):
+        """Raise if no flow model is bound (required for input generation)."""
+
         if self.model is None:
             raise ValueError("model is required for MP3DU input generation.")
 
     def _require_particle_source(self):
+        """Validate exactly one release source is given (a particle file or explicit cells) and exists."""
+
         if self.particle_shp is None and self.particle_cells is None:
             raise ValueError("Either particle_shp or particle_cells is required for MP3DU input generation.")
         if self.particle_shp is not None and self.particle_cells is not None:
@@ -245,12 +280,20 @@ class ParticleTrackingInput:
             raise FileNotFoundError(f"Particle file not found: {self.particle_shp}")
 
     def _resolve_particle_input_path(self) -> Path:
+        """The particle-release input file path: the given vector, or one generated from cells."""
+
         self._require_particle_source()
         if self.particle_shp is not None:
             return self._prepare_particle_vector_input()
         return self._write_generated_particle_file()
 
     def _prepare_particle_vector_input(self) -> Path:
+        """Use the release vector directly if it is point features with the required fields, else regenerate.
+
+        A non-point or field-incomplete vector is mapped to grid cells and a
+        proper point-release file is generated from them.
+        """
+
         particle_data = read_shp_gpkg(self.particle_shp)
         columns = set(particle_data.columns)
         has_required = all(
@@ -269,6 +312,8 @@ class ParticleTrackingInput:
         return self._write_generated_particle_file_from_vector(particle_data)
 
     def _write_generated_particle_file_from_vector(self, particle_data: pd.DataFrame) -> Path:
+        """Map vector features to unique grid cells and write a generated point-release file."""
+
         self._require_model()
         cells_series = self.model.vor.get_vor_cells_as_series(particle_data)
         ordered_cells: list[int] = []
@@ -286,6 +331,8 @@ class ParticleTrackingInput:
         return self._write_generated_particle_file(filename="mp3du_particles_from_vector.shp")
 
     def _grid_cell_count(self) -> int:
+        """The model's cells-per-layer count, from the Voronoi grid or model grid (raises if unknown)."""
+
         vor = getattr(self.model, "vor", None)
         if vor is not None:
             ncpl = getattr(vor, "ncpl", None)
@@ -302,6 +349,12 @@ class ParticleTrackingInput:
         raise AttributeError("Could not determine grid cell count for particle generation.")
 
     def _write_generated_particle_file(self, filename: str = "mp3du_particle_cells.shp") -> Path:
+        """Write a point-release shapefile with one particle at each ``particle_cells`` centroid.
+
+        Validates the cell ids are in range and stamps release time, z-location, and
+        a label on each generated point.
+        """
+
         self._require_model()
         if self.particle_cells is None:
             raise ValueError("particle_cells are required to generate a particle shapefile.")
@@ -332,9 +385,17 @@ class ParticleTrackingInput:
         return particle_path
 
     def _read_particle_locations(self) -> pd.DataFrame:
+        """Read the resolved particle-release input file into a GeoDataFrame."""
+
         return read_shp_gpkg(self.particle_input_path)
 
     def _resolve_particle_field_map(self) -> dict[str, Any]:
+        """Resolve which source columns supply each MP3DU release field.
+
+        Uses generated-file defaults for cell-based/regenerated input, else matches
+        the configured aliases against the file's columns.
+        """
+
         particle_data = self._read_particle_locations()
         columns = set(particle_data.columns)
         explicit = dict(self._particle_field_map_input)
@@ -384,6 +445,8 @@ class ParticleTrackingInput:
 
     @staticmethod
     def _normalize_int(value: Any) -> int | None:
+        """Coerce a value to a Python int, or ``None`` for null/NaN."""
+
         if value is None or pd.isna(value):
             return None
         if isinstance(value, np.generic):
@@ -391,6 +454,8 @@ class ParticleTrackingInput:
         return int(value)
 
     def _normalize_declared_cellid(self, value: Any) -> int | None:
+        """A declared cell id normalized to a zero-based index (subtracting ``cellid_index_base``)."""
+
         normalized = self._normalize_int(value)
         if normalized is None:
             return None
@@ -398,6 +463,8 @@ class ParticleTrackingInput:
 
     @classmethod
     def _flatten_cellid(cls, value: Any) -> list[int]:
+        """Flatten any cellid shape (scalar, ``(layer, cell)``, nested list/array) to zero-based cell ints."""
+
         if value is None or (not isinstance(value, (list, tuple, np.ndarray)) and pd.isna(value)):
             return []
         if isinstance(value, np.ndarray):
@@ -418,6 +485,8 @@ class ParticleTrackingInput:
 
     @classmethod
     def _aligned_cells_from_series(cls, frame: pd.DataFrame, cells_series: pd.Series) -> list[int | None]:
+        """One cell (or ``None``) per row of ``frame``, taken from the geometry-derived ``cells_series``."""
+
         aligned: list[int | None] = []
         for idx in range(len(frame)):
             if idx not in cells_series.index:
@@ -428,6 +497,12 @@ class ParticleTrackingInput:
         return aligned
 
     def get_start_cell_diagnostics(self) -> dict[str, Any]:
+        """Diagnose each particle's start cell: mapped counts, declared-vs-geometry mismatches, and boundary/inactive/IFACE coverage.
+
+        Returns a dict summarizing how many particles mapped to cells, how many fall
+        on boundary packages or inactive cells, and which packages lack an IFACE override.
+        """
+
         self._require_model()
         particle_data = self._read_particle_locations()
         declared_cells = [
@@ -480,6 +555,8 @@ class ParticleTrackingInput:
         }
 
     def collect_inactive_cells(self) -> set[int]:
+        """The set of inactive (idomain==0) cell ids for the model's top layer."""
+
         try:
             inactive = getattr(self.model, "inactive_cells", None)
         except Exception:
@@ -499,11 +576,15 @@ class ParticleTrackingInput:
 
     @classmethod
     def _package_type_name(cls, name: str, package) -> str:
+        """The uppercase three-letter package type (e.g. ``"CHD"``) from a package or its name."""
+
         package_type = getattr(package, "package_type", None) or getattr(package, "_package_type", None) or name
         return str(package_type).upper().split("_")[0]
 
     @classmethod
     def _collect_cells_from_source(cls, source: Any) -> set[int]:
+        """Recursively extract all cell ids from a package data source (arrays, dicts, records)."""
+
         cells: set[int] = set()
         if source is None:
             return cells
@@ -551,6 +632,8 @@ class ParticleTrackingInput:
         return cells
 
     def collect_boundary_cell_sets(self) -> dict[str, set[int]]:
+        """Map each boundary package type to the set of cells it applies to across the model."""
+
         self._require_model()
         boundary_cells: dict[str, set[int]] = {}
         package_dict = getattr(self.model.gwf, "package_dict", {})
@@ -564,6 +647,8 @@ class ParticleTrackingInput:
         return dict(sorted(boundary_cells.items()))
 
     def summarize_endpoint_output(self, endpoint_path: Path | None = None) -> dict[str, int]:
+        """Count particle termination reasons (``PTERM``) in the endpoint output shapefile."""
+
         path = self.output_path / self.output_names["ENDPOINT"] if endpoint_path is None else Path(endpoint_path)
         if not path.exists():
             raise FileNotFoundError(f"Endpoint output not found: {path}")
@@ -575,6 +660,8 @@ class ParticleTrackingInput:
 
     @property
     def output_names(self) -> dict[str, str]:
+        """The MP3DU output filenames (pathline table/shapes, points-in-time, endpoint), prefixed by model name."""
+
         prefix = self.model.name
         return {
             "DBF_TABLE": f"{prefix}_pathline_table.dbf",
@@ -585,6 +672,12 @@ class ParticleTrackingInput:
         }
 
     def validate_inputs(self, *, execute: bool, convert_output: bool):
+        """Validate everything needed to build (and optionally run/convert) an MP3DU run.
+
+        Checks the model, particle source, porosities, and the required executables
+        exist, and eagerly resolves the particle input path + field map.
+        """
+
         self._require_model()
         self._require_particle_source()
         if self.porosities_by_layer is None:
@@ -602,6 +695,8 @@ class ParticleTrackingInput:
         _ = self.particle_field_map
 
     def get_active_iface_overrides(self) -> dict[str, int]:
+        """The IFACE overrides restricted to boundary packages actually present in the model."""
+
         try:
             boundary_packages = set(self.collect_boundary_cell_sets())
         except Exception:
@@ -743,6 +838,8 @@ class ParticleTrackingInput:
         return json_file_path
 
     def create_output_json_file(self) -> Path:
+        """Write the MP3DU output-conversion JSON (which pathline/endpoint files to emit) and return its path."""
+
         output_json = {
             "MP3DU_BIN": f"{self.model.name}_PATHLINE.bin",
             "OUTPUTS": [
@@ -765,6 +862,8 @@ class ParticleTrackingInput:
         return self.create_output_json_file()
 
     def run_output_conversion(self, output_json_path: Path):
+        """Run the ``writep3doutput`` tool to convert the binary pathline output into shapefiles/tables."""
+
         cmd = [self.writep3doutput_path.as_posix(), Path(output_json_path).name, "colorcode"]
         result = subprocess.run(
             cmd,
@@ -783,6 +882,8 @@ class ParticleTrackingInput:
         start_cells: dict[str, Any] | None = None,
         endpoint_summary: dict[str, int] | None = None,
     ) -> Path:
+        """Write the start-cell and endpoint diagnostics to a JSON file and return its path."""
+
         diagnostics = {
             "start_cells": start_cells,
             "endpoint_summary": endpoint_summary,
@@ -933,6 +1034,8 @@ def run_particle_tracking(
 
 
 def __getattr__(name: str):
+    """Redirect legacy PRT helper names to ``mp3du.legacy_prt`` with a deprecation warning."""
+
     if name in _LEGACY_PRT_NAMES:
         warnings.warn(
             "Legacy FloPy/MODFLOW PRT helpers moved to "

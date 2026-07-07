@@ -6,9 +6,13 @@ if TYPE_CHECKING:
 
 
 def create_custom_modelgrid(model: SimulationBase, BaseGridClass):
+    """Build a ``ModelGrid`` subclass of the model's grid adding node<->layer-node-index maps."""
+
     class ModelGrid(model.gwf.modelgrid):
 
         def __init__(self):
+            """Wrap the model's grid, deferring the node<->lni maps until first accessed."""
+
             # super().__init__()  # Initialize with inherited arguments
 
             self._node_to_lni = None

@@ -33,6 +33,8 @@ MINUS = "−"
 
 
 def _is_finite_number(value: Any) -> bool:
+    """Return True if ``value`` coerces to a finite float (not NaN/inf/non-numeric)."""
+
     try:
         return np.isfinite(float(value))
     except (TypeError, ValueError):
@@ -125,6 +127,8 @@ class HoverContext:
 
     @property
     def nlay(self) -> int:
+        """Number of layers implied by the layer fields (or the surfaces), else 0."""
+
         for arrays in self.layer_fields.values():
             return len(arrays)
         if self.botm is not None:
@@ -132,6 +136,8 @@ class HoverContext:
         return 0
 
     def has(self, name: str) -> bool:
+        """True if ``name`` is available as a flat field or a per-layer field."""
+
         return name in self.payload or name in self.layer_fields
 
     def resolve(self, name: str) -> list:
@@ -146,6 +152,8 @@ class HoverContext:
         return ["" for _ in range(self.ncpl)]
 
     def formatted(self, name: str, *, precision: int, unit: str | None = None) -> list[str]:
+        """Per-cell display strings for ``name`` (resolve + :func:`format_number`)."""
+
         return [format_number(v, precision=precision, unit=unit) for v in self.resolve(name)]
 
 
@@ -153,6 +161,8 @@ class HoverBlock:
     """A section of a hover. Subclasses append to an assembler in :meth:`build`."""
 
     def build(self, asm: "_HoverAssembler", ctx: HoverContext, spec: "HoverSpec") -> None:
+        """Append this block's template fragments + customdata columns to ``asm``."""
+
         raise NotImplementedError
 
 
@@ -165,6 +175,8 @@ class Fields(HoverBlock):
     inline: bool = False
 
     def build(self, asm, ctx, spec) -> None:
+        """Emit the present fields as one inline row or a labeled right-aligned grid."""
+
         present = [f for f in self.fields if ctx.has(f)]
         if not present:
             return
@@ -197,6 +209,13 @@ class LayerTable(HoverBlock):
     mark_dry: bool = True
 
     def build(self, asm, ctx, spec) -> None:
+        """Emit the per-layer table (head column, optional bottom column + Top row).
+
+        Builds NBSP-padded columns so numbers right-align, bolds the active layer,
+        and appends a dagger to dry cells when ``mark_dry`` and surfaces are shown.
+        Does nothing if the primary field has no per-layer arrays in ``ctx``.
+        """
+
         primary = self.fields[0]
         arrays = ctx.layer_fields.get(primary)
         if not arrays:
@@ -252,6 +271,8 @@ class LayerTable(HoverBlock):
 
     @staticmethod
     def _mark_dry(formatted: list[str], heads, botm) -> list[str]:
+        """Append a dagger to each formatted head that sits below its cell bottom."""
+
         out = []
         for text, head, bottom in zip(formatted, heads, botm):
             dry = (
@@ -280,12 +301,18 @@ class HoverSpec:
     style: HoverStyle = field(default_factory=HoverStyle)
 
     def unit(self, name: str) -> str | None:
+        """The display unit configured for field ``name`` (or None)."""
+
         return self.units.get(name)
 
     def label(self, name: str) -> str:
+        """The display label for field ``name`` (falls back to the name itself)."""
+
         return self.labels.get(name, name)
 
     def with_style(self, **overrides: Any) -> "HoverSpec":
+        """A copy of this spec with the given :class:`HoverStyle` fields overridden."""
+
         return replace(self, style=replace(self.style, **overrides))
 
     def with_fields(self, *names: str, title: str | None = None) -> "HoverSpec":
@@ -294,6 +321,13 @@ class HoverSpec:
         return replace(self, blocks=self.blocks + (Fields(title=title, fields=tuple(names), inline=True),))
 
     def _effective_blocks(self, ctx: HoverContext) -> list[HoverBlock]:
+        """The blocks to render, prepending an auto layer/surface table when needed.
+
+        When ``layers="all"`` (or surfaces are requested) and the primary field has
+        per-layer data, a :class:`LayerTable` is synthesized ahead of the user's
+        explicit ``blocks``; surface-only requests still get a Top/bottom table.
+        """
+
         blocks: list[HoverBlock] = []
         primary = self.primary
         want_layers = primary in ctx.layer_fields and self.layers in ("active+strip", "all")
@@ -345,6 +379,13 @@ class HoverSpec:
         return asm.finish()
 
     def _render_footer(self, asm: "_HoverAssembler", ctx: HoverContext) -> None:
+        """Append the muted footer line joining the configured period/date/area/model bits.
+
+        Scalar sources (period, step, date, model) render as static text; list
+        sources (area) become per-cell customdata via :meth:`_HoverAssembler.footer_ref`.
+        Emits nothing when none of the footer keys resolve to data.
+        """
+
         pieces: list[str] = []
         deferred_static: list[str] = []
         for key in self.footer:
@@ -372,6 +413,8 @@ class _HoverAssembler:
     """Collects template fragments + customdata columns for one hover."""
 
     def __init__(self, ncpl: int, style: HoverStyle):
+        """Start an empty assembler for a grid of ``ncpl`` cells with ``style``."""
+
         self.ncpl = int(ncpl)
         self.style = style
         self._cols: list[list] = []
@@ -379,10 +422,18 @@ class _HoverAssembler:
         self._footer_pending: list[str] = []
 
     def text(self, fragment: str) -> None:
+        """Append a static (non-per-cell) template fragment; empty fragments are skipped."""
+
         if fragment:
             self._parts.append(fragment)
 
     def _register(self, values: Sequence[Any]) -> str:
+        """Store a per-cell column and return its ``%{customdata[i]}`` placeholder.
+
+        Raises ``ValueError`` if the column length does not match the grid's cell
+        count, since Plotly indexes customdata positionally per point.
+        """
+
         column = [("" if v is None else str(v)) for v in values]
         if len(column) != self.ncpl:
             raise ValueError(
@@ -393,6 +444,13 @@ class _HoverAssembler:
         return "%{customdata[" + str(index) + "]}"
 
     def value(self, values: Sequence[Any], *, wrap: str = "{}", muted: HoverSpec | None = None) -> None:
+        """Append a per-cell value column, optionally wrapped in markup / muted color.
+
+        ``wrap`` is a template whose ``{}`` is replaced by the customdata placeholder
+        (e.g. a bold accent span); ``muted`` additionally wraps it in the spec's
+        muted color.
+        """
+
         ref = self._register(values)
         text = wrap.replace("{}", ref)
         if muted is not None:
@@ -400,16 +458,26 @@ class _HoverAssembler:
         self._parts.append(text)
 
     def inline_field(self, name: str, ctx: HoverContext, spec: HoverSpec) -> str:
+        """Return a ``label value`` fragment for one inline field (no trailing break)."""
+
         label = spec.label(name)
         ref = self._register(ctx.formatted(name, precision=spec.precision, unit=spec.unit(name)))
         return f'<span style="color:{spec.style.muted}">{label}</span>{NBSP}{ref}'
 
     def section_label(self, title: str) -> None:
+        """Append a small, muted, uppercase section heading followed by a line break."""
+
         self._parts.append(
             f'<span style="color:{self.style.muted};font-size:10px">{title.upper()}</span><br>'
         )
 
     def layer_strip(self, primary: str, ctx: HoverContext, spec: HoverSpec) -> None:
+        """Append a one-line ``L2 v · L3 v`` strip of the non-active layers' values.
+
+        Used by the ``layers="active+strip"`` mode to show neighbor layers compactly
+        beneath the active-layer primary value.
+        """
+
         arrays = ctx.layer_fields[primary]
         pieces = []
         for layer in range(len(arrays)):
@@ -424,14 +492,25 @@ class _HoverAssembler:
             self._parts.append(f'<span style="color:{spec.style.muted};font-size:10.5px">{joined}</span><br>')
 
     def footer_ref(self, values: Sequence[Any]) -> str:
+        """Register a per-cell footer column (e.g. cell area) as ``cell <ref> ft²``."""
+
         return "cell " + self._register(values) + " ft²"
 
     def footer_line(self, joined: str) -> None:
+        """Append the assembled footer text as a small muted span (no line break)."""
+
         self._parts.append(
             f'<span style="color:{self.style.muted};font-size:10.5px">{joined}</span>'
         )
 
     def finish(self) -> tuple[list, str, dict]:
+        """Close the template and return ``(customdata, hovertemplate, hoverlabel)``.
+
+        Transposes the registered columns into one customdata row per cell, appends
+        Plotly's ``<extra></extra>`` to suppress the default trace box, and returns
+        the style's hoverlabel mapping.
+        """
+
         template = "".join(self._parts) + "<extra></extra>"
         if self._cols:
             customdata = [list(row) for row in zip(*self._cols)]

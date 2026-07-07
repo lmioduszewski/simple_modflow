@@ -9,6 +9,8 @@ from flopy.mf6 import MFSimulation, ModflowGwf, ModflowGwfdisu
 
 
 def flatten(values):
+    """Flatten one level of nesting: a sequence of sequences into a single list."""
+
     return [item for sublist in values for item in sublist]
 
 
@@ -26,6 +28,8 @@ def rows_truncate_at_first_missing(rec, treat_nan=True):
     names = rec.dtype.names
 
     def is_missing(value):
+        """True if ``value`` is ``None`` (or NaN when ``treat_nan``)."""
+
         return (value is None) or (treat_nan and isinstance(value, float) and np.isnan(value))
 
     out = []

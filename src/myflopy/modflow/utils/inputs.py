@@ -10,19 +10,27 @@ from myflopy.modflow.utils.datatypes.choros import Choro
 
 class Inputs:
     def __init__(self, model: SimulationBase):
+        """Bind the legacy input-explorer namespace to ``model``."""
+
         self.model = model
 
     @property
     def rch(self):
+        """Recharge input helper for the bound model."""
+
         return RchInput(self.model)
 
     @property
     def uzf(self):
+        """UZF input helper for the bound model."""
+
         return UzfInput(self.model)
 
 
 class UzfInput:
     def __init__(self, model: SimulationBase):
+        """Bind the UZF input helper to ``model``."""
+
         self.model = model
 
     def finf(self, per: int | str = 0, multiplier: float = 12 * 30):
@@ -74,6 +82,8 @@ class UzfInput:
         return finf
 
     def plot(self, per: int = 0, multiplier: float = 12 * 30, **kwargs):
+        """Plot the UZF infiltration (``finf``) choropleth for one period."""
+
         finf = self.finf(per, multiplier).finf
         self.model.cor(per=per, custom_zs=finf.to_list(), **kwargs).plot()
 
@@ -83,11 +93,15 @@ class RchInput:
             self,
             model: SimulationBase,
     ):
+        """Bind the RCH input helper to ``model`` (default period 0)."""
+
         self.model = model
         self._df = None
         self.per = 0  # default stress period
 
     def df(self, per: int|str = None):
+        """The RCH stress-period-data table for ``per`` indexed by cell number."""
+
         per = self.per if per is None else per
         df = pd.DataFrame(self.model.gwf.rch.stress_period_data.data[per])
         df['cellid'] = df['cellid'].apply(lambda x: x[1])  # extract cell numbers
@@ -99,6 +113,8 @@ class RchInput:
             per: tuple = None,
             multiplier: float | int = 1
     ):
+        """Plot the recharge choropleth for one period (filling zero-recharge cells)."""
+
         model = self.model
         vor = model.vor
 
@@ -117,12 +133,16 @@ class DrnInput:
             self,
             model: SimulationBase,
     ):
+        """Bind the DRN input helper to ``model``."""
+
         self.model = model
 
     def plot(
             self,
             per: tuple = None,
     ):
+        """Highlight the DRN cells on the grid for one stress period."""
+
         model = self.model
         vor = model.vor
 

@@ -39,6 +39,8 @@ class CellSurfaceOffset:
     minimum: int | float | str | None = None
 
     def __post_init__(self) -> None:
+        """Lowercase and validate ``reference`` (one of model_top/cell_top/cell_bottom)."""
+
         reference = self.reference.lower()
         valid = {"model_top", "cell_top", "cell_bottom"}
         if reference not in valid:
@@ -47,6 +49,8 @@ class CellSurfaceOffset:
 
     @staticmethod
     def _row_or_value(row, value: int | float | str | None) -> float | None:
+        """Resolve a numeric constant or a GeoPackage field name to a float (``None`` -> ``None``)."""
+
         if value is None:
             return None
         if isinstance(value, str):
@@ -121,6 +125,8 @@ class GeoPackageSource:
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Coerce ``path`` and validate the file exists, a grid is present, and ``nper >= 1``."""
+
         self.path = Path(self.path)
         if not self.path.exists():
             raise FileNotFoundError(f"GeoPackage not found: {self.path}")
@@ -149,6 +155,8 @@ class GeoPackageSource:
         return self._gdf
 
     def _active(self, layer: int, cell: int) -> bool:
+        """Whether ``(layer, cell)`` is active in the context's idomain (True if none set)."""
+
         domain = self.context.domain
         if domain is None:
             return True
@@ -162,6 +170,8 @@ class GeoPackageSource:
         return bool(values[layer, cell])
 
     def _layer(self, row) -> int:
+        """The zero-based grid layer for a feature (from ``layer_field`` minus ``layer_base``)."""
+
         if self.layer_field is None:
             return 0
         layer = int(row[self.layer_field]) - self.layer_base
@@ -170,6 +180,8 @@ class GeoPackageSource:
         return layer
 
     def _periods(self, row) -> range | tuple[int]:
+        """The stress periods a feature applies to: all periods, or its single ``period_field``."""
+
         if self.period_field is None:
             return range(self.nper)
         period = int(row[self.period_field]) - self.period_base
@@ -178,6 +190,8 @@ class GeoPackageSource:
         return (period,)
 
     def _cells(self, geometry, *, layer: int, edges_only: bool = False) -> list[int]:
+        """The active grid cells a feature's ``geometry`` intersects (optionally edge cells only)."""
+
         cells = self.grid.gdf_vorPolys.index[
             self.grid.gdf_vorPolys.intersects(geometry)
         ].tolist()
@@ -187,6 +201,8 @@ class GeoPackageSource:
         return [int(cell) for cell in cells if self._active(layer, int(cell))]
 
     def _surfaces(self):
+        """The surface source for :class:`CellSurfaceOffset`: the context's, else the grid's top/botm."""
+
         surfaces = self.context.surfaces
         if surfaces is None:
             surfaces = getattr(self.grid, "gdf_topbtm", None)
@@ -198,6 +214,8 @@ class GeoPackageSource:
 
     @staticmethod
     def _cell_sequence(value: Any, cell: int) -> float:
+        """One cell's value from a scalar (broadcast) or a per-cell array."""
+
         array = np.asarray(value, dtype=float)
         if array.ndim == 0:
             return float(array)
@@ -241,6 +259,8 @@ class GeoPackageSource:
         )
 
     def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int):
+        """Resolve one value spec for a cell: surface offset, numeric constant, or (per-period) field."""
+
         if isinstance(value, CellSurfaceOffset):
             return value.resolve(self, row, layer=layer, cell=cell)
         if isinstance(value, (int, float)):
@@ -253,6 +273,13 @@ class GeoPackageSource:
         edges_only: bool = False,
         boundnames: bool = False,
     ) -> dict[int, list[list[Any]]]:
+        """Build MF6 stress-period data by mapping every feature to its cells and value fields.
+
+        Validates the required columns exist, then for each feature emits one
+        ``[(layer, cell), *values(, boundname)]`` record per applicable period and
+        intersected cell, keyed by stress period.
+        """
+
         required = {
             field_name
             for field in fields

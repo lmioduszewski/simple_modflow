@@ -294,15 +294,23 @@ class _GroupSpatialView(SpatialView):
     """
 
     def _spatial_models(self):
+        """The group's member model names -- the model axis for faceting."""
+
         return list(self.group.models)
 
     def _spatial_reference_model(self):
+        """The reference model whose grid/layers frame the panels."""
+
         return self.group.models[self.group.reference]
 
     def _spatial_default_facet(self):
+        """Group mosaics default to one panel per model."""
+
         return "model"
 
     def _spatial_periods(self):
+        """Stress periods present in the data (``[0]`` when there is no period axis)."""
+
         frame = self.get()
         columns = getattr(frame, "columns", [])
         if "per" in columns and not frame.empty:
@@ -330,6 +338,8 @@ class GroupHeads(_GroupSpatialView):
     """
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the group heads accessor to its :class:`ModelGroup`."""
+
         self.group = group
 
     # -- unified grammar hooks ----------------------------------------------
@@ -340,20 +350,30 @@ class GroupHeads(_GroupSpatialView):
         return target.hds.map(per=int(per), layer=int(layer), **kwargs)
 
     def _spatial_periods(self) -> list[int]:
+        """Stress periods present in the reference model's saved heads."""
+
         reference = self.group.models[self.group.reference]
         return sorted({int(key[1]) for key in reference.kstpkper})
 
     def _spatial_value_label(self) -> str:
+        """The mapped quantity's label -- head."""
+
         return "head"
 
     def _series_table(self) -> pd.DataFrame:
+        """The period-end head table backing ``plot()`` (one head per model/per/layer/cell)."""
+
         # one head per (model, per, layer, cell): reduce to period-end saves
         return _reduce_to_period_end(self.get())
 
     def _series_value_column(self, frame) -> str:
+        """The column ``plot()`` draws -- head elevation (``elev``)."""
+
         return "elev"
 
     def _series_default_agg(self) -> str:
+        """Collapse cells within a plotted line by mean (averaging heads)."""
+
         return "mean"
 
     def _sections(
@@ -541,6 +561,8 @@ class GroupBudget:
     """Budget accessor for :class:`ModelGroup`."""
 
     def __init__(self, group: "ModelGroup", package: str | None = None):
+        """Bind the group budget accessor, optionally pinned to one ``package``."""
+
         self.group = group
         self.package = None if package is None else str(package).lower()
 
@@ -645,6 +667,8 @@ class GroupPackageInputField(_GroupSpatialView):
     """
 
     def __init__(self, parent: "GroupPackageInputs", field_name: str):
+        """Pin a grouped package-inputs accessor to one field for the unified grammar."""
+
         self._parent = parent
         self.group = parent.group
         self.package_name = parent.package_name
@@ -667,13 +691,19 @@ class GroupPackageInputField(_GroupSpatialView):
         return self._parent.summary(**kwargs)
 
     def _spatial_map(self, **kwargs):
+        """Draw one model's map for this pinned field (delegates to the parent accessor)."""
+
         kwargs.setdefault("value_column", self.field_name)
         return self._parent._spatial_map(**kwargs)
 
     def _spatial_value_label(self) -> str:
+        """The mapped quantity's label -- this pinned field name."""
+
         return self.field_name
 
     def _series_value_column(self, frame) -> str:
+        """The column ``plot()`` draws -- this pinned field name."""
+
         return self.field_name
 
 
@@ -687,13 +717,19 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
     """
 
     def __init__(self, group: "ModelGroup", package_name: str):
+        """Bind a grouped BC-package inputs accessor to ``group`` for one package."""
+
         self.group = group
         self.package_name = str(package_name).lower()
 
     def _field_names(self) -> list[str]:
+        """The registry-declared input field names for this package."""
+
         return get_package_input_field_names(self.package_name)
 
     def _field_node(self, name: str) -> GroupPackageInputField:
+        """Return this accessor pinned to field ``name``."""
+
         return GroupPackageInputField(self, name)
 
     def get(
@@ -944,6 +980,8 @@ class GroupCellPackageResults(_GroupSpatialView):
     """
 
     def __init__(self, group: "ModelGroup", package_name: str, *, budget_text: str, value_name: str):
+        """Bind a grouped cell-budget result accessor: one ``budget_text`` term + value column."""
+
         self.group = group
         self.package_name = str(package_name).lower()
         self.budget_text = str(budget_text)
@@ -1146,6 +1184,8 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
     """Grouped SFR exchange accessor with reach-length-normalized maps."""
 
     def __init__(self, group: "ModelGroup", *, budget_text: str = "SFR", value_name: str = "q"):
+        """Bind a grouped SFR exchange accessor (defaults to the ``SFR`` term's ``q``)."""
+
         super().__init__(group, "sfr", budget_text=budget_text, value_name=value_name)
 
     def get(
@@ -1293,6 +1333,8 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         data = self.get(per=per, layer=layer)
 
         def _normalized_by_cell(frame: pd.DataFrame, current_model_name: str) -> pd.DataFrame:
+            """Per-cell exchange per unit reach length (``sum(q)/sum(rlen)``) for one model."""
+
             selected = frame[frame["model"] == current_model_name].copy()
             if selected.empty:
                 return pd.DataFrame(columns=["cell", "q_per_length"])
@@ -1361,6 +1403,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
 
     def __init__(self, group: "ModelGroup", *, budget_text: str = "GWF", value_name: str = "q"):
+        """Bind a grouped LAK exchange accessor (defaults to the ``GWF`` term's ``q``)."""
+
         super().__init__(group, "lak", budget_text=budget_text, value_name=value_name)
 
     def get(
@@ -1509,6 +1553,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         data = self.get(per=per, layer=layer, connection_type=connection_type)
 
         def _normalized_by_cell(frame: pd.DataFrame, current_model_name: str) -> pd.DataFrame:
+            """Per-cell exchange per unit connection area (``sum(q)/sum(flow_area)``) for one model."""
+
             selected = frame[frame["model"] == current_model_name].copy()
             if selected.empty:
                 return pd.DataFrame(columns=["cell", "q_per_area"])
@@ -1578,6 +1624,8 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
     """Grouped accessor for one UZF perioddata field such as ``finf``."""
 
     def __init__(self, group: "ModelGroup", field_name: str):
+        """Bind a grouped UZF perioddata-field accessor to ``group`` for one field."""
+
         self.group = group
         self.field_name = str(field_name)
 
@@ -1756,6 +1804,8 @@ class GroupUzfInputs:
     """Namespace for grouped UZF input fields."""
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped UZF inputs namespace to ``group``."""
+
         self.group = group
 
     def _field(self, field_name: str) -> GroupUzfFieldAccessor:
@@ -1818,6 +1868,8 @@ class GroupLakOutputs:
     """Lake-output accessor for :class:`ModelGroup`."""
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped lake-output accessor to ``group``."""
+
         self.group = group
 
     def stage(self) -> pd.DataFrame:
@@ -1850,9 +1902,13 @@ class GroupLakStageResults(_GroupSpatialView):
     """
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped lake stage-results accessor to ``group``."""
+
         self.group = group
 
     def _spatial_value_label(self) -> str:
+        """The mapped quantity's label -- lake stage."""
+
         return "stage"
 
     def _spatial_map(self, *, per: int = 0, layer: int = 0, model=None, **kwargs):
@@ -1934,9 +1990,13 @@ class GroupSfrStageResults(_GroupSpatialView):
     """
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped SFR reach stage-results accessor to ``group``."""
+
         self.group = group
 
     def _spatial_value_label(self) -> str:
+        """The mapped quantity's label -- reach stage."""
+
         return "stage"
 
     def _spatial_map(self, *, per: int = 0, layer: int = 0, model=None, **kwargs):
@@ -2014,6 +2074,8 @@ class GroupLakConnections:
     """Grouped accessor for lake-connection geometry."""
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped lake-connection-geometry accessor to ``group``."""
+
         self.group = group
 
     def get(
@@ -2097,6 +2159,8 @@ class GroupOutputs:
     """Namespace for grouped package-specific output accessors."""
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped package-output namespace to ``group``."""
+
         self.group = group
 
     @property
@@ -2110,6 +2174,8 @@ class GroupPackageAccessor:
     """Namespace for one grouped package's preferred exploration helpers."""
 
     def __init__(self, accessor):
+        """Wrap a grouped inputs ``accessor`` and expose ``.inputs`` / ``.results``."""
+
         self.inputs = accessor
 
     @property
@@ -2134,6 +2200,8 @@ class GroupResultsOnlyPackageAccessor(Generic[TResultsNamespace]):
     """Namespace for grouped packages that currently expose results only."""
 
     def __init__(self, results_namespace: TResultsNamespace):
+        """Wrap a grouped results namespace for a package exposing results only."""
+
         self._results_namespace = results_namespace
 
     @property
@@ -2147,6 +2215,8 @@ class GroupUzfPackageAccessor:
     """Namespace for grouped UZF exploration helpers."""
 
     def __init__(self, accessor: GroupUzfInputs):
+        """Wrap a grouped UZF inputs ``accessor`` and expose ``.inputs`` / ``.results``."""
+
         self.inputs = accessor
 
     @property
@@ -2173,9 +2243,13 @@ class GroupUzfResultsNamespace(FieldMappable):
     _default_field = "gwrch"
 
     def _field_names(self):
+        """The mappable grouped UZF result fields: ``gwrch`` and ``sat``."""
+
         return ["gwrch", "sat"]
 
     def __init__(self, gwrch_accessor: GroupCellPackageResults, sat_accessor: GroupCellPackageResults | None = None):
+        """Bind the grouped UZF results namespace; ``sat`` is built lazily if not given."""
+
         self._gwrch = gwrch_accessor
         self._sat = sat_accessor
 
@@ -2211,9 +2285,13 @@ class GroupCellPackageResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """The single mappable grouped result field: exchange ``q``."""
+
         return ["q"]
 
     def __init__(self, result_accessor: GroupCellPackageResults):
+        """Wrap a grouped cell-budget result accessor as a ``field=``-aware namespace."""
+
         self._result_accessor = result_accessor
 
     @property
@@ -2227,6 +2305,8 @@ class GroupSfrResultsNamespace(GroupCellPackageResultsNamespace):
     """Namespace for grouped SFR result accessors."""
 
     def _field_names(self):
+        """The mappable grouped SFR result fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     @property
@@ -2246,6 +2326,8 @@ class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):
     """Namespace for grouped LAK result accessors."""
 
     def _field_names(self):
+        """The mappable grouped LAK result fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     @property
@@ -2265,6 +2347,8 @@ class GroupLakPackageAccessor:
     """Namespace for grouped LAK geometry and result helpers."""
 
     def __init__(self, group: "ModelGroup", results_namespace: GroupLakResultsNamespace):
+        """Bind the grouped LAK package accessor (connections + results) to ``group``."""
+
         self.group = group
         self._results_namespace = results_namespace
 
@@ -2285,6 +2369,8 @@ class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
     """Grouped combined SFR/LAK exchange accessor (unified map/mosaic/animate)."""
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped combined surface-water exchange accessor to ``group``."""
+
         self.group = group
 
     def get(
@@ -2374,9 +2460,13 @@ class GroupSurfaceWaterResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """The single mappable grouped combined-exchange field: ``q``."""
+
         return ["q"]
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the grouped combined surface-water results namespace to ``group``."""
+
         self.group = group
 
     @property
@@ -2394,6 +2484,8 @@ class GroupPackages:
     """
 
     def __init__(self, group: "ModelGroup"):
+        """Bind the preferred grouped ``packages`` namespace to ``group``."""
+
         self.group = group
 
     @property
@@ -2501,6 +2593,13 @@ class ModelGroup:
         verbosity_level: int = 0,
         shared_grid: bool = False,
     ):
+        """Load ``models`` into the group, pick the reference, and wire the accessors.
+
+        Coerces the ``models`` mapping/sequence to loaded models, validates the
+        chosen ``reference``, optionally reconciles a shared grid, and constructs
+        the heads/outputs/package accessors. See the class docstring for parameters.
+        """
+
         self.models = _coerce_models(models, crs=crs, verbosity_level=verbosity_level)
         if not self.models:
             raise ValueError("ModelGroup requires at least one model.")
@@ -2614,6 +2713,17 @@ class ModelGroup:
         Reference-star: every other model is compared against the group's
         reference. See :class:`~myflopy.project.model_diff.ModelDiff` for the
         structural + value difference tiers, ``summary()``, and ``report()``.
+
+        Returns
+        -------
+        ModelDiff
+            The single ``diff`` verb over this group.
+
+        Examples
+        --------
+        >>> group = mf.ModelGroup({"base": run_a, "variant": run_b}, reference="base")
+        >>> group.diff().report()                       # Markdown setup diff
+        >>> group.diff().hds.map("variant", per=8)       # Δhead map vs reference
         """
 
         from myflopy.project.model_diff import ModelDiff

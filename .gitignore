@@ -112,3 +112,7 @@ examples/mf6/variant_workflow/runs/
 examples/mf6/notebooks/artifacts/
 examples/mf6/notebooks/*.html
 layer_vtk_3d_all.html
+
+# Scratch docs
+scripts/consol.py
+scripts/scratch.ipynb

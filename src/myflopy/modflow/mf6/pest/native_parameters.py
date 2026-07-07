@@ -170,6 +170,8 @@ class NativeParameterSpec:
     resolved_files: list[str] = field(default_factory=list)
 
     def __post_init__(self):
+        """Resolve the target recipe and fill defaults for style, additive, and name."""
+
         self.recipe = resolve_target(self.target)
         if self.style is None:
             self.style = self.recipe.default_style

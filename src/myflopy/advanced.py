@@ -43,6 +43,8 @@ def _build_named(constructor, model, **options):
 
 
 def _factory(constructor):
+    """A picklable builder that constructs ``constructor``'s package (for use in a ``PackageSpec``)."""
+
     # functools.partial over a module-level function (not a lambda) so the
     # resulting PackageSpec can be pickled and reused across variants/sessions.
     return functools.partial(_build_named, constructor)

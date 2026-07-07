@@ -314,11 +314,15 @@ class Surface:
         return Surface.isopach(self)
 
     def __sub__(self, distance) -> Surface:
+        """``surface - distance``: a new surface shifted down by a constant elevation."""
+
         if not isinstance(distance, (int, float, np.integer, np.floating)):
             return NotImplemented
         return Surface.shift(self, -float(distance))
 
     def __add__(self, distance) -> Surface:
+        """``surface + distance``: a new surface shifted up by a constant elevation."""
+
         if not isinstance(distance, (int, float, np.integer, np.floating)):
             return NotImplemented
         return Surface.shift(self, float(distance))
@@ -343,6 +347,8 @@ class Surface:
         from myflopy.modflow.utils.derived_raster import DerivedRaster
 
         def produce() -> None:
+            """Regenerate the derived raster by interpolating this surface's contours."""
+
             from myflopy.modflow.utils.contour_interp import (
                 interpolate_contours_to_raster,
             )
@@ -406,6 +412,8 @@ class Surface:
         """
 
         def _op(operand):
+            """Sample one operand surface on ``vor`` as a float array (same args as the parent)."""
+
             return np.asarray(
                 operand.values(vor, previous, method=method, refresh=refresh),
                 dtype=float,
@@ -495,6 +503,12 @@ class LayerSurfaces:
     """
 
     def __init__(self, surfaces: Sequence[Surface], labels: Sequence | None = None):
+        """Wrap an ordered surface stack (top first) with matching column ``labels``.
+
+        ``labels`` default to integer positions; their count must match
+        ``surfaces``.
+        """
+
         self.surfaces = list(surfaces)
         self.labels = (
             list(labels) if labels is not None else list(range(len(self.surfaces)))

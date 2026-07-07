@@ -162,7 +162,8 @@ class Contours:
         self,
         path: Path
         ):
-        
+        """Wrap a contour vector file at ``path`` (its stem becomes ``shp_name``)."""
+
         self.shp_name = path.name[:-4]
         self.path = path #path to contour shapefile
         

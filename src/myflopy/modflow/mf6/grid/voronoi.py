@@ -782,6 +782,8 @@ class VoronoiGridPlus(VoronoiGrid):
         face_dim = grid.face_dimension
 
         def _face_dataarray(values, varname):
+            """Wrap a per-cell (face) array as an xugrid ``DataArray`` (validating its length)."""
+
             array = np.asarray(values, dtype=float)
             if array.ndim == 1:
                 if array.shape[0] != ncpl:

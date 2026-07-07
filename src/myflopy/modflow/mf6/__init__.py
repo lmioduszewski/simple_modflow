@@ -203,6 +203,8 @@ __all__ = sorted([*_SUBMODULES.keys(), *_EXPORTS.keys()])
 
 
 def __getattr__(name: str):
+    """Lazily import a submodule or public export on first attribute access."""
+
     if name in _SUBMODULES:
         return import_module(_SUBMODULES[name])
 
@@ -215,4 +217,6 @@ def __getattr__(name: str):
 
 
 def __dir__():
+    """Advertise the lazily-exported names for tab-completion."""
+
     return sorted(list(globals().keys()) + __all__)

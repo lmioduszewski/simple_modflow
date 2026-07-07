@@ -1172,6 +1172,8 @@ class LakeStageTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
 
     def __post_init__(self):
+        """Normalize the ``name -> lake`` locations and observed values into internal tables."""
+
         normalized: dict[str, int] = {}
         source = self.locations if self.locations is not None else {}
         if isinstance(source, pd.Series):
@@ -1293,6 +1295,8 @@ class LakeStageTargets:
         )
 
     def _obs_column_map(self) -> dict[str, str]:
+        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+
         return {
             str(name): _observation_label(name)
             for name in self._series.keys()
@@ -1447,6 +1451,8 @@ class SfrStageTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
 
     def __post_init__(self):
+        """Normalize the ``name -> reach`` locations and observed values into internal tables."""
+
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
         self._values = _normalize_named_series_values(
             self.values,
@@ -1461,15 +1467,21 @@ class SfrStageTargets:
             self._values["name"] = str(self._locations["name"].iloc[0])
 
     def get(self) -> pd.DataFrame:
+        """Return the named reach definitions, or the observed values merged with them."""
+
         definitions = self._locations.copy()
         if self._values.empty:
             return definitions
         return _copy_frame(self._values.merge(definitions, on="name", how="left"))
 
     def to_long(self) -> pd.DataFrame:
+        """Return the long-format SFR-stage target table."""
+
         return self.get()
 
     def to_wide(self) -> pd.DataFrame:
+        """Return the target table in wide format with one column per reach series."""
+
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
         frame = self.get().pivot_table(index="time", columns="name", values="stage_target", aggfunc="first").reset_index()
@@ -1477,15 +1489,21 @@ class SfrStageTargets:
         return frame
 
     def summary(self) -> pd.DataFrame:
+        """Return a compact summary (reach count, row count) of the target set."""
+
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
     def _obs_column_map(self) -> dict[str, str]:
+        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+
         return {
             str(name): _observation_label(name)
             for name in self._locations["name"].astype(str).tolist()
         }
 
     def simulated_series(self, model) -> pd.DataFrame:
+        """Return one wide simulated-stage table indexed by stress period."""
+
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
             return observed
@@ -1499,6 +1517,8 @@ class SfrStageTargets:
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
+        """Compare target reach stages against simulated SFR stages (with residuals)."""
+
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
@@ -1520,10 +1540,14 @@ class SfrStageTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
+        """Return a compact residual table (target/sim/residual) for SFR-stage targets."""
+
         frame = self.compare(model)
         return frame.loc[:, ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
 
     def stats(self, model) -> pd.DataFrame:
+        """Return aggregate residual statistics for the SFR-stage target set."""
+
         return _default_compare_stats(self.compare(model))
 
     def to_flopy_obs(
@@ -1532,6 +1556,8 @@ class SfrStageTargets:
         csv_name: str = "sfr_stage_targets.csv",
         kind: str = "STAGE",
     ) -> dict[str, list[tuple[str, str, int]]]:
+        """Return a FloPy ``continuous`` dict for MF6 SFR-stage observations (one-based reaches)."""
+
         records = [
             (_observation_label(name), str(kind).upper(), int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
@@ -1548,6 +1574,8 @@ class SfrStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
+        """Attach an MF6 utility observation package to SFR for these stage targets."""
+
         import flopy
 
         owner = model.gwf.sfr if package is None else package
@@ -1602,6 +1630,8 @@ class SfrFlowTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
 
     def __post_init__(self):
+        """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
+
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
         self._values = _normalize_named_series_values(
             self.values,
@@ -1616,15 +1646,21 @@ class SfrFlowTargets:
             self._values["name"] = str(self._locations["name"].iloc[0])
 
     def get(self) -> pd.DataFrame:
+        """Return the named reach definitions, or the observed flows merged with them."""
+
         definitions = self._locations.copy()
         if self._values.empty:
             return definitions
         return _copy_frame(self._values.merge(definitions, on="name", how="left"))
 
     def to_long(self) -> pd.DataFrame:
+        """Return the long-format SFR-flow target table."""
+
         return self.get()
 
     def to_wide(self) -> pd.DataFrame:
+        """Return the target table in wide format with one column per reach series."""
+
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
         frame = self.get().pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
@@ -1632,15 +1668,25 @@ class SfrFlowTargets:
         return frame
 
     def summary(self) -> pd.DataFrame:
+        """Return a compact summary (reach count, row count) of the target set."""
+
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
     def _obs_column_map(self) -> dict[str, str]:
+        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+
         return {
             str(name): _observation_label(name)
             for name in self._locations["name"].astype(str).tolist()
         }
 
     def _package_flow_table(self, model) -> pd.DataFrame:
+        """Build a per-period, per-reach simulated-flow table from the SFR budget output.
+
+        Prefers the FLOW-JA-FACE through-flow (outbound rows, plus TO-MVR), falling
+        back to the ``sfr.results.q`` cell budget; returns ``per``/``reach``/``sim_flow``.
+        """
+
         if not hasattr(model, "outputs"):
             try:
                 flow = model.packages.sfr.results.q.get().copy()
@@ -1702,6 +1748,8 @@ class SfrFlowTargets:
         return grouped
 
     def simulated_series(self, model) -> pd.DataFrame:
+        """Return one wide simulated-flow table indexed by stress period."""
+
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
             return observed
@@ -1716,6 +1764,8 @@ class SfrFlowTargets:
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
+        """Compare target reach flows against simulated SFR flows (with residuals)."""
+
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
@@ -1737,10 +1787,14 @@ class SfrFlowTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
+        """Return a compact residual table (target/sim/residual) for SFR-flow targets."""
+
         frame = self.compare(model)
         return frame.loc[:, ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]]
 
     def stats(self, model) -> pd.DataFrame:
+        """Return aggregate residual statistics for the SFR-flow target set."""
+
         return _default_compare_stats(self.compare(model))
 
     def to_flopy_obs(
@@ -1749,6 +1803,8 @@ class SfrFlowTargets:
         csv_name: str = "sfr_flow_targets.csv",
         kind: str = "DOWNSTREAM-FLOW",
     ) -> dict[str, list[tuple[str, str, int]]]:
+        """Return a FloPy ``continuous`` dict for MF6 SFR-flow observations (one-based reaches)."""
+
         records = [
             (_observation_label(name), str(kind).upper(), int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
@@ -1765,6 +1821,8 @@ class SfrFlowTargets:
         kind: str = "DOWNSTREAM-FLOW",
         package=None,
     ):
+        """Attach an MF6 utility observation package to SFR for these flow targets."""
+
         import flopy
 
         owner = model.gwf.sfr if package is None else package
@@ -1826,6 +1884,8 @@ def _normalize_drn_zone_locations(
         frame["layer"] = 0
     if "cells" in frame.columns:
         def _coerce_cells(values):
+            """Coerce one zone's cell spec (CSV string / sequence / scalar / NaN) to a list of ints."""
+
             if isinstance(values, str):
                 return [int(value) for value in values.split(",") if str(value).strip() != ""]
             if isinstance(values, (list, tuple, np.ndarray, pd.Series)):
@@ -1908,6 +1968,8 @@ class DrnFlowTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
 
     def __post_init__(self):
+        """Normalize the zone definitions and observed discharge into internal tables."""
+
         self._locations = _normalize_drn_zone_locations(
             self.locations,
             name_column=self.name_column,
@@ -1928,12 +1990,18 @@ class DrnFlowTargets:
 
     @property
     def locations_gdf(self):
+        """A copy of the normalized zone-definition table (geometry preserved)."""
+
         return self._locations.copy()
 
     def zone_definitions(self, model) -> pd.DataFrame:
+        """Resolve each zone's member cells against ``model`` (intersecting polygons if needed)."""
+
         return _resolve_drn_zone_cells(self._locations, model)
 
     def get(self, model=None) -> pd.DataFrame:
+        """Return the zone definitions (cells resolved when ``model`` is given), merged with values."""
+
         definitions = self._locations.copy()
         if model is not None:
             definitions = self.zone_definitions(model)
@@ -1942,9 +2010,13 @@ class DrnFlowTargets:
         return _copy_frame(self._values.merge(definitions.drop(columns="geometry", errors="ignore"), on="name", how="left"))
 
     def to_long(self, model=None) -> pd.DataFrame:
+        """Return the long-format DRN-flow target table."""
+
         return self.get(model=model)
 
     def to_wide(self) -> pd.DataFrame:
+        """Return the observed discharge in wide format with one column per zone."""
+
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].astype(str).tolist()])
         frame = self._values.pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
@@ -1952,12 +2024,16 @@ class DrnFlowTargets:
         return frame
 
     def summary(self, model=None) -> pd.DataFrame:
+        """Return a compact summary (zone count, resolved cell count, row count)."""
+
         definitions = self.zone_definitions(model) if model is not None else self._locations.copy()
         zone_count = int(definitions["name"].nunique())
         cell_count = int(sum(len(value) for value in definitions.get("cells", pd.Series(dtype=object))))
         return pd.DataFrame([{"n_zones": zone_count, "n_cells": cell_count, "n_rows": int(len(self._values))}])
 
     def _drn_budget_frame(self, model) -> pd.DataFrame:
+        """The DRN cell-by-cell budget as a tidy per/node/q frame (adds ``per`` if only kstpkper)."""
+
         budget = model.bud("drn").df.reset_index().copy()
         if "per" not in budget.columns:
             if "kstpkper" not in budget.columns:
@@ -1970,6 +2046,8 @@ class DrnFlowTargets:
         return budget
 
     def _obs_column_map(self, model) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+        """Return the resolved zones and, per zone, its per-cell MF6 observation labels."""
+
         zones = self.zone_definitions(model)
         zone_columns: dict[str, list[str]] = {}
         for row in zones.itertuples(index=False):
@@ -1980,6 +2058,8 @@ class DrnFlowTargets:
         return zones, zone_columns
 
     def _simulated_series_from_obs(self, model) -> pd.DataFrame | None:
+        """Sum per-cell observation-CSV outputs into one wide series per zone, or ``None`` if absent."""
+
         zones, zone_columns = self._obs_column_map(model)
         expected = {
             f"{zone_name}__{index}": column
@@ -2007,6 +2087,8 @@ class DrnFlowTargets:
         return result
 
     def _compare_from_obs(self, model) -> pd.DataFrame | None:
+        """Build the target-vs-simulated compare table from observation output, or ``None``."""
+
         wide = self._simulated_series_from_obs(model)
         if wide is None:
             return None
@@ -2028,6 +2110,8 @@ class DrnFlowTargets:
         return _copy_frame(compare)
 
     def simulated_series(self, model) -> pd.DataFrame:
+        """Return one wide simulated-discharge table per zone, summed over each zone's DRN cells."""
+
         observed = self._simulated_series_from_obs(model)
         if observed is not None:
             return observed
@@ -2051,6 +2135,8 @@ class DrnFlowTargets:
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
+        """Compare observed discharge against simulated per-zone DRN flow (with residuals)."""
+
         observed = self._compare_from_obs(model)
         if observed is not None:
             return observed
@@ -2084,6 +2170,8 @@ class DrnFlowTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
+        """Return a compact residual table (target/sim/residual, with group/weight) for DRN zones."""
+
         frame = self.compare(model)
         columns = ["name", "group", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual", "weight"]
         if "cells" in frame.columns:
@@ -2091,6 +2179,8 @@ class DrnFlowTargets:
         return frame.loc[:, columns]
 
     def stats(self, model) -> pd.DataFrame:
+        """Return aggregate residual statistics for the DRN-flow target set."""
+
         return _default_compare_stats(self.compare(model))
 
     def to_flopy_obs(
@@ -2100,6 +2190,8 @@ class DrnFlowTargets:
         csv_name: str = "drn_flow_targets.csv",
         kind: str = "DRN",
     ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
+        """Return a FloPy ``continuous`` dict with one MF6 DRN observation per member cell."""
+
         zones = self.zone_definitions(model)
         records: list[tuple[str, str, tuple[int, int]]] = []
         for row in zones.itertuples(index=False):
@@ -2118,6 +2210,8 @@ class DrnFlowTargets:
         kind: str = "DRN",
         package=None,
     ):
+        """Attach an MF6 utility observation package to DRN for these seepage-zone targets."""
+
         import flopy
 
         owner = model.gwf.drn if package is None else package
@@ -2134,38 +2228,60 @@ class BoundHeadTargets:
     """Model-bound head-target helper returned from ``model.targets.heads``."""
 
     def __init__(self, model, targets: HeadTargets):
+        """Bind ``targets`` to ``model`` so its methods default to that model."""
+
         self.model = model
         self.targets = targets
         self._plot = None
 
     def get(self) -> pd.DataFrame:
+        """The target definitions (delegates to the wrapped :class:`HeadTargets`)."""
+
         return self.targets.get()
 
     def to_long(self) -> pd.DataFrame:
+        """The long-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_long()
 
     def to_wide(self) -> pd.DataFrame:
+        """The wide-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_wide()
 
     def summary(self) -> pd.DataFrame:
+        """A compact summary of the target set (delegates to the wrapped targets)."""
+
         return self.targets.summary()
 
     def plot_locations(self, *, ax=None, **kwargs):
+        """Plot the target locations on a map axis (delegates to the wrapped targets)."""
+
         return self.targets.plot_locations(ax=ax, **kwargs)
 
     def match_to_model(self, model=None) -> pd.DataFrame:
+        """Match each target location to its grid cell (defaults to the bound model)."""
+
         return self.targets.match_to_model(self.model if model is None else model)
 
     def simulated_heads(self, model=None) -> pd.DataFrame:
+        """Simulated heads at the target locations (defaults to the bound model)."""
+
         return self.targets.simulated_heads(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
+        """Compare observed vs simulated heads (defaults to the bound model)."""
+
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
+        """The residual table for the head targets (defaults to the bound model)."""
+
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
+        """Aggregate residual statistics (defaults to the bound model)."""
+
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(
@@ -2174,6 +2290,8 @@ class BoundHeadTargets:
         csv_name: str = "head_targets.csv",
         kind: str = "HEAD",
     ):
+        """A FloPy ``continuous`` observation dict for the head targets on the bound model."""
+
         return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)
 
     def attach_flopy_obs(
@@ -2185,6 +2303,8 @@ class BoundHeadTargets:
         kind: str = "HEAD",
         package=None,
     ):
+        """Attach an MF6 head observation package to the bound model."""
+
         return self.targets.attach_flopy_obs(
             self.model,
             pname=pname,
@@ -2195,6 +2315,8 @@ class BoundHeadTargets:
         )
 
     def calibration_plot(self, *, type: str = "calibration"):
+        """A calibration plot for the head targets on the bound model."""
+
         return self.targets.calibration_plot(self.model, type=type)
 
     @property
@@ -2210,14 +2332,20 @@ class BoundHeadTargetPlots:
     """Plotting facade for model-bound head targets."""
 
     def __init__(self, bound_targets: BoundHeadTargets):
+        """Wrap a :class:`BoundHeadTargets` to expose its plotting helpers."""
+
         self.bound_targets = bound_targets
 
     @property
     def model(self):
+        """The model the underlying targets are bound to."""
+
         return self.bound_targets.model
 
     @property
     def targets(self):
+        """The underlying :class:`HeadTargets` being plotted."""
+
         return self.bound_targets.targets
 
     def locations(self, *, ax=None, **kwargs):
@@ -2280,32 +2408,50 @@ class BoundLakeStageTargets:
     """Model-bound lake-stage helper returned from ``model.targets.lake_stage``."""
 
     def __init__(self, model, targets: LakeStageTargets):
+        """Bind ``targets`` to ``model`` so its methods default to that model."""
+
         self.model = model
         self.targets = targets
         self._plot = None
 
     def get(self) -> pd.DataFrame:
+        """The target definitions (delegates to the wrapped targets)."""
+
         return self.targets.get()
 
     def to_long(self) -> pd.DataFrame:
+        """The long-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_long()
 
     def to_wide(self) -> pd.DataFrame:
+        """The wide-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_wide()
 
     def summary(self) -> pd.DataFrame:
+        """A compact summary of the target set (delegates to the wrapped targets)."""
+
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
+        """The wide simulated series (defaults to the bound model)."""
+
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
+        """Compare observed vs simulated values (defaults to the bound model)."""
+
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
+        """The residual table (defaults to the bound model)."""
+
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
+        """Aggregate residual statistics (defaults to the bound model)."""
+
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(
@@ -2314,6 +2460,8 @@ class BoundLakeStageTargets:
         csv_name: str = "lake_stage_targets.csv",
         kind: str = "STAGE",
     ):
+        """A FloPy ``continuous`` observation dict for the lake-stage targets."""
+
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
     def attach_flopy_obs(
@@ -2325,6 +2473,8 @@ class BoundLakeStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
+        """Attach an MF6 lake-stage observation package to the bound model."""
+
         return self.targets.attach_flopy_obs(
             self.model,
             pname=pname,
@@ -2335,10 +2485,14 @@ class BoundLakeStageTargets:
         )
 
     def calibration_plot(self, *, type: str = "calibration"):
+        """A calibration plot for the lake-stage targets on the bound model."""
+
         return self.targets.calibration_plot(self.model, type=type)
 
     @property
     def plot(self):
+        """Plotting helpers (obs-vs-sim, time series) for these lake-stage targets."""
+
         if self._plot is None:
             self._plot = BoundNamedSeriesTargetPlots(
                 self,
@@ -2354,35 +2508,55 @@ class BoundSfrStageTargets:
     """Model-bound SFR stage helper returned from ``model.targets.sfr_stage``."""
 
     def __init__(self, model, targets: SfrStageTargets):
+        """Bind ``targets`` to ``model`` so its methods default to that model."""
+
         self.model = model
         self.targets = targets
         self._plot = None
 
     def get(self) -> pd.DataFrame:
+        """The target definitions (delegates to the wrapped targets)."""
+
         return self.targets.get()
 
     def to_long(self) -> pd.DataFrame:
+        """The long-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_long()
 
     def to_wide(self) -> pd.DataFrame:
+        """The wide-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_wide()
 
     def summary(self) -> pd.DataFrame:
+        """A compact summary of the target set (delegates to the wrapped targets)."""
+
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
+        """The wide simulated series (defaults to the bound model)."""
+
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
+        """Compare observed vs simulated values (defaults to the bound model)."""
+
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
+        """The residual table (defaults to the bound model)."""
+
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
+        """Aggregate residual statistics (defaults to the bound model)."""
+
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "sfr_stage_targets.csv", kind: str = "STAGE"):
+        """A FloPy ``continuous`` observation dict for the SFR-stage targets."""
+
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
     def attach_flopy_obs(
@@ -2394,6 +2568,8 @@ class BoundSfrStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
+        """Attach an MF6 SFR-stage observation package to the bound model."""
+
         return self.targets.attach_flopy_obs(
             self.model,
             pname=pname,
@@ -2405,6 +2581,8 @@ class BoundSfrStageTargets:
 
     @property
     def plot(self):
+        """Plotting helpers (obs-vs-sim, time series) for these SFR-stage targets."""
+
         if self._plot is None:
             self._plot = BoundNamedSeriesTargetPlots(
                 self,
@@ -2420,35 +2598,55 @@ class BoundSfrFlowTargets:
     """Model-bound SFR flow helper returned from ``model.targets.sfr_flow``."""
 
     def __init__(self, model, targets: SfrFlowTargets):
+        """Bind ``targets`` to ``model`` so its methods default to that model."""
+
         self.model = model
         self.targets = targets
         self._plot = None
 
     def get(self) -> pd.DataFrame:
+        """The target definitions (delegates to the wrapped targets)."""
+
         return self.targets.get()
 
     def to_long(self) -> pd.DataFrame:
+        """The long-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_long()
 
     def to_wide(self) -> pd.DataFrame:
+        """The wide-format target table (delegates to the wrapped targets)."""
+
         return self.targets.to_wide()
 
     def summary(self) -> pd.DataFrame:
+        """A compact summary of the target set (delegates to the wrapped targets)."""
+
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
+        """The wide simulated series (defaults to the bound model)."""
+
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
+        """Compare observed vs simulated values (defaults to the bound model)."""
+
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
+        """The residual table (defaults to the bound model)."""
+
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
+        """Aggregate residual statistics (defaults to the bound model)."""
+
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "sfr_flow_targets.csv", kind: str = "DOWNSTREAM-FLOW"):
+        """A FloPy ``continuous`` observation dict for the SFR-flow targets."""
+
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
     def attach_flopy_obs(
@@ -2460,6 +2658,8 @@ class BoundSfrFlowTargets:
         kind: str = "DOWNSTREAM-FLOW",
         package=None,
     ):
+        """Attach an MF6 SFR-flow observation package to the bound model."""
+
         return self.targets.attach_flopy_obs(
             self.model,
             pname=pname,
@@ -2471,6 +2671,8 @@ class BoundSfrFlowTargets:
 
     @property
     def plot(self):
+        """Plotting helpers (obs-vs-sim, time series) for these SFR-flow targets."""
+
         if self._plot is None:
             self._plot = BoundNamedSeriesTargetPlots(
                 self,
@@ -2486,35 +2688,55 @@ class BoundDrnFlowTargets:
     """Model-bound DRN seepage-zone helper returned from ``model.targets.drn_flow``."""
 
     def __init__(self, model, targets: DrnFlowTargets):
+        """Bind ``targets`` to ``model`` so its methods default to that model."""
+
         self.model = model
         self.targets = targets
         self._plot = None
 
     def get(self) -> pd.DataFrame:
+        """The zone definitions with member cells resolved against the bound model."""
+
         return self.targets.get(model=self.model)
 
     def to_long(self) -> pd.DataFrame:
+        """The long-format DRN-flow target table (resolved against the bound model)."""
+
         return self.targets.to_long(model=self.model)
 
     def to_wide(self) -> pd.DataFrame:
+        """The observed discharge in wide format (one column per zone)."""
+
         return self.targets.to_wide()
 
     def summary(self) -> pd.DataFrame:
+        """A compact summary of the seepage-zone target set (resolved against the bound model)."""
+
         return self.targets.summary(model=self.model)
 
     def simulated_series(self, model=None) -> pd.DataFrame:
+        """The wide simulated-discharge series per zone (defaults to the bound model)."""
+
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
+        """Compare observed vs simulated DRN discharge (defaults to the bound model)."""
+
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
+        """The residual table for the seepage-zone targets (defaults to the bound model)."""
+
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
+        """Aggregate residual statistics (defaults to the bound model)."""
+
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "drn_flow_targets.csv", kind: str = "DRN"):
+        """A FloPy ``continuous`` observation dict for the DRN seepage-zone targets."""
+
         return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)
 
     def attach_flopy_obs(
@@ -2526,6 +2748,8 @@ class BoundDrnFlowTargets:
         kind: str = "DRN",
         package=None,
     ):
+        """Attach an MF6 DRN observation package to the bound model for these zones."""
+
         return self.targets.attach_flopy_obs(
             self.model,
             pname=pname,
@@ -2537,6 +2761,8 @@ class BoundDrnFlowTargets:
 
     @property
     def plot(self):
+        """Plotting helpers (obs-vs-sim, time series) for these DRN seepage targets."""
+
         if self._plot is None:
             self._plot = BoundNamedSeriesTargetPlots(
                 self,
@@ -2560,6 +2786,8 @@ class BoundNamedSeriesTargetPlots:
         title: str,
         yaxis_title: str,
     ):
+        """Configure the shared plotting facade with the target/simulated column names and labels."""
+
         self.bound_targets = bound_targets
         self.target_column = target_column
         self.simulated_column = simulated_column
@@ -2567,6 +2795,8 @@ class BoundNamedSeriesTargetPlots:
         self.yaxis_title = yaxis_title
 
     def obs_vs_sim(self, *, baseline=None, backend: str = "plotly"):
+        """Return an observed-vs-simulated cross plot (optionally with a ``baseline`` model)."""
+
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
@@ -2582,6 +2812,8 @@ class BoundNamedSeriesTargetPlots:
         )
 
     def timeseries(self, name: str | None = None, *, baseline=None, backend: str = "plotly"):
+        """Return an observed/simulated time-series plot for one target ``name`` (or all)."""
+
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
@@ -2598,6 +2830,8 @@ class BoundNamedSeriesTargetPlots:
         )
 
     def residuals_by_period(self, *, baseline=None, backend: str = "plotly"):
+        """Return a by-period residual summary plot (optionally with a ``baseline`` model)."""
+
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         current = self.bound_targets.compare()
@@ -2611,10 +2845,14 @@ class TargetRegistry:
     _INTERNAL_NAMES = {"model", "_targets"}
 
     def __init__(self, model):
+        """Create an empty target registry bound to ``model``."""
+
         object.__setattr__(self, "model", model)
         object.__setattr__(self, "_targets", {})
 
     def _bind(self, target):
+        """Wrap a bare target in its model-bound helper (pass through anything unrecognized)."""
+
         if isinstance(target, HeadTargets):
             return BoundHeadTargets(self.model, target)
         if isinstance(target, LakeStageTargets):
@@ -2628,6 +2866,8 @@ class TargetRegistry:
         return target
 
     def _coerce_target(self, value):
+        """Unwrap a bound helper back to its bare target, validating the type (raises otherwise)."""
+
         if isinstance(
             value,
             (
@@ -2647,9 +2887,13 @@ class TargetRegistry:
         )
 
     def keys(self) -> list[str]:
+        """The registered target-set names, sorted."""
+
         return sorted(self._targets)
 
     def summary(self) -> pd.DataFrame:
+        """A ``name``/``type`` table of every registered target set."""
+
         rows = [
             {"name": name, "type": type(target).__name__}
             for name, target in sorted(self._targets.items())
@@ -2657,6 +2901,8 @@ class TargetRegistry:
         return pd.DataFrame(rows)
 
     def _named_target(self, name: str):
+        """The model-bound helper for a registered target ``name`` (raises if absent)."""
+
         if name not in self._targets:
             raise AttributeError(f"{type(self).__name__!r} has no target set {name!r}")
         return self[name]
@@ -2669,6 +2915,8 @@ class TargetRegistry:
 
     @heads.setter
     def heads(self, value: HeadTargets | BoundHeadTargets):
+        """Register ``value`` as the ``heads`` target set."""
+
         self["heads"] = value
 
     @property
@@ -2679,6 +2927,8 @@ class TargetRegistry:
 
     @lake_stage.setter
     def lake_stage(self, value: LakeStageTargets | BoundLakeStageTargets):
+        """Register ``value`` as the ``lake_stage`` target set."""
+
         self["lake_stage"] = value
 
     @property
@@ -2689,6 +2939,8 @@ class TargetRegistry:
 
     @sfr_stage.setter
     def sfr_stage(self, value: SfrStageTargets | BoundSfrStageTargets):
+        """Register ``value`` as the ``sfr_stage`` target set."""
+
         self["sfr_stage"] = value
 
     @property
@@ -2699,6 +2951,8 @@ class TargetRegistry:
 
     @sfr_flow.setter
     def sfr_flow(self, value: SfrFlowTargets | BoundSfrFlowTargets):
+        """Register ``value`` as the ``sfr_flow`` target set."""
+
         self["sfr_flow"] = value
 
     @property
@@ -2709,27 +2963,41 @@ class TargetRegistry:
 
     @drn_flow.setter
     def drn_flow(self, value: DrnFlowTargets | BoundDrnFlowTargets):
+        """Register ``value`` as the ``drn_flow`` target set."""
+
         self["drn_flow"] = value
 
     def __getitem__(self, key: str):
+        """Return the model-bound helper for the registered target ``key``."""
+
         return self._bind(self._targets[key])
 
     def __setitem__(self, key: str, value):
+        """Register ``value`` (coerced to a bare target) under name ``key``."""
+
         self._targets[str(key)] = self._coerce_target(value)
 
     def __contains__(self, key: str) -> bool:
+        """Whether a target set named ``key`` is registered."""
+
         return str(key) in self._targets
 
     def __delitem__(self, key: str):
+        """Remove the registered target set named ``key``."""
+
         del self._targets[str(key)]
 
     def __getattr__(self, name: str):
+        """Resolve ``registry.<name>`` to a registered target's bound helper (else ``AttributeError``)."""
+
         targets = object.__getattribute__(self, "__dict__").get("_targets", {})
         if name in targets:
             return self._bind(targets[name])
         raise AttributeError(f"{type(self).__name__!r} has no target set {name!r}")
 
     def __setattr__(self, name: str, value):
+        """Assigning ``registry.<name> = targets`` registers a target set (internal fields pass through)."""
+
         if name in self._INTERNAL_NAMES:
             object.__setattr__(self, name, value)
             return
@@ -2740,5 +3008,7 @@ class TargetRegistry:
         targets[name] = self._coerce_target(value)
 
     def __dir__(self):
+        """Advertise the registered target-set names for tab-completion."""
+
         targets = object.__getattribute__(self, "__dict__").get("_targets", {})
         return sorted(set(super().__dir__()) | set(targets))

@@ -88,6 +88,8 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
     lon_fraction = max(abs(east - west) * scale / 360.0, 1.0e-12)
 
     def mercator_y(latitude):
+        """Web Mercator vertical fraction (0 at north pole, 1 at south) for a latitude."""
+
         radians = np.radians(latitude)
         return (1.0 - np.log(np.tan(radians) + (1.0 / np.cos(radians))) / np.pi) / 2.0
 
@@ -245,10 +247,19 @@ class Choro:
 
     @property
     def per(self):
+        """The stress period being plotted (``None`` means the ``kstpkper`` given directly)."""
+
         return self._per
 
     @per.setter
     def per(self, per):
+        """Select the ``kstpkper`` for stress period ``per`` per the ``per_timestep`` rule.
+
+        Validates ``per`` against the model's available periods, then picks the
+        saved timestep in that period: ``"last"``/``"first"``, an exact zero-based
+        MODFLOW timestep, or a positional index into that period's saved steps.
+        """
+
         if per is not None:
             matches = [tuple(value) for value in self.model.kstpkper if int(value[1]) == int(per)]
             if not matches:
@@ -278,23 +289,33 @@ class Choro:
 
     @property
     def all_heads(self):
+        """All-layer, all-time head table for the model (loaded and cached on first use)."""
+
         if self._all_heads is None:
             self._all_heads = self.model.hds.all_heads
         return self._all_heads
 
     @property
     def all_ks(self):
+        """Per-layer horizontal K array from the model's NPF package (cached)."""
+
         if self._all_ks is None:
             self._all_ks = self.model.gwf.npf.k.data
         return self._all_ks
 
     def _cell_vector(self, values, label: str):
+        """Coerce ``values`` to a one-per-cell array sized to this grid's ``ncpl``."""
+
         return _as_cell_vector(values, ncpl=self.vor.ncpl, label=label)
 
     def _top_vector(self):
+        """The model-top elevation as a one-value-per-cell array."""
+
         return self._cell_vector(self.model.gwf.modelgrid.top, "model top")
 
     def _bottom_vector(self, layer: int):
+        """The bottom elevation of ``layer`` (zero-based) as a per-cell array."""
+
         return self._cell_vector(self.model.gwf.modelgrid.botm[layer], f"layer {layer + 1} bottom")
 
     def _contour_vector(self):
@@ -360,15 +381,21 @@ class Choro:
         return active.union_all()
 
     def _series_minus_cell_vector(self, series, values, label: str):
+        """``series`` minus a per-cell vector of ``values`` (e.g. head above a datum)."""
+
         vector = self._cell_vector(values, label)
         return pd.Series(pd.to_numeric(series, errors="coerce").to_numpy() - vector, index=series.index)
 
     @property
     def model(self):
+        """The bound MODFLOW simulation (``SimulationBase``), or ``None`` for a grid-only map."""
+
         return self._model
 
     @model.setter
     def model(self, model):
+        """Bind the source simulation (accepts ``None`` for a grid-only map)."""
+
         # assert isinstance(model, SimulationBase), 'model must be an instance of SimulationBase'
         self._model = model
 
@@ -385,19 +412,27 @@ class Choro:
 
     @property
     def vor(self):
+        """The :class:`VoronoiGridPlus` grid whose cells this map draws."""
+
         return self._vor
 
     @vor.setter
     def vor(self, vor):
+        """Bind the Voronoi grid whose polygons define the map's cells."""
+
         # assert isinstance(vor, Vor), 'vor must be an instance of VoronoiGridPlus'
         self._vor = vor
 
     @property
     def kstpkper(self):
+        """The ``(timestep, stress_period)`` currently selected for plotting."""
+
         return self._kstpkper
 
     @kstpkper.setter
     def kstpkper(self, kstpkper):
+        """Set the plotted timestep, asserting the tuple exists in the head file."""
+
         if kstpkper is not None:
             assert isinstance(kstpkper, tuple), 'kstpkper must be an instance of tuple'
             assert kstpkper in self.model.hds.kstpkper, f'kstpkper {kstpkper} invalid, not listed in hds file'
@@ -405,10 +440,19 @@ class Choro:
 
     @property
     def nlay(self):
+        """Number of layers in the bound model's grid."""
+
         return self.model.gwf.modelgrid.nlay
 
     @property
     def hover_dict(self):
+        """The legacy flat ``{label: per-cell list}`` hover payload for this map.
+
+        Adds time-step/period, per-layer heads or Kh, recharge, layer-elevation,
+        mounding, below-ground, and custom-hover entries according to the plot
+        ``type`` and the ``show_*`` / ``hover_*`` flags. Consumed by
+        :func:`_content_aware_hover`; the newer sectioned hover uses ``hover_spec``.
+        """
 
         if self.model is not None:
             if self.kstpkper is not None:
@@ -491,20 +535,28 @@ class Choro:
 
     @property
     def layer(self):
+        """The zero-based layer being plotted (0 == layer 1)."""
+
         return self._layer
 
     @layer.setter
     def layer(self, layer):
+        """Set the plotted layer, asserting it is within the model's layer range."""
+
         assert int(layer) in list(range(self.model.gwf.modelgrid.nlay)), \
             'layer must be an integer, from 0 up to 1 less than the number of model layers'
         self._layer = layer
 
     @property
     def custom_zs(self):
+        """Caller-supplied per-cell color values that override the computed ``zs``, if set."""
+
         return self._custom_zs
 
     @custom_zs.setter
     def custom_zs(self, custom_zs):
+        """Set explicit per-cell color values (a list with one entry per grid cell)."""
+
         if not isinstance(custom_zs, list):
             raise ValueError('custom_zs must be an instance of list')
         assert len(custom_zs) == self.vor.ncpl, 'customs zs must be provided for every cell'
@@ -603,6 +655,13 @@ class Choro:
 
     @colorscale.setter
     def colorscale(self, colorscale):
+        """Set the colorscale: a named Plotly scale (validated) or explicit ``[[pos, color], ...]`` stops.
+
+        Named strings are matched case-insensitively against the supported set and
+        fall back to ``'earth'`` with a warning if unknown. A list/tuple of stops
+        (e.g. the gaining/losing blue-white-red scale) passes straight through to Plotly.
+        """
+
         valid_colorscales = [
             'Blackbody', 'Bluered', 'Blues', 'Cividis', 'Earth', 'Electric',
             'Greens', 'Greys', 'Hot', 'Jet', 'Picnic', 'Portland', 'Rainbow',
@@ -621,10 +680,18 @@ class Choro:
 
     @property
     def locs(self):
+        """The location-marker GeoDataFrame (WGS84) overlaid on the map, or ``None``."""
+
         return self._locs
 
     @locs.setter
     def locs(self, locs):
+        """Set overlay locations from a shapefile/GeoPackage ``Path`` or a GeoDataFrame.
+
+        The features are read (if a path) and reprojected to EPSG:4326; an
+        unreadable or unrecognized value leaves ``locs`` unset with a printed warning.
+        """
+
         if locs is not None:
             if isinstance(locs, Path):
                 try:
@@ -642,6 +709,7 @@ class Choro:
             self._locs = locations
 
     def update_layout(self):
+        """Apply the default map style, center, and (fitted or fixed) zoom to ``self.fig``."""
 
         # Set up default choropleth map styles
         if self.vor:
@@ -805,6 +873,12 @@ class Choro:
         return spec
 
     def get_choropleth(self):
+        """Build and return the ``go.Choroplethmap`` trace for the current selection.
+
+        Uses the sectioned ``hover_spec`` (rendered to customdata + template +
+        hoverlabel) when one resolves, otherwise the legacy content-aware hover, and
+        colors cells by ``zs`` with the configured colorscale and z-range.
+        """
 
         extra = {}
         resolved_spec = self._resolved_hover_spec()
@@ -830,6 +904,12 @@ class Choro:
         return choropleth
 
     def add_locs(self, name_field='ExploName'):
+        """Overlay each location feature as a labeled point/line trace on ``self.fig``.
+
+        ``name_field`` names the attribute column used for the trace label (falling
+        back to the row index); points become markers and polygons become outlines.
+        """
+
         if self.locs is not None:
             for idx, row in self.locs.iterrows():
                 try:
@@ -854,6 +934,8 @@ class Choro:
 
     @property
     def choropleth(self):
+        """The fully assembled figure: cells + contours + location markers + hillshade."""
+
         self.add_choropleth()
         self.add_contours()
         if self.locs is not None:
@@ -866,6 +948,12 @@ class Choro:
             self,
             tif_path: Path = None,
     ):
+        """Render a hillshade GeoTIFF as a PNG image layer beneath the map traces.
+
+        Reuses an already-exported PNG next to the model output when present,
+        otherwise converts ``tif_path`` first.
+        """
+
         hillshade = ChoroplethHillshadeBackground(tif_path, self.model)
         if hillshade.png_path.exists():
             print('hillshade png already exists, using existing file')
@@ -1039,6 +1127,11 @@ class Choro:
         return fig
 
     def dash_selector(self):
+        """Launch an interactive Dash app for box/lasso-selecting cells on the map.
+
+        The selection callback returns the picked cell indices; used to interactively
+        gather a set of cell numbers (runs an external Jupyter-mode server on port 8050).
+        """
 
         self.add_choropleth()
 
@@ -1075,6 +1168,8 @@ class Choro:
             prevent_initial_callbacks=True,
         )
         def on_select(selectedData):
+            """Dash callback: map the box/lasso selection to a list of cell indices."""
+
             if not selectedData:
                 return None, None
             selected_cells = []
@@ -1094,6 +1189,11 @@ class ChoroplethHillshadeBackground:
             model: SimulationBase = None,
             png_path: Path = None,
     ):
+        """Wrap a hillshade GeoTIFF for use as a Plotly map background image.
+
+        ``png_path`` defaults to ``hillshade.png`` in the model's output folder (or
+        the working directory when no ``model`` is given); ``bounds`` are read lazily.
+        """
 
         self.tif_path = tif_path
         self.model = model
@@ -1138,6 +1238,8 @@ class ChoroplethHillshadeBackground:
 
         # Normalize to 0–255 uint8 if needed
         def norm255(a):
+            """Linearly rescale a band to 0-255 ``uint8`` (all-zero if degenerate/NaN)."""
+
             a = a.astype(np.float32)
             amin, amax = np.nanmin(a), np.nanmax(a)
             if not np.isfinite(amin) or not np.isfinite(amax) or amax == amin:

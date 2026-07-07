@@ -664,6 +664,8 @@ def _xy_animation_plotly(frames, *, title, xaxis_title, yaxis_title, markers):
     mode = "lines+markers" if markers else "lines"
 
     def _traces(lines):
+        """Build one ``go.Scatter`` per ``(name, x, y)`` line for a single frame."""
+
         return [
             go.Scatter(x=x_values, y=y_values, mode=mode, name=str(name))
             for name, x_values, y_values in lines
@@ -728,6 +730,8 @@ def _xy_animation_mpl(frames, *, title, xlabel, ylabel, markers):
     fig, axis = mpl_axes(1, 1, figsize=(8.0, 5.0))
 
     def _draw(index):
+        """Redraw the axes for animation frame ``index`` with fixed shared limits."""
+
         axis.clear()
         for name, x_values, y_values in frames[index][1]:
             axis.plot(x_values, y_values, marker=marker, linewidth=1.8, label=str(name))
@@ -787,6 +791,8 @@ class SpatialView:
         return self.model
 
     def _spatial_layers(self) -> list[int]:
+        """Layers to offer for faceting: those present in the data, else every grid layer."""
+
         # Prefer the layers actually present in this field's data (many BC
         # packages live in a single layer); fall back to every grid layer.
         frame = self.get()
@@ -798,6 +804,8 @@ class SpatialView:
         return list(range(int(self._spatial_reference_model().gwf.modelgrid.nlay)))
 
     def _spatial_periods(self) -> list[int]:
+        """Stress periods present in the data (``[0]`` when there is no period axis)."""
+
         frame = self.get()
         columns = getattr(frame, "columns", [])
         if "per" not in columns or frame.empty:
@@ -805,12 +813,18 @@ class SpatialView:
         return sorted({int(value) for value in frame["per"].dropna().tolist()})
 
     def _spatial_models(self) -> list[str] | None:
+        """Model names for the model axis; ``None`` for a single-model surface."""
+
         return None  # single-model surfaces have no model axis
 
     def _spatial_default_facet(self) -> str:
+        """Default mosaic facet: ``"model"`` for a group, else ``"layer"``."""
+
         return "model" if self._spatial_models() else "layer"
 
     def _spatial_value_label(self) -> str:
+        """Human label for the mapped quantity (field/value/package name, else "value")."""
+
         for attribute in ("field_name", "value_name", "package_name"):
             value = getattr(self, attribute, None)
             if value is not None:
@@ -818,6 +832,8 @@ class SpatialView:
         return "value"
 
     def _spatial_is_diff(self) -> bool:
+        """Whether panels show a signed difference (drives diverging, zero-centered scales)."""
+
         return False
 
     # -- series hooks (the plot verb) ---------------------------------------
@@ -855,6 +871,8 @@ class SpatialView:
 
     # -- dimension resolution ---------------------------------------------
     def _resolve_layers(self, layer) -> list[int]:
+        """Normalize the ``layer`` selector to a list: ``None`` -> all present, int -> one, iterable -> many."""
+
         if layer is None:
             return self._spatial_layers()
         if isinstance(layer, (int, np.integer)):
@@ -865,6 +883,8 @@ class SpatialView:
         return resolved
 
     def _single_layer(self, layer) -> int:
+        """Reduce the ``layer`` selector to one layer (0 by default; first of a set)."""
+
         if layer is None:
             return 0
         if isinstance(layer, (int, np.integer)):
@@ -872,6 +892,8 @@ class SpatialView:
         return self._resolve_layers(layer)[0]
 
     def _resolve_periods(self, per) -> list[int]:
+        """Normalize the ``per`` selector to a list: ``None`` -> all present, int -> one, iterable -> many."""
+
         if per is None:
             return self._spatial_periods()
         if isinstance(per, (int, np.integer)):
@@ -882,6 +904,13 @@ class SpatialView:
         return resolved
 
     def _resolve_models(self, model) -> list:
+        """Normalize the ``model`` selector against this surface's model axis.
+
+        Single-model surfaces accept only ``None``/``"*"`` (returning ``[None]``);
+        group surfaces map ``None``/``"*"`` to all models and validate any explicit
+        names against the group.
+        """
+
         models = self._spatial_models()
         if not models:
             if model not in (None, "*"):
@@ -899,6 +928,8 @@ class SpatialView:
 
     @classmethod
     def _normalize_backend(cls, backend: str) -> str:
+        """Canonicalize a backend alias to ``"plotly"`` or ``"mpl"`` (raises if unknown)."""
+
         value = str(backend).lower()
         if value in cls._PLOTLY_BACKENDS:
             return "plotly"
@@ -1313,6 +1344,12 @@ class SpatialView:
         )
 
     def _facet_panels(self, axis, *, per, layer, model, **map_kwargs):
+        """Build ``[(label, Choro), ...]`` mosaic panels faceted by ``"layer"`` or ``"model"``.
+
+        A layer facet fixes the model (reference) and varies the layer; a model
+        facet fixes the layer and varies the model. Both hold ``per`` constant.
+        """
+
         if axis == "layer":
             reference = None if self._spatial_models() is None else self._resolve_models(model)[0]
             return [
@@ -1334,6 +1371,8 @@ class SpatialView:
         raise ValueError(f"by must be 'layer' or 'model', got {axis!r}.")
 
     def _plotly_mosaic(self, panels, *, ncols, title, sync_views=True):
+        """Compose ``Choro`` panels into one synchronized Plotly small-multiples figure."""
+
         # one composer engine: the leaf mosaic is sugar over viz.mosaic
         from myflopy.viz import mosaic as viz_mosaic
 
@@ -1346,6 +1385,12 @@ class SpatialView:
         )
 
     def _mpl_mosaic(self, panels, *, ncols, title):
+        """Render ``Choro`` panels as a matplotlib grid sharing one color scale + colorbar.
+
+        Diff surfaces get a symmetric ``RdBu`` scale centered at zero; other
+        surfaces get a ``viridis`` scale spanning the panels' finite value range.
+        """
+
         from matplotlib import cm
         from matplotlib import colors as mcolors
 
@@ -1395,6 +1440,8 @@ class SpatialView:
         return fig
 
     def _single_period(self, per) -> int:
+        """Reduce the ``per`` selector to one period (0 by default; first of a set)."""
+
         if per is None:
             return 0
         if isinstance(per, (int, np.integer)):
@@ -1402,6 +1449,12 @@ class SpatialView:
         return self._resolve_periods(per)[0]
 
     def _frame_panels(self, axis, *, per, layer, model, **map_kwargs):
+        """Build ``[(label, Choro), ...]`` animation frames over ``"period"`` or ``"model"``.
+
+        A period animation fixes the model and layer and steps through periods; a
+        model animation fixes the period and layer and steps through models.
+        """
+
         base_layer = self._single_layer(layer)
         if axis == "period":
             reference = self._resolve_models(model)[0]
@@ -1568,6 +1621,12 @@ class SpatialView:
         )
 
     def _plotly_animation(self, frames, *, title):
+        """Build a Plotly play/slider map animation over ``[(label, Choro), ...]`` frames.
+
+        All frames share one data-fitted map view so the map does not reset to a
+        world view between frames.
+        """
+
         if not frames:
             raise ValueError("animate requires at least one frame.")
         from myflopy.viz import shared_map_view
@@ -1616,6 +1675,12 @@ class SpatialView:
         return fig
 
     def _mpl_animation(self, frames, *, title):
+        """Build a matplotlib ``FuncAnimation`` over ``[(label, Choro), ...]`` map frames.
+
+        Uses one fixed color scale across all frames (symmetric ``RdBu`` for diff
+        surfaces, ``viridis`` otherwise).
+        """
+
         from matplotlib.animation import FuncAnimation
 
         if not frames:
@@ -1635,6 +1700,8 @@ class SpatialView:
         fig, axis = mpl_axes(1, 1, figsize=(7.0, 6.0))
 
         def _draw(index):
+            """Redraw the map for animation frame ``index`` under the shared color scale."""
+
             axis.clear()
             gdf = choros[index].vor.gdf_vorPolys.copy()
             gdf["_spatial_value"] = arrays[index]
@@ -1699,6 +1766,13 @@ class LeafFieldSugar:
     _FIELD_SUGAR_GUARD = ("package_name", "group", "model", "field_name")
 
     def __getattr__(self, name: str):
+        """Resolve ``node.<field>`` to that field's pinned node (else raise ``AttributeError``).
+
+        Only names that are actual field names (and not private or guarded
+        attributes) are dispatched, so a genuinely missing attribute still errors
+        cleanly instead of recursing.
+        """
+
         if (
             not name.startswith("_")
             and name not in self._FIELD_SUGAR_GUARD
@@ -1710,21 +1784,29 @@ class LeafFieldSugar:
         )
 
     def map(self, *args, field=None, **kwargs):
+        """Map this leaf's default field, or the one named by ``field=``."""
+
         if field is not None:
             return self.field(field).map(*args, **kwargs)
         return super().map(*args, **kwargs)
 
     def plot(self, *args, field=None, **kwargs):
+        """Series-plot this leaf's default field, or the one named by ``field=``."""
+
         if field is not None:
             return self.field(field).plot(*args, **kwargs)
         return super().plot(*args, **kwargs)
 
     def mosaic(self, *args, field=None, **kwargs):
+        """Mosaic this leaf's default field, or the one named by ``field=``."""
+
         if field is not None:
             return self.field(field).mosaic(*args, **kwargs)
         return super().mosaic(*args, **kwargs)
 
     def animate(self, *args, field=None, **kwargs):
+        """Animate this leaf's default field, or the one named by ``field=``."""
+
         if field is not None:
             return self.field(field).animate(*args, **kwargs)
         return super().animate(*args, **kwargs)
@@ -1741,9 +1823,13 @@ class DiffSpatialView(SpatialView):
     """
 
     def _spatial_is_diff(self) -> bool:
+        """Diff nodes always map signed deltas (diverging, zero-centered scale)."""
+
         return True
 
     def _spatial_default_facet(self) -> str:
+        """Diff mosaics default to one panel per compared model."""
+
         return "model"
 
 
@@ -1772,6 +1858,8 @@ class FieldMappable:
         return list(self._field_names())
 
     def _field_accessor(self, field=None):
+        """Return the accessor for ``field`` (or the default field), validating the name."""
+
         name = field if field is not None else self._default_field
         available = self._field_names()
         if available and name not in available:

@@ -44,6 +44,8 @@ def _as_cell_values(values, *, ncpl: int, label: str) -> np.ndarray:
 
 
 def _can_contour(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> bool:
+    """Whether contouring is possible: at least 3 finite points and 2 distinct z values."""
+
     finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
     if int(finite.sum()) < 3:
         return False
@@ -72,6 +74,8 @@ def _resolve_contour_levels(levels: int | float | Sequence[float], values: np.nd
 
 
 def _segments_from_contour_set(contour_set):
+    """Flatten a matplotlib contour set into ``{level, x, y}`` polyline dicts (2+ points each)."""
+
     segments = []
     for level, level_segments in zip(contour_set.levels, contour_set.allsegs, strict=False):
         for segment in level_segments:
@@ -88,6 +92,8 @@ def _segments_from_contour_set(contour_set):
 
 
 def _iter_lines(geometry):
+    """Yield each ``LineString`` in a line/multiline/collection geometry (skipping empties)."""
+
     if geometry is None or geometry.is_empty:
         return
     if isinstance(geometry, LineString):
@@ -99,6 +105,8 @@ def _iter_lines(geometry):
 
 
 def _clip_contour_segments(segments, clip_geometry):
+    """Clip each contour polyline to ``clip_geometry``, dropping degenerate pieces (no-op if ``None``)."""
+
     if clip_geometry is None:
         return segments
     clipped = []
@@ -141,6 +149,8 @@ def _linear_contour_segments(
     *,
     levels: np.ndarray,
 ):
+    """Contour segments via linear triangulation of the scattered ``(x, y, z)`` points."""
+
     fig = Figure()
     ax = fig.subplots()
     triangulation = mtri.Triangulation(x, y)
@@ -156,6 +166,8 @@ def _cubic_contour_segments(
     levels: np.ndarray,
     resolution: int,
 ):
+    """Contour segments via cubic interpolation onto a ``resolution``-square grid, then contouring."""
+
     xmin, xmax = float(np.nanmin(x)), float(np.nanmax(x))
     ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
     if xmin == xmax or ymin == ymax:

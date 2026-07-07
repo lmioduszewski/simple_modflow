@@ -117,6 +117,8 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         budget_text: str = "SFR",
         value_name: str = "q",
     ):
+        """Bind an SFR budget-result explorer (defaults to the ``SFR`` term's ``q``)."""
+
         super().__init__(model, "sfr", budget_text, value_name)
 
     def get(
@@ -271,6 +273,8 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         budget_text: str = "GWF",
         value_name: str = "q",
     ):
+        """Bind a LAK budget-result explorer (defaults to the ``GWF`` exchange ``q``)."""
+
         super().__init__(model, "lak", budget_text, value_name)
 
     def get(
@@ -473,6 +477,8 @@ class LakStageResultsExplorer(StageResultsExplorer):
     per lake by stress period (replaced the old ``plot_timeseries``)."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind a LAK stage-result explorer using the lake stage table builder."""
+
         super().__init__(model, "lak", build_lak_stage_result_table)
 
 
@@ -480,6 +486,8 @@ class LakStageChangeExplorer:
     """Explorer for lake-stage changes between stress periods."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the lake stage-change explorer to ``model``."""
+
         self.model = model
 
     def get(
@@ -596,6 +604,8 @@ class LakConnectionsExplorer:
     """Explorer for LAK connection geometry and exchange interface area."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the LAK connection-geometry explorer to ``model``."""
+
         self.model = model
 
     def get(
@@ -712,6 +722,8 @@ class SfrStageResultsExplorer(StageResultsExplorer):
     """SFR stage explorer with reach-profile helpers."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind an SFR stage-result explorer using the reach stage table builder."""
+
         super().__init__(model, "sfr", build_sfr_stage_result_table)
 
     def profile(self, *, per: int = 0) -> pd.DataFrame:
@@ -781,9 +793,13 @@ class LakResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """The mappable LAK result fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the LAK results namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -816,6 +832,8 @@ class LakBudgetNamespace:
     """Namespace for all MF6-defined LAK package-output budget terms."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the LAK budget-term namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -1059,6 +1077,8 @@ class SfrBudgetNamespace:
     """Namespace for all MF6-defined SFR package-output budget terms."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the SFR budget-term namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -1279,9 +1299,13 @@ class SfrResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """The mappable SFR result fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the SFR results namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -1440,6 +1464,8 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
     """Combined SFR/LAK exchange explorer with one shared physical sign scale."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the combined SFR/LAK exchange explorer to ``model``."""
+
         self.model = model
 
     def get(
@@ -1535,9 +1561,13 @@ class SurfaceWaterResultsNamespace(FieldMappable):
     _default_field = "q"
 
     def _field_names(self):
+        """The single mappable combined surface-water field: exchange ``q``."""
+
         return ["q"]
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the combined surface-water results namespace to ``model``."""
+
         self.model = model
 
     @property
@@ -1551,6 +1581,8 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
     """One cell-mapped LAK or SFR input field."""
 
     def __init__(self, inputs: "SurfaceWaterInputsNamespace", field_name: str):
+        """Pin a LAK/SFR inputs namespace to one mappable numeric input field."""
+
         self.inputs = inputs
         self.model = inputs.model
         self.package_name = inputs.package_name
@@ -1574,6 +1606,8 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         return frame.loc[:, [*metadata, self.field_name]].copy()
 
     def summary(self) -> pd.DataFrame:
+        """Return a compact one-field summary of this LAK/SFR input field."""
+
         return summarize_input_table(
             self.get(),
             label=f"{self.package_name}.inputs.{self.field_name}",
@@ -1636,14 +1670,20 @@ class SurfaceWaterInputsNamespace(FieldMappable):
     """
 
     def __init__(self, model: "SimulationBase", package_name: str):
+        """Bind a LAK or SFR inputs namespace to ``model`` (``package_name`` lowercased)."""
+
         self.model = model
         self.package_name = str(package_name).lower()
 
     @property
     def _default_field(self) -> str:
+        """Preferred input field: LAK ``connection_area``, SFR ``rhk``."""
+
         return "connection_area" if self.package_name == "lak" else "rhk"
 
     def _field_names(self) -> list[str]:
+        """The mappable numeric input field names discovered for this package."""
+
         return self.fields["field"].tolist()
 
     def get(
@@ -1691,12 +1731,16 @@ class SurfaceWaterInputsNamespace(FieldMappable):
         return pd.DataFrame({"field": fields})
 
     def summary(self) -> pd.DataFrame:
+        """Return one stacked summary row per mappable input field for this package."""
+
         frames = [
             getattr(self, field).summary() for field in self.fields["field"].tolist()
         ]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     def __getattr__(self, field_name: str) -> SurfaceWaterInputFieldExplorer:
+        """Resolve ``inputs.<field>`` to a field-pinned explorer (else ``AttributeError``)."""
+
         if field_name not in set(self.fields["field"].tolist()):
             raise AttributeError(
                 f"{type(self).__name__!s} has no input field {field_name!r}"
@@ -1716,6 +1760,8 @@ class LakPackageExplorer:
     """Top-level LAK package explorer namespace."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the top-level LAK explorer (inputs/connections/budget/results) to ``model``."""
+
         self.model = model
 
     @property
@@ -1747,6 +1793,8 @@ class SfrPackageExplorer:
     """Top-level SFR package explorer namespace."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the top-level SFR explorer (inputs/budget/results) to ``model``."""
+
         self.model = model
 
     @property
@@ -1772,6 +1820,8 @@ class SurfaceWaterPackageExplorer:
     """Top-level combined surface-water explorer namespace."""
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the top-level combined SFR/LAK explorer to ``model``."""
+
         self.model = model
 
     @property

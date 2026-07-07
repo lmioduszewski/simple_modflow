@@ -14,6 +14,8 @@ __all__ = sorted(_EXPORTS)
 
 
 def __getattr__(name: str):
+    """Lazily import a public utility export on first attribute access."""
+
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -23,4 +25,6 @@ def __getattr__(name: str):
 
 
 def __dir__():
+    """Advertise the lazily-exported names for tab-completion."""
+
     return sorted(list(globals().keys()) + __all__)

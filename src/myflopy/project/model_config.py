@@ -136,6 +136,8 @@ class ModelConfig:
     """A normalized, comparable view of one model's configuration settings."""
 
     def __init__(self, settings: pd.DataFrame):
+        """Wrap a normalized ``(section, setting, value)`` settings table."""
+
         self._settings = settings
 
     @classmethod
@@ -166,15 +168,23 @@ class ModelConfig:
 
     @property
     def tdis(self) -> dict:
+        """The TDIS (time-discretization) settings as a ``{setting: value}`` mapping."""
+
         return self.section("tdis")
 
     @property
     def ims(self) -> dict:
+        """The IMS (solver) settings as a ``{setting: value}`` mapping."""
+
         return self.section("ims")
 
     @property
     def oc(self) -> dict:
+        """The OC (output-control) settings as a ``{setting: value}`` mapping."""
+
         return self.section("oc")
 
     def __repr__(self) -> str:
+        """Show the config's sections and total setting count."""
+
         return f"ModelConfig(sections={self.sections!r}, settings={len(self._settings)})"

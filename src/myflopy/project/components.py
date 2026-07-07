@@ -67,6 +67,8 @@ class PackageArtifact:
     derived_from_run_id: str | None = None
 
     def __post_init__(self):
+        """Coerce ``source_workspace`` to a ``Path`` and lowercase the package type."""
+
         self.source_workspace = Path(self.source_workspace)
         self.package_type = self.package_type.lower()
 

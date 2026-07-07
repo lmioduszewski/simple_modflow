@@ -120,6 +120,8 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
     """
 
     def __init__(self, diff: "ModelDiff", package_name: str, field_name: str | None = None):
+        """Bind one BC package's diff view; ``field_name`` pins it to a single field."""
+
         self._diff = diff
         self.group = diff.group
         self.package_name = str(package_name).lower()
@@ -128,11 +130,15 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
 
     # -- field nodes (LeafFieldSugar hooks) ------------------------------------
     def _field_names(self) -> list[str]:
+        """The registry-declared input field names for this package."""
+
         from myflopy.modflow.mf6.package_explorer import get_package_input_field_names
 
         return get_package_input_field_names(self.package_name)
 
     def _field_node(self, name: str) -> "PackageDiff":
+        """Return a copy of this diff view pinned to field ``name``."""
+
         return PackageDiff(self._diff, self.package_name, field_name=name)
 
     # -- spatial-view hooks (delta maps vs the reference) ---------------------
@@ -144,25 +150,39 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         return self._inputs.compare_map(model_name=model, per=per, layer=layer, **kwargs)
 
     def _spatial_models(self):
+        """The non-reference model names -- one delta panel each."""
+
         return [name for name in self.group.models if name != self.group.reference]
 
     def _spatial_reference_model(self):
+        """The reference model whose grid/layers frame the delta maps."""
+
         return self.group.models[self.group.reference]
 
     def _spatial_periods(self):
+        """Stress periods present in this package's data (delegates to the group inputs)."""
+
         return self._inputs._spatial_periods()
 
     def _spatial_layers(self):
+        """Layers present in this package's data (delegates to the group inputs)."""
+
         return self._inputs._spatial_layers()
 
     def _spatial_value_label(self):
+        """Label for the mapped quantity: the pinned field, else the package name."""
+
         return self.field_name or self.package_name
 
     # -- series hooks: plot() draws the field's Δ by period per model ----------
     def _series_table(self) -> pd.DataFrame:
+        """The aligned value-diff table backing ``plot()`` (the group's compare)."""
+
         return self._inputs.compare()
 
     def _series_value_column(self, frame) -> str:
+        """The ``<field>_diff`` column ``plot()`` draws (validated against ``frame``)."""
+
         from myflopy.modflow.mf6.package_explorer import get_default_package_value_column
 
         field = self.field_name or get_default_package_value_column(self.package_name)
@@ -302,14 +322,20 @@ class ConnectionDiff:
     _row_label: str = "connections"
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind a connection/reach geometry diff to a group via its ``ModelDiff``."""
+
         self._diff = diff
         self.group = diff.group
 
     @staticmethod
     def _build_table(model):  # pragma: no cover - overridden
+        """Return one model's connection/reach geometry table (subclass override)."""
+
         raise NotImplementedError
 
     def _targets(self, model_name=None) -> list[str]:
+        """The non-reference model names to diff (or just ``model_name``, validated)."""
+
         if model_name is not None:
             name = str(model_name)
             if name not in self.group.models:
@@ -402,6 +428,8 @@ class LakConnectionDiff(ConnectionDiff):
 
     @staticmethod
     def _build_table(model):
+        """Return the model's LAK connection-geometry table."""
+
         return build_lak_connection_table(model)
 
     def connections(self, **kwargs) -> pd.DataFrame:
@@ -419,6 +447,8 @@ class SfrReachDiff(ConnectionDiff):
 
     @staticmethod
     def _build_table(model):
+        """Return the model's SFR reach-geometry table."""
+
         return build_sfr_reach_table(model)
 
     def reaches(self, **kwargs) -> pd.DataFrame:
@@ -459,6 +489,8 @@ class _BcPackageDiffNode:
     """
 
     def __init__(self, diff: "ModelDiff", package_name: str):
+        """Bind a BC package's ``.inputs``/``.results`` diff node to ``package_name``."""
+
         self._diff = diff
         self.package_name = str(package_name).lower()
 
@@ -477,6 +509,8 @@ class _BcPackageDiffNode:
         return CellResultsDiffNamespace(self._diff, self.package_name)
 
     def __repr__(self) -> str:
+        """Show the package name and the two sub-nodes available."""
+
         return f"<diff.packages.{self.package_name}: .inputs / .results>"
 
 
@@ -484,6 +518,8 @@ class _LakDiffNode:
     """``diff.packages.lak``: connection-geometry inputs + q/stage results."""
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the LAK ``.inputs``/``.results`` diff node to a group's ``ModelDiff``."""
+
         self._diff = diff
         self.package_name = "lak"
 
@@ -502,6 +538,8 @@ class _LakDiffNode:
         return LakResultsDiffNamespace(self._diff)
 
     def __repr__(self) -> str:
+        """Show the LAK diff node's available sub-nodes."""
+
         return "<diff.packages.lak: .inputs / .results>"
 
 
@@ -509,6 +547,8 @@ class _SfrDiffNode:
     """``diff.packages.sfr``: reach-geometry inputs + q/stage results."""
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the SFR ``.inputs``/``.results`` diff node to a group's ``ModelDiff``."""
+
         self._diff = diff
         self.package_name = "sfr"
 
@@ -527,6 +567,8 @@ class _SfrDiffNode:
         return SfrResultsDiffNamespace(self._diff)
 
     def __repr__(self) -> str:
+        """Show the SFR diff node's available sub-nodes."""
+
         return "<diff.packages.sfr: .inputs / .results>"
 
 
@@ -534,6 +576,8 @@ class _UzfDiffNode:
     """``diff.packages.uzf``: results only (UZF input diffing is not built)."""
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the UZF ``.results``-only diff node to a group's ``ModelDiff``."""
+
         self._diff = diff
         self.package_name = "uzf"
 
@@ -546,6 +590,8 @@ class _UzfDiffNode:
         return UzfResultsDiffNamespace(self._diff)
 
     def __repr__(self) -> str:
+        """Show the UZF diff node's available sub-node."""
+
         return "<diff.packages.uzf: .results>"
 
 
@@ -553,6 +599,8 @@ class _MvrDiffNode:
     """``diff.packages.mvr``: results only (mover options diff in ``config``)."""
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the MVR ``.results``-only diff node to a group's ``ModelDiff``."""
+
         self._diff = diff
         self.package_name = "mvr"
 
@@ -565,6 +613,8 @@ class _MvrDiffNode:
         return MvrResultDiff(self._diff)
 
     def __repr__(self) -> str:
+        """Show the MVR diff node's available sub-node."""
+
         return "<diff.packages.mvr: .results>"
 
 
@@ -579,6 +629,8 @@ class _PackageDiffNamespace:
     """
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the ``diff.packages`` namespace to a group's ``ModelDiff``."""
+
         self._diff = diff
 
     # -- explicit, IDE-discoverable package accessors -------------------------
@@ -628,6 +680,8 @@ class _PackageDiffNamespace:
         return _MvrDiffNode(self._diff)
 
     def __getattr__(self, name: str):
+        """Fallback package lookup -> a BC diff node, or a helpful ``AttributeError``."""
+
         # Fallback for any package name not declared above -> helpful AttributeError.
         pkg = str(name).lower()
         if pkg in _DIFF_PACKAGES:
@@ -638,6 +692,8 @@ class _PackageDiffNamespace:
         )
 
     def __dir__(self):
+        """Advertise the diffable package names for tab-completion."""
+
         known = (
             set(self._diff.package_names)
             | set(self._diff.connection_package_names)
@@ -650,6 +706,8 @@ class _FocusedModelDiff:
     """A :class:`ModelDiff` narrowed to a single non-reference model."""
 
     def __init__(self, diff: "ModelDiff", model_name: str):
+        """Narrow a ``ModelDiff`` to one non-reference model (validated, not the reference)."""
+
         self._diff = diff
         self.model_name = str(model_name)
         if self.model_name not in diff.group.models:
@@ -658,17 +716,25 @@ class _FocusedModelDiff:
             raise ValueError("The reference model cannot be diffed against itself.")
 
     def summary(self) -> pd.DataFrame:
+        """Per-package difference counts for this one model vs the reference."""
+
         return self._diff.summary(model_name=self.model_name)
 
     def report(self) -> str:
+        """The Markdown faithful-copy report narrowed to this one model."""
+
         return self._diff._render_report(model_name=self.model_name)
 
     def cells(self, package: str, **kwargs) -> pd.DataFrame:
+        """Structural cell set-difference for one ``package`` on this model."""
+
         return _resolve_package_diff(self._diff, package).cells(
             model_name=self.model_name, **kwargs
         )
 
     def values(self, package: str, **kwargs) -> pd.DataFrame:
+        """Aligned value difference for one ``package`` on this model."""
+
         return _resolve_package_diff(self._diff, package).values(
             model_name=self.model_name, **kwargs
         )
@@ -699,10 +765,14 @@ class ConfigDiff:
     """
 
     def __init__(self, diff: "ModelDiff"):
+        """Bind the configuration-tier diff to a group via its ``ModelDiff``."""
+
         self._diff = diff
         self.group = diff.group
 
     def _targets(self, model_name=None) -> list[str]:
+        """The non-reference model names to diff (or just ``model_name``, validated)."""
+
         if model_name is not None:
             name = str(model_name)
             if name not in self.group.models:
@@ -713,6 +783,8 @@ class ConfigDiff:
         return [name for name in self.group.models if name != self.group.reference]
 
     def _settings_map(self, model_name: str) -> dict:
+        """A ``{(section, setting): value}`` map of one model's normalized config."""
+
         frame = self.group.models[model_name].config.settings()
         return {
             (row.section, row.setting): row.value
@@ -771,6 +843,8 @@ class ModelDiff:
     """Reference-star difference across a :class:`ModelGroup` (the ``diff`` verb)."""
 
     def __init__(self, group: "ModelGroup"):
+        """Wrap a :class:`ModelGroup` as the ``diff`` engine (its reference is the baseline)."""
+
         self.group = group
 
     @property
@@ -878,6 +952,13 @@ class ModelDiff:
         return self._render_report(results=results)
 
     def _render_report(self, *, model_name=None, results: bool = False) -> str:
+        """Assemble the Markdown diff report (package/config/connection, optional results).
+
+        Backs both :meth:`report` (all non-reference models) and the focused
+        report (one ``model_name``); each model is flagged identical or its
+        differing tiers are tabulated.
+        """
+
         reference = self.group.reference
         summary = self.summary(model_name=model_name)
         config = self.config
@@ -1004,6 +1085,8 @@ class ModelDiff:
         return {"identical": heads_ok and budget_ok, "lines": lines}
 
     def __repr__(self) -> str:
+        """Show the reference and the compared model names."""
+
         return (
             f"ModelDiff(reference={self.group.reference!r}, "
             f"models={self.model_names!r})"

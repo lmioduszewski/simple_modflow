@@ -4,6 +4,8 @@ import numpy as np
 
 
 def _triangle_coords(triangle) -> np.ndarray:
+    """Per-triangle vertex coordinates as an ``(ntri, 3, 2)`` array from a Triangle mesh."""
+
     vertices = triangle.node
     vert_lookup = {
         int(row["ivert"]): np.array([float(row["x"]), float(row["y"])], dtype=float)
@@ -25,6 +27,8 @@ def _triangle_coords(triangle) -> np.ndarray:
 
 
 def _triangle_edge_lengths(coords: np.ndarray) -> np.ndarray:
+    """The three edge lengths of each triangle as an ``(ntri, 3)`` array."""
+
     a = np.linalg.norm(coords[:, 1] - coords[:, 0], axis=1)
     b = np.linalg.norm(coords[:, 2] - coords[:, 1], axis=1)
     c = np.linalg.norm(coords[:, 0] - coords[:, 2], axis=1)
@@ -32,6 +36,8 @@ def _triangle_edge_lengths(coords: np.ndarray) -> np.ndarray:
 
 
 def _triangle_areas(coords: np.ndarray) -> np.ndarray:
+    """The area of each triangle via the shoelace formula."""
+
     return 0.5 * np.abs(
         (coords[:, 1, 0] - coords[:, 0, 0]) * (coords[:, 2, 1] - coords[:, 0, 1])
         - (coords[:, 2, 0] - coords[:, 0, 0]) * (coords[:, 1, 1] - coords[:, 0, 1])
@@ -39,12 +45,16 @@ def _triangle_areas(coords: np.ndarray) -> np.ndarray:
 
 
 def _triangle_angles(coords: np.ndarray) -> np.ndarray:
+    """The three interior angles (degrees) of each triangle via the law of cosines."""
+
     lengths = _triangle_edge_lengths(coords)
     a = lengths[:, 0]
     b = lengths[:, 1]
     c = lengths[:, 2]
 
     def angle(opposite: np.ndarray, side1: np.ndarray, side2: np.ndarray) -> np.ndarray:
+        """The angle (degrees) opposite ``opposite`` given its two adjacent sides."""
+
         denom = 2.0 * side1 * side2
         cos_theta = np.ones_like(denom)
         valid = denom > 0
@@ -62,6 +72,8 @@ def _triangle_angles(coords: np.ndarray) -> np.ndarray:
 
 
 def _summary_stats(values: np.ndarray, prefix: str) -> dict[str, float]:
+    """Min/mean/max/std of ``values`` as a dict keyed by ``<prefix>_<stat>`` (zeros if empty)."""
+
     if values.size == 0:
         return {
             f"{prefix}_min": 0.0,
@@ -78,6 +90,8 @@ def _summary_stats(values: np.ndarray, prefix: str) -> dict[str, float]:
 
 
 def _triangle_edge_ratio(lengths: np.ndarray) -> np.ndarray:
+    """Each triangle's longest/shortest edge ratio (``inf`` for a degenerate zero-length edge)."""
+
     min_lengths = np.min(lengths, axis=1)
     max_lengths = np.max(lengths, axis=1)
     ratios = np.full(len(lengths), np.inf, dtype=float)
@@ -87,6 +101,8 @@ def _triangle_edge_ratio(lengths: np.ndarray) -> np.ndarray:
 
 
 def _triangle_neighbor_area_ratios(triangle, areas: np.ndarray) -> np.ndarray:
+    """Larger/smaller area ratio for each pair of edge-adjacent triangles (a smoothness metric)."""
+
     edge_to_triangles: dict[tuple[int, int], list[int]] = {}
     for tri_idx, cell in enumerate(triangle.ele):
         verts = [int(cell["iv1"]), int(cell["iv2"]), int(cell["iv3"])]
@@ -113,6 +129,12 @@ def triangle_quality_report(
     include_voronoi: bool = False,
     validate_voronoi: bool = False,
 ) -> dict[str, float | int | str]:
+    """A dict of triangulation quality metrics (angles, areas, edge/area ratios, degeneracies).
+
+    Optionally attempts (and validates) a Voronoi build to flag meshes unsafe for
+    the Voronoi grid. Raises if the mesh has not been built.
+    """
+
     if not hasattr(triangle, "ele") or len(triangle.ele) == 0:
         raise ValueError("triangle mesh must be built before quality_report() can be computed")
 

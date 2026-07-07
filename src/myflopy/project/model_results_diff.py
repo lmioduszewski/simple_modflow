@@ -42,10 +42,14 @@ class _ResultDiffBase:
     """Shared target resolution for results accessors."""
 
     def __init__(self, diff):
+        """Bind a results-tier accessor to a group via its ``ModelDiff``."""
+
         self._diff = diff
         self.group = diff.group
 
     def _targets(self, model_name=None) -> list[str]:
+        """The non-reference model names to compare (or just ``model_name``, validated)."""
+
         if model_name is not None:
             name = str(model_name)
             if name not in self.group.models:
@@ -74,22 +78,34 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
 
     # -- spatial-view hooks (delta head maps) ---------------------------------
     def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
+        """Δhead choropleth (compared model - reference) for one model."""
+
         return self.group.hds.compare_map(model_name=model, per=per, layer=layer, **kwargs)
 
     def _spatial_models(self):
+        """The non-reference model names -- one Δhead panel each."""
+
         return self._targets()
 
     def _spatial_reference_model(self):
+        """The reference model whose grid/layers frame the Δhead maps."""
+
         return self.group.models[self.group.reference]
 
     def _spatial_value_label(self):
+        """The mapped quantity's label -- head difference."""
+
         return "head"
 
     # -- series hooks: plot() draws mean Δhead by period, one line per model --
     def _series_value_column(self, frame) -> str:
+        """The column ``plot()`` draws: the aligned head difference (``diff``)."""
+
         return "diff"
 
     def _series_default_agg(self) -> str:
+        """Collapse cells within a line by mean (averaging Δhead, not summing)."""
+
         return "mean"
 
     def _sections(
@@ -178,6 +194,8 @@ class BudgetResultDiff(_ResultDiffBase):
     """
 
     def _model_budget(self, model_name: str) -> pd.DataFrame:
+        """One model's incremental listing budget, melted to ``totim`` / ``term`` / ``value``."""
+
         # ``budget_incremental`` is a property on real models (returns a
         # DataFrame); tolerate a callable too so fakes/other readers work.
         raw = self.group.models[model_name].budget_incremental
@@ -280,6 +298,8 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
     """
 
     def __init__(self, diff, accessor):
+        """Wrap a grouped cell-budget ``accessor``, taking its package + value names."""
+
         super().__init__(diff)
         self._accessor = accessor
         self.package_name = accessor.package_name
@@ -297,6 +317,8 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
 
     # -- series hook: plot() draws the Δ column, one line per model -----------
     def _series_value_column(self, frame) -> str:
+        """The column ``plot()`` draws: the aligned ``<value>_diff``."""
+
         return f"{self.value_name}_diff"
 
     def summary(
@@ -359,18 +381,28 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
         return self._accessor.compare_map(model_name=model, per=per, layer=layer, **kwargs)
 
     def _spatial_models(self):
+        """The non-reference model names -- one Δflux panel each."""
+
         return self._targets()
 
     def _spatial_reference_model(self):
+        """The reference model whose grid/layers frame the Δflux maps."""
+
         return self.group.models[self.group.reference]
 
     def _spatial_periods(self):
+        """Stress periods present in this term's data (delegates to the accessor)."""
+
         return self._accessor._spatial_periods()
 
     def _spatial_layers(self):
+        """Layers present in this term's data (delegates to the accessor)."""
+
         return self._accessor._spatial_layers()
 
     def _spatial_value_label(self):
+        """The mapped quantity's label -- this term's value name (``q``, ``gwrch``, ...)."""
+
         return self.value_name
 
 
@@ -389,11 +421,15 @@ class CellResultsDiffNamespace(FieldMappable):
     _default_field = "q"
 
     def __init__(self, diff, package_name: str):
+        """Bind a cell-budget results-diff namespace to one package."""
+
         self._diff = diff
         self.group = diff.group
         self.package_name = str(package_name).lower()
 
     def _field_names(self):
+        """The single mappable results-diff field: exchange ``q``."""
+
         return ["q"]
 
     @property
@@ -420,13 +456,19 @@ class UzfResultsDiffNamespace(FieldMappable):
     _default_field = "gwrch"
 
     def __init__(self, diff):
+        """Bind the UZF results-diff namespace to a group via its ``ModelDiff``."""
+
         self._diff = diff
         self.group = diff.group
 
     def _field_names(self):
+        """The mappable UZF results-diff fields: ``gwrch`` and ``sat``."""
+
         return ["gwrch", "sat"]
 
     def _uzf_results(self):
+        """The group's UZF results accessor (source of the diffed fields)."""
+
         return self.group.packages.uzf.results
 
     @property
@@ -451,6 +493,8 @@ class StageResultDiff(_ResultDiffBase):
     """
 
     def __init__(self, diff, accessor, *, entity: str):
+        """Wrap a grouped stage ``accessor`` keyed by ``entity`` (``"lake"`` or ``"reach"``)."""
+
         super().__init__(diff)
         self._accessor = accessor
         self._entity = entity  # "lake" | "reach"
@@ -477,6 +521,8 @@ class StageResultDiff(_ResultDiffBase):
         rtol: float = _DEFAULT_RTOL,
         per=None,
     ) -> pd.DataFrame:
+        """One row per model: max/mean/RMSE Δstage, the worst feature/period, within tolerance."""
+
         data = self.get(model_name=model_name, per=per)
         argmax_column = f"argmax_{self._entity}"
         columns = [
@@ -524,6 +570,8 @@ class MvrResultDiff(_ResultDiffBase):
     ]
 
     def _cell_diff(self, package: str, term: str) -> CellBudgetResultDiff:
+        """Build a cell-budget diff for one package's mover ``term`` (FROM/TO-MVR)."""
+
         from myflopy.project.model_group import GroupCellPackageResults
 
         accessor = GroupCellPackageResults(
@@ -568,9 +616,13 @@ class LakResultsDiffNamespace(CellResultsDiffNamespace):
     """``diff.packages.lak.results`` -- fields ``q`` (default) and ``stage``."""
 
     def __init__(self, diff):
+        """Bind the LAK results-diff namespace (fields ``q`` + ``stage``) to the group."""
+
         super().__init__(diff, "lak")
 
     def _field_names(self):
+        """The mappable LAK results-diff fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     @property
@@ -586,9 +638,13 @@ class SfrResultsDiffNamespace(CellResultsDiffNamespace):
     """``diff.packages.sfr.results`` -- fields ``q`` (default) and ``stage``."""
 
     def __init__(self, diff):
+        """Bind the SFR results-diff namespace (fields ``q`` + ``stage``) to the group."""
+
         super().__init__(diff, "sfr")
 
     def _field_names(self):
+        """The mappable SFR results-diff fields: exchange ``q`` and ``stage``."""
+
         return ["q", "stage"]
 
     @property

@@ -28,6 +28,8 @@ from myflopy.modflow.mf6.pest.native_parameters import _flatten_array_file, _res
 
 
 def _cell_centers(model) -> tuple[np.ndarray, np.ndarray]:
+    """The model grid's cell-center ``(x, y)`` coordinate arrays, flattened."""
+
     grid = model.gwf.modelgrid
     return (
         np.asarray(grid.xcellcenters, dtype=float).reshape(-1),

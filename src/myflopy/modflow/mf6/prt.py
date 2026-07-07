@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
 
 def _mfdata_value(value, default=None):
+    """Unwrap a FloPy MFData value (calling ``get_data()`` if present), or return ``default``."""
+
     if value is None:
         return default
     getter = getattr(value, "get_data", None)
@@ -30,11 +32,15 @@ def _mfdata_value(value, default=None):
 
 
 def _default_prt_name(flow_name: str) -> str:
+    """A default PRT model name derived from the flow model name (sanitized, ``_prt`` suffix)."""
+
     stem = re.sub(r"[^A-Za-z0-9_]", "_", str(flow_name))
     return f"{stem[:12]}_prt"
 
 
 def _output_filename(model: "SimulationBase", kind: str) -> str:
+    """The GWF head/budget output filename from its OC record (falling back to ``<name>.hds/.cbc``)."""
+
     oc = getattr(model.gwf, "oc", None)
     record = getattr(oc, f"{kind}_filerecord", None) if oc is not None else None
     data = _mfdata_value(record)
@@ -59,6 +65,8 @@ def _grid_filename(model: "SimulationBase") -> str:
 
 
 def _tdis_perioddata(model: "SimulationBase") -> list[tuple[float, int, float]]:
+    """The flow model's TDIS ``(perlen, nstp, tsmult)`` rows (defaulting to one steady period)."""
+
     tdis = getattr(model.sim, "tdis", None)
     data = _mfdata_value(getattr(tdis, "perioddata", None))
     if data is None:
@@ -70,11 +78,15 @@ def _tdis_perioddata(model: "SimulationBase") -> list[tuple[float, int, float]]:
 
 
 def _tdis_time_units(model: "SimulationBase") -> str:
+    """The flow model's TDIS time units (``"DAYS"`` if unset)."""
+
     tdis = getattr(model.sim, "tdis", None)
     return str(_mfdata_value(getattr(tdis, "time_units", None), "DAYS"))
 
 
 def _copy_grid_to_prt(flow_model: "SimulationBase", prt_model):
+    """Replicate the GWF DIS/DISV discretization onto a PRT model (raises for unsupported grids)."""
+
     gwf = flow_model.gwf
     if getattr(gwf, "disv", None) is not None:
         disv = gwf.disv
@@ -140,7 +152,30 @@ class PRTReleasePoints:
         layer: int = 0,
         local_z: float = 0.5,
     ) -> "PRTReleasePoints":
-        """Create release points at model-cell centers."""
+        """Create particle release points at the centers of given model cells.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The flow model whose grid supplies the cell centers.
+        cells : Sequence[int or tuple]
+            Cell ids to release from -- zero-based DISV cell numbers, or structured
+            ``(row, col)`` / ``(layer, row, col)`` tuples.
+        layer : int, default 0
+            Layer to place the particles in when ``cells`` are bare cell/``(row, col)``.
+        local_z : float, default 0.5
+            Vertical position within the cell (0 = bottom, 1 = top).
+
+        Returns
+        -------
+        PRTReleasePoints
+            Pass it to ``model.particle_tracking.prt(release_points=...)``.
+
+        Examples
+        --------
+        >>> rp = mf.PRTReleasePoints.from_cells(model, cells=[100, 120, 140],
+        ...                                     layer=0, local_z=0.5)
+        """
 
         grid = model.gwf.modelgrid
         rows = []
@@ -227,6 +262,8 @@ class PRTRunResults:
 
     @property
     def engine(self) -> str:
+        """The particle-tracking engine that produced these results (``"mf6-prt"``)."""
+
         return "mf6-prt"
 
     @cached_property
@@ -245,22 +282,30 @@ class PRTRunResults:
 
     @property
     def terminal_points(self) -> pd.DataFrame:
+        """The terminating pathline records (``ireason == 3``), one per particle endpoint."""
+
         data = self.pathlines
         if "ireason" not in data.columns:
             return data.iloc[0:0].copy()
         return data.loc[data["ireason"] == 3].copy()
 
     def scene(self, **kwargs):
+        """Build a 3D PyVista particle-tracking scene from the pathlines and flow grid."""
+
         from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
 
         return build_particle_tracking_scene(self.flow_model, self.pathlines, **kwargs)
 
     def plot_map(self, **kwargs):
+        """Plot the particle pathlines on a plan-view map of the flow model."""
+
         from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
 
         return plot_particle_pathlines(self.flow_model, self.pathlines, **kwargs)
 
     def export_3d_html(self, output_path: str | Path, **kwargs) -> Path:
+        """Export a standalone 3D HTML particle-tracking scene to ``output_path``."""
+
         from myflopy.modflow.mf6.interactive_plotting import export_particle_tracking_html
 
         return export_particle_tracking_html(self.flow_model, self.pathlines, output_path, **kwargs)
@@ -315,6 +360,13 @@ class PRTProject:
         track_times: Sequence[float] | None = None,
         exe_name: str = "mf6",
     ):
+        """Configure a PRT run off ``model``: validate the name/release points and set output paths.
+
+        See the class docstring for the tracking-time, placement, and termination
+        parameters. Raises if the name exceeds 16 characters or no release points
+        are given.
+        """
+
         self.flow_model = model
         self.workspace = Path(workspace)
         self.name = _default_prt_name(model.name) if name is None else str(name)
@@ -397,10 +449,14 @@ class PRTProject:
         self.ems = flopy.mf6.ModflowEms(self.sim, pname="ems", filename=f"{self.name}.ems")
 
     def write(self, *, silent: bool = True) -> Path:
+        """Write the PRT simulation files to the workspace and return its path."""
+
         self.sim.write_simulation(silent=silent)
         return self.workspace
 
     def results(self, *, success: bool | None = None, report: Sequence[str] = ()) -> PRTRunResults:
+        """Build a :class:`PRTRunResults` handle over this project's output files."""
+
         return PRTRunResults(
             flow_model=self.flow_model,
             workspace=self.workspace,
@@ -412,6 +468,12 @@ class PRTProject:
         )
 
     def run(self, *, write: bool = True, silent: bool = True, report: bool = True) -> PRTRunResults:
+        """Write (optionally) and run the PRT simulation, returning its :class:`PRTRunResults`.
+
+        Requires the GWF head/budget/grid outputs to already exist (raises with the
+        missing paths otherwise); raises ``RuntimeError`` if the MF6 run fails.
+        """
+
         missing = [
             path
             for path in (
@@ -500,9 +562,13 @@ class ParticleTracking:
     """
 
     def __init__(self, model: "SimulationBase"):
+        """Bind the particle-tracking front door to a flow ``model``."""
+
         self.model = model
 
     def prt(self, *, workspace: str | Path, release_points, **kwargs) -> PRTProject:
+        """Build a native MF6 PRT project for this model (see :class:`PRTProject`)."""
+
         return PRTProject(
             self.model,
             workspace=workspace,
@@ -511,9 +577,13 @@ class ParticleTracking:
         )
 
     def open_prt(self, workspace: str | Path, *, name: str | None = None) -> PRTRunResults:
+        """Reopen a completed PRT run in ``workspace`` (see :func:`open_prt_run`)."""
+
         return open_prt_run(self.model, workspace, name=name)
 
     def mp3du(self, particles, **kwargs):
+        """Prepare a legacy MP3DU (MODPATH-style) particle-tracking run for this model."""
+
         from myflopy.modflow.mp3du import prepare_particle_tracking
 
         return prepare_particle_tracking(model=self.model, particles=particles, **kwargs)

@@ -144,6 +144,8 @@ class HeadsPlus(SpatialView, bf.HeadFile):
 
     @property
     def all_heads(self):
+        """The full ``kstpkper/layer/cell`` head table, built and cached on first access."""
+
         if self._all_heads is None:
             self._all_heads = self.get_all_heads()
         return self._all_heads
@@ -204,12 +206,18 @@ class HeadsPlus(SpatialView, bf.HeadFile):
 
     # -- unified grammar: dimension + series hooks --------------------------
     def _spatial_layers(self) -> list[int]:
+        """Every grid layer -- heads are saved for all layers."""
+
         return list(range(int(self.nlay)))
 
     def _spatial_periods(self) -> list[int]:
+        """Stress periods present in the saved head output."""
+
         return sorted({int(key[1]) for key in self.kstpkper})
 
     def _series_default_agg(self) -> str:
+        """Collapse cells within a plotted line by mean (averaging heads, not summing)."""
+
         return "mean"  # heads average over cells; summing elevations is meaningless
 
     def _sections(
@@ -481,18 +489,26 @@ class HeadsPlus(SpatialView, bf.HeadFile):
 
     @property
     def obs(self):
+        """Mapping of registered head-observation location sets."""
+
         return self._obs
 
     @property
     def obs_path(self):
+        """Filesystem path to the head observation output file, if configured."""
+
         return self._obs_path
 
     @obs_path.setter
     def obs_path(self, val):
+        """Set the path to the head observation output file."""
+
         self._obs_path = val
 
     @property
     def obs_heads(self):
+        """Observed/simulated heads at the observation locations (loaded and cached)."""
+
         if self._obs_heads is None:
             self._obs_heads = self.get_obs_heads()
         return self._obs_heads

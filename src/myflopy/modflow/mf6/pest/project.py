@@ -802,6 +802,8 @@ class PestProject:
         ]
 
         def _obs_rows(specs, prepared_filter):
+            """Summary rows for observation/forecast ``specs``, merged with prepared build info."""
+
             rows = []
             prepared = {
                 item.get("prefix"): item
