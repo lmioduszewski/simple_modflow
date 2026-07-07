@@ -79,7 +79,8 @@ def test_package_explorer_facade_reexports_split_module_surfaces():
 def test_package_explorer_registry_preserves_existing_defaults():
     assert get_default_package_value_column("rch") == "recharge"
     assert get_default_package_value_column("drn") == "elev"
-    assert get_default_package_colorscale("ghb") == "Portland"
+    # colorscale policy: non-signed data uses the house brown-to-blue scale
+    assert get_default_package_colorscale("ghb") == "earth"
     assert get_default_budget_term("uzf_gwrch") == ("UZF-GWRCH", "gwrch")
     assert get_package_explorer_spec("lak") is registry_spec("lak")
 
@@ -102,7 +103,7 @@ def test_package_explorer_registry_exposes_uzf_period_fields():
         spec.inputs
     )
     assert spec.inputs["pet"].label == "Potential evapotranspiration"
-    assert get_default_package_colorscale("uzf_pet") == "YlOrRd"
+    assert get_default_package_colorscale("uzf_pet") == "earth"
 
 
 def test_model_packages_exposes_registry_backed_wel_accessors():

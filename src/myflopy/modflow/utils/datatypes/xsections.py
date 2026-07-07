@@ -21,6 +21,97 @@ import shapely as shp
 from flopy.mf6 import MFSimulation
 
 
+def _normalize_section_line(line) -> LineString:
+    """Coerce a section-line spec to a shapely ``LineString``.
+
+    Accepts a ``LineString``, a sequence of ``(x, y)`` pairs, or a flopy-style
+    ``{"line": [...]}`` dict, so every ``xs(line=...)`` entry point shares one
+    normalization.
+    """
+
+    if isinstance(line, LineString):
+        return line
+    if isinstance(line, dict) and "line" in line:
+        return _normalize_section_line(line["line"])
+    try:
+        coords = [(float(x), float(y)) for x, y in line]
+    except (TypeError, ValueError) as err:
+        raise TypeError(
+            "line must be a LineString, a sequence of (x, y) pairs, or a "
+            f"{{'line': [...]}} dict; got {line!r}."
+        ) from err
+    if len(coords) < 2:
+        raise ValueError("line must contain at least two (x, y) points.")
+    return LineString(coords)
+
+
+def combined_section_frame(sections: dict[str, "XSection"]) -> pd.DataFrame:
+    """Concatenate section profile tables into one long overlay frame.
+
+    Each section contributes its head-profile series (labeled by its
+    ``section_name``) at its *current* ``kstpkper``; the model top is included
+    once, from the first section. This is the shared data step behind
+    :func:`render_xsections` and the ``kind="xs"`` composers.
+    """
+
+    if not sections:
+        raise ValueError("at least one section is required.")
+    frames = [
+        section.to_frame(include_model_top=(index == 0), include_model_btm=False)
+        for index, section in enumerate(sections.values())
+    ]
+    return pd.concat(frames, ignore_index=True)
+
+
+def render_xsections(
+        sections: dict[str, "XSection"],
+        *,
+        backend: str = "plotly",
+        title: str | None = None,
+):
+    """Render one or more :class:`XSection` objects as a single overlay figure.
+
+    The shared renderer behind the ``xs`` grammar verb on model, group, and
+    diff heads surfaces: each section contributes its head-profile series
+    (labeled by its ``section_name``); the model top is drawn once from the
+    first section. ``backend="plotly"`` returns a ``viz.Fig``; ``backend="mpl"``
+    a matplotlib figure.
+    """
+
+    data = combined_section_frame(sections)
+
+    normalized = str(backend).lower()
+    if normalized in ("mpl", "matplotlib", "static"):
+        from figs.mpl import plot_cross_section
+
+        result = plot_cross_section(
+            data=data,
+            x="distance",
+            y="elevation",
+            series_col="series",
+            title=title or "Cross section",
+            ylabel="Elevation",
+        )
+        # figs returns (fig, ax); the grammar contract is a bare figure
+        return result[0] if isinstance(result, tuple) else result
+    if normalized in ("plotly", "interactive"):
+        fig = Fig()
+        for series_name, sub in data.groupby("series", sort=False):
+            fig.add_scatter(
+                x=sub["distance"].to_numpy(),
+                y=sub["elevation"].to_numpy(),
+                mode="lines",
+                name=str(series_name),
+            )
+        fig.update_layout(
+            title=title or "Cross section",
+            xaxis_title="Distance",
+            yaxis_title="Elevation",
+        )
+        return fig
+    raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+
+
 class XSection:
 
     def __init__(
@@ -30,6 +121,7 @@ class XSection:
             kstpkper: tuple = None,
             layer: int | list[int] = 0,
             cells: int | list[int] = None,
+            line=None,
             x_or_y: str = 'x',
             spacing: int = 10,
             num_points: int = 100,
@@ -69,6 +161,9 @@ class XSection:
         :param kstpkper: defaults to the first model stress period if not provided
         :param layer: defaults to 0
         :param cells: defines cross-section location. Can provide any number of cells
+        :param line: defines the cross-section location directly as a shapely
+        LineString, a sequence of (x, y) pairs, or a flopy-style {'line': [...]}
+        dict. Takes precedence over 'cells' when provided.
         :param x_or_y: only used if one cell is given, defines whether
         the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
         :param spacing: x distance between points on the plot
@@ -93,7 +188,7 @@ class XSection:
         self._num_points = num_points
         self._points = None
         self._extrapolate_beyond_section_ends = extrapolate_beyond_section_ends
-        self._xsect_linestring = None
+        self._xsect_linestring = None if line is None else _normalize_section_line(line)
         self._xs_as_length = None
         self._x_min_max = None
         self._y_min_max = None
@@ -598,127 +693,3 @@ class XSection:
         self.fig.show()
 
 
-class MultiModelXSection:
-
-    def __init__(
-            self,
-            models: list[SimulationBase],
-            section_names: list[str] = None,
-            cells: int | list[int] = None,
-            per: int = None,
-            kstpkper: tuple = None,
-            layer: int = 0,
-            x_or_y: str = 'x',
-            spacing: int = 10,
-            num_points: int = 100,
-            extrapolate_beyond_section_ends: bool = False,
-            surf_type: str = 'hds',
-            interpolate: bool = False,
-            interpolator: str = None,
-            use_rbf: bool = True,
-            clip: shp.Polygon = None,
-            **kwargs
-    ):
-        """
-        set up a list of XSection objects, one for each model provided in 'models' arg. For each model, the
-        remaining args will be applied in creating a list of XSection objects. Can then show the animation figure
-        using .show() method.
-        :param models: list of SimulationBase objects for which to create XSection objects. Should have the same
-        model grid or there will be errors or will return erroneous results.
-        :param section_names: list of section names to show on figure (optional), will default to model names
-        :param cells: defines cross-section location. Can provide any number of cells
-        :param per: stress period number, O-based index; will take presedence over kstpkper if provided
-        :param kstpkper: defaults to the first model stress period if not provided
-        :param layer: defaults to 0
-        :param x_or_y: only used if one cell is given, defines whether
-        the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
-        :param spacing: x distance between points on the plot
-        :param num_points: number of points in the cross-section plot
-        :param extrapolate_beyond_section_ends: not yet implemented
-        :param surf_type: can be hds (default) or lyr (for model layers)
-        :param interpolate: if True, interpolate between cells along cross section line
-        :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
-        :param interpolator: define interpolation method. See InterpolatedSurface class for options.
-        :param kwargs: additional keyword arguments to pass to XSection class
-
-        Example usage: MultiModelXSection(models=[model7a, model7b, model7c], cells=[23444, 15525, 16264]).show()
-        """
-
-        self.xsect_class_objs = []
-        if section_names is not None:
-            assert (isinstance(section_names, list)), 'section_names must be a list'
-            assert (len(section_names) == len(models)), 'section_names must have same length as models'
-            section_names = [str(name) for name in section_names]
-        else:
-            section_names = [model.name for model in models]
-        for i, model in enumerate(models):
-            self.xsect_class_objs.append(
-                XSection(
-                    model=model,
-                    section_name=section_names[i],
-                    cells=cells,
-                    per=per,
-                    kstpkper=kstpkper,
-                    layer=layer,
-                    x_or_y=x_or_y,
-                    spacing=spacing,
-                    num_points=num_points,
-                    extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
-                    surf_type=surf_type,
-                    interpolate=interpolate,
-                    interpolator=interpolator,
-                    use_rbf=use_rbf,
-                    clip=clip,
-                    **kwargs
-                )
-            )
-
-        self._anis = None
-
-    @property
-    def anis(self):
-        """get a list of animation figures for each XSection object"""
-
-        if self._anis is None:
-            anis = [xsect_obj.ani for xsect_obj in self.xsect_class_objs]
-        self._anis = anis
-
-        return self._anis
-
-    @property
-    def fig(self):
-        """create and show the animation figure, including all models provided to MultiModelXSection class"""
-
-        anis = self.anis
-        animation_fig = anis[0]
-
-        if len(anis) == 1:
-            return animation_fig
-        else:
-            print(f'\n{len(anis)} models for xsection animation')
-            for ani in anis[1:]:
-                animation_fig.add_traces(ani.data)
-                for i, frame in enumerate(animation_fig.frames):
-                    frame.data += tuple(ani.frames[i].data)
-
-            return animation_fig
-
-    def show(self):
-        self.fig.show()
-
-
-if __name__ == '__main__':
-    import pickle
-    from pathlib import Path
-
-    model_path_v7b_et = Path(r"C:\Users\lukem\mf6\cum7bET\cum7bET.model")
-    with open(model_path_v7b_et, 'rb') as file:
-        model7b: SimulationBase = pickle.load(file)
-
-    fig = XSection(
-        model=model7b,
-        cells=[16264, 15525, 23444],
-        section_name='dev',
-        interpolator='cloughTocher2D',
-        resolution=300
-    ).ani.show()

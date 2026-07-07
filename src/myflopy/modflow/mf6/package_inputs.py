@@ -15,12 +15,12 @@ from myflopy.modflow.mf6.package_registry import (
     get_default_package_colorscale,
     get_default_package_value_column,
     get_package_explorer_spec,
+    get_package_input_field_names,
     get_package_input_field_spec,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
     _default_show_layer_elevs,
     _filter_normalized_table,
-    _infer_default_value_column,
 )
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
@@ -28,19 +28,35 @@ from myflopy.modflow.mf6.package_tables import (
     build_uzf_field_input_wide_table,
     summarize_input_table,
 )
+from myflopy.modflow.utils.datatypes.hover import cell_input_hover
 from myflopy.modflow.mf6.package_plotting import (
-    MappedFieldVisualizationMixin,
+    FieldMappable,
+    SpatialView,
+    _apply_backend,
     _as_layer_cell_property,
     build_cell_input_map_payload,
 )
 
 
-class CellPackageInputsExplorer:
-    """Normalized input explorer for one cell-based MF6 stress-period package."""
+class CellPackageInputsExplorer(FieldMappable):
+    """Normalized input explorer for one cell-based MF6 stress-period package.
+
+    Each registry-backed field is a first-class node (``ghb.inputs.cond``) with
+    the full unified grammar; the namespace verbs take ``field=`` as sugar --
+    ``inputs.map(field="cond")`` is exactly ``inputs.cond.map()``, and
+    ``inputs.map()`` draws the package's default field.
+    """
 
     def __init__(self, model: "SimulationBase", package_name: str):
         self.model = model
         self.package_name = str(package_name).lower()
+
+    @property
+    def _default_field(self) -> str:
+        return get_default_package_value_column(self.package_name)
+
+    def _field_names(self) -> list[str]:
+        return get_package_input_field_names(self.package_name)
 
     def __getattr__(self, field_name: str) -> "CellPackageInputFieldExplorer":
         """Return a field-specific explorer for registry-backed input fields."""
@@ -93,90 +109,17 @@ class CellPackageInputsExplorer:
             frame, label=f"{self.package_name}.inputs", value_columns=value_columns
         )
 
-    def map(
-        self,
-        *,
-        per: int = 0,
-        layer: int = 0,
-        value_column: str | None = None,
-        multiplier: float = 1.0,
-        fill_value: float = 0.0,
-        agg: str = "sum",
-        colorscale: str | None = None,
-        **kwargs,
-    ):
-        """Build a package-input choropleth using the preferred shared style.
-
-        Parameters
-        ----------
-        per, layer
-            Zero-based stress period and layer to map.
-        value_column
-            Numeric field to display. If omitted, a package-specific default is
-            used when available.
-        multiplier
-            Optional multiplier applied to mapped values before plotting.
-        fill_value
-            Value used for cells with no package record in the selected
-            period/layer.
-        agg
-            Aggregation used when a package contains multiple rows for one cell
-            in the selected period/layer.
-        colorscale
-            Optional Plotly colorscale name. When omitted, a package-specific
-            default is used.
-        kwargs
-            Forwarded to :meth:`SimulationBase.cor`.
-        """
-
-        selected = self.get(per=per, layer=layer)
-        chosen_value_column = _infer_default_value_column(
-            selected if not selected.empty else self.get(),
-            fallback=get_default_package_value_column(self.package_name),
-        )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
-        values, hover = build_cell_input_map_payload(
-            selected,
-            ncpl=self.model.vor.ncpl,
-            value_column=value_column or chosen_value_column,
-            per=per,
-            layer=layer,
-            multiplier=multiplier,
-            fill_value=fill_value,
-            agg=agg,
-        )
-        return self.model.cor(
-            per=per,
-            layer=layer,
-            type="custom",
-            custom_zs=values,
-            custom_hover=hover,
-            hover_heads=False,
-            hover_ks=False,
-            colorscale=colorscale or get_default_package_colorscale(self.package_name),
-            **kwargs,
-        )
-
     @property
     def default(self) -> "CellPackageInputFieldExplorer":
         """Return the registry-defined preferred input field."""
 
         return getattr(self, get_default_package_value_column(self.package_name))
 
-    def plot(self, **kwargs):
-        return self.default.plot(**kwargs)
-
-    def plotly_mosaic(self, **kwargs):
-        return self.default.plotly_mosaic(**kwargs)
-
-    def slider_html(self, *args, **kwargs):
-        return self.default.slider_html(*args, **kwargs)
-
-    def plotly_animation(self, **kwargs):
-        return self.default.plotly_animation(**kwargs)
+    # map/plot/xs/mosaic/animate come from FieldMappable: they dispatch to the
+    # (default) field node, so ``inputs.map()`` == ``inputs.<default>.map()``.
 
 
-class CellPackageInputFieldExplorer(MappedFieldVisualizationMixin):
+class CellPackageInputFieldExplorer(SpatialView):
     """Field-specific view over a cell package's normalized input table."""
 
     def __init__(self, inputs: CellPackageInputsExplorer, field_spec: FieldSpec):
@@ -234,23 +177,43 @@ class CellPackageInputFieldExplorer(MappedFieldVisualizationMixin):
         fill_value: float | None = None,
         agg: str | None = None,
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a choropleth for this specific input field."""
 
-        return self.inputs.map(
+        selected = self.inputs.get(per=per, layer=layer)
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
+        values, hover = build_cell_input_map_payload(
+            selected,
+            ncpl=self.model.vor.ncpl,
+            value_column=self.field_name,
             per=per,
             layer=layer,
-            value_column=self.field_name,
             multiplier=multiplier,
             fill_value=self.field_spec.fill_value if fill_value is None else fill_value,
             agg=self.field_spec.agg if agg is None else agg,
-            colorscale=colorscale or self.field_spec.colorscale,
+        )
+        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        choro = self.model.cor(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=(
+                colorscale
+                or self.field_spec.colorscale
+                or get_default_package_colorscale(self.package_name)
+            ),
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class UzfFieldInputsExplorer(MappedFieldVisualizationMixin):
+class UzfFieldInputsExplorer(SpatialView):
     """Normalized explorer for one UZF perioddata field."""
 
     def __init__(self, model: "SimulationBase", field_name: str):
@@ -309,6 +272,7 @@ class UzfFieldInputsExplorer(MappedFieldVisualizationMixin):
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a choropleth for the selected UZF field."""
@@ -325,7 +289,8 @@ class UzfFieldInputsExplorer(MappedFieldVisualizationMixin):
             fill_value=fill_value,
             agg=agg,
         )
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -335,16 +300,27 @@ class UzfFieldInputsExplorer(MappedFieldVisualizationMixin):
             hover_ks=False,
             colorscale=colorscale
             or get_default_package_colorscale(f"uzf_{self.field_name}")
-            or "Viridis",
+            or "earth",
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class UzfInputsNamespace:
-    """Namespace for normalized UZF input explorers."""
+class UzfInputsNamespace(FieldMappable):
+    """Namespace for normalized UZF input explorers.
+
+    Each perioddata field (``finf``, ``pet``, ...) is a first-class node with
+    the full unified grammar; the namespace verbs take ``field=`` as sugar
+    (default field: ``finf``).
+    """
+
+    _default_field = "finf"
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
+
+    def _field_names(self) -> list[str]:
+        return get_package_input_field_names("uzf")
 
     @property
     def fields(self) -> pd.DataFrame:
@@ -412,20 +388,7 @@ class UzfInputsNamespace:
 
         return self.finf
 
-    def map(self, **kwargs):
-        return self.default.map(**kwargs)
-
-    def plot(self, **kwargs):
-        return self.default.plot(**kwargs)
-
-    def plotly_mosaic(self, **kwargs):
-        return self.default.plotly_mosaic(**kwargs)
-
-    def slider_html(self, *args, **kwargs):
-        return self.default.slider_html(*args, **kwargs)
-
-    def plotly_animation(self, **kwargs):
-        return self.default.plotly_animation(**kwargs)
+    # map/plot/xs/mosaic/animate come from FieldMappable (field= sugar).
 
     @property
     def finf(self) -> UzfFieldInputsExplorer:
@@ -470,7 +433,7 @@ class UzfInputsNamespace:
         return self._field("rootact")
 
 
-class StaticArrayFieldExplorer(MappedFieldVisualizationMixin):
+class StaticArrayFieldExplorer(SpatialView):
     """Explorer for static layer/cell arrays such as IC, NPF, and STO fields."""
 
     def __init__(
@@ -578,6 +541,7 @@ class StaticArrayFieldExplorer(MappedFieldVisualizationMixin):
         per: int = 0,
         layer: int = 0,
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a choropleth for one layer of this static array field."""
@@ -593,7 +557,8 @@ class StaticArrayFieldExplorer(MappedFieldVisualizationMixin):
             layer=layer,
             agg="first",
         )
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        choro = self.model.cor(
             per=0,
             layer=layer,
             type="custom",
@@ -604,6 +569,7 @@ class StaticArrayFieldExplorer(MappedFieldVisualizationMixin):
             colorscale=colorscale or self.colorscale,
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
 __all__ = [

@@ -1,7 +1,6 @@
 """Generic result explorer classes behind model.packages."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -29,14 +28,17 @@ from myflopy.modflow.mf6.package_tables import (
 from myflopy.modflow.mf6.package_budget import (
     build_budget_result_table,
 )
+from myflopy.modflow.utils.datatypes.hover import result_hover
 from myflopy.modflow.mf6.package_plotting import (
-    MappedFieldVisualizationMixin,
+    FieldMappable,
+    SpatialView,
+    _apply_backend,
     _symmetric_color_limit,
     build_cell_input_map_payload,
 )
 
 
-class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
+class CellBudgetResultsExplorer(SpatialView):
     """Normalized explorer for one cell-based package result term."""
 
     def __init__(
@@ -156,75 +158,8 @@ class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
 
         return self.long(**kwargs)
 
-    def plot_timeseries(
-        self,
-        *,
-        cells: int | Iterable[int] | None = None,
-        layer: int | Iterable[int] | None = None,
-        agg: str = "sum",
-        ax=None,
-        return_fig: bool = True,
-    ):
-        """Plot this cell result by stress period for selected cells."""
-
-        selected_cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
-        frame = self.get(layer=layer, cells=selected_cells)
-        result_spec = get_package_result_spec(self.package_name, self.value_name)
-        display_label = (
-            result_spec.label
-            if result_spec is not None and result_spec.label is not None
-            else f"{self.package_name.upper()} {self.value_name}"
-        )
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if frame.empty:
-            ax.set_title(f"{display_label} by stress period")
-            ax.set_xlabel("Stress Period")
-            ax.set_ylabel(self.value_name)
-            if return_fig:
-                return fig
-            return None
-
-        grouped_keys = [
-            column for column in ("layer", "cell") if column in frame.columns
-        ]
-        for key, group in frame.groupby(grouped_keys, dropna=False):
-            if not isinstance(key, tuple):
-                key = (key,)
-            key_map = dict(zip(grouped_keys, key, strict=False))
-            series = (
-                group.groupby("per", as_index=False)[self.value_name]
-                .agg(agg)
-                .sort_values("per")
-            )
-            layer_label = (
-                f"L{int(key_map['layer'])} "
-                if "layer" in key_map and pd.notna(key_map["layer"])
-                else ""
-            )
-            cell_label = (
-                f"C{int(key_map['cell'])}"
-                if "cell" in key_map and pd.notna(key_map["cell"])
-                else "All cells"
-            )
-            ax.plot(
-                series["per"].astype(int).to_numpy(),
-                series[self.value_name].astype(float).to_numpy(),
-                marker="o",
-                linewidth=2.0,
-                label=f"{layer_label}{cell_label}",
-            )
-
-        ax.set_title(f"{display_label} by stress period")
-        ax.set_xlabel("Stress Period")
-        ax.set_ylabel(self.value_name)
-        ax.legend()
-        fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
+    # NOTE: the series view of this result is the unified grammar's ``plot()``
+    # (SpatialView) -- ``results.q.plot(cells=[...])`` replaced plot_timeseries.
 
     def map(
         self,
@@ -235,6 +170,7 @@ class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a choropleth for this cell-based result field."""
@@ -257,7 +193,15 @@ class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
             kwargs.setdefault("zmax", absmax if absmax > 0 else None)
             kwargs.setdefault("zmid", 0.0)
         result_spec = get_package_result_spec(self.package_name, self.value_name)
-        return self.model.cor(
+        kwargs.setdefault(
+            "hover_spec",
+            result_hover(
+                self.value_name,
+                title=f"{self.package_name.upper()} {self.value_name}",
+                units={"q": "ft³/d"} if self.value_name == "q" else None,
+            ),
+        )
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -270,19 +214,26 @@ class CellBudgetResultsExplorer(MappedFieldVisualizationMixin):
                 or (result_spec.colorscale if result_spec is not None else None)
                 or ("RdBu" if self.value_name == "q" else None)
                 or get_default_package_colorscale(self.package_name)
-                or "Viridis"
+                or "earth"
             ),
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class StageResultsExplorer(MappedFieldVisualizationMixin):
+class StageResultsExplorer(SpatialView):
     """Normalized explorer for cell-mapped stage results such as LAK and SFR."""
+
+    #: value label + series column for the unified grammar
+    value_name = "stage"
 
     def __init__(self, model: "SimulationBase", package_name: str, builder):
         self.model = model
         self.package_name = str(package_name).lower()
         self._builder = builder
+
+    def _series_default_agg(self) -> str:
+        return "mean"  # stage repeats per connected cell; summing is meaningless
 
     def get(
         self,
@@ -315,6 +266,7 @@ class StageResultsExplorer(MappedFieldVisualizationMixin):
         fill_value: float = 0.0,
         agg: str = "first",
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a stage choropleth mapped to cells."""
@@ -331,7 +283,15 @@ class StageResultsExplorer(MappedFieldVisualizationMixin):
             fill_value=fill_value,
             agg=agg,
         )
-        return self.model.cor(
+        kwargs.setdefault(
+            "hover_spec",
+            result_hover(
+                "stage",
+                title=f"{self.package_name.upper()} stage",
+                units={"stage": "ft"},
+            ),
+        )
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -339,13 +299,24 @@ class StageResultsExplorer(MappedFieldVisualizationMixin):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "Blues",
+            colorscale=colorscale or "earth",
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class CellPackageResultsNamespace:
-    """Namespace for cell-based package results represented by one budget term."""
+class CellPackageResultsNamespace(FieldMappable):
+    """Namespace for cell-based package results represented by one budget term.
+
+    Simple BC packages expose a single field ``q``; ``results.map()`` maps it and
+    ``results.map(field="q")`` is explicit.
+    """
+
+    _default_field = "q"
+
+    def _field_names(self):
+        names = self.fields["field"].tolist()
+        return names if "q" in names else ["q", *names]  # .q always resolves
 
     def __init__(self, model: "SimulationBase", package_name: str):
         self.model = model
@@ -436,8 +407,19 @@ class CellPackageResultsNamespace:
         )
 
 
-class UzfResultsNamespace:
-    """Namespace for UZF result explorers."""
+class UzfResultsNamespace(FieldMappable):
+    """Namespace for UZF result explorers.
+
+    Fields: ``gwrch`` (groundwater recharge, the default) and ``sat``
+    (unsaturated-zone saturation). ``results.map(field="sat")`` or
+    ``results.sat.map()``.
+    """
+
+    _default_field = "gwrch"
+
+    def _field_names(self):
+        names = self.fields["field"].tolist()
+        return names or ["gwrch", "sat"]
 
     def __init__(self, model: "SimulationBase"):
         self.model = model

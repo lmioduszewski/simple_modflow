@@ -24,6 +24,7 @@ from myflopy.modflow.mf6.heads_plotting import (
     plot_choropleth as _plot_choropleth,
     plot_heads as _plot_heads,
 )
+from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -73,8 +74,18 @@ def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] 
 
 
 
-class HeadsPlus(bf.HeadFile):
-    """Extended heads-file reader with spatial/model-aware convenience methods."""
+class HeadsPlus(SpatialView, bf.HeadFile):
+    """Extended heads-file reader with spatial/model-aware convenience methods.
+
+    Also a full :class:`SpatialView` leaf in the unified grammar --
+    ``hds.get()/.summary()`` (tables), ``hds.map()/.plot()/.xs()`` (panels),
+    ``hds.mosaic()/.animate()`` (composers). ``SpatialView`` is first in the
+    MRO deliberately so the grammar's ``plot`` shadows flopy's legacy
+    ``LayerFile.plot``.
+    """
+
+    #: value label + tidy-frame column used by the unified grammar
+    value_name = "head"
 
     def __init__(
             self,
@@ -136,6 +147,93 @@ class HeadsPlus(bf.HeadFile):
         if self._all_heads is None:
             self._all_heads = self.get_all_heads()
         return self._all_heads
+
+    # -- unified grammar: data verbs ---------------------------------------
+    def get(
+        self,
+        *,
+        per: int | list[int] | None = None,
+        layer: int | list[int] | None = None,
+        cells: int | list[int] | None = None,
+    ) -> pd.DataFrame:
+        """Return period-end heads as a tidy ``per``/``layer``/``cell``/``head`` frame.
+
+        Each stress period is reduced to its last saved timestep; flopy dry/no-data
+        sentinels (``|head| >= 1e29``) become ``NaN``. All selectors are zero-based.
+        """
+
+        frame = self.all_heads.reset_index()
+        frame["kstp"] = [int(key[0]) for key in frame["kstpkper"]]
+        frame["per"] = [int(key[1]) for key in frame["kstpkper"]]
+        period_end = frame.groupby("per")["kstp"].transform("max")
+        frame = frame[frame["kstp"] == period_end].copy()
+        frame = frame.rename(columns={"elev": "head"})
+        frame["head"] = pd.to_numeric(frame["head"], errors="coerce")
+        frame.loc[frame["head"].abs() >= 1e29, "head"] = np.nan
+        for column, selector in (("per", per), ("layer", layer), ("cells", cells)):
+            if selector is None:
+                continue
+            values = (
+                [int(selector)]
+                if isinstance(selector, (int, np.integer))
+                else [int(value) for value in selector]
+            )
+            frame = frame[frame["cell" if column == "cells" else column].isin(values)]
+        return frame[["per", "layer", "cell", "head"]].reset_index(drop=True)
+
+    def summary(self) -> pd.DataFrame:
+        """Return a one-row summary of the saved heads."""
+
+        frame = self.get()
+        heads = frame["head"].to_numpy(dtype=float)
+        finite = heads[np.isfinite(heads)]
+        return pd.DataFrame(
+            [
+                {
+                    "label": "hds",
+                    "records": int(len(frame)),
+                    "periods": int(frame["per"].nunique()),
+                    "layers": int(frame["layer"].nunique()),
+                    "cells": int(frame["cell"].nunique()),
+                    "min": float(finite.min()) if finite.size else float("nan"),
+                    "max": float(finite.max()) if finite.size else float("nan"),
+                    "mean": float(finite.mean()) if finite.size else float("nan"),
+                }
+            ]
+        )
+
+    # -- unified grammar: dimension + series hooks --------------------------
+    def _spatial_layers(self) -> list[int]:
+        return list(range(int(self.nlay)))
+
+    def _spatial_periods(self) -> list[int]:
+        return sorted({int(key[1]) for key in self.kstpkper})
+
+    def _series_default_agg(self) -> str:
+        return "mean"  # heads average over cells; summing elevations is meaningless
+
+    def _sections(
+        self,
+        model=None,
+        *,
+        line=None,
+        cells: int | list[int] | None = None,
+        per: int | None = None,
+        layer: int | list[int] = 0,
+        **kwargs,
+    ):
+        """Return this model's :class:`XSection` for the grammar's ``xs`` verbs."""
+
+        del model  # single-model surface; SpatialView validates the selector
+        if self.model is None:
+            raise ValueError("HeadsPlus.xs() requires a parent model.")
+        from myflopy.modflow.utils.datatypes.xsections import XSection
+
+        return {
+            self.model.name: XSection(
+                model=self.model, line=line, cells=cells, per=per, layer=layer, **kwargs
+            )
+        }
 
     def long(self, *, values: str = "elev") -> pd.Series:
         """Return heads as a long series indexed by ``kstpkper/layer/cell``."""
@@ -345,13 +443,29 @@ class HeadsPlus(bf.HeadFile):
         contour_levels: int | float | list[float] = 10,
         contour_resolution: int = 150,
         contour_method: str = "linear",
+        backend: str = "plotly",
+        hover=None,
+        hover_layers: str = "active+strip",
+        hover_surfaces: bool = False,
         **kwargs,
     ):
-        """Return a choropleth map of heads, optionally with contour overlays."""
+        """Return a choropleth map of heads, optionally with contour overlays.
+
+        ``hover`` accepts a :class:`~myflopy.modflow.utils.datatypes.hover.HoverSpec`
+        for full control of the sectioned, styled hover; otherwise a default heads
+        spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
+        ``"all"``) sets how the vertical head profile shows, and
+        ``hover_surfaces=True`` adds the model-top/layer-bottom column (merged with
+        the layer table on ``"all"``).
+        """
 
         if self.model is None:
             raise ValueError("HeadsPlus.map() requires a parent model.")
-        return self.model.cor(
+        if hover is None:
+            from myflopy.modflow.utils.datatypes.hover import head_hover
+
+            hover = head_hover(layers=hover_layers, surfaces=hover_surfaces)
+        choro = self.model.cor(
             per=per,
             kstpkper=kstpkper,
             layer=layer,
@@ -360,8 +474,10 @@ class HeadsPlus(bf.HeadFile):
             contour_levels=contour_levels,
             contour_resolution=contour_resolution,
             contour_method=contour_method,
+            hover_spec=hover,
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
     @property
     def obs(self):

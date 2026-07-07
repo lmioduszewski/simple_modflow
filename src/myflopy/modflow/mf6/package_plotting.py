@@ -1,7 +1,7 @@
 """Plot payload builders and plotting mixins for package explorers."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
+from myflopy.viz import Fig, mpl_axes
 
 from collections.abc import Iterable
 from pathlib import Path
@@ -12,13 +12,27 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from flopy.plot import PlotMapView
-from plotly.subplots import make_subplots
 
 if TYPE_CHECKING:
     pass
 from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
 )
+
+
+def _apply_backend(choro, backend: str = "plotly"):
+    """Return a ``Choro`` as an interactive Plotly figure or a static mpl one.
+
+    Lets a single-model atomic ``map(..., backend=)`` honor the same
+    ``backend="plotly"|"mpl"`` switch the :class:`SpatialView` grammar uses,
+    without the map having to inherit the engine.
+    """
+
+    if str(backend).lower() in ("mpl", "matplotlib", "static"):
+        return choro.plot_mpl()
+    if str(backend).lower() in ("plotly", "interactive"):
+        return choro
+    raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
 
 
 def _symmetric_color_limit(values: Iterable[float]) -> float:
@@ -70,6 +84,30 @@ def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.n
     raise ValueError(
         f"{label} must resolve to one value per layer/cell; got shape={arr.shape}."
     )
+
+
+#: per-feature result columns passed through to LAK/SFR q-map hovers when a
+#: caller has joined them onto the exchange frame (see ``join_*_stage``).
+_FEATURE_HOVER_COLUMNS = ("stage", "depth")
+
+
+def _append_feature_hover_columns(hover, selected, full_index) -> None:
+    """Add joined per-feature columns (stage, depth) to a q-map hover payload.
+
+    Stage repeats on every cell a feature touches, so a per-cell mean is the
+    faithful aggregate (matches ``StageResultsExplorer``'s series default).
+    """
+
+    for column in _FEATURE_HOVER_COLUMNS:
+        if column not in selected.columns or column in hover:
+            continue
+        numeric = pd.to_numeric(selected[column], errors="coerce")
+        hover[column] = (
+            numeric.groupby(selected["cell"], dropna=False)
+            .mean()
+            .reindex(full_index, fill_value=np.nan)
+            .tolist()
+        )
 
 
 def build_sfr_q_map_payload(
@@ -141,6 +179,7 @@ def build_sfr_q_map_payload(
             .reindex(full_index, fill_value="")
             .tolist()
         )
+    _append_feature_hover_columns(hover, selected, full_index)
     return values.tolist(), hover
 
 
@@ -221,6 +260,7 @@ def build_lak_q_map_payload(
             .reindex(full_index, fill_value="")
             .tolist()
         )
+    _append_feature_hover_columns(hover, selected, full_index)
     return values.tolist(), hover
 
 
@@ -522,240 +562,1252 @@ def build_group_input_compare_map_payload(
     return diff_values.tolist(), hover, absmax
 
 
-class MappedFieldVisualizationMixin:
-    """Shared spatial views for cell-mapped package input and result fields."""
+def _xy_panels_bounds(panels):
+    """Global finite x/y bounds across ``[(label, [(name, x, y)])]`` panels."""
 
-    @property
-    def _mapped_value_name(self) -> str:
-        for attribute in ("field_name", "value_name"):
-            value = getattr(self, attribute, None)
-            if value is not None:
-                return str(value)
-        return "stage"
+    xs_parts, ys_parts = [], []
+    for _, lines in panels:
+        for _, x_values, y_values in lines:
+            x_array = np.asarray(x_values, dtype=float)
+            y_array = np.asarray(y_values, dtype=float)
+            xs_parts.append(x_array[np.isfinite(x_array)])
+            ys_parts.append(y_array[np.isfinite(y_array)])
+    xs_all = np.concatenate(xs_parts) if xs_parts else np.asarray([])
+    ys_all = np.concatenate(ys_parts) if ys_parts else np.asarray([])
+    x_bounds = (float(xs_all.min()), float(xs_all.max())) if xs_all.size else None
+    y_bounds = (float(ys_all.min()), float(ys_all.max())) if ys_all.size else None
+    return x_bounds, y_bounds
 
-    def _mapped_periods(self) -> list[int]:
+
+def _xy_mosaic_plotly(panels, *, ncols, title, xaxis_title, yaxis_title, markers):
+    """Shared-scale grid of xy panels (series or section profiles)."""
+
+    from myflopy.viz import subplots
+
+    if not panels:
+        raise ValueError("mosaic requires at least one panel.")
+    labels = [label for label, _ in panels]
+    ncols = min(int(ncols), len(panels)) or 1
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig = subplots(
+        nrows,
+        ncols,
+        shared_xaxes="all",
+        shared_yaxes="all",
+        subplot_titles=labels,
+    )
+    mode = "lines+markers" if markers else "lines"
+    seen = set()
+    for index, (_, lines) in enumerate(panels):
+        row, col = index // ncols + 1, index % ncols + 1
+        for name, x_values, y_values in lines:
+            fig.add_scatter(
+                x=x_values,
+                y=y_values,
+                mode=mode,
+                name=str(name),
+                legendgroup=str(name),
+                showlegend=str(name) not in seen,
+                row=row,
+                col=col,
+            )
+            seen.add(str(name))
+    fig.update_xaxes(title_text=xaxis_title, row=nrows)
+    fig.update_yaxes(title_text=yaxis_title, col=1)
+    fig.update_layout(title=title, uirevision="lock")
+    return fig
+
+
+def _xy_mosaic_mpl(panels, *, ncols, title, xlabel, ylabel, markers):
+    """Matplotlib grid of xy panels with shared axes and one legend."""
+
+    if not panels:
+        raise ValueError("mosaic requires at least one panel.")
+    labels = [label for label, _ in panels]
+    ncols = min(int(ncols), len(panels)) or 1
+    nrows = int(np.ceil(len(panels) / ncols))
+    fig, axes = mpl_axes(
+        nrows,
+        ncols,
+        figsize=(5.0 * ncols, 3.8 * nrows),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+    marker = "o" if markers else None
+    handles: dict[str, object] = {}
+    for axis, label, (_, lines) in zip(axes.flat, labels, panels, strict=False):
+        for name, x_values, y_values in lines:
+            (handle,) = axis.plot(
+                x_values, y_values, marker=marker, linewidth=1.8, label=str(name)
+            )
+            handles.setdefault(str(name), handle)
+        axis.set_title(str(label))
+    for axis in axes.flat[len(panels):]:
+        axis.set_visible(False)
+    for axis in axes[-1, :]:
+        axis.set_xlabel(xlabel)
+    for axis in axes[:, 0]:
+        axis.set_ylabel(ylabel)
+    if handles:
+        fig.legend(handles.values(), handles.keys(), loc="upper right")
+    fig.suptitle(title)
+    return fig
+
+
+def _xy_animation_plotly(frames, *, title, xaxis_title, yaxis_title, markers):
+    """Plotly play/slider animation over ``[(label, [(name, x, y)])]`` frames."""
+
+    if not frames:
+        raise ValueError("animate requires at least one frame.")
+    x_bounds, y_bounds = _xy_panels_bounds(frames)
+    mode = "lines+markers" if markers else "lines"
+
+    def _traces(lines):
+        return [
+            go.Scatter(x=x_values, y=y_values, mode=mode, name=str(name))
+            for name, x_values, y_values in lines
+        ]
+
+    names = [str(label) for label, _ in frames]
+    fig = go.Figure(data=_traces(frames[0][1]))
+    fig.frames = [
+        go.Frame(data=_traces(lines), name=str(label)) for label, lines in frames
+    ]
+    play = {"frame": {"duration": 600, "redraw": True}, "fromcurrent": True}
+    pause = {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}
+    fig.update_layout(
+        title=title,
+        xaxis_title=xaxis_title,
+        yaxis_title=yaxis_title,
+        uirevision="lock",
+        updatemenus=[
+            {
+                "type": "buttons",
+                "showactive": False,
+                "buttons": [
+                    {"label": "Play", "method": "animate", "args": [None, play]},
+                    {"label": "Pause", "method": "animate", "args": [[None], pause]},
+                ],
+            }
+        ],
+        sliders=[
+            {
+                "active": 0,
+                "steps": [
+                    {
+                        "method": "animate",
+                        "args": [[name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                        "label": name,
+                    }
+                    for name in names
+                ],
+            }
+        ],
+    )
+    # freeze axes so the animation does not rescale frame to frame
+    if x_bounds is not None:
+        span = (x_bounds[1] - x_bounds[0]) or 1.0
+        fig.update_xaxes(range=[x_bounds[0] - 0.05 * span, x_bounds[1] + 0.05 * span])
+    if y_bounds is not None:
+        span = (y_bounds[1] - y_bounds[0]) or 1.0
+        fig.update_yaxes(range=[y_bounds[0] - 0.05 * span, y_bounds[1] + 0.05 * span])
+    return fig
+
+
+def _xy_animation_mpl(frames, *, title, xlabel, ylabel, markers):
+    """Matplotlib ``FuncAnimation`` over ``[(label, [(name, x, y)])]`` frames."""
+
+    from matplotlib.animation import FuncAnimation
+
+    if not frames:
+        raise ValueError("animate requires at least one frame.")
+    labels = [str(label) for label, _ in frames]
+    x_bounds, y_bounds = _xy_panels_bounds(frames)
+    marker = "o" if markers else None
+    fig, axis = mpl_axes(1, 1, figsize=(8.0, 5.0))
+
+    def _draw(index):
+        axis.clear()
+        for name, x_values, y_values in frames[index][1]:
+            axis.plot(x_values, y_values, marker=marker, linewidth=1.8, label=str(name))
+        axis.set_title(f"{title} - {labels[index]}")
+        axis.set_xlabel(xlabel)
+        axis.set_ylabel(ylabel)
+        if frames[index][1]:
+            axis.legend(loc="best")
+        if x_bounds is not None:
+            span = (x_bounds[1] - x_bounds[0]) or 1.0
+            axis.set_xlim(x_bounds[0] - 0.05 * span, x_bounds[1] + 0.05 * span)
+        if y_bounds is not None:
+            span = (y_bounds[1] - y_bounds[0]) or 1.0
+            axis.set_ylim(y_bounds[0] - 0.05 * span, y_bounds[1] + 0.05 * span)
+
+    _draw(0)
+    return FuncAnimation(fig, _draw, frames=len(frames), interval=600, blit=False)
+
+
+class SpatialView:
+    """Unified view grammar for cell-mapped package fields.
+
+    Panel verbs :meth:`map` (plan view) and :meth:`plot` (series view) plus
+    composers :meth:`mosaic` and :meth:`animate`, exposed identically on
+    single-model, model-group, and diff surfaces (inputs and results). A host
+    supplies the atomic styled panel via :meth:`_spatial_map` (and optionally
+    the series hooks) plus the dimensions it has; this mixin composes single
+    panels, faceted mosaics (by ``layer`` or ``model``), and animations (over
+    ``period`` or ``model``) for both backends.
+
+    ``backend="plotly"`` (default) returns an interactive figure/``Choro``;
+    ``backend="mpl"`` returns a matplotlib ``Figure`` (or, from :meth:`animate`,
+    a ``FuncAnimation``). The mapped *content* -- raw value vs difference -- is
+    decided by the node: a ``diff.*`` node maps deltas, an inputs/results node
+    maps raw values.
+    """
+
+    _PLOTLY_BACKENDS = ("plotly", "interactive")
+    _MPL_BACKENDS = ("mpl", "matplotlib", "static")
+
+    # -- hooks the host provides ------------------------------------------
+    def _spatial_map(self, *, per, layer, model=None, **kwargs):
+        """Return one styled Plotly ``Choro`` for a (per, layer, model).
+
+        Default: delegate to the host's atomic ``map(per=, layer=, ...)`` builder
+        -- the single-model surfaces, whose ``map`` already returns a ``Choro``,
+        so they gain :meth:`mosaic`/:meth:`animate` for free. Group/diff surfaces
+        -- which need a ``model`` selector plus their own delta/colorscale policy
+        -- override this hook and let :meth:`map` come from this mixin.
+        """
+
+        return self.map(per=int(per), layer=int(layer), **kwargs)
+
+    def _spatial_reference_model(self):
+        """Model whose grid/layers frame the view (single-model default)."""
+
+        return self.model
+
+    def _spatial_layers(self) -> list[int]:
+        # Prefer the layers actually present in this field's data (many BC
+        # packages live in a single layer); fall back to every grid layer.
         frame = self.get()
-        if "per" not in frame.columns or frame.empty:
+        columns = getattr(frame, "columns", [])
+        if "layer" in columns and not frame.empty:
+            present = sorted({int(value) for value in frame["layer"].dropna().tolist()})
+            if present:
+                return present
+        return list(range(int(self._spatial_reference_model().gwf.modelgrid.nlay)))
+
+    def _spatial_periods(self) -> list[int]:
+        frame = self.get()
+        columns = getattr(frame, "columns", [])
+        if "per" not in columns or frame.empty:
             return [0]
         return sorted({int(value) for value in frame["per"].dropna().tolist()})
 
-    def _mapped_layers(self, layers=None) -> list[int]:
-        if layers is None:
-            return list(range(int(self.model.gwf.modelgrid.nlay)))
-        if isinstance(layers, (int, np.integer)):
-            return [int(layers)]
-        resolved = [int(layer) for layer in layers]
+    def _spatial_models(self) -> list[str] | None:
+        return None  # single-model surfaces have no model axis
+
+    def _spatial_default_facet(self) -> str:
+        return "model" if self._spatial_models() else "layer"
+
+    def _spatial_value_label(self) -> str:
+        for attribute in ("field_name", "value_name", "package_name"):
+            value = getattr(self, attribute, None)
+            if value is not None:
+                return str(value)
+        return "value"
+
+    def _spatial_is_diff(self) -> bool:
+        return False
+
+    # -- series hooks (the plot verb) ---------------------------------------
+    #: entity id columns that get one line each in ``plot`` when present
+    _SERIES_ENTITY_COLUMNS = ("lake", "reach", "well")
+
+    def _series_table(self) -> pd.DataFrame:
+        """Long table backing :meth:`plot`; defaults to the node's ``get()``."""
+
+        get = getattr(self, "get", None)
+        if get is None:
+            raise NotImplementedError(
+                "plot() requires a tabular get(); this node does not provide one."
+            )
+        return get()
+
+    def _series_value_column(self, frame: pd.DataFrame) -> str:
+        """Column of :meth:`_series_table` that :meth:`plot` draws."""
+
+        value = getattr(self, "value_name", None)
+        if value is not None and value in frame.columns:
+            return str(value)
+        label = self._spatial_value_label()
+        if label in frame.columns:
+            return label
+        raise KeyError(
+            "Could not infer the value column for plot(); available columns: "
+            f"{list(frame.columns)}."
+        )
+
+    def _series_default_agg(self) -> str:
+        """How :meth:`plot` collapses cells within a line (sum for fluxes)."""
+
+        return "sum"
+
+    # -- dimension resolution ---------------------------------------------
+    def _resolve_layers(self, layer) -> list[int]:
+        if layer is None:
+            return self._spatial_layers()
+        if isinstance(layer, (int, np.integer)):
+            return [int(layer)]
+        resolved = [int(value) for value in layer]
         if not resolved:
-            raise ValueError("layers must contain at least one layer.")
+            raise ValueError("layer must select at least one layer.")
         return resolved
 
-    def _mapped_values(self, *, per: int, layer: int, **map_kwargs) -> np.ndarray:
-        return np.asarray(self.map(per=per, layer=layer, **map_kwargs).zs, dtype=float)
+    def _single_layer(self, layer) -> int:
+        if layer is None:
+            return 0
+        if isinstance(layer, (int, np.integer)):
+            return int(layer)
+        return self._resolve_layers(layer)[0]
+
+    def _resolve_periods(self, per) -> list[int]:
+        if per is None:
+            return self._spatial_periods()
+        if isinstance(per, (int, np.integer)):
+            return [int(per)]
+        resolved = [int(value) for value in per]
+        if not resolved:
+            raise ValueError("per must select at least one period.")
+        return resolved
+
+    def _resolve_models(self, model) -> list:
+        models = self._spatial_models()
+        if not models:
+            if model not in (None, "*"):
+                raise ValueError(
+                    "This surface has a single model; 'model' is not applicable."
+                )
+            return [None]
+        if model in (None, "*"):
+            return list(models)
+        names = [str(model)] if isinstance(model, str) else [str(m) for m in model]
+        missing = [name for name in names if name not in models]
+        if missing:
+            raise KeyError(f"Models not in this group: {missing!r}")
+        return names
+
+    @classmethod
+    def _normalize_backend(cls, backend: str) -> str:
+        value = str(backend).lower()
+        if value in cls._PLOTLY_BACKENDS:
+            return "plotly"
+        if value in cls._MPL_BACKENDS:
+            return "mpl"
+        raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+
+    def map(
+        self,
+        model=None,
+        *,
+        per: int = 0,
+        layer: int = 0,
+        backend: str = "plotly",
+        **map_kwargs,
+    ):
+        """One choropleth panel.
+
+        ``backend="plotly"`` (default) returns an interactive ``Choro``;
+        ``backend="mpl"`` returns a static matplotlib ``Figure``. On a
+        group/diff surface ``model`` (first positional) selects which model to
+        draw (defaults to the reference).
+        """
+
+        choro = self._spatial_map(per=int(per), layer=int(layer), model=model, **map_kwargs)
+        if self._normalize_backend(backend) == "plotly":
+            return choro
+        return choro.plot_mpl()
+
+    @staticmethod
+    def _series_line_label(keys, key) -> str:
+        """Human label for one plotted line (model / entity / layer / cell)."""
+
+        parts = []
+        for column, value in zip(keys, key, strict=False):
+            if pd.isna(value):
+                continue
+            if column == "model":
+                parts.append(str(value))
+            elif column == "layer":
+                parts.append(f"L{int(value)}")
+            elif column == "cell":
+                parts.append(f"C{int(value)}")
+            else:  # entity columns: lake, reach, well
+                parts.append(f"{column.capitalize()} {int(value)}")
+        return " / ".join(parts) if parts else "All"
+
+    def _series_selection(self, *, model=None, per=None, layer=None, cells=None):
+        """Filter the series table; return ``(frame, value_column, line_keys)``."""
+
+        selected_models = self._resolve_models(model)
+        frame = self._series_table()
+        if frame is None or "per" not in getattr(frame, "columns", []):
+            raise ValueError(
+                "plot() requires period-indexed rows; this node has no 'per' data."
+            )
+        frame = frame.copy()
+
+        # column-based filters (a filter is skipped when its column is absent)
+        if model is not None and "model" in frame.columns:
+            frame = frame[frame["model"].isin([str(name) for name in selected_models])]
+        if per is not None:
+            per_values = (
+                [int(per)] if isinstance(per, (int, np.integer)) else [int(v) for v in per]
+            )
+            frame = frame[frame["per"].isin(per_values)]
+        if layer is not None and "layer" in frame.columns:
+            layer_values = (
+                [int(layer)]
+                if isinstance(layer, (int, np.integer))
+                else [int(v) for v in layer]
+            )
+            frame = frame[frame["layer"].isin(layer_values)]
+        if cells is not None and "cell" in frame.columns:
+            cell_values = (
+                [int(cells)]
+                if isinstance(cells, (int, np.integer))
+                else [int(v) for v in cells]
+            )
+            frame = frame[frame["cell"].isin(cell_values)]
+
+        value_column = self._series_value_column(frame)
+        frame[value_column] = pd.to_numeric(frame[value_column], errors="coerce")
+
+        # line keys: model axis, entity ids, multi-layer split, explicit cells.
+        # A single-model surface may still carry a ``model`` column in its
+        # table; only treat it as a line axis when the surface has one.
+        keys = ["model"] if self._spatial_models() and "model" in frame.columns else []
+        keys += [c for c in self._SERIES_ENTITY_COLUMNS if c in frame.columns]
+        if "layer" in frame.columns and frame["layer"].nunique() > 1:
+            keys.append("layer")
+        if cells is not None and "cell" in frame.columns:
+            keys.append("cell")
+        return frame, value_column, keys
+
+    def _series_lines(self, frame, keys, value_column, aggregation):
+        """Aggregate a filtered series frame into ``[(label, x, y)]`` lines."""
+
+        grouped = frame.groupby([*keys, "per"], dropna=False, as_index=False)[
+            value_column
+        ].agg(aggregation)
+        lines = []
+        if keys:
+            for key, sub in grouped.groupby(keys, dropna=False):
+                key = key if isinstance(key, tuple) else (key,)
+                sub = sub.sort_values("per")
+                lines.append(
+                    (
+                        self._series_line_label(keys, key),
+                        sub["per"].astype(int).to_numpy(),
+                        sub[value_column].astype(float).to_numpy(),
+                    )
+                )
+        elif not grouped.empty:
+            sub = grouped.sort_values("per")
+            lines.append(
+                (
+                    self._spatial_value_label(),
+                    sub["per"].astype(int).to_numpy(),
+                    sub[value_column].astype(float).to_numpy(),
+                )
+            )
+        return lines
 
     def plot(
         self,
+        model=None,
         *,
-        per: int = 0,
-        layers=None,
-        ncols: int = 3,
-        figsize: tuple[float, float] | None = None,
-        cmap: str = "viridis",
-        vmin: float | None = None,
-        vmax: float | None = None,
-        show_grid: bool = True,
-        show_colorbar: bool = True,
+        per=None,
+        layer=None,
+        cells=None,
+        agg: str | None = None,
+        backend: str = "plotly",
         title: str | None = None,
-        **map_kwargs,
     ):
-        """Plot one layer or a selected-layer Matplotlib mosaic."""
+        """Series panel: this field by stress period.
 
-        resolved_layers = self._mapped_layers(layers)
-        ncols = min(int(ncols), len(resolved_layers))
-        nrows = int(np.ceil(len(resolved_layers) / ncols))
-        fig, axes = mpl_axes(
-            nrows,
-            ncols,
-            figsize=figsize or (5.0 * ncols, 4.0 * nrows),
-            squeeze=False,
+        One line per model (groups/diffs), per entity (lake/reach) when the
+        package has one, and per cell when ``cells`` selects specific cells;
+        otherwise cells are aggregated (``agg``, default sum for fluxes).
+        ``backend="plotly"`` (default) returns an interactive ``viz.Fig``;
+        ``backend="mpl"`` a matplotlib ``Figure``. Stress periods are zero-based.
+        """
+
+        backend_kind = self._normalize_backend(backend)
+        frame, value_column, keys = self._series_selection(
+            model=model, per=per, layer=layer, cells=cells
         )
-        arrays = [
-            self._mapped_values(per=per, layer=layer, **map_kwargs)
-            for layer in resolved_layers
+        aggregation = self._series_default_agg() if agg is None else str(agg)
+        lines = self._series_lines(frame, keys, value_column, aggregation)
+        heading = title or (
+            f"{self._spatial_value_label()} by stress period"
+            + (" (model - reference)" if self._spatial_is_diff() else "")
+        )
+        if backend_kind == "plotly":
+            fig = Fig()
+            for label, xs_values, ys_values in lines:
+                fig.add_scatter(
+                    x=xs_values, y=ys_values, mode="lines+markers", name=label
+                )
+            fig.update_layout(
+                title=heading, xaxis_title="Stress Period", yaxis_title=value_column
+            )
+            return fig
+        fig, ax = mpl_axes(figsize=(8, 4))
+        for label, xs_values, ys_values in lines:
+            ax.plot(xs_values, ys_values, marker="o", linewidth=2.0, label=label)
+        ax.set_title(heading)
+        ax.set_xlabel("Stress Period")
+        ax.set_ylabel(value_column)
+        if lines:
+            ax.legend()
+        fig.tight_layout()
+        return fig
+
+    # -- cross-section hooks (the xs verb + kind="xs" composers) ------------
+    def _sections(self, model=None, **kwargs):
+        """Return ``{name: XSection}`` for this node (heads leaves override)."""
+
+        raise NotImplementedError(
+            "This node has no cross-section view; xs/kind='xs' is available on "
+            "heads leaves (model.hds, group.hds, diff heads)."
+        )
+
+    def xs(
+        self,
+        model=None,
+        *,
+        line=None,
+        cells=None,
+        per: int | None = None,
+        layer=0,
+        backend: str = "plotly",
+        title: str | None = None,
+        **kwargs,
+    ):
+        """Cross-section panel: this field vs distance along a section line.
+
+        ``line`` is a shapely ``LineString`` / ``(x, y)`` pairs / flopy dict;
+        alternatively ``cells`` traces the section through cell centroids. On a
+        group surface ``model=None`` overlays every member; a diff overlays the
+        reference with each compared model. ``backend="plotly"`` returns a
+        ``viz.Fig``, ``backend="mpl"`` a matplotlib figure.
+        """
+
+        from myflopy.modflow.utils.datatypes.xsections import render_xsections
+
+        sections = self._sections(
+            model=model, line=line, cells=cells, per=per, layer=layer, **kwargs
+        )
+        return render_xsections(sections, backend=backend, title=title)
+
+    @staticmethod
+    def _section_lines(sections) -> list:
+        """Flatten sections to ``[(series_label, x, y)]`` at their current period."""
+
+        from myflopy.modflow.utils.datatypes.xsections import combined_section_frame
+
+        data = combined_section_frame(sections)
+        return [
+            (
+                str(name),
+                sub["distance"].to_numpy(dtype=float),
+                sub["elevation"].to_numpy(dtype=float),
+            )
+            for name, sub in data.groupby("series", sort=False)
         ]
-        finite_parts = [
-            values[np.isfinite(values)]
-            for values in arrays
-            if np.isfinite(values).any()
+
+    @staticmethod
+    def _period_end_kstpkper(model, period: int):
+        """Return the period-end ``(kstp, kper)`` saved for ``period`` (or None)."""
+
+        candidates = [
+            tuple(int(v) for v in key)
+            for key in model.kstpkper
+            if int(key[1]) == int(period)
         ]
-        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
-        if finite.size:
-            vmin = float(np.nanmin(finite)) if vmin is None else vmin
-            vmax = float(np.nanmax(finite)) if vmax is None else vmax
-        image = None
-        for ax, layer, values in zip(axes.flat, resolved_layers, arrays, strict=False):
-            view = PlotMapView(
-                model=self.model.gwf,
-                modelgrid=self.model.gwf.modelgrid,
+        return max(candidates) if candidates else None
+
+    def mosaic(
+        self,
+        *,
+        kind: str = "map",
+        by: str | None = None,
+        per=None,
+        layer=None,
+        model=None,
+        cells=None,
+        agg: str | None = None,
+        backend: str = "plotly",
+        ncols: int = 3,
+        title: str | None = None,
+        sync_views: bool = True,
+        **kwargs,
+    ):
+        """Faceted grid of panels sharing one scale.
+
+        ``kind`` picks the panel type: ``"map"`` (choropleths, default),
+        ``"plot"`` (series panels), or ``"xs"`` (cross sections, heads leaves).
+        ``by`` picks the facet axis -- maps: ``"layer"``/``"model"``; series:
+        ``"model"``/``"layer"``/an entity (``"lake"``, ``"reach"``); sections:
+        ``"model"``/``"period"``. Defaults to the surface's natural axis.
+        For ``kind="map"``, ``sync_views`` (default ``True``) frames every panel
+        to one shared extent so the maps line up; set it ``False`` to fit each
+        map to its own data. It is ignored for non-map kinds.
+        """
+
+        kind_key = str(kind).lower()
+        if kind_key == "map":
+            axis = (by or self._spatial_default_facet()).lower()
+            fixed_per = self._single_period(per)
+            panels = self._facet_panels(
+                axis, per=fixed_per, layer=layer, model=model, **kwargs
+            )
+            heading = title or f"{self._spatial_value_label()} by {axis}"
+            if self._normalize_backend(backend) == "plotly":
+                return self._plotly_mosaic(
+                    panels, ncols=int(ncols), title=heading, sync_views=sync_views
+                )
+            return self._mpl_mosaic(panels, ncols=int(ncols), title=heading)
+        if kind_key == "plot":
+            return self._plot_mosaic(
+                by=by,
+                per=per,
                 layer=layer,
-                ax=ax,
-            )
-            image = view.plot_array(values, cmap=cmap, vmin=vmin, vmax=vmax)
-            if show_grid:
-                view.plot_grid(color="#3c4652", linewidth=0.2)
-            ax.set_title(f"Layer {layer + 1}")
-            ax.set_aspect("equal")
-        for ax in axes.flat[len(resolved_layers) :]:
-            ax.set_visible(False)
-        if show_colorbar and image is not None:
-            fig.colorbar(
-                image,
-                ax=list(axes.flat[: len(resolved_layers)]),
-                shrink=0.75,
-                label=self._mapped_value_name,
-            )
-        fig.suptitle(title or f"{self._mapped_value_name} | stress period {per}")
-        return fig
-
-    def plotly_mosaic(
-        self,
-        *,
-        per: int = 0,
-        layers=None,
-        ncols: int = 3,
-        title: str | None = None,
-        **map_kwargs,
-    ):
-        """Return a selected-layer Plotly choropleth mosaic."""
-
-        resolved_layers = self._mapped_layers(layers)
-        ncols = min(int(ncols), len(resolved_layers))
-        nrows = int(np.ceil(len(resolved_layers) / ncols))
-        fig = make_subplots(
-            rows=nrows,
-            cols=ncols,
-            specs=[[{"type": "map"} for _ in range(ncols)] for _ in range(nrows)],
-            subplot_titles=[f"Layer {layer + 1}" for layer in resolved_layers],
-        )
-        traces = []
-        for index, layer in enumerate(resolved_layers):
-            trace = self.map(per=per, layer=layer, **map_kwargs).get_choropleth()
-            trace.coloraxis = "coloraxis"
-            traces.append(trace)
-            fig.add_trace(trace, row=(index // ncols) + 1, col=(index % ncols) + 1)
-        finite_parts = [
-            np.asarray(trace.z, dtype=float)[
-                np.isfinite(np.asarray(trace.z, dtype=float))
-            ]
-            for trace in traces
-            if np.isfinite(np.asarray(trace.z, dtype=float)).any()
-        ]
-        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
-        coloraxis = {"colorscale": traces[0].colorscale if traces else "Viridis"}
-        if finite.size:
-            coloraxis.update(
-                cmin=float(np.nanmin(finite)),
-                cmax=float(np.nanmax(finite)),
-                cauto=False,
-            )
-        fig.update_layout(
-            title=title or f"{self._mapped_value_name} | stress period {per}",
-            coloraxis=coloraxis,
-            uirevision="lock",
-        )
-        return fig
-
-    def slider_html(
-        self,
-        output_path: str | Path,
-        *,
-        periods=None,
-        layers=None,
-        ncols: int = 3,
-        dpi: int = 160,
-        title: str | None = None,
-        **map_kwargs,
-    ):
-        """Export selected layers through stress periods as standalone Matplotlib HTML."""
-
-        from myflopy.modflow.mf6.interactive_plotting import (
-            export_matplotlib_slider_html,
-        )
-
-        periods = (
-            self._mapped_periods()
-            if periods is None
-            else [int(period) for period in periods]
-        )
-        labels = [f"Stress period {period}" for period in periods]
-
-        def render(period, index):
-            return self.plot(
-                per=period,
-                layers=layers,
+                model=model,
+                cells=cells,
+                agg=agg,
+                backend=backend,
                 ncols=ncols,
-                title=labels[index],
-                **map_kwargs,
+                title=title,
             )
+        if kind_key in ("xs", "section"):
+            return self._xs_mosaic(
+                by=by,
+                per=per,
+                layer=layer,
+                model=model,
+                backend=backend,
+                ncols=ncols,
+                title=title,
+                **kwargs,
+            )
+        raise ValueError(f"kind must be 'map', 'plot', or 'xs', got {kind!r}.")
 
-        return export_matplotlib_slider_html(
-            render,
-            periods,
-            output_path,
-            labels=labels,
-            title=title or self._mapped_value_name,
-            dpi=dpi,
+    def _plot_mosaic(
+        self, *, by, per, layer, model, cells, agg, backend, ncols, title
+    ):
+        """Grid of series panels faceted by model, layer, or an entity."""
+
+        frame, value_column, keys = self._series_selection(
+            model=model, per=per, layer=layer, cells=cells
+        )
+        default_axis = (
+            "model"
+            if (self._spatial_models() and "model" in frame.columns)
+            else next(
+                (c for c in self._SERIES_ENTITY_COLUMNS if c in frame.columns),
+                "layer",
+            )
+        )
+        axis = str(by or default_axis).lower()
+        if axis == "period":
+            raise ValueError(
+                "Series panels already have period on the x-axis; facet by "
+                "'model', 'layer', or an entity (e.g. 'lake') instead."
+            )
+        if axis not in frame.columns:
+            raise ValueError(
+                f"Cannot facet series by {axis!r}; available facet columns: "
+                f"{[c for c in ('model', 'layer', *self._SERIES_ENTITY_COLUMNS) if c in frame.columns]}."
+            )
+        if axis == "model":
+            in_frame = set(frame["model"])
+            facet_values = [n for n in self._resolve_models(model) if n in in_frame]
+        else:
+            facet_values = sorted(frame[axis].dropna().unique().tolist())
+        aggregation = self._series_default_agg() if agg is None else str(agg)
+        panel_keys = [key for key in keys if key != axis]
+        panels = [
+            (
+                self._series_line_label([axis], (value,)),
+                self._series_lines(
+                    frame[frame[axis] == value], panel_keys, value_column, aggregation
+                ),
+            )
+            for value in facet_values
+        ]
+        heading = title or (
+            f"{self._spatial_value_label()} by stress period per {axis}"
+            + (" (model - reference)" if self._spatial_is_diff() else "")
+        )
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_mosaic_plotly(
+                panels,
+                ncols=int(ncols),
+                title=heading,
+                xaxis_title="Stress Period",
+                yaxis_title=value_column,
+                markers=True,
+            )
+        return _xy_mosaic_mpl(
+            panels,
+            ncols=int(ncols),
+            title=heading,
+            xlabel="Stress Period",
+            ylabel=value_column,
+            markers=True,
         )
 
-    def plotly_animation(
+    def _xs_mosaic(
+        self, *, by, per, layer, model, backend, ncols, title, **kwargs
+    ):
+        """Grid of cross-section panels faceted by model or period."""
+
+        axis = str(by or ("model" if self._spatial_models() else "period")).lower()
+        base_layer = 0 if layer is None else layer
+        panels = []
+        if axis == "model":
+            for name in self._resolve_models(model):
+                sections = self._sections(
+                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
+                )
+                panels.append((str(name), self._section_lines(sections)))
+        elif axis == "period":
+            sections = self._sections(model=model, layer=base_layer, **kwargs)
+            for period in self._resolve_periods(per):
+                for section in sections.values():
+                    key = self._period_end_kstpkper(section.model, period)
+                    if key is not None:
+                        section.kstpkper = key
+                panels.append((f"Period {period}", self._section_lines(sections)))
+        else:
+            raise ValueError(f"by must be 'model' or 'period' for kind='xs', got {axis!r}.")
+        heading = title or f"{self._spatial_value_label()} cross sections by {axis}"
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_mosaic_plotly(
+                panels,
+                ncols=int(ncols),
+                title=heading,
+                xaxis_title="Distance",
+                yaxis_title="Elevation",
+                markers=False,
+            )
+        return _xy_mosaic_mpl(
+            panels,
+            ncols=int(ncols),
+            title=heading,
+            xlabel="Distance",
+            ylabel="Elevation",
+            markers=False,
+        )
+
+    def _facet_panels(self, axis, *, per, layer, model, **map_kwargs):
+        if axis == "layer":
+            reference = None if self._spatial_models() is None else self._resolve_models(model)[0]
+            return [
+                (
+                    f"Layer {value + 1}",
+                    self._spatial_map(per=int(per), layer=value, model=reference, **map_kwargs),
+                )
+                for value in self._resolve_layers(layer)
+            ]
+        if axis == "model":
+            base_layer = self._single_layer(layer)
+            return [
+                (
+                    str(name),
+                    self._spatial_map(per=int(per), layer=base_layer, model=name, **map_kwargs),
+                )
+                for name in self._resolve_models(model)
+            ]
+        raise ValueError(f"by must be 'layer' or 'model', got {axis!r}.")
+
+    def _plotly_mosaic(self, panels, *, ncols, title, sync_views=True):
+        # one composer engine: the leaf mosaic is sugar over viz.mosaic
+        from myflopy.viz import mosaic as viz_mosaic
+
+        return viz_mosaic(
+            list(panels),
+            ncols=int(ncols),
+            title=title,
+            diff=self._spatial_is_diff(),
+            sync_views=sync_views,
+        )
+
+    def _mpl_mosaic(self, panels, *, ncols, title):
+        from matplotlib import cm
+        from matplotlib import colors as mcolors
+
+        labels = [label for label, _ in panels]
+        choros = [choro for _, choro in panels]
+        if not choros:
+            raise ValueError("mosaic requires at least one panel.")
+        ncols = min(int(ncols), len(choros)) or 1
+        nrows = int(np.ceil(len(choros) / ncols))
+        fig, axes = mpl_axes(nrows, ncols, figsize=(5.0 * ncols, 4.5 * nrows), squeeze=False)
+        arrays = [np.asarray(choro.zs, dtype=float) for choro in choros]
+        finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
+        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+        if self._spatial_is_diff():
+            absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
+            vmin, vmax, cmap = -absmax, absmax, "RdBu"
+        else:
+            vmin = float(np.nanmin(finite)) if finite.size else 0.0
+            vmax = float(np.nanmax(finite)) if finite.size else 1.0
+            cmap = "viridis"
+        for axis, label, choro, values in zip(axes.flat, labels, choros, arrays, strict=False):
+            gdf = choro.vor.gdf_vorPolys.copy()
+            gdf["_spatial_value"] = values
+            gdf.plot(
+                column="_spatial_value",
+                ax=axis,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                linewidth=0.2,
+                edgecolor="#666666",
+            )
+            axis.set_title(str(label))
+            axis.set_axis_off()
+            axis.set_aspect("equal")
+        for axis in axes.flat[len(choros):]:
+            axis.set_visible(False)
+        mappable = cm.ScalarMappable(norm=mcolors.Normalize(vmin=vmin, vmax=vmax), cmap=cmap)
+        mappable.set_array([])
+        fig.colorbar(
+            mappable,
+            ax=list(axes.flat[: len(choros)]),
+            shrink=0.85,
+            label=self._spatial_value_label(),
+        )
+        fig.suptitle(title)
+        return fig
+
+    def _single_period(self, per) -> int:
+        if per is None:
+            return 0
+        if isinstance(per, (int, np.integer)):
+            return int(per)
+        return self._resolve_periods(per)[0]
+
+    def _frame_panels(self, axis, *, per, layer, model, **map_kwargs):
+        base_layer = self._single_layer(layer)
+        if axis == "period":
+            reference = self._resolve_models(model)[0]
+            return [
+                (
+                    f"Period {value}",
+                    self._spatial_map(per=value, layer=base_layer, model=reference, **map_kwargs),
+                )
+                for value in self._resolve_periods(per)
+            ]
+        if axis == "model":
+            fixed_per = self._single_period(per)
+            return [
+                (
+                    str(name),
+                    self._spatial_map(per=fixed_per, layer=base_layer, model=name, **map_kwargs),
+                )
+                for name in self._resolve_models(model)
+            ]
+        raise ValueError(f"over must be 'period' or 'model', got {axis!r}.")
+
+    def animate(
         self,
         *,
-        periods=None,
-        layers=None,
-        ncols: int = 3,
-        output_path: str | Path | None = None,
+        kind: str = "map",
+        over: str | None = None,
+        per=None,
+        layer: int = 0,
+        model=None,
+        cells=None,
+        agg: str | None = None,
+        backend: str = "plotly",
         title: str | None = None,
-        **map_kwargs,
+        **kwargs,
     ):
-        """Return or export a Plotly stress-period animation for selected layers."""
+        """Animate a panel across a dimension.
 
-        from myflopy.modflow.mf6.interactive_plotting import _plotly_config
-        from myflopy.modflow.utils.animations import Animation
-        import plotly.io as pio
+        ``kind`` picks the panel type: ``"map"`` (default), ``"xs"`` (cross
+        sections, heads leaves), or ``"plot"`` (series). ``over="period"``
+        sweeps stress periods (maps and sections); ``over="model"`` sweeps the
+        group's models (any kind). ``backend="plotly"`` returns an interactive
+        figure with play/slider; ``backend="mpl"`` a matplotlib
+        ``FuncAnimation``. Both are objects for the caller to display or save --
+        nothing is written to disk.
+        """
 
-        periods = (
-            self._mapped_periods()
-            if periods is None
-            else [int(period) for period in periods]
-        )
-        figures = [
-            self.plotly_mosaic(
-                per=period, layers=layers, ncols=ncols, title=title, **map_kwargs
+        kind_key = str(kind).lower()
+        if kind_key == "map":
+            axis = str(over or "period").lower()
+            frames = self._frame_panels(axis, per=per, layer=layer, model=model, **kwargs)
+            heading = title or f"{self._spatial_value_label()} over {axis}"
+            if self._normalize_backend(backend) == "plotly":
+                return self._plotly_animation(frames, title=heading)
+            return self._mpl_animation(frames, title=heading)
+        if kind_key == "plot":
+            return self._plot_animation(
+                over=over,
+                per=per,
+                layer=layer,
+                model=model,
+                cells=cells,
+                agg=agg,
+                backend=backend,
+                title=title,
             )
-            for period in periods
+        if kind_key in ("xs", "section"):
+            return self._xs_animation(
+                over=over,
+                per=per,
+                layer=layer,
+                model=model,
+                backend=backend,
+                title=title,
+                **kwargs,
+            )
+        raise ValueError(f"kind must be 'map', 'plot', or 'xs', got {kind!r}.")
+
+    def _plot_animation(
+        self, *, over, per, layer, model, cells, agg, backend, title
+    ):
+        """Flip series panels over the group's models."""
+
+        axis = str(over or "model").lower()
+        if axis != "model":
+            raise ValueError(
+                "Series panels already sweep periods on the x-axis; use "
+                "over='model', or animate kind='map'/'xs' over periods."
+            )
+        frame, value_column, keys = self._series_selection(
+            model=model, per=per, layer=layer, cells=cells
+        )
+        if not (self._spatial_models() and "model" in frame.columns):
+            raise ValueError("over='model' requires a model axis (groups/diffs).")
+        aggregation = self._series_default_agg() if agg is None else str(agg)
+        panel_keys = [key for key in keys if key != "model"]
+        frames = [
+            (
+                str(name),
+                self._series_lines(
+                    frame[frame["model"] == name], panel_keys, value_column, aggregation
+                ),
+            )
+            for name in self._resolve_models(model)
         ]
-        fig = go.Figure(data=figures[0].data, layout=figures[0].layout)
+        heading = title or (
+            f"{self._spatial_value_label()} by stress period over model"
+            + (" (model - reference)" if self._spatial_is_diff() else "")
+        )
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_animation_plotly(
+                frames,
+                title=heading,
+                xaxis_title="Stress Period",
+                yaxis_title=value_column,
+                markers=True,
+            )
+        return _xy_animation_mpl(
+            frames,
+            title=heading,
+            xlabel="Stress Period",
+            ylabel=value_column,
+            markers=True,
+        )
+
+    def _xs_animation(self, *, over, per, layer, model, backend, title, **kwargs):
+        """Animate cross sections over stress periods or the group's models."""
+
+        axis = str(over or "period").lower()
+        base_layer = 0 if layer is None else layer
+        frames = []
+        if axis == "period":
+            sections = self._sections(model=model, layer=base_layer, **kwargs)
+            for period in self._resolve_periods(per):
+                for section in sections.values():
+                    key = self._period_end_kstpkper(section.model, period)
+                    if key is not None:
+                        section.kstpkper = key
+                frames.append((f"Period {period}", self._section_lines(sections)))
+        elif axis == "model":
+            for name in self._resolve_models(model):
+                sections = self._sections(
+                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
+                )
+                frames.append((str(name), self._section_lines(sections)))
+        else:
+            raise ValueError(
+                f"over must be 'period' or 'model' for kind='xs', got {axis!r}."
+            )
+        heading = title or f"{self._spatial_value_label()} cross section over {axis}"
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_animation_plotly(
+                frames,
+                title=heading,
+                xaxis_title="Distance",
+                yaxis_title="Elevation",
+                markers=False,
+            )
+        return _xy_animation_mpl(
+            frames,
+            title=heading,
+            xlabel="Distance",
+            ylabel="Elevation",
+            markers=False,
+        )
+
+    def _plotly_animation(self, frames, *, title):
+        if not frames:
+            raise ValueError("animate requires at least one frame.")
+        from myflopy.viz import shared_map_view
+
+        names = [str(label) for label, _ in frames]
+        traces = [choro.get_choropleth() for _, choro in frames]
+        fig = go.Figure(data=[traces[0]])
         fig.frames = [
-            go.Frame(data=frame.data, name=str(period))
-            for period, frame in zip(periods, figures, strict=False)
+            go.Frame(data=[trace], name=name)
+            for name, trace in zip(names, traces, strict=False)
         ]
-        animation = Animation(self.model, periods=periods, redraw=True)
+        # A single map flipped across frames still needs its view fitted to the
+        # data -- otherwise it renders zoomed out to the world, like the mosaic
+        # subplots did. All frames share the site, so one shared view suffices.
+        map_view = shared_map_view([choro for _, choro in frames])
+        play = {"frame": {"duration": 600, "redraw": True}, "fromcurrent": True}
+        pause = {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}
         fig.update_layout(
-            updatemenus=animation.updatemenus,
-            sliders=animation.sliders,
+            title=title,
             uirevision="lock",
+            map=map_view or {},
+            updatemenus=[
+                {
+                    "type": "buttons",
+                    "showactive": False,
+                    "buttons": [
+                        {"label": "Play", "method": "animate", "args": [None, play]},
+                        {"label": "Pause", "method": "animate", "args": [[None], pause]},
+                    ],
+                }
+            ],
+            sliders=[
+                {
+                    "active": 0,
+                    "steps": [
+                        {
+                            "method": "animate",
+                            "args": [[name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                            "label": name,
+                        }
+                        for name in names
+                    ],
+                }
+            ],
         )
-        if output_path is not None:
-            output_path = Path(output_path)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            pio.write_html(
-                fig,
-                file=output_path,
-                include_plotlyjs=True,
-                config=_plotly_config(fig),
-                auto_play=False,
-                auto_open=False,
-            )
         return fig
+
+    def _mpl_animation(self, frames, *, title):
+        from matplotlib.animation import FuncAnimation
+
+        if not frames:
+            raise ValueError("animate requires at least one frame.")
+        labels = [str(label) for label, _ in frames]
+        choros = [choro for _, choro in frames]
+        arrays = [np.asarray(choro.zs, dtype=float) for choro in choros]
+        finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
+        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+        if self._spatial_is_diff():
+            absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
+            vmin, vmax, cmap = -absmax, absmax, "RdBu"
+        else:
+            vmin = float(np.nanmin(finite)) if finite.size else 0.0
+            vmax = float(np.nanmax(finite)) if finite.size else 1.0
+            cmap = "viridis"
+        fig, axis = mpl_axes(1, 1, figsize=(7.0, 6.0))
+
+        def _draw(index):
+            axis.clear()
+            gdf = choros[index].vor.gdf_vorPolys.copy()
+            gdf["_spatial_value"] = arrays[index]
+            gdf.plot(
+                column="_spatial_value",
+                ax=axis,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                linewidth=0.2,
+                edgecolor="#666666",
+            )
+            axis.set_title(f"{title} - {labels[index]}")
+            axis.set_axis_off()
+            axis.set_aspect("equal")
+
+        _draw(0)
+        return FuncAnimation(fig, _draw, frames=len(frames), interval=600, blit=False)
+
+
+class LeafFieldSugar:
+    """``field=`` keyword and ``.field(name)`` nodes on an aggregator *leaf*.
+
+    For hosts that are themselves a :class:`SpatialView` leaf (their verbs draw
+    a default field) but carry several numeric input fields -- e.g. a grouped
+    GHB input accessor with ``bhead`` and ``cond``. ``field=None`` keeps the
+    leaf's own verb; ``field="cond"`` (or the ``inputs.cond`` attribute)
+    dispatches to a field-pinned node from :meth:`_field_node`. Namespace-style
+    hosts without their own verbs use :class:`FieldMappable` instead.
+
+    Place this mixin *before* the SpatialView base in the MRO.
+    """
+
+    def _field_names(self) -> list[str]:
+        """Return the selectable field names (override per host)."""
+
+        raise NotImplementedError
+
+    def field_names(self) -> list[str]:
+        """List the mappable field names available on this node."""
+
+        return list(self._field_names())
+
+    def _field_node(self, name: str):
+        """Return this leaf pinned to one field (override per host)."""
+
+        raise NotImplementedError
+
+    def field(self, name: str):
+        """Return the field-pinned node for ``name`` (validated)."""
+
+        key = str(name).lower()
+        available = self._field_names()
+        if available and key not in available:
+            raise ValueError(
+                f"Unknown field {name!r} for this package; choose from {available}."
+            )
+        return self._field_node(key)
+
+    #: attributes _field_names itself may read -- never treat these as fields
+    #: (prevents __getattr__ recursion when they are genuinely missing)
+    _FIELD_SUGAR_GUARD = ("package_name", "group", "model", "field_name")
+
+    def __getattr__(self, name: str):
+        if (
+            not name.startswith("_")
+            and name not in self._FIELD_SUGAR_GUARD
+            and name in self._field_names()
+        ):
+            return self._field_node(name)
+        raise AttributeError(
+            f"{type(self).__name__!s} has no attribute or input field {name!r}"
+        )
+
+    def map(self, *args, field=None, **kwargs):
+        if field is not None:
+            return self.field(field).map(*args, **kwargs)
+        return super().map(*args, **kwargs)
+
+    def plot(self, *args, field=None, **kwargs):
+        if field is not None:
+            return self.field(field).plot(*args, **kwargs)
+        return super().plot(*args, **kwargs)
+
+    def mosaic(self, *args, field=None, **kwargs):
+        if field is not None:
+            return self.field(field).mosaic(*args, **kwargs)
+        return super().mosaic(*args, **kwargs)
+
+    def animate(self, *args, field=None, **kwargs):
+        if field is not None:
+            return self.field(field).animate(*args, **kwargs)
+        return super().animate(*args, **kwargs)
+
+
+class DiffSpatialView(SpatialView):
+    """:class:`SpatialView` for a diff node: panels are per compared-model deltas.
+
+    The mapped content is a difference (model - reference), so the shared color
+    scale is diverging and centered at zero, and faceting defaults to one panel
+    per compared model. The host supplies ``_spatial_map(per, layer, model)``
+    that returns the delta ``Choro`` for one compared model plus the compared
+    model names via ``_spatial_models``.
+    """
+
+    def _spatial_is_diff(self) -> bool:
+        return True
+
+    def _spatial_default_facet(self) -> str:
+        return "model"
+
+
+class FieldMappable:
+    """Namespace-level ``map`` / ``mosaic`` / ``animate`` with a ``field=`` selector.
+
+    A results/inputs namespace groups several mappable *fields* -- e.g. a lake's
+    ``q`` (exchange), ``stage``, ``stage_change``; UZF's ``gwrch`` / ``sat``.
+    Each field is a first-class accessor (``ns.stage``) with a :class:`SpatialView`
+    surface. This mixin adds the same verbs at the namespace level with a
+    ``field=`` selector that simply dispatches to the named accessor -- so
+    ``ns.map(field="stage")`` is exactly ``ns.stage.map()``. ``field=None`` uses
+    the package's default field; :meth:`field_names` lists the choices.
+    """
+
+    _default_field: str = "q"
+
+    def _field_names(self) -> list[str]:
+        """Return the selectable field names (override per namespace)."""
+
+        raise NotImplementedError
+
+    def field_names(self) -> list[str]:
+        """List the mappable field names available on this namespace."""
+
+        return list(self._field_names())
+
+    def _field_accessor(self, field=None):
+        name = field if field is not None else self._default_field
+        available = self._field_names()
+        if available and name not in available:
+            raise ValueError(
+                f"Unknown field {field!r} for this package; choose from {available}."
+            )
+        return getattr(self, name)
+
+    def map(self, *args, field=None, **kwargs):
+        """Map one result/input field (``field=`` selects it; default otherwise).
+
+        Extra positional/keyword args pass through to the field's ``map`` -- e.g.
+        a group namespace forwards a positional model name: ``results.map("F9b")``.
+        """
+
+        return self._field_accessor(field).map(*args, **kwargs)
+
+    def plot(self, *args, field=None, **kwargs):
+        """Series plot of one field by stress period (``field=`` selects it)."""
+
+        return self._field_accessor(field).plot(*args, **kwargs)
+
+    def xs(self, *args, field=None, **kwargs):
+        """Cross-section of one field along a line (``field=`` selects it)."""
+
+        return self._field_accessor(field).xs(*args, **kwargs)
+
+    def mosaic(self, *args, field=None, **kwargs):
+        """Shared-scale mosaic of one field over layers/models."""
+
+        return self._field_accessor(field).mosaic(*args, **kwargs)
+
+    def animate(self, *args, field=None, **kwargs):
+        """Animate one field over periods/models."""
+
+        return self._field_accessor(field).animate(*args, **kwargs)
 
 
 __all__ = [
@@ -767,5 +1819,8 @@ __all__ = [
     "build_surface_water_q_map_payload",
     "build_cell_input_map_payload",
     "build_group_input_compare_map_payload",
-    "MappedFieldVisualizationMixin",
+    "SpatialView",
+    "DiffSpatialView",
+    "FieldMappable",
+    "LeafFieldSugar",
 ]

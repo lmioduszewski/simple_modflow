@@ -86,7 +86,7 @@ def test_identical_models_report_no_difference(tables):
     assert row["cells_only_in_model"] == 0
     assert row["cells_shared"] == 2
     assert row["value_cells_changed"] == 0
-    assert diff.packages.ghb.cells().empty
+    assert diff.packages.ghb.inputs.cells().empty
     assert "identical to reference" in diff.report()
 
 
@@ -107,14 +107,14 @@ def test_structural_and_value_differences_detected(tables):
     diff = _group(tables, ["ref", "variant"], reference="ref").diff()
 
     # structural tier
-    cells = diff.packages.ghb.cells()
+    cells = diff.packages.ghb.inputs.cells()
     only_ref = set(cells.loc[cells["membership"] == "only_in_reference", "cell"])
     only_model = set(cells.loc[cells["membership"] == "only_in_model", "cell"])
     assert only_ref == {10}
     assert only_model == {14}
 
     # value tier (aligned x / reference_x / x_diff on shared cells)
-    values = diff.packages.ghb.values()
+    values = diff.packages.ghb.inputs.values()
     changed = values.loc[values["cond_diff"] != 0.0]
     assert set(changed["cell"]) == {12}
     assert float(changed["cond_diff"].iloc[0]) == pytest.approx(899.0)
@@ -136,7 +136,7 @@ def test_structural_diff_survives_only_in_one_model(tables):
     tables[("variant", "ghb")] = _ghb("variant", [(0, 0, 99, 5.0, 100.0)])
 
     diff = _group(tables, ["ref", "variant"], reference="ref").diff()
-    cells = diff.packages.ghb.cells()
+    cells = diff.packages.ghb.inputs.cells()
     assert set(cells.loc[cells["membership"] == "only_in_reference", "cell"]) == {10}
     assert set(cells.loc[cells["membership"] == "only_in_model", "cell"]) == {99}
     # No shared cells -> value compare is empty, but the diff is NOT identical.
@@ -196,9 +196,9 @@ def test_per_and_layer_filters(tables):
     tables[("variant", "ghb")] = _ghb("variant", [(0, 0, 10, 5.0, 100.0)])  # missing per=1
 
     diff = _group(tables, ["ref", "variant"], reference="ref").diff()
-    per0 = diff.packages.ghb.cells(per=0)
+    per0 = diff.packages.ghb.inputs.cells(per=0)
     assert per0.empty  # identical at period 0
-    per1 = diff.packages.ghb.cells(per=1)
+    per1 = diff.packages.ghb.inputs.cells(per=1)
     assert set(per1.loc[per1["membership"] == "only_in_reference", "cell"]) == {20}
 
 
@@ -217,9 +217,77 @@ def test_unsupported_package_and_self_diff_errors(tables):
     with pytest.raises(AttributeError):
         diff.package("nope")
     with pytest.raises(ValueError):
-        diff.packages.ghb.cells(model_name="ref")  # reference vs itself
+        diff.packages.ghb.inputs.cells(model_name="ref")  # reference vs itself
     with pytest.raises(KeyError):
-        diff.packages.ghb.cells(model_name="ghost")
+        diff.packages.ghb.inputs.cells(model_name="ghost")
+
+
+# --- the unified tree shape ---------------------------------------------------
+def test_diff_tree_mirrors_single_and_group_shape(tables):
+    """diff.packages.<pkg>.inputs/.results + diff.hds/diff.bud -- one grammar."""
+
+    tables[("ref", "ghb")] = _ghb("ref", [(0, 0, 10, 5.0, 100.0)])
+    tables[("variant", "ghb")] = _ghb("variant", [(0, 0, 10, 5.0, 100.0)])
+    diff = _group(tables, ["ref", "variant"], reference="ref").diff()
+
+    node = diff.packages.ghb
+    assert node.inputs.package_name == "ghb"  # PackageDiff (inputs tier)
+    assert node.results.field_names() == ["q"]
+
+    # advanced nodes: inputs = geometry diff, results = field namespaces
+    assert type(diff.packages.lak.inputs).__name__ == "LakConnectionDiff"
+    assert diff.packages.lak.results.field_names() == ["q", "stage"]
+    assert type(diff.packages.sfr.inputs).__name__ == "SfrReachDiff"
+    assert diff.packages.sfr.results.field_names() == ["q", "stage"]
+    assert diff.packages.uzf.results.field_names() == ["gwrch", "sat"]
+    assert type(diff.packages.mvr.results).__name__ == "MvrResultDiff"
+
+    # heads/budget leaves at the surface root, like model.hds / group.hds
+    assert type(diff.hds).__name__ == "HeadsResultDiff"
+    assert type(diff.bud).__name__ == "BudgetResultDiff"
+
+    # the old flat results tree is gone outright
+    assert not hasattr(diff, "results")
+
+    # the string door returns the same node as attribute access
+    assert diff.package("ghb").package_name == "ghb"
+    assert diff.package("ghb").inputs.package_name == "ghb"
+
+
+# --- map / values accept a positional model name -----------------------------
+def test_values_accepts_positional_model_name(tables):
+    tables[("ref", "ghb")] = _ghb("ref", [(0, 0, 10, 5.0, 100.0)])
+    tables[("A", "ghb")] = _ghb("A", [(0, 0, 10, 6.0, 100.0)])
+    tables[("B", "ghb")] = _ghb("B", [(0, 0, 10, 5.0, 100.0)])
+    diff = _group(tables, ["ref", "A", "B"], reference="ref").diff()
+
+    values = diff.packages.ghb.inputs.values("A")  # positional -> only compared model A
+    assert set(values["model"]) == {"A"}
+
+
+def test_map_forwards_positional_model_name(tables):
+    tables[("ref", "ghb")] = _ghb("ref", [(0, 0, 10, 5.0, 100.0)])
+    tables[("A", "ghb")] = _ghb("A", [(0, 0, 10, 6.0, 100.0)])
+    tables[("B", "ghb")] = _ghb("B", [(0, 0, 10, 5.0, 100.0)])
+    pkg = _group(tables, ["ref", "A", "B"], reference="ref").diff().packages.ghb.inputs
+
+    captured = {}
+    pkg._inputs.compare_map = lambda **kwargs: captured.update(kwargs) or "FIG"
+    # positional model name must be accepted (was a TypeError) and forwarded
+    assert pkg.map("A") == "FIG"
+    assert captured["model_name"] == "A"
+
+
+def test_map_without_model_name_errors_helpfully(tables):
+    for name in ("ref", "A", "B"):
+        tables[(name, "ghb")] = _ghb(name, [(0, 0, 10, 5.0, 100.0)])
+    diff = _group(tables, ["ref", "A", "B"], reference="ref").diff()
+
+    with pytest.raises(ValueError) as excinfo:
+        diff.packages.ghb.inputs.map()  # ambiguous: two non-reference models
+    message = str(excinfo.value)
+    assert "compare_map" not in message      # no internal-method leak
+    assert "A" in message and "B" in message  # lists the choices
 
 
 # --- end-to-end on a real model via the model.diff() door --------------------
@@ -261,7 +329,7 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
     assert not ghb_row["identical"]
 
     # The dropped cell shows up structurally as only-in-reference at period 0.
-    only_ref = diff.packages.ghb.cells(per=0)
+    only_ref = diff.packages.ghb.inputs.cells(per=0)
     dropped_cell = int(dropped_cellid[-1])
     assert dropped_cell in set(
         only_ref.loc[only_ref["membership"] == "only_in_reference", "cell"]
@@ -276,10 +344,10 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
 
     # Connection tier works on real LAK/SFR networks: unperturbed here, so the
     # lake connections and stream reaches must read as identical.
-    assert bool(diff.packages.lak.summary().iloc[0]["identical"])
-    assert diff.packages.lak.connections().empty
-    assert bool(diff.packages.sfr.summary().iloc[0]["identical"])
-    assert diff.packages.sfr.reaches().empty
+    assert bool(diff.packages.lak.inputs.summary().iloc[0]["identical"])
+    assert diff.packages.lak.inputs.connections().empty
+    assert bool(diff.packages.sfr.inputs.summary().iloc[0]["identical"])
+    assert diff.packages.sfr.inputs.reaches().empty
 
     # Door 2: ModelGroup(...).diff() gives the same reference-star result.
     group_summary = (

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.package_explorer import DiffSpatialView, LeafFieldSugar
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
     build_lak_connection_table,
@@ -39,6 +40,15 @@ from myflopy.project.model_group import GroupPackageInputs
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from myflopy.project.model_group import ModelGroup
+    from myflopy.project.model_results_diff import (
+        BudgetResultDiff,
+        CellResultsDiffNamespace,
+        HeadsResultDiff,
+        LakResultsDiffNamespace,
+        MvrResultDiff,
+        SfrResultsDiffNamespace,
+        UzfResultsDiffNamespace,
+    )
 
 # Cell-based stress-period BC packages the Phase-1 diff understands. These match
 # the packages the ModelGroup exposes as GroupPackageInputs accessors.
@@ -98,20 +108,71 @@ def _package_keys(model, package_name: str, *, per=None, layer=None):
     return True, keys
 
 
-class PackageDiff:
+class PackageDiff(LeafFieldSugar, DiffSpatialView):
     """Difference view for one cell-based BC package across the group.
 
-    Reached via ``model_diff.packages.<package>`` (e.g. ``.ghb``). Exposes the
-    structural tier (:meth:`cells`), the value tier (:meth:`values`, :meth:`map`),
-    and per-model counts (:meth:`summary`), always relative to the group's
-    reference model.
+    Reached via ``diff.packages.<package>.inputs`` (e.g. ``.ghb.inputs``).
+    Exposes the structural tier (:meth:`cells`), the value tier
+    (:meth:`values`), the unified delta grammar (``map``/``plot``/``mosaic``/
+    ``animate``, with registry fields as first-class nodes -- ``inputs.cond``
+    or ``field="cond"``), and per-model counts (:meth:`summary`), always
+    relative to the group's reference model.
     """
 
-    def __init__(self, diff: "ModelDiff", package_name: str):
+    def __init__(self, diff: "ModelDiff", package_name: str, field_name: str | None = None):
         self._diff = diff
         self.group = diff.group
         self.package_name = str(package_name).lower()
+        self.field_name = None if field_name is None else str(field_name).lower()
         self._inputs = GroupPackageInputs(self.group, self.package_name)
+
+    # -- field nodes (LeafFieldSugar hooks) ------------------------------------
+    def _field_names(self) -> list[str]:
+        from myflopy.modflow.mf6.package_explorer import get_package_input_field_names
+
+        return get_package_input_field_names(self.package_name)
+
+    def _field_node(self, name: str) -> "PackageDiff":
+        return PackageDiff(self._diff, self.package_name, field_name=name)
+
+    # -- spatial-view hooks (delta maps vs the reference) ---------------------
+    def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
+        """Delta choropleth (compared model - reference) for one model."""
+
+        if self.field_name is not None:
+            kwargs.setdefault("value_column", self.field_name)
+        return self._inputs.compare_map(model_name=model, per=per, layer=layer, **kwargs)
+
+    def _spatial_models(self):
+        return [name for name in self.group.models if name != self.group.reference]
+
+    def _spatial_reference_model(self):
+        return self.group.models[self.group.reference]
+
+    def _spatial_periods(self):
+        return self._inputs._spatial_periods()
+
+    def _spatial_layers(self):
+        return self._inputs._spatial_layers()
+
+    def _spatial_value_label(self):
+        return self.field_name or self.package_name
+
+    # -- series hooks: plot() draws the field's Δ by period per model ----------
+    def _series_table(self) -> pd.DataFrame:
+        return self._inputs.compare()
+
+    def _series_value_column(self, frame) -> str:
+        from myflopy.modflow.mf6.package_explorer import get_default_package_value_column
+
+        field = self.field_name or get_default_package_value_column(self.package_name)
+        column = f"{field}_diff"
+        if column not in getattr(frame, "columns", []):
+            raise KeyError(
+                f"Aligned diff column {column!r} was not found; available: "
+                f"{list(getattr(frame, 'columns', []))}."
+            )
+        return column
 
     def _targets(self, model_name=None) -> list[str]:
         """Return the non-reference model names to diff (or just ``model_name``)."""
@@ -126,20 +187,17 @@ class PackageDiff:
         return [name for name in self.group.models if name != self.group.reference]
 
     # -- value tier (reuses the group's aligned-value compare) ----------------
-    def values(self, **kwargs) -> pd.DataFrame:
+    def values(self, model_name=None, **kwargs) -> pd.DataFrame:
         """Aligned value table: each numeric field as ``x`` / ``reference_x`` /
         ``x_diff`` on the cells shared with the reference model.
 
-        Accepts the same ``model_name`` / ``per`` / ``layer`` / ``cells``
-        filters as the group input accessor.
+        ``model_name`` (the first positional argument) restricts the table to one
+        compared model; ``per`` / ``layer`` / ``cells`` filter as on the group
+        input accessor. With no ``model_name`` every non-reference model is
+        returned.
         """
 
-        return self._inputs.compare(**kwargs)
-
-    def map(self, **kwargs):
-        """Diverging choropleth of a field's difference vs the reference model."""
-
-        return self._inputs.compare_map(**kwargs)
+        return self._inputs.compare(model_name=model_name, **kwargs)
 
     # -- structural tier (the new set-difference engine) ----------------------
     def cells(
@@ -373,7 +431,12 @@ class SfrReachDiff(ConnectionDiff):
 
 
 def _resolve_package_diff(diff: "ModelDiff", name: str):
-    """Return the right diff accessor for a package name (BC vs connection)."""
+    """Return the *inputs-tier* diff accessor for a package name.
+
+    Internal: this backs ``summary()``/``report()``, which aggregate the
+    setup-tier differences. The public tree exposes the same accessors as
+    ``diff.packages.<pkg>.inputs``.
+    """
 
     pkg = str(name).lower()
     if pkg in _DIFF_PACKAGES:
@@ -388,17 +451,198 @@ def _resolve_package_diff(diff: "ModelDiff", name: str):
     )
 
 
+class _BcPackageDiffNode:
+    """``diff.packages.<pkg>`` for a BC package: ``.inputs`` / ``.results``.
+
+    Mirrors the single-model/group tree shape -- the declared-data difference
+    lives under ``inputs`` and the computed-output difference under ``results``.
+    """
+
+    def __init__(self, diff: "ModelDiff", package_name: str):
+        self._diff = diff
+        self.package_name = str(package_name).lower()
+
+    @property
+    def inputs(self) -> PackageDiff:
+        """Declared stress-period data difference (cells + values)."""
+
+        return PackageDiff(self._diff, self.package_name)
+
+    @property
+    def results(self) -> "CellResultsDiffNamespace":
+        """Computed cell-budget difference (field ``q``); requires runs."""
+
+        from myflopy.project.model_results_diff import CellResultsDiffNamespace
+
+        return CellResultsDiffNamespace(self._diff, self.package_name)
+
+    def __repr__(self) -> str:
+        return f"<diff.packages.{self.package_name}: .inputs / .results>"
+
+
+class _LakDiffNode:
+    """``diff.packages.lak``: connection-geometry inputs + q/stage results."""
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.package_name = "lak"
+
+    @property
+    def inputs(self) -> LakConnectionDiff:
+        """Lake connection-geometry difference (the LAK input tier)."""
+
+        return LakConnectionDiff(self._diff)
+
+    @property
+    def results(self) -> "LakResultsDiffNamespace":
+        """Computed lake results difference -- fields ``q`` and ``stage``."""
+
+        from myflopy.project.model_results_diff import LakResultsDiffNamespace
+
+        return LakResultsDiffNamespace(self._diff)
+
+    def __repr__(self) -> str:
+        return "<diff.packages.lak: .inputs / .results>"
+
+
+class _SfrDiffNode:
+    """``diff.packages.sfr``: reach-geometry inputs + q/stage results."""
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.package_name = "sfr"
+
+    @property
+    def inputs(self) -> SfrReachDiff:
+        """Stream reach-geometry difference (the SFR input tier)."""
+
+        return SfrReachDiff(self._diff)
+
+    @property
+    def results(self) -> "SfrResultsDiffNamespace":
+        """Computed stream results difference -- fields ``q`` and ``stage``."""
+
+        from myflopy.project.model_results_diff import SfrResultsDiffNamespace
+
+        return SfrResultsDiffNamespace(self._diff)
+
+    def __repr__(self) -> str:
+        return "<diff.packages.sfr: .inputs / .results>"
+
+
+class _UzfDiffNode:
+    """``diff.packages.uzf``: results only (UZF input diffing is not built)."""
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.package_name = "uzf"
+
+    @property
+    def results(self) -> "UzfResultsDiffNamespace":
+        """Computed UZF results difference -- fields ``gwrch`` and ``sat``."""
+
+        from myflopy.project.model_results_diff import UzfResultsDiffNamespace
+
+        return UzfResultsDiffNamespace(self._diff)
+
+    def __repr__(self) -> str:
+        return "<diff.packages.uzf: .results>"
+
+
+class _MvrDiffNode:
+    """``diff.packages.mvr``: results only (mover options diff in ``config``)."""
+
+    def __init__(self, diff: "ModelDiff"):
+        self._diff = diff
+        self.package_name = "mvr"
+
+    @property
+    def results(self) -> "MvrResultDiff":
+        """Mover-flow difference per moved package and direction."""
+
+        from myflopy.project.model_results_diff import MvrResultDiff
+
+        return MvrResultDiff(self._diff)
+
+    def __repr__(self) -> str:
+        return "<diff.packages.mvr: .results>"
+
+
 class _PackageDiffNamespace:
-    """Attribute access ``diff.packages.<package>`` -> a package diff accessor."""
+    """Attribute access ``diff.packages.<package>`` -> a package diff node.
+
+    Every node mirrors the single-model/group tree: ``.inputs`` for declared
+    data, ``.results`` for computed outputs. The supported packages are
+    declared as explicit properties (below) so IDEs / static analyzers can
+    discover them; ``__getattr__`` remains as a fallback that raises a helpful
+    error for unsupported package names.
+    """
 
     def __init__(self, diff: "ModelDiff"):
         self._diff = diff
 
+    # -- explicit, IDE-discoverable package accessors -------------------------
+    @property
+    def rch(self) -> _BcPackageDiffNode:
+        """Recharge (RCH) difference node."""
+        return _BcPackageDiffNode(self._diff, "rch")
+
+    @property
+    def chd(self) -> _BcPackageDiffNode:
+        """Constant-head (CHD) difference node."""
+        return _BcPackageDiffNode(self._diff, "chd")
+
+    @property
+    def drn(self) -> _BcPackageDiffNode:
+        """Drain (DRN) difference node."""
+        return _BcPackageDiffNode(self._diff, "drn")
+
+    @property
+    def ghb(self) -> _BcPackageDiffNode:
+        """General-head-boundary (GHB) difference node."""
+        return _BcPackageDiffNode(self._diff, "ghb")
+
+    @property
+    def wel(self) -> _BcPackageDiffNode:
+        """Well (WEL) difference node."""
+        return _BcPackageDiffNode(self._diff, "wel")
+
+    @property
+    def lak(self) -> _LakDiffNode:
+        """Lake (LAK) difference node."""
+        return _LakDiffNode(self._diff)
+
+    @property
+    def sfr(self) -> _SfrDiffNode:
+        """Stream (SFR) difference node."""
+        return _SfrDiffNode(self._diff)
+
+    @property
+    def uzf(self) -> _UzfDiffNode:
+        """Unsaturated-zone (UZF) difference node."""
+        return _UzfDiffNode(self._diff)
+
+    @property
+    def mvr(self) -> _MvrDiffNode:
+        """Mover (MVR) difference node."""
+        return _MvrDiffNode(self._diff)
+
     def __getattr__(self, name: str):
-        return _resolve_package_diff(self._diff, name)
+        # Fallback for any package name not declared above -> helpful AttributeError.
+        pkg = str(name).lower()
+        if pkg in _DIFF_PACKAGES:
+            return _BcPackageDiffNode(self._diff, pkg)
+        raise AttributeError(
+            f"ModelDiff does not diff package {name!r}; supported: "
+            f"{', '.join((*_DIFF_PACKAGES, *_CONNECTION_PACKAGES, 'uzf', 'mvr'))}."
+        )
 
     def __dir__(self):
-        known = set(self._diff.package_names) | set(self._diff.connection_package_names)
+        known = (
+            set(self._diff.package_names)
+            | set(self._diff.connection_package_names)
+            | {"uzf", "mvr"}
+        )
         return sorted(set(super().__dir__()) | known)
 
 
@@ -420,10 +664,14 @@ class _FocusedModelDiff:
         return self._diff._render_report(model_name=self.model_name)
 
     def cells(self, package: str, **kwargs) -> pd.DataFrame:
-        return self._diff.package(package).cells(model_name=self.model_name, **kwargs)
+        return _resolve_package_diff(self._diff, package).cells(
+            model_name=self.model_name, **kwargs
+        )
 
     def values(self, package: str, **kwargs) -> pd.DataFrame:
-        return self._diff.package(package).values(model_name=self.model_name, **kwargs)
+        return _resolve_package_diff(self._diff, package).values(
+            model_name=self.model_name, **kwargs
+        )
 
 
 _CONFIG_ABSENT = "<absent>"
@@ -570,26 +818,32 @@ class ModelDiff:
         return ConfigDiff(self)
 
     @property
-    def results(self):
-        """Results-tier diff (heads, budget, ...) vs the reference.
+    def hds(self) -> "HeadsResultDiff":
+        """Head-difference leaf (Δhead maps/plots/sections vs the reference).
 
-        Compares computed outputs, so both models must have completed runs. See
-        :class:`~myflopy.project.model_results_diff.ResultsDiff`.
+        Mirrors ``model.hds`` / ``group.hds``; requires completed runs.
         """
 
-        from myflopy.project.model_results_diff import ResultsDiff
+        from myflopy.project.model_results_diff import HeadsResultDiff
 
-        return ResultsDiff(self)
+        return HeadsResultDiff(self)
+
+    @property
+    def bud(self) -> "BudgetResultDiff":
+        """Volumetric (listing) budget difference per term vs the reference."""
+
+        from myflopy.project.model_results_diff import BudgetResultDiff
+
+        return BudgetResultDiff(self)
 
     def package(self, name: str):
-        """Return the diff accessor for one package.
+        """Return the diff node for one package -- same as ``diff.packages.<name>``.
 
-        BC packages (rch/chd/drn/ghb/wel) yield a :class:`PackageDiff` (cell
-        structural + value tiers); ``lak``/``sfr`` yield a connection/reach
-        geometry diff (:class:`LakConnectionDiff` / :class:`SfrReachDiff`).
+        Every node has ``.inputs`` (declared-data difference) and, where the
+        package produces cell output, ``.results`` (computed difference).
         """
 
-        return _resolve_package_diff(self, name)
+        return getattr(self.packages, str(name).lower())
 
     def model(self, name: str) -> _FocusedModelDiff:
         """Focus the diff on a single non-reference model."""
@@ -605,7 +859,8 @@ class ModelDiff:
         """
 
         frames = [
-            self.package(pkg).summary(model_name=model_name) for pkg in self.package_names
+            _resolve_package_diff(self, pkg).summary(model_name=model_name)
+            for pkg in self.package_names
         ]
         frames = [frame for frame in frames if not frame.empty]
         if not frames:
@@ -633,7 +888,7 @@ class ModelDiff:
             config_diffs = config.settings(model_name=name)
             connection_rows = []
             for pkg in self.connection_package_names:
-                connection_summary = self.package(pkg).summary(model_name=name)
+                connection_summary = _resolve_package_diff(self, pkg).summary(model_name=name)
                 if not connection_summary.empty and not bool(
                     connection_summary.iloc[0]["identical"]
                 ):
@@ -715,10 +970,9 @@ class ModelDiff:
         identical decision.
         """
 
-        results = self.results
         try:
-            heads = results.heads.summary(model_name=model_name)
-            budget = results.budget.summary(model_name=model_name)
+            heads = self.hds.summary(model_name=model_name)
+            budget = self.bud.summary(model_name=model_name)
         except Exception:
             return {"identical": True, "lines": ["_Results differences: outputs unavailable (models not run)._"]}
 

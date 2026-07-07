@@ -12,15 +12,18 @@ Two questions at once ("both" framing):
 * **scenario** -- with different inputs, *how much* do the outputs differ, and
   *where / when* (max |diff| and its location).
 
-Phase 5a covers **heads** and the overall (volumetric) **budget**; later
-sub-phases add per-package cell budgets, UZF, lake/SFR stage & flow, and MVR.
-All stress-period/time references are zero-based.
+These accessors surface in the unified tree as ``diff.hds`` (heads), ``diff.bud``
+(volumetric budget), and ``diff.packages.<pkg>.results`` (per-package cell
+budgets, UZF gwrch/sat, lake/SFR q + stage, MVR). All stress-period/time
+references are zero-based.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from myflopy.modflow.mf6.package_explorer import DiffSpatialView, FieldMappable
 
 # Default tolerances for the ``within_tolerance`` test: |diff| <= atol + rtol*|ref|.
 _DEFAULT_ATOL = 1e-3
@@ -53,8 +56,12 @@ class _ResultDiffBase:
         return [name for name in self.group.models if name != self.group.reference]
 
 
-class HeadsResultDiff(_ResultDiffBase):
-    """Head-difference results vs the reference model (per cell / layer / time)."""
+class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
+    """Head-difference results vs the reference model (per cell / layer / time).
+
+    ``map`` / ``mosaic`` / ``animate`` render Δhead (model - reference) --
+    ``diff.hds.map("F9b", per=8, layer=1)``, ``diff.hds.mosaic(by="model")``.
+    """
 
     def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
         """Return aligned head differences: ``elev`` / ``reference_elev`` / ``diff``."""
@@ -64,6 +71,60 @@ class HeadsResultDiff(_ResultDiffBase):
             targets = self._targets(model_name)
             frame = frame[frame["model"].isin(targets)]
         return frame.reset_index(drop=True)
+
+    # -- spatial-view hooks (delta head maps) ---------------------------------
+    def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
+        return self.group.hds.compare_map(model_name=model, per=per, layer=layer, **kwargs)
+
+    def _spatial_models(self):
+        return self._targets()
+
+    def _spatial_reference_model(self):
+        return self.group.models[self.group.reference]
+
+    def _spatial_value_label(self):
+        return "head"
+
+    # -- series hooks: plot() draws mean Δhead by period, one line per model --
+    def _series_value_column(self, frame) -> str:
+        return "diff"
+
+    def _series_default_agg(self) -> str:
+        return "mean"
+
+    def _sections(
+        self,
+        model=None,
+        *,
+        line=None,
+        cells: int | list[int] | None = None,
+        per: int | None = None,
+        layer: int | list[int] = 0,
+        **kwargs,
+    ):
+        """Return reference + compared-model :class:`XSection` objects.
+
+        The grammar's ``xs`` verbs overlay the reference model's profile with
+        each target model's along the same ``line`` (or ``cells`` path), so
+        head differences read directly off the profiles; ``model`` narrows to
+        one compared model.
+        """
+
+        from myflopy.modflow.utils.datatypes.xsections import XSection
+
+        names = [self.group.reference, *self._targets(model)]
+        return {
+            name: XSection(
+                model=self.group.models[name],
+                section_name=name,
+                line=line,
+                cells=cells,
+                per=per,
+                layer=layer,
+                **kwargs,
+            )
+            for name in names
+        }
 
     def summary(
         self,
@@ -209,12 +270,13 @@ class BudgetResultDiff(_ResultDiffBase):
         ).reset_index(drop=True)
 
 
-class CellBudgetResultDiff(_ResultDiffBase):
+class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
     """Per-package cell-budget difference vs the reference model.
 
     Wraps a grouped cell-budget accessor (GHB/DRN/… leakage, SFR/LAK exchange,
     UZF recharge/saturation) and adds Δ summary stats + a within-tolerance flag on
-    its value column (``q``, ``gwrch``, ``sat``, …).
+    its value column (``q``, ``gwrch``, ``sat``, …), plus the unified delta
+    ``map`` / ``mosaic`` / ``animate`` grammar.
     """
 
     def __init__(self, diff, accessor):
@@ -232,6 +294,10 @@ class CellBudgetResultDiff(_ResultDiffBase):
         if model_name is not None:
             frame = frame[frame["model"].isin(self._targets(model_name))]
         return frame.reset_index(drop=True)
+
+    # -- series hook: plot() draws the Δ column, one line per model -----------
+    def _series_value_column(self, frame) -> str:
+        return f"{self.value_name}_diff"
 
     def summary(
         self,
@@ -286,51 +352,93 @@ class CellBudgetResultDiff(_ResultDiffBase):
             )
         return pd.DataFrame(rows, columns=columns)
 
+    # -- spatial-view hooks (delta per-cell flux maps) ------------------------
+    def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
+        """Δ leakage/exchange choropleth for one compared model."""
+
+        return self._accessor.compare_map(model_name=model, per=per, layer=layer, **kwargs)
+
+    def _spatial_models(self):
+        return self._targets()
+
+    def _spatial_reference_model(self):
+        return self.group.models[self.group.reference]
+
+    def _spatial_periods(self):
+        return self._accessor._spatial_periods()
+
+    def _spatial_layers(self):
+        return self._accessor._spatial_layers()
+
+    def _spatial_value_label(self):
+        return self.value_name
+
 
 # Packages with a per-cell budget diff via group.packages.<pkg>.results.q.
 _CELL_BUDGET_PACKAGES = ("ghb", "drn", "chd", "wel", "rch", "sfr", "lak")
 
 
-class _ResultsPackageNamespace:
-    """``diff.results.packages.<pkg>`` -> :class:`CellBudgetResultDiff`."""
+class CellResultsDiffNamespace(FieldMappable):
+    """``diff.packages.<pkg>.results`` for cell-budget BC packages.
 
-    def __init__(self, diff):
+    One field, ``q`` (the package-groundwater exchange Δ), matching the
+    single-model and group results namespaces -- so ``results.map()`` /
+    ``results.q.map("F9b")`` follow the unified grammar with Δ content.
+    """
+
+    _default_field = "q"
+
+    def __init__(self, diff, package_name: str):
         self._diff = diff
         self.group = diff.group
+        self.package_name = str(package_name).lower()
 
-    def __getattr__(self, name: str) -> CellBudgetResultDiff:
-        pkg = str(name).lower()
+    def _field_names(self):
+        return ["q"]
+
+    @property
+    def q(self) -> CellBudgetResultDiff:
+        """Per-cell exchange difference vs the reference model."""
+
         try:
-            accessor = getattr(self.group.packages, pkg)
+            accessor = getattr(self.group.packages, self.package_name)
         except AttributeError as exc:
             raise AttributeError(
-                f"No grouped results accessor for package {name!r}."
+                f"No grouped results accessor for package {self.package_name!r}."
             ) from exc
         cell = getattr(getattr(accessor, "results", None), "q", None)
         if cell is None:
-            raise AttributeError(f"Package {name!r} has no cell-budget results.")
+            raise AttributeError(
+                f"Package {self.package_name!r} has no cell-budget results."
+            )
         return CellBudgetResultDiff(self._diff, cell)
 
-    def __dir__(self):
-        return sorted(set(super().__dir__()) | set(_CELL_BUDGET_PACKAGES))
 
+class UzfResultsDiffNamespace(FieldMappable):
+    """``diff.packages.uzf.results`` -- fields ``gwrch`` (default) and ``sat``."""
 
-class _ResultsUzfNamespace:
-    """``diff.results.uzf.gwrch`` / ``.sat`` -> :class:`CellBudgetResultDiff`."""
+    _default_field = "gwrch"
 
     def __init__(self, diff):
         self._diff = diff
         self.group = diff.group
+
+    def _field_names(self):
+        return ["gwrch", "sat"]
 
     def _uzf_results(self):
         return self.group.packages.uzf.results
 
     @property
     def gwrch(self) -> CellBudgetResultDiff:
+        """Groundwater-recharge difference vs the reference model."""
+
         return CellBudgetResultDiff(self._diff, self._uzf_results().gwrch)
 
     @property
     def sat(self) -> CellBudgetResultDiff:
+        """Unsaturated-zone saturation difference vs the reference model."""
+
         return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
 
 
@@ -456,79 +564,37 @@ class MvrResultDiff(_ResultDiffBase):
         return pd.concat(frames, ignore_index=True)[self._COLUMNS]
 
 
-class _ResultsLakNamespace:
-    """``diff.results.lak.stage`` / ``.flow``."""
+class LakResultsDiffNamespace(CellResultsDiffNamespace):
+    """``diff.packages.lak.results`` -- fields ``q`` (default) and ``stage``."""
 
     def __init__(self, diff):
-        self._diff = diff
-        self.group = diff.group
+        super().__init__(diff, "lak")
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     @property
     def stage(self) -> StageResultDiff:
+        """Lake-stage difference vs the reference model (per lake / period)."""
+
         from myflopy.project.model_group import GroupLakStageResults
 
         return StageResultDiff(self._diff, GroupLakStageResults(self.group), entity="lake")
 
-    @property
-    def flow(self) -> CellBudgetResultDiff:
-        return CellBudgetResultDiff(self._diff, self.group.packages.lak.results.q)
 
-
-class _ResultsSfrNamespace:
-    """``diff.results.sfr.stage`` / ``.flow``."""
+class SfrResultsDiffNamespace(CellResultsDiffNamespace):
+    """``diff.packages.sfr.results`` -- fields ``q`` (default) and ``stage``."""
 
     def __init__(self, diff):
-        self._diff = diff
-        self.group = diff.group
+        super().__init__(diff, "sfr")
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     @property
     def stage(self) -> StageResultDiff:
+        """Reach-stage difference vs the reference model (per reach / period)."""
+
         from myflopy.project.model_group import GroupSfrStageResults
 
         return StageResultDiff(self._diff, GroupSfrStageResults(self.group), entity="reach")
-
-    @property
-    def flow(self) -> CellBudgetResultDiff:
-        return CellBudgetResultDiff(self._diff, self.group.packages.sfr.results.q)
-
-
-class ResultsDiff:
-    """Results-tier facade for :class:`~myflopy.project.model_diff.ModelDiff`.
-
-    Compares computed outputs between models -- ``heads``, the overall ``budget``,
-    per-package cell budgets (``packages.<pkg>``), ``uzf`` recharge/saturation,
-    lake/stream ``lak``/``sfr`` (stage + flow), and the mover (``mvr``). Requires
-    completed runs; accessors raise if outputs are missing.
-    """
-
-    def __init__(self, diff):
-        self._diff = diff
-        self.group = diff.group
-
-    @property
-    def heads(self) -> HeadsResultDiff:
-        return HeadsResultDiff(self._diff)
-
-    @property
-    def budget(self) -> BudgetResultDiff:
-        return BudgetResultDiff(self._diff)
-
-    @property
-    def packages(self) -> _ResultsPackageNamespace:
-        return _ResultsPackageNamespace(self._diff)
-
-    @property
-    def uzf(self) -> _ResultsUzfNamespace:
-        return _ResultsUzfNamespace(self._diff)
-
-    @property
-    def lak(self) -> _ResultsLakNamespace:
-        return _ResultsLakNamespace(self._diff)
-
-    @property
-    def sfr(self) -> _ResultsSfrNamespace:
-        return _ResultsSfrNamespace(self._diff)
-
-    @property
-    def mvr(self) -> MvrResultDiff:
-        return MvrResultDiff(self._diff)

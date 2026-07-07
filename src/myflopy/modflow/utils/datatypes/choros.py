@@ -135,6 +135,11 @@ class Choro:
             contour_resolution: int = 150,
             contour_method: str = "linear",
             animation_kstpkpers=None,
+            hover_spec=None,
+            hover=None,
+            hover_layers=None,
+            hover_surfaces=None,
+            hover_fields=None,
             **kwargs
 
     ):
@@ -216,6 +221,11 @@ class Choro:
             else list(animation_kstpkpers or [])
         )
         self._contour_segments = []
+        self.hover_spec = hover_spec
+        self._hover_override = hover
+        self._hover_layers = hover_layers
+        self._hover_surfaces = hover_surfaces
+        self._hover_fields = hover_fields
         self.kwargs = kwargs
 
         self.fig = Fig()
@@ -604,6 +614,10 @@ class Choro:
                 print(f'colorscale {colorscale} not recognized, using default: "earth".\n'
                       f'colorscale options are: {valid_colorscales}')
                 self._colorscale = 'earth'
+        elif isinstance(colorscale, (list, tuple)):
+            # explicit [[position, color], ...] stops (e.g. the gaining/losing
+            # blue-white-red scale) pass through to Plotly untouched
+            self._colorscale = [list(stop) for stop in colorscale]
 
     @property
     def locs(self):
@@ -651,6 +665,41 @@ class Choro:
             uirevision="lock",
         )
 
+    @property
+    def latlon_bounds(self):
+        """``(west, south, east, north)`` WGS84 grid bounds, or ``None``.
+
+        Consumed by :func:`myflopy.viz.mosaic` to fit -- and optionally to
+        synchronize -- the view of each map subplot to the model data.
+        """
+
+        if self.vor is None:
+            return None
+        west, south, east, north = self.vor.gdf_latlon.total_bounds
+        return (float(west), float(south), float(east), float(north))
+
+    def map_view(self, *, bounds=None):
+        """Return the ``{style, center, zoom}`` layout for this map's subplot.
+
+        Mirrors :meth:`update_layout`'s framing so a choropleth composed into a
+        subplot grid zooms to the data just like the standalone map does.
+        ``bounds`` -- ``(west, south, east, north)`` in WGS84 -- overrides this
+        map's own extent so several panels can share one synchronized view; it
+        defaults to :attr:`latlon_bounds`.
+        """
+
+        view = {"style": "carto-voyager"}
+        extent = self.latlon_bounds if bounds is None else tuple(float(b) for b in bounds)
+        if extent is None:
+            return view
+        west, south, east, north = extent
+        view["center"] = {"lat": (south + north) / 2.0, "lon": (west + east) / 2.0}
+        if self.fit_bounds:
+            view["zoom"] = _initial_map_zoom(extent, padding=self.bounds_padding)
+        else:
+            view["zoom"] = self.zoom
+        return view
+
     def add_choropleth(self):
         """creates a choropleth map based on the provided params and adds to the fig"""
         custom_data, hover_template = _content_aware_hover(self.hover_dict)
@@ -686,9 +735,85 @@ class Choro:
                 showlegend=False,
             )
 
+    def _build_hover_context(self):
+        """Assemble a :class:`HoverContext` from this map's data for ``hover_spec``."""
+
+        from myflopy.modflow.utils.datatypes.hover import HoverContext
+
+        ncpl = int(self.vor.ncpl)
+        period = step = date = None
+        if self.kstpkper is not None:
+            step, period = self.kstpkper
+        if self.model is not None and getattr(self.model, "per_dates", None) is not None:
+            try:
+                dates = self.model.per_dates
+                if period is not None and period < len(dates):
+                    date = dates[period].strftime("%b %Y")
+            except Exception:
+                date = None
+
+        payload = dict(self._custom_hover) if self._custom_hover else {}
+        layer_fields: dict[str, list] = {}
+        top = botm = None
+        if self.model is not None and (self.type == "hds" or self.hover_heads):
+            heads = []
+            for lyr in range(self.nlay):
+                lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], "elev"].to_list()
+                heads.append([np.nan if h == 1e30 else h for h in lyr_heads])
+            layer_fields["head"] = heads
+            try:
+                topbtm = self.vor.gdf_topbtm
+                top = topbtm.iloc[:, 1].to_list()
+                botm = [topbtm.iloc[:, 2 + i].to_list() for i in range(self.nlay)]
+            except Exception:
+                top = botm = None
+
+        return HoverContext(
+            ncpl=ncpl,
+            active_layer=self.layer,
+            payload=payload,
+            layer_fields=layer_fields,
+            top=top,
+            botm=botm,
+            area=list(self.area_list),
+            cells=list(self.cell_list),
+            period=period,
+            step=step,
+            date=date,
+        )
+
+    def _resolved_hover_spec(self):
+        """Merge the base spec with any call-site sugar (hover/hover_layers/...).
+
+        ``hover=`` replaces the base spec outright; ``hover_layers`` /
+        ``hover_surfaces`` / ``hover_fields`` tweak it. Sugar that does not apply
+        (e.g. ``hover_layers`` on a single-value-per-cell field) is a no-op --
+        the layer table simply finds no per-layer field and renders nothing.
+        """
+
+        from dataclasses import replace
+
+        spec = self._hover_override if self._hover_override is not None else self.hover_spec
+        if spec is None:
+            return None
+        if self._hover_layers is not None:
+            spec = replace(spec, layers=self._hover_layers)
+        if self._hover_surfaces is not None:
+            spec = replace(spec, surfaces=self._hover_surfaces)
+        if self._hover_fields:
+            spec = spec.with_fields(*self._hover_fields)
+        return spec
+
     def get_choropleth(self):
 
-        custom_data, hover_template = _content_aware_hover(self.hover_dict)
+        extra = {}
+        resolved_spec = self._resolved_hover_spec()
+        if resolved_spec is not None:
+            context = self._build_hover_context()
+            custom_data, hover_template, hoverlabel = resolved_spec.render(context)
+            extra["hoverlabel"] = hoverlabel
+        else:
+            custom_data, hover_template = _content_aware_hover(self.hover_dict)
         choropleth = go.Choroplethmap(
             geojson=self.vor.latlon,
             featureidkey="id",
@@ -699,6 +824,7 @@ class Choro:
             colorscale=self.colorscale,
             zmax=self._zmax,
             zmin=self._zmin,
+            **extra,
             **self.kwargs,
         )
         return choropleth
@@ -883,7 +1009,17 @@ class Choro:
         else:
             fig = ax.figure
 
-        cmap = cmap or _PLOTLY_TO_MPL_CMAP.get(str(self.colorscale).lower(), "viridis")
+        if cmap is None:
+            scale = self.colorscale
+            if isinstance(scale, (list, tuple)):
+                # explicit color stops -> equivalent matplotlib colormap
+                from matplotlib.colors import LinearSegmentedColormap
+
+                cmap = LinearSegmentedColormap.from_list(
+                    "choro_custom", [(float(pos), color) for pos, color in scale]
+                )
+            else:
+                cmap = _PLOTLY_TO_MPL_CMAP.get(str(scale).lower(), "gist_earth")
         vmin = self._zmin if vmin is None else vmin
         vmax = self._zmax if vmax is None else vmax
         gdf.plot(column="_choro", ax=ax, cmap=cmap, legend=colorbar,

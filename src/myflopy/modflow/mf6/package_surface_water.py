@@ -39,7 +39,9 @@ from myflopy.modflow.mf6.package_budget import (
     build_surface_water_exchange_cell_table,
 )
 from myflopy.modflow.mf6.package_plotting import (
-    MappedFieldVisualizationMixin,
+    FieldMappable,
+    SpatialView,
+    _apply_backend,
     _blue_white_red_diverging_colorscale,
     _symmetric_color_limit,
     build_cell_input_map_payload,
@@ -47,11 +49,62 @@ from myflopy.modflow.mf6.package_plotting import (
     build_sfr_q_map_payload,
     build_surface_water_q_map_payload,
 )
+from myflopy.modflow.utils.datatypes.hover import (
+    cell_input_hover,
+    lak_hover,
+    sfr_hover,
+    surface_water_hover,
+)
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
     PackageBudgetTermExplorer,
     StageResultsExplorer,
 )
+
+
+def _join_feature_stage(frame, stage_table, *, per=None):
+    """Join per-cell feature stage onto an exchange frame for the hover.
+
+    ``stage_table`` is a normalized stage result table (one row per feature-cell
+    per period). Cells touched by more than one feature take the mean stage,
+    matching :class:`StageResultsExplorer`'s series aggregate.
+    """
+
+    if frame.empty or "stage" in frame.columns or stage_table.empty:
+        return frame
+    selected = stage_table
+    if per is not None and "per" in selected.columns:
+        selected = selected[selected["per"] == int(per)]
+    if selected.empty or "stage" not in selected.columns:
+        return frame
+    mapping = (
+        pd.to_numeric(selected["stage"], errors="coerce")
+        .groupby(selected["cell"])
+        .mean()
+    )
+    joined = frame.copy()
+    joined["stage"] = joined["cell"].map(mapping)
+    return joined
+
+
+def join_sfr_stage(model, frame, *, per=None):
+    """Add SFR reach stage to an exchange frame; a no-op if stage is unavailable."""
+
+    try:
+        stage_table = build_sfr_stage_result_table(model)
+    except Exception:
+        return frame
+    return _join_feature_stage(frame, stage_table, per=per)
+
+
+def join_lak_stage(model, frame, *, per=None):
+    """Add lake stage to an exchange frame; a no-op if stage is unavailable."""
+
+    try:
+        stage_table = build_lak_stage_result_table(model)
+    except Exception:
+        return frame
+    return _join_feature_stage(frame, stage_table, per=per)
 
 
 class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
@@ -99,6 +152,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build an SFR exchange choropleth normalized by total reach length.
@@ -120,7 +174,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         """
 
         del agg
-        selected = self.get(per=per, layer=layer)
+        selected = join_sfr_stage(self.model, self.get(per=per, layer=layer), per=per)
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_sfr_q_map_payload(
             selected,
@@ -134,7 +188,8 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", sfr_hover())
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -145,6 +200,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
     def plot_profile(
         self,
@@ -250,6 +306,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a LAK exchange choropleth normalized by flow-surface area.
@@ -263,7 +320,11 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         """
 
         del agg
-        selected = self.get(per=per, layer=layer, connection_type=connection_type)
+        selected = join_lak_stage(
+            self.model,
+            self.get(per=per, layer=layer, connection_type=connection_type),
+            per=per,
+        )
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_lak_q_map_payload(
             selected,
@@ -277,7 +338,8 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", lak_hover())
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -285,9 +347,11 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "RdBu",
+            # match the SFR convention: gaining (negative q) blue, losing red
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
     def budget_summary(
         self,
@@ -405,64 +469,11 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
 
 
 class LakStageResultsExplorer(StageResultsExplorer):
-    """LAK stage explorer with simple period-oriented plotting helpers."""
+    """LAK stage explorer -- the unified grammar's ``plot()`` draws one line
+    per lake by stress period (replaced the old ``plot_timeseries``)."""
 
     def __init__(self, model: "SimulationBase"):
         super().__init__(model, "lak", build_lak_stage_result_table)
-
-    def plot_timeseries(
-        self,
-        *,
-        lake: int | None = None,
-        ax=None,
-        return_fig: bool = True,
-    ):
-        """Plot stage by stress period for one lake or all lakes.
-
-        Parameters
-        ----------
-        lake
-            Optional zero-based lake id. When omitted, all lakes are plotted.
-        ax
-            Optional Matplotlib axes object to draw onto.
-        return_fig
-            If ``True``, return the created figure.
-        """
-
-        frame = self.get()
-        if lake is not None:
-            frame = frame.loc[frame["lake"] == int(lake)].copy()
-        frame = frame.sort_values(["lake", "per", "cell"]).drop_duplicates(
-            ["lake", "per"]
-        )
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if frame.empty:
-            ax.set_title("LAK stage by stress period")
-            ax.set_xlabel("Stress Period")
-            ax.set_ylabel("Stage")
-            if return_fig:
-                return fig
-            return None
-
-        for lake_id, group in frame.groupby("lake", dropna=False):
-            ax.plot(
-                group["per"].astype(int).to_numpy(),
-                group["stage"].astype(float).to_numpy(),
-                marker="o",
-                linewidth=2.0,
-                label=f"Lake {int(lake_id)}",
-            )
-        ax.set_title("LAK stage by stress period")
-        ax.set_xlabel("Stress Period")
-        ax.set_ylabel("Stage")
-        ax.legend()
-        fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
 
 
 class LakStageChangeExplorer:
@@ -517,28 +528,48 @@ class LakStageChangeExplorer:
             ]
         )
 
-    def plot_timeseries(
+    def plot(
         self,
         *,
         lake: int | None = None,
-        ax=None,
-        return_fig: bool = True,
+        backend: str = "plotly",
+        title: str | None = None,
     ):
-        """Plot stage changes by stress-period transition."""
+        """Series panel: stage change by stress-period transition, per lake.
+
+        The grammar's ``plot`` verb for this node (its x-axis is the period
+        *transition*, not the period, so it does not use the generic series
+        engine). ``backend="plotly"`` returns a ``viz.Fig``; ``backend="mpl"``
+        a matplotlib figure.
+        """
+
+        from myflopy.viz import Fig
 
         frame = self.get(lake=lake)
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if frame.empty:
-            ax.set_title("LAK stage change by transition")
-            ax.set_xlabel("Stress-Period Transition")
-            ax.set_ylabel("Stage Change")
-            if return_fig:
-                return fig
-            return None
-
+        heading = title or "LAK stage change by transition"
+        normalized = str(backend).lower()
+        if normalized in ("plotly", "interactive"):
+            fig = Fig()
+            for lake_id, group in frame.groupby("lake", dropna=False):
+                labels = [
+                    f"{int(start)}->{int(end)}"
+                    for start, end in zip(group["per0"], group["per1"], strict=False)
+                ]
+                fig.add_scatter(
+                    x=labels,
+                    y=group["stage_change"].astype(float).to_numpy(),
+                    mode="lines+markers",
+                    name=f"Lake {int(lake_id)}",
+                )
+            fig.update_layout(
+                title=heading,
+                xaxis_title="Stress-Period Transition",
+                yaxis_title="Stage Change",
+            )
+            return fig
+        if normalized not in ("mpl", "matplotlib", "static"):
+            raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+        fig, ax = mpl_axes(figsize=(8, 4))
         for lake_id, group in frame.groupby("lake", dropna=False):
             labels = [
                 f"{int(start)}->{int(end)}"
@@ -552,14 +583,13 @@ class LakStageChangeExplorer:
                 label=f"Lake {int(lake_id)}",
             )
         ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
-        ax.set_title("LAK stage change by transition")
+        ax.set_title(heading)
         ax.set_xlabel("Stress-Period Transition")
         ax.set_ylabel("Stage Change")
-        ax.legend()
+        if not frame.empty:
+            ax.legend()
         fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
+        return fig
 
 
 class LakConnectionsExplorer:
@@ -625,6 +655,7 @@ class LakConnectionsExplorer:
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a choropleth of LAK connection geometry by cell.
@@ -662,7 +693,8 @@ class LakConnectionsExplorer:
             fill_value=fill_value,
             agg=agg,
         )
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", cell_input_hover(value_column))
+        choro = self.model.cor(
             per=0,
             layer=layer,
             type="custom",
@@ -670,9 +702,10 @@ class LakConnectionsExplorer:
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "Blues",
+            colorscale=colorscale or "earth",
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
 class SfrStageResultsExplorer(StageResultsExplorer):
@@ -735,8 +768,20 @@ class SfrStageResultsExplorer(StageResultsExplorer):
         return None
 
 
-class LakResultsNamespace:
-    """Namespace for LAK result explorers."""
+class LakResultsNamespace(FieldMappable):
+    """Namespace for LAK result explorers.
+
+    Mappable fields: ``q`` (lake-groundwater exchange, the default) and
+    ``stage`` -- use ``results.map(field="stage")`` or ``results.stage.map()``.
+    ``stage_change`` stays a first-class accessor (``results.stage_change.plot()``)
+    but is a per-transition series, not a spatial field, so it is not in
+    ``field_names()``.
+    """
+
+    _default_field = "q"
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
@@ -1224,8 +1269,17 @@ class SfrBudgetNamespace:
         )
 
 
-class SfrResultsNamespace:
-    """Namespace for SFR result explorers."""
+class SfrResultsNamespace(FieldMappable):
+    """Namespace for SFR result explorers.
+
+    Fields: ``q`` (stream-groundwater exchange, the default) and ``stage``.
+    Use ``results.map(field="stage")`` or ``results.stage.map()``.
+    """
+
+    _default_field = "q"
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
@@ -1382,7 +1436,7 @@ class SfrResultsNamespace:
         return None
 
 
-class SurfaceWaterExchangeResultsExplorer:
+class SurfaceWaterExchangeResultsExplorer(SpatialView):
     """Combined SFR/LAK exchange explorer with one shared physical sign scale."""
 
     def __init__(self, model: "SimulationBase"):
@@ -1426,6 +1480,7 @@ class SurfaceWaterExchangeResultsExplorer:
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build one combined SFR/LAK exchange map with a shared L/T scale.
@@ -1458,7 +1513,8 @@ class SurfaceWaterExchangeResultsExplorer:
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", surface_water_hover())
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -1466,13 +1522,20 @@ class SurfaceWaterExchangeResultsExplorer:
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "RdBu",
+            # signed exchange: gaining (negative) blue, losing red, like SFR/LAK
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class SurfaceWaterResultsNamespace:
-    """Namespace for combined surface-water result explorers."""
+class SurfaceWaterResultsNamespace(FieldMappable):
+    """Namespace for combined surface-water result explorers (field: ``q``)."""
+
+    _default_field = "q"
+
+    def _field_names(self):
+        return ["q"]
 
     def __init__(self, model: "SimulationBase"):
         self.model = model
@@ -1484,7 +1547,7 @@ class SurfaceWaterResultsNamespace:
         return SurfaceWaterExchangeResultsExplorer(self.model)
 
 
-class SurfaceWaterInputFieldExplorer(MappedFieldVisualizationMixin):
+class SurfaceWaterInputFieldExplorer(SpatialView):
     """One cell-mapped LAK or SFR input field."""
 
     def __init__(self, inputs: "SurfaceWaterInputsNamespace", field_name: str):
@@ -1526,6 +1589,7 @@ class SurfaceWaterInputFieldExplorer(MappedFieldVisualizationMixin):
         fill_value: float = 0.0,
         agg: str | None = None,
         colorscale: str | None = None,
+        backend: str = "plotly",
         **kwargs,
     ):
         """Build a Plotly choropleth for this LAK or SFR input field."""
@@ -1548,7 +1612,8 @@ class SurfaceWaterInputFieldExplorer(MappedFieldVisualizationMixin):
             agg=agg,
         )
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
-        return self.model.cor(
+        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        choro = self.model.cor(
             per=per,
             layer=layer,
             type="custom",
@@ -1556,17 +1621,30 @@ class SurfaceWaterInputFieldExplorer(MappedFieldVisualizationMixin):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "Viridis",
+            colorscale=colorscale or "earth",
             **kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
-class SurfaceWaterInputsNamespace:
-    """Consistent input exploration namespace for LAK and SFR."""
+class SurfaceWaterInputsNamespace(FieldMappable):
+    """Consistent input exploration namespace for LAK and SFR.
+
+    Every numeric input column is a first-class field node (``sfr.inputs.rhk``,
+    ``lak.inputs.connection_area``) with the unified grammar; the namespace
+    verbs take ``field=`` as sugar over them.
+    """
 
     def __init__(self, model: "SimulationBase", package_name: str):
         self.model = model
         self.package_name = str(package_name).lower()
+
+    @property
+    def _default_field(self) -> str:
+        return "connection_area" if self.package_name == "lak" else "rhk"
+
+    def _field_names(self) -> list[str]:
+        return self.fields["field"].tolist()
 
     def get(
         self,
@@ -1629,23 +1707,9 @@ class SurfaceWaterInputsNamespace:
     def default(self) -> SurfaceWaterInputFieldExplorer:
         """Return the preferred package input field."""
 
-        preferred = "connection_area" if self.package_name == "lak" else "rhk"
-        return getattr(self, preferred)
+        return getattr(self, self._default_field)
 
-    def map(self, **kwargs):
-        return self.default.map(**kwargs)
-
-    def plot(self, **kwargs):
-        return self.default.plot(**kwargs)
-
-    def plotly_mosaic(self, **kwargs):
-        return self.default.plotly_mosaic(**kwargs)
-
-    def slider_html(self, *args, **kwargs):
-        return self.default.slider_html(*args, **kwargs)
-
-    def plotly_animation(self, **kwargs):
-        return self.default.plotly_animation(**kwargs)
+    # map/plot/xs/mosaic/animate come from FieldMappable (field= sugar).
 
 
 class LakPackageExplorer:

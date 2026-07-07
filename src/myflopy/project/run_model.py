@@ -560,7 +560,14 @@ class LoadedMf6Run(SimulationBase):
         """Return the binary cell-budget reader without loading FloPy core packages."""
 
         if self._bud is None:
-            self._bud = flopy.utils.CellBudgetFile(self.workspace / f"{self.name}.cbc")
+            # MF6 always writes double-precision binaries. FloPy's default
+            # precision="auto" tries single first and can misread a double file:
+            # on Windows the bogus record length makes file.seek raise
+            # OSError (Errno 22) -- which escapes FloPy's BudgetIndexError/EOFError
+            # guard, so the double-precision fallback never runs. Read as double.
+            self._bud = flopy.utils.CellBudgetFile(
+                self.workspace / f"{self.name}.cbc", precision="double"
+            )
         return self._bud
 
     def _get_budget_kstpkper(self) -> list[tuple[int, int]]:

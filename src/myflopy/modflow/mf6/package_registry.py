@@ -41,12 +41,15 @@ class PackageExplorerSpec:
 
 
 _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
+    # Colorscale policy: diverging red/white/blue is reserved for signed,
+    # gaining/losing "q"-like fields and diff maps; everything else uses the
+    # house brown-to-blue "earth" scale (the mounding-figure default).
     "rch": PackageExplorerSpec(
         name="rch",
         default_input="recharge",
-        colorscale="Viridis",
+        colorscale="earth",
         inputs={
-            "recharge": FieldSpec("recharge", label="Recharge", colorscale="Viridis"),
+            "recharge": FieldSpec("recharge", label="Recharge", colorscale="earth"),
         },
         results={
             "q": ResultSpec("q", budget_text="RCH", value_name="q", colorscale="RdBu"),
@@ -55,9 +58,9 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     "chd": PackageExplorerSpec(
         name="chd",
         default_input="head",
-        colorscale="Blues",
+        colorscale="earth",
         inputs={
-            "head": FieldSpec("head", label="Constant head", colorscale="Blues"),
+            "head": FieldSpec("head", label="Constant head", colorscale="earth"),
         },
         results={
             "q": ResultSpec("q", budget_text="CHD", value_name="q", colorscale="RdBu"),
@@ -66,10 +69,10 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     "drn": PackageExplorerSpec(
         name="drn",
         default_input="elev",
-        colorscale="YlOrRd",
+        colorscale="earth",
         inputs={
-            "elev": FieldSpec("elev", label="Drain elevation", colorscale="YlOrRd"),
-            "cond": FieldSpec("cond", label="Drain conductance", colorscale="Viridis"),
+            "elev": FieldSpec("elev", label="Drain elevation", colorscale="earth"),
+            "cond": FieldSpec("cond", label="Drain conductance", colorscale="earth"),
         },
         results={
             "q": ResultSpec("q", budget_text="DRN", value_name="q", colorscale="RdBu"),
@@ -78,10 +81,10 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     "ghb": PackageExplorerSpec(
         name="ghb",
         default_input="bhead",
-        colorscale="Portland",
+        colorscale="earth",
         inputs={
-            "bhead": FieldSpec("bhead", label="Boundary head", colorscale="Portland"),
-            "cond": FieldSpec("cond", label="Boundary conductance", colorscale="Viridis"),
+            "bhead": FieldSpec("bhead", label="Boundary head", colorscale="earth"),
+            "cond": FieldSpec("cond", label="Boundary conductance", colorscale="earth"),
         },
         results={
             "q": ResultSpec("q", budget_text="GHB", value_name="q", colorscale="RdBu"),
@@ -102,13 +105,13 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         name="uzf",
         kind="uzf",
         inputs={
-            "finf": FieldSpec("finf", label="UZF infiltration", colorscale="Viridis"),
-            "pet": FieldSpec("pet", label="Potential evapotranspiration", colorscale="YlOrRd"),
-            "extdp": FieldSpec("extdp", label="ET extinction depth", colorscale="Blues"),
-            "extwc": FieldSpec("extwc", label="ET extinction water content", colorscale="Viridis"),
-            "ha": FieldSpec("ha", label="Surface depression storage depth", colorscale="Blues"),
-            "hroot": FieldSpec("hroot", label="Root zone thickness", colorscale="Blues"),
-            "rootact": FieldSpec("rootact", label="Root activity", colorscale="Viridis"),
+            "finf": FieldSpec("finf", label="UZF infiltration", colorscale="earth"),
+            "pet": FieldSpec("pet", label="Potential evapotranspiration", colorscale="earth"),
+            "extdp": FieldSpec("extdp", label="ET extinction depth", colorscale="earth"),
+            "extwc": FieldSpec("extwc", label="ET extinction water content", colorscale="earth"),
+            "ha": FieldSpec("ha", label="Surface depression storage depth", colorscale="earth"),
+            "hroot": FieldSpec("hroot", label="Root zone thickness", colorscale="earth"),
+            "rootact": FieldSpec("rootact", label="Root activity", colorscale="earth"),
         },
         results={
             "gwrch": ResultSpec(
@@ -116,7 +119,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
                 budget_text="UZF-GWRCH",
                 value_name="gwrch",
                 label="UZF groundwater recharge",
-                colorscale="Viridis",
+                colorscale="earth",
                 diverging=False,
             ),
             "sat": ResultSpec(
@@ -124,7 +127,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
                 budget_text="DATA-SAT",
                 value_name="sat",
                 label="UZF saturation",
-                colorscale="Viridis",
+                colorscale="earth",
                 diverging=False,
             ),
         },
@@ -198,6 +201,13 @@ def get_package_input_field_spec(package_name: str, field_name: str) -> FieldSpe
     return spec.inputs.get(str(field_name).lower())
 
 
+def get_package_input_field_names(package_name: str) -> list[str]:
+    """Return the known input field names for one package (empty if unknown)."""
+
+    spec = get_package_explorer_spec(package_name)
+    return list(spec.inputs) if spec is not None else []
+
+
 def get_package_result_spec(package_name: str, result_name: str) -> ResultSpec | None:
     """Return registry metadata for one result field, if it is known."""
 
@@ -222,6 +232,7 @@ __all__ = [
     "get_default_package_colorscale",
     "get_default_package_value_column",
     "get_package_explorer_spec",
+    "get_package_input_field_names",
     "get_package_input_field_spec",
     "get_package_result_spec",
 ]

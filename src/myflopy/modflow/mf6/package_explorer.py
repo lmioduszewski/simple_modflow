@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.package_registry import (
     get_default_package_colorscale,
     get_default_package_value_column,
     get_package_explorer_spec,
+    get_package_input_field_names,
     get_package_input_field_spec,
     get_package_result_spec,
 )
@@ -70,7 +71,10 @@ from myflopy.modflow.mf6.package_plotting import (
     build_surface_water_q_map_payload,
     build_cell_input_map_payload,
     build_group_input_compare_map_payload,
-    MappedFieldVisualizationMixin,
+    SpatialView,
+    DiffSpatialView,
+    FieldMappable,
+    LeafFieldSugar,
 )
 
 from myflopy.modflow.mf6.package_inputs import (
@@ -125,6 +129,7 @@ __all__ = [
     "get_default_package_colorscale",
     "get_default_package_value_column",
     "get_package_explorer_spec",
+    "get_package_input_field_names",
     "get_package_input_field_spec",
     "get_package_result_spec",
     "_get_package_explorer_cache",
@@ -167,7 +172,10 @@ __all__ = [
     "build_surface_water_q_map_payload",
     "build_cell_input_map_payload",
     "build_group_input_compare_map_payload",
-    "MappedFieldVisualizationMixin",
+    "SpatialView",
+    "DiffSpatialView",
+    "FieldMappable",
+    "LeafFieldSugar",
     "CellPackageInputsExplorer",
     "CellPackageInputFieldExplorer",
     "UzfFieldInputsExplorer",

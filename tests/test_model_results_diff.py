@@ -70,7 +70,7 @@ def test_identical_heads_are_within_tolerance():
     frame = _heads("variant", [((0, 0), 0, 10, 5.0, 5.0), ((0, 0), 0, 11, 6.0, 6.0)])
     budgets = {"ref": _budget([1.0], TOTAL_IN=[10.0]), "variant": _budget([1.0], TOTAL_IN=[10.0])}
     diff = _group(heads_frame=frame, budgets=budgets).diff()
-    summary = diff.results.heads.summary().iloc[0]
+    summary = diff.hds.summary().iloc[0]
     assert summary["max_abs_diff"] == 0.0
     assert bool(summary["within_tolerance"])
 
@@ -82,7 +82,7 @@ def test_head_difference_flagged_with_location():
     )
     budgets = {"ref": _budget([1.0], TOTAL_IN=[10.0]), "variant": _budget([1.0], TOTAL_IN=[10.0])}
     diff = _group(heads_frame=frame, budgets=budgets).diff()
-    summary = diff.results.heads.summary().iloc[0]
+    summary = diff.hds.summary().iloc[0]
     assert summary["max_abs_diff"] == pytest.approx(0.8)
     assert summary["argmax_cell"] == 42
     assert summary["argmax_layer"] == 1
@@ -94,11 +94,26 @@ def test_head_difference_flagged_with_location():
 def test_head_tolerance_is_overridable():
     frame = _heads("variant", [((0, 0), 0, 10, 100.05, 100.0)])  # 0.05 diff, ref 100
     budgets = {"ref": _budget([1.0], TOTAL_IN=[10.0]), "variant": _budget([1.0], TOTAL_IN=[10.0])}
-    heads = _group(heads_frame=frame, budgets=budgets).diff().results.heads
+    heads = _group(heads_frame=frame, budgets=budgets).diff().hds
     # default atol+rtol (1e-3): 0.05 <= 1e-3 + 1e-3*100 = 0.101 -> within
     assert bool(heads.summary().iloc[0]["within_tolerance"])
     # tighten: atol=0.01, rtol=0 -> 0.05 > 0.01 -> breached
     assert not bool(heads.summary(atol=0.01, rtol=0.0).iloc[0]["within_tolerance"])
+
+
+def test_heads_map_forwards_model_name():
+    """diff.hds.map('X') -> the group heads compare_map (Δhead map)."""
+
+    frame = _heads("variant", [((0, 0), 0, 10, 5.0, 5.0)])
+    budgets = {"ref": _budget([1.0], TOTAL_IN=[10.0]), "variant": _budget([1.0], TOTAL_IN=[10.0])}
+    group = _group(heads_frame=frame, budgets=budgets)
+    diff = group.diff()
+
+    captured = {}
+    group.hds.compare_map = lambda **kwargs: captured.update(kwargs) or "FIG"
+    assert diff.hds.map("variant", per=3, layer=1) == "FIG"
+    assert captured["model_name"] == "variant"
+    assert captured["per"] == 3 and captured["layer"] == 1
 
 
 # --- budget ------------------------------------------------------------------
@@ -108,7 +123,7 @@ def test_identical_budget_terms_within_tolerance():
         "ref": _budget([1.0, 2.0], RCH_IN=[100.0, 100.0], GHB_OUT=[50.0, 50.0]),
         "variant": _budget([1.0, 2.0], RCH_IN=[100.0, 100.0], GHB_OUT=[50.0, 50.0]),
     }
-    summary = _group(heads_frame=frame, budgets=budgets).diff().results.budget.summary()
+    summary = _group(heads_frame=frame, budgets=budgets).diff().bud.summary()
     assert bool(summary["within_tolerance"].all())
     assert set(summary["term"]) == {"RCH_IN", "GHB_OUT"}
 
@@ -122,7 +137,7 @@ def test_budget_term_difference_detected():
     summary = (
         _group(heads_frame=frame, budgets=budgets)
         .diff()
-        .results.budget.summary()
+        .bud.summary()
         .set_index("term")
     )
     assert bool(summary.loc["RCH_IN", "within_tolerance"])
@@ -138,7 +153,7 @@ def test_budget_aligns_on_totim_intersection():
         "ref": _budget([1.0, 2.0, 3.0], RCH_IN=[100.0, 100.0, 100.0]),
         "variant": _budget([2.0, 3.0], RCH_IN=[100.0, 100.0]),  # missing totim 1.0
     }
-    data = _group(heads_frame=frame, budgets=budgets).diff().results.budget.get()
+    data = _group(heads_frame=frame, budgets=budgets).diff().bud.get()
     assert set(data["totim"]) == {2.0, 3.0}  # only the shared timesteps
 
 
@@ -158,9 +173,9 @@ def test_results_self_reference_errors():
     budgets = {"ref": _budget([1.0], RCH_IN=[100.0]), "variant": _budget([1.0], RCH_IN=[100.0])}
     diff = _group(heads_frame=frame, budgets=budgets).diff()
     with pytest.raises(ValueError):
-        diff.results.budget.summary(model_name="ref")
+        diff.bud.summary(model_name="ref")
     with pytest.raises(KeyError):
-        diff.results.heads.summary(model_name="ghost")
+        diff.hds.summary(model_name="ghost")
 
 
 # --- per-package cell budget + UZF (5b) --------------------------------------
@@ -205,20 +220,40 @@ def test_cell_budget_identical_within_tolerance():
     assert bool(cbd.summary().iloc[0]["within_tolerance"])
 
 
+def test_cell_budget_map_forwards_model_name():
+    """diff.packages.sfr.results.q.map('X') / .packages.ghb.map('X') must forward the
+    model to the accessor's compare_map (the SFR/LAK results Δ map)."""
+
+    accessor = _FakeCellAccessor("ghb", "q", _cell_frame([(10, -5.0, -5.0)]))
+    captured = {}
+    accessor.compare_map = lambda **kwargs: captured.update(kwargs) or "FIG"
+    cbd = CellBudgetResultDiff(_bare_diff(), accessor)
+
+    assert cbd.map("variant") == "FIG"          # positional model name accepted
+    assert captured["model_name"] == "variant"
+
+
+def test_cell_budget_map_requires_accessor_support():
+    accessor = _FakeCellAccessor("ghb", "q", _cell_frame([(10, -5.0, -5.0)]))  # no compare_map
+    cbd = CellBudgetResultDiff(_bare_diff(), accessor)
+    with pytest.raises(AttributeError):
+        cbd.map("variant")
+
+
 def test_results_packages_namespace_resolves():
     diff = _bare_diff()
-    ghb = diff.results.packages.ghb
+    ghb = diff.packages.ghb.results.q
     assert isinstance(ghb, CellBudgetResultDiff)
     assert ghb.package_name == "ghb"
     with pytest.raises(AttributeError):
-        _ = diff.results.packages.definitely_not_a_package
+        _ = diff.packages.definitely_not_a_package
 
 
 def test_results_uzf_namespace_resolves():
     diff = _bare_diff()
-    assert diff.results.uzf.gwrch.value_name == "gwrch"
-    assert diff.results.uzf.sat.value_name == "sat"
-    assert diff.results.uzf.gwrch.package_name == "uzf"
+    assert diff.packages.uzf.results.gwrch.value_name == "gwrch"
+    assert diff.packages.uzf.results.sat.value_name == "sat"
+    assert diff.packages.uzf.results.gwrch.package_name == "uzf"
 
 
 # --- LAK/SFR stage + MVR (5c) ------------------------------------------------
@@ -263,20 +298,20 @@ def test_sfr_reach_stage_diff_within_tolerance():
 
 def test_mvr_summary_empty_and_columns_without_mover_output():
     diff = _bare_diff()
-    summary = diff.results.mvr.summary()
+    summary = diff.packages.mvr.results.summary()
     assert summary.empty
     assert list(summary.columns) == MvrResultDiff._COLUMNS
 
 
 def test_results_lak_sfr_mvr_namespaces_resolve():
     diff = _bare_diff()
-    assert isinstance(diff.results.lak.stage, StageResultDiff)
-    assert diff.results.lak.stage._entity == "lake"
-    assert isinstance(diff.results.sfr.stage, StageResultDiff)
-    assert diff.results.sfr.stage._entity == "reach"
-    assert isinstance(diff.results.lak.flow, CellBudgetResultDiff)
-    assert diff.results.sfr.flow.package_name == "sfr"
-    assert isinstance(diff.results.mvr, MvrResultDiff)
+    assert isinstance(diff.packages.lak.results.stage, StageResultDiff)
+    assert diff.packages.lak.results.stage._entity == "lake"
+    assert isinstance(diff.packages.sfr.results.stage, StageResultDiff)
+    assert diff.packages.sfr.results.stage._entity == "reach"
+    assert isinstance(diff.packages.lak.results.q, CellBudgetResultDiff)
+    assert diff.packages.sfr.results.q.package_name == "sfr"
+    assert isinstance(diff.packages.mvr.results, MvrResultDiff)
 
 
 @pytest.mark.slow
@@ -290,35 +325,40 @@ def test_results_diff_end_to_end_identical_on_canonical(canonical_run):
     reloaded = mf.load_mf6_run(run.workspace)
     diff = ModelGroup({"a": run, "b": reloaded}, reference="a").diff()
 
-    heads = diff.results.heads.summary().iloc[0]
+    heads = diff.hds.summary().iloc[0]
     assert heads["max_abs_diff"] == 0.0
     assert bool(heads["within_tolerance"])
 
-    budget = diff.results.budget.summary()
+    budget = diff.bud.summary()
     assert not budget.empty
     assert bool(budget["within_tolerance"].all())
 
     # per-package cell budget + UZF on real outputs (identical -> within tolerance)
-    ghb_cells = diff.results.packages.ghb.summary()
+    ghb_cells = diff.packages.ghb.results.q.summary()
     assert not ghb_cells.empty
     assert bool(ghb_cells["within_tolerance"].all())
-    uzf = diff.results.uzf.gwrch.summary()
+    uzf = diff.packages.uzf.results.gwrch.summary()
     assert bool(uzf["within_tolerance"].all())
 
     # LAK/SFR stage + SFR flow on real outputs (identical -> within tolerance)
-    lak_stage = diff.results.lak.stage.summary()
+    lak_stage = diff.packages.lak.results.stage.summary()
     assert not lak_stage.empty
     assert bool(lak_stage["within_tolerance"].all())
-    sfr_stage = diff.results.sfr.stage.summary()
+    sfr_stage = diff.packages.sfr.results.stage.summary()
     assert not sfr_stage.empty
     assert bool(sfr_stage["within_tolerance"].all())
-    assert bool(diff.results.sfr.flow.summary()["within_tolerance"].all())
+    assert bool(diff.packages.sfr.results.q.summary()["within_tolerance"].all())
 
     # MVR (canonical routes lake -> stream via the mover); if terms are present,
     # a run vs a reload of itself must be within tolerance.
-    mvr = diff.results.mvr.summary()
+    mvr = diff.packages.mvr.results.summary()
     if not mvr.empty:
         assert bool(mvr["within_tolerance"].all())
+
+    # spatial diff maps render on real outputs (a==b so flat, but must build)
+    assert diff.hds.map("b") is not None
+    assert diff.packages.sfr.results.q.map("b") is not None
+    assert diff.packages.ghb.results.q.map("b") is not None
 
     report = diff.report(results=True)
     assert "Results differences" in report

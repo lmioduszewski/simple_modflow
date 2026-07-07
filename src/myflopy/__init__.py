@@ -121,6 +121,7 @@ if TYPE_CHECKING:
     )
     from myflopy.modflow.mf6.simulation.base import SimulationBase
     from myflopy.modflow.mf6.simulation.packages import Wells
+    from myflopy.modflow.utils.datatypes.hover import HoverSpec, HoverStyle
     from myflopy.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
     from myflopy.project import (
         LoadedMf6Run,
@@ -436,6 +437,8 @@ _EXPORTS = {
     "run_particle_tracking": ("myflopy.modflow.mp3du", "run_particle_tracking"),
     "modflow": ("myflopy", "modflow"),
     "project": ("myflopy", "project"),
+    "HoverSpec": ("myflopy.modflow.utils.datatypes.hover", "HoverSpec"),
+    "HoverStyle": ("myflopy.modflow.utils.datatypes.hover", "HoverStyle"),
     "read_gpkg": ("myflopy.modflow.utils.datatypes.readers", "read_gpkg"),
     "read_shp_gpkg": ("myflopy.modflow.utils.datatypes.readers", "read_shp_gpkg"),
     "validate_surface_water_configuration": (

@@ -9,12 +9,13 @@ import warnings
 from pathlib import Path
 from typing import Generic, TypeVar
 
-import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
 from myflopy.modflow.mf6.package_explorer import (
+    SpatialView,
+    FieldMappable,
+    LeafFieldSugar,
+    get_package_input_field_names,
     _blue_white_red_diverging_colorscale,
     _normalize_connection_type_filter,
     build_surface_water_exchange_cell_table,
@@ -25,6 +26,8 @@ from myflopy.modflow.mf6.package_explorer import (
     build_lak_connection_table,
     build_lak_budget_result_table,
     build_lak_q_map_payload,
+    LakStageResultsExplorer,
+    SfrStageResultsExplorer,
     build_sfr_budget_result_table,
     build_sfr_q_map_payload,
     build_group_input_compare_map_payload,
@@ -35,6 +38,15 @@ from myflopy.modflow.mf6.package_explorer import (
     get_package_input_field_spec,
     get_default_package_value_column,
     _symmetric_color_limit,
+)
+from myflopy.modflow.mf6.package_surface_water import join_lak_stage, join_sfr_stage
+from myflopy.modflow.utils.datatypes.hover import (
+    cell_input_hover,
+    compare_hover,
+    lak_hover,
+    result_hover,
+    sfr_hover,
+    surface_water_hover,
 )
 
 TResultsNamespace = TypeVar("TResultsNamespace")
@@ -70,113 +82,6 @@ def _normalize_iterable_filter(values) -> list[int] | None:
     return [int(values)]
 
 
-def _coerce_panel_model_names(group: "ModelGroup", model_names: Sequence[str] | None = None) -> list[str]:
-    """Normalize optional subplot model ordering to a validated name list."""
-
-    if model_names is None:
-        return list(group.models.keys())
-    normalized = [str(name) for name in model_names]
-    missing = [name for name in normalized if name not in group.models]
-    if missing:
-        raise KeyError(f"Models not found in group: {missing!r}")
-    return normalized
-
-
-def _coerce_matplotlib_colormap(colorscale) -> mcolors.Colormap:
-    """Convert a package-explorer colorscale into a Matplotlib colormap."""
-
-    if colorscale is None:
-        return plt.get_cmap("RdBu")
-    if isinstance(colorscale, str):
-        try:
-            return plt.get_cmap(colorscale)
-        except ValueError:
-            return plt.get_cmap(colorscale.lower())
-    if isinstance(colorscale, Sequence):
-        color_values = []
-        for entry in colorscale:
-            if isinstance(entry, Sequence) and len(entry) >= 2:
-                color_values.append(entry[1])
-            else:
-                color_values.append(entry)
-        return mcolors.LinearSegmentedColormap.from_list("myflopy_surface_water", color_values)
-    raise TypeError("colorscale must be None, a Matplotlib colormap name, or a Plotly-style colorscale list.")
-
-
-def _plot_group_choropleth_subplots(
-    group: "ModelGroup",
-    panel_values: dict[str, np.ndarray],
-    *,
-    colorbar_label: str,
-    title_prefix: str,
-    colorscale,
-    model_names: Sequence[str] | None = None,
-    ncols: int | None = None,
-    figsize: tuple[float, float] | None = None,
-    symmetric: bool = True,
-):
-    """Plot one shared-scale choropleth panel per model and return the figure."""
-
-    ordered_names = _coerce_panel_model_names(group, model_names)
-    if not ordered_names:
-        raise ValueError("At least one model must be selected for subplot_map().")
-
-    ncols = int(ncols) if ncols is not None else min(3, max(1, len(ordered_names)))
-    nrows = int(np.ceil(len(ordered_names) / ncols))
-    if figsize is None:
-        figsize = (5.0 * ncols, 4.75 * nrows)
-    fig, axes = mpl_axes(nrows=nrows, ncols=ncols, figsize=figsize)
-    axes_array = np.atleast_1d(axes).ravel()
-
-    all_values = np.concatenate([np.asarray(panel_values[name], dtype=float) for name in ordered_names])
-    finite = all_values[np.isfinite(all_values)]
-    if symmetric:
-        absmax = float(np.max(np.abs(finite))) if finite.size else 0.0
-        if absmax <= 0.0:
-            absmax = 1.0
-        vmin, vmax = -absmax, absmax
-    elif finite.size:
-        vmin = float(np.min(finite))
-        vmax = float(np.max(finite))
-        if vmin == vmax:
-            padding = abs(vmin) * 0.05 if vmin != 0.0 else 1.0
-            vmin -= padding
-            vmax += padding
-    else:
-        vmin, vmax = 0.0, 1.0
-    cmap = _coerce_matplotlib_colormap(colorscale)
-    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-
-    for axis, model_name in zip(axes_array, ordered_names, strict=False):
-        model = group.models[model_name]
-        gdf = model.vor.gdf_vorPolys.copy()
-        gdf["value"] = np.asarray(panel_values[model_name], dtype=float)
-        gdf.plot(
-            column="value",
-            ax=axis,
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-            linewidth=0.3,
-            edgecolor="#666666",
-        )
-        axis.set_title(str(model_name))
-        axis.set_axis_off()
-        axis.set_aspect("equal")
-
-    for axis in axes_array[len(ordered_names):]:
-        axis.set_visible(False)
-
-    scalar_mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
-    scalar_mappable.set_array([])
-    colorbar = fig.colorbar(scalar_mappable, ax=axes_array[: len(ordered_names)], shrink=0.9)
-    colorbar.set_label(colorbar_label)
-    fig.suptitle(title_prefix, y=0.98)
-    fig.subplots_adjust(top=0.9, wspace=0.08, hspace=0.12)
-    fig._myflopy_panel_values = {name: np.asarray(panel_values[name], dtype=float) for name in ordered_names}
-    return fig
-
-
 def _filter_group_input_table(
     frame: pd.DataFrame,
     *,
@@ -201,12 +106,76 @@ def _filter_group_input_table(
     return selected.reset_index(drop=True)
 
 
+def _stable_compare_keys(
+    frame: pd.DataFrame,
+    value_columns: Sequence[str],
+    *,
+    carried: Sequence[str] = ("kstpkper",),
+) -> list[str]:
+    """Return the stable integer-identity columns to merge two models on.
+
+    A cell-budget table carries float geometry columns (``rlen``,
+    ``distance_start/mid/end``) that differ between models by sub-unit
+    floating-point noise -- e.g. a shared reach with ``rlen`` 16.000493 in one
+    model and 16.000000 in another. Including any of those in an exact-match
+    inner-join key drops the row entirely, silently emptying the comparison.
+
+    So the join key is the integer identity only (``per``/``layer``/``cell``/
+    ``node``/``node2``/``reach``/``package``): every float column, the value
+    columns being diffed, ``model``, and time metadata such as ``kstpkper``
+    (which varies with a model's time discretization) are excluded and instead
+    carried through from the compared model.
+    """
+
+    skip = {"model", *value_columns, *carried}
+    return [
+        column
+        for column in frame.columns
+        if column not in skip and not pd.api.types.is_float_dtype(frame[column])
+    ]
+
+
+def _reduce_to_period_end(frame: pd.DataFrame) -> pd.DataFrame:
+    """Collapse a per-timestep result table to one period-end row per identity.
+
+    Models with the same physics but different ``nstp`` save their period-end
+    output at a different ``kstp`` (e.g. kstp=13 vs kstp=9), so two runs cannot
+    be aligned on the full ``(kstp, kper)`` tuple. Reducing each model to the
+    largest-``kstp`` record within a stress period lets the comparison align on
+    the period alone -- and, for a model that saves several steps per period,
+    prevents a same-period self-join from exploding into a cartesian product.
+
+    A ``per`` column (zero-based stress period) is derived from ``kstpkper``.
+    This is a no-op for a model that already saves a single step per period.
+    """
+
+    if frame.empty or "kstpkper" not in frame.columns:
+        return frame
+    out = frame.copy()
+    out["per"] = out["kstpkper"].map(lambda kk: int(kk[1]))
+    out["_kstp"] = out["kstpkper"].map(lambda kk: int(kk[0]))
+    identity = [
+        column
+        for column in ("model", "package", "layer", "cell", "node", "node2", "reach")
+        if column in out.columns
+    ]
+    return (
+        out.sort_values(["per", "_kstp"])
+        .drop_duplicates(subset=[*identity, "per"], keep="last")
+        .drop(columns="_kstp")
+        .reset_index(drop=True)
+    )
+
+
 def _resolve_group_compare_target(group: "ModelGroup", model_name: str | None) -> str:
     """Resolve which non-reference model to use for a group difference map."""
 
     if model_name is not None:
         if model_name == group.reference:
-            raise ValueError("compare_map requires a non-reference model name.")
+            raise ValueError(
+                f"Cannot map {model_name!r} against itself -- it is the group's "
+                "reference. Choose a non-reference model."
+            )
         if model_name not in group.models:
             raise KeyError(f"Model {model_name!r} is not in the group.")
         return str(model_name)
@@ -215,7 +184,8 @@ def _resolve_group_compare_target(group: "ModelGroup", model_name: str | None) -
     if len(non_reference) == 1:
         return non_reference[0]
     raise ValueError(
-        "compare_map requires model_name when the group has more than one non-reference model."
+        "A model_name is required to map a difference when the group has more "
+        f"than one non-reference model. Pass one of: {non_reference}."
     )
 
 
@@ -314,15 +284,108 @@ def _coerce_models(models, *, crs: str, verbosity_level: int) -> dict[str, objec
     )
 
 
-class GroupHeads:
+class _GroupSpatialView(SpatialView):
+    """:class:`SpatialView` wired for a :class:`ModelGroup`.
+
+    Faceting defaults to one panel per model (``by="model"``) and the model
+    axis is the group's members; the host implements ``_spatial_map(per, layer,
+    model)`` to render one model's field as a ``Choro``. ``model=None`` means the
+    reference model.
+    """
+
+    def _spatial_models(self):
+        return list(self.group.models)
+
+    def _spatial_reference_model(self):
+        return self.group.models[self.group.reference]
+
+    def _spatial_default_facet(self):
+        return "model"
+
+    def _spatial_periods(self):
+        frame = self.get()
+        columns = getattr(frame, "columns", [])
+        if "per" in columns and not frame.empty:
+            return sorted({int(value) for value in frame["per"].dropna().tolist()})
+        return [0]
+
+    def _group_target(self, model):
+        """Resolve a model selector to a concrete model name (default reference)."""
+
+        if model is None:
+            return self.group.reference
+        name = str(model)
+        if name not in self.group.models:
+            raise KeyError(f"Model {name!r} is not in the group.")
+        return name
+
+
+class GroupHeads(_GroupSpatialView):
     """Heads accessor for :class:`ModelGroup`.
 
-    This mirrors the single-model ``model.hds`` surface conceptually while
-    returning aligned multi-model data and derived comparisons.
+    Mirrors the single-model ``model.hds`` leaf: aligned multi-model tables via
+    :meth:`get`/:meth:`compare`, plus the unified grammar -- ``map``/``plot``/
+    ``xs`` panels and ``mosaic``/``animate`` composers, faceting over the
+    group's members (reference by default).
     """
 
     def __init__(self, group: "ModelGroup"):
         self.group = group
+
+    # -- unified grammar hooks ----------------------------------------------
+    def _spatial_map(self, *, per: int = 0, layer: int = 0, model=None, **kwargs):
+        """Render one member's heads choropleth (raw heads, not deltas)."""
+
+        target = self.group.models[self._group_target(model)]
+        return target.hds.map(per=int(per), layer=int(layer), **kwargs)
+
+    def _spatial_periods(self) -> list[int]:
+        reference = self.group.models[self.group.reference]
+        return sorted({int(key[1]) for key in reference.kstpkper})
+
+    def _spatial_value_label(self) -> str:
+        return "head"
+
+    def _series_table(self) -> pd.DataFrame:
+        # one head per (model, per, layer, cell): reduce to period-end saves
+        return _reduce_to_period_end(self.get())
+
+    def _series_value_column(self, frame) -> str:
+        return "elev"
+
+    def _series_default_agg(self) -> str:
+        return "mean"
+
+    def _sections(
+        self,
+        model=None,
+        *,
+        line=None,
+        cells: int | list[int] | None = None,
+        per: int | None = None,
+        layer: int | list[int] = 0,
+        **kwargs,
+    ):
+        """Return member :class:`XSection` objects for the ``xs`` verbs.
+
+        ``model=None`` overlays every member (labeled by model name);
+        ``model="F9b"`` sections just that member.
+        """
+
+        from myflopy.modflow.utils.datatypes.xsections import XSection
+
+        return {
+            name: XSection(
+                model=self.group.models[name],
+                section_name=name,
+                line=line,
+                cells=cells,
+                per=per,
+                layer=layer,
+                **kwargs,
+            )
+            for name in self._resolve_models(model)
+        }
 
     def get(
         self,
@@ -380,36 +443,98 @@ class GroupHeads:
         """Compare heads for all models against the group's reference model."""
 
         data = self.get(per=per, kstpkper=kstpkper, layer=layer, cells=cells)
+        columns = [
+            "model", "reference_model", "kstpkper", "per",
+            "layer", "cell", "elev", "reference_elev", "diff",
+        ]
         if data.empty:
-            return pd.DataFrame(
-                columns=[
-                    "model",
-                    "reference_model",
-                    "kstpkper",
-                    "layer",
-                    "cell",
-                    "elev",
-                    "reference_elev",
-                    "diff",
-                ]
-            )
+            return pd.DataFrame(columns=columns)
+
+        # Align on the stress PERIOD, not the full ``(kstp, kper)`` tuple: models
+        # with the same physics but different time discretization save the
+        # period-end head at a different ``kstp`` (e.g. kstp=13 vs kstp=9), so an
+        # exact tuple match finds nothing. Reduce each model to its period-end
+        # head and merge periods.
+        data = _reduce_to_period_end(data)
 
         reference = self.group.reference
         ref = (
             data[data["model"] == reference]
             .rename(columns={"elev": "reference_elev"})
-            .drop(columns=["model"])
+            .drop(columns=["model", "kstpkper"])
         )
         comp = data[data["model"] != reference].merge(
             ref,
-            on=["kstpkper", "layer", "cell"],
+            on=["per", "layer", "cell"],
             how="inner",
         )
         comp["reference_model"] = reference
         comp["diff"] = comp["elev"].astype(float) - comp["reference_elev"].astype(float)
-        return comp[
-            ["model", "reference_model", "kstpkper", "layer", "cell", "elev", "reference_elev", "diff"]
-        ]
+        return comp[columns]
+
+    def compare_map(
+        self,
+        *,
+        model_name: str | None = None,
+        per: int = 0,
+        layer: int = 0,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Diverging choropleth of head differences (model - reference).
+
+        Colors every Voronoi cell by ``diff`` (Δhead) for one stress period and
+        layer, using the same diff-map payload + rendering as the package diff
+        maps. ``model_name`` selects the compared model (inferred when the group
+        has a single non-reference model). ``per`` / ``layer`` are zero-based.
+        """
+
+        target_name = _resolve_group_compare_target(self.group, model_name)
+        _ensure_group_map_compatible(self.group, target_name)
+        reference_model = self.group.models[self.group.reference]
+        selected = self.compare(per=per, layer=layer)
+        if not selected.empty:
+            selected = selected[selected["model"] == target_name]
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
+        values, hover, absmax = build_group_input_compare_map_payload(
+            selected,
+            ncpl=reference_model.vor.ncpl,
+            value_column="elev",
+            diff_column="diff",
+            model_name=target_name,
+            reference_model=self.group.reference,
+            per=per,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+            agg="first",  # one head per cell per (per, layer) -- do not sum
+        )
+        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
+        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault(
+            "hover_spec",
+            compare_hover(
+                "elev",
+                "diff",
+                title="Δ head vs reference",
+                units={"elev": "ft", "reference_elev": "ft", "diff": "ft"},
+                labels={"diff": "Δ head"},
+            ),
+        )
+        return reference_model.cor(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or get_default_group_compare_colorscale(),
+            **kwargs,
+        )
 
 
 class GroupBudget:
@@ -512,12 +637,64 @@ class GroupBudget:
         return comp[ordered]
 
 
-class GroupPackageInputs:
-    """Grouped input accessor for simple cell-based MF6 stress-period packages."""
+class GroupPackageInputField(_GroupSpatialView):
+    """One input field of a grouped package, pinned for the unified grammar.
+
+    ``group.packages.ghb.inputs.cond`` -- same verbs as the parent accessor
+    but every panel/series draws this field.
+    """
+
+    def __init__(self, parent: "GroupPackageInputs", field_name: str):
+        self._parent = parent
+        self.group = parent.group
+        self.package_name = parent.package_name
+        self.field_name = str(field_name).lower()
+
+    def get(self, **kwargs) -> pd.DataFrame:
+        """Return the aligned input rows narrowed to this field."""
+
+        frame = self._parent.get(**kwargs)
+        keep = [
+            column
+            for column in ("model", "package", "per", "layer", "cell", self.field_name)
+            if column in getattr(frame, "columns", [])
+        ]
+        return frame[keep] if keep else frame
+
+    def summary(self, **kwargs) -> pd.DataFrame:
+        """Return the parent's per-model coverage summary."""
+
+        return self._parent.summary(**kwargs)
+
+    def _spatial_map(self, **kwargs):
+        kwargs.setdefault("value_column", self.field_name)
+        return self._parent._spatial_map(**kwargs)
+
+    def _spatial_value_label(self) -> str:
+        return self.field_name
+
+    def _series_value_column(self, frame) -> str:
+        return self.field_name
+
+
+class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
+    """Grouped input accessor for simple cell-based MF6 stress-period packages.
+
+    Inherits the unified grammar (``map``/``plot``/``mosaic``/``animate``;
+    ``mosaic()`` defaults to one panel per model). Registry-backed fields are
+    first-class nodes (``inputs.cond``) and every verb takes ``field=`` as
+    sugar over them; without ``field=`` the package default field is drawn.
+    """
 
     def __init__(self, group: "ModelGroup", package_name: str):
         self.group = group
         self.package_name = str(package_name).lower()
+
+    def _field_names(self) -> list[str]:
+        return get_package_input_field_names(self.package_name)
+
+    def _field_node(self, name: str) -> GroupPackageInputField:
+        return GroupPackageInputField(self, name)
 
     def get(
         self,
@@ -616,12 +793,12 @@ class GroupPackageInputs:
             cells=cells,
         )
 
-    def map(
+    def _spatial_map(
         self,
         *,
-        model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        model=None,
         value_column: str | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
@@ -629,28 +806,9 @@ class GroupPackageInputs:
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped raw-value choropleth for one selected model.
+        """Render one model's package-input field as a raw-value ``Choro``."""
 
-        Parameters
-        ----------
-        model_name
-            Model to render. Defaults to the group's reference model.
-        per, layer
-            Zero-based stress period and layer to map.
-        value_column
-            Numeric package-input field to display. If omitted, a package
-            default is used when available.
-        multiplier, fill_value, agg
-            Passed through to the shared cell-map payload builder.
-        colorscale
-            Optional colorscale override.
-        kwargs
-            Forwarded to ``model.cor(...)`` on the selected model.
-        """
-
-        target_name = self.group.reference if model_name is None else str(model_name)
-        if target_name not in self.group.models:
-            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_name = self._group_target(model)
         target_model = self.group.models[target_name]
         selected = self.get(model_name=target_name, per=per, layer=layer)
         fallback = get_default_package_value_column(self.package_name)
@@ -679,6 +837,7 @@ class GroupPackageInputs:
             fill_value=fill_value,
             agg=agg,
         )
+        kwargs.setdefault("hover_spec", cell_input_hover(chosen_value_column))
         return target_model.cor(
             per=per,
             layer=layer,
@@ -763,6 +922,7 @@ class GroupPackageInputs:
         )
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("hover_spec", compare_hover(chosen_value_column, diff_column))
         return reference_model.cor(
             per=per,
             layer=layer,
@@ -776,8 +936,12 @@ class GroupPackageInputs:
         )
 
 
-class GroupCellPackageResults:
-    """Grouped accessor for cell-based package result tables."""
+class GroupCellPackageResults(_GroupSpatialView):
+    """Grouped accessor for cell-based package result tables.
+
+    Inherits the unified ``map`` / ``mosaic`` / ``animate`` grammar (``mosaic()``
+    defaults to one panel per model).
+    """
 
     def __init__(self, group: "ModelGroup", package_name: str, *, budget_text: str, value_name: str):
         self.group = group
@@ -830,11 +994,12 @@ class GroupCellPackageResults:
         data = self.get(per=per, layer=layer, cells=cells)
         if data.empty:
             return pd.DataFrame()
+        data = _reduce_to_period_end(data)
 
         reference = self.group.reference
         value_columns = [self.value_name]
-        key_columns = [column for column in data.columns if column not in {"model", *value_columns}]
-        ref = data[data["model"] == reference].drop(columns=["model"]).copy()
+        key_columns = _stable_compare_keys(data, value_columns)
+        ref = data[data["model"] == reference][key_columns + value_columns].copy()
         rename_map = {column: f"reference_{column}" for column in value_columns}
         ref = ref.rename(columns=rename_map)
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
@@ -859,23 +1024,21 @@ class GroupCellPackageResults:
             cells=cells,
         )
 
-    def map(
+    def _spatial_map(
         self,
         *,
-        model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        model=None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped raw-value choropleth for one selected result field."""
+        """Render one model's package result field as a ``Choro``."""
 
-        target_name = self.group.reference if model_name is None else str(model_name)
-        if target_name not in self.group.models:
-            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_name = self._group_target(model)
         target_model = self.group.models[target_name]
         selected = self.get(model_name=target_name, per=per, layer=layer)
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
@@ -894,6 +1057,14 @@ class GroupCellPackageResults:
             kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
             kwargs.setdefault("zmax", absmax if absmax > 0 else None)
             kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault(
+            "hover_spec",
+            result_hover(
+                self.value_name,
+                title=f"{self.package_name.upper()} {self.value_name}",
+                units={"q": "ft³/d"} if self.value_name == "q" else None,
+            ),
+        )
         return target_model.cor(
             per=per,
             layer=layer,
@@ -906,7 +1077,7 @@ class GroupCellPackageResults:
                 colorscale
                 or ("RdBu" if self.value_name == "q" else None)
                 or get_default_package_colorscale(self.package_name)
-                or "Viridis"
+                or "earth"
             ),
             **kwargs,
         )
@@ -947,6 +1118,14 @@ class GroupCellPackageResults:
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault(
+            "hover_spec",
+            compare_hover(
+                self.value_name,
+                diff_column,
+                title=f"Δ {self.package_name.upper()} {self.value_name} vs reference",
+            ),
+        )
         return reference_model.cor(
             per=per,
             layer=layer,
@@ -959,111 +1138,8 @@ class GroupCellPackageResults:
             **kwargs,
         )
 
-    def subplot_map(
-        self,
-        *,
-        per: int = 0,
-        layer: int = 0,
-        model_names: Sequence[str] | None = None,
-        ncols: int | None = None,
-        figsize: tuple[float, float] | None = None,
-        multiplier: float = 1.0,
-        fill_value: float = 0.0,
-        agg: str = "sum",
-        colorscale=None,
-        symmetric: bool | None = None,
-    ):
-        """Plot one grouped package-result choropleth panel per model."""
-
-        ordered_names = _coerce_panel_model_names(self.group, model_names)
-        panel_values: dict[str, np.ndarray] = {}
-        for current_model_name in ordered_names:
-            model = self.group.models[current_model_name]
-            selected = self.get(model_name=current_model_name, per=per, layer=layer)
-            values, _hover = build_cell_input_map_payload(
-                selected,
-                ncpl=model.vor.ncpl,
-                value_column=self.value_name,
-                per=per,
-                layer=layer,
-                multiplier=multiplier,
-                fill_value=fill_value,
-                agg=agg,
-            )
-            panel_values[current_model_name] = np.asarray(values, dtype=float)
-
-        use_symmetric = self.value_name == "q" if symmetric is None else bool(symmetric)
-        return _plot_group_choropleth_subplots(
-            self.group,
-            panel_values,
-            colorbar_label=f"{self.package_name.upper()} {self.value_name}",
-            title_prefix=f"Grouped {self.package_name.upper()} {self.value_name} (per={per}, layer={layer})",
-            colorscale=(
-                colorscale
-                or ("RdBu" if use_symmetric else None)
-                or get_default_package_colorscale(self.package_name)
-                or "Viridis"
-            ),
-            model_names=ordered_names,
-            ncols=ncols,
-            figsize=figsize,
-            symmetric=use_symmetric,
-        )
-
-    def plot_timeseries(
-        self,
-        *,
-        cells: int | Sequence[int] | None = None,
-        layer: int | Sequence[int] | None = None,
-        model_names: Sequence[str] | None = None,
-        agg: str = "sum",
-        ax=None,
-        return_fig: bool = True,
-    ):
-        """Plot grouped package results by stress period for selected cells."""
-
-        selected_cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
-        ordered_names = _coerce_panel_model_names(self.group, model_names)
-        frame = self.get(layer=layer, cells=selected_cells)
-        if ordered_names:
-            frame = frame.loc[frame["model"].isin(ordered_names)].copy()
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if frame.empty:
-            ax.set_title(f"Grouped {self.package_name.upper()} {self.value_name} by stress period")
-            ax.set_xlabel("Stress Period")
-            ax.set_ylabel(self.value_name)
-            if return_fig:
-                return fig
-            return None
-
-        grouped_keys = [column for column in ("model", "layer", "cell") if column in frame.columns]
-        for key, group in frame.groupby(grouped_keys, dropna=False):
-            if not isinstance(key, tuple):
-                key = (key,)
-            key_map = dict(zip(grouped_keys, key, strict=False))
-            series = group.groupby("per", as_index=False)[self.value_name].agg(agg).sort_values("per")
-            model_label = str(key_map.get("model", "model"))
-            layer_label = f"L{int(key_map['layer'])} " if "layer" in key_map and pd.notna(key_map["layer"]) else ""
-            cell_label = f"C{int(key_map['cell'])}" if "cell" in key_map and pd.notna(key_map["cell"]) else "All cells"
-            ax.plot(
-                series["per"].astype(int).to_numpy(),
-                series[self.value_name].astype(float).to_numpy(),
-                marker="o",
-                linewidth=2.0,
-                label=f"{model_label} / {layer_label}{cell_label}",
-            )
-
-        ax.set_title(f"Grouped {self.package_name.upper()} {self.value_name} by stress period")
-        ax.set_xlabel("Stress Period")
-        ax.set_ylabel(self.value_name)
-        ax.legend()
-        fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
+    # NOTE: the series view is the unified grammar's ``plot()`` (SpatialView) --
+    # one line per model (and per cell with ``cells=[...]``).
 
 
 class GroupSfrBudgetResults(GroupCellPackageResults):
@@ -1116,11 +1192,12 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         data = self.get(per=per, layer=layer, cells=cells)
         if data.empty:
             return pd.DataFrame()
+        data = _reduce_to_period_end(data)
 
         reference = self.group.reference
         value_columns = ["q", "q_per_length"] if "q_per_length" in data.columns else ["q"]
-        key_columns = [column for column in data.columns if column not in {"model", *value_columns}]
-        ref = data[data["model"] == reference].drop(columns=["model"]).copy()
+        key_columns = _stable_compare_keys(data, value_columns)
+        ref = data[data["model"] == reference][key_columns + value_columns].copy()
         rename_map = {column: f"reference_{column}" for column in value_columns}
         ref = ref.rename(columns=rename_map)
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
@@ -1149,31 +1226,26 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             cells=cells,
         )
 
-    def map(
+    def _spatial_map(
         self,
         *,
-        model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        model=None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped SFR map normalized by total reach length per cell.
-
-        Positive MF6 ``SFR``/``GWF`` exchange means flow from the stream to
-        groundwater, so the default diverging colorscale is defined explicitly
-        to render gaining reaches blue and losing reaches red.
-        """
+        """Render one model's SFR exchange (reach-length-normalized) as a ``Choro``."""
 
         del agg
-        target_name = self.group.reference if model_name is None else str(model_name)
-        if target_name not in self.group.models:
-            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_name = self._group_target(model)
         target_model = self.group.models[target_name]
-        selected = self.get(model_name=target_name, per=per, layer=layer)
+        selected = join_sfr_stage(
+            target_model, self.get(model_name=target_name, per=per, layer=layer), per=per
+        )
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_sfr_q_map_payload(
             selected,
@@ -1187,6 +1259,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault("hover_spec", sfr_hover())
         return target_model.cor(
             per=per,
             layer=layer,
@@ -1258,6 +1331,20 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault(
+            "hover_spec",
+            compare_hover(
+                "q_per_length",
+                "q_per_length_diff",
+                title="Δ stream exchange vs reference",
+                units={
+                    "q_per_length": "ft²/d",
+                    "reference_q_per_length": "ft²/d",
+                    "q_per_length_diff": "ft²/d",
+                },
+                labels={"q_per_length_diff": "Δ q / length"},
+            ),
+        )
         return reference_model.cor(
             per=per,
             layer=layer,
@@ -1269,46 +1356,6 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             colorscale=colorscale or get_default_group_compare_colorscale(),
             **kwargs,
         )
-
-    def subplot_map(
-        self,
-        *,
-        per: int = 0,
-        layer: int = 0,
-        model_names: Sequence[str] | None = None,
-        ncols: int | None = None,
-        figsize: tuple[float, float] | None = None,
-        multiplier: float = 1.0,
-        fill_value: float = 0.0,
-        colorscale=None,
-    ):
-        """Plot one SFR exchange choropleth panel per model with a shared scale."""
-
-        ordered_names = _coerce_panel_model_names(self.group, model_names)
-        panel_values: dict[str, np.ndarray] = {}
-        for current_model_name in ordered_names:
-            model = self.group.models[current_model_name]
-            selected = self.get(model_name=current_model_name, per=per, layer=layer)
-            values, _hover = build_sfr_q_map_payload(
-                selected,
-                ncpl=model.vor.ncpl,
-                per=per,
-                layer=layer,
-                multiplier=multiplier,
-                fill_value=fill_value,
-            )
-            panel_values[current_model_name] = np.asarray(values, dtype=float)
-        return _plot_group_choropleth_subplots(
-            self.group,
-            panel_values,
-            colorbar_label="SFR exchange per reach length",
-            title_prefix=f"Grouped SFR exchange (per={per}, layer={layer})",
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
-            model_names=ordered_names,
-            ncols=ncols,
-            figsize=figsize,
-        )
-
 
 class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
@@ -1390,12 +1437,12 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             cells=cells,
         )
 
-    def map(
+    def _spatial_map(
         self,
         *,
-        model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        model=None,
         connection_type: str | Sequence[str] | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
@@ -1403,14 +1450,16 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped LAK map normalized by total exchange area per cell."""
+        """Render one model's LAK exchange (area-normalized) as a ``Choro``."""
 
         del agg
-        target_name = self.group.reference if model_name is None else str(model_name)
-        if target_name not in self.group.models:
-            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_name = self._group_target(model)
         target_model = self.group.models[target_name]
-        selected = self.get(model_name=target_name, per=per, layer=layer, connection_type=connection_type)
+        selected = join_lak_stage(
+            target_model,
+            self.get(model_name=target_name, per=per, layer=layer, connection_type=connection_type),
+            per=per,
+        )
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_lak_q_map_payload(
             selected,
@@ -1424,6 +1473,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault("hover_spec", lak_hover())
         return target_model.cor(
             per=per,
             layer=layer,
@@ -1432,7 +1482,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "RdBu",
+            # match the SFR convention: gaining (negative q) blue, losing red
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
             **kwargs,
         )
 
@@ -1496,6 +1547,20 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault(
+            "hover_spec",
+            compare_hover(
+                "q_per_area",
+                "q_per_area_diff",
+                title="Δ lake exchange vs reference",
+                units={
+                    "q_per_area": "ft/d",
+                    "reference_q_per_area": "ft/d",
+                    "q_per_area_diff": "ft/d",
+                },
+                labels={"q_per_area_diff": "Δ q / area"},
+            ),
+        )
         return reference_model.cor(
             per=per,
             layer=layer,
@@ -1508,53 +1573,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             **kwargs,
         )
 
-    def subplot_map(
-        self,
-        *,
-        per: int = 0,
-        layer: int = 0,
-        connection_type: str | Sequence[str] | None = None,
-        model_names: Sequence[str] | None = None,
-        ncols: int | None = None,
-        figsize: tuple[float, float] | None = None,
-        multiplier: float = 1.0,
-        fill_value: float = 0.0,
-        colorscale=None,
-    ):
-        """Plot one LAK exchange choropleth panel per model with a shared scale."""
 
-        ordered_names = _coerce_panel_model_names(self.group, model_names)
-        panel_values: dict[str, np.ndarray] = {}
-        for current_model_name in ordered_names:
-            model = self.group.models[current_model_name]
-            selected = self.get(
-                model_name=current_model_name,
-                per=per,
-                layer=layer,
-                connection_type=connection_type,
-            )
-            values, _hover = build_lak_q_map_payload(
-                selected,
-                ncpl=model.vor.ncpl,
-                per=per,
-                layer=layer,
-                multiplier=multiplier,
-                fill_value=fill_value,
-            )
-            panel_values[current_model_name] = np.asarray(values, dtype=float)
-        return _plot_group_choropleth_subplots(
-            self.group,
-            panel_values,
-            colorbar_label="LAK exchange per flow area",
-            title_prefix=f"Grouped LAK exchange (per={per}, layer={layer})",
-            colorscale=colorscale or "RdBu",
-            model_names=ordered_names,
-            ncols=ncols,
-            figsize=figsize,
-        )
-
-
-class GroupUzfFieldAccessor:
+class GroupUzfFieldAccessor(_GroupSpatialView):
     """Grouped accessor for one UZF perioddata field such as ``finf``."""
 
     def __init__(self, group: "ModelGroup", field_name: str):
@@ -1642,23 +1662,21 @@ class GroupUzfFieldAccessor:
             cells=cells,
         )
 
-    def map(
+    def _spatial_map(
         self,
         *,
-        model_name: str | None = None,
         per: int = 0,
         layer: int = 0,
+        model=None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped raw-value choropleth for one selected UZF field."""
+        """Render one model's UZF field as a raw-value ``Choro``."""
 
-        target_name = self.group.reference if model_name is None else str(model_name)
-        if target_name not in self.group.models:
-            raise KeyError(f"Model {target_name!r} is not in the group.")
+        target_name = self._group_target(model)
         target_model = self.group.models[target_name]
         selected = self.get(model_name=target_name, per=per, layer=layer)
         kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
@@ -1672,6 +1690,7 @@ class GroupUzfFieldAccessor:
             fill_value=fill_value,
             agg=agg,
         )
+        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
         return target_model.cor(
             per=per,
             layer=layer,
@@ -1680,7 +1699,7 @@ class GroupUzfFieldAccessor:
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or get_default_package_colorscale(f"uzf_{self.field_name}") or "Viridis",
+            colorscale=colorscale or get_default_package_colorscale(f"uzf_{self.field_name}") or "earth",
             **kwargs,
         )
 
@@ -1719,6 +1738,7 @@ class GroupUzfFieldAccessor:
         )
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("hover_spec", compare_hover(self.field_name, diff_column))
         return reference_model.cor(
             per=per,
             layer=layer,
@@ -1820,11 +1840,28 @@ class GroupLakOutputs:
         return pd.concat(rows, ignore_index=True)[["model", "kstpkper", "lake", "stage"]]
 
 
-class GroupLakStageResults:
-    """Grouped accessor for lake stages and stage comparisons."""
+class GroupLakStageResults(_GroupSpatialView):
+    """Grouped accessor for lake stages and stage comparisons.
+
+    Inherits the :class:`SpatialView` grammar (``map``/``mosaic``/``animate``)
+    with the model axis being the group's members; each panel delegates to the
+    single-model LAK stage explorer so grouped stage maps match the single-model
+    ``lak.results.stage.map`` exactly.
+    """
 
     def __init__(self, group: "ModelGroup"):
         self.group = group
+
+    def _spatial_value_label(self) -> str:
+        return "stage"
+
+    def _spatial_map(self, *, per: int = 0, layer: int = 0, model=None, **kwargs):
+        """Render one model's lake stage broadcast to connected cells."""
+
+        target_model = self.group.models[self._group_target(model)]
+        return LakStageResultsExplorer(target_model).map(
+            per=int(per), layer=int(layer), backend="plotly", **kwargs
+        )
 
     def get(
         self,
@@ -1884,56 +1921,31 @@ class GroupLakStageResults:
             comp = comp.loc[comp["model"] == str(model_name)].copy()
         return comp[["model", "reference_model", "per", "lake", "stage", "reference_stage", "stage_diff"]]
 
-    def plot_timeseries(
-        self,
-        *,
-        lake: int | None = None,
-        ax=None,
-        return_fig: bool = True,
-    ):
-        """Plot lake stage over stress periods for every model in the group."""
-
-        frame = self.get(lake=lake)
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if frame.empty:
-            ax.set_title("Grouped LAK stage by stress period")
-            ax.set_xlabel("Stress Period")
-            ax.set_ylabel("Stage")
-            if return_fig:
-                return fig
-            return None
-
-        for (model_name, lake_id), group in frame.groupby(["model", "lake"], dropna=False):
-            group = group.sort_values("per")
-            ax.plot(
-                group["per"].astype(int).to_numpy(),
-                group["stage"].astype(float).to_numpy(),
-                marker="o",
-                linewidth=2.0,
-                label=f"{model_name} / Lake {int(lake_id)}",
-            )
-        ax.set_title("Grouped LAK stage by stress period")
-        ax.set_xlabel("Stress Period")
-        ax.set_ylabel("Stage")
-        ax.legend()
-        fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
+    # NOTE: the series view is the unified grammar's ``plot()`` (SpatialView) --
+    # one line per model and lake.
 
 
-class GroupSfrStageResults:
+class GroupSfrStageResults(_GroupSpatialView):
     """Grouped accessor for SFR reach stages and stage comparisons.
 
     Mirrors :class:`GroupLakStageResults` for streams (keyed by ``reach``),
-    reading ``model.outputs.sfr.stage``.
+    reading ``model.outputs.sfr.stage``. Inherits the :class:`SpatialView`
+    grammar; each panel delegates to the single-model SFR stage explorer.
     """
 
     def __init__(self, group: "ModelGroup"):
         self.group = group
+
+    def _spatial_value_label(self) -> str:
+        return "stage"
+
+    def _spatial_map(self, *, per: int = 0, layer: int = 0, model=None, **kwargs):
+        """Render one model's reach stage broadcast to reach cells."""
+
+        target_model = self.group.models[self._group_target(model)]
+        return SfrStageResultsExplorer(target_model).map(
+            per=int(per), layer=int(layer), backend="plotly", **kwargs
+        )
 
     def get(
         self,
@@ -2067,6 +2079,7 @@ class GroupLakConnections:
             fill_value=fill_value,
             agg=agg,
         )
+        kwargs.setdefault("hover_spec", cell_input_hover(value_column))
         return target_model.cor(
             per=0,
             layer=layer,
@@ -2075,7 +2088,7 @@ class GroupLakConnections:
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or "Blues",
+            colorscale=colorscale or "earth",
             **kwargs,
         )
 
@@ -2151,8 +2164,16 @@ class GroupUzfPackageAccessor:
         )
 
 
-class GroupUzfResultsNamespace:
-    """Namespace for grouped UZF result accessors."""
+class GroupUzfResultsNamespace(FieldMappable):
+    """Namespace for grouped UZF result accessors.
+
+    Fields: ``gwrch`` (groundwater recharge, the default) and ``sat``.
+    """
+
+    _default_field = "gwrch"
+
+    def _field_names(self):
+        return ["gwrch", "sat"]
 
     def __init__(self, gwrch_accessor: GroupCellPackageResults, sat_accessor: GroupCellPackageResults | None = None):
         self._gwrch = gwrch_accessor
@@ -2179,8 +2200,18 @@ class GroupUzfResultsNamespace:
         return self._sat
 
 
-class GroupCellPackageResultsNamespace:
-    """Namespace for grouped cell-based package result accessors."""
+class GroupCellPackageResultsNamespace(FieldMappable):
+    """Namespace for grouped cell-based package result accessors.
+
+    ``results.map()`` maps the exchange field ``q`` for one model;
+    ``results.mosaic(by="model")`` and ``results.animate(...)`` inherit the
+    unified grammar. (SFR/LAK add a ``stage`` field via their subclasses.)
+    """
+
+    _default_field = "q"
+
+    def _field_names(self):
+        return ["q"]
 
     def __init__(self, result_accessor: GroupCellPackageResults):
         self._result_accessor = result_accessor
@@ -2194,6 +2225,9 @@ class GroupCellPackageResultsNamespace:
 
 class GroupSfrResultsNamespace(GroupCellPackageResultsNamespace):
     """Namespace for grouped SFR result accessors."""
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     @property
     def q(self) -> GroupSfrBudgetResults:
@@ -2210,6 +2244,9 @@ class GroupSfrResultsNamespace(GroupCellPackageResultsNamespace):
 
 class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):
     """Namespace for grouped LAK result accessors."""
+
+    def _field_names(self):
+        return ["q", "stage"]
 
     @property
     def stage(self) -> GroupLakStageResults:
@@ -2244,8 +2281,8 @@ class GroupLakPackageAccessor:
         return self._results_namespace
 
 
-class GroupSurfaceWaterExchangeResults:
-    """Grouped combined SFR/LAK exchange accessor with shared L/T subplots."""
+class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
+    """Grouped combined SFR/LAK exchange accessor (unified map/mosaic/animate)."""
 
     def __init__(self, group: "ModelGroup"):
         self.group = group
@@ -2279,56 +2316,65 @@ class GroupSurfaceWaterExchangeResults:
         combined = pd.concat(frames, ignore_index=True)
         return _filter_group_input_table(combined, model_name=model_name, per=per, layer=layer, cells=None)
 
-    def subplot_map(
+    def _spatial_map(
         self,
         *,
         per: int = 0,
         layer: int = 0,
+        model=None,
         include: str | Sequence[str] | None = None,
         lak_connection_type: str | Sequence[str] | None = None,
-        model_names: Sequence[str] | None = None,
-        ncols: int | None = None,
-        figsize: tuple[float, float] | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         colorscale=None,
+        **kwargs,
     ):
-        """Plot one combined SFR/LAK exchange panel per model with a shared scale."""
+        """Render one model's combined SFR/LAK exchange as a ``Choro``."""
 
-        ordered_names = _coerce_panel_model_names(self.group, model_names)
-        panel_values: dict[str, np.ndarray] = {}
-        for current_model_name in ordered_names:
-            model = self.group.models[current_model_name]
-            selected = self.get(
-                model_name=current_model_name,
-                per=per,
-                layer=layer,
-                include=include,
-                lak_connection_type=lak_connection_type,
-            )
-            values, _hover = build_surface_water_q_map_payload(
-                selected,
-                ncpl=model.vor.ncpl,
-                per=per,
-                layer=layer,
-                multiplier=multiplier,
-                fill_value=fill_value,
-            )
-            panel_values[current_model_name] = np.asarray(values, dtype=float)
-        return _plot_group_choropleth_subplots(
-            self.group,
-            panel_values,
-            colorbar_label="Surface-water exchange intensity",
-            title_prefix=f"Grouped surface-water exchange (per={per}, layer={layer})",
-            colorscale=colorscale or "RdBu",
-            model_names=ordered_names,
-            ncols=ncols,
-            figsize=figsize,
+        target_name = self._group_target(model)
+        target_model = self.group.models[target_name]
+        selected = self.get(
+            model_name=target_name,
+            per=per,
+            layer=layer,
+            include=include,
+            lak_connection_type=lak_connection_type,
+        )
+        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
+        values, hover = build_surface_water_q_map_payload(
+            selected,
+            ncpl=target_model.vor.ncpl,
+            per=per,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+        )
+        absmax = _symmetric_color_limit(values)
+        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
+        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("zmid", 0.0)
+        kwargs.setdefault("hover_spec", surface_water_hover())
+        return target_model.cor(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            # signed exchange: gaining (negative) blue, losing red, like SFR/LAK
+            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            **kwargs,
         )
 
 
-class GroupSurfaceWaterResultsNamespace:
-    """Namespace for grouped combined surface-water result helpers."""
+class GroupSurfaceWaterResultsNamespace(FieldMappable):
+    """Namespace for grouped combined surface-water result helpers (field ``q``)."""
+
+    _default_field = "q"
+
+    def _field_names(self):
+        return ["q"]
 
     def __init__(self, group: "ModelGroup"):
         self.group = group
@@ -2481,6 +2527,17 @@ class ModelGroup:
     # These duplicate ``group.packages.<pkg>.inputs`` (which mirrors the
     # single-model ``model.packages.<pkg>.inputs``) and have no single-model
     # equivalent, so they are deprecated in favor of the mirrored path.
+    _DEPRECATED_ATTRS = ("rch", "chd", "drn", "ghb", "wel", "uzf")
+
+    def __dir__(self):
+        """Hide the deprecated flat shortcuts from tab-completion / dir().
+
+        They still work (with a DeprecationWarning) for back-compat, but should
+        not be advertised -- use ``group.packages.<pkg>.inputs`` instead.
+        """
+
+        return [name for name in super().__dir__() if name not in self._DEPRECATED_ATTRS]
+
     @property
     def rch(self) -> "GroupPackageInputs":
         """Deprecated. Use ``group.packages.rch.inputs``."""
