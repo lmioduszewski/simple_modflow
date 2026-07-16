@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import warnings
@@ -70,6 +71,28 @@ def _pest_run_slug(name: str) -> str:
 
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_")
     return slug or "pest_run"
+
+
+def build_forward_run_command(template_workspace: Path, interpreter: str) -> str:
+    """Return the PEST++ model command that runs ``forward_run.py``.
+
+    The forward-run interpreter is pinned to ``interpreter`` (this
+    environment's Python) so PEST++ workers use the venv that has
+    numpy/flopy/pyemu/myflopy, not a bare ``python`` that may resolve
+    elsewhere. On Windows the quoted absolute path works directly. On POSIX,
+    PEST++'s run manager neither shell-parses quotes nor accepts absolute
+    command paths (it mangles the leading ``/`` and ``execv`` fails), so the
+    command is a ``./run_forward.sh`` wrapper written into the template
+    workspace that ``exec``s the absolute interpreter; PEST++ worker dirs are
+    copies of the template, so the wrapper travels with them.
+    """
+
+    if os.name == "nt":
+        return f'"{interpreter}" forward_run.py'
+    wrapper = Path(template_workspace) / "run_forward.sh"
+    wrapper.write_text(f'#!/bin/sh\nexec "{interpreter}" forward_run.py "$@"\n')
+    wrapper.chmod(0o755)
+    return "./run_forward.sh"
 
 
 def _import_pyemu():
@@ -752,10 +775,9 @@ class PestProject:
             self.pst = self.pf.build_pst(filename=target_name)
         if self._pilot_point_frames:
             register_pilot_point_parameters(self)
-        # Pin the forward-run interpreter to this environment's Python so PEST++
-        # workers use the venv that has numpy/flopy/pyemu/myflopy, not a bare
-        # "python" that may resolve elsewhere.
-        self.pst.model_command = [f'"{sys.executable}" forward_run.py']
+        self.pst.model_command = [
+            build_forward_run_command(self.template_workspace, sys.executable)
+        ]
         finalize_observations(self, self._prepared_observations)
         self._apply_forecasts()
         self._finalize_capture_fields()

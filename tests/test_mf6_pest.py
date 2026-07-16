@@ -1477,3 +1477,26 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
     )
     assert result.returncode == 0, result.stdout[-2000:] + "\n" + result.stderr[-2000:]
     assert (cal.template_workspace / "hds_simulated_heads.csv").exists()
+
+
+def test_build_forward_run_command_is_pestpp_compatible(tmp_path):
+    """The PST model command must survive PEST++'s run manager on both OSes.
+
+    POSIX PEST++ neither shell-parses quotes nor accepts absolute command
+    paths (it mangles the leading '/' and execv fails), so the command must
+    be a ./wrapper script; Windows uses the quoted interpreter directly.
+    """
+
+    from myflopy.modflow.mf6.pest.project import build_forward_run_command
+
+    command = build_forward_run_command(tmp_path, "/opt/env/bin/python")
+    if os.name == "nt":
+        assert command == '"/opt/env/bin/python" forward_run.py'
+    else:
+        assert command == "./run_forward.sh"
+        wrapper = tmp_path / "run_forward.sh"
+        content = wrapper.read_text()
+        assert content.startswith("#!/bin/sh")
+        assert 'exec "/opt/env/bin/python" forward_run.py' in content
+        assert wrapper.stat().st_mode & 0o111, "wrapper must be executable"
+        assert not command.startswith("/"), "absolute commands break POSIX PEST++"

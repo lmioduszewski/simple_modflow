@@ -152,7 +152,8 @@ Non-negotiable project conventions. Violating them is a review failure even if t
    into `/home/lukem/python/envs/gw`; confirm `PYTHONPATH=src` resolves the repo (not
    the shadowing site-packages copy).
 3. Record the baseline fast/full suite results (and the full-suite wall time — the
-   test-runtime budget in "Sequencing" tripwires at 2× this number) next to the PR.
+   test-runtime budget in "Sequencing" tripwires at 2× this number) in
+   `docs/phase_baselines.md`; later phases append their close-out runs there.
 4. Note the starting commit and **tag it `v0.1.0`** (D11 — starts the deprecation
    clock; an annotated tag on the existing commit, no history rewrite).
 
