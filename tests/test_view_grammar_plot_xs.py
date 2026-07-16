@@ -9,7 +9,6 @@ model across the three surfaces (model / group / diff).
 from __future__ import annotations
 
 import matplotlib
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest

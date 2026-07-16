@@ -1,43 +1,43 @@
 """Group-oriented helpers for comparing multiple models with one lazy API."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
-from collections.abc import Mapping, Sequence
 import hashlib
 import warnings
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
 import numpy as np
 import pandas as pd
+
 from myflopy.modflow.mf6.package_explorer import (
-    SpatialView,
     FieldMappable,
+    LakStageResultsExplorer,
     LeafFieldSugar,
-    get_package_input_field_names,
+    SfrStageResultsExplorer,
+    SpatialView,
     _blue_white_red_diverging_colorscale,
     _normalize_connection_type_filter,
-    build_surface_water_exchange_cell_table,
-    build_surface_water_q_map_payload,
-    build_cell_package_input_table,
-    build_cell_input_map_payload,
+    _symmetric_color_limit,
     build_budget_result_table,
-    build_lak_connection_table,
+    build_cell_input_map_payload,
+    build_cell_package_input_table,
+    build_group_input_compare_map_payload,
     build_lak_budget_result_table,
+    build_lak_connection_table,
     build_lak_q_map_payload,
-    LakStageResultsExplorer,
-    SfrStageResultsExplorer,
     build_sfr_budget_result_table,
     build_sfr_q_map_payload,
-    build_group_input_compare_map_payload,
+    build_surface_water_exchange_cell_table,
+    build_surface_water_q_map_payload,
     build_uzf_field_input_table,
     get_default_budget_term,
     get_default_group_compare_colorscale,
     get_default_package_colorscale,
-    get_package_input_field_spec,
     get_default_package_value_column,
-    _symmetric_color_limit,
+    get_package_input_field_names,
+    get_package_input_field_spec,
 )
 from myflopy.modflow.mf6.package_surface_water import join_lak_stage, join_sfr_stage
 from myflopy.modflow.utils.datatypes.hover import (
@@ -167,7 +167,7 @@ def _reduce_to_period_end(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _resolve_group_compare_target(group: "ModelGroup", model_name: str | None) -> str:
+def _resolve_group_compare_target(group: ModelGroup, model_name: str | None) -> str:
     """Resolve which non-reference model to use for a group difference map."""
 
     if model_name is not None:
@@ -189,7 +189,7 @@ def _resolve_group_compare_target(group: "ModelGroup", model_name: str | None) -
     )
 
 
-def _ensure_group_map_compatible(group: "ModelGroup", model_name: str):
+def _ensure_group_map_compatible(group: ModelGroup, model_name: str):
     """Confirm a selected model can be mapped against the reference grid."""
 
     reference_model = group.models[group.reference]
@@ -337,7 +337,7 @@ class GroupHeads(_GroupSpatialView):
     group's members (reference by default).
     """
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the group heads accessor to its :class:`ModelGroup`."""
 
         self.group = group
@@ -560,7 +560,7 @@ class GroupHeads(_GroupSpatialView):
 class GroupBudget:
     """Budget accessor for :class:`ModelGroup`."""
 
-    def __init__(self, group: "ModelGroup", package: str | None = None):
+    def __init__(self, group: ModelGroup, package: str | None = None):
         """Bind the group budget accessor, optionally pinned to one ``package``."""
 
         self.group = group
@@ -666,7 +666,7 @@ class GroupPackageInputField(_GroupSpatialView):
     but every panel/series draws this field.
     """
 
-    def __init__(self, parent: "GroupPackageInputs", field_name: str):
+    def __init__(self, parent: GroupPackageInputs, field_name: str):
         """Pin a grouped package-inputs accessor to one field for the unified grammar."""
 
         self._parent = parent
@@ -716,7 +716,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
     sugar over them; without ``field=`` the package default field is drawn.
     """
 
-    def __init__(self, group: "ModelGroup", package_name: str):
+    def __init__(self, group: ModelGroup, package_name: str):
         """Bind a grouped BC-package inputs accessor to ``group`` for one package."""
 
         self.group = group
@@ -979,7 +979,7 @@ class GroupCellPackageResults(_GroupSpatialView):
     defaults to one panel per model).
     """
 
-    def __init__(self, group: "ModelGroup", package_name: str, *, budget_text: str, value_name: str):
+    def __init__(self, group: ModelGroup, package_name: str, *, budget_text: str, value_name: str):
         """Bind a grouped cell-budget result accessor: one ``budget_text`` term + value column."""
 
         self.group = group
@@ -1183,7 +1183,7 @@ class GroupCellPackageResults(_GroupSpatialView):
 class GroupSfrBudgetResults(GroupCellPackageResults):
     """Grouped SFR exchange accessor with reach-length-normalized maps."""
 
-    def __init__(self, group: "ModelGroup", *, budget_text: str = "SFR", value_name: str = "q"):
+    def __init__(self, group: ModelGroup, *, budget_text: str = "SFR", value_name: str = "q"):
         """Bind a grouped SFR exchange accessor (defaults to the ``SFR`` term's ``q``)."""
 
         super().__init__(group, "sfr", budget_text=budget_text, value_name=value_name)
@@ -1402,7 +1402,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
 class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
 
-    def __init__(self, group: "ModelGroup", *, budget_text: str = "GWF", value_name: str = "q"):
+    def __init__(self, group: ModelGroup, *, budget_text: str = "GWF", value_name: str = "q"):
         """Bind a grouped LAK exchange accessor (defaults to the ``GWF`` term's ``q``)."""
 
         super().__init__(group, "lak", budget_text=budget_text, value_name=value_name)
@@ -1623,7 +1623,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
 class GroupUzfFieldAccessor(_GroupSpatialView):
     """Grouped accessor for one UZF perioddata field such as ``finf``."""
 
-    def __init__(self, group: "ModelGroup", field_name: str):
+    def __init__(self, group: ModelGroup, field_name: str):
         """Bind a grouped UZF perioddata-field accessor to ``group`` for one field."""
 
         self.group = group
@@ -1803,7 +1803,7 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
 class GroupUzfInputs:
     """Namespace for grouped UZF input fields."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped UZF inputs namespace to ``group``."""
 
         self.group = group
@@ -1867,7 +1867,7 @@ class GroupUzfInputs:
 class GroupLakOutputs:
     """Lake-output accessor for :class:`ModelGroup`."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped lake-output accessor to ``group``."""
 
         self.group = group
@@ -1901,7 +1901,7 @@ class GroupLakStageResults(_GroupSpatialView):
     ``lak.results.stage.map`` exactly.
     """
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped lake stage-results accessor to ``group``."""
 
         self.group = group
@@ -1989,7 +1989,7 @@ class GroupSfrStageResults(_GroupSpatialView):
     grammar; each panel delegates to the single-model SFR stage explorer.
     """
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped SFR reach stage-results accessor to ``group``."""
 
         self.group = group
@@ -2073,7 +2073,7 @@ class GroupSfrStageResults(_GroupSpatialView):
 class GroupLakConnections:
     """Grouped accessor for lake-connection geometry."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped lake-connection-geometry accessor to ``group``."""
 
         self.group = group
@@ -2158,7 +2158,7 @@ class GroupLakConnections:
 class GroupOutputs:
     """Namespace for grouped package-specific output accessors."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped package-output namespace to ``group``."""
 
         self.group = group
@@ -2316,7 +2316,7 @@ class GroupSfrResultsNamespace(GroupCellPackageResultsNamespace):
         return self._result_accessor
 
     @property
-    def stage(self) -> "GroupSfrStageResults":
+    def stage(self) -> GroupSfrStageResults:
         """Return grouped SFR reach-stage helpers."""
 
         return GroupSfrStageResults(self._result_accessor.group)
@@ -2346,7 +2346,7 @@ class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):
 class GroupLakPackageAccessor:
     """Namespace for grouped LAK geometry and result helpers."""
 
-    def __init__(self, group: "ModelGroup", results_namespace: GroupLakResultsNamespace):
+    def __init__(self, group: ModelGroup, results_namespace: GroupLakResultsNamespace):
         """Bind the grouped LAK package accessor (connections + results) to ``group``."""
 
         self.group = group
@@ -2368,7 +2368,7 @@ class GroupLakPackageAccessor:
 class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
     """Grouped combined SFR/LAK exchange accessor (unified map/mosaic/animate)."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped combined surface-water exchange accessor to ``group``."""
 
         self.group = group
@@ -2464,7 +2464,7 @@ class GroupSurfaceWaterResultsNamespace(FieldMappable):
 
         return ["q"]
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the grouped combined surface-water results namespace to ``group``."""
 
         self.group = group
@@ -2483,7 +2483,7 @@ class GroupPackages:
     while reusing the existing grouped ``get()/compare()`` accessors.
     """
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Bind the preferred grouped ``packages`` namespace to ``group``."""
 
         self.group = group
@@ -2638,42 +2638,42 @@ class ModelGroup:
         return [name for name in super().__dir__() if name not in self._DEPRECATED_ATTRS]
 
     @property
-    def rch(self) -> "GroupPackageInputs":
+    def rch(self) -> GroupPackageInputs:
         """Deprecated. Use ``group.packages.rch.inputs``."""
 
         _warn_deprecated("ModelGroup.rch", "group.packages.rch.inputs")
         return self._rch
 
     @property
-    def chd(self) -> "GroupPackageInputs":
+    def chd(self) -> GroupPackageInputs:
         """Deprecated. Use ``group.packages.chd.inputs``."""
 
         _warn_deprecated("ModelGroup.chd", "group.packages.chd.inputs")
         return self._chd
 
     @property
-    def drn(self) -> "GroupPackageInputs":
+    def drn(self) -> GroupPackageInputs:
         """Deprecated. Use ``group.packages.drn.inputs``."""
 
         _warn_deprecated("ModelGroup.drn", "group.packages.drn.inputs")
         return self._drn
 
     @property
-    def ghb(self) -> "GroupPackageInputs":
+    def ghb(self) -> GroupPackageInputs:
         """Deprecated. Use ``group.packages.ghb.inputs``."""
 
         _warn_deprecated("ModelGroup.ghb", "group.packages.ghb.inputs")
         return self._ghb
 
     @property
-    def wel(self) -> "GroupPackageInputs":
+    def wel(self) -> GroupPackageInputs:
         """Deprecated. Use ``group.packages.wel.inputs``."""
 
         _warn_deprecated("ModelGroup.wel", "group.packages.wel.inputs")
         return self._wel
 
     @property
-    def uzf(self) -> "GroupUzfInputs":
+    def uzf(self) -> GroupUzfInputs:
         """Deprecated. Use ``group.packages.uzf.inputs``."""
 
         _warn_deprecated("ModelGroup.uzf", "group.packages.uzf.inputs")
@@ -2758,4 +2758,4 @@ class ModelGroup:
         for model_name, model in self.models.items():
             if model_name == anchor_name:
                 continue
-            setattr(model, "_shared_vor_source", anchor_model)
+            model._shared_vor_source = anchor_model

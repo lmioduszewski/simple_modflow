@@ -1,21 +1,19 @@
 """Drain-boundary helpers built on polygon/line GIS inputs and Voronoi cells."""
 
 from __future__ import annotations
+
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-import flopy.utils.binaryfile
-import shapely as shp
-from pathlib import Path
-import geopandas as gpd
 import pandas as pd
-import pickle
+
+from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
     coerce_values_by_cell,
     filter_inactive_cells,
     normalize_grid_type,
 )
-from myflopy.modflow.mf6.boundaries import Boundaries
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor

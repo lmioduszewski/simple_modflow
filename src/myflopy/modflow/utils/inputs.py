@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 import pandas as pd
+
 from myflopy.modflow.utils.datatypes.choros import Choro
 
 

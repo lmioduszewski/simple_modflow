@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from numbers import Real
-from typing import Iterable
 
 
 def normalize_grid_type(grid_type: str) -> str:

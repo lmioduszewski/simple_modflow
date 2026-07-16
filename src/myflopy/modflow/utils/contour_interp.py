@@ -12,18 +12,18 @@ only actually running an interpolation does.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def _grass_modules():
     """Import GRASS Python modules lazily, with a clear error if unavailable."""
 
     try:
+        import grass.script.setup as gsetup
         from grass.pygrass.modules.shortcuts import general as g
         from grass.pygrass.modules.shortcuts import raster as r
         from grass.pygrass.modules.shortcuts import vector as v
-        import grass.script.setup as gsetup
     except Exception as error:  # pragma: no cover - exercised only with GRASS
         raise ImportError(
             "GRASS GIS Python modules are required for contour interpolation. "

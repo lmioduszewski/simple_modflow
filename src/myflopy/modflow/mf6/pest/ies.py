@@ -31,8 +31,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from myflopy import viz
 
+from myflopy import viz
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
 _PRIOR_COLOR = viz.PALETTE.prior
@@ -463,7 +463,6 @@ class IesResults:
         posterior = self.obs_ensemble(iteration if iteration is not None else self.posterior_iteration)._df
 
         if _normalize_backend(backend) == "matplotlib":
-            import matplotlib.pyplot as plt
             import seaborn as sns
 
             with sns.axes_style("whitegrid"):
@@ -916,7 +915,6 @@ class IesResults:
             return names, times, measured, flags
 
         if _normalize_backend(backend) == "matplotlib":
-            import matplotlib.pyplot as plt
             import seaborn as sns
 
             with sns.axes_style("whitegrid"):

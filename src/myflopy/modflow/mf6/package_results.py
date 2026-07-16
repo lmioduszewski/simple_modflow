@@ -5,16 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-from myflopy.modflow.mf6.package_registry import (
-    get_default_package_colorscale,
-    get_package_explorer_spec,
-    get_package_result_spec,
+from myflopy.modflow.mf6.package_budget import (
+    build_budget_result_table,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
     _default_show_layer_elevs,
@@ -22,13 +18,6 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_iterable_filter,
     _normalize_term_filter,
 )
-from myflopy.modflow.mf6.package_tables import (
-    summarize_input_table,
-)
-from myflopy.modflow.mf6.package_budget import (
-    build_budget_result_table,
-)
-from myflopy.modflow.utils.datatypes.hover import result_hover
 from myflopy.modflow.mf6.package_plotting import (
     FieldMappable,
     SpatialView,
@@ -36,6 +25,15 @@ from myflopy.modflow.mf6.package_plotting import (
     _symmetric_color_limit,
     build_cell_input_map_payload,
 )
+from myflopy.modflow.mf6.package_registry import (
+    get_default_package_colorscale,
+    get_package_explorer_spec,
+    get_package_result_spec,
+)
+from myflopy.modflow.mf6.package_tables import (
+    summarize_input_table,
+)
+from myflopy.modflow.utils.datatypes.hover import result_hover
 
 
 class CellBudgetResultsExplorer(SpatialView):
@@ -43,7 +41,7 @@ class CellBudgetResultsExplorer(SpatialView):
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         package_name: str,
         budget_text: str,
         value_name: str,
@@ -233,7 +231,7 @@ class StageResultsExplorer(SpatialView):
     #: value label + series column for the unified grammar
     value_name = "stage"
 
-    def __init__(self, model: "SimulationBase", package_name: str, builder):
+    def __init__(self, model: SimulationBase, package_name: str, builder):
         """Bind a stage result explorer; ``builder(model)`` yields its normalized table."""
 
         self.model = model
@@ -330,7 +328,7 @@ class CellPackageResultsNamespace(FieldMappable):
         names = self.fields["field"].tolist()
         return names if "q" in names else ["q", *names]  # .q always resolves
 
-    def __init__(self, model: "SimulationBase", package_name: str):
+    def __init__(self, model: SimulationBase, package_name: str):
         """Bind a cell-based results namespace to ``model`` for one package."""
 
         self.model = model
@@ -437,7 +435,7 @@ class UzfResultsNamespace(FieldMappable):
         names = self.fields["field"].tolist()
         return names or ["gwrch", "sat"]
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the UZF results namespace to ``model``."""
 
         self.model = model

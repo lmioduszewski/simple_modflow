@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from importlib import import_module
 import json
-from pathlib import Path
 import pickle
 import re
 import warnings
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import flopy
@@ -28,7 +28,6 @@ from myflopy.specs import (
     _package_entry_label,
 )
 
-
 RUN_MANIFEST_NAME = "run.json"
 PROJECT_MANIFEST_NAME = "project.json"
 PROJECT_SPEC_NAME = "project_spec.json"
@@ -42,7 +41,7 @@ class ModelView(SimulationBase):
     ``packages``, ``outputs``, and budget accessors.
     """
 
-    def __init__(self, *, run: "Run", model_name: str):
+    def __init__(self, *, run: Run, model_name: str):
         """Build a model view over one model of a completed ``run``."""
 
         self._initialize_from_built_run(run, model_name)

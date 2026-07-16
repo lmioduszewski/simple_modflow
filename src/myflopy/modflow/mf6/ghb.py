@@ -1,21 +1,19 @@
 """General-head-boundary helpers built from polygons, lines, and tabular inputs."""
 
 from __future__ import annotations
+
+import pickle
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-import flopy.utils.binaryfile
-import shapely as shp
-from pathlib import Path
-import geopandas as gpd
 import pandas as pd
+
+from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
-    filter_inactive_cells,
     merge_stress_period_data,
     normalize_grid_type,
 )
-from myflopy.modflow.mf6.boundaries import Boundaries
-import pickle
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor

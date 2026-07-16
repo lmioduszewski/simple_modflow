@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import geopandas as gpd
-import myflopy as mf
 import pytest
 from shapely.geometry import LineString, Point, Polygon
 
+import myflopy as mf
 from myflopy.builders import build_gwf_gwt_exchange
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.specs import ExchangeSpec, PostBuildHook

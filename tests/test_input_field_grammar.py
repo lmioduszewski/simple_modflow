@@ -189,9 +189,10 @@ def test_field_name_parity_across_surfaces():
 def test_input_field_grammar_renders_on_canonical(canonical_run):
     """inputs.<field> nodes and field= sugar render on all three surfaces."""
 
-    import myflopy as mf
     import plotly.graph_objects as go
     from matplotlib.figure import Figure
+
+    import myflopy as mf
 
     model = canonical_run
 

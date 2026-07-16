@@ -17,8 +17,8 @@ returned spec is built at run time by ``PackageSpec.build(model)``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import functools
+from collections.abc import Iterable
 from typing import Any
 
 import flopy

@@ -1,6 +1,7 @@
 """Shared GIS/grid helpers used by boundary-specific MF6 setup classes."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from geopandas import GeoDataFrame
@@ -9,10 +10,12 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-import pandas as pd
 from pathlib import Path
+
 import geopandas as gpd
+import pandas as pd
 import shapely as shp
+
 from myflopy.modflow.mf6.boundary_support import filter_inactive_cells
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 

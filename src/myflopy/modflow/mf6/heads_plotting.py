@@ -25,7 +25,7 @@ idxx = pd.IndexSlice
 crs_latlon = "EPSG:4326"
 
 
-def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] | Path, **kwargs):
+def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | Path, **kwargs):
     """Combine one heads plot from each model into a single figure."""
 
     figures = []
@@ -34,7 +34,7 @@ def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] 
         figures.append(fig)
 
     model_order = {model.name: index for index, model in enumerate(models)}
-    grouped: "OrderedDict[str, list[tuple[int, object]]]" = OrderedDict()
+    grouped: OrderedDict[str, list[tuple[int, object]]] = OrderedDict()
 
     for model, fig in zip(models, figures):
         for trace in fig.data:
@@ -53,7 +53,7 @@ def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] 
 
 
 def _plot_x_values(
-    heads: "HeadsPlus",
+    heads: HeadsPlus,
     *,
     times: pd.DatetimeIndex | None,
     show_times: bool,
@@ -74,7 +74,7 @@ def _plot_x_values(
 
 
 def plot_heads(
-    heads: "HeadsPlus",
+    heads: HeadsPlus,
     locs: Path | int | list,
     *,
     crs: str | None = None,
@@ -144,7 +144,7 @@ def plot_heads(
 
 
 def choropleth(
-    heads: "HeadsPlus",
+    heads: HeadsPlus,
     *,
     kstpkper: tuple = (0, 0),
     plot_mounding: bool = False,
@@ -234,7 +234,7 @@ def choropleth(
     return fig_mbox
 
 
-def plot_choropleth(heads: "HeadsPlus", *args, **kwargs):
+def plot_choropleth(heads: HeadsPlus, *args, **kwargs):
     """Plot a choropleth immediately and return ``None``."""
 
     fig = choropleth(heads, *args, **kwargs)

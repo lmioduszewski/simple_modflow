@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
-def _gwf_package_filename(model: "SimulationBase", suffix: str) -> str:
+def _gwf_package_filename(model: SimulationBase, suffix: str) -> str:
     """Return the standard MF6 package filename for ``model`` and ``suffix``."""
 
     return f"{model.name}.{suffix}"
@@ -24,7 +24,7 @@ def _gwf_package_filename(model: "SimulationBase", suffix: str) -> str:
 
 def _build_gwf_package(
     constructor,
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     pname: str,
     filename_suffix: str,
@@ -45,7 +45,7 @@ class OutputControl:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             save_record=(("HEAD", "LAST"), ("BUDGET", "LAST")),
             print_record=None
     ):
@@ -74,7 +74,7 @@ class OutputControl:
 
 
 def _maybe_create_package_artifact(
-    model: "SimulationBase",
+    model: SimulationBase,
     package_name: str,
     *,
     artifact_id: str | None = None,
@@ -114,7 +114,7 @@ def _finalize_wrapper(
     *,
     attr_name: str,
     package,
-    model: "SimulationBase",
+    model: SimulationBase,
     package_name: str | None = None,
     artifact_id: str | None = None,
     artifact_catalog=None,
@@ -147,8 +147,8 @@ class InitialConditions:
 
     def __init__(
             self,
-            model: "SimulationBase",
-            vor: "Vor",
+            model: SimulationBase,
+            vor: Vor,
             botm_cells: list = None,
             initial_sat_thickness: float = 0.5,
             nlay=1,
@@ -209,7 +209,7 @@ class KFlow:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             k: list = None,
             k33_vert=None,
             icelltype=1,
@@ -275,7 +275,7 @@ class Storage:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             specific_storage: float = 0.0001,
             specific_yield: float = 0.2,
             sto_steady: dict = None,
@@ -320,8 +320,8 @@ class Recharge:
 
     def __init__(
             self,
-            model: "SimulationBase",
-            vor: "Vor" = None,
+            model: SimulationBase,
+            vor: Vor = None,
             rch_dict: dict = None,
             auxiliary: list[str] = None,
             artifact_id: str | None = None,
@@ -399,7 +399,7 @@ class Wells:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             stress_period_data,
             auxiliary=None,
             boundnames: bool = True,
@@ -442,7 +442,7 @@ class Drains:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             stress_period_data: list,
             artifact_id: str | None = None,
             artifact_catalog=None,
@@ -491,7 +491,7 @@ class GHB:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             stress_period_data,
             auxiliary=None,
             artifact_id: str | None = None,
@@ -544,7 +544,7 @@ class CHD:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             stress_period_data,
             artifact_id: str | None = None,
             artifact_catalog=None,
@@ -593,7 +593,7 @@ class UZF:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             packagedata=None,
             perioddata=None,
             print_input=False,

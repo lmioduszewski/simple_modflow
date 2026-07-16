@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+from myflopy.modflow.mf6.chd import CHDFromVector
+from myflopy.modflow.mf6.drn import DRNFromVector
+from myflopy.modflow.mf6.ghb import GHBFromVector
+from myflopy.modflow.mf6.kflow import KFromVector
+from myflopy.modflow.mf6.recharge import RCHFromVector
 from myflopy.modflow.mf6.simulation import (
     CHD,
     GHB,
-    ModelRegion,
-    RegionGroup,
     UZF,
     DisuGrid,
     DisvGrid,
     Drains,
     InitialConditions,
     KFlow,
+    ModelRegion,
     OutputControl,
     Recharge,
+    RegionGroup,
     RegionRegistry,
     SimulationBase,
     Storage,
@@ -40,11 +45,6 @@ from myflopy.modflow.mf6.simulation import (
     get_uzf_output,
     run_simulation,
 )
-from myflopy.modflow.mf6.chd import CHDFromVector
-from myflopy.modflow.mf6.drn import DRNFromVector
-from myflopy.modflow.mf6.ghb import GHBFromVector
-from myflopy.modflow.mf6.kflow import KFromVector
-from myflopy.modflow.mf6.recharge import RCHFromVector
 
 __all__ = [
     "CHD",

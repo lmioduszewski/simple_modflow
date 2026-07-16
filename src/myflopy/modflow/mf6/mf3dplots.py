@@ -1,8 +1,8 @@
-import plotly.graph_objs as go
 import pandas as pd
-import numpy as np
-from myflopy.viz import Fig
+import plotly.graph_objs as go
+
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.viz import Fig
 
 
 class SurfacePlot(Fig):

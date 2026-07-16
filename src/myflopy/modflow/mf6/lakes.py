@@ -462,7 +462,7 @@ class LAKBuilder:
         except KeyError as error:
             raise ValueError(f"Unknown lake ID: {lake_id}") from error
 
-    def connection(self, lake_id: str) -> "MoverConnection":
+    def connection(self, lake_id: str) -> MoverConnection:
         """Return an MVR endpoint for a lake by stable lake ID."""
 
         from myflopy.modflow.mf6.mvr import MoverConnection

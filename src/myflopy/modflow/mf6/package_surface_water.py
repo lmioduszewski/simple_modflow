@@ -1,32 +1,18 @@
 """LAK, SFR, and combined surface-water package explorers."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from myflopy import viz as figs
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from myflopy import viz as figs
+from myflopy.viz import mpl_axes
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-from myflopy.modflow.mf6.package_registry import (
-    get_default_budget_term,
-)
-from myflopy.modflow.mf6.package_explorer_utils import (
-    _default_show_layer_elevs,
-    _filter_normalized_table,
-    _normalize_connection_type_filter,
-)
-from myflopy.modflow.mf6.package_tables import (
-    build_lak_connection_table,
-    build_lak_input_table,
-    build_sfr_input_table,
-    summarize_input_table,
-)
 from myflopy.modflow.mf6.package_budget import (
     build_lak_budget_result_table,
     build_lak_budget_term_table,
@@ -37,6 +23,11 @@ from myflopy.modflow.mf6.package_budget import (
     build_sfr_long_profile_table,
     build_sfr_stage_result_table,
     build_surface_water_exchange_cell_table,
+)
+from myflopy.modflow.mf6.package_explorer_utils import (
+    _default_show_layer_elevs,
+    _filter_normalized_table,
+    _normalize_connection_type_filter,
 )
 from myflopy.modflow.mf6.package_plotting import (
     FieldMappable,
@@ -49,16 +40,25 @@ from myflopy.modflow.mf6.package_plotting import (
     build_sfr_q_map_payload,
     build_surface_water_q_map_payload,
 )
-from myflopy.modflow.utils.datatypes.hover import (
-    cell_input_hover,
-    lak_hover,
-    sfr_hover,
-    surface_water_hover,
+from myflopy.modflow.mf6.package_registry import (
+    get_default_budget_term,
 )
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
     PackageBudgetTermExplorer,
     StageResultsExplorer,
+)
+from myflopy.modflow.mf6.package_tables import (
+    build_lak_connection_table,
+    build_lak_input_table,
+    build_sfr_input_table,
+    summarize_input_table,
+)
+from myflopy.modflow.utils.datatypes.hover import (
+    cell_input_hover,
+    lak_hover,
+    sfr_hover,
+    surface_water_hover,
 )
 
 
@@ -112,7 +112,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         *,
         budget_text: str = "SFR",
         value_name: str = "q",
@@ -268,7 +268,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         *,
         budget_text: str = "GWF",
         value_name: str = "q",
@@ -476,7 +476,7 @@ class LakStageResultsExplorer(StageResultsExplorer):
     """LAK stage explorer -- the unified grammar's ``plot()`` draws one line
     per lake by stress period (replaced the old ``plot_timeseries``)."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind a LAK stage-result explorer using the lake stage table builder."""
 
         super().__init__(model, "lak", build_lak_stage_result_table)
@@ -485,7 +485,7 @@ class LakStageResultsExplorer(StageResultsExplorer):
 class LakStageChangeExplorer:
     """Explorer for lake-stage changes between stress periods."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the lake stage-change explorer to ``model``."""
 
         self.model = model
@@ -603,7 +603,7 @@ class LakStageChangeExplorer:
 class LakConnectionsExplorer:
     """Explorer for LAK connection geometry and exchange interface area."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the LAK connection-geometry explorer to ``model``."""
 
         self.model = model
@@ -721,7 +721,7 @@ class LakConnectionsExplorer:
 class SfrStageResultsExplorer(StageResultsExplorer):
     """SFR stage explorer with reach-profile helpers."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind an SFR stage-result explorer using the reach stage table builder."""
 
         super().__init__(model, "sfr", build_sfr_stage_result_table)
@@ -797,7 +797,7 @@ class LakResultsNamespace(FieldMappable):
 
         return ["q", "stage"]
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the LAK results namespace to ``model``."""
 
         self.model = model
@@ -831,7 +831,7 @@ class LakResultsNamespace(FieldMappable):
 class LakBudgetNamespace:
     """Namespace for all MF6-defined LAK package-output budget terms."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the LAK budget-term namespace to ``model``."""
 
         self.model = model
@@ -946,13 +946,13 @@ class LakBudgetNamespace:
         return wide.reset_index()
 
     @property
-    def gwf(self) -> "PackageBudgetTermExplorer":
+    def gwf(self) -> PackageBudgetTermExplorer:
         """Lake-groundwater exchange term helper."""
 
         return PackageBudgetTermExplorer(self, term="GWF", label="lak.budget.gwf")
 
     @property
-    def storage(self) -> "PackageBudgetTermExplorer":
+    def storage(self) -> PackageBudgetTermExplorer:
         """Lake storage term helper."""
 
         return PackageBudgetTermExplorer(
@@ -960,13 +960,13 @@ class LakBudgetNamespace:
         )
 
     @property
-    def runoff(self) -> "PackageBudgetTermExplorer":
+    def runoff(self) -> PackageBudgetTermExplorer:
         """Lake runoff term helper."""
 
         return PackageBudgetTermExplorer(self, term="RUNOFF", label="lak.budget.runoff")
 
     @property
-    def rainfall(self) -> "PackageBudgetTermExplorer":
+    def rainfall(self) -> PackageBudgetTermExplorer:
         """Lake rainfall term helper."""
 
         return PackageBudgetTermExplorer(
@@ -974,7 +974,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def evaporation(self) -> "PackageBudgetTermExplorer":
+    def evaporation(self) -> PackageBudgetTermExplorer:
         """Lake evaporation term helper."""
 
         return PackageBudgetTermExplorer(
@@ -982,7 +982,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def withdrawal(self) -> "PackageBudgetTermExplorer":
+    def withdrawal(self) -> PackageBudgetTermExplorer:
         """Lake withdrawal term helper."""
 
         return PackageBudgetTermExplorer(
@@ -990,7 +990,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def constant(self) -> "PackageBudgetTermExplorer":
+    def constant(self) -> PackageBudgetTermExplorer:
         """Lake constant-stage balancing flow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -998,7 +998,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def ext_inflow(self) -> "PackageBudgetTermExplorer":
+    def ext_inflow(self) -> PackageBudgetTermExplorer:
         """External inflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1006,7 +1006,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def ext_outflow(self) -> "PackageBudgetTermExplorer":
+    def ext_outflow(self) -> PackageBudgetTermExplorer:
         """External outflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1014,7 +1014,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def from_mvr(self) -> "PackageBudgetTermExplorer":
+    def from_mvr(self) -> PackageBudgetTermExplorer:
         """Mover inflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1022,13 +1022,13 @@ class LakBudgetNamespace:
         )
 
     @property
-    def to_mvr(self) -> "PackageBudgetTermExplorer":
+    def to_mvr(self) -> PackageBudgetTermExplorer:
         """Mover outflow term helper."""
 
         return PackageBudgetTermExplorer(self, term="TO-MVR", label="lak.budget.to_mvr")
 
     @property
-    def flow_ja_face(self) -> "PackageBudgetTermExplorer":
+    def flow_ja_face(self) -> PackageBudgetTermExplorer:
         """Lake-to-lake outlet/routing connection term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1036,7 +1036,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def auxiliary(self) -> "PackageBudgetTermExplorer":
+    def auxiliary(self) -> PackageBudgetTermExplorer:
         """Auxiliary term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1044,7 +1044,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def mvr(self) -> "PackageBudgetTermExplorer":
+    def mvr(self) -> PackageBudgetTermExplorer:
         """Combined mover-related LAK budget term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1052,7 +1052,7 @@ class LakBudgetNamespace:
         )
 
     @property
-    def lake_fluxes(self) -> "PackageBudgetTermExplorer":
+    def lake_fluxes(self) -> PackageBudgetTermExplorer:
         """Combined lake-level flux term helper excluding connection-level GWF rows."""
 
         return PackageBudgetTermExplorer(
@@ -1076,7 +1076,7 @@ class LakBudgetNamespace:
 class SfrBudgetNamespace:
     """Namespace for all MF6-defined SFR package-output budget terms."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the SFR budget-term namespace to ``model``."""
 
         self.model = model
@@ -1182,13 +1182,13 @@ class SfrBudgetNamespace:
         return wide.reset_index()
 
     @property
-    def gwf(self) -> "PackageBudgetTermExplorer":
+    def gwf(self) -> PackageBudgetTermExplorer:
         """Stream-groundwater exchange term helper."""
 
         return PackageBudgetTermExplorer(self, term="GWF", label="sfr.budget.gwf")
 
     @property
-    def flow_ja_face(self) -> "PackageBudgetTermExplorer":
+    def flow_ja_face(self) -> PackageBudgetTermExplorer:
         """Reach-to-reach routing connection term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1196,7 +1196,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def ext_inflow(self) -> "PackageBudgetTermExplorer":
+    def ext_inflow(self) -> PackageBudgetTermExplorer:
         """External inflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1204,19 +1204,19 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def runoff(self) -> "PackageBudgetTermExplorer":
+    def runoff(self) -> PackageBudgetTermExplorer:
         """Runoff term helper."""
 
         return PackageBudgetTermExplorer(self, term="RUNOFF", label="sfr.budget.runoff")
 
     @property
-    def rain(self) -> "PackageBudgetTermExplorer":
+    def rain(self) -> PackageBudgetTermExplorer:
         """Rainfall term helper."""
 
         return PackageBudgetTermExplorer(self, term="RAIN", label="sfr.budget.rain")
 
     @property
-    def evaporation(self) -> "PackageBudgetTermExplorer":
+    def evaporation(self) -> PackageBudgetTermExplorer:
         """Evaporation term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1224,7 +1224,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def ext_outflow(self) -> "PackageBudgetTermExplorer":
+    def ext_outflow(self) -> PackageBudgetTermExplorer:
         """External outflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1232,7 +1232,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def storage(self) -> "PackageBudgetTermExplorer":
+    def storage(self) -> PackageBudgetTermExplorer:
         """Storage term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1240,7 +1240,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def from_mvr(self) -> "PackageBudgetTermExplorer":
+    def from_mvr(self) -> PackageBudgetTermExplorer:
         """Mover inflow term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1248,13 +1248,13 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def to_mvr(self) -> "PackageBudgetTermExplorer":
+    def to_mvr(self) -> PackageBudgetTermExplorer:
         """Mover outflow term helper."""
 
         return PackageBudgetTermExplorer(self, term="TO-MVR", label="sfr.budget.to_mvr")
 
     @property
-    def auxiliary(self) -> "PackageBudgetTermExplorer":
+    def auxiliary(self) -> PackageBudgetTermExplorer:
         """Auxiliary term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1262,7 +1262,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def mvr(self) -> "PackageBudgetTermExplorer":
+    def mvr(self) -> PackageBudgetTermExplorer:
         """Combined mover-related SFR budget term helper."""
 
         return PackageBudgetTermExplorer(
@@ -1270,7 +1270,7 @@ class SfrBudgetNamespace:
         )
 
     @property
-    def stream_fluxes(self) -> "PackageBudgetTermExplorer":
+    def stream_fluxes(self) -> PackageBudgetTermExplorer:
         """Combined reach-level flux term helper excluding GWF and routing rows."""
 
         return PackageBudgetTermExplorer(
@@ -1303,7 +1303,7 @@ class SfrResultsNamespace(FieldMappable):
 
         return ["q", "stage"]
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the SFR results namespace to ``model``."""
 
         self.model = model
@@ -1463,7 +1463,7 @@ class SfrResultsNamespace(FieldMappable):
 class SurfaceWaterExchangeResultsExplorer(SpatialView):
     """Combined SFR/LAK exchange explorer with one shared physical sign scale."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the combined SFR/LAK exchange explorer to ``model``."""
 
         self.model = model
@@ -1565,7 +1565,7 @@ class SurfaceWaterResultsNamespace(FieldMappable):
 
         return ["q"]
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the combined surface-water results namespace to ``model``."""
 
         self.model = model
@@ -1580,7 +1580,7 @@ class SurfaceWaterResultsNamespace(FieldMappable):
 class SurfaceWaterInputFieldExplorer(SpatialView):
     """One cell-mapped LAK or SFR input field."""
 
-    def __init__(self, inputs: "SurfaceWaterInputsNamespace", field_name: str):
+    def __init__(self, inputs: SurfaceWaterInputsNamespace, field_name: str):
         """Pin a LAK/SFR inputs namespace to one mappable numeric input field."""
 
         self.inputs = inputs
@@ -1669,7 +1669,7 @@ class SurfaceWaterInputsNamespace(FieldMappable):
     verbs take ``field=`` as sugar over them.
     """
 
-    def __init__(self, model: "SimulationBase", package_name: str):
+    def __init__(self, model: SimulationBase, package_name: str):
         """Bind a LAK or SFR inputs namespace to ``model`` (``package_name`` lowercased)."""
 
         self.model = model
@@ -1759,7 +1759,7 @@ class SurfaceWaterInputsNamespace(FieldMappable):
 class LakPackageExplorer:
     """Top-level LAK package explorer namespace."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the top-level LAK explorer (inputs/connections/budget/results) to ``model``."""
 
         self.model = model
@@ -1792,7 +1792,7 @@ class LakPackageExplorer:
 class SfrPackageExplorer:
     """Top-level SFR package explorer namespace."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the top-level SFR explorer (inputs/budget/results) to ``model``."""
 
         self.model = model
@@ -1819,7 +1819,7 @@ class SfrPackageExplorer:
 class SurfaceWaterPackageExplorer:
     """Top-level combined surface-water explorer namespace."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the top-level combined SFR/LAK explorer to ``model``."""
 
         self.model = model

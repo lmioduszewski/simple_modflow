@@ -1,14 +1,12 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
+
 
 from myflopy.modflow.utils.surfaces import InterpolatedSurface
-from myflopy import viz as f
-import pandas as pd
-import geopandas as gpd
 
 
 class ModelSurface:

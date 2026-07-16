@@ -104,7 +104,7 @@ class SurfaceWaterValidationReport:
             )
         )
 
-    def extend(self, other: "SurfaceWaterValidationReport") -> None:
+    def extend(self, other: SurfaceWaterValidationReport) -> None:
         """Append findings from another report."""
 
         self.issues.extend(other.issues)
@@ -190,7 +190,7 @@ def _normalize_lak_connection_rows(connectiondata: list | None) -> list[list]:
     return connectiondata
 
 
-def _model_ncpl(model: "SimulationBase") -> int | None:
+def _model_ncpl(model: SimulationBase) -> int | None:
     """Return the number of plan-view cells for ``model`` when available."""
 
     if getattr(model, "vor", None) is not None:
@@ -201,7 +201,7 @@ def _model_ncpl(model: "SimulationBase") -> int | None:
     return None
 
 
-def _model_nlay(model: "SimulationBase") -> int | None:
+def _model_nlay(model: SimulationBase) -> int | None:
     """Return the number of layers for ``model`` when available."""
 
     try:
@@ -210,7 +210,7 @@ def _model_nlay(model: "SimulationBase") -> int | None:
         return None
 
 
-def _cell_top_bottom(model: "SimulationBase", layer: int, cell: int) -> tuple[float | None, float | None]:
+def _cell_top_bottom(model: SimulationBase, layer: int, cell: int) -> tuple[float | None, float | None]:
     """Return the top and bottom elevation for one zero-based cellid."""
 
     vor = getattr(model, "vor", None)
@@ -248,7 +248,7 @@ def _cell_top_bottom(model: "SimulationBase", layer: int, cell: int) -> tuple[fl
 def _validate_zero_based_cellid(
     report: SurfaceWaterValidationReport,
     *,
-    model: "SimulationBase",
+    model: SimulationBase,
     cellid: Any,
     code_prefix: str,
     context: dict[str, Any],
@@ -305,7 +305,7 @@ def _validate_zero_based_cellid(
     return layer, cell
 
 
-def _infer_mvr_package_count(model: "SimulationBase", package_name: str) -> int | None:
+def _infer_mvr_package_count(model: SimulationBase, package_name: str) -> int | None:
     """Infer how many mover-addressable entries a package exposes."""
 
     gwf = getattr(model, "gwf", None)
@@ -324,7 +324,7 @@ def _infer_mvr_package_count(model: "SimulationBase", package_name: str) -> int 
 
 
 def validate_lak_configuration(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     nlakes: int,
     packagedata: list | None,
@@ -580,8 +580,8 @@ def validate_lak_configuration(
 
 
 def validate_sfr_configuration(
-    sfr: "SFRBuilder",
-    model: "SimulationBase" | None = None,
+    sfr: SFRBuilder,
+    model: SimulationBase | None = None,
 ) -> SurfaceWaterValidationReport:
     """Validate an SFR builder's derived reach and connection data."""
 
@@ -804,7 +804,7 @@ def validate_sfr_configuration(
 
 
 def validate_mvr_configuration(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     maxmvr: int,
     maxpackages: int,
@@ -978,13 +978,13 @@ def validate_mvr_configuration(
 
 
 def validate_surface_water_configuration(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     nlakes: int | None = None,
     lak_packagedata: list | None = None,
     lak_connectiondata: list | None = None,
     lak_perioddata: dict | None = None,
-    sfr: "SFRBuilder" | None = None,
+    sfr: SFRBuilder | None = None,
     maxmvr: int | None = None,
     maxpackages: int | None = None,
     mvr_packages: list | None = None,

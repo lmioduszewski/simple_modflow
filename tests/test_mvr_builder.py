@@ -9,7 +9,7 @@ from shapely.geometry import LineString, Polygon
 from myflopy import ModelContext, ModelSpec, PackageSpec, SimulationSpec
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.lakes import LAKBuilder
-from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection
+from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder
 
 

@@ -137,8 +137,9 @@ def test_group_inputs_results_mosaic_render_on_canonical(canonical_run):
     """A two-model group (run vs reload) renders a shared-scale per-model mosaic
     for both an input and a result field via ``mosaic(by="model")``."""
 
-    import myflopy as mf
     from matplotlib.figure import Figure
+
+    import myflopy as mf
 
     reloaded = mf.load_mf6_run(canonical_run.workspace)
     group = ModelGroup({"a": canonical_run, "b": reloaded}, reference="a")
@@ -162,8 +163,9 @@ def test_group_lak_sfr_stage_field_mosaic_render_on_canonical(canonical_run):
     single-model stage explorer exposes (regression for the ``Unknown field
     'stage'`` gap)."""
 
-    import myflopy as mf
     from matplotlib.figure import Figure
+
+    import myflopy as mf
 
     reloaded = mf.load_mf6_run(canonical_run.workspace)
     group = ModelGroup({"a": canonical_run, "b": reloaded}, reference="a")

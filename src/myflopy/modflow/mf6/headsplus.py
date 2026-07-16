@@ -1,30 +1,43 @@
 """Legacy head-output exploration helpers built on top of FloPy's HeadFile."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-    from figs import Fig
 
-import pandas as pd
-import numpy as np
-import flopy.utils.binaryfile as bf
 from pathlib import Path
-from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
+
+import flopy.utils.binaryfile as bf
+import numpy as np
+import pandas as pd
+
 from myflopy.modflow.mf6.heads_observations import (
     get_obs_cells as _get_obs_cells,
+)
+from myflopy.modflow.mf6.heads_observations import (
     get_obs_heads as _get_obs_heads,
+)
+from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
 from myflopy.modflow.mf6.heads_plotting import (
     choropleth as _choropleth,
+)
+from myflopy.modflow.mf6.heads_plotting import (
     multimodel_plot_heads as _multimodel_plot_heads,
+)
+from myflopy.modflow.mf6.heads_plotting import (
     plot_choropleth as _plot_choropleth,
+)
+from myflopy.modflow.mf6.heads_plotting import (
     plot_heads as _plot_heads,
 )
 from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
+from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -66,7 +79,7 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
     )
 
 
-def multimodel_plot_heads(models: list["SimulationBase"], locs: int | list[int] | Path, **kwargs):
+def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | Path, **kwargs):
     """Compatibility wrapper for the dedicated multi-model plotting helper."""
 
     return _multimodel_plot_heads(models, locs, **kwargs)

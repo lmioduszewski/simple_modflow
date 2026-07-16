@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import sha1
-import json
 from pathlib import Path
 from typing import Any
 
 import flopy
 import numpy as np
-
 
 SUPPORTED_PACKAGE_ARTIFACT_TYPES = {"chd", "drn", "ghb", "ic", "npf", "rch", "uzf", "lak", "sfr", "mvr"}
 PACKAGE_ARTIFACT_APPLY_ORDER = {

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from myflopy import viz as f
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -15,6 +14,7 @@ import shapely as shp
 from flopy.discretization.vertexgrid import VertexGrid
 from flopy.plot.crosssection import PlotCrossSection
 
+from myflopy import viz as f
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 

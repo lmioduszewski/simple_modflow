@@ -1,13 +1,16 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 import pickle
-from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
-from pandas import IndexSlice as idxx
 from pathlib import Path
+
+from pandas import IndexSlice as idxx
+
+from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 
 
 def get_iheads(model: SimulationBase, kstpkper: tuple = None,

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 import flopy
 import pandas as pd
@@ -38,7 +39,7 @@ def _default_prt_name(flow_name: str) -> str:
     return f"{stem[:12]}_prt"
 
 
-def _output_filename(model: "SimulationBase", kind: str) -> str:
+def _output_filename(model: SimulationBase, kind: str) -> str:
     """The GWF head/budget output filename from its OC record (falling back to ``<name>.hds/.cbc``)."""
 
     oc = getattr(model.gwf, "oc", None)
@@ -51,7 +52,7 @@ def _output_filename(model: "SimulationBase", kind: str) -> str:
     return f"{model.name}.{suffix}"
 
 
-def _grid_filename(model: "SimulationBase") -> str:
+def _grid_filename(model: SimulationBase) -> str:
     """Return the GWF binary-grid filename required by PRT local-z releases."""
 
     grid = getattr(model.gwf, "dis", None) or getattr(model.gwf, "disv", None) or getattr(model.gwf, "disu", None)
@@ -64,7 +65,7 @@ def _grid_filename(model: "SimulationBase") -> str:
     return f"{model.name}.{package_type}.grb"
 
 
-def _tdis_perioddata(model: "SimulationBase") -> list[tuple[float, int, float]]:
+def _tdis_perioddata(model: SimulationBase) -> list[tuple[float, int, float]]:
     """The flow model's TDIS ``(perlen, nstp, tsmult)`` rows (defaulting to one steady period)."""
 
     tdis = getattr(model.sim, "tdis", None)
@@ -77,14 +78,14 @@ def _tdis_perioddata(model: "SimulationBase") -> list[tuple[float, int, float]]:
     ]
 
 
-def _tdis_time_units(model: "SimulationBase") -> str:
+def _tdis_time_units(model: SimulationBase) -> str:
     """The flow model's TDIS time units (``"DAYS"`` if unset)."""
 
     tdis = getattr(model.sim, "tdis", None)
     return str(_mfdata_value(getattr(tdis, "time_units", None), "DAYS"))
 
 
-def _copy_grid_to_prt(flow_model: "SimulationBase", prt_model):
+def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
     """Replicate the GWF DIS/DISV discretization onto a PRT model (raises for unsupported grids)."""
 
     gwf = flow_model.gwf
@@ -146,12 +147,12 @@ class PRTReleasePoints:
     @classmethod
     def from_cells(
         cls,
-        model: "SimulationBase",
+        model: SimulationBase,
         cells: Sequence[int | tuple[int, ...]],
         *,
         layer: int = 0,
         local_z: float = 0.5,
-    ) -> "PRTReleasePoints":
+    ) -> PRTReleasePoints:
         """Create particle release points at the centers of given model cells.
 
         Parameters
@@ -209,12 +210,12 @@ class PRTReleasePoints:
     @classmethod
     def from_points(
         cls,
-        model: "SimulationBase",
+        model: SimulationBase,
         points,
         *,
         layer: int = 0,
         local_z: float = 0.5,
-    ) -> "PRTReleasePoints":
+    ) -> PRTReleasePoints:
         """Create release points from point geometries or an iterable of ``(x, y)``."""
 
         geometries = getattr(points, "geometry", points)
@@ -252,7 +253,7 @@ class PRTRunResults:
         Paths to the particle-track CSV and (optional) budget output.
     """
 
-    flow_model: "SimulationBase"
+    flow_model: SimulationBase
     workspace: Path
     name: str
     track_csv_path: Path
@@ -274,7 +275,7 @@ class PRTRunResults:
             raise FileNotFoundError(f"PRT track CSV not found: {self.track_csv_path}")
         return pd.read_csv(self.track_csv_path)
 
-    def refresh(self) -> "PRTRunResults":
+    def refresh(self) -> PRTRunResults:
         """Clear cached file-backed results so subsequent access rereads disk."""
 
         self.__dict__.pop("pathlines", None)
@@ -342,7 +343,7 @@ class PRTProject:
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         *,
         workspace: str | Path,
         name: str | None = None,
@@ -499,7 +500,7 @@ class PRTProject:
 
 
 def open_prt_run(
-    model: "SimulationBase",
+    model: SimulationBase,
     workspace: str | Path,
     *,
     name: str | None = None,
@@ -561,7 +562,7 @@ class ParticleTracking:
         The flow model these particle-tracking workflows operate on.
     """
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the particle-tracking front door to a flow ``model``."""
 
         self.model = model

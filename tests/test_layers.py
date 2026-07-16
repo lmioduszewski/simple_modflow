@@ -16,7 +16,6 @@ from myflopy.layers import (
     LayerStack,
     Max,
     Min,
-    Raster,
 )
 from myflopy.surfaces import LayerSurfaces, Surface
 
@@ -243,6 +242,7 @@ def test_algebra_aliases_build_the_right_kinds():
 @pytest.fixture(scope="module")
 def real_vor():
     import tempfile
+
     import myflopy as mf
 
     ws = tempfile.mkdtemp(prefix="vorgrid_")

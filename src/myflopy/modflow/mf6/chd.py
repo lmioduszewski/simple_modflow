@@ -20,8 +20,8 @@ class CHDFromVector(Boundaries):
 
     def __init__(
         self,
-        model: "SimulationBase" = None,
-        vor: "Vor" = None,
+        model: SimulationBase = None,
+        vor: Vor = None,
         shp_gpkg: Path = None,
         uid: str = "name",
         crs: int = 2927,

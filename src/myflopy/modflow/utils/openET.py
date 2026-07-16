@@ -1,19 +1,20 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-import requests
 import glob
-import rasterio as rio
-import pandas as pd
-import geopandas as gpd
-from shapely import Polygon
-from pathlib import Path
 import re
+from pathlib import Path
+
+import geopandas as gpd
+import pandas as pd
+import rasterio as rio
 import rasterio.features as features
+import requests
+from shapely import Polygon
 
 
 def extract_dates_from_paths(paths) -> list[Path]:

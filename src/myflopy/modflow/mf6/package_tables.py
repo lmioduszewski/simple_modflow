@@ -20,7 +20,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
 
 
 def build_cell_package_input_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     package_name: str,
     *,
     per: int | None = None,
@@ -88,7 +88,7 @@ def build_cell_package_input_table(
 
 
 def build_uzf_field_input_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     field_name: str,
     *,
     per: int | None = None,
@@ -188,7 +188,7 @@ def build_uzf_field_input_table(
 
 
 def build_uzf_field_input_wide_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     field_name: str,
     *,
     layer: int | Iterable[int] | None = None,
@@ -244,7 +244,7 @@ def build_uzf_field_input_wide_table(
     return wide
 
 
-def build_sfr_reach_table(model: "SimulationBase") -> pd.DataFrame:
+def build_sfr_reach_table(model: SimulationBase) -> pd.DataFrame:
     """Return per-reach geometry metadata used by SFR tables and profiles."""
 
     packagedata = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
@@ -278,7 +278,7 @@ def build_sfr_reach_table(model: "SimulationBase") -> pd.DataFrame:
     ].drop_duplicates()
 
 
-def build_lak_connection_table(model: "SimulationBase") -> pd.DataFrame:
+def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
     """Return a normalized table of LAK connection geometry by cell.
 
     Notes
@@ -373,7 +373,7 @@ def build_lak_connection_table(model: "SimulationBase") -> pd.DataFrame:
     return connectiondata[ordered + remaining]
 
 
-def build_sfr_input_table(model: "SimulationBase") -> pd.DataFrame:
+def build_sfr_input_table(model: SimulationBase) -> pd.DataFrame:
     """Return normalized static and stress-period SFR inputs mapped to cells."""
 
     base = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
@@ -400,7 +400,7 @@ def build_sfr_input_table(model: "SimulationBase") -> pd.DataFrame:
     )
 
 
-def build_lak_input_table(model: "SimulationBase") -> pd.DataFrame:
+def build_lak_input_table(model: SimulationBase) -> pd.DataFrame:
     """Return normalized static and stress-period LAK inputs mapped to connection cells."""
 
     connections = build_lak_connection_table(model)

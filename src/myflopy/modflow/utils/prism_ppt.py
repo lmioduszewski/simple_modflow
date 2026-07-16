@@ -1,15 +1,16 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-from pathlib import Path
-from myflopy import read_shp_gpkg
-import geopandas as gpd
 import pickle
+from pathlib import Path
+
 from shapely import Point
+
+from myflopy import read_shp_gpkg
 from myflopy.modflow.utils.raster import RasterData
 
 

@@ -1,15 +1,17 @@
 
 import random
-import plotly.graph_objects as go
+
 import numpy as np
+import plotly.graph_objects as go
 from skimage import measure
+
 
 #AVERAGE FUNCTION
 def average(lst=None):
     """return the average value of a list of numbers"""
     for i in range(len(lst)):
         lst[i] = int(lst[i])
-        
+
     return (sum(lst) / len(lst))
 
 #DRAW LINE OF A POLYGON IN DASH FIGURE
@@ -18,8 +20,8 @@ def dpl(fig=None, x0=None, y0=None, x1=None, y1=None, color='RoyalBlue', width=3
     If the line drawn closes the polygon, the polygon object is created and returned.
     Defaults to Royal Blue with a width of 3.
     The function requires x and y coordinates of both the beginning and end of the line."""
-    
-    polyline = fig.add_shape(type="line", x0=x0, y0=y0, x1=x1, y1=y1, 
+
+    polyline = fig.add_shape(type="line", x0=x0, y0=y0, x1=x1, y1=y1,
                                 line=dict(color=color,width=width))
     return polyline
 
@@ -92,7 +94,7 @@ def interpolate_z_flat(x_coords, y_coords, corner_z_coords):
     :param corner_z_coords: a list of four corner z-coordinates in the order top-left, top-right, bottom-right, bottom-left
     :return: a tuple containing the x-coordinates, y-coordinates, and z-coordinates for all points in the grid
     """
-    
+
     top_left_z, top_right_z, bottom_right_z, bottom_left_z = corner_z_coords
 
     x_coords_flat = []
@@ -106,7 +108,7 @@ def interpolate_z_flat(x_coords, y_coords, corner_z_coords):
             top_z = top_left_z + (top_right_z - top_left_z) * x_frac
             bottom_z = bottom_left_z + (bottom_right_z - bottom_left_z) * x_frac
             point_z = top_z + (bottom_z - top_z) * y_frac
-            
+
             x_coords_flat.append(x)
             y_coords_flat.append(y)
             z_coords_flat.append(point_z)
@@ -154,7 +156,7 @@ def calculate_z_on_surface(numrow=50, numcol=50, corner_z_coords=None, xy_points
     Returns:
         list: list of lists of all [x,y,z] coorindates
     """
-    
+
     top_left_z, top_right_z, bottom_right_z, bottom_left_z = corner_z_coords
     xyz_points=[]
     p1=(0, numrow-1, bottom_left_z)
@@ -185,7 +187,7 @@ def calculate_z_on_surface(numrow=50, numcol=50, corner_z_coords=None, xy_points
         xyz_points.append(point_aslist)
     return xyz_points
 
-def deleteFigTraces(figure=None, 
+def deleteFigTraces(figure=None,
                     attr_val_to_search=None,
                     attr_to_search=None,
                     ) -> go.Figure:
@@ -202,7 +204,7 @@ def deleteFigTraces(figure=None,
 
     listfig = list(figure.data)
     if listfig==None:
-        return    
+        return
     traces_to_delete = []
     attr_val_to_search = attr_val_to_search
     attr_to_search = attr_to_search
@@ -214,7 +216,7 @@ def deleteFigTraces(figure=None,
             if listfig[
                 trace][attr_to_search][:len(attr_val_to_search)
                                        ]==attr_val_to_search:
-                traces_to_delete.append(trace)        
+                traces_to_delete.append(trace)
     traces_to_delete.sort(reverse=True)
     if traces_to_delete==None:
         return
@@ -238,7 +240,7 @@ def numTracesinFig(
     Returns:
         int: number of traces with a matching attribute value
     """
-    
+
     matching_trace_indx=[]
     numtrace=len(figure.data)
     for trace in range(numtrace):
@@ -254,10 +256,10 @@ def calculate_mesh_contours(vertices, faces, contour_level):
     volume = np.zeros(np.max(faces) + 1)
     volume[faces] = 1
     volume = np.reshape(volume, (len(x), len(y), len(z)))
-    
+
     # Calculate the contours using the marching cubes algorithm
     contours = measure.find_contours(volume, contour_level)
-    
+
     # Convert the 3D coordinates of the contours to 2D coordinates
     for i in range(len(contours)):
         contour = contours[i]
@@ -265,7 +267,7 @@ def calculate_mesh_contours(vertices, faces, contour_level):
         contour[:, 0] = x[contour[:, 0].astype(int)]
         contour[:, 1] = y[contour[:, 1].astype(int)]
         contours[i] = contour
-    
+
     return contours
 
 def calculate_contours(x, y, z, contour_level):

@@ -141,7 +141,7 @@ class ModelConfig:
         self._settings = settings
 
     @classmethod
-    def from_model(cls, model) -> "ModelConfig":
+    def from_model(cls, model) -> ModelConfig:
         """Extract the configuration settings from a live or loaded model."""
 
         return cls(_extract_settings(model))

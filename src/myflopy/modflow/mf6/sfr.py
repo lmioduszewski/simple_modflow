@@ -24,7 +24,6 @@ from myflopy.specs import (
     mf6_time_conversion,
 )
 
-
 StreamLocation = str | Point
 
 
@@ -496,7 +495,7 @@ class SFRBuilder:
 
         return self.stream_reaches[str(stream_id)][-1]
 
-    def connection(self, stream_id: str, location: StreamLocation = "downstream") -> "MoverConnection":
+    def connection(self, stream_id: str, location: StreamLocation = "downstream") -> MoverConnection:
         """Return an MVR endpoint for a stream by stable stream ID and location."""
 
         from myflopy.modflow.mf6.mvr import MoverConnection

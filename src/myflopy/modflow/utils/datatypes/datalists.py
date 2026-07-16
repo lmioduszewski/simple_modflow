@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
+
 import numpy as np
-from pathlib import Path
+
 import myflopy.modflow.utils.validators as validators
 
 

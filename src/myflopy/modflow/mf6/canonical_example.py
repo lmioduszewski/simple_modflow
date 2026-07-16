@@ -37,12 +37,13 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, Polygon
 
-from myflopy.modflow.mf6.lakes import LAKBuilder
-from myflopy.modflow.mf6.mvr import MVRBuilder, Move
 from myflopy.modflow.mf6.canonical import (
     CANONICAL_MODEL_CONTRACT,
     irregular_voronoi_grid,
 )
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.lakes import LAKBuilder
+from myflopy.modflow.mf6.mvr import Move, MVRBuilder
 from myflopy.modflow.mf6.observations import (
     DrnFlowTargets,
     HeadTargets,
@@ -51,8 +52,6 @@ from myflopy.modflow.mf6.observations import (
     SfrStageTargets,
 )
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection
-from myflopy.modflow.mf6.uzf import UZFBuilder
-from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.discretization import (
     DisvGrid,
@@ -69,6 +68,7 @@ from myflopy.modflow.mf6.simulation.packages import (
     Storage,
     Wells,
 )
+from myflopy.modflow.mf6.uzf import UZFBuilder
 from myflopy.specs import ModelContext
 
 
@@ -102,7 +102,7 @@ class CanonicalModelConfig:
     steps_per_period: int = 2
 
     @classmethod
-    def validation(cls) -> "CanonicalModelConfig":
+    def validation(cls) -> CanonicalModelConfig:
         """Return a smaller profile for automated API validation."""
 
         return cls(nrow=50, ncol=50, nlay=4, nper=6, cell_size=100.0)

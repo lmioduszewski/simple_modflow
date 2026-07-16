@@ -67,7 +67,7 @@ class CellSurfaceOffset:
             fields.add(self.minimum)
         return fields
 
-    def resolve(self, source: "GeoPackageSource", row, *, layer: int, cell: int) -> float:
+    def resolve(self, source: GeoPackageSource, row, *, layer: int, cell: int) -> float:
         """Return the resolved elevation/head for one mapped cell."""
 
         surface = source.surface_value(self.reference, layer=layer, cell=cell)

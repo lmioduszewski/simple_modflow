@@ -332,8 +332,9 @@ def test_field_mappable_xs_dispatch():
 def test_composers_render_on_canonical(canonical_run):
     """kind= composers render real figures/animations on all three surfaces."""
 
-    import myflopy as mf
     from shapely.geometry import LineString
+
+    import myflopy as mf
     from myflopy.project.model_group import ModelGroup
 
     model = canonical_run

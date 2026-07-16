@@ -1,14 +1,12 @@
 import subprocess
-import sys
-import os
 from pathlib import Path
-#os.environ['GISBASE'] = Path(r'C:\OSGeo4W\apps\grass\grass83').as_posix()
 
-from grass.pygrass.modules.shortcuts import raster as r
-from grass.pygrass.modules.shortcuts import general as g
-from grass.pygrass.modules.shortcuts import vector as v
 import grass.script.setup as gsetup
-from grass.pygrass.modules import Module
+from grass.pygrass.modules.shortcuts import general as g
+
+#os.environ['GISBASE'] = Path(r'C:\OSGeo4W\apps\grass\grass83').as_posix()
+from grass.pygrass.modules.shortcuts import raster as r
+from grass.pygrass.modules.shortcuts import vector as v
 
 
 class SurfaceInterpFromShp:

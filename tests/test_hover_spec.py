@@ -12,11 +12,9 @@ import numpy as np
 import pytest
 
 from myflopy.modflow.utils.datatypes.hover import (
-    Fields,
     HoverContext,
     HoverSpec,
     HoverStyle,
-    LayerTable,
     cell_input_hover,
     compare_hover,
     format_number,
@@ -258,6 +256,7 @@ def test_result_hover_and_surface_water_hover_defaults():
 # --- stage passthrough in LAK/SFR q payload builders ------------------------------
 def test_sfr_q_payload_passes_joined_stage_through_to_hover():
     import pandas as pd
+
     from myflopy.modflow.mf6.package_plotting import build_sfr_q_map_payload
 
     frame = pd.DataFrame(
@@ -279,6 +278,7 @@ def test_sfr_q_payload_passes_joined_stage_through_to_hover():
 
 def test_lak_q_payload_passes_stage_and_skips_when_absent():
     import pandas as pd
+
     from myflopy.modflow.mf6.package_plotting import build_lak_q_map_payload
 
     with_stage = pd.DataFrame(
@@ -300,6 +300,7 @@ def test_lak_q_payload_passes_stage_and_skips_when_absent():
 
 def test_join_feature_stage_maps_mean_stage_per_cell():
     import pandas as pd
+
     from myflopy.modflow.mf6.package_surface_water import _join_feature_stage
 
     frame = pd.DataFrame({"cell": [5, 9], "q": [-1.0, 2.0]})

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
@@ -21,7 +21,6 @@ from myflopy.sources import (
     TableSource,
 )
 from myflopy.specs import GridSpec
-
 
 _BUILD_OPTION_KEYS = {
     "cleanup",

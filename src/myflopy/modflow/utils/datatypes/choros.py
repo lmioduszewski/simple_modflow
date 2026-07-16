@@ -1,29 +1,31 @@
 from __future__ import annotations
-from myflopy.viz import mpl_axes
+
 import copy
 from typing import TYPE_CHECKING
+
+from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-from pandas import IndexSlice as idxx
-from myflopy.viz import Fig, create_hover
-import numpy as np
-import shapely as shp
+import base64
+import mimetypes
 from pathlib import Path
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
 import geopandas as gpd
-import json
+import numpy as np
 import pandas as pd
 import plotly.graph_objs as go
-from myflopy.modflow.utils.animations import Animation
 import rasterio
-from rasterio.warp import transform_bounds
+import shapely as shp
+from pandas import IndexSlice as idxx
 from PIL import Image
-import base64, mimetypes
-from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
+from rasterio.warp import transform_bounds
 
+from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
+from myflopy.modflow.utils.animations import Animation
+from myflopy.viz import Fig
 
 # Map the Plotly colorscale names this class understands to the nearest
 # matplotlib colormap, so plot_mpl() honors a Choro's configured colorscale.
@@ -482,7 +484,7 @@ class Choro:
                     0]  # TODO why do i have to add [0]
             layer_nums = list(range(len(botms)))
             self._hover_dict.update(
-                {f'Top of Model': np.round(top, 2).tolist()})
+                {'Top of Model': np.round(top, 2).tolist()})
             self._hover_dict.update(
                 {
                     f'Layer {lyr + 1} Bottom': np.round(botm, 2).tolist() for lyr, botm in enumerate(botms)
@@ -508,7 +510,7 @@ class Choro:
         else:
             self._hover_dict.update(
                 {
-                    f'zs': self.zs
+                    'zs': self.zs
                 }
             )
         if self._custom_hover:
@@ -1082,7 +1084,6 @@ class Choro:
             The figure the choropleth was drawn on.
         """
 
-        import matplotlib.pyplot as plt
 
         values = np.asarray(self.zs, dtype=float)
         gdf = self.vor.gdf_vorPolys.copy()
@@ -1133,7 +1134,7 @@ class Choro:
         # interactive selector is actually launched.
         import dash
         import dash_bootstrap_components as dbc
-        from dash import dcc, html, Input, Output
+        from dash import Input, Output, dcc, html
 
         self.add_choropleth()
 

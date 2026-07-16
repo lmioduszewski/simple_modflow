@@ -1,15 +1,5 @@
 """Simulation helpers extracted from the MF6 base model module."""
 
-from .base import SimulationBase
-from .discretization import DisuGrid, DisvGrid, TemporalDiscretization
-from .indexing import (
-    build_idomain,
-    build_model_times,
-    build_ncpl_arr,
-    build_node_to_lni,
-    build_offsets,
-    coerce_per_dates,
-)
 from .accessors import (
     build_choro,
     build_xsection,
@@ -25,6 +15,16 @@ from .accessors import (
     get_surface,
     get_uzf_output,
 )
+from .base import SimulationBase
+from .discretization import DisuGrid, DisvGrid, TemporalDiscretization
+from .indexing import (
+    build_idomain,
+    build_model_times,
+    build_ncpl_arr,
+    build_node_to_lni,
+    build_offsets,
+    coerce_per_dates,
+)
 from .packages import (
     CHD,
     GHB,
@@ -34,11 +34,11 @@ from .packages import (
     KFlow,
     OutputControl,
     Recharge,
-    Wells,
     Storage,
+    Wells,
 )
-from .runtime import run_simulation
 from .regions import ModelRegion, RegionGroup, RegionRegistry
+from .runtime import run_simulation
 
 __all__ = [
     "CHD",

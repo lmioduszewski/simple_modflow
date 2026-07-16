@@ -45,7 +45,7 @@ def _normalize_budget_nodes(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_budget_result_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     budget_text: str,
     package_name: str,
@@ -113,7 +113,7 @@ def build_budget_result_table(
     return combined
 
 
-def build_sfr_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
+def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     """Return a normalized table of SFR stage results by reach and period."""
 
     stage_frame = model.outputs.sfr.stage.get().copy()
@@ -149,7 +149,7 @@ def build_sfr_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
 
 
 def build_sfr_long_profile_table(
-    model: "SimulationBase", *, per: int = 0
+    model: SimulationBase, *, per: int = 0
 ) -> pd.DataFrame:
     """Return one merged SFR long-profile table for a selected stress period.
 
@@ -259,7 +259,7 @@ def build_sfr_long_profile_table(
 
 
 def build_sfr_budget_result_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     budget_text: str = "SFR",
     value_name: str = "q",
@@ -317,7 +317,7 @@ def build_sfr_budget_result_table(
     return frame[ordered + remaining]
 
 
-def build_lak_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
+def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     """Return a normalized table of LAK stage results mapped to connected cells."""
 
     stage_array = np.asarray(model.outputs.lak.stage.get(), dtype=float)
@@ -341,7 +341,7 @@ def build_lak_stage_result_table(model: "SimulationBase") -> pd.DataFrame:
 
 
 def build_lak_budget_result_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     budget_text: str = "GWF",
     value_name: str = "q",
@@ -561,7 +561,7 @@ def build_lak_budget_result_table(
 
 
 def build_lak_budget_term_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     term: str | Iterable[str] | None = None,
 ) -> pd.DataFrame:
@@ -678,7 +678,7 @@ def build_lak_budget_term_table(
 
 
 def build_sfr_budget_term_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     term: str | Iterable[str] | None = None,
 ) -> pd.DataFrame:
@@ -797,7 +797,7 @@ def build_sfr_budget_term_table(
 
 
 def build_surface_water_exchange_cell_table(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     per: int | None = None,
     layer: int | Iterable[int] | None = None,
@@ -899,7 +899,7 @@ def build_surface_water_exchange_cell_table(
     return combined.reset_index(drop=True)
 
 
-def build_lak_stage_change_table(model: "SimulationBase") -> pd.DataFrame:
+def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
     """Return per-transition lake-stage changes for one model.
 
     The resulting table carries one row per lake and stress-period transition,

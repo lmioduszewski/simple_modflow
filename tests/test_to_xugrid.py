@@ -122,7 +122,6 @@ def test_plot_requires_single_field(vor):
 
 import myflopy as mf  # noqa: E402
 from myflopy.layers import Array  # noqa: E402
-from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig  # noqa: E402
 
 
 def _build_two_layer_run(root):

@@ -14,15 +14,46 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     # These imports are for static analysis and IDE completion only. Runtime
     # access still goes through the lazy ``_EXPORTS`` / ``__getattr__`` path.
+    from myflopy.advanced import (
+        chd_spec,
+        drn_spec,
+        ghb_spec,
+        lak_spec,
+        mvr_spec,
+        rch_spec,
+        sfr_spec,
+        uzf_spec,
+        wel_spec,
+    )
+    from myflopy.builders import (
+        PackageBuilder,
+        build_gwf_gwe_exchange,
+        build_gwf_gwf_exchange,
+        build_gwf_gwt_exchange,
+        build_gwf_prt_exchange,
+        build_ims,
+    )
+    from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
+    from myflopy.layers import (
+        LayerBuildResult,
+        LayerQCReport,
+        LayerStack,
+        modflow_surfaces,
+    )
+    from myflopy.modflow.mf6.canonical import (
+        CANONICAL_MODEL_CONTRACT,
+        CanonicalModelContract,
+        canonical_feature_signals,
+        canonical_head_signals,
+        canonical_partition_mask,
+        canonical_sfr_signals,
+    )
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        build_canonical_model,
+    )
     from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
-    from myflopy.modflow.mf6.observations import (
-        DrnFlowTargets,
-        HeadTargets,
-        LakeStageTargets,
-        SfrFlowTargets,
-        SfrStageTargets,
-    )
     from myflopy.modflow.mf6.interactive_plotting import (
         FrameExportProgress,
         ModelMapStyle,
@@ -37,6 +68,28 @@ if TYPE_CHECKING:
         export_particle_tracking_html,
         plot_model_head_map,
         plot_particle_pathlines,
+    )
+    from myflopy.modflow.mf6.lakes import (
+        LAKBuilder,
+        LakeConnection,
+        LakeOutlet,
+        LakeTable,
+        LakeTableBuilder,
+    )
+    from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
+    from myflopy.modflow.mf6.observations import (
+        DrnFlowTargets,
+        HeadTargets,
+        LakeStageTargets,
+        SfrFlowTargets,
+        SfrStageTargets,
+    )
+    from myflopy.modflow.mf6.parallel import (
+        ParallelCompatibilityError,
+        ParallelEnvironment,
+        ParallelModelWorkflow,
+        ParallelSplitResults,
+        ParallelSplitRun,
     )
     from myflopy.modflow.mf6.pest import (
         DrnFlowObservationSpec,
@@ -57,55 +110,6 @@ if TYPE_CHECKING:
         PRTRunResults,
         open_prt_run,
     )
-    from myflopy.modflow.mf6.parallel import (
-        ParallelCompatibilityError,
-        ParallelEnvironment,
-        ParallelModelWorkflow,
-        ParallelSplitResults,
-        ParallelSplitRun,
-    )
-    from myflopy.modflow.mf6.canonical import (
-        CANONICAL_MODEL_CONTRACT,
-        CanonicalModelContract,
-        canonical_feature_signals,
-        canonical_head_signals,
-        canonical_partition_mask,
-        canonical_sfr_signals,
-    )
-    from myflopy.modflow.mf6.canonical_example import (
-        CanonicalModelConfig,
-        build_canonical_model,
-    )
-    from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
-    from myflopy.surfaces import LayerSurfaces, Surface
-    from myflopy.layers import (
-        LayerBuildResult,
-        LayerQCReport,
-        LayerStack,
-        modflow_surfaces,
-    )
-    from myflopy.sources import (
-        DataSourceSpec,
-        GeoPackageSourceSpec,
-        LiteralSource,
-        RasterSource,
-        ShapeSource,
-        TableSource,
-    )
-    from myflopy.modflow.mf6.surface_water_validation import (
-        SurfaceWaterValidationIssue,
-        SurfaceWaterValidationReport,
-        validate_surface_water_configuration,
-    )
-    from myflopy.modflow.mf6.simplemodel import SimpleModelConfig, simple_model_spec
-    from myflopy.modflow.mf6.lakes import (
-        LAKBuilder,
-        LakeConnection,
-        LakeOutlet,
-        LakeTable,
-        LakeTableBuilder,
-    )
-    from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection
     from myflopy.modflow.mf6.recharge import RCHBuilder
     from myflopy.modflow.mf6.sfr import (
         SFRBuilder,
@@ -113,66 +117,22 @@ if TYPE_CHECKING:
         StreamDiversion,
         StreamNetwork,
     )
+    from myflopy.modflow.mf6.simplemodel import SimpleModelConfig, simple_model_spec
+    from myflopy.modflow.mf6.simulation.base import SimulationBase
+    from myflopy.modflow.mf6.simulation.packages import Wells
+    from myflopy.modflow.mf6.surface_water_validation import (
+        SurfaceWaterValidationIssue,
+        SurfaceWaterValidationReport,
+        validate_surface_water_configuration,
+    )
     from myflopy.modflow.mf6.uzf import UZFBuilder
     from myflopy.modflow.mp3du import (
         ParticleTrackingInput,
         prepare_particle_tracking,
         run_particle_tracking,
     )
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
-    from myflopy.modflow.mf6.simulation.packages import Wells
     from myflopy.modflow.utils.datatypes.hover import HoverSpec, HoverStyle
     from myflopy.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
-    from myflopy.project import (
-        LoadedMf6Run,
-        ModelGroup,
-        PackageArtifact,
-        PackageCompatibilityError,
-        load_mf6_run,
-        patch_simulation_plot,
-    )
-    from myflopy.specs import (
-        BuiltModel,
-        BuiltSimulation,
-        ExchangeSpec,
-        GweModel,
-        GwfModel,
-        GwtModel,
-        Mf6Model,
-        Mf6Simulation,
-        ModelContext,
-        ModelSpec,
-        ModelType,
-        GridSpec,
-        GridRef,
-        PackageRef,
-        PackageSpec,
-        PrtModel,
-        PostBuildHook,
-        SimulationSpec,
-        SpecBuildContext,
-        grid_ref,
-        ref,
-    )
-    from myflopy.advanced import (
-        chd_spec,
-        drn_spec,
-        ghb_spec,
-        lak_spec,
-        mvr_spec,
-        rch_spec,
-        sfr_spec,
-        uzf_spec,
-        wel_spec,
-    )
-    from myflopy.builders import (
-        PackageBuilder,
-        build_gwf_gwe_exchange,
-        build_gwf_gwf_exchange,
-        build_gwf_gwt_exchange,
-        build_gwf_prt_exchange,
-        build_ims,
-    )
     from myflopy.package_api import (
         chd,
         disv,
@@ -196,6 +156,46 @@ if TYPE_CHECKING:
         uzf,
         wel,
     )
+    from myflopy.project import (
+        LoadedMf6Run,
+        ModelGroup,
+        PackageArtifact,
+        PackageCompatibilityError,
+        load_mf6_run,
+        patch_simulation_plot,
+    )
+    from myflopy.sources import (
+        DataSourceSpec,
+        GeoPackageSourceSpec,
+        LiteralSource,
+        RasterSource,
+        ShapeSource,
+        TableSource,
+    )
+    from myflopy.specs import (
+        BuiltModel,
+        BuiltSimulation,
+        ExchangeSpec,
+        GridRef,
+        GridSpec,
+        GweModel,
+        GwfModel,
+        GwtModel,
+        Mf6Model,
+        Mf6Simulation,
+        ModelContext,
+        ModelSpec,
+        ModelType,
+        PackageRef,
+        PackageSpec,
+        PostBuildHook,
+        PrtModel,
+        SimulationSpec,
+        SpecBuildContext,
+        grid_ref,
+        ref,
+    )
+    from myflopy.surfaces import LayerSurfaces, Surface
     from myflopy.workspace import ModelView, Project, ProjectLayout, Run, load_run
 
 try:

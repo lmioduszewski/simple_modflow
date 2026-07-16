@@ -1,13 +1,12 @@
+from pathlib import Path
+
 import pandas as pd
-import numpy as np
 import pandas.core.indexes.datetimes
 import plotly.graph_objects as go
-import plotly.subplots
 from plotly.subplots import make_subplots
-from pathlib import Path
+
 from myflopy.modflow.mf6.paths import *
 from myflopy.viz import Fig, Template
-from plotly.colors import DEFAULT_PLOTLY_COLORS as colorsbo
 
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',

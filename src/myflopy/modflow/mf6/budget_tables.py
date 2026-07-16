@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 idxx = pd.IndexSlice
 
 
-def budget_types(model: "SimulationBase") -> list[str]:
+def budget_types(model: SimulationBase) -> list[str]:
     """Return record types present in the model budget file.
 
     Parameters
@@ -32,7 +32,7 @@ def budget_types(model: "SimulationBase") -> list[str]:
     return [record.astype(str) for record in model._get_budget_reader().get_unique_record_names()]
 
 
-def raw_budget(model: "SimulationBase", gwf_package: str | None = None):
+def raw_budget(model: SimulationBase, gwf_package: str | None = None):
     """Return the raw model budget reader or one package's raw record list.
 
     Parameters
@@ -70,7 +70,7 @@ def _zero_base_budget_frame(frame: pd.DataFrame, gwf_package: str) -> pd.DataFra
     return normalized
 
 
-def budget_df(model: "SimulationBase", gwf_package: str) -> pd.DataFrame:
+def budget_df(model: SimulationBase, gwf_package: str) -> pd.DataFrame:
     """Return one concatenated dataframe for a package budget across all periods.
 
     Parameters
@@ -125,7 +125,7 @@ def coerce_plot_times(times) -> pd.DatetimeIndex | None:
 def budget_obs_df(
     budget,
     *,
-    model: "SimulationBase",
+    model: SimulationBase,
     shp_gpkg: Path,
     q: str = "q",
     name_field: str = "name",
@@ -194,7 +194,7 @@ def package_output_budget(package):
 
 
 def package_output_df(
-    model: "SimulationBase",
+    model: SimulationBase,
     package,
     *,
     bud_type: str,
@@ -223,7 +223,7 @@ def package_output_df(
     return pd.concat(frames)
 
 
-def lake_stage_array(model: "SimulationBase"):
+def lake_stage_array(model: SimulationBase):
     """Return LAK stage output reshaped to ``(nper, nlakes)``."""
 
     nlakes = model.lak.nlakes.data
@@ -231,7 +231,7 @@ def lake_stage_array(model: "SimulationBase"):
     return stages.get_alldata().reshape(-1, nlakes)
 
 
-def sfr_stage_df(model: "SimulationBase") -> pd.DataFrame:
+def sfr_stage_df(model: SimulationBase) -> pd.DataFrame:
     """Return SFR stage output as a reach-by-period dataframe."""
 
     nreaches = model.sfr.nreaches.data

@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
+import flopy
 import numpy as np
 import pytest
-import flopy
 
+from myflopy.modflow.mf6.canonical import canonical_partition_mask
 from myflopy.modflow.mf6.parallel import (
     ParallelCompatibilityError,
     ParallelModelWorkflow,
     ParallelSplitRun,
     _mover_column_groups,
 )
-from myflopy.modflow.mf6.canonical import canonical_partition_mask
 
 
 class _FakeModel:

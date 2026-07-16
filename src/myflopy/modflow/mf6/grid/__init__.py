@@ -1,33 +1,6 @@
 """Grid helpers extracted from the MF6 Voronoi modules."""
 
 from .connectivity import build_disu_connectivity
-from .helpers import (
-    densify_poly,
-    flatten,
-    get_griddata_from_disu,
-    rows_truncate_at_first_missing,
-    signed_area,
-)
-from .selection import (
-    get_grid_edge_cells,
-    get_model_boundary_polygons,
-    get_vor_cells_as_dict,
-    get_vor_cells_as_series,
-)
-from .plotting import (
-    GridSection,
-    build_choropleth,
-    build_grid_section,
-    get_dash_selector,
-    map_nodes,
-    mapit,
-    plot2d,
-    plot3d,
-    plottri,
-    show,
-    show_overlapping_geometry,
-    show_selected_cells,
-)
 from .geometry import (
     adjust_cells_by_id,
     adjust_top_btm_overlaps,
@@ -50,6 +23,33 @@ from .geometry import (
     set_k_vor,
     shared_face_length,
     voronoi_refine_by_point,
+)
+from .helpers import (
+    densify_poly,
+    flatten,
+    get_griddata_from_disu,
+    rows_truncate_at_first_missing,
+    signed_area,
+)
+from .plotting import (
+    GridSection,
+    build_choropleth,
+    build_grid_section,
+    get_dash_selector,
+    map_nodes,
+    mapit,
+    plot2d,
+    plot3d,
+    plottri,
+    show,
+    show_overlapping_geometry,
+    show_selected_cells,
+)
+from .selection import (
+    get_grid_edge_cells,
+    get_model_boundary_polygons,
+    get_vor_cells_as_dict,
+    get_vor_cells_as_series,
 )
 from .surfaces import (
     get_cell_areas,

@@ -107,8 +107,8 @@ class DisuGrid:
 
     def __init__(
             self,
-            vor: "Vor",
-            model: "SimulationBase",
+            vor: Vor,
+            model: SimulationBase,
             top=None,
             bottom=None
     ):
@@ -160,8 +160,8 @@ class DisvGrid:
 
     def __init__(
             self,
-            vor: "Vor" = None,
-            model: "SimulationBase" = None,
+            vor: Vor = None,
+            model: SimulationBase = None,
             top=None,
             bottom=None,
             nlay=1,
@@ -205,7 +205,7 @@ class TemporalDiscretization:
 
     def __init__(
             self,
-            model: "SimulationBase",
+            model: SimulationBase,
             time_units: str = 'DAYS',
             per_len: int = 1,
             period_data: list = None,

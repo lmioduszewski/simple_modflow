@@ -42,7 +42,7 @@ def _coerce_layer_offsets(values: Any, nlay: int) -> list[float]:
     return [values for _ in range(nlay)]
 
 
-def _surface_columns(vor: "Vor") -> list:
+def _surface_columns(vor: Vor) -> list:
     """The non-geometry surface columns of the grid's ``gdf_topbtm`` (empty if absent)."""
 
     if getattr(vor, "gdf_topbtm", None) is None:
@@ -50,7 +50,7 @@ def _surface_columns(vor: "Vor") -> list:
     return [column for column in vor.gdf_topbtm.columns if column != "geometry"]
 
 
-def _resolve_top_and_bottom(config: "SimpleModelConfig") -> tuple[list, list | list[list]]:
+def _resolve_top_and_bottom(config: SimpleModelConfig) -> tuple[list, list | list[list]]:
     """Resolve model top and per-layer bottoms from the config or the grid surfaces.
 
     Falls back to the grid's ``gdf_topbtm`` columns when ``top``/``bottom`` are
@@ -111,7 +111,7 @@ def _flatten_bottom_cells(bottom: list | list[list], *, grid_type: str) -> list:
     return [cell for layer_values in bottom for cell in layer_values]
 
 
-def _resolve_initial_heads(config: "SimpleModelConfig", bottom: list | list[list]):
+def _resolve_initial_heads(config: SimpleModelConfig, bottom: list | list[list]):
     """The initial-head array: the config's if given, else each cell bottom + saturated thickness."""
 
     if config.initial_heads is not None:
@@ -121,7 +121,7 @@ def _resolve_initial_heads(config: "SimpleModelConfig", bottom: list | list[list
     return [cell_elev + config.initial_sat_thickness for cell_elev in botm_cells]
 
 
-def _resolve_boundary_cells(config: "SimpleModelConfig") -> list[int]:
+def _resolve_boundary_cells(config: SimpleModelConfig) -> list[int]:
     """The perimeter boundary cells: the config's if given, else the grid's edge cells."""
 
     if config.boundary_cells is not None:
@@ -130,7 +130,7 @@ def _resolve_boundary_cells(config: "SimpleModelConfig") -> list[int]:
 
 
 def _resolve_boundary_heads(
-    config: "SimpleModelConfig",
+    config: SimpleModelConfig,
     cells: list[int],
     top: list[float],
     layer_idx: int,
@@ -152,7 +152,7 @@ def _resolve_boundary_heads(
 
 
 def build_edge_drain_stress_period_data(
-    config: "SimpleModelConfig",
+    config: SimpleModelConfig,
     bottom: list | list[list],
 ) -> list[list]:
     """Build edge-drain stress-period rows from a :class:`SimpleModelConfig`."""
@@ -178,7 +178,7 @@ def build_edge_drain_stress_period_data(
 
 
 def build_constant_head_stress_period_data(
-    config: "SimpleModelConfig",
+    config: SimpleModelConfig,
     top: list[float],
 ) -> dict[int, list[list]]:
     """Build constant-head stress-period data from a :class:`SimpleModelConfig`."""
@@ -198,13 +198,13 @@ def build_constant_head_stress_period_data(
     return stress_period_data
 
 
-def _default_sto_steady(config: "SimpleModelConfig") -> dict[int, bool]:
+def _default_sto_steady(config: SimpleModelConfig) -> dict[int, bool]:
     """Default STO steady-state flags: only the first stress period is steady."""
 
     return {0: True}
 
 
-def _default_sto_transient(config: "SimpleModelConfig") -> dict[int, bool]:
+def _default_sto_transient(config: SimpleModelConfig) -> dict[int, bool]:
     """Default STO transient flags: every period after the first (empty for a single period)."""
 
     return {} if config.nper <= 1 else {per: True for per in range(1, config.nper)}
@@ -227,7 +227,7 @@ class SimpleModelConfig:
     The notable fields are grouped above; see :func:`simple_model_spec` for how
     they are translated into a :class:`~myflopy.specs.SimulationSpec`.
     """
-    vor: "Vor"
+    vor: Vor
     name: str = "simplemodel"
     nper: int = 1
     nlay: int = 1

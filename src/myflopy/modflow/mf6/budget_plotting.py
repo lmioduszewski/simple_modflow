@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from myflopy.viz import Fig
 from pandas import IndexSlice as idxx
 from plotly.colors import DEFAULT_PLOTLY_COLORS as colors
 
 from myflopy.modflow.mf6.budget_tables import budget_obs_df, coerce_plot_times
+from myflopy.viz import Fig
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.budget import Budget
@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
 
 def plot_budget_obs(
-    budget: "Budget",
+    budget: Budget,
     *,
-    model: "SimulationBase",
+    model: SimulationBase,
     shp_gpkg: Path,
     q: str = "q",
     plot_fig: bool = True,
@@ -81,7 +81,7 @@ def plot_budget_obs(
 
 
 def multimodel_plot_budget_obs(
-    models: list["SimulationBase"],
+    models: list[SimulationBase],
     *,
     model_package: str = "drn",
     shp_gpkg: Path,
@@ -144,7 +144,7 @@ def multimodel_plot_budget_obs(
     return fig
 
 
-def plot_drn_choropleth(model: "SimulationBase", *, per: int = 0, zmax=None):
+def plot_drn_choropleth(model: SimulationBase, *, per: int = 0, zmax=None):
     """Plot DRN flows for one zero-based stress-period index as a choropleth.
 
     Parameters

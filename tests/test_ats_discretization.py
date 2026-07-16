@@ -235,8 +235,9 @@ def test_ats_subdivides_targeted_period_when_run(tmp_path):
     listing), the same period the WEL injects into (flopy stress_period_data
     key 1 is also zero-based).
     """
-    import flopy
     import re
+
+    import flopy
 
     grid = _grid()
     model = SimulationBase(

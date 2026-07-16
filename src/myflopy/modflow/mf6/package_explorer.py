@@ -7,6 +7,60 @@ path used by existing callers.
 
 from __future__ import annotations
 
+from myflopy.modflow.mf6.package_budget import (
+    _normalize_budget_nodes,
+    build_budget_result_table,
+    build_lak_budget_result_table,
+    build_lak_budget_term_table,
+    build_lak_stage_change_table,
+    build_lak_stage_result_table,
+    build_sfr_budget_result_table,
+    build_sfr_budget_term_table,
+    build_sfr_long_profile_table,
+    build_sfr_stage_result_table,
+    build_surface_water_exchange_cell_table,
+)
+from myflopy.modflow.mf6.package_explorer_utils import (
+    _aggregate_hover_strings,
+    _coerce_numeric_like_columns,
+    _default_show_layer_elevs,
+    _extract_structured_column,
+    _filter_normalized_table,
+    _get_package_explorer_cache,
+    _infer_default_value_column,
+    _normalize_connection_type_filter,
+    _normalize_iterable_filter,
+    _normalize_surface_water_include,
+    _normalize_term_filter,
+    split_cellid_columns,
+)
+from myflopy.modflow.mf6.package_inputs import (
+    CellPackageInputFieldExplorer,
+    CellPackageInputsExplorer,
+    StaticArrayFieldExplorer,
+    UzfFieldInputsExplorer,
+    UzfInputsNamespace,
+)
+from myflopy.modflow.mf6.package_model import (
+    ModelPackages,
+    PackageExplorer,
+    StaticArrayPackageExplorer,
+    UzfPackageExplorer,
+)
+from myflopy.modflow.mf6.package_plotting import (
+    DiffSpatialView,
+    FieldMappable,
+    LeafFieldSugar,
+    SpatialView,
+    _as_layer_cell_property,
+    _blue_white_red_diverging_colorscale,
+    _symmetric_color_limit,
+    build_cell_input_map_payload,
+    build_group_input_compare_map_payload,
+    build_lak_q_map_payload,
+    build_sfr_q_map_payload,
+    build_surface_water_q_map_payload,
+)
 from myflopy.modflow.mf6.package_registry import (
     FieldSpec,
     PackageExplorerSpec,
@@ -20,104 +74,42 @@ from myflopy.modflow.mf6.package_registry import (
     get_package_input_field_spec,
     get_package_result_spec,
 )
-
-from myflopy.modflow.mf6.package_explorer_utils import (
-    _get_package_explorer_cache,
-    _extract_structured_column,
-    _coerce_numeric_like_columns,
-    split_cellid_columns,
-    _normalize_term_filter,
-    _normalize_connection_type_filter,
-    _normalize_surface_water_include,
-    _infer_default_value_column,
-    _normalize_iterable_filter,
-    _filter_normalized_table,
-    _aggregate_hover_strings,
-    _default_show_layer_elevs,
-)
-
-from myflopy.modflow.mf6.package_tables import (
-    build_cell_package_input_table,
-    build_uzf_field_input_table,
-    build_uzf_field_input_wide_table,
-    build_sfr_reach_table,
-    build_lak_connection_table,
-    build_sfr_input_table,
-    build_lak_input_table,
-    summarize_input_table,
-    _numeric_period_settings,
-)
-
-from myflopy.modflow.mf6.package_budget import (
-    _normalize_budget_nodes,
-    build_budget_result_table,
-    build_sfr_stage_result_table,
-    build_sfr_long_profile_table,
-    build_sfr_budget_result_table,
-    build_lak_stage_result_table,
-    build_lak_budget_result_table,
-    build_lak_budget_term_table,
-    build_sfr_budget_term_table,
-    build_surface_water_exchange_cell_table,
-    build_lak_stage_change_table,
-)
-
-from myflopy.modflow.mf6.package_plotting import (
-    _symmetric_color_limit,
-    _blue_white_red_diverging_colorscale,
-    _as_layer_cell_property,
-    build_sfr_q_map_payload,
-    build_lak_q_map_payload,
-    build_surface_water_q_map_payload,
-    build_cell_input_map_payload,
-    build_group_input_compare_map_payload,
-    SpatialView,
-    DiffSpatialView,
-    FieldMappable,
-    LeafFieldSugar,
-)
-
-from myflopy.modflow.mf6.package_inputs import (
-    CellPackageInputsExplorer,
-    CellPackageInputFieldExplorer,
-    UzfFieldInputsExplorer,
-    UzfInputsNamespace,
-    StaticArrayFieldExplorer,
-)
-
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
-    StageResultsExplorer,
     CellPackageResultsNamespace,
-    UzfResultsNamespace,
     PackageBudgetTermExplorer,
+    StageResultsExplorer,
+    UzfResultsNamespace,
 )
-
 from myflopy.modflow.mf6.package_surface_water import (
-    SfrBudgetResultsExplorer,
-    LakBudgetResultsExplorer,
-    LakStageResultsExplorer,
-    LakStageChangeExplorer,
-    LakConnectionsExplorer,
-    SfrStageResultsExplorer,
-    LakResultsNamespace,
     LakBudgetNamespace,
+    LakBudgetResultsExplorer,
+    LakConnectionsExplorer,
+    LakPackageExplorer,
+    LakResultsNamespace,
+    LakStageChangeExplorer,
+    LakStageResultsExplorer,
     SfrBudgetNamespace,
+    SfrBudgetResultsExplorer,
+    SfrPackageExplorer,
     SfrResultsNamespace,
+    SfrStageResultsExplorer,
     SurfaceWaterExchangeResultsExplorer,
-    SurfaceWaterResultsNamespace,
     SurfaceWaterInputFieldExplorer,
     SurfaceWaterInputsNamespace,
-    LakPackageExplorer,
-    SfrPackageExplorer,
     SurfaceWaterPackageExplorer,
+    SurfaceWaterResultsNamespace,
 )
-
-from myflopy.modflow.mf6.package_model import (
-    PackageExplorer,
-    StaticArrayPackageExplorer,
-    UzfPackageExplorer,
-    ModelPackages,
+from myflopy.modflow.mf6.package_tables import (
+    _numeric_period_settings,
+    build_cell_package_input_table,
+    build_lak_connection_table,
+    build_lak_input_table,
+    build_sfr_input_table,
+    build_sfr_reach_table,
+    build_uzf_field_input_table,
+    build_uzf_field_input_wide_table,
+    summarize_input_table,
 )
 
 __all__ = [

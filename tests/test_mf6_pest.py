@@ -29,6 +29,7 @@ except Exception:
             sys.path.insert(0, str(dep_path))
 
 from myflopy.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.observations import (  # noqa: E402
     DrnFlowTargets,
     HeadTargets,
@@ -37,37 +38,33 @@ from myflopy.modflow.mf6.observations import (  # noqa: E402
     SfrStageTargets,
     TargetRegistry,
 )
+from myflopy.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
 from myflopy.modflow.mf6.pest.observations import (  # noqa: E402
     prepare_drn_flow_observations,
     prepare_lake_stage_observations,
     prepare_sfr_flow_observations,
     prepare_sfr_stage_observations,
 )
-from myflopy.modflow.mf6.pest.gis import derive_bounds  # noqa: E402
 from myflopy.modflow.mf6.pest.project import PestProject  # noqa: E402
 from myflopy.modflow.mf6.pest.specs import (  # noqa: E402
     DrnFlowObservationSpec,
-    HeadTargetObservationSpec,
-    ExpGeoStruct,
     LakeStageObservationSpec,
     SfrFlowObservationSpec,
     SfrStageObservationSpec,
-    VectorParameterSource,
 )
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from myflopy.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
+    DisvGrid,
+    TemporalDiscretization,
+)
 from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
-    Drains,
     InitialConditions,
     KFlow,
     OutputControl,
     Recharge,
     Storage,
 )
-from myflopy.modflow.mf6.drn import DRNFromVector  # noqa: E402
-from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
-from myflopy.project.run_model import LoadedMf6Run  # noqa: E402
 
 
 def _project_temp_dir(name: str) -> Path:
@@ -976,6 +973,7 @@ def test_find_pest_runs_dedupes_parallel_master_copies(tmp_path):
     # each carrying a copy of the metadata. find_pest_runs must list the run once
     # (with the masters as its execution kinds), not once per metadata copy.
     import json
+
     from myflopy.modflow.mf6.pest.runs import find_pest_runs
 
     pest = tmp_path / "pest"
@@ -1372,7 +1370,6 @@ def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path
     from myflopy.modflow.mf6.canonical_calibration import (
         build_canonical_calibration_demo,
     )
-    from myflopy.modflow.mf6.pest import PestProject
 
     demo = build_canonical_calibration_demo(tmp_path / "model", n_head_wells=8)
     assert demo.model.gwf.modelgrid.nlay == 4
@@ -1408,7 +1405,6 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
     from myflopy.modflow.mf6.canonical_calibration import (
         build_canonical_calibration_demo,
     )
-    from myflopy.modflow.mf6.pest import PestProject
 
     demo = build_canonical_calibration_demo(
         tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
@@ -1443,10 +1439,10 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
     on unstructured grids, so the facade uses inverse-distance weighting."""
 
     import subprocess
+
     from myflopy.modflow.mf6.canonical_calibration import (
         build_canonical_calibration_demo,
     )
-    from myflopy.modflow.mf6.pest import PestProject
 
     demo = build_canonical_calibration_demo(
         tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)

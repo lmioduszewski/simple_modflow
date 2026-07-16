@@ -12,13 +12,13 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
-def _get_package_explorer_cache(model: "SimulationBase") -> dict[tuple, pd.DataFrame]:
+def _get_package_explorer_cache(model: SimulationBase) -> dict[tuple, pd.DataFrame]:
     """Return a per-model cache for expensive normalized explorer tables."""
 
     cache = getattr(model, "_package_explorer_cache", None)
     if cache is None:
         cache = {}
-        setattr(model, "_package_explorer_cache", cache)
+        model._package_explorer_cache = cache
     return cache
 
 

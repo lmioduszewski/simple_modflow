@@ -12,7 +12,6 @@ import numpy as np
 from myflopy.advanced import uzf_spec
 from myflopy.specs import ModelContext, PackageSpec
 
-
 CellId = tuple[int, int]
 CellSelection = str | Sequence[CellId]
 

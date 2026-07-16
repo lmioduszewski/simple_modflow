@@ -5,8 +5,6 @@ brown-to-blue 'earth' scale (the mounding-figure default).
 
 from __future__ import annotations
 
-import pytest
-
 from myflopy.modflow.mf6.package_plotting import _blue_white_red_diverging_colorscale
 from myflopy.modflow.mf6.package_registry import (
     get_default_group_compare_colorscale,

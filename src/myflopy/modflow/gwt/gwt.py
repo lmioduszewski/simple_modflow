@@ -1,19 +1,17 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-from pandas import IndexSlice as idxx
-from myflopy.viz import Fig, create_hover
-import numpy as np
-import shapely as shp
 from pathlib import Path
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-import geopandas as gpd
-import pandas as pd
+
 import flopy
+import numpy as np
+import pandas as pd
+
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 
 class GWT:
@@ -128,6 +126,7 @@ class FMI:
 
 if __name__ == '__main__':
     import pickle
+
     import flopy
     with open(Path(r"C:\Users\lukem\mf6\ssb_Phs2_nPrch\ssb_Phs2_nPrch.model"), 'rb') as f:
         gwf_model: SimulationBase = pickle.load(f)

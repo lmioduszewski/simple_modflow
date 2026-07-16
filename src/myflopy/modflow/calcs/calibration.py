@@ -1,20 +1,21 @@
 from __future__ import annotations
-from myflopy.viz import mpl_axes
+
 from typing import TYPE_CHECKING
 
 from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
-    import plotly.graph_objects as go
     import pandas as pd
 
-import numpy as np
-from myflopy import viz as f
-from pathlib import Path
-from pandas import IndexSlice as idxx
-import pandas as pd
 import itertools
-import traceback
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from pandas import IndexSlice as idxx
+
+from myflopy import viz as f
 
 
 def calculate_calibration_statistics(observed, simulated):
@@ -166,7 +167,6 @@ def _normalize_backend(backend: str) -> str:
 def _mpl_axes(**kwargs):
     """Create a seaborn-styled matplotlib figure/axes without global side effects."""
 
-    import matplotlib.pyplot as plt
     import seaborn as sns
 
     with sns.axes_style("whitegrid"):
@@ -607,7 +607,7 @@ class CalibrationPlot(f.Fig):
                 layers = [0]  # set layer to 0 for all lake observations
                 kstpkper = self.model.gwf.output.head().get_kstpkper()
                 assert len(lak_obs[lake_names[0]]) == len(kstpkper), \
-                    f'length of lake stage data does not match number of stress periods in model'
+                    'length of lake stage data does not match number of stress periods in model'
                 lak_idx = pd.MultiIndex.from_product(
                     [lake_names, layers, kstpkper], names=['locs', 'layer', 'kstpkper'])
                 lake_data = list(itertools.chain.from_iterable(lak_obs.values()))

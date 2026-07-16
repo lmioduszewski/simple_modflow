@@ -12,29 +12,44 @@ logic with the newer lazy-loading and grouped-model layers.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+
 import warnings
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-    from flopy.utils.binaryfile import CellBudgetFile, HeadFile
+
+from pathlib import Path
 
 import pandas as pd
-import numpy as np
 from pandas import IndexSlice as idxx
-from pathlib import Path
 
 from myflopy.modflow.mf6.budget_plotting import (
     multimodel_plot_budget_obs as _multimodel_plot_budget_obs,
+)
+from myflopy.modflow.mf6.budget_plotting import (
     plot_budget_obs as _plot_budget_obs,
+)
+from myflopy.modflow.mf6.budget_plotting import (
     plot_drn_choropleth as _plot_drn_choropleth,
 )
 from myflopy.modflow.mf6.budget_tables import (
     budget_df as _budget_df,
+)
+from myflopy.modflow.mf6.budget_tables import (
     budget_types as _budget_types,
+)
+from myflopy.modflow.mf6.budget_tables import (
     package_output_budget as _package_output_budget,
+)
+from myflopy.modflow.mf6.budget_tables import (
     package_output_df as _package_output_df,
+)
+from myflopy.modflow.mf6.budget_tables import (
     package_output_types as _package_output_types,
+)
+from myflopy.modflow.mf6.budget_tables import (
     raw_budget as _raw_budget,
 )
 

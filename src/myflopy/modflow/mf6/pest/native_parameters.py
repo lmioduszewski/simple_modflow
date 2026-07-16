@@ -18,15 +18,13 @@ external array/list files produced by ``sim.set_all_data_external()``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import re
-
 import numpy as np
 import pandas as pd
-
 
 # --- recipe registry -------------------------------------------------------
 #

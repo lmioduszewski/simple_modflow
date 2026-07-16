@@ -1,6 +1,6 @@
-from shiny.express import input, ui, render
-from shinywidgets import render_plotly
 from shiny import reactive
+from shiny.express import input, ui
+from shinywidgets import render_plotly
 
 ui.input_selectize(
     "var", "Select variable",

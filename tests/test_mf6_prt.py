@@ -9,16 +9,17 @@ from pathlib import Path
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
 
+import flopy
 import numpy as np
 import pandas as pd
 import pytest
-import flopy
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from myflopy.modflow.mf6.canonical_example import representative_cells  # noqa: E402
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.prt import (  # noqa: E402
     PRTProject,
@@ -26,7 +27,6 @@ from myflopy.modflow.mf6.prt import (  # noqa: E402
     PRTRunResults,
     open_prt_run,
 )
-from myflopy.modflow.mf6.canonical_example import representative_cells  # noqa: E402
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
 from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,

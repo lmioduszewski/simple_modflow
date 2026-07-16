@@ -46,13 +46,16 @@ def test_second_tier_top_level_exports_remain_explicitly_importable():
 
 
 def test_primary_model_namespaces_have_ide_visible_return_annotations():
+    # Bare names (not quote-nested): the module uses `from __future__ import
+    # annotations`, so every annotation is already a string and ruff UP037
+    # strips the redundant inner quotes.
     expected = {
-        "targets": "'TargetRegistry'",
-        "visualize": "'ModelVisualization'",
-        "particle_tracking": "'ParticleTracking'",
-        "parallel": "'ParallelModelWorkflow'",
-        "outputs": "'ModelOutputs'",
-        "packages": "'ModelPackages'",
+        "targets": "TargetRegistry",
+        "visualize": "ModelVisualization",
+        "particle_tracking": "ParticleTracking",
+        "parallel": "ParallelModelWorkflow",
+        "outputs": "ModelOutputs",
+        "packages": "ModelPackages",
     }
     for name, return_annotation in expected.items():
         assert getattr(SimulationBase, name).fget.__annotations__["return"] == return_annotation

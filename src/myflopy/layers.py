@@ -20,15 +20,16 @@ the existing, tested `LayerSurfaces` engine.
 """
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
-from dataclasses import dataclass, field, replace as _dc_replace
+from dataclasses import dataclass
+from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from myflopy.surfaces import LayerSurfaces, Surface
+from myflopy.viz import mpl_axes
 
 # Convenience source aliases -- the existing Surface constructors under friendlier
 # names for layer authoring (NOT new implementations).
@@ -338,7 +339,7 @@ class LayerBuildResult:
                     sizes[r] += 1
         return labels, sizes
 
-    def qc(self) -> "LayerQCReport":
+    def qc(self) -> LayerQCReport:
         """Check the built stack for problems MODFLOW 6 would choke on.
 
         Catches **NaN-bounded active cells** (a surface had no source coverage),
@@ -375,14 +376,14 @@ class LayerBuildResult:
             component_sizes=sorted(sizes.values(), reverse=True),
         )
 
-    def validate(self) -> "LayerBuildResult":
+    def validate(self) -> LayerBuildResult:
         """Raise ``ValueError`` if :meth:`qc` finds anything fatal; else return self."""
         report = self.qc()
         if not report.ok:
             raise ValueError("Layer stack failed QC:\n" + str(report))
         return self
 
-    def prune_isolated(self) -> "LayerBuildResult":
+    def prune_isolated(self) -> LayerBuildResult:
         """Deactivate (``idomain -> 0``) active cells that have no connection.
 
         Returns a new result. Isolated cells have no edges, so removing them
@@ -721,7 +722,6 @@ class LayerBuildResult:
 
     def thickness_map(self, *, layer=None, ax=None):
         """Per-cell thickness choropleth (total, or a single named layer)."""
-        import matplotlib.pyplot as plt
 
         if layer is None:
             values = self.thickness.sum(axis=0)
@@ -841,7 +841,7 @@ class LayerStack:
         resample: bool = True,
         length_units: str = "feet",
         time_units: str = "days",
-    ) -> "LayerStack":
+    ) -> LayerStack:
         """Build a stack on ``vor`` from an existing MODFLOW model's top/botm.
 
         ``source`` is a flopy model or modelgrid; its top and per-layer bottoms
@@ -870,7 +870,7 @@ class LayerStack:
         min_thickness: float | None = None,
         pinch: str | None = None,
         fill: str | None = None,
-    ) -> "LayerStack":
+    ) -> LayerStack:
         """Append a named layer beneath the current bottom. Returns ``self`` (chainable).
 
         Define the layer either by its **bottom** surface or its **thickness**
@@ -914,7 +914,7 @@ class LayerStack:
     def insert_below(
         self, name: str, new_name: str, *, bottom=None, thickness=None,
         min_thickness: float | None = None, pinch: str | None = None, fill: str | None = None,
-    ) -> "LayerStack":
+    ) -> LayerStack:
         """Insert a new layer directly below the existing layer ``name``."""
         if any(layer.name == new_name for layer in self._layers):
             raise ValueError(f"layer {new_name!r} already exists.")
@@ -927,7 +927,7 @@ class LayerStack:
     def replace(
         self, name: str, *, bottom=None, thickness=None,
         min_thickness=_UNSET, pinch=_UNSET, fill=None,
-    ) -> "LayerStack":
+    ) -> LayerStack:
         """Update an existing layer in place; unspecified fields are kept."""
         idx = self._index(name)
         layer = self._layers[idx]
@@ -943,7 +943,7 @@ class LayerStack:
         )
         return self
 
-    def remove(self, name: str) -> "LayerStack":
+    def remove(self, name: str) -> LayerStack:
         """Remove a layer by name."""
         del self._layers[self._index(name)]
         return self
@@ -983,7 +983,7 @@ class LayerStack:
         ]
         return min_thk, pinch
 
-    def refresh(self) -> "LayerStack":
+    def refresh(self) -> LayerStack:
         """Rebuild the cached raster of every derived (contour) surface now."""
         for surface in [self._top] + [layer.surface for layer in self._layers]:
             if getattr(surface, "is_derived", False):

@@ -2,8 +2,8 @@ import os
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-import myflopy.modflow.mf6.package_explorer as package_explorer
 import myflopy.modflow.mf6.package_budget as package_budget
+import myflopy.modflow.mf6.package_explorer as package_explorer
 import myflopy.modflow.mf6.package_explorer_utils as package_explorer_utils
 import myflopy.modflow.mf6.package_inputs as package_inputs
 import myflopy.modflow.mf6.package_model as package_model

@@ -19,8 +19,8 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 
 def _hash_file(path: Path) -> str | None:

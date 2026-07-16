@@ -8,23 +8,22 @@ replace without introducing a framework around FloPy.
 
 from __future__ import annotations
 
+import pickle
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from html import escape
 from importlib import import_module
 from pathlib import Path
-import pickle
-from typing import Any, Callable, Iterable, TypeAlias, TypeVar, cast
+from typing import Any, TypeAlias, TypeVar, cast
 
 import flopy
 
 from myflopy.sources import (
     DataSourceSpec,
-    GeoPackageSourceSpec,
     LiteralSource,
     source_from_dict,
 )
-
 
 Builder = Callable[..., Any]
 Hook = Callable[[Any, dict[str, Any], "ModelContext"], Any]
@@ -1229,7 +1228,7 @@ class SpecBuildContext:
     simulation_workspace: Path | str | None = None
     grid_workspace: Path | str | None = None
     package_specs: dict[str, PackageSpec] = field(default_factory=dict)
-    grid_specs: dict[str, "GridSpec"] = field(default_factory=dict)
+    grid_specs: dict[str, GridSpec] = field(default_factory=dict)
     build_grids: bool = True
 
     def __post_init__(self) -> None:
@@ -1271,7 +1270,7 @@ class SpecBuildContext:
                 f"Package reference '{key}' is unresolved in the build context."
             ) from error
 
-    def grid_spec(self, key: str) -> "GridSpec":
+    def grid_spec(self, key: str) -> GridSpec:
         """Return a resolved project-level grid spec by key."""
 
         try:
@@ -1542,7 +1541,7 @@ class ModelSpec:
 
         return replace(self, context=context)
 
-    def with_grid(self, grid: "GridSpec | GridRef | Any") -> ModelSpec:
+    def with_grid(self, grid: GridSpec | GridRef | Any) -> ModelSpec:
         """Return a copy with a grid recipe, reference, or built object attached."""
 
         return replace(self, grid=grid)
@@ -2045,7 +2044,7 @@ class SimulationSpec:
         )
 
     def replace_grid(
-        self, model_name: str, grid: "GridSpec | GridRef | Any"
+        self, model_name: str, grid: GridSpec | GridRef | Any
     ) -> SimulationSpec:
         """Return a copy with one model's grid replaced.
 

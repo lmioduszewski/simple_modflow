@@ -1,7 +1,6 @@
 """Quick contour plotting helpers for cell-centered MF6 data."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 from collections.abc import Sequence
 
@@ -12,6 +11,8 @@ import numpy as np
 from matplotlib.figure import Figure
 from scipy.interpolate import CloughTocher2DInterpolator
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, Point
+
+from myflopy.viz import mpl_axes
 
 
 def _matplotlib_cmap(name):

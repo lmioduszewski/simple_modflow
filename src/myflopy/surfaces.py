@@ -14,15 +14,16 @@ layer-elevation lookups, ``mf.disv``) keep working unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import geopandas as gpd
 import numpy as np
 
-from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 from myflopy.modflow.mf6.grid.geometry import reconcile_surfaces
+from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 
 # Surfaces defined relative to the surface immediately above them.
 _RELATIVE_KINDS = ("offset_below", "constant_thickness")
@@ -215,7 +216,7 @@ class Surface:
         return cls(kind="array", array=np.asarray(values, dtype=float), units=units)
 
     @staticmethod
-    def _coerce(x) -> "Surface":
+    def _coerce(x) -> Surface:
         """Coerce a Surface / path / number operand into a Surface."""
         if isinstance(x, Surface):
             return x

@@ -6,7 +6,6 @@ kernel, or a web server.
 """
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 import base64
 import copy
@@ -14,8 +13,8 @@ import html
 import io
 import json
 import os
-from contextlib import contextmanager
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +27,7 @@ from myflopy.modflow.mf6.cross_section_plotting import (
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
+from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -190,7 +190,7 @@ class ParticleTrackingScene:
         return path
 
 
-def _figure_to_data_uri(fig: "Figure", *, dpi: int) -> str:
+def _figure_to_data_uri(fig: Figure, *, dpi: int) -> str:
     """Render a matplotlib figure to a base64 PNG ``data:`` URI for inline embedding."""
 
     buffer = io.BytesIO()
@@ -198,7 +198,7 @@ def _figure_to_data_uri(fig: "Figure", *, dpi: int) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _write_figure_png(fig: "Figure", path: Path, *, dpi: int) -> Path:
+def _write_figure_png(fig: Figure, path: Path, *, dpi: int) -> Path:
     """Save a figure to ``path`` as PNG via an atomic temp-file replace."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -331,7 +331,7 @@ show(0);
 
 
 def export_matplotlib_slider_html(
-    render_frame: Callable[[Any, int], "Figure | tuple[Figure, Any]"],
+    render_frame: Callable[[Any, int], Figure | tuple[Figure, Any]],
     frame_values: Sequence[Any],
     output_path: str | Path,
     *,
@@ -447,7 +447,7 @@ def export_matplotlib_slider_html(
 
 
 def _resolve_frames(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     kstpkpers: Sequence[tuple[int, int]] | None,
     head_frames: Sequence[Any] | None,
@@ -472,7 +472,7 @@ def _resolve_frames(
 
 
 def _frame_labels(
-    model: "SimulationBase",
+    model: SimulationBase,
     values: Sequence[Any],
     *,
     kstpkpers: Sequence[tuple[int, int]] | None,
@@ -496,7 +496,7 @@ def _normalize_head_frame(values):
     return array
 
 
-def _head_frame(model: "SimulationBase", value, resolved_kstpkpers):
+def _head_frame(model: SimulationBase, value, resolved_kstpkpers):
     """One normalized head array: ``value`` itself, or read from the model at that kstpkper."""
 
     data = value if resolved_kstpkpers is None else model.gwf.output.head().get_data(kstpkper=value)
@@ -511,7 +511,7 @@ def _clean_head_values(values):
 
 
 def _shared_head_limits(
-    model: "SimulationBase",
+    model: SimulationBase,
     values: Sequence[Any],
     resolved_kstpkpers,
     layers: Sequence[int],
@@ -534,7 +534,7 @@ def _shared_head_limits(
 
 
 def export_cross_section_slider_html(
-    model: "SimulationBase",
+    model: SimulationBase,
     line,
     output_path: str | Path,
     *,
@@ -626,7 +626,7 @@ def export_cross_section_slider_html(
 
 
 def plot_model_head_map(
-    model: "SimulationBase",
+    model: SimulationBase,
     head_data,
     *,
     layer: int = 0,
@@ -692,7 +692,7 @@ def plot_model_head_map(
 
 
 def plot_particle_pathlines(
-    model: "SimulationBase",
+    model: SimulationBase,
     pathlines,
     *,
     layer: int | str = "all",
@@ -756,7 +756,7 @@ def plot_particle_pathlines(
 
 
 def export_head_map_slider_html(
-    model: "SimulationBase",
+    model: SimulationBase,
     output_path: str | Path,
     *,
     layer: int = 0,
@@ -855,7 +855,7 @@ def export_head_map_slider_html(
 
 
 def export_head_layer_mosaic_slider_html(
-    model: "SimulationBase",
+    model: SimulationBase,
     output_path: str | Path,
     *,
     layers: Sequence[int] | None = None,
@@ -961,7 +961,7 @@ def export_head_layer_mosaic_slider_html(
 
 
 def build_particle_tracking_scene(
-    model: "SimulationBase",
+    model: SimulationBase,
     pathlines,
     *,
     vertical_exaggeration: float = 1.0,
@@ -1042,7 +1042,7 @@ def build_particle_tracking_scene(
 
 
 def export_particle_tracking_html(
-    model: "SimulationBase",
+    model: SimulationBase,
     pathlines,
     output_path: str | Path,
     **scene_kwargs,
@@ -1252,7 +1252,7 @@ class ModelVisualization:
         The model whose results these exporters visualize.
     """
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the visualization exporters to a flow ``model``."""
 
         self.model = model

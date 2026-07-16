@@ -14,7 +14,6 @@ from examples.mf6.visualization_prt_master_support import (
 )
 from myflopy.modflow.mf6.interactive_plotting import ModelMapStyle
 
-
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.canonical
 

@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+
 def test_choro_plot_returns_figure_without_calling_show():
     import plotly.graph_objects as go
 
@@ -34,6 +36,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     FrameExportProgress,
     ModelMapStyle,
@@ -53,7 +56,6 @@ from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     TemporalDiscretization,
 )
 from myflopy.modflow.mf6.simulation.packages import KFlow  # noqa: E402
-from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 
 
 def _workspace(name: str) -> Path:
@@ -601,8 +603,9 @@ def test_plotly_cross_section_frames_preserve_current_axis_zoom():
 
 
 def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_path):
-    import plotly.graph_objects as go
     from types import SimpleNamespace
+
+    import plotly.graph_objects as go
 
     from myflopy.modflow.utils.datatypes.choros import Choro
 

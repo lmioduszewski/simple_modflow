@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         PRTRunResults,
         open_prt_run,
     )
+    from myflopy.modflow.mf6.recharge import RCHBuilder
     from myflopy.modflow.mf6.simulation.base import SimulationBase
     from myflopy.modflow.mf6.simulation.discretization import (
         DisuGrid,
@@ -68,7 +69,6 @@ if TYPE_CHECKING:
         Storage,
         Wells,
     )
-    from myflopy.modflow.mf6.recharge import RCHBuilder
 
 
 _SUBMODULES = {

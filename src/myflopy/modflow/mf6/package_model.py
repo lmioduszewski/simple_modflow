@@ -9,13 +9,13 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-from myflopy.modflow.mf6.package_registry import (
-    get_package_explorer_spec,
-)
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
     UzfInputsNamespace,
+)
+from myflopy.modflow.mf6.package_registry import (
+    get_package_explorer_spec,
 )
 from myflopy.modflow.mf6.package_results import (
     CellPackageResultsNamespace,
@@ -31,7 +31,7 @@ from myflopy.modflow.mf6.package_surface_water import (
 class PackageExplorer:
     """Namespace for one package's preferred exploration helpers."""
 
-    def __init__(self, model: "SimulationBase", package_name: str):
+    def __init__(self, model: SimulationBase, package_name: str):
         """Bind a generic package explorer (``.inputs`` / ``.results``) to ``model``."""
 
         self.model = model
@@ -55,7 +55,7 @@ class StaticArrayPackageExplorer:
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         package_name: str,
         fields: Mapping[str, dict[str, str]],
     ):
@@ -150,7 +150,7 @@ class StaticArrayPackageExplorer:
 class UzfPackageExplorer:
     """Top-level UZF package explorer namespace."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the top-level UZF explorer (``.inputs`` / ``.results``) to ``model``."""
 
         self.model = model
@@ -181,7 +181,7 @@ class ModelPackages:
         Compact summary of UZF infiltration inputs.
     """
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the preferred ``model.packages`` exploration namespace to ``model``."""
 
         self.model = model
@@ -227,7 +227,7 @@ class ModelPackages:
         return PackageExplorer(self.model, "wel")
 
     @property
-    def uzf(self) -> "UzfPackageExplorer":
+    def uzf(self) -> UzfPackageExplorer:
         """UZF package exploration helpers."""
 
         return UzfPackageExplorer(self.model)
@@ -281,19 +281,19 @@ class ModelPackages:
         )
 
     @property
-    def lak(self) -> "LakPackageExplorer":
+    def lak(self) -> LakPackageExplorer:
         """LAK package exploration helpers."""
 
         return LakPackageExplorer(self.model)
 
     @property
-    def sfr(self) -> "SfrPackageExplorer":
+    def sfr(self) -> SfrPackageExplorer:
         """SFR package exploration helpers."""
 
         return SfrPackageExplorer(self.model)
 
     @property
-    def surface_water(self) -> "SurfaceWaterPackageExplorer":
+    def surface_water(self) -> SurfaceWaterPackageExplorer:
         """Combined SFR/LAK exploration helpers."""
 
         return SurfaceWaterPackageExplorer(self.model)

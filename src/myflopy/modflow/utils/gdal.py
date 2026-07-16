@@ -60,11 +60,10 @@ def get_contours_as_polygons(raster_path, contour_interval=10, union=True):
 """
 
 from osgeo import gdal, ogr
-from shapely.wkt import loads as wkt_loads
-from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString
-from shapely.ops import unary_union, polygonize, snap
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
+from shapely.ops import polygonize, snap, unary_union
 from shapely.validation import explain_validity
-import geopandas as gpd  # optional; we won't depend on it for unions now
+from shapely.wkt import loads as wkt_loads
 
 # Shapely >= 2.0 has make_valid; older versions can fall back to buffer(0)
 try:

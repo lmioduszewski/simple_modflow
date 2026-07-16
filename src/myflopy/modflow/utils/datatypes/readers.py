@@ -1,14 +1,15 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-import pandas as pd
 from pathlib import Path
-import shapely as shp
+
 import geopandas as gpd
+import pandas as pd
+import shapely as shp
 
 
 def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:

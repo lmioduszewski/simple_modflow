@@ -30,7 +30,7 @@ def sort_dict_by_keys(dict_to_sort: dict | None = None) -> dict:
 
 
 def get_obs_cells(
-    heads: "HeadsPlus",
+    heads: HeadsPlus,
     locs: Path | None,
     crs: str | None = None,
     loc_name_field: str = "ExploName",
@@ -73,7 +73,7 @@ def get_obs_cells(
 
 
 def get_obs_heads(
-    heads: "HeadsPlus",
+    heads: HeadsPlus,
     locs: Path | list[int] | None = None,
     crs: str | None = None,
     loc_name_field: str = "ExploName",

@@ -7,9 +7,9 @@ surface helpers, and selection utilities used throughout ``myflopy``.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
-import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -21,54 +21,130 @@ from flopy.utils.voronoi import VoronoiGrid
 from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity
 from myflopy.modflow.mf6.grid.geometry import (
     adjust_cells_by_id as geometry_adjust_cells_by_id,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     adjust_top_btm_overlaps as geometry_adjust_top_btm_overlaps,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     calculate_distance as geometry_calculate_distance,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     find_adjacent_cells as geometry_find_adjacent_cells,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     find_adjacent_polygons as geometry_find_adjacent_polygons,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_around_point as geometry_generate_grid_around_point,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_coordinates as geometry_generate_grid_coordinates,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_polygons as geometry_generate_grid_polygons,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_centroids as geometry_get_centroids,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_gdf_latlon as geometry_get_gdf_latlon,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_gdf_vor_polys as geometry_get_gdf_vor_polys,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_grid_centroid as geometry_get_grid_centroid,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_latlon as geometry_get_latlon,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_overlapping_area as geometry_get_overlapping_area,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_vor_idx_from_geometry as geometry_get_vor_idx_from_geometry,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_vor_idx_from_geometry_idx as geometry_get_vor_idx_from_geometry_idx,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     get_voronoi_polygons as geometry_get_voronoi_polygons,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     reconcile_surfaces as geometry_reconcile_surfaces,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     set_k_vor as geometry_set_k_vor,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     shared_face_length as geometry_shared_face_length,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     voronoi_refine_by_point as geometry_voronoi_refine_by_point,
 )
 from myflopy.modflow.mf6.grid.helpers import get_griddata_from_disu
 from myflopy.modflow.mf6.grid.plotting import (
     build_choropleth as plotting_build_choropleth,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     build_grid_section as plotting_build_grid_section,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     get_dash_selector as plotting_get_dash_selector,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     map_nodes as plotting_map_nodes,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     mapit as plotting_mapit,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     plot2d as plotting_plot2d,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     plot3d as plotting_plot3d,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     plottri as plotting_plottri,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     show as plotting_show,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     show_overlapping_geometry as plotting_show_overlapping_geometry,
+)
+from myflopy.modflow.mf6.grid.plotting import (
     show_selected_cells as plotting_show_selected_cells,
 )
 from myflopy.modflow.mf6.grid.selection import (
     get_grid_edge_cells,
     get_model_boundary_polygons,
+)
+from myflopy.modflow.mf6.grid.selection import (
     get_vor_cells_as_dict as selection_get_vor_cells_as_dict,
+)
+from myflopy.modflow.mf6.grid.selection import (
     get_vor_cells_as_series as selection_get_vor_cells_as_series,
 )
 from myflopy.modflow.mf6.grid.surfaces import (
     get_cell_areas as surface_get_cell_areas,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_domain as surface_get_domain,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_gdf_topbtm_multilyr as surface_get_gdf_topbtm_multilyr,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_normal_from_strike_and_dip as surface_get_normal_from_strike_and_dip,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_origin_xy as surface_get_origin_xy,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_raster_from_strike_dip as surface_get_raster_from_strike_dip,
+)
+from myflopy.modflow.mf6.grid.surfaces import (
     get_raster_vals_at_centroids as surface_get_raster_vals_at_centroids,
 )
 

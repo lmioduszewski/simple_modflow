@@ -29,8 +29,14 @@ from myflopy.advanced import (
 )
 from myflopy.builders import build_ims
 from myflopy.geopackage import GeoPackageSource, RowValue
-from myflopy.modflow.mf6.lakes import LAKBuilder, LakeConnection, LakeOutlet, LakeTable, LakeTableBuilder
-from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection
+from myflopy.modflow.mf6.lakes import (
+    LAKBuilder,
+    LakeConnection,
+    LakeOutlet,
+    LakeTable,
+    LakeTableBuilder,
+)
+from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
@@ -41,7 +47,6 @@ from myflopy.specs import (
     PostBuildHook,
     SimulationSpec,
 )
-
 
 PathLike = Path | str
 

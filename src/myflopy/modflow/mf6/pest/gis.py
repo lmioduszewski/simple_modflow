@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import geopandas as gpd
-import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.pest.specs import VectorParameterSource

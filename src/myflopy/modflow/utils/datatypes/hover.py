@@ -20,8 +20,9 @@ fixed skeleton of styling + ``%{customdata[i]}`` placeholders. See
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -94,7 +95,7 @@ class HoverStyle:
             },
         }
 
-    def input(self) -> "HoverStyle":
+    def input(self) -> HoverStyle:
         """The same style with the blue 'input map' accent."""
 
         return replace(self, accent="#185FA5")
@@ -160,7 +161,7 @@ class HoverContext:
 class HoverBlock:
     """A section of a hover. Subclasses append to an assembler in :meth:`build`."""
 
-    def build(self, asm: "_HoverAssembler", ctx: HoverContext, spec: "HoverSpec") -> None:
+    def build(self, asm: _HoverAssembler, ctx: HoverContext, spec: HoverSpec) -> None:
         """Append this block's template fragments + customdata columns to ``asm``."""
 
         raise NotImplementedError
@@ -310,12 +311,12 @@ class HoverSpec:
 
         return self.labels.get(name, name)
 
-    def with_style(self, **overrides: Any) -> "HoverSpec":
+    def with_style(self, **overrides: Any) -> HoverSpec:
         """A copy of this spec with the given :class:`HoverStyle` fields overridden."""
 
         return replace(self, style=replace(self.style, **overrides))
 
-    def with_fields(self, *names: str, title: str | None = None) -> "HoverSpec":
+    def with_fields(self, *names: str, title: str | None = None) -> HoverSpec:
         """Append an extra inline :class:`Fields` block (call-site ``hover_fields=``)."""
 
         return replace(self, blocks=self.blocks + (Fields(title=title, fields=tuple(names), inline=True),))
@@ -378,7 +379,7 @@ class HoverSpec:
         self._render_footer(asm, ctx)
         return asm.finish()
 
-    def _render_footer(self, asm: "_HoverAssembler", ctx: HoverContext) -> None:
+    def _render_footer(self, asm: _HoverAssembler, ctx: HoverContext) -> None:
         """Append the muted footer line joining the configured period/date/area/model bits.
 
         Scalar sources (period, step, date, model) render as static text; list

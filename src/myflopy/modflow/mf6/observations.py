@@ -15,16 +15,16 @@ target heads through time or stress period.
 """
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from myflopy.viz import mpl_axes
 
 
 def _copy_frame(frame: pd.DataFrame) -> pd.DataFrame:

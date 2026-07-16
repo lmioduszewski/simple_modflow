@@ -1,8 +1,9 @@
 from pathlib import Path
-import plotly.graph_objs as go
-import pandas as pd
-import scipy
+
 import numpy as np
+import pandas as pd
+import plotly.graph_objs as go
+import scipy
 
 data = pd.read_excel(Path.home().joinpath('Python', 'data', 'EB-48W.xlsx'))
 

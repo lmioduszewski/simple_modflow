@@ -35,11 +35,6 @@ from myflopy.modflow.mf6.simulation.indexing import (
     build_offsets,
     coerce_per_dates,
 )
-from myflopy.modflow.mf6.surface_water_validation import (
-    SurfaceWaterValidationReport,
-    validate_surface_water_configuration,
-)
-from myflopy.modflow.mf6.simulation.runtime import run_simulation as run_model_simulation
 from myflopy.modflow.mf6.simulation.regions import (
     RegionGroup,
     RegionRegistry,
@@ -48,17 +43,22 @@ from myflopy.modflow.mf6.simulation.regions import (
     list_model_groups,
     list_model_regions,
 )
+from myflopy.modflow.mf6.simulation.runtime import run_simulation as run_model_simulation
+from myflopy.modflow.mf6.surface_water_validation import (
+    SurfaceWaterValidationReport,
+    validate_surface_water_configuration,
+)
 
 if TYPE_CHECKING:
     import numpy as np
 
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.sfr import SFRBuilder
     from myflopy.modflow.mf6.interactive_plotting import ModelVisualization
     from myflopy.modflow.mf6.observations import TargetRegistry
     from myflopy.modflow.mf6.package_explorer import ModelPackages
     from myflopy.modflow.mf6.parallel import ParallelModelWorkflow
     from myflopy.modflow.mf6.prt import ParticleTracking
+    from myflopy.modflow.mf6.sfr import SFRBuilder
     from myflopy.modflow.mf6.simulation.accessors import ModelOutputs
 
 
@@ -128,7 +128,7 @@ class SimulationBase:
         self.idomain_path = idomain_path
 
     @classmethod
-    def from_built_run(cls, run: Any, model_name: str) -> "SimulationBase":
+    def from_built_run(cls, run: Any, model_name: str) -> SimulationBase:
         """Create a myflopy model view over a model in a live built run."""
 
         view = cls.__new__(cls)
@@ -333,7 +333,7 @@ class SimulationBase:
         return sorted(self.gwf.get_package_list())
 
     @property
-    def targets(self) -> "TargetRegistry":
+    def targets(self) -> TargetRegistry:
         """Model-bound registry for reusable calibration target sets."""
 
         if self._targets is None:
@@ -343,7 +343,7 @@ class SimulationBase:
         return self._targets
 
     @property
-    def visualize(self) -> "ModelVisualization":
+    def visualize(self) -> ModelVisualization:
         """Model-bound standalone visualization and export helpers."""
 
         if self._visualize is None:
@@ -353,7 +353,7 @@ class SimulationBase:
         return self._visualize
 
     @property
-    def particle_tracking(self) -> "ParticleTracking":
+    def particle_tracking(self) -> ParticleTracking:
         """Model-bound MF6 PRT and MP3DU workflow entry point."""
 
         if self._particle_tracking is None:
@@ -363,7 +363,7 @@ class SimulationBase:
         return self._particle_tracking
 
     @property
-    def parallel(self) -> "ParallelModelWorkflow":
+    def parallel(self) -> ParallelModelWorkflow:
         """Model-bound unified splitting and parallel execution workflow."""
 
         if self._parallel is None:
@@ -652,13 +652,13 @@ class SimulationBase:
         return get_inputs(self)
 
     @property
-    def outputs(self) -> "ModelOutputs":
+    def outputs(self) -> ModelOutputs:
         """Namespace of package-specific output helpers."""
 
         return get_outputs(self)
 
     @property
-    def packages(self) -> "ModelPackages":
+    def packages(self) -> ModelPackages:
         """Preferred package exploration namespace for inputs and maps.
 
         This is the higher-level package inspection surface intended to grow
@@ -954,7 +954,7 @@ class SimulationBase:
         lak_packagedata: list | None = None,
         lak_connectiondata: list | None = None,
         lak_perioddata: dict | None = None,
-        sfr: "SFRBuilder" | None = None,
+        sfr: SFRBuilder | None = None,
         maxmvr: int | None = None,
         maxpackages: int | None = None,
         mvr_packages: list | None = None,

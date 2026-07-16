@@ -1,27 +1,29 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-import numpy as np
-from scipy.interpolate import griddata, RBFInterpolator
-from myflopy import viz as f
-import pandas as pd
-import rasterio
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import plotly.graph_objs as go
-from shapely.geometry import Polygon
-from rasterio.io import MemoryFile
-from rasterio.transform import from_origin
-from rasterio.mask import mask
-from pandas import IndexSlice as idxx
-from shapely.geometry import mapping
-from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
+import rasterio
 import shapely as shp
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from pandas import IndexSlice as idxx
+from rasterio.io import MemoryFile
+from rasterio.mask import mask
+from rasterio.transform import from_origin
+from scipy.interpolate import RBFInterpolator, griddata
 from scipy.spatial import cKDTree
+from shapely.geometry import Polygon, mapping
+
+from myflopy import viz as f
+from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 
 class InterpolatedSurface:

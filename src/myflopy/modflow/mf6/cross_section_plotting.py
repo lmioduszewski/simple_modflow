@@ -6,7 +6,6 @@ while optionally borrowing a matplotlib theme from :mod:`figs`.
 """
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -15,15 +14,15 @@ from typing import TYPE_CHECKING
 
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
 import shapely as shp
 from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
+from myflopy.viz import mpl_axes
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
-    from matplotlib.figure import Figure
 
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
@@ -90,7 +89,7 @@ def _resolve_layer_array(grid) -> np.ndarray:
 
 
 def _resolve_head_data(
-    model: "SimulationBase",
+    model: SimulationBase,
     *,
     kstpkper: tuple | None,
     head_data,
@@ -175,7 +174,7 @@ def plot_layered_cross_section(
     modelgrid,
     line,
     *,
-    ax: "Axes" | None = None,
+    ax: Axes | None = None,
     style: ModelCrossSectionStyle | None = None,
     layer_colors: Sequence[str] | None = None,
     layer_labels: Sequence[str] | None = None,
@@ -282,13 +281,13 @@ def plot_layered_cross_section(
 
 
 def plot_model_cross_section(
-    model: "SimulationBase",
+    model: SimulationBase,
     line,
     *,
     kstpkper: tuple | None = None,
     head_data=None,
     head_layer: int = 0,
-    ax: "Axes" | None = None,
+    ax: Axes | None = None,
     style: ModelCrossSectionStyle | None = None,
     ylim: tuple[float, float] | None = None,
     xlim: tuple[float, float] | None = None,

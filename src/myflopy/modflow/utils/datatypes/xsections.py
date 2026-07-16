@@ -1,24 +1,24 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
 if TYPE_CHECKING:
-    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-from pandas import IndexSlice as idxx
-from myflopy.viz import Fig, create_hover
-from myflopy.modflow.utils.datatypes.surface_data import ModelSurface
-from shapely.geometry import LineString
-from myflopy.modflow.utils.surfaces import InterpolatedSurface
-from myflopy import viz as f
-import plotly.graph_objs as go
 import numpy as np
-from shapely import line_locate_point
-from myflopy.modflow.utils.animations import Animation
+import plotly.graph_objs as go
 import shapely as shp
 from flopy.mf6 import MFSimulation
+from pandas import IndexSlice as idxx
+from shapely import line_locate_point
+from shapely.geometry import LineString
+
+from myflopy import viz as f
+from myflopy.modflow.utils.animations import Animation
+from myflopy.modflow.utils.surfaces import InterpolatedSurface
+from myflopy.viz import Fig
 
 
 def _normalize_section_line(line) -> LineString:
@@ -45,7 +45,7 @@ def _normalize_section_line(line) -> LineString:
     return LineString(coords)
 
 
-def combined_section_frame(sections: dict[str, "XSection"]) -> pd.DataFrame:
+def combined_section_frame(sections: dict[str, XSection]) -> pd.DataFrame:
     """Concatenate section profile tables into one long overlay frame.
 
     Each section contributes its head-profile series (labeled by its
@@ -64,7 +64,7 @@ def combined_section_frame(sections: dict[str, "XSection"]) -> pd.DataFrame:
 
 
 def render_xsections(
-        sections: dict[str, "XSection"],
+        sections: dict[str, XSection],
         *,
         backend: str = "plotly",
         title: str | None = None,
@@ -395,7 +395,7 @@ class XSection:
                     linestring = LineString(((x, ymin), (x, ymax)))
 
                 else:
-                    raise ValueError(f'x_or_y must be either x or y')
+                    raise ValueError('x_or_y must be either x or y')
 
             # if 'cells' > 1, then use the cells to define a cross-section line
             elif len(self.cells) > 1:

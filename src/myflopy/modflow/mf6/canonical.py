@@ -10,7 +10,6 @@ from shapely.geometry import Polygon, box
 
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
-
 CANONICAL_TARGET_NAMES = frozenset(
     {"heads", "lake_stage", "sfr_stage", "sfr_flow", "drn_flow"}
 )

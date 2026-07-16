@@ -1,7 +1,6 @@
 """Unified model-splitting and parallel MODFLOW 6 workflow."""
 
 from __future__ import annotations
-from myflopy.viz import mpl_axes
 
 import json
 import os
@@ -15,6 +14,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from myflopy.viz import mpl_axes
 
 
 def _find_executable(name: str) -> str | None:
@@ -439,7 +440,7 @@ class ParallelSplitResults:
         The :class:`ParallelSplitRun` whose outputs are being reconstructed.
     """
 
-    def __init__(self, run: "ParallelSplitRun"):
+    def __init__(self, run: ParallelSplitRun):
         """Bind the results reader to a partitioned :class:`ParallelSplitRun`."""
 
         self.run = run
@@ -737,7 +738,6 @@ class ParallelSplitRun:
     def plot_partitions(self, *, ax=None, layer: int = 0, cmap: str = "tab20"):
         """Plot the partition mask on the original model grid."""
 
-        import matplotlib.pyplot as plt
         from flopy.plot import PlotMapView
 
         if ax is None:

@@ -119,7 +119,7 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
     relative to the group's reference model.
     """
 
-    def __init__(self, diff: "ModelDiff", package_name: str, field_name: str | None = None):
+    def __init__(self, diff: ModelDiff, package_name: str, field_name: str | None = None):
         """Bind one BC package's diff view; ``field_name`` pins it to a single field."""
 
         self._diff = diff
@@ -136,7 +136,7 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
 
         return get_package_input_field_names(self.package_name)
 
-    def _field_node(self, name: str) -> "PackageDiff":
+    def _field_node(self, name: str) -> PackageDiff:
         """Return a copy of this diff view pinned to field ``name``."""
 
         return PackageDiff(self._diff, self.package_name, field_name=name)
@@ -321,7 +321,7 @@ class ConnectionDiff:
     _identity_columns: tuple = ()
     _row_label: str = "connections"
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind a connection/reach geometry diff to a group via its ``ModelDiff``."""
 
         self._diff = diff
@@ -460,7 +460,7 @@ class SfrReachDiff(ConnectionDiff):
     connections = reaches
 
 
-def _resolve_package_diff(diff: "ModelDiff", name: str):
+def _resolve_package_diff(diff: ModelDiff, name: str):
     """Return the *inputs-tier* diff accessor for a package name.
 
     Internal: this backs ``summary()``/``report()``, which aggregate the
@@ -488,7 +488,7 @@ class _BcPackageDiffNode:
     lives under ``inputs`` and the computed-output difference under ``results``.
     """
 
-    def __init__(self, diff: "ModelDiff", package_name: str):
+    def __init__(self, diff: ModelDiff, package_name: str):
         """Bind a BC package's ``.inputs``/``.results`` diff node to ``package_name``."""
 
         self._diff = diff
@@ -501,7 +501,7 @@ class _BcPackageDiffNode:
         return PackageDiff(self._diff, self.package_name)
 
     @property
-    def results(self) -> "CellResultsDiffNamespace":
+    def results(self) -> CellResultsDiffNamespace:
         """Computed cell-budget difference (field ``q``); requires runs."""
 
         from myflopy.project.model_results_diff import CellResultsDiffNamespace
@@ -517,7 +517,7 @@ class _BcPackageDiffNode:
 class _LakDiffNode:
     """``diff.packages.lak``: connection-geometry inputs + q/stage results."""
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the LAK ``.inputs``/``.results`` diff node to a group's ``ModelDiff``."""
 
         self._diff = diff
@@ -530,7 +530,7 @@ class _LakDiffNode:
         return LakConnectionDiff(self._diff)
 
     @property
-    def results(self) -> "LakResultsDiffNamespace":
+    def results(self) -> LakResultsDiffNamespace:
         """Computed lake results difference -- fields ``q`` and ``stage``."""
 
         from myflopy.project.model_results_diff import LakResultsDiffNamespace
@@ -546,7 +546,7 @@ class _LakDiffNode:
 class _SfrDiffNode:
     """``diff.packages.sfr``: reach-geometry inputs + q/stage results."""
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the SFR ``.inputs``/``.results`` diff node to a group's ``ModelDiff``."""
 
         self._diff = diff
@@ -559,7 +559,7 @@ class _SfrDiffNode:
         return SfrReachDiff(self._diff)
 
     @property
-    def results(self) -> "SfrResultsDiffNamespace":
+    def results(self) -> SfrResultsDiffNamespace:
         """Computed stream results difference -- fields ``q`` and ``stage``."""
 
         from myflopy.project.model_results_diff import SfrResultsDiffNamespace
@@ -575,14 +575,14 @@ class _SfrDiffNode:
 class _UzfDiffNode:
     """``diff.packages.uzf``: results only (UZF input diffing is not built)."""
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the UZF ``.results``-only diff node to a group's ``ModelDiff``."""
 
         self._diff = diff
         self.package_name = "uzf"
 
     @property
-    def results(self) -> "UzfResultsDiffNamespace":
+    def results(self) -> UzfResultsDiffNamespace:
         """Computed UZF results difference -- fields ``gwrch`` and ``sat``."""
 
         from myflopy.project.model_results_diff import UzfResultsDiffNamespace
@@ -598,14 +598,14 @@ class _UzfDiffNode:
 class _MvrDiffNode:
     """``diff.packages.mvr``: results only (mover options diff in ``config``)."""
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the MVR ``.results``-only diff node to a group's ``ModelDiff``."""
 
         self._diff = diff
         self.package_name = "mvr"
 
     @property
-    def results(self) -> "MvrResultDiff":
+    def results(self) -> MvrResultDiff:
         """Mover-flow difference per moved package and direction."""
 
         from myflopy.project.model_results_diff import MvrResultDiff
@@ -628,7 +628,7 @@ class _PackageDiffNamespace:
     error for unsupported package names.
     """
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the ``diff.packages`` namespace to a group's ``ModelDiff``."""
 
         self._diff = diff
@@ -705,7 +705,7 @@ class _PackageDiffNamespace:
 class _FocusedModelDiff:
     """A :class:`ModelDiff` narrowed to a single non-reference model."""
 
-    def __init__(self, diff: "ModelDiff", model_name: str):
+    def __init__(self, diff: ModelDiff, model_name: str):
         """Narrow a ``ModelDiff`` to one non-reference model (validated, not the reference)."""
 
         self._diff = diff
@@ -764,7 +764,7 @@ class ConfigDiff:
     options -- the part a value/structural cell diff cannot see.
     """
 
-    def __init__(self, diff: "ModelDiff"):
+    def __init__(self, diff: ModelDiff):
         """Bind the configuration-tier diff to a group via its ``ModelDiff``."""
 
         self._diff = diff
@@ -842,7 +842,7 @@ class ConfigDiff:
 class ModelDiff:
     """Reference-star difference across a :class:`ModelGroup` (the ``diff`` verb)."""
 
-    def __init__(self, group: "ModelGroup"):
+    def __init__(self, group: ModelGroup):
         """Wrap a :class:`ModelGroup` as the ``diff`` engine (its reference is the baseline)."""
 
         self.group = group
@@ -892,7 +892,7 @@ class ModelDiff:
         return ConfigDiff(self)
 
     @property
-    def hds(self) -> "HeadsResultDiff":
+    def hds(self) -> HeadsResultDiff:
         """Head-difference leaf (Δhead maps/plots/sections vs the reference).
 
         Mirrors ``model.hds`` / ``group.hds``; requires completed runs.
@@ -903,7 +903,7 @@ class ModelDiff:
         return HeadsResultDiff(self)
 
     @property
-    def bud(self) -> "BudgetResultDiff":
+    def bud(self) -> BudgetResultDiff:
         """Volumetric (listing) budget difference per term vs the reference."""
 
         from myflopy.project.model_results_diff import BudgetResultDiff

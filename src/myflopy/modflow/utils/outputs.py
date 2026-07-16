@@ -1,17 +1,19 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
-from myflopy.modflow.mf6.budget import LakBudget, SFRBudget
 import pandas as pd
+
+from myflopy.modflow.mf6.budget import LakBudget, SFRBudget
 
 
 class LakStageOutput:
     """Lake stage output accessor hosted under ``model.outputs.lak``."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the lake stage-output accessor to ``model``."""
 
         self.model = model
@@ -27,7 +29,7 @@ class LakStageOutput:
 class SFRStageOutput:
     """Stream stage output accessor hosted under ``model.outputs.sfr``."""
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the stream stage-output accessor to ``model``."""
 
         self.model = model

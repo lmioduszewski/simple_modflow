@@ -19,7 +19,10 @@ if str(SRC) not in sys.path:
 from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid  # noqa: E402
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from myflopy.modflow.mf6.simulation.discretization import DisvGrid, TemporalDiscretization  # noqa: E402
+from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
+    DisvGrid,
+    TemporalDiscretization,
+)
 from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
@@ -327,9 +330,8 @@ def test_add_polygon_buffers_point_and_line_features(tmp_path):
 
 
 def test_add_polygon_point_without_buffer_errors_clearly(tmp_path):
-    from shapely.geometry import Point
-
     import pytest
+    from shapely.geometry import Point
 
     tri = TriangleGrid(model_ws=str(tmp_path / "pt2"), angle=30)
     tri.set_domain_rectangle(x_dist=1000, y_dist=1000, origin=(0, 0))

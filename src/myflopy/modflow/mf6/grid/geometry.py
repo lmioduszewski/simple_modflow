@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import shapely as shp
 from shapely.geometry import LineString, Polygon
-from shapely.prepared import prep
 
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from types import MethodType
-import hashlib
 
 import flopy
 import geopandas as gpd
@@ -14,6 +14,8 @@ import pandas as pd
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
+
+
 def _progress(verbosity_level: int, message: str):
     """Emit a simple progress message when verbose loading is enabled."""
 

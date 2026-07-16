@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import importlib
+import json
+import shutil
+import subprocess
+import warnings
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -7,14 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import geopandas as gpd
-import importlib
-import json
 import numpy as np
-import os
 import pandas as pd
-import shutil
-import subprocess
-import warnings
 
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 

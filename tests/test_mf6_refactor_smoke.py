@@ -23,59 +23,92 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import figs  # noqa: E402
+
 import myflopy  # noqa: E402
 from myflopy import (  # noqa: E402
     ModelContext,
     Project,
-    SimpleModelConfig as PackageSimpleModelConfig,
-    SimulationBase as PackageSimulationBase,
-    TriangleGrid as PackageTriangleGrid,
     UZFBuilder,
-    VoronoiGridPlus as PackageVoronoiGridPlus,
     read_gpkg,
     read_shp_gpkg,
+)
+from myflopy import (
+    SimpleModelConfig as PackageSimpleModelConfig,
+)
+from myflopy import (
+    SimulationBase as PackageSimulationBase,
+)
+from myflopy import (
+    TriangleGrid as PackageTriangleGrid,
+)
+from myflopy import (
+    VoronoiGridPlus as PackageVoronoiGridPlus,
+)
+from myflopy import (
     simple_model_spec as package_simple_model_spec,
 )
 from myflopy.modflow import geotiff_to_contours, get_iheads  # noqa: E402
+from myflopy.modflow.gwt.gwt import GWT  # noqa: E402
 from myflopy.modflow.mf6 import (  # noqa: E402
     DRN as PackageDRN,
-    DisvGrid as PackageDisvGrid,
+)
+from myflopy.modflow.mf6 import (
     GHB as PackageGHB,
+)
+from myflopy.modflow.mf6 import (
+    DisvGrid as PackageDisvGrid,
+)
+from myflopy.modflow.mf6 import (
     ModelRegion as PackageModelRegion,
+)
+from myflopy.modflow.mf6 import (
     OutputControl as PackageOutputControl,
+)
+from myflopy.modflow.mf6 import (
     RegionGroup as PackageRegionGroup,
+)
+from myflopy.modflow.mf6 import (
     RegionRegistry as PackageRegionRegistry,
-    SimulationBase as PackageMf6SimulationBase,
+)
+from myflopy.modflow.mf6 import (
     SimpleModelConfig as PackageMf6SimpleModelConfig,
+)
+from myflopy.modflow.mf6 import (
+    SimulationBase as PackageMf6SimulationBase,
+)
+from myflopy.modflow.mf6 import (
     TemporalDiscretization as PackageTemporalDiscretization,
+)
+from myflopy.modflow.mf6 import (
     VoronoiGridPlus as PackageMf6Voronoi,
+)
+from myflopy.modflow.mf6 import (
     simple_model_spec as mf6_simple_model_spec,
 )
-from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity  # noqa: E402
-from myflopy.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
-from myflopy.modflow.mf6.grid.plotting import GridSection  # noqa: E402
-from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as GridVoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mf6.boundaries import Boundaries  # noqa: E402
+from myflopy.modflow.mf6.chd import CHDFromVector  # noqa: E402
 from myflopy.modflow.mf6.cross_section_plotting import (  # noqa: E402
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
+from myflopy.modflow.mf6.drn import DRN, DRNFromVector  # noqa: E402
+from myflopy.modflow.mf6.ghb import GHB, GHBFromVector  # noqa: E402
+from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity  # noqa: E402
+from myflopy.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
+from myflopy.modflow.mf6.grid.plotting import GridSection  # noqa: E402
 from myflopy.modflow.mf6.grid.selection import (  # noqa: E402
     get_grid_edge_cells,
     get_vor_cells_as_series,
 )
-from myflopy.modflow.mf6.boundaries import Boundaries  # noqa: E402
-from myflopy.modflow.mf6.chd import CHDFromVector  # noqa: E402
-from myflopy.modflow.mf6.drn import DRN, DRNFromVector  # noqa: E402
-from myflopy.modflow.mf6.ghb import GHB, GHBFromVector  # noqa: E402
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as GridVoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.kflow import KFromVector  # noqa: E402
-from myflopy.modflow.gwt.gwt import GWT  # noqa: E402
 from myflopy.modflow.mf6.lakes import (  # noqa: E402
     LAKBuilder,
     LakeTableBuilder,
 )
-from myflopy.modflow.mf6.mvr import MVRBuilder, Move, MoverConnection  # noqa: E402
 from myflopy.modflow.mf6.mfsimbase import SimulationBase  # noqa: E402
-from myflopy.modflow.mf6.recharge import RechargeFromShp, RCHFromVector  # noqa: E402
+from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder  # noqa: E402
+from myflopy.modflow.mf6.recharge import RCHFromVector, RechargeFromShp  # noqa: E402
 from myflopy.modflow.mf6.sfr import SFRBuilder  # noqa: E402
 from myflopy.modflow.mf6.simplemodel import (  # noqa: E402
     SimpleModelConfig,
@@ -88,12 +121,6 @@ from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
 )
-from myflopy.modflow.mf6.simulation.regions import (  # noqa: E402
-    ModelRegion,
-    RegionGroup,
-    RegionRegistry,
-)
-from myflopy.modflow.utils.datatypes.xsections import XSection  # noqa: E402
 from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     CHD,
     InitialConditions,
@@ -102,8 +129,14 @@ from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     Recharge,
     Storage,
 )
-from myflopy.modflow.mp3du.particles import ParticleTrackingInput  # noqa: E402
+from myflopy.modflow.mf6.simulation.regions import (  # noqa: E402
+    ModelRegion,
+    RegionGroup,
+    RegionRegistry,
+)
 from myflopy.modflow.mf6.voronoiplus import TriangleGrid, VoronoiGridPlus  # noqa: E402
+from myflopy.modflow.mp3du.particles import ParticleTrackingInput  # noqa: E402
+from myflopy.modflow.utils.datatypes.xsections import XSection  # noqa: E402
 
 
 def _model_context(model, vor):

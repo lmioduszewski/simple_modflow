@@ -10,6 +10,17 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.modflow.mf6.package_explorer_utils import (
+    _default_show_layer_elevs,
+    _filter_normalized_table,
+)
+from myflopy.modflow.mf6.package_plotting import (
+    FieldMappable,
+    SpatialView,
+    _apply_backend,
+    _as_layer_cell_property,
+    build_cell_input_map_payload,
+)
 from myflopy.modflow.mf6.package_registry import (
     FieldSpec,
     get_default_package_colorscale,
@@ -18,10 +29,6 @@ from myflopy.modflow.mf6.package_registry import (
     get_package_input_field_names,
     get_package_input_field_spec,
 )
-from myflopy.modflow.mf6.package_explorer_utils import (
-    _default_show_layer_elevs,
-    _filter_normalized_table,
-)
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
     build_uzf_field_input_table,
@@ -29,13 +36,6 @@ from myflopy.modflow.mf6.package_tables import (
     summarize_input_table,
 )
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover
-from myflopy.modflow.mf6.package_plotting import (
-    FieldMappable,
-    SpatialView,
-    _apply_backend,
-    _as_layer_cell_property,
-    build_cell_input_map_payload,
-)
 
 
 class CellPackageInputsExplorer(FieldMappable):
@@ -47,7 +47,7 @@ class CellPackageInputsExplorer(FieldMappable):
     ``inputs.map()`` draws the package's default field.
     """
 
-    def __init__(self, model: "SimulationBase", package_name: str):
+    def __init__(self, model: SimulationBase, package_name: str):
         """Bind a cell-based input explorer to ``model`` for one package (name lowercased)."""
 
         self.model = model
@@ -64,7 +64,7 @@ class CellPackageInputsExplorer(FieldMappable):
 
         return get_package_input_field_names(self.package_name)
 
-    def __getattr__(self, field_name: str) -> "CellPackageInputFieldExplorer":
+    def __getattr__(self, field_name: str) -> CellPackageInputFieldExplorer:
         """Return a field-specific explorer for registry-backed input fields."""
 
         field_spec = get_package_input_field_spec(self.package_name, field_name)
@@ -116,7 +116,7 @@ class CellPackageInputsExplorer(FieldMappable):
         )
 
     @property
-    def default(self) -> "CellPackageInputFieldExplorer":
+    def default(self) -> CellPackageInputFieldExplorer:
         """Return the registry-defined preferred input field."""
 
         return getattr(self, get_default_package_value_column(self.package_name))
@@ -224,7 +224,7 @@ class CellPackageInputFieldExplorer(SpatialView):
 class UzfFieldInputsExplorer(SpatialView):
     """Normalized explorer for one UZF perioddata field."""
 
-    def __init__(self, model: "SimulationBase", field_name: str):
+    def __init__(self, model: SimulationBase, field_name: str):
         """Bind an explorer to one UZF perioddata field (e.g. ``finf``, ``pet``)."""
 
         self.model = model
@@ -326,7 +326,7 @@ class UzfInputsNamespace(FieldMappable):
 
     _default_field = "finf"
 
-    def __init__(self, model: "SimulationBase"):
+    def __init__(self, model: SimulationBase):
         """Bind the UZF inputs namespace to ``model``."""
 
         self.model = model
@@ -452,7 +452,7 @@ class StaticArrayFieldExplorer(SpatialView):
 
     def __init__(
         self,
-        model: "SimulationBase",
+        model: SimulationBase,
         package_name: str,
         field_name: str,
         *,

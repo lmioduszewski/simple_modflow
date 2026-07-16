@@ -2,8 +2,8 @@ import os
 
 os.environ["MPLBACKEND"] = "Agg"
 
-import numpy as np
 import geopandas as gpd
+import numpy as np
 from shapely.geometry import LineString, box
 
 from myflopy.modflow.mf6.contour_plotting import _resolve_contour_levels, contour_line_segments

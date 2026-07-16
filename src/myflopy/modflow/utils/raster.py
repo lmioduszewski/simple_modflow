@@ -1,21 +1,22 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, Sequence, Union, List, Optional, Any
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
 
+import os
+import pickle
+from pathlib import Path
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
 import rasterio
 import shapely as shp
-from pathlib import Path
-import geopandas as gpd
-import pickle
-import pandas as pd
-import numpy as np
-import os
 from rasterio.features import geometry_mask
-from shapely.geometry import LineString, mapping, Point
-from dataclasses import dataclass
+from shapely.geometry import LineString, Point, mapping
 
 
 def _gaussian_kernel_1d(sigma: float, radius: int) -> np.ndarray:
@@ -50,9 +51,9 @@ def _convolve1d_reflect(arr: np.ndarray, kernel: np.ndarray, axis: int) -> np.nd
 
 def _gaussian_smooth_nodata_aware(
     data: np.ndarray,
-    nodata: Optional[float],
+    nodata: float | None,
     sigma: float,
-    radius: Optional[int] = None,
+    radius: int | None = None,
 ) -> np.ndarray:
     """A separable 2-D Gaussian smooth that ignores nodata cells (normalized by valid weight)."""
 
@@ -98,7 +99,7 @@ def geotiff_to_contours(
     nodata: float | None = None,
     attr_name: str = "elev",
     ignore_nodata: bool = True,
-    smoothing: Optional[Dict[str, Any]] = None,
+    smoothing: dict[str, Any] | None = None,
 ):
     r"""
             # Example usage:
@@ -226,7 +227,7 @@ def sample_raster_cells_crossed_by_lines(
     band: int = 1,
     nodata_to_nan: bool = True,
     keep_na: bool = True,
-) -> Dict[int, pd.Series]:
+) -> dict[int, pd.Series]:
 
     """
     Samples raster cell values crossed by given lines and maps them to their projected distance
@@ -248,7 +249,7 @@ def sample_raster_cells_crossed_by_lines(
         representing the raster values along the line distance.
     :rtype: Dict[int, pd.Series]
     """
-    out: Dict[int, pd.Series] = {}
+    out: dict[int, pd.Series] = {}
 
     with rasterio.open(raster_path) as ds:
         arr = ds.read(band)
@@ -321,7 +322,7 @@ class RasterData:
             print(f'sampling raster from single point {self.point}')
             points = [self.point]
         elif self.vor:
-            print(f'sampling raster at all centroids in voronoi grid')
+            print('sampling raster at all centroids in voronoi grid')
             points = self.vor.gdf_vorPolys.centroid.to_list()
         else:
             raise ValueError('No valid sample points provided')

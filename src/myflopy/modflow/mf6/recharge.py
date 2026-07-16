@@ -1,27 +1,24 @@
 """Recharge helpers that translate GIS/tabular sources into MF6 recharge inputs."""
 
 from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from numbers import Real
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import flopy.utils.binaryfile
-import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pickle
-import shapely as shp
-from pathlib import Path
 
 from myflopy.advanced import rch_spec
+from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
     filter_inactive_cells,
     merge_stress_period_data,
     normalize_grid_type,
 )
-from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.utils.prism_ppt import PrismPrecipScaling
 from myflopy.specs import ModelContext, PackageSpec
 
@@ -68,7 +65,7 @@ class RCHBuilder:
         if isinstance(self.cells, str) and self.cells not in {"top_active", "all_active", "surface_only"}:
             raise ValueError("cells must be 'top_active', 'surface_only', 'all_active', or explicit cells.")
 
-    def with_updates(self, **updates: Any) -> "RCHBuilder":
+    def with_updates(self, **updates: Any) -> RCHBuilder:
         """Return a changed builder without modifying the original."""
 
         return replace(self, **updates)

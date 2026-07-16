@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import time
 from pathlib import Path
 
 import numpy as np
@@ -97,7 +95,10 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     than calling other module-level helpers.
     """
 
-    from pathlib import Path
+    # Deliberately duplicated: pyEMU extracts this function's SOURCE into the
+    # generated forward_run.py, whose header does not import Path — the import
+    # must live inside the function to survive extraction.
+    from pathlib import Path  # noqa: F811
 
     import myflopy as mf
 
