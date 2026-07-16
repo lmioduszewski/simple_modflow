@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -68,7 +69,7 @@ print("ok")
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=ROOT,
-        env={"PYTHONPATH": str(SRC), "MPLBACKEND": "Agg", "PATH": ""},
+        env={**os.environ, "PYTHONPATH": str(SRC), "MPLBACKEND": "Agg"},
         capture_output=True,
         text=True,
     )
@@ -110,7 +111,7 @@ print("ok")
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=ROOT,
-        env={"PYTHONPATH": str(SRC), "MPLBACKEND": "Agg", "PATH": ""},
+        env={**os.environ, "PYTHONPATH": str(SRC), "MPLBACKEND": "Agg"},
         capture_output=True,
         text=True,
     )

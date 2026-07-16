@@ -9,6 +9,7 @@ fresh install without the extra.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,7 +52,7 @@ def _run_with_blocked_modules(*blocked: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=ROOT,
-        env={"PYTHONPATH": str(SRC), "MPLBACKEND": "Agg", "PATH": ""},
+        env={**os.environ, "PYTHONPATH": str(SRC), "MPLBACKEND": "Agg"},
         capture_output=True,
         text=True,
     )

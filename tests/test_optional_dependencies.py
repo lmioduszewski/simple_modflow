@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import tomllib
+
+tomllib = pytest.importorskip("tomllib", reason="tomllib is stdlib only on Python 3.11+")
 
 from myflopy import _optional
 
