@@ -726,7 +726,7 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
 
 
 def test_particle_tracking_scene_uses_flopy_vtk_and_pyvista(monkeypatch):
-    import pyvista as pv
+    pv = pytest.importorskip("pyvista")
     from flopy.export import vtk as vtk_module
 
     calls = {}
@@ -766,6 +766,7 @@ def test_particle_tracking_scene_uses_flopy_vtk_and_pyvista(monkeypatch):
 
 
 def test_particle_tracking_scene_builds_with_real_flopy_vtk():
+    pytest.importorskip("pyvista")
     workspace = _workspace("real_vtk_scene")
     try:
         model = _two_cell_model("real_vtk_scene", workspace)
@@ -790,7 +791,7 @@ def test_particle_tracking_scene_builds_with_real_flopy_vtk():
 
 
 def test_particle_tracking_scene_exports_real_standalone_html(tmp_path):
-    import pyvista as pv
+    pv = pytest.importorskip("pyvista")
 
     plotter = pv.Plotter(off_screen=True)
     plotter.add_mesh(pv.Line((0, 0, 0), (1, 1, 1)), line_width=4)

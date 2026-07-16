@@ -371,6 +371,8 @@ class SFRBudget:
             riv_flows = riv_flows[riv_flows.q < 0].q / cfs
             riv_flows: pd.Series = riv_flows * -1 * gpm
             stream_flows.append(riv_flows)
+        from myflopy.viz import Fig
+
         fig = Fig()
         for i, flows in enumerate(stream_flows):
             flows = flows.reset_index().drop('kstpkper', axis=1)

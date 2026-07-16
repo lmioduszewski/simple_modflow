@@ -6,7 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from numbers import Real
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from myflopy.modflow.mf6.mvr import MoverConnection
 
 import flopy
 import geopandas as gpd
