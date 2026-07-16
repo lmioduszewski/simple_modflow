@@ -27,11 +27,11 @@ close-out; the Phase 0 entry is the reference every later phase compares against
    sample data, mkdir-or-skip the artifacts assert.
 2. `test_parallel_model.py::test_canonical_eight_part_split_runs_with_mpi` — the
    standard MODFLOW executables bundle ships a **serial** mf6 ("Can not run parallel
-   mode with this executable: no MPI"). Needs an MPI-enabled mf6 build to pass here.
-   Bonus finding: `parallel.environment.parallel_ready` is a **false positive** — it
-   detects `mpiexec` but not whether mf6 is an MPI build, so the test's skip guard
-   doesn't fire; the readiness check should probe the binary (e.g. parse
-   `mf6 -v`/trial run) and the test would then skip cleanly.
+   mode with this executable: no MPI"). RESOLVED 2026-07-16: an MPI/PETSc-enabled
+   `mf6 6.8.0.dev0` build now sits in `~/.local/bin` (built against the local
+   PETSc 3.22); the test passes. Residual note: `parallel.environment.parallel_ready`
+   detects `mpiexec` but not whether mf6 is an MPI build — on serial-mf6 machines
+   the test FAILS rather than skips; the readiness check should probe the binary.
 
 ### Environment provisioning performed (reproduce on a fresh Linux box)
 
@@ -120,3 +120,4 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 | 2026-07-16 | `d7a39e1` | 576 passed / 1 skipped / 5 failed (pyemu installed; 3 IES fails = PEST++ POSIX command bug) | 8m10s |
 | 2026-07-16 | `d7a39e1`+fix | **BASELINE: 580 passed / 1 skipped / 2 failed (both known: layout smoke, MPI)** | **9m51s** |
 | 2026-07-16 | Phase 1 end (`phase-1-distribution`) | 588 passed / 2 skipped / 1 failed (only the MPI environment limitation; layout smoke now skips; +12 new Phase-1 tests; parallel/xugrid extras now exercised) | 11m23s (within the 20 min tripwire) |
+| 2026-07-16 | Phase 2 end (`phase-2-hygiene`) | **609 passed / 1 skipped / 0 failed — fully green** (MPI-enabled mf6 6.8.0.dev0 installed; the 1 skip is the author-machine-only sample data) | 14m21s (within the 20 min tripwire) |
