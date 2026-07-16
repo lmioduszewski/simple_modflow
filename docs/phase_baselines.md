@@ -43,8 +43,10 @@ $gw -m pip install pyvista trame trame-vtk trame-vuetify           # viz3d extra
 $gw -m pip install pyemu                                            # pest extra
 $gw -m pip install scikit-learn pymetis xugrid          # parallel + xugrid extras
 # (h5py was already present)
-# GDAL: no pip wheel builds here; system GDAL 3.12.2 symlinked into the env:
-#   ln -s /usr/lib/python3/dist-packages/osgeo <gw site-packages>/osgeo
+# GDAL: built from source into /usr/local (3.13.1, 2026-07-16) — with
+# gdal-config on PATH the bindings pip-install cleanly into the env:
+$gw -m pip install "gdal==$(gdal-config --version)"
+# (previous stopgap — a symlink to the apt dist-packages bindings — removed)
 $gw -m pip install -e .    # editable — replaces the stale site-packages copy
                            # that used to shadow the repo without PYTHONPATH
 $gw -m flopy.utils.get_modflow ~/.local/bin            # mf6, triangle, ...
