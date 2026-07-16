@@ -30,9 +30,13 @@ jobs:
         # Voronoi meshes, but never RUN models — that is the `slow` contract.
         shell: bash
         run: |
-          mkdir -p "$HOME/.local/bin"
-          python -m flopy.utils.get_modflow --subset mf6,triangle "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          bindir="$HOME/.local/bin"
+          mkdir -p "$bindir"
+          python -m flopy.utils.get_modflow --subset mf6,triangle "$bindir"
+          # GITHUB_PATH entries are consumed by native (Windows) processes:
+          # convert Git-Bash's POSIX path to a Windows path where applicable.
+          if command -v cygpath >/dev/null 2>&1; then bindir=$(cygpath -w "$bindir"); fi
+          echo "$bindir" >> "$GITHUB_PATH"
       - name: Fast test suite
         run: python -m pytest -m "not slow" -q
 
