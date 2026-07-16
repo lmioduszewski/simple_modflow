@@ -22,8 +22,6 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import figs  # noqa: E402
-
 import myflopy  # noqa: E402
 from myflopy import (  # noqa: E402
     ModelContext,
@@ -603,7 +601,11 @@ class DummyVor:
 
 
 def test_imports_and_custom_figs_are_available():
-    assert figs is not None
+    # The figs surface must come through the viz front door — external figs
+    # is absent on CI/installed machines (the vendored snapshot serves it).
+    from myflopy.viz import Fig
+
+    assert Fig is not None
     assert myflopy.__version__
     assert SimulationBase is not None
     assert TriangleGrid is not None

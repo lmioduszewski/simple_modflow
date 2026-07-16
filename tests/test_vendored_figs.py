@@ -119,9 +119,16 @@ print("ok")
     )
 
 
+def _scan_paths():
+    # tests/ must not import figs either: external figs does not exist on
+    # CI/installed machines — everything goes through myflopy.viz.
+    yield from (SRC / "myflopy").rglob("*.py")
+    yield from (ROOT / "tests").rglob("*.py")
+
+
 def _runtime_figs_importers() -> list[str]:
     offenders = []
-    for path in (SRC / "myflopy").rglob("*.py"):
+    for path in _scan_paths():
         if "_vendor" in path.parts:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
