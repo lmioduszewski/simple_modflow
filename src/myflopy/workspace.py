@@ -78,6 +78,18 @@ def load_run(
     return Run.load(workspace, executable=executable, load=load)
 
 
+def _library_grid_spec(key: str, value) -> GridSpec:
+    """Normalize a Project grid-library entry, requiring a resolvable GridSpec."""
+
+    entry = _grid_entry(value)
+    if not isinstance(entry, GridSpec):
+        raise TypeError(
+            f"Project grid library entry {key!r} must be a GridSpec, "
+            f"got {type(entry).__name__}"
+        )
+    return entry
+
+
 def _utc_now() -> str:
     """Return a current UTC timestamp suitable for a manifest."""
 
@@ -323,7 +335,7 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
         "models": [
             {
                 "name": model.name,
-                "type": model.model_type.value,
+                "type": model.type_enum.value,
                 # Use the entry label so a reference keeps its library key
                 # (e.g. "npf/high_k"), preserving which variant was used.
                 "packages": [
@@ -423,6 +435,7 @@ class Run:
 
         if self.simulation is None:
             self.build()
+        assert self.simulation is not None  # build() populates it
         self.simulation.write_simulation(silent=True)
         self._record_status("written")
         return self.workspace
@@ -454,6 +467,7 @@ class Run:
             or self.simulation is None
         ):
             self.write()
+        assert self.simulation is not None  # write()/build() populate it
         self.simulation.exe_name = self.executable
         success, report = self.simulation.run_simulation(silent=silent, report=True)
         self.success = bool(success)
@@ -573,6 +587,7 @@ class Run:
                 return model
         if (self.workspace / "mfsim.nam").exists():
             self.open()
+            assert self.simulation is not None  # open() populates it
             model = self.simulation.get_model(name)
             if model is not None:
                 return model
@@ -772,7 +787,7 @@ class Project:
             simulation_workspace=workspace,
             grid_workspace=workspace / "_grid",
             package_specs=dict(self.packages),
-            grid_specs={key: _grid_entry(value) for key, value in self.grids.items()},
+            grid_specs={key: _library_grid_spec(key, value) for key, value in self.grids.items()},
         )
 
     def prepare_run(

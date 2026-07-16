@@ -1002,24 +1002,24 @@ class GridSpec:
             script=data.get("script"),
             function=data.get("function"),
             source=(
-                source_from_dict(data["source"])
+                _grid_data_source(data["source"])
                 if data.get("source") is not None
                 else None
             ),
             boundary=(
-                source_from_dict(data["boundary"])
+                _grid_data_source(data["boundary"])
                 if data.get("boundary") is not None
                 else None
             ),
             refinement=(
-                source_from_dict(data["refinement"])
+                _grid_data_source(data["refinement"])
                 if data.get("refinement") is not None
                 else None
             ),
             breaklines=tuple(
-                source_from_dict(item) for item in data.get("breaklines", ())
+                _grid_data_source(item) for item in data.get("breaklines", ())
             ),
-            points=tuple(source_from_dict(item) for item in data.get("points", ())),
+            points=tuple(_grid_data_source(item) for item in data.get("points", ())),
             inputs=tuple(_spec_value(list(data.get("inputs", ())))),
             crs=data.get("crs"),
             engine=data.get("engine"),
@@ -1070,6 +1070,17 @@ class GridSpec:
             build=build,
             return_triangle=return_triangle,
         )
+
+
+def _grid_data_source(data: dict[str, Any]) -> DataSourceSpec:
+    """Rebuild a grid data source, rejecting non-file-backed kinds."""
+
+    source = source_from_dict(data)
+    if not isinstance(source, DataSourceSpec):
+        raise ValueError(
+            f"Grid sources must be file-backed data sources, got {type(source).__name__}"
+        )
+    return source
 
 
 def _grid_entry(value: Any) -> GridSpec | GridRef | None:
@@ -1255,9 +1266,9 @@ class SpecBuildContext:
         """Return the generated grid workspace for one model, when available."""
 
         if self.grid_workspace is not None:
-            return self.grid_workspace / model_name
+            return Path(self.grid_workspace) / model_name
         if self.simulation_workspace is not None:
-            return self.simulation_workspace / "_grid" / model_name
+            return Path(self.simulation_workspace) / "_grid" / model_name
         return None
 
     def package_spec(self, key: str) -> PackageSpec:
@@ -1365,7 +1376,7 @@ class BuiltModel:
         if self.simulation is not None:
             return self.simulation
         model_simulation = getattr(self.model, "sim", None)
-        if isinstance(model_simulation, Mf6Simulation):
+        if isinstance(model_simulation, Mf6Simulation):  # type: ignore[misc]  # flopy is untyped
             return model_simulation
         raise AttributeError("This built model does not have a parent MFSimulation.")
 
@@ -1448,6 +1459,8 @@ class ModelSpec:
         """
 
         object.__setattr__(self, "model_type", ModelType(self.model_type))
+        # NOTE: after this point ``model_type`` is always the enum; use
+        # ``type_enum`` where a typed value is needed.
         object.__setattr__(
             self,
             "packages",
@@ -1581,7 +1594,7 @@ class ModelSpec:
             )
             context = replace(context, grid=grid)
 
-        builder = self.builder or _DEFAULT_MODEL_BUILDERS[self.model_type]
+        builder = self.builder or _DEFAULT_MODEL_BUILDERS[self.type_enum]
         model = builder(simulation, modelname=self.name, **self.options)
         model.myflopy_context = context
         packages = self.resolved_packages(build_context)
@@ -1611,7 +1624,7 @@ class ModelSpec:
         payload: dict[str, Any] = {
             "kind": "ModelSpec",
             "name": self.name,
-            "model_type": self.model_type.value,
+            "model_type": self.type_enum.value,
             "options": _json_value(self.options),
             "packages": [package.to_dict() for package in self.packages],
             "context": {
@@ -1654,6 +1667,12 @@ class ModelSpec:
         )
 
     @property
+    def type_enum(self) -> ModelType:
+        """``model_type`` as the enum (coerced in ``__post_init__``)."""
+
+        return ModelType(self.model_type)
+
+    @property
     def package_names(self) -> tuple[str, ...]:
         """Return enabled package names in declaration order."""
 
@@ -1669,7 +1688,7 @@ class ModelSpec:
         return (
             "ModelSpec("
             f"name={self.name!r}, "
-            f"model_type={self.model_type.value!r}, "
+            f"model_type={self.type_enum.value!r}, "
             f"packages={self.package_names!r}, "
             f"options={_summarize_mapping(self.options)!r}, "
             f"hooks={tuple(hook.name for hook in self.hooks)!r}"
@@ -1701,7 +1720,7 @@ class ModelSpec:
         return (
             "<div>"
             f"<h4>ModelSpec: <code>{escape(self.name)}</code></h4>"
-            f"<p><strong>Type:</strong> {escape(self.model_type.value)} "
+            f"<p><strong>Type:</strong> {escape(self.type_enum.value)} "
             f"<strong>Packages:</strong> {len(self.packages)} "
             f"<strong>Hooks:</strong> {escape(hooks)}</p>"
             f"{_html_table(package_rows, empty='No packages')}"
@@ -2129,7 +2148,7 @@ class SimulationSpec:
             run_workspace = Path(self.run_name or self.name)
         run = Run(
             name=run_name or self.run_name or self.name,
-            workspace=run_workspace,
+            workspace=Path(run_workspace),
             spec=self,
             executable=self.executable,
             build_context=build_context,
@@ -2275,7 +2294,7 @@ class SimulationSpec:
         model_rows = [
             (
                 model.name,
-                f"{model.model_type.value}; packages={len(model.packages)}",
+                f"{model.type_enum.value}; packages={len(model.packages)}",
             )
             for model in self.models
         ]

@@ -745,8 +745,8 @@ def simulation(
 
     return SimulationSpec(
         name,
-        models=list(models),
-        packages=[timing, *solvers, *packages],
+        models=tuple(models),
+        packages=(timing, *solvers, *packages),
         exchanges=tuple(exchanges),
         **options,
     )

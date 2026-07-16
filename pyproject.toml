@@ -45,6 +45,7 @@ viz3d = [
   "trame-vuetify>=3.0",
 ]
 dev = [
+  "mypy>=1.10",
   "nbstripout>=0.7",
   "pytest>=8.0",
   "ruff>=0.5",
@@ -127,6 +128,26 @@ ignore = ["E501", "F841", "E722", "B008", "B018", "B023"]
 "src/myflopy/modflow/gwt/gwt.py" = ["F821", "E402"]
 # Tests set MPLBACKEND/sys.path before imports by design.
 "tests/*" = ["E402"]
+
+# Scoped type check (implementation plan 1.4): the declarative core only.
+# `python -m mypy` with no args checks exactly these files. Grow the list as
+# modules gain annotations; never shrink it.
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "silent"
+# Scoped check: third-party packages are treated as untyped (Any) — some
+# installed libs use syntax newer than the 3.10 grammar pin and must not be
+# parsed at all.
+no_site_packages = true
+files = [
+  "src/myflopy/specs.py",
+  "src/myflopy/package_api.py",
+  "src/myflopy/sources.py",
+  "src/myflopy/workspace.py",
+  "src/myflopy/advanced.py",
+  "src/myflopy/builders.py",
+]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"

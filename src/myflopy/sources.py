@@ -60,7 +60,7 @@ class DataSourceSpec:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a ``kind``-tagged dict, omitting default ``external``/``metadata``."""
 
-        payload = {
+        payload: dict[str, Any] = {
             "kind": self.kind,
             "path": _path_text(self.path),
         }
@@ -74,7 +74,7 @@ class DataSourceSpec:
     def from_dict(cls, data: dict[str, Any]) -> DataSourceSpec:
         """Rebuild a source spec, dispatching on its ``kind`` tag to the right subclass."""
 
-        kind = data.get("kind")
+        kind = str(data.get("kind"))
         try:
             source_type = _SOURCE_TYPES[kind]
         except KeyError as error:
@@ -374,7 +374,7 @@ _SOURCE_TYPES: dict[str, type[Any]] = {
 def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
     """Recreate a source specification from its serialized representation."""
 
-    kind = data.get("kind")
+    kind = str(data.get("kind"))
     try:
         source_type = _SOURCE_TYPES[kind]
     except KeyError as error:
