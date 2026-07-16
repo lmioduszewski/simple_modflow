@@ -7,10 +7,8 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
 
 import os
-import pickle
 from pathlib import Path
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
