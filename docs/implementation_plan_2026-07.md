@@ -94,12 +94,14 @@ Non-negotiable project conventions. Violating them is a review failure even if t
 
 1. **Environment (per-machine).** Windows: mf-env venv
    `C:\Users\lukem\Python\mf-env\.venv\Scripts\python.exe` with `PYTHONPATH=src`.
-   Linux (the repo's current home, `/home/lukem/python/simple_modflow`): the only
+   Linux (the repo's current home, `/home/lukem/python/simple_modflow`): the
    provisioned env is `/home/lukem/python/envs/gw` (Python 3.14, flopy 3.10, figs
-   editable) — **it lacks pytest/ruff/nbstripout; install them into `gw` before any
-   phase** (Phase 0 step 2). FOOTGUN: `gw` also carries a NON-editable `myflopy 0.1.0`
-   in site-packages that silently shadows the repo — always run with `PYTHONPATH=src`
-   and sanity-check `myflopy.__file__` resolves into the repo. Fast loop:
+   editable). FULLY PROVISIONED as of 2026-07-16 (Phase 0/1): pytest/ruff/
+   nbstripout/mypy/build, every optional extra (viz, viz3d, pest, parallel,
+   xugrid), GDAL via system-bindings symlink, and **myflopy installed editable**
+   — the old shadowing footgun (a stale non-editable copy in site-packages) is
+   gone; `import myflopy` resolves to the repo with or without `PYTHONPATH=src`.
+   Fast loop:
    `pytest -m "not slow"` (~60 s, ~540 tests — conftest auto-marks ~47 slow). Full
    suite: ~14 min. Fast suite after every change-set; FULL suite at the end of each
    phase.
@@ -924,11 +926,10 @@ by up to ~2×. Phase 5's header excludes 5.7, which is optional/forward-looking.
 Linux (the repo's current home — primary):
 
 ```bash
-export PYTHONPATH=src
-py=/home/lukem/python/envs/gw/bin/python   # the only provisioned env (Python 3.14)
-# ONE-TIME (Phase 0 step 2): $py -m pip install pytest nbstripout ruff
-# FOOTGUN: gw also has a non-editable myflopy in site-packages — PYTHONPATH=src is
-# REQUIRED; sanity check: $py -c "import myflopy; print(myflopy.__file__)" → repo path
+py=/home/lukem/python/envs/gw/bin/python   # fully provisioned (Python 3.14)
+# myflopy is installed EDITABLE in gw (2026-07-16): imports resolve to the repo
+# with or without PYTHONPATH=src (exporting it stays harmless).
+# Sanity check: $py -c "import myflopy; print(myflopy.__file__)" → repo path
 
 $py -m pytest -m "not slow" -q            # fast suite (after every change-set)
 $py -m pytest -q                          # full suite (end of each phase; ~14 min)
@@ -973,13 +974,19 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
 
 ## Appendix C — Master acceptance checklist
 
-- [x] figs committed in its repo (`bb1526b`, 2026-07-07) — remaining: vendored; fresh
-      venv `pip install -e .` → `import myflopy.viz` + map-sync post-scripts work
-      without local figs (0, 1.1)
-- [ ] `v0.1.0` tagged at baseline; wheel-build CI job green; scheduled slow lane
-      exists (0, 1.3, D11)
-- [ ] `matplotlib` (+ `seaborn`, `pyyaml`) declared; import-surface smoke green (1.2, 5.6)
-- [ ] CI green on ubuntu + windows (fast suite + ruff); vendored-figs path exercised (1.3, 1.4)
+- [x] figs committed in its repo (`bb1526b`, 2026-07-07) AND vendored (2026-07-16:
+      `_vendor/figs` @ bb1526b via `scripts/sync_vendored_figs.py`; figs-hidden
+      subprocess tests prove `import myflopy.viz` + post-script injection work
+      without local figs; wheel verified to contain the snapshot) (0, 1.1)
+- [x] `v0.1.0` tagged at baseline (2026-07-16); wheel-build CI job written and
+      verified locally; scheduled slow lane exists — remote green pending the
+      first push (0, 1.3, D11)
+- [x] `matplotlib` + `seaborn` + `openpyxl` declared; dash/osgeo lazified with
+      subprocess isolation tests; import-surface smoke green (`pyyaml` lands with
+      5.6) (1.2)
+- [ ] CI green on ubuntu + windows (fast suite + ruff + scoped mypy); vendored-figs
+      path exercised — workflows landed 2026-07-16, green pending the first push
+      (1.3, 1.4)
 - [ ] `grep -rn "lukem" src/myflopy` empty; junk modules gone incl. the
       `get_iheads`/`gwt` lazy-export + smoke-test removals (D10) (2.1, 2.2)
 - [ ] Notebooks stripped + pre-commit hook; no `.exe` under `src/`; `tools/mp3du/`

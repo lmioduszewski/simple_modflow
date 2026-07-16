@@ -37,12 +37,16 @@ close-out; the Phase 0 entry is the reference every later phase compares against
 
 ```bash
 gw=/home/lukem/python/envs/gw/bin/python
-$gw -m pip install pytest nbstripout ruff              # plan ground rule 1
+$gw -m pip install pytest nbstripout ruff mypy build   # plan ground rule 1 / 1.4
 $gw -m pip install "dash>=2.15" "dash-bootstrap-components>=1.5"   # viz extra
 $gw -m pip install pyvista trame trame-vtk trame-vuetify           # viz3d extra
 $gw -m pip install pyemu                                            # pest extra
+$gw -m pip install scikit-learn pymetis xugrid          # parallel + xugrid extras
+# (h5py was already present)
 # GDAL: no pip wheel builds here; system GDAL 3.12.2 symlinked into the env:
 #   ln -s /usr/lib/python3/dist-packages/osgeo <gw site-packages>/osgeo
+$gw -m pip install -e .    # editable — replaces the stale site-packages copy
+                           # that used to shadow the repo without PYTHONPATH
 $gw -m flopy.utils.get_modflow ~/.local/bin            # mf6, triangle, ...
 # PEST++ 5.2.16 (pestpp-ies etc.) from github.com/usgs/pestpp releases
 # (linux tar.gz → bin/pestpp-* → ~/.local/bin)
@@ -74,6 +78,24 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 - Deferred-import ratchet baseline: **198** (`grep -rn "^\s\+from myflopy"
   src/myflopy --include="*.py" | wc -l`).
 
+## Phase 1 — Distribution blockers (2026-07-16, branch `phase-1-distribution`)
+
+- **Delivered:** figs vendored (`_vendor/figs` @ figs `bb1526b`, trimmed closure,
+  sync script, external-first import in viz.py, single-importer AST rule);
+  matplotlib/seaborn/openpyxl declared, dash/osgeo lazified (+ subprocess
+  isolation tests); GitHub Actions (fast matrix ubuntu+windows ×
+  py3.10/3.12/3.14, ruff+mypy lint job, wheel job, weekly slow lane);
+  `ruff check src tests` green (577 safe autofixes + triage; documented
+  burn-down ignore list); scoped mypy green on the declarative core (26 errors
+  fixed, incl. one latent NameError bug in `budget.py` stream-flow plotting).
+- **Fast suite:** 540 passed / 2 skipped / 0 failed, ~18 s.
+- **Repo defects fixed:** layout smoke test no longer requires untracked local
+  data (mkdir + skip); pyvista tests importorskip; pest tests' pyemu guard
+  gap remains for 3 tests (they raise a clear ModuleNotFoundError — acceptable).
+- **Still open for Phase 1 acceptance:** first push → remote CI green on both
+  OSes (workflows are verified locally: wheel contains `_vendor`, py310
+  grammar parse clean, figs-blocked smokes pass).
+
 ### Full-suite runs (append per phase)
 
 | Date | Commit | Result | Wall time |
@@ -81,3 +103,4 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 | 2026-07-16 | `d7a39e1` | 570 passed / 7 skipped / 5 failed (pre-pyemu, pre-PEST++) | 7m59s |
 | 2026-07-16 | `d7a39e1` | 576 passed / 1 skipped / 5 failed (pyemu installed; 3 IES fails = PEST++ POSIX command bug) | 8m10s |
 | 2026-07-16 | `d7a39e1`+fix | **BASELINE: 580 passed / 1 skipped / 2 failed (both known: layout smoke, MPI)** | **9m51s** |
+| 2026-07-16 | Phase 1 end (`phase-1-distribution`) | 588 passed / 2 skipped / 1 failed (only the MPI environment limitation; layout smoke now skips; +12 new Phase-1 tests; parallel/xugrid extras now exercised) | 11m23s (within the 20 min tripwire) |
