@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import shutil
 import subprocess
 import warnings
@@ -30,7 +31,39 @@ __all__ = [
 
 
 _MODULE_DIR = Path(__file__).resolve().parent
+_REPO_TOOLS_DIR = _MODULE_DIR.parents[3] / "tools" / "mp3du"
 _LEGACY_PRT_NAMES = {"PRT", "PrtMip", "PrtOc", "PrtPrp", "PrtDisv", "PrtFmi"}
+
+
+def resolve_mp3du_executable(name: str, explicit: Path | str | None = None) -> Path:
+    """Resolve an MP3DU executable path (implementation plan 2.4).
+
+    Resolution order: explicit argument -> ``MYFLOPY_MP3DU_DIR`` environment
+    variable -> the repo's untracked ``tools/mp3du/`` -> the deprecated
+    package-directory fallback (executables no longer ship inside ``src/``;
+    see ``tools/mp3du/README.md`` for where to put them).
+    """
+
+    if explicit is not None:
+        return Path(explicit)
+    env_dir = os.environ.get("MYFLOPY_MP3DU_DIR")
+    if env_dir:
+        return Path(env_dir) / name
+    repo_candidate = _REPO_TOOLS_DIR / name
+    if repo_candidate.exists():
+        return repo_candidate
+    legacy = _MODULE_DIR / name
+    if legacy.exists():
+        # Plain warning for now; converted to the 3.1 deprecation helper when
+        # that lands (plan 2.4 sequencing note).
+        warnings.warn(
+            f"Loading {name} from inside the myflopy package is deprecated; "
+            "place MP3DU executables in tools/mp3du/ or set MYFLOPY_MP3DU_DIR.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return legacy
+    return repo_candidate
 
 
 @dataclass(frozen=True)
@@ -148,12 +181,9 @@ class ParticleTrackingInput:
         """
 
         self.model = model
-        mp3du_default = _MODULE_DIR / "mp3du.exe"
-        writegsf_default = _MODULE_DIR / "writep3dgsf.exe"
-        writeout_default = _MODULE_DIR / "writep3doutput.exe"
-        self.writep3dgsf_path = writegsf_default if writep3dgsf_path is None else Path(writep3dgsf_path)
-        self.mp3du_path = mp3du_default if mp3du_path is None else Path(mp3du_path)
-        self.writep3doutput_path = writeout_default if writep3doutput_path is None else Path(writep3doutput_path)
+        self.writep3dgsf_path = resolve_mp3du_executable("writep3dgsf.exe", writep3dgsf_path)
+        self.mp3du_path = resolve_mp3du_executable("mp3du.exe", mp3du_path)
+        self.writep3doutput_path = resolve_mp3du_executable("writep3doutput.exe", writep3doutput_path)
         self._model_output_files = model_output_files
         self._output_path = Path(output_path) if output_path is not None else None
         self._porosities_by_layer = porosities_by_layer
