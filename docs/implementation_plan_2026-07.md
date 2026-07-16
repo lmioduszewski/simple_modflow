@@ -6,7 +6,7 @@ against the committed code. Reconciles the plan with the now-committed baseline 
 drifted (two Phase 2 "orphan" rows, the `.flopy` pattern, `__compatibility__`, the
 Phase 8 import graph, Appendix B numbers); reconciles the effort math and the 4.4 layer
 map; adds the Linux environment, test-runtime budget, and release/tagging story; locks
-new decisions D8–D11.)
+new decisions D8–D12.)
 **Prior:** rev. 3, 2026-07-06 (added Phase 6). **Source:** full structural/code review
 of `src/myflopy` on branch `myflopy` (follow-up to `docs/refactor_review_report.md`,
 2026-06-12), re-verified claim-by-claim on 2026-07-14. Line numbers are anchors and
@@ -84,6 +84,7 @@ ambiguity arises that this plan does not cover, stop and ask the user — do not
 | D9 | GWT test fixture | **`transport=True` option on the small canonical config** (one-model-everywhere), NOT a promotion of example 03 into a second model family. GWE mirrors it in 6.2. Details in Phase 6.1.6. |
 | D10 | `iheads.py` + `modflow/gwt/` removal | **Hard-delete now** (Phase 2.1) including their lazy-export map entries and smoke-test imports — they are public exports, not orphans. Justified pre-1.0 with zero tagged releases; note in the changelog. |
 | D11 | Release/tagging | **Tag `v0.1.0` at the Phase 0 baseline commit**, then bump+tag at milestones (`v0.2.0` after Phase 1, `v0.3.0` after Phases 4–5). This starts 3.1's "≥ 2 tagged releases" deprecation clock and anchors the CI wheel build. |
+| D12 | Alias visibility | Deprecated aliases/methods/classes are **hidden from autocompletion**: resolved only via `__getattr__` (module- or class-level), excluded from `__all__`, `dir()`, `TYPE_CHECKING` import blocks, and `.pyi` stubs. Runtime-compatible with a warning, invisible to IDEs and new users. Details in Phase 3.1. |
 
 ---
 
@@ -336,8 +337,19 @@ every compatibility name warns with its replacement; names live ≥ 2 tagged rel
 marker over `_SECOND_TIER_EXPORTS` (21 names) — 3.1 REPURPOSES it as the warned-alias
 registry rather than introducing it; and `project/model_group.py` already carries a
 private `_warn_deprecated` (used 6× for `ModelGroup.rch/chd/drn/ghb/wel/uzf`) — absorb
-it into the new module, do not leave two mechanisms. Tests: `pytest.warns` per alias;
-fast suite passes with `-W error::DeprecationWarning` filtered to `myflopy.*`.
+it into the new module, do not leave two mechanisms.
+
+**D12 — deprecated names are runtime-only, hidden from autocompletion.** Every warned
+alias resolves ONLY through module-level `__getattr__` (PEP 562) — or class-level
+`__getattr__` for deprecated methods/attributes (e.g. the `ModelGroup.rch/chd/...`
+accessors) — never as a real module/class attribute. Deprecated names stay OUT of
+`__all__`, OUT of the `TYPE_CHECKING` import blocks and any `.pyi` stubs (that is what
+IDEs/static completers read), and module `__dir__()` must exclude them — implement
+`__dir__` alongside `__getattr__` inside `deprecated_module_getattr` so hiding comes
+free at every facade. Old code keeps working with a warning; new users never see the
+old names suggested. Tests: `pytest.warns` per alias; per alias also assert
+`name not in dir(module)` and `name not in __all__`; fast suite passes with
+`-W error::DeprecationWarning` filtered to `myflopy.*`.
 
 ### 3.2 Resolve the GHB/DRN naming collision + FromVector consistency
 
@@ -347,8 +359,9 @@ aliases via 3.1. SCOPE CORRECTION (rev. 4): smaller than rev. 3 implied — unwa
 aliases `GHBFromVector = GHB` / `DRNFromVector = DRN` already exist (since 2026-06-16)
 and `mfsimbase.py` already imports the `*FromVector` names (its `__all__` lists both
 spellings). Remaining work: flip which name is the real class, make the old
-`GHB`/`DRN` names warn via 3.1, repoint `modflow/mf6/__init__.py`'s `"GHB"`/`"DRN"`
-export entries, update docs.
+`GHB`/`DRN` names warn via 3.1 (hidden per D12 — the old names drop out of
+`__all__`/`dir()`/TYPE_CHECKING; only `*FromVector` stays completion-visible),
+repoint `modflow/mf6/__init__.py`'s `"GHB"`/`"DRN"` export entries, update docs.
 
 ---
 
@@ -807,7 +820,9 @@ remains the front door.
 
 **Mechanic:** leaf-first move order (`contours` → `choropleth` → `xsections` → `grid` →
 `budget` → `heads` → `cross_sections` → `interactive`); per move: `git mv`, fix internal
-imports, old-path facade with 3.1's warning `__getattr__`, repoint internal importers
+imports, old-path facade with 3.1's warning `__getattr__` (per D12: the old paths
+warn-and-work at runtime but are absent from `__all__`/`dir()`/TYPE_CHECKING — only
+the new `myflopy/plot/` names are completion-visible), repoint internal importers
 (so internal code never triggers its own deprecation warnings), fast suite, commit.
 Update `_EXPORTS` targets (the 13 interactive names) and `mf6/__init__.py` +
 `grid/__init__.py`; grep for string references (pickles, docs, notebooks — incl. the
@@ -819,7 +834,8 @@ plotting tests must pass unedited** — if they break, the move broke something
 `test_group_map_api`, `test_hover_integration`). Note `choros.py` now lazily imports
 `datatypes/hover.py` inside `_build_hover_context` — hover stays put (L0 leaf), the
 edge just needs to survive the move. New `tests/test_plot_layout.py`: new path clean,
-old path warns-and-works, top-level exports resolve.
+old path warns-and-works and is hidden per D12 (not in `dir()`/`__all__`), top-level
+exports resolve.
 
 ---
 
@@ -965,7 +981,9 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       `get_iheads`/`gwt` lazy-export + smoke-test removals (D10) (2.1, 2.2)
 - [ ] Notebooks stripped + pre-commit hook; no `.exe` under `src/`; `tools/mp3du/`
       resolution tested (2.3, 2.4)
-- [ ] Deprecated aliases warn; GHB/DRN collision resolved; policy doc exists (3.x)
+- [ ] Deprecated aliases warn AND are hidden from autocompletion per D12 (not in
+      `__all__`/`dir()`/TYPE_CHECKING/stubs); GHB/DRN collision resolved; policy doc
+      exists (3.x)
 - [ ] `observations/` + `project/group/` packages; old paths work; no active module
       > ~1,800 lines without a written reason (4.1, 4.2)
 - [ ] Layering test + deferred-import ratchet in CI (4.4)
