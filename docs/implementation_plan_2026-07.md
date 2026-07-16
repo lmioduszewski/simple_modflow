@@ -281,6 +281,8 @@ with grep before removing:
 | `modflow/utils/iheads.py` | delete (D10 — NOT an orphan) | public lazy export: ALSO remove the `get_iheads` map entries in `modflow/__init__.py` and `modflow/utils/__init__.py`, and the import/assert in `tests/test_mf6_refactor_smoke.py`; superseded by `HeadsPlus` (it is a thin wrapper over it) |
 | `modflow/mf6/mf3dplots.py` | attic | update the `viz.py` docstring that names it |
 | `modflow/mf6/recovery_analysis.py` | attic | orphaned |
+| `modflow/utils/gdal.py` | attic (found during Phase 1) | zero importers anywhere (re-verified 2026-07-16); broad excepts noted in 7.3 become moot |
+| `modflow/mf6/gis_functions.py` | attic (found during Phase 1) | zero importers anywhere (re-verified 2026-07-16); top-level `osgeo` import |
 | `modflow/calcs/cj_approximation.py` | attic | orphaned |
 | `modflow/gwt/` (whole dir) | attic `gwt.py`; delete the dir — the only remainder is an empty `__init__.py` (D10 — NOT unimported) | scratch with personal paths; ALSO remove the `"gwt"` lazy submodule map entry in `modflow/__init__.py` and the `GWT` import in `tests/test_mf6_refactor_smoke.py`; the REAL transport home is Phases 5.3 + 6.1; afterwards add a permanent check to the layout test that nothing imports `myflopy.modflow.gwt` |
 

@@ -82,7 +82,7 @@ def render_xsections(
 
     normalized = str(backend).lower()
     if normalized in ("mpl", "matplotlib", "static"):
-        from figs.mpl import plot_cross_section
+        from myflopy.viz import plot_cross_section
 
         result = plot_cross_section(
             data=data,
@@ -597,7 +597,7 @@ class XSection:
         """
         Plot the cross-section with the figs matplotlib cross-section helper.
         """
-        from figs.mpl import plot_cross_section
+        from myflopy.viz import plot_cross_section
 
         data = self.to_frame()
         kwargs.setdefault("title", self.section_name)

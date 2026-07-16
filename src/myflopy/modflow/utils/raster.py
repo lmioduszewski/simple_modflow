@@ -11,7 +11,6 @@ from pathlib import Path
 import geopandas as gpd
 import pickle
 import pandas as pd
-from osgeo import gdal, ogr, osr
 import numpy as np
 import os
 from rasterio.features import geometry_mask
@@ -124,6 +123,11 @@ def geotiff_to_contours(
     :param smoothing:
     :return:
     """
+    # GDAL is a system dependency (no reliable pip wheel), only needed by this
+    # contour exporter — import lazily so `import myflopy` and the lazy-export
+    # surface work on installs without OSGeo.
+    from osgeo import gdal, ogr, osr
+
     ds = gdal.Open(tif_path, gdal.GA_ReadOnly)
     if ds is None:
         raise FileNotFoundError(f"Could not open: {tif_path}")

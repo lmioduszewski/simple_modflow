@@ -36,8 +36,14 @@ from __future__ import annotations
 # Re-export the figs primitives the project uses, so `myflopy.viz` is a superset
 # drop-in for `figs`: a module can `from myflopy import viz as f` (or
 # `from myflopy.viz import Fig, create_hover`) and never import figs directly.
-from figs import Fig, Subplot, Template, create_hover
-from figs.mpl import REPORT, Theme, get_mplfig
+# External-first: the author's machine exercises the live figs project; installed
+# environments (and CI) fall back to the vendored snapshot in myflopy._vendor.
+try:
+    from figs import Fig, Subplot, Template, create_hover
+    from figs.mpl import REPORT, Theme, get_mplfig, plot_cross_section
+except ImportError:  # vendored fallback for installed environments
+    from myflopy._vendor.figs import Fig, Subplot, Template, create_hover
+    from myflopy._vendor.figs.mpl import REPORT, Theme, get_mplfig, plot_cross_section
 from plotly.subplots import make_subplots as _make_subplots
 
 __all__ = [
@@ -53,6 +59,7 @@ __all__ = [
     "Theme",
     "REPORT",
     "PALETTE",
+    "plot_cross_section",
 ]
 
 

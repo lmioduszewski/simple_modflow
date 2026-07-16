@@ -9,10 +9,6 @@ if TYPE_CHECKING:
 
 from pandas import IndexSlice as idxx
 from myflopy.viz import Fig, create_hover
-import dash
-from dash import dcc
-from dash import html, Input, Output
-import dash_bootstrap_components as dbc
 import numpy as np
 import shapely as shp
 from pathlib import Path
@@ -1132,6 +1128,12 @@ class Choro:
         The selection callback returns the picked cell indices; used to interactively
         gather a set of cell numbers (runs an external Jupyter-mode server on port 8050).
         """
+
+        # Dash is the `viz` extra, not a core dependency — import only when the
+        # interactive selector is actually launched.
+        import dash
+        import dash_bootstrap_components as dbc
+        from dash import dcc, html, Input, Output
 
         self.add_choropleth()
 

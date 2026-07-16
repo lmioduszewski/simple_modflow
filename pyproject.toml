@@ -11,10 +11,17 @@ requires-python = ">=3.10"
 authors = [
   { name="Luke Mioduszewski", email="luke.mioduszewski@gmail.com" }
 ]
+# NOTE: the MODFLOW 6 / MODPATH / Triangle / PEST++ executables are runtime
+# BINARIES, not pip dependencies — install them on PATH separately (e.g.
+# `python -m flopy.utils.get_modflow` for the MODFLOW family; PEST++ from its
+# GitHub releases). GDAL/OSGeo is likewise a system library (no reliable pip
+# wheel), needed only by the geotiff contour exporter.
 dependencies = [
   "flopy>=3.10,<4",
   "geopandas>=0.14",
+  "matplotlib>=3.8",
   "numpy>=1.24",
+  "openpyxl>=3.1",
   "pandas>=2.0",
   "Pillow>=10.0",
   "plotly>=5.0",
@@ -22,6 +29,7 @@ dependencies = [
   "requests>=2.31",
   "scikit-image>=0.22",
   "scipy>=1.11",
+  "seaborn>=0.13",
   "shapely>=2.0",
 ]
 
@@ -37,7 +45,9 @@ viz3d = [
   "trame-vuetify>=3.0",
 ]
 dev = [
+  "nbstripout>=0.7",
   "pytest>=8.0",
+  "ruff>=0.5",
 ]
 parallel = [
   "h5py>=3.10",

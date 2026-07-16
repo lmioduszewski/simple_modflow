@@ -333,7 +333,7 @@ class GridSection:
         """
         Plot the grid cross-section with the figs matplotlib cross-section helper.
         """
-        from figs.mpl import plot_cross_section
+        from myflopy.viz import plot_cross_section
 
         data = self.to_frame()
         kwargs.setdefault("show_legend", False)

@@ -58,7 +58,7 @@ def _theme_context(style: ModelCrossSectionStyle):
     if not style.use_figs_theme:
         return nullcontext()
     try:
-        from figs.mpl import REPORT
+        from myflopy.viz import REPORT
     except Exception:
         return nullcontext()
     return REPORT.context()
