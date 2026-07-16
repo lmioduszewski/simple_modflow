@@ -155,9 +155,9 @@ class LakeTable:
         stages = [row[0] for row in rows]
         volumes = [row[1] for row in rows]
         areas = [row[2] for row in rows]
-        if any(current <= previous for previous, current in zip(stages, stages[1:])):
+        if any(current <= previous for previous, current in zip(stages, stages[1:], strict=False)):
             raise ValueError("Lake table stages must be strictly increasing.")
-        if any(current < previous for previous, current in zip(volumes, volumes[1:])):
+        if any(current < previous for previous, current in zip(volumes, volumes[1:], strict=False)):
             raise ValueError("Lake table volumes must be nondecreasing.")
         if any(value < 0.0 for value in areas):
             raise ValueError("Lake table surface areas cannot be negative.")
@@ -605,7 +605,7 @@ class LAKBuilder:
         """
 
         surfaces = self._surfaces().loc[cell].to_numpy(dtype=float)
-        for layer, (top, bottom) in enumerate(zip(surfaces, surfaces[1:])):
+        for layer, (top, bottom) in enumerate(zip(surfaces, surfaces[1:], strict=False)):
             if only_layer is not None and layer != only_layer:
                 continue
             if top >= elevation >= bottom and self._active(layer, cell):
@@ -724,7 +724,7 @@ class LAKBuilder:
                     continue
                 face_bottom = lake_bottom
                 face_top = neighbor_bottom
-            for layer, (cell_top, cell_bottom) in enumerate(zip(surfaces, surfaces[1:])):
+            for layer, (cell_top, cell_bottom) in enumerate(zip(surfaces, surfaces[1:], strict=False)):
                 if only_layer is not None and layer != only_layer:
                     continue
                 if not self._active(layer, cell):
@@ -945,7 +945,7 @@ class LAKBuilder:
                     # Rectangular facilities need an explicit flat top; the connection
                     # telev is lake_top, never the (transient) starting stage.
                     tops = [self._top(lake_id, cell) for cell in cells]
-                    if any(top <= bottom for top, bottom in zip(tops, bottoms)):
+                    if any(top <= bottom for top, bottom in zip(tops, bottoms, strict=False)):
                         raise ValueError(
                             f"lake_top must be above lake_bottom for rectangular lake '{lake_id}'."
                         )

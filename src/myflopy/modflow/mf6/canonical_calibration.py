@@ -67,7 +67,7 @@ def _truth_head_targets(model, cells, prefix: str, *, layer: int = 0) -> HeadTar
     )
     locations = [
         {"name": name, "layer": layer, "cell": cell}
-        for name, cell in zip(names, cells)
+        for name, cell in zip(names, cells, strict=False)
     ]
     placeholder = pd.DataFrame(
         {"per": list(range(model.nper)), **{name: [np.nan] * model.nper for name in names}}

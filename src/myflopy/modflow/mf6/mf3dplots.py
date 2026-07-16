@@ -19,11 +19,11 @@ class SurfacePlot(Fig):
             vor = self.vor
 
         """Get Voronoi Grid Centroid x,y-coords"""
-        centroids_xy = list(zip(vor.centroids_x, vor.centroids_y))
+        centroids_xy = list(zip(vor.centroids_x, vor.centroids_y, strict=False))
 
         """"Get gridded xs and ys of vornoi grid based on provided spacing"""
         x_surface, y_surface = vor.generate_grid_coordinates(spacing)
-        xy = list(zip(x_surface, y_surface))
+        xy = list(zip(x_surface, y_surface, strict=False))
 
         unqiue_x = list(set(x_surface))
         unqiue_y = list(set(y_surface))
@@ -48,7 +48,7 @@ class SurfacePlot(Fig):
         gridded_model_botm = griddata(
             points=centroids_xy, values=vor.gdf_topbtm["bottom"], xi=xy, method="cubic"
         )
-        xyz_heads = list(zip(x_surface, y_surface, gridded_heads, gridded_model_botm))
+        xyz_heads = list(zip(x_surface, y_surface, gridded_heads, gridded_model_botm, strict=False))
     def plot(self):
 
         """Reshape x,y,z arrays for Surface plot"""

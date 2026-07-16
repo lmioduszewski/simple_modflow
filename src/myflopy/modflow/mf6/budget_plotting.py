@@ -29,7 +29,7 @@ def plot_budget_obs(
     name_field: str = "name",
     times=None,
     multiplier: float = 24 * 60 * 60,
-    y_range: list[float] = [0, 4],
+    y_range: list[float] | None = None,
 ):
     """Plot or return observation-area budget totals for one package.
 
@@ -67,6 +67,8 @@ def plot_budget_obs(
         multiplier=multiplier,
     )
 
+    if y_range is None:
+        y_range = [0, 4]
     if plot_fig or return_fig:
         fig = Fig()
         for col in frame.columns:

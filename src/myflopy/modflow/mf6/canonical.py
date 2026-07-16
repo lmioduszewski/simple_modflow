@@ -392,7 +392,7 @@ def irregular_voronoi_grid(
     verts: list[tuple[float, float]] = []
     iverts: list[list[int]] = []
     centers: list[tuple[float, float]] = []
-    for point, region in zip(points, regions):
+    for point, region in zip(points, regions, strict=False):
         polygon = Polygon(vertices[region]).intersection(domain)
         if polygon.geom_type != "Polygon":
             polygon = max(polygon.geoms, key=lambda geometry: geometry.area)
@@ -421,7 +421,7 @@ def _finite_voronoi_regions(vor: Voronoi, radius: float) -> tuple[list[list[int]
     new_regions: list[list[int]] = []
     new_vertices = vor.vertices.tolist()
     ridges: dict[int, list[tuple[int, int, int]]] = {}
-    for (point_a, point_b), (vertex_a, vertex_b) in zip(vor.ridge_points, vor.ridge_vertices):
+    for (point_a, point_b), (vertex_a, vertex_b) in zip(vor.ridge_points, vor.ridge_vertices, strict=False):
         ridges.setdefault(point_a, []).append((point_b, vertex_a, vertex_b))
         ridges.setdefault(point_b, []).append((point_a, vertex_a, vertex_b))
 

@@ -168,7 +168,7 @@ def build_edge_drain_stress_period_data(
 
     for layer_idx, bottom_addition in enumerate(layer_offsets):
         layer_bottom = bottom if config.grid_type == "disu" else bottom[layer_idx]
-        for cell, conductance in zip(boundary_cells, conductances):
+        for cell, conductance in zip(boundary_cells, conductances, strict=False):
             cell_id = cell if config.grid_type == "disu" else (layer_idx, cell)
             stress_period_data.append(
                 [cell_id, layer_bottom[cell] + bottom_addition, conductance]
@@ -190,7 +190,7 @@ def build_constant_head_stress_period_data(
         period_rows = []
         for layer_idx in range(config.nlay):
             layer_heads = _resolve_boundary_heads(config, boundary_cells, top, layer_idx)
-            for cell, head in zip(boundary_cells, layer_heads):
+            for cell, head in zip(boundary_cells, layer_heads, strict=False):
                 cell_id = cell if config.grid_type == "disu" else (layer_idx, cell)
                 period_rows.append([cell_id, head])
         stress_period_data[per] = period_rows

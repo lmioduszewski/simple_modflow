@@ -856,7 +856,7 @@ class LayerStack:
         if len(names) != len(botm_s):
             raise ValueError(f"{len(names)} names given for {len(botm_s)} layers.")
         stack = cls(vor, top=top_s, length_units=length_units, time_units=time_units)
-        for name, surface in zip(names, botm_s):
+        for name, surface in zip(names, botm_s, strict=False):
             stack.add(name, bottom=surface)
         return stack
 
@@ -992,7 +992,7 @@ class LayerStack:
 
     def cache_status(self) -> dict[str, str]:
         """Map ``name -> "missing"/"fresh"/"stale"`` for each derived surface."""
-        named = [("top", self._top)] + [(l.name, l.surface) for l in self._layers]
+        named = [("top", self._top)] + [(layer.name, layer.surface) for layer in self._layers]
         return {
             name: surface.cache_status()
             for name, surface in named

@@ -55,7 +55,7 @@ def build_model_times(gwf):
 
     times = gwf.modeltime.totim
     steps = gwf.modeltime.kper_kstp
-    return {(step[1], step[0]): float(time) for step, time in zip(steps, times)}
+    return {(step[1], step[0]): float(time) for step, time in zip(steps, times, strict=False)}
 
 
 def build_ncpl_arr(modelgrid) -> np.ndarray:

@@ -74,10 +74,10 @@ class CooperJacob:
         """
 
         if Ts is None:
-            Ts = [k * b for k, b in zip(ks, bs)]
+            Ts = [k * b for k, b in zip(ks, bs, strict=False)]
         if self.gpm_ft_day:
             qs = [q * 192.5 for q in qs]
-        iterations = zip(qs, Ts, Ss, rs)
+        iterations = zip(qs, Ts, Ss, rs, strict=False)
         ds_all_inters = []
         for iter in iterations:
             iter_ds = []

@@ -164,7 +164,7 @@ class ModelConfig:
         """Return one section's settings as a ``{setting: value}`` mapping."""
 
         frame = self.settings(section=name)
-        return dict(zip(frame["setting"], frame["value"]))
+        return dict(zip(frame["setting"], frame["value"], strict=False))
 
     @property
     def tdis(self) -> dict:

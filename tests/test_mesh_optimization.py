@@ -43,7 +43,7 @@ def _project_temp_dir(name: str) -> Path:
 def _max_segment_length(polygon: Polygon) -> float:
     coords = list(polygon.exterior.coords)
     lengths = []
-    for start, end in zip(coords[:-1], coords[1:]):
+    for start, end in zip(coords[:-1], coords[1:], strict=False):
         dx = float(end[0]) - float(start[0])
         dy = float(end[1]) - float(start[1])
         lengths.append((dx * dx + dy * dy) ** 0.5)

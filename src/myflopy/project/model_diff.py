@@ -104,7 +104,7 @@ def _package_keys(model, package_name: str, *, per=None, layer=None):
     per_col = table["per"].to_numpy(dtype=int) if "per" in table.columns else np.zeros(n, dtype=int)
     layer_col = table["layer"].to_numpy(dtype=int) if "layer" in table.columns else np.zeros(n, dtype=int)
     cell_col = table["cell"].to_numpy(dtype=int)
-    keys = set(zip(per_col.tolist(), layer_col.tolist(), cell_col.tolist()))
+    keys = set(zip(per_col.tolist(), layer_col.tolist(), cell_col.tolist(), strict=False))
     return True, keys
 
 

@@ -99,7 +99,7 @@ def test_lake_connection_geometry_change_shows_as_remove_and_add(connection_tabl
     connections = diff.packages.lak.inputs.connections()
     # Lake 0 unaffected; only lake 1 cell 20 differs, as one remove + one add.
     assert set(connections["lake"]) == {1}
-    memberships = dict(zip(connections["connlen"], connections["membership"]))
+    memberships = dict(zip(connections["connlen"], connections["membership"], strict=False))
     assert memberships[50.0] == "only_in_reference"
     assert memberships[75.0] == "only_in_model"
 

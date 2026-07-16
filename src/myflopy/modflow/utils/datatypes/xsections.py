@@ -537,7 +537,7 @@ class XSection:
         points, elevations = self.xsect
 
         if self.interpolate is True:
-            for distance, elevation in zip(self.xs_as_length, elevations):
+            for distance, elevation in zip(self.xs_as_length, elevations, strict=False):
                 rows.append(
                     {
                         "distance": float(distance),
@@ -549,7 +549,7 @@ class XSection:
         else:
             for i, lyr in enumerate(self.layer):
                 series_name = f"Lyr {lyr} hds - {self.section_name}"
-                for distance, elevation in zip(points, elevations[i]):
+                for distance, elevation in zip(points, elevations[i], strict=False):
                     rows.append(
                         {
                             "distance": float(distance),
@@ -563,7 +563,7 @@ class XSection:
         if include_model_top:
             xs = self.xs
             ys = self.model_top.loc[self.xs.index.to_list()].to_list()
-            for distance, elevation in zip(xs, ys):
+            for distance, elevation in zip(xs, ys, strict=False):
                 rows.append(
                     {
                         "distance": float(distance),
@@ -580,7 +580,7 @@ class XSection:
                 if lyr not in self.layer:
                     continue
                 ys = btm_layers.loc[xs.index.to_list(), lyr].to_list()
-                for distance, elevation in zip(xs, ys):
+                for distance, elevation in zip(xs, ys, strict=False):
                     rows.append(
                         {
                             "distance": float(distance),

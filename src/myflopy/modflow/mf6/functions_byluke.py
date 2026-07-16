@@ -43,7 +43,7 @@ def to_svg_string(coordinates):
 def random_rgba(a=1.0):
     """Generate a random RGBA color in the format rgba(r, g, b, a)
     with an alpha value argument. The alpha value defaults to 1.0.
-    
+
     Args:
         a - an integer between 0 and 1 defining the transparency. 0 = transparent. 1.0 = opaque
 
@@ -70,9 +70,9 @@ def random_hex_color():
 #GENRATE A RANDOM RBGA COLOR
 def random_rgb():
     """Generate a random RGB color in the format rgb(r, g, b)
-    
+
     Args:
-        a - an integer between 0 and 1 defining the transparency. 
+        a - an integer between 0 and 1 defining the transparency.
         0 = transparent. 1.0 = opaque
 
     Returns:
@@ -144,12 +144,12 @@ def interpolate_z_nonflat(x_coords, y_coords, corner_z_coords):
 def calculate_z_on_surface(numrow=50, numcol=50, corner_z_coords=None, xy_points=None)->list:
     """Calculate the z-coordinates for each point in a list of x,y points,
     based on the z-coordinates of each corner of a rectangular grid. The size
-    of the grid is defined by 'numrow' and 'numcol' numbers of rows and columns. 
+    of the grid is defined by 'numrow' and 'numcol' numbers of rows and columns.
 
     Args:
         numrow (int): number of rows
         numcol (int): number of columns
-        corner_z_coords (list): list of z-coordinates from top left, top right, 
+        corner_z_coords (list): list of z-coordinates from top left, top right,
         bottom right, bottom left
         xy_points (list): list of lists of individual x,y points - [[x0,y0], [x1,y1], [etc]]
 
@@ -195,7 +195,7 @@ def deleteFigTraces(figure=None,
 
     Args:
         figure (plotly Figure, optional): The plotly Figure with traes to delte. Defaults to None.
-        attr_to_search (str, optional): Attribute to search for. Defaults to None. 
+        attr_to_search (str, optional): Attribute to search for. Defaults to None.
         attr_val_to_search (str, optional): Attribute value to match. Value to match can be a portion of the full attribute value. Function will attempt to match the beginning of the attribute value based on the value provided. All traces mathing that attribute value will be deleted. Defaults to None.
 
     Returns:
@@ -203,7 +203,7 @@ def deleteFigTraces(figure=None,
     """
 
     listfig = list(figure.data)
-    if listfig==None:
+    if listfig is None:
         return
     traces_to_delete = []
     attr_val_to_search = attr_val_to_search
@@ -218,7 +218,7 @@ def deleteFigTraces(figure=None,
                                        ]==attr_val_to_search:
                 traces_to_delete.append(trace)
     traces_to_delete.sort(reverse=True)
-    if traces_to_delete==None:
+    if traces_to_delete is None:
         return
     for trace in traces_to_delete:
         del listfig[trace]
@@ -289,5 +289,5 @@ def calculate_contours(x, y, z, contour_level):
 
     return contours
 
-def flatten(l):
-    return [item for sublist in l for item in sublist]
+def flatten(nested):
+    return [item for sublist in nested for item in sublist]

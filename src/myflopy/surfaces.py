@@ -543,7 +543,7 @@ class LayerSurfaces:
 
         columns: dict = {}
         previous: np.ndarray | None = None
-        for label, surface in zip(self.labels, self.surfaces):
+        for label, surface in zip(self.labels, self.surfaces, strict=False):
             vals = np.asarray(
                 surface.values(vor, previous=previous, method=method, refresh=refresh),
                 dtype=float,

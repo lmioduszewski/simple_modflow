@@ -163,7 +163,7 @@ class GHB(Boundaries):
         cond_end = self.line_ghb.gdf[self.line_fields['cond'][1]]
         cond_delta = cond_end - cond_strt
         ghb_line_lists = []
-        for idx, delta in enumerate(elev_delta):
+        for idx, _delta in enumerate(elev_delta):
             line_len = self.line_ghb.gdf.geometry[idx].length
             sorted_cells = self.line_ghb.sorted_cells_along_line(idx)
             line_layer = self.line_ghb.gdf['layer'].iloc[idx] - 1

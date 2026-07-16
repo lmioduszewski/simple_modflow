@@ -275,7 +275,7 @@ class LayerTable(HoverBlock):
         """Append a dagger to each formatted head that sits below its cell bottom."""
 
         out = []
-        for text, head, bottom in zip(formatted, heads, botm):
+        for text, head, bottom in zip(formatted, heads, botm, strict=False):
             dry = (
                 _is_finite_number(head)
                 and _is_finite_number(bottom)
@@ -514,7 +514,7 @@ class _HoverAssembler:
 
         template = "".join(self._parts) + "<extra></extra>"
         if self._cols:
-            customdata = [list(row) for row in zip(*self._cols)]
+            customdata = [list(row) for row in zip(*self._cols, strict=False)]
         else:
             customdata = [[] for _ in range(self.ncpl)]
         return customdata, template, self.style.to_hoverlabel()

@@ -235,7 +235,7 @@ def mosaic(
         raise ValueError("mosaic requires at least one panel.")
 
     kinds, cell_traces = [], []
-    for label, panel in normalized:
+    for _label, panel in normalized:
         if hasattr(panel, "get_choropleth"):
             kinds.append("map")
             cell_traces.append([panel.get_choropleth()])
@@ -264,7 +264,7 @@ def mosaic(
     map_values = []
     map_colorscale = None
     map_cells = []  # (subplot_id, panel) for each map cell, in add order
-    for index, (kind, traces) in enumerate(zip(kinds, cell_traces)):
+    for index, (kind, traces) in enumerate(zip(kinds, cell_traces, strict=False)):
         row, col = index // ncols + 1, index % ncols + 1
         subplot_id = None
         for trace in traces:

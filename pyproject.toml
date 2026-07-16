@@ -107,6 +107,26 @@ extend-exclude = ["attic", "examples", "scripts", "src/myflopy/_vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+# Legacy burn-down list (implementation plan 1.4 triage, 2026-07-16): these
+# counts may only go DOWN; remove a code from this list once its violations
+# are fixed. E501=646 (line length), F841=18 (unused vars — unsafe to
+# autofix), E722=12 (bare excepts — Phase 7.3 narrows these), B008=9,
+# B018=8, B023=4.
+ignore = ["E501", "F841", "E722", "B008", "B018", "B023"]
+
+[tool.ruff.lint.per-file-ignores]
+# Lazy-export tables: the TYPE_CHECKING import blocks exist purely for IDE
+# visibility of the exported names (mirrors of _EXPORTS).
+"src/myflopy/__init__.py" = ["F401", "E402"]
+"src/myflopy/modflow/mf6/__init__.py" = ["F401", "E402"]
+# Phase-2 attic candidates (implementation plan 2.1) — not worth fixing.
+"src/myflopy/modflow/mf6/mf3dplots.py" = ["F821"]
+"src/myflopy/modflow/mf6/mf2Dplots.py" = ["F403", "F405"]
+"src/myflopy/modflow/calcs/cj_approximation.py" = ["F821"]
+"src/myflopy/modflow/mf6/grasspyV.py" = ["F821", "E402"]
+"src/myflopy/modflow/gwt/gwt.py" = ["F821", "E402"]
+# Tests set MPLBACKEND/sys.path before imports by design.
+"tests/*" = ["E402"]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"

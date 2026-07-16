@@ -42,7 +42,7 @@ class WaterLevelPlot(Fig):
                 except:  # if error
                     print(f'{filename.stem} is not a valid .xlsx file! Skipping...')
                     continue  # skip to next file in for loop
-                """create a dictionary of Pandas dataframes. Each item in the 
+                """create a dictionary of Pandas dataframes. Each item in the
                 dict is an imported excel file"""
                 df_excel_dict[filename.stem] = thisdf  # store df in dict
             else:

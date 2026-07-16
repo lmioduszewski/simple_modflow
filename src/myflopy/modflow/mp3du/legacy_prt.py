@@ -77,7 +77,7 @@ class PRT:
         last_time_by_kper = OrderedDict()
         prev_time = 0.0
 
-        for (kstp, kper), totim in zip(kstpkper, times):
+        for (kstp, kper), totim in zip(kstpkper, times, strict=False):
             if kper not in last_time_by_kper or kstp > last_time_by_kper[kper][0]:
                 dt = totim - prev_time
                 last_time_by_kper[kper] = (kstp, dt)

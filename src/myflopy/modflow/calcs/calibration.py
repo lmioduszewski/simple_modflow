@@ -104,7 +104,7 @@ def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         zip(
             frame["name"].astype(str),
             pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int),
-            [(0, int(value)) for value in time_values],
+            [(0, int(value)) for value in time_values], strict=False,
         )
     )
     index = pd.MultiIndex.from_tuples(tuples, names=["locs", "layer", "kstpkper"])

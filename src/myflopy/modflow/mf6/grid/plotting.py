@@ -131,7 +131,7 @@ def plot3d(vor, z=None) -> go.Figure:
     else:
         x_lines = []
         y_lines = []
-        for xs, ys in zip(vor.x_coords_by_node, vor.y_coords_by_node):
+        for xs, ys in zip(vor.x_coords_by_node, vor.y_coords_by_node, strict=False):
             x_lines.extend(list(xs) + [None])
             y_lines.extend(list(ys) + [None])
 
@@ -214,7 +214,7 @@ def plottri(vor):
 
     xtricells = []
     ytricells = []
-    for i, j, k in zip(ilist, jlist, klist):
+    for i, j, k in zip(ilist, jlist, klist, strict=False):
         xtricells.extend([xtriverts[i], xtriverts[j], xtriverts[k], None])
         ytricells.extend([ytriverts[i], ytriverts[j], ytriverts[k], None])
 

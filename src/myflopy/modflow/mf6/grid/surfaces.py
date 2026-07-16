@@ -33,7 +33,7 @@ def _centroid_sample(src, vor_crs, xs, ys, raster_path) -> np.ndarray:
         )
         sample_xs, sample_ys = list(xs), list(ys)
     sampled = np.array(
-        [val[0] for val in src.sample(zip(sample_xs, sample_ys))], dtype=float
+        [val[0] for val in src.sample(zip(sample_xs, sample_ys, strict=False))], dtype=float
     )
     # rasterio.sample() yields the nodata value (e.g. -9999) for nodata and
     # out-of-bounds points, never None, so convert those to NaN explicitly.

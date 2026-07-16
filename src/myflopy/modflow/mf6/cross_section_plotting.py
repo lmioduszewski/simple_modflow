@@ -155,7 +155,7 @@ def _build_legend_handles(
 
     handles = [
         mpatches.Patch(color=color, label=label)
-        for color, label in zip(layer_colors, layer_labels)
+        for color, label in zip(layer_colors, layer_labels, strict=False)
     ]
     if include_head:
         handles.append(

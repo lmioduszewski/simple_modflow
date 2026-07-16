@@ -36,7 +36,7 @@ def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | 
     model_order = {model.name: index for index, model in enumerate(models)}
     grouped: OrderedDict[str, list[tuple[int, object]]] = OrderedDict()
 
-    for model, fig in zip(models, figures):
+    for model, fig in zip(models, figures, strict=False):
         for trace in fig.data:
             base_name = trace.name or "trace"
             trace_json = trace.to_plotly_json()
@@ -46,7 +46,7 @@ def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | 
 
     out = figs.Fig()
     out.update_layout(figures[0].layout)
-    for base_name, items in grouped.items():
+    for _base_name, items in grouped.items():
         for _, trace_json in sorted(items, key=lambda item: item[0]):
             out.add_trace(figs.Fig(data=[trace_json]).data[0])
     return out.show()

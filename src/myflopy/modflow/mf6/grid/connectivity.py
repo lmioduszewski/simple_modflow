@@ -66,7 +66,7 @@ def build_disu_connectivity(
         hwva.append(0.0)
 
         ci = centers[i]
-        for j, (length, segment) in zip(edge_neighbors, faces):
+        for j, (length, segment) in zip(edge_neighbors, faces, strict=False):
             hwva.append(length)
 
             (x1, y1) = segment.coords[0]
@@ -134,7 +134,7 @@ def build_disu_connectivity(
             row_js = ja[pos:pos + k]
             row_c = cl12[pos:pos + k]
             row_h = hwva[pos:pos + k]
-            for j, c, h in zip(row_js[1:], row_c[1:], row_h[1:]):
+            for j, c, h in zip(row_js[1:], row_c[1:], row_h[1:], strict=False):
                 key = (min(i, int(j)), max(i, int(j)))
                 if key in edge_map:
                     c0, h0 = edge_map[key]

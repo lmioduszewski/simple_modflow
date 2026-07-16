@@ -277,7 +277,7 @@ def sample_raster_cells_crossed_by_lines(
 
             # distance along line: project pixel centers onto line
             dists = np.array(
-                [line.project(Point(x, y)) for x, y in zip(xs, ys)],
+                [line.project(Point(x, y)) for x, y in zip(xs, ys, strict=False)],
                 dtype=float,
             )
 

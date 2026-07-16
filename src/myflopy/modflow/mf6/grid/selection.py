@@ -105,7 +105,7 @@ def get_model_boundary_polygons(gdf_vor_polys) -> dict:
         if convex_hull_boundary.dwithin(polygon, 0.01):
             boundary_polygons.append(polygon)
             boundary_polygons_idx.append(idx)
-    return dict(zip(boundary_polygons_idx, boundary_polygons))
+    return dict(zip(boundary_polygons_idx, boundary_polygons, strict=False))
 
 
 def get_grid_edge_cells(vor, idomain: list = None, idomain_path: Path = None, include_interiors: bool = True) -> list:

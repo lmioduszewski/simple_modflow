@@ -141,7 +141,7 @@ class Budget:
             name_field: str = 'name',
             times = None,
             multiplier = 24 * 60 * 60,
-            y_range = [0, 4]
+            y_range = None
     ):
         """Aggregate package budget flows by observation polygon.
 

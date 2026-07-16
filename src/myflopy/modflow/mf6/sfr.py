@@ -578,7 +578,7 @@ class SFRBuilder:
         upstream: dict[int, list[int]] = {rno: [] for rno in self.reaches.index}
         downstream: dict[int, list[int]] = {rno: [] for rno in self.reaches.index}
         for reaches in self.stream_reaches.values():
-            for source, receiver in zip(reaches, reaches[1:]):
+            for source, receiver in zip(reaches, reaches[1:], strict=False):
                 downstream[source].append(receiver)
                 upstream[receiver].append(source)
         for source, receiver in self.resolved_connections:
@@ -616,7 +616,7 @@ class SFRBuilder:
         if len(values) == self.total_nreaches:
             return values
         if len(values) == len(self.stream_ids):
-            by_stream = dict(zip(self.stream_ids, values))
+            by_stream = dict(zip(self.stream_ids, values, strict=False))
             return [by_stream[stream_id] for stream_id in self.reaches["stream_id"]]
         raise ValueError(f"{name} must contain one value per reach or stream.")
 

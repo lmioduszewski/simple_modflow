@@ -59,7 +59,7 @@ def place_pilot_points(model, *, pp_space=None, pp_points=None) -> pd.DataFrame:
         bx = np.floor((xc - xc.min()) / step).astype(int)
         by = np.floor((yc - yc.min()) / step).astype(int)
         chosen = {}
-        for cell, key in enumerate(zip(bx.tolist(), by.tolist())):
+        for cell, key in enumerate(zip(bx.tolist(), by.tolist(), strict=False)):
             # nearest cell to the net-node centre of its bin
             node = (xc.min() + (key[0] + 0.5) * step, yc.min() + (key[1] + 0.5) * step)
             d2 = (xc[cell] - node[0]) ** 2 + (yc[cell] - node[1]) ** 2

@@ -43,7 +43,7 @@ def _content_aware_hover(name_dict: dict[str, list]):
 
     names = list(name_dict)
     values = [list(name_dict[name]) for name in names]
-    custom_data = [list(row) for row in zip(*values)]
+    custom_data = [list(row) for row in zip(*values, strict=False)]
     template = []
     for index, name in enumerate(names):
         non_null = next(

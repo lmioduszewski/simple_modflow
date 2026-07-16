@@ -54,7 +54,7 @@ def coerce_values_by_cell(
     if isinstance(values, list):
         if len(values) != len(cell_list):
             raise ValueError(f"{name} list length must equal number of cells")
-        return dict(zip(cell_list, values))
+        return dict(zip(cell_list, values, strict=False))
     raise TypeError(f"{name} must be a scalar, list, or dict")
 
 

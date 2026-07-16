@@ -7,7 +7,7 @@ from scipy.interpolate import griddata
 
 
 def get_intersecting_polygons(point_shapefile, polygon_shapefile):
-    """find intersection of a point shapefile with respect to a 
+    """find intersection of a point shapefile with respect to a
     polygon shapefile. Return the intersection
 
     Args:
@@ -181,7 +181,7 @@ class Contours:
         Args:
             out_path (Path): Path for output raster. Defaults to None.
             resolution (int): Resolution of output raster. Defaults to 4.
-            epsg (int): Projection of data as an EPSG code. 
+            epsg (int): Projection of data as an EPSG code.
             Defaults to 2927 # NAD83 Harn Washington South.
         """
 
@@ -199,7 +199,7 @@ class Contours:
         interpolated_contours_path: Path = None
         ):
         """Contour class-specific method to generate a rasterized version of the
-        vector contours and then save another raster of interpolated data based on 
+        vector contours and then save another raster of interpolated data based on
         the rasterized contours, uses the griddata method from scipy.
 
         Args:
@@ -209,9 +209,9 @@ class Contours:
             interpolated_contours_path (Path, optional): Path to save interpolated raster. Default name based on the shapefile nam.
         """
 
-        if rasterized_contours_path == None:
+        if rasterized_contours_path is None:
             rasterized_contours_path = Path().cwd().joinpath(f'{self.shp_name}.tif')
-        if interpolated_contours_path == None:
+        if interpolated_contours_path is None:
             interpolated_contours_path = Path().cwd().joinpath(f'interpolated {self.shp_name}.tif')
 
         self.get_rasterized_contours(

@@ -216,7 +216,7 @@ class InterpolatedSurface:
         """The cell-centroid points as a list of ``(x, y)`` tuples (cached)."""
 
         if self._xys is None:
-            xys = list(zip(self.xs, self.ys))
+            xys = list(zip(self.xs, self.ys, strict=False))
             self._xys = xys
         return self._xys
 
@@ -524,7 +524,10 @@ def rasterize_points(
         ymin, ymax = np.nanmin(y), np.nanmax(y)
         # tiny padding to fully include edges
         pad = 1e-9
-        xmin -= pad; ymin -= pad; xmax += pad; ymax += pad
+        xmin -= pad
+        ymin -= pad
+        xmax += pad
+        ymax += pad
     else:
         xmin, ymin, xmax, ymax = bounds
 

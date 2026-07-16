@@ -46,7 +46,7 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     except:
         layer = False
         if layer_num == 0:
-            raise ValueError('Could not read gpkg file')
+            raise ValueError('Could not read gpkg file') from None
 
     print(f'Imported {num_features} features from {gpkg_path}')
     gdf = gpd.GeoDataFrame.from_records(data=layers)

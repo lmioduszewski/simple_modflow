@@ -1076,7 +1076,7 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     par = pst.parameter_data
     par.loc[par.index[par["pargp"] == "k"], "parval1"] = 2.0
     par.loc[par.index[par["pargp"] == "recharge"], "parval1"] = 0.5
-    for tpl, inp in zip(pst.template_files, pst.input_files):
+    for tpl, inp in zip(pst.template_files, pst.input_files, strict=False):
         write_to_template(par["parval1"], str(template / tpl), str(template / inp))
     subprocess.run(
         [sys.executable, "forward_run.py"],

@@ -927,7 +927,7 @@ def export_head_layer_mosaic_slider_html(
         axes = np.atleast_1d(axes).reshape(-1)
         mosaic_style = replace(style, show_colorbar=False)
         images = []
-        for ax, layer in zip(axes, layers):
+        for ax, layer in zip(axes, layers, strict=False):
             plot_model_head_map(
                 model,
                 data,

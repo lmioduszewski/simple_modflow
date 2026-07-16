@@ -509,11 +509,11 @@ class ParticleTrackingInput:
             for value in particle_data[self.particle_field_map["CELLID_ATTR"]].tolist()
         ]
         geometry_cells = self._aligned_cells_from_series(particle_data, self.model.vor.get_vor_cells_as_series(particle_data))
-        start_cells = [declared if declared is not None else geometry for declared, geometry in zip(declared_cells, geometry_cells)]
+        start_cells = [declared if declared is not None else geometry for declared, geometry in zip(declared_cells, geometry_cells, strict=False)]
 
         mismatch_count = sum(
             declared is not None and geometry is not None and declared != geometry
-            for declared, geometry in zip(declared_cells, geometry_cells)
+            for declared, geometry in zip(declared_cells, geometry_cells, strict=False)
         )
         boundary_cells = self.collect_boundary_cell_sets()
         inactive_cells = self.collect_inactive_cells()
@@ -730,8 +730,7 @@ class ParticleTrackingInput:
         run = subprocess.run(
             cmd,
             cwd=self.output_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 
@@ -777,8 +776,7 @@ class ParticleTrackingInput:
         result = subprocess.run(
             cmd,
             cwd=self.output_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
         if result.returncode != 0:
@@ -867,8 +865,7 @@ class ParticleTrackingInput:
         result = subprocess.run(
             cmd,
             cwd=self.output_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
         if result.returncode != 0:

@@ -467,7 +467,7 @@ class IesResults:
 
             with sns.axes_style("whitegrid"):
                 fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
-            for ax, group in zip(axes[:, 0], chosen):
+            for ax, group in zip(axes[:, 0], chosen, strict=False):
                 group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
                 names = group_obs.index.tolist()
                 times = group_obs["_time"].to_numpy()
@@ -919,7 +919,7 @@ class IesResults:
 
             with sns.axes_style("whitegrid"):
                 fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
-            for ax, group in zip(axes[:, 0], chosen):
+            for ax, group in zip(axes[:, 0], chosen, strict=False):
                 names, times, measured, flags = _group_data(group)
                 for real in prior.index:
                     ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)

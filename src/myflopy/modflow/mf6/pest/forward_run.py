@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
@@ -33,7 +31,7 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, k
     cells = pd.read_csv(cells_meta_csv)
     points["pv"] = points["parnme"].astype(str).map(values)
     if points["pv"].isna().any():
-        raise ValueError("Missing pilot-point values in %r." % parameter_csv)
+        raise ValueError(f"Missing pilot-point values in {parameter_csv!r}.")
     px = points["x"].to_numpy(dtype=float)
     py = points["y"].to_numpy(dtype=float)
     pv = points["pv"].to_numpy(dtype=float)
@@ -125,7 +123,7 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     }
     kind_key = str(kind).strip().lower()
     if kind_key not in builders:
-        raise ValueError("Unsupported named-series observation kind %r." % (kind,))
+        raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
     targets = builders[kind_key](locations=locations, values=None)
     targets.simulated_series(model).to_csv(output_csv, index=False)
 
