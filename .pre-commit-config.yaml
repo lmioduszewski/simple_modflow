@@ -1,0 +1,9 @@
+# Pre-commit hooks (implementation plan 2.3). Install once with:
+#   pip install pre-commit && pre-commit install
+# After that, every commit strips notebook outputs automatically.
+# No pre-commit? scripts/strip_notebooks.py does the same by hand.
+repos:
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
