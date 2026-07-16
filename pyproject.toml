@@ -121,11 +121,7 @@ ignore = ["E501", "F841", "E722", "B008", "B018", "B023"]
 "src/myflopy/__init__.py" = ["F401", "E402"]
 "src/myflopy/modflow/mf6/__init__.py" = ["F401", "E402"]
 # Phase-2 attic candidates (implementation plan 2.1) — not worth fixing.
-"src/myflopy/modflow/mf6/mf3dplots.py" = ["F821"]
 "src/myflopy/modflow/mf6/mf2Dplots.py" = ["F403", "F405"]
-"src/myflopy/modflow/calcs/cj_approximation.py" = ["F821"]
-"src/myflopy/modflow/mf6/grasspyV.py" = ["F821", "E402"]
-"src/myflopy/modflow/gwt/gwt.py" = ["F821", "E402"]
 # Tests set MPLBACKEND/sys.path before imports by design.
 "tests/*" = ["E402"]
 

@@ -610,17 +610,3 @@ def rasterize_points(
     else:
         return Z, transform
 
-
-if __name__ == '__main__':
-    import pickle
-    model_path_v7b_et = Path(r"C:\Users\lukem\mf6\cum7bET\cum7bET.model")
-    with open(model_path_v7b_et, 'rb') as file:
-        model7b: SimulationBase = pickle.load(file)
-
-    surf = InterpolatedSurface(
-        model=model7b,
-        per=75,
-        interpolator='linearND',
-        resolution=200
-    )
-    surf.plot(clip=True)

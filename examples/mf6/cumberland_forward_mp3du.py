@@ -23,10 +23,10 @@ from myflopy.modflow.mp3du.particles import ParticleTrackingInput
 
 @dataclass(frozen=True)
 class CumberlandForwardPaths:
-    model_pickle: Path = Path(r"C:\Users\lukem\mf6\cum9a_algo4\cum9a_algo4.model")
-    edge_particles: Path = Path(r"C:\Users\lukem\mf6\Cumberland general\particles\edge_particles.shp")
-    deep_lake_particles: Path = Path(r"C:\Users\lukem\mf6\Cumberland general\particles\deep_lake_particles.gpkg")
-    backward_particles: Path = Path(r"C:\Users\lukem\mf6\Cumberland general\particles\cumb_backward_particles.gpkg")
+    model_pickle: Path = Path.home() / "mf6/cum9a_algo4/cum9a_algo4.model"
+    edge_particles: Path = Path.home() / "mf6/Cumberland general/particles/edge_particles.shp"
+    deep_lake_particles: Path = Path.home() / "mf6/Cumberland general/particles/deep_lake_particles.gpkg"
+    backward_particles: Path = Path.home() / "mf6/Cumberland general/particles/cumb_backward_particles.gpkg"
 
 
 def parse_args() -> argparse.Namespace:

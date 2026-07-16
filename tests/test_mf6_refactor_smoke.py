@@ -47,8 +47,7 @@ from myflopy import (
 from myflopy import (
     simple_model_spec as package_simple_model_spec,
 )
-from myflopy.modflow import geotiff_to_contours, get_iheads  # noqa: E402
-from myflopy.modflow.gwt.gwt import GWT  # noqa: E402
+from myflopy.modflow import geotiff_to_contours  # noqa: E402
 from myflopy.modflow.mf6 import (  # noqa: E402
     DRN as PackageDRN,
 )
@@ -616,7 +615,6 @@ def test_imports_and_custom_figs_are_available():
     assert RCHFromVector is not None
     assert LakeTableBuilder is not None
     assert SFRBuilder is not None
-    assert GWT is not None
     assert ParticleTrackingInput is not None
     assert PackageSimulationBase is SimulationBase
     assert PackageSimpleModelConfig is SimpleModelConfig
@@ -640,7 +638,6 @@ def test_imports_and_custom_figs_are_available():
     assert PackageGHB is GHB
     assert read_gpkg is not None
     assert read_shp_gpkg is not None
-    assert get_iheads is not None
     assert geotiff_to_contours is not None
     assert myflopy.validate_surface_water_configuration is not None
 
@@ -2846,3 +2843,36 @@ def test_geopackage_source_is_the_public_vector_builder_api():
         "KFromVector",
     ):
         assert not hasattr(myflopy, legacy_name)
+
+
+def test_retired_modules_stay_retired():
+    """Nothing may import the Phase-2 retired modules (implementation plan 2.1).
+
+    They live in attic/ (or are deleted); a reappearing import means someone
+    resurrected one instead of building the real replacement (e.g. the real
+    transport home is the package-first GWT work, not modflow/gwt).
+    """
+
+    retired = (
+        "myflopy.modflow.gwt",
+        "myflopy.modflow.utils.iheads",
+        "myflopy.modflow.utils.shiny_app",
+        "myflopy.modflow.mf6.pyqgis",
+        "myflopy.modflow.mf6.grasspyV",
+        "myflopy.modflow.utils.openET",
+        "myflopy.modflow.mf6.mf3dplots",
+        "myflopy.modflow.mf6.recovery_analysis",
+        "myflopy.modflow.calcs.cj_approximation",
+        "myflopy.modflow.utils.gdal",
+        "myflopy.modflow.mf6.gis_functions",
+    )
+    offenders = []
+    for base in (SRC / "myflopy", ROOT / "tests", ROOT / "examples", ROOT / "scripts"):
+        if not base.exists():
+            continue
+        for path in base.rglob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for name in retired:
+                if f"import {name}" in text or f"from {name}" in text:
+                    offenders.append(f"{path}: {name}")
+    assert not offenders, f"retired-module imports found: {offenders}"

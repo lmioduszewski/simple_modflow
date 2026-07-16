@@ -338,17 +338,3 @@ class RasterData:
 
         return pd.Series(values)
 
-
-if __name__ == '__main__':
-
-    prism_raster = Path(r"C:\Users\lukem\mf6\Cumberland general\PRISM_ppt_30yr_normal_800mM4_annual_bil\PRISM_ppt_30yr_normal_annual_inches_EPSG_2926.tif")
-    weather_stn = Path(r"C:\Users\lukem\mf6\Cumberland general\landsburg.gpkg")
-    vor_path_v2c = Path(r"C:\Users\lukem\mf6\Cumberland general\cumberland_v2c.vor")
-
-    with open(vor_path_v2c, 'rb') as file:
-        vor: Vor = pickle.load(file)
-    point = gpd.read_file(weather_stn).geometry.iloc[0]
-
-    rs = RasterData(prism_raster, vor=vor)
-    print(rs.sample_raster())
-

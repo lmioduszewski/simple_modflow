@@ -24,7 +24,7 @@ Custom per-plot themes are fine -- keep them next to the plot, sourced from here
 
 Deliberate exceptions (kept on raw ``plotly.graph_objects`` by design, *not*
 ``Fig``): **3-D scenes** (layer/surface ``surface_trace`` plots in ``layers``,
-``surfaces``, ``mf3dplots``), **mapbox maps** (the node-id / cell debug plots in
+``surfaces``), **mapbox maps** (the node-id / cell debug plots in
 ``grid/plotting``; the model-data choropleth already runs through ``Fig`` via the
 ``Choro`` class), and **animation re-wraps** (``interactive_plotting`` rebuilds a
 figure from existing data + frames). The 2-D house template (paper-anchored

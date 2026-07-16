@@ -323,12 +323,3 @@ class GHB(Boundaries):
 # Preferred alias for the vector-driven general-head-boundary builder API.
 GHBFromVector = GHB
 
-
-if __name__ == '__main__':
-    model_path_v4b_lowK = Path(r"C:\Users\lukem\mf6\cumb_v4b\cumb_v4b.model")
-    with open(model_path_v4b_lowK, 'rb') as file:
-        model = pickle.load(file)
-    ghb_path = Path(r"C:\Users\lukem\mf6\Cumberland general\Boundaries\ghb.gpkg")
-    ghb = GHB(shp_gpkg=ghb_path, model=model, crs=2926)
-    print(ghb.get_from_poly()[0])
-
