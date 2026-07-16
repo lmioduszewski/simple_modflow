@@ -38,7 +38,9 @@ jobs:
           if command -v cygpath >/dev/null 2>&1; then bindir=$(cygpath -w "$bindir"); fi
           echo "$bindir" >> "$GITHUB_PATH"
       - name: Fast test suite
-        run: python -m pytest -m "not slow" -q
+        # -ra --tb=line: end the log with a compact failure summary so a
+        # glance at the tail explains a red job.
+        run: python -m pytest -m "not slow" -q -ra --tb=line
 
   lint:
     name: ruff + scoped mypy
