@@ -1,0 +1,35 @@
+name: slow lane
+
+# The slow suite shells out to MF6/Triangle binaries; it never runs on
+# push/PR (that is the fast lane's `not slow` contract). This scheduled lane
+# is the only automated run of the slow e2e tests Phases 5-6 keep adding.
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  slow-tests:
+    name: full suite with MF6 binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package + extras exercised by slow tests
+        run: python -m pip install -e .[dev,pest,viz,viz3d]
+      - name: Install MODFLOW executables (mf6, triangle, ...)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          python -m flopy.utils.get_modflow "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install PEST++ binaries
+        run: |
+          curl -sL -o /tmp/pestpp.tar.gz \
+            https://github.com/usgs/pestpp/releases/download/5.2.16/pestpp-5.2.16-linux.tar.gz
+          tar -xzf /tmp/pestpp.tar.gz -C /tmp
+          cp /tmp/bin/pestpp-* "$HOME/.local/bin/"
+      - name: Full test suite
+        run: python -m pytest -q
