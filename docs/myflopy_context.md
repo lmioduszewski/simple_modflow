@@ -139,10 +139,13 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 
 ## The genuinely short gap list (verify each before building)
 
-> The sequenced roadmap for all of these is `docs/implementation_plan_2026-07.md` (rev. 3).
+> The sequenced roadmap for all of these is `docs/implementation_plan_2026-07.md` (rev. 4,
+> 2026-07-14 — every claim re-verified against the code; read its "Resolved decisions"
+> D8–D11 before starting).
 
-1. **RIV / EVT / MAW / HFB / CSUB packages** — zero support in either layer (plan §5.1–5.4;
-   RIV and EVT first). Also `mf.dis`/`mf.disu` passthroughs (§5.5).
+1. **RIV / EVT / MAW / HFB packages** — zero support in either layer (plan §5.1–5.4;
+   RIV and EVT first; simple list BCs also get a real `.flopy` escape hatch per plan D8).
+   CSUB is an explicit non-goal (plan §5.9). Also `mf.dis`/`mf.disu` passthroughs (§5.5).
 2. **GWT/GWE integration** — package helpers (§5.3: `mf.adv/dsp/mst/ssm/cnc/...`,
    `mf.est/cnd/ctp/...`, model-type dispatch for `mf.ic/oc/disv`) AND the results tier
    (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,

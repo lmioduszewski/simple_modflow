@@ -1,19 +1,25 @@
 # myflopy Consolidation & Completion Plan
 
-**Date:** 2026-07-06 (rev. 3 — adds Phase 6: full GWT / GWE / PRT / PEST-IES integration
-into the preferred API incl. visualization + hover; folds in work completed 2026-07-06)
-**Source:** Full structural/code review of `src/myflopy` on branch `myflopy` (follow-up to
-`docs/refactor_review_report.md`, 2026-06-12). Every finding below was verified against the
-code; line numbers are anchors and WILL drift — always locate by symbol name, not line
-number.
-**Audience:** an implementing agent (e.g. Opus 4.8) working phase-by-phase. Read the whole
+**Date:** 2026-07-14 (rev. 4 — full adversarial re-verification of every rev-3 claim
+against the committed code. Reconciles the plan with the now-committed baseline (myflopy
+`985eb9a`/`76c5f9f`/`962654d`, figs `bb1526b`); corrects claims that were wrong or had
+drifted (two Phase 2 "orphan" rows, the `.flopy` pattern, `__compatibility__`, the
+Phase 8 import graph, Appendix B numbers); reconciles the effort math and the 4.4 layer
+map; adds the Linux environment, test-runtime budget, and release/tagging story; locks
+new decisions D8–D11.)
+**Prior:** rev. 3, 2026-07-06 (added Phase 6). **Source:** full structural/code review
+of `src/myflopy` on branch `myflopy` (follow-up to `docs/refactor_review_report.md`,
+2026-06-12), re-verified claim-by-claim on 2026-07-14. Line numbers are anchors and
+WILL drift — always locate by symbol name, not line number.
+**Audience:** an implementing agent working phase-by-phase. Read the whole
 "Ground rules" section before touching anything.
 
 ---
 
-## Completed since rev. 2 (2026-07-06, on branch `myflopy`, uncommitted) — do NOT redo
+## Completed since rev. 2 — COMMITTED as `985eb9a` + `76c5f9f` + `962654d` (2026-07-07) — do NOT redo
 
-These subsystems now exist and are the *patterns to extend* in later phases:
+These subsystems exist, are committed, and are the *patterns to extend* in later phases.
+Both repos are clean as of rev. 4 (2026-07-14); nothing below is in-flight anymore:
 
 1. **Sectioned hover system** — `src/myflopy/modflow/utils/datatypes/hover.py`:
    `HoverSpec` / `HoverStyle` / `Fields` / `LayerTable` / `HoverContext`, plus factories
@@ -44,11 +50,16 @@ These subsystems now exist and are the *patterns to extend* in later phases:
    injects a `plotly_relayout` JS handler so panels pan/zoom together on
    `show()`/`write_html()` (not notebook-inline). `sync_views=False` = same shared start
    view, independent interaction.
-4. **figs backend changes (in the SEPARATE figs repo, `_fig.py`, UNCOMMITTED):**
-   `Fig.add_post_script(js)` + threading into `show()`/`write_html()`; `write_html`
-   signature fixed to plotly-compatible `write_html(self, file=None, config=None, ...)`
-   (was mis-binding the path to `config`). **Phase 1.1's vendored snapshot must be taken
-   AFTER these are committed in figs** — they are load-bearing for map sync.
+4. **figs backend changes — COMMITTED in the separate figs repo as `bb1526b`
+   (2026-07-07):** `Fig.add_post_script(js)` + threading into `show()`/`write_html()`;
+   `write_html` signature fixed to plotly-compatible
+   `write_html(self, file=None, config=None, ...)`; `_repr_mimebundle_` config merge;
+   `add_logo=False` default. All four of Phase 1.1's snapshot preconditions are
+   satisfied — **the vendoring gate is OPEN**. NOTE: the same commit restructured figs
+   into `plotly/`/`mpl/`/`apps/` subpackages under `src/figs/`; Phase 1.1's module
+   trace must be done against figs HEAD, not rev-3's description. Linux location of
+   the figs checkout: `/home/lukem/python/Figures%20-%20Templates` (editable-installed
+   in the `gw` env).
 5. The public diff surface is the ONE **`diff()` verb** (`group.diff().hds.map("b")`,
    `group.diff().packages.ghb.results.q.map("b")`); `compare_map` is internal plumbing —
    never document, teach, or test it directly.
@@ -69,6 +80,10 @@ ambiguity arises that this plan does not cover, stop and ask the user — do not
 | D5 | Plotting consolidation | **Do it**, as its own late phase (Phase 8), after the god-module splits (Phase 4), API completion (Phases 5–6), and the `_flopy_compat` boundary (Phase 7.1). Details in Phase 8. |
 | D6 | Hover defaults | DONE (see "Completed"). Heads default `layers="active+strip"`; sectioned/styled hover is the default everywhere; `custom_hover` stays as the raw escape hatch. |
 | D7 | Colorscales | DONE (see "Completed"). Diverging only for signed q-like + diff maps; `'earth'` for everything else. New surfaces added by this plan MUST follow this policy. |
+| D8 | `.flopy` on simple list BCs | **Add a real `.flopy(...)` escape hatch** to `mf.chd/ghb/drn/wel` (they never had one — only rch/uzf/sfr/lak/mvr do, though the chd/drn/wel docstrings advertise it) and ship `mf.riv`/`mf.evt` with all three entry points. Details in Phase 5.0. |
+| D9 | GWT test fixture | **`transport=True` option on the small canonical config** (one-model-everywhere), NOT a promotion of example 03 into a second model family. GWE mirrors it in 6.2. Details in Phase 6.1.6. |
+| D10 | `iheads.py` + `modflow/gwt/` removal | **Hard-delete now** (Phase 2.1) including their lazy-export map entries and smoke-test imports — they are public exports, not orphans. Justified pre-1.0 with zero tagged releases; note in the changelog. |
+| D11 | Release/tagging | **Tag `v0.1.0` at the Phase 0 baseline commit**, then bump+tag at milestones (`v0.2.0` after Phase 1, `v0.3.0` after Phases 4–5). This starts 3.1's "≥ 2 tagged releases" deprecation clock and anchors the CI wheel build. |
 
 ---
 
@@ -76,10 +91,17 @@ ambiguity arises that this plan does not cover, stop and ask the user — do not
 
 Non-negotiable project conventions. Violating them is a review failure even if tests pass.
 
-1. **Environment.** mf-env venv: `C:\Users\lukem\Python\mf-env\.venv\Scripts\python.exe`
-   with `PYTHONPATH=src`. Fast loop: `pytest -m "not slow"` (~60 s, 540 tests as of
-   2026-07-06 evening). Full suite: ~14 min. Fast suite after every change-set; FULL
-   suite at the end of each phase.
+1. **Environment (per-machine).** Windows: mf-env venv
+   `C:\Users\lukem\Python\mf-env\.venv\Scripts\python.exe` with `PYTHONPATH=src`.
+   Linux (the repo's current home, `/home/lukem/python/simple_modflow`): the only
+   provisioned env is `/home/lukem/python/envs/gw` (Python 3.14, flopy 3.10, figs
+   editable) — **it lacks pytest/ruff/nbstripout; install them into `gw` before any
+   phase** (Phase 0 step 2). FOOTGUN: `gw` also carries a NON-editable `myflopy 0.1.0`
+   in site-packages that silently shadows the repo — always run with `PYTHONPATH=src`
+   and sanity-check `myflopy.__file__` resolves into the repo. Fast loop:
+   `pytest -m "not slow"` (~60 s, ~540 tests — conftest auto-marks ~47 slow). Full
+   suite: ~14 min. Fast suite after every change-set; FULL suite at the end of each
+   phase.
 2. **Tests are mandatory.** Real, runnable pytest tests covering behavior (not smoke
    tests) for every capability/refactor; run pytest to prove they pass before declaring
    done. Refactors need existing tests green AND a new test pinning the seam.
@@ -88,17 +110,22 @@ Non-negotiable project conventions. Violating them is a review failure even if t
    tables in `myflopy/__init__.py` and `modflow/mf6/__init__.py` must keep resolving.
 4. **Grep both API layers before building.** Package-first (`package_api.py`, `specs.py`,
    `advanced.py`, `builders.py`, `geopackage.py`) sits on the OO engine
-   (`modflow/mf6/*.py` + `simulation/`). `docs/myflopy_context.md` is the capability map —
-   update it (and `CLAUDE.md`) whenever a phase changes what exists.
+   (`modflow/mf6/*.py` + `simulation/`). **CANONICAL RULE (user, 2026-07-14): every
+   change-set updates ALL documentation artifacts in the same pass** — every affected
+   guide under `docs/` (including the capability map `docs/myflopy_context.md`),
+   `CLAUDE.md`, tests, and any notebook/example demonstrating the touched surface.
+   A missing doc/test/notebook update means the task is incomplete.
 5. **Zero-based stress periods** in every myflopy-facing API.
 6. **ASCII-safe console output** (Windows console; see commit `e61b973`).
 7. **Do not reintroduce retired APIs** (legacy PEST `add_parameter`/`build_pst` path,
    retired PEST demo models).
 8. **One phase per branch/PR.** A phase is done when all its acceptance criteria pass
    plus a full-suite run.
-9. **Check the working tree first.** As of rev. 3 the tree carries the completed-but-
-   uncommitted hover/colorscale/map-sync work listed above PLUS the earlier in-flight
-   diff/group work. Land it with the user before starting any phase.
+9. **Check the working tree first.** As of rev. 4 BOTH repos are clean: the rev-3
+   in-flight work landed as myflopy `985eb9a`/`76c5f9f`/`962654d` and figs `bb1526b`
+   (all 2026-07-07). Phase 0 reduces to environment provisioning, baseline recording,
+   and tagging (D11). Still verify `git status` in both repos before starting any
+   phase.
 10. **Verify before acting.** Re-verify every claim (orphan file, symbol, line) with grep
     before deleting or renaming — the codebase moves fast.
 11. **No history rewrites, no force pushes, ever** (D3).
@@ -111,43 +138,55 @@ Non-negotiable project conventions. Violating them is a review failure even if t
 
 ---
 
-## Phase 0 — Baseline (prerequisite, ~0.5 day)
+## Phase 0 — Baseline (prerequisite, ~0.5 day; step 1 ALREADY DONE)
 
 **Steps:**
-1. Land or shelve ALL in-flight work with the user: the diff/group feature files
-   (`model_diff.py`, `model_group.py`, `model_results_diff.py`, `run_model.py`,
-   `package_*.py`, `simulation/*.py`, `headsplus.py`, `xsections.py`, their tests) AND
-   the rev-3 completed work (hover.py + wiring, colorscale policy, viz.py map sync,
-   `test_hover_*.py`, `test_colorscale_policy.py`, `test_view_grammar_composers.py`
-   updates). Commit the **figs repo** changes (`_fig.py`: `add_post_script`,
-   `write_html` fix) in figs itself.
-2. Record the baseline fast/full suite results next to the PR.
-3. Note the starting commit.
+1. ~~Land or shelve ALL in-flight work~~ **DONE 2026-07-07**: the diff/group feature
+   files and the rev-3 hover/colorscale/map-sync work landed as myflopy `985eb9a`
+   (+ docs `76c5f9f`, docstrings `962654d`); the figs changes — including the
+   `_repr_mimebundle_` merge and `add_logo=False` default that rev-3's Phase 0 text
+   omitted from its figs change-set — landed as figs `bb1526b`. Verify both repos are
+   still clean.
+2. Provision the Linux environment (ground rule 1): install pytest, ruff, nbstripout
+   into `/home/lukem/python/envs/gw`; confirm `PYTHONPATH=src` resolves the repo (not
+   the shadowing site-packages copy).
+3. Record the baseline fast/full suite results (and the full-suite wall time — the
+   test-runtime budget in "Sequencing" tripwires at 2× this number) next to the PR.
+4. Note the starting commit and **tag it `v0.1.0`** (D11 — starts the deprecation
+   clock; an annotated tag on the existing commit, no history rewrite).
 
-**Acceptance:** clean `git status` in BOTH repos; recorded baseline test results.
+**Acceptance:** clean `git status` in BOTH repos; a working local test loop;
+recorded baseline test results + wall time; `v0.1.0` tag exists.
 
 ---
 
-## Phase 1 — Distribution blockers (highest priority, ~1–2 days)
+## Phase 1 — Distribution blockers (highest priority, ~3–6 days)
 
 ### 1.1 Vendor `figs` with external-first import (D1)
 
-**Problem (verified):** `src/myflopy/viz.py` hard-imports
+**Problem (re-verified 2026-07-14):** `src/myflopy/viz.py:39-40` hard-imports
 `from figs import Fig, Subplot, Template, create_hover` and
 `from figs.mpl import REPORT, Theme, get_mplfig`. `figs` resolves to the user's local
-project (`C:\Users\lukem\Python\Projects\figs`, package root `src/figs/`) and is not
+editable project (Linux: `/home/lukem/python/Figures%20-%20Templates`; Windows:
+`C:\Users\lukem\Python\Projects\figs`; package root `src/figs/` on both) and is not
 declared in `pyproject.toml`, not on PyPI. 21+ modules import `myflopy.viz`, so a pip
-install of myflopy is broken for anyone but the author.
+install of myflopy is broken for anyone but the author. Since rev. 3, figs `bb1526b`
+restructured the package into `plotly/`/`mpl/`/`apps/` subpackages — trace against
+figs HEAD.
 
 **Implementation:**
 1. **Snapshot the source** into `src/myflopy/_vendor/figs/` — ONLY the modules providing
-   the symbols above plus their figs-internal deps, traced transitively; rewrite absolute
-   `figs.` imports to relative so the subtree is self-contained. **Snapshot only after
-   the figs repo has committed** `add_post_script`, the `write_html(file=None, ...)`
-   signature fix, `_repr_mimebundle_` config merge, and `add_logo=False` default — all
-   load-bearing for myflopy's map sync + inline scroll-zoom. Add
-   `_vendor/__init__.py` and `_vendor/README.md` ("Vendored snapshot of figs, synced
-   <date>. Do not edit by hand; run `scripts/sync_vendored_figs.py`.").
+   the symbols above plus their figs-internal deps, traced transitively **against figs
+   HEAD** (the `bb1526b` restructure makes `figs.mpl` a subpackage sitting next to
+   `plotly/`/`apps/` modules the trace must exclude); rewrite absolute `figs.` imports
+   to relative so the subtree is self-contained. The snapshot gate is OPEN: all four
+   preconditions (`add_post_script`, the `write_html(file=None, ...)` signature fix,
+   `_repr_mimebundle_` config merge, `add_logo=False` default — all load-bearing for
+   myflopy's map sync + inline scroll-zoom) are committed in figs `bb1526b`. Add
+   `_vendor/__init__.py` and `_vendor/README.md` ("Vendored snapshot of figs @
+   <figs-commit-hash>, synced <date>. Do not edit by hand; run
+   `scripts/sync_vendored_figs.py`.") — **record the figs commit hash** so drift
+   between the live and vendored copies is diagnosable.
 2. **External-first import in `viz.py`:**
    ```python
    try:
@@ -160,7 +199,10 @@ install of myflopy is broken for anyone but the author.
    `viz.py` stays the ONLY runtime importer of figs (TYPE_CHECKING imports exempt);
    enforce with an AST/grep test.
 3. **Sync script** `scripts/sync_vendored_figs.py`: copies the traced module set,
-   rewrites imports, stamps the sync date. Idempotent.
+   rewrites imports, stamps the sync date + figs commit hash. Idempotent. The figs
+   checkout path is per-machine — take it from an env var or CLI arg, do NOT hardcode
+   (Linux: `/home/lukem/python/Figures%20-%20Templates`, note the percent-encoded
+   directory name).
 4. **Packaging:** verify `myflopy._vendor.figs` lands in the wheel; add any figs data
    files to package-data if they exist.
 
@@ -174,23 +216,37 @@ works, `viz.Fig()` constructs, viz-touching fast tests pass.
 
 ### 1.2 Declare `matplotlib` (and audit the rest)
 
-Add `"matplotlib>=3.8"` to `[project] dependencies` (imported top-level by 10+ live
-modules, currently only transitive). Audit the rest against a fresh-venv install:
-`seaborn` (used by `viz.mpl_axes`!), `openpyxl` (xlsx reads), and document that FloPy's
-`Triangle` and the MODFLOW/PEST++ executables are runtime binaries, not pip deps.
+Add `"matplotlib>=3.8"` to `[project] dependencies` (COUNT CORRECTED rev. 4: 7 modules
+import it top-level, 13 counting lazy function-level imports — rev-3's "10+ top-level"
+overstated; the action is unchanged since it currently arrives only transitively via
+figs). Audit the rest against a fresh-venv install: `seaborn` (lazy-imported by
+`viz.mpl_axes`, `calibration.py`, and `pest/ies.py` — fails only when an mpl-backend
+plot is requested, never at import time), `openpyxl` (no direct import anywhere — it is
+pandas' implicit xlsx engine for the `pd.read_excel` calls in `recharge.py`/`ghb.py`/
+`calibration.py`, so a fresh venv fails at runtime on xlsx reads; declare it or
+document it as an extra), and document that FloPy's `Triangle` and the MODFLOW/PEST++
+executables are runtime binaries, not pip deps.
 
 **Acceptance:** fresh-venv install + import-surface smoke (1.3) green.
 
 ### 1.3 Add CI (GitHub Actions)
 
-`.github/workflows/ci.yml`: matrix ubuntu-latest + windows-latest × Python 3.10/3.12;
+`.github/workflows/ci.yml`: matrix ubuntu-latest + windows-latest × Python 3.10/3.12
+**+ 3.14** (the local dev interpreter is 3.14 — catch its breakage in CI, not locally);
 `pip install -e .[dev]` → `pytest -m "not slow" -q` → (after 1.4) `ruff check src tests`.
 Fast suite must not need MF6 binaries (that is the `slow` contract). First run will
 surface optional-dep assumptions (pyvista/trame, pymetis/h5py, pyemu) — prefer
 `pytest.importorskip` over fattening the CI install. Add the import-surface smoke step:
 `python -c "import myflopy; [getattr(myflopy, n) for n in myflopy.__all__]"`.
+Two more jobs (rev. 4): (a) a **wheel build** (`python -m build` + install the wheel in
+a clean venv + import smoke) — this is also the automated check that `_vendor` lands in
+the wheel (1.1 acceptance, previously verified by no automated step); (b) a
+**scheduled slow-lane job** (nightly or weekly, ubuntu only) that installs MF6 binaries
+(e.g. `modflow-devtools`' `get-modflow`) and runs `pytest -m slow` — without it the
+slow e2e tests Phases 5–6 keep adding are never run automatically.
 
-**Acceptance:** green CI on both OSes on a no-op PR.
+**Acceptance:** green CI on both OSes on a no-op PR; wheel job green; slow lane
+scheduled (its first green run may trail the phase).
 
 ### 1.4 Lint + (scoped) type checking
 
@@ -205,23 +261,26 @@ nothing verifying it. Add tools to the `dev` extra.
 
 ---
 
-## Phase 2 — Junk removal & repo hygiene (~1 day)
+## Phase 2 — Junk removal & repo hygiene (~2–3 days)
 
 ### 2.1 Delete/attic the orphaned modules
 
-Verified orphans (re-verify each with grep before removing):
+Re-verified 2026-07-14: 7 of the 9 rows are true orphans; **`iheads.py` and
+`modflow/gwt/` are NOT** — both are public lazy exports with smoke-test importers
+(D10 = hard-delete with the extra edit sites listed in their rows). Re-verify each
+with grep before removing:
 
 | File | Action | Notes |
 |------|--------|-------|
 | `modflow/utils/shiny_app.py` | delete | palmerpenguins Shiny demo |
 | `modflow/mf6/pyqgis.py` | delete | mutates `sys.path` with hardcoded OSGeo4W path |
-| `modflow/mf6/grasspyV.py` | attic | hardcoded `grass84.bat`; live GRASS path is `utils/contour_interp.py` — confirm |
+| `modflow/mf6/grasspyV.py` | attic | hardcoded `grass84.bat`; live GRASS path is `utils/contour_interp.py` (confirmed); ALSO update the markdown cell naming `grasspyV.SurfaceInterpFromShp` in `examples/mf6/notebooks/layer_management_workflow.ipynb` (docs-in-sync, ground rule 4) |
 | `modflow/utils/openET.py` | attic | hardcoded Cumberland paths |
-| `modflow/utils/iheads.py` | delete | superseded by `HeadsPlus` |
+| `modflow/utils/iheads.py` | delete (D10 — NOT an orphan) | public lazy export: ALSO remove the `get_iheads` map entries in `modflow/__init__.py` and `modflow/utils/__init__.py`, and the import/assert in `tests/test_mf6_refactor_smoke.py`; superseded by `HeadsPlus` (it is a thin wrapper over it) |
 | `modflow/mf6/mf3dplots.py` | attic | update the `viz.py` docstring that names it |
 | `modflow/mf6/recovery_analysis.py` | attic | orphaned |
 | `modflow/calcs/cj_approximation.py` | attic | orphaned |
-| `modflow/gwt/` (whole dir) | attic `gwt.py`, delete dir | scratch with personal paths; the REAL transport home is Phases 5.3 + 6.1 — nothing may import `myflopy.modflow.gwt` |
+| `modflow/gwt/` (whole dir) | attic `gwt.py`; delete the dir — the only remainder is an empty `__init__.py` (D10 — NOT unimported) | scratch with personal paths; ALSO remove the `"gwt"` lazy submodule map entry in `modflow/__init__.py` and the `GWT` import in `tests/test_mf6_refactor_smoke.py`; the REAL transport home is Phases 5.3 + 6.1; afterwards add a permanent check to the layout test that nothing imports `myflopy.modflow.gwt` |
 
 `prism_ppt.py` (1 importer): cascade-check. `mf2Dplots.py` (1 importer) is deferred to
 Phase 8's fold — do not touch here.
@@ -230,15 +289,25 @@ Phase 8's fold — do not touch here.
 
 Sites: `ghb.py`, `utils/raster.py`, `utils/prism_ppt.py`, `utils/surfaces.py`. Remove the
 `C:\Users\lukem\...` blocks; convert anything worth keeping into a test or `examples/`
-script. **Acceptance:** `grep -rn "lukem" src/myflopy` empty.
+script. The other 7 `lukem` lines in `src/myflopy` live in files 2.1 already
+deletes/attics (`openET.py`, `grasspyV.py`, `gwt/gwt.py`) — the acceptance grep passes
+only if 2.1 lands too. Personal paths ALSO exist outside `src/` (rev. 4):
+`examples/mf6/archive/cumberland_transient_observed_pest_first_slice.py`,
+`examples/mf6/notebooks/canonical_model_template.ipynb` (loads `starting_heads.npy`
+from a hardcoded `C:\Users\lukem` path), and two archive notebooks — fix or archive
+these in the same pass. **Acceptance:** `grep -rn "lukem" src/myflopy` empty AND
+`git grep -l "Users.lukem" -- examples` empty outside `examples/**/archive/`.
 
 ### 2.3 Strip all notebook outputs from git (D2)
 
 `nbstripout` in dev extra + `.pre-commit-config.yaml` (+ fallback
 `scripts/strip_notebooks.py`); one-time strip-only commit over ALL tracked notebooks
 (incl. `notebooks/archive/`); gitignored `docs/_rendered/` + `scripts/render_notebooks.py`
-for browsable executed copies; evaluate `starting_heads.csv` (604 KB fixture?); gitignore
-`scripts/scratch*`.
+for browsable executed copies; DELETE `examples/mf6/notebooks/starting_heads.csv`
+(602 KB — re-verified 2026-07-14: nothing in the repo references it; the related
+notebook loads `starting_heads.npy` from a personal path instead, see 2.2); gitignore
+`scripts/scratch*`. Note: stripping shrinks the CHECKOUT (~31.5 MB of tracked
+notebooks), not the ~170 MiB `.git` history (D3 keeps that out of scope).
 
 **Acceptance:** `nbstripout --dry-run` clean over tracked notebooks; none over ~100 KB.
 
@@ -246,9 +315,11 @@ for browsable executed copies; evaluate `starting_heads.csv` (604 KB fixture?); 
 
 `src/myflopy/modflow/mp3du/*.exe` (10.7 MB) → untracked `tools/mp3du/` (tracked README
 tells the user what goes there). Resolution order in `particles.py`: explicit arg →
-`MYFLOPY_MP3DU_DIR` env var → repo `tools/mp3du/` → deprecated `_MODULE_DIR` fallback
-(warns via 3.1). gitignore `src/**/*.exe`. Unit-test the resolution order (monkeypatched
-env, tmp dirs).
+`MYFLOPY_MP3DU_DIR` env var → repo `tools/mp3du/` → deprecated `_MODULE_DIR` fallback.
+SEQUENCING FIX (rev. 4): the fallback's deprecation warning depends on 3.1, which lands
+AFTER Phase 2 — use a plain `warnings.warn(..., DeprecationWarning)` here and convert
+it to the 3.1 helper when 3.1 lands. gitignore `src/**/*.exe`. Unit-test the resolution
+order (monkeypatched env, tmp dirs).
 
 ---
 
@@ -258,26 +329,36 @@ env, tmp dirs).
 
 `src/myflopy/_deprecation.py` with `warn_deprecated(old, new, *, since)` and
 `deprecated_module_getattr(mapping, module)`; `docs/deprecation_policy.md` (short):
-every compatibility name warns with its replacement; names live ≥ 2 tagged releases;
-`__compatibility__` in `myflopy/__init__.py` is authoritative. Tests: `pytest.warns`
-per alias; fast suite passes with `-W error::DeprecationWarning` filtered to `myflopy.*`.
+every compatibility name warns with its replacement; names live ≥ 2 tagged releases
+(the clock is real now — D11 tags `v0.1.0` at Phase 0 and bumps at milestones);
+`__compatibility__` in `myflopy/__init__.py` is authoritative. CORRECTIONS (rev. 4):
+`__compatibility__` ALREADY EXISTS (since 2026-06-16) as an unwarned export-tier
+marker over `_SECOND_TIER_EXPORTS` (21 names) — 3.1 REPURPOSES it as the warned-alias
+registry rather than introducing it; and `project/model_group.py` already carries a
+private `_warn_deprecated` (used 6× for `ModelGroup.rch/chd/drn/ghb/wel/uzf`) — absorb
+it into the new module, do not leave two mechanisms. Tests: `pytest.warns` per alias;
+fast suite passes with `-W error::DeprecationWarning` filtered to `myflopy.*`.
 
 ### 3.2 Resolve the GHB/DRN naming collision + FromVector consistency
 
 Rename so `*FromVector` is the real class name in all four modules (`ghb.py` GHB→
 GHBFromVector, `drn.py` DRN→DRNFromVector; chd/kflow already correct); keep warned
-aliases via 3.1. Repoint `modflow/mf6/__init__.py`'s `"GHB"` export; update internal
-import sites and `mfsimbase.py`; update docs.
+aliases via 3.1. SCOPE CORRECTION (rev. 4): smaller than rev. 3 implied — unwarned
+aliases `GHBFromVector = GHB` / `DRNFromVector = DRN` already exist (since 2026-06-16)
+and `mfsimbase.py` already imports the `*FromVector` names (its `__all__` lists both
+spellings). Remaining work: flip which name is the real class, make the old
+`GHB`/`DRN` names warn via 3.1, repoint `modflow/mf6/__init__.py`'s `"GHB"`/`"DRN"`
+export entries, update docs.
 
 ---
 
-## Phase 4 — Structural splits & import hygiene (~4–6 days)
+## Phase 4 — Structural splits & import hygiene (~6–12 days)
 
 **Mechanic:** create the new package, move code in small mechanical commits, keep the old
 module as a re-export facade, change zero user-facing paths, run the fast suite after
 each move. No renames, no "improvements" during a split.
 
-### 4.1 Split `modflow/mf6/observations.py` (2,744 lines, 13 classes)
+### 4.1 Split `modflow/mf6/observations.py` (3,014 lines, 13 classes)
 
 Target package `modflow/mf6/observations/`: `_shared.py` (normalization/series helpers),
 `heads.py` (`HeadTargets`, `BoundHeadTargets`, `BoundHeadTargetPlots`), `lake.py`,
@@ -285,17 +366,26 @@ Target package `modflow/mf6/observations/`: `_shared.py` (normalization/series h
 `registry.py` (`TargetRegistry`), `__init__.py` re-exporting everything (the package
 shadows the old module path automatically). `heads_observations.py` is NOT part of this
 split. Consumers (top-level `_EXPORTS`, pest package, `model.targets`) keep working —
-verify with grep. Watch pickling references. Tests: existing target tests unchanged +
-`tests/test_observations_layout.py` (both import paths).
+verify with grep. Watch pickling references. NOTE (rev. 4): `pest/observations.py`
+imports the private `_normalize_row_labels` from this module — `_shared.py` must keep
+that cross-package import alive. Class inventory re-verified 2026-07-14: still exactly
+13 (the +270 lines since rev. 3 are docstrings only). Tests: existing target tests
+unchanged + `tests/test_observations_layout.py` (both import paths).
 
-### 4.2 Split `project/model_group.py` (2,572+ lines, 28+ classes)
+### 4.2 Split `project/model_group.py` (2,761 lines, 27 classes)
 
 Target package `project/group/`: `spatial.py` (`_GroupSpatialView`, `GroupHeads`),
-`budget.py`, `inputs.py`, `results.py` (`GroupCellPackageResults` + namespaces +
-`GroupOutputs`), `sfr.py`, `lak.py` (incl. connections), `uzf.py`, `surface_water.py`,
-`packages.py`, `core.py` (`ModelGroup`), `__init__.py`. Keep `model_group.py` as facade.
-**Re-verify the class inventory after Phase 0** (in-flight work adds classes). Tests:
-group/diff test files green unchanged + layout test.
+`budget.py`, `inputs.py` (+ `GroupPackageInputField`), `results.py`
+(`GroupCellPackageResults` + namespaces + `GroupOutputs`), `sfr.py`, `lak.py` (incl.
+connections), `uzf.py`, `surface_water.py`, `packages.py`, `core.py` (`ModelGroup`),
+`__init__.py`. Keep `model_group.py` as facade. INVENTORY (rev. 4): 27 top-level
+classes as of 2026-07-14 — `985eb9a` added `_GroupSpatialView` and
+`GroupPackageInputField` and re-based views on `FieldMappable`/`LeafFieldSugar`
+(rev-3's "28+" matched no committed tree). Re-verify again if any Phase 6 group work
+(`GroupConc`/`GroupTemp`) lands first — the PREFERRED order is 4.2 before 6.1's group
+work so the new classes get a proper home from day one. Tests: group/diff test files
+green unchanged (incl. `test_model_group_diff_alignment.py`, new in `985eb9a`) +
+layout test.
 
 ### 4.3 Consolidate the three `surfaces` modules
 
@@ -308,39 +398,67 @@ facade; attic the rest symbol-by-symbol.
 
 ### 4.4 Import layering + deferred-import ratchet
 
-~195 function-level `from myflopy...` imports (≈half of internal imports) are circular-
-dependency scar tissue centered on `simulation/base.py`. Document the layer map in
-`docs/architecture_layers.md`:
-- **L0** `_optional`, `_deprecation`, `_vendor`, `viz`, `modflow/utils/*` (incl.
-  `datatypes/hover.py` — it is a leaf)
-- **L1** `modflow/mf6/grid/*`
-- **L2** output readers: `headsplus`, `heads_observations`, `budget`, `budget_tables`
-- **L3** explorers + observations + `*_plotting` (→ `myflopy/plot/` after Phase 8)
+198 function-level `from myflopy...` imports (≈half of internal imports; 31 of them are
+the intentional lazy-export machinery in `myflopy/__init__.py`) are circular-dependency
+scar tissue centered on `simulation/base.py` (16 sites). LAYER-MAP CORRECTION (rev. 4):
+the rev-3 map contradicted real edges — `headsplus` (L2) imports `heads_plotting`,
+`budget.py` (L2) imports `budget_plotting`, `choros.py` imports `contour_plotting`, and
+`utils/inputs.py` imports `choros` — so "L3 `*_plotting`" and a uniform-L0
+`modflow/utils/*` are untenable; a literal AST test against that map fails immediately.
+Fix: **derive the map FROM the actual AST graph first** (the layering doc is an output
+of this step, not an input), then pin it. Corrected sketch to validate against the
+graph before pinning:
+- **L0** `_optional`, `_deprecation`, `_vendor`, `viz` (verified: imports externals
+  only — rev-3's Phase 8 rows claiming viz imports plotting modules were phantom),
+  `modflow/utils/*` leaves (`datatypes/hover.py` IS a leaf; `choros`/`xsections`/
+  `inputs` are NOT — see L1)
+- **L1** presentation leaves — the standalone plotting modules (today: `choros`,
+  `xsections`, `contour_plotting`, `heads_plotting`+`mf2Dplots`, `budget_plotting`,
+  `grid/plotting`; = `myflopy/plot/` after Phase 8) + `utils/inputs`; these import
+  only L0 + externals
+- **L2** `modflow/mf6/grid/*` + output readers: `headsplus`, `heads_observations`,
+  `budget`, `budget_tables`
+- **L3** explorers + observations + `interactive_plotting`
 - **L4** engine facade: `simulation/*`, OO builders
 - **L5** declarative: `specs`, `sources`, `geopackage`, `package_api`, `advanced`,
   `builders`, `layers`, `surfaces`, `grid_spec_resolver`
 - **L6** lifecycle: `workspace`, `project/*`, `pest/*`, `parallel`, `prt`, `mp3du`
-Runtime imports only point at same-or-lower layers; upward = TYPE_CHECKING or injection.
-`tests/test_import_layering.py` (AST walk vs the map, `_vendor` excluded) + a deferred-
-import **ratchet** (`tests/deferred_import_allowlist.json`, counts may only go DOWN).
-Burn down ~30 easy conversions to prove the mechanism.
+Runtime imports only point at same-or-lower layers; upward = TYPE_CHECKING, injection,
+or an allowlisted deferred import — **deferred (function-level) imports are exempt from
+the layering test** but counted by the ratchet. `tests/test_import_layering.py` (AST
+walk vs the map, `_vendor` excluded) + a deferred-import **ratchet**
+(`tests/deferred_import_allowlist.json`, baseline **198** as of 2026-07-14, counts may
+only go DOWN; list the two lazy-export `__init__.py` files as intentional). Burn down
+~30 easy conversions to prove the mechanism.
 
 ### 4.5 Second-tier splits (after 4.1/4.2)
 
-`grid/triangle.py` (1,742) → move domain/feature specs + cleanup/optimization
-orchestration into existing `grid/` collaborators behind the `TriangleGrid` facade.
-`package_plotting.py` / `package_surface_water.py` stay in the explorer family unless
-they keep growing. `specs.py` is cohesive — leave below ~2,500.
+`grid/triangle.py` (1,822 — +80 docstring lines since rev. 3) → move domain/feature
+specs + cleanup/optimization orchestration into existing `grid/` collaborators behind
+the `TriangleGrid` facade. GROWTH TRIGGER FIRED (rev. 4): `package_plotting.py` grew
+771 → 1,914 lines (+148%, the `985eb9a` hover/colorscale/map-sync work) and is now the
+largest file in the explorer family; `package_surface_water.py` is at 1,852. Rev-3's
+"stay unless they keep growing" condition is met — plan a split of
+`package_plotting.py` along its natural seams (payload builders / mosaic-animate /
+colorscale helpers) behind the explorer facade, here or as Phase 8 prep. `specs.py` is
+cohesive — leave below ~2,500 (currently 2,315).
 
 ---
 
-## Phase 5 — Package API completion (~5–8 days, independent of Phase 4)
+## Phase 5 — Package API completion (~8–15 days excluding 5.7, independent of Phase 4)
 
 ### 5.0 The pattern to replicate (read first)
 
 Every list-style boundary package = four pieces (DRN is the reference):
 1. `package_api.py` helper class (`_DRNPackage`: `__call__` direct data / `.gpkg` GIS /
-   `.flopy` escape hatch) + module-level singleton.
+   `.flopy` escape hatch) + module-level singleton. CORRECTION + D8 (rev. 4): the
+   simple list-BC helpers (`_CHDPackage`/`_GHBPackage`/`_DRNPackage`/`_WELPackage`)
+   have NEVER had a `.flopy` method (only rch/uzf/sfr/lak/mvr do), even though the
+   chd/drn/wel docstrings — and `advanced.py`'s — advertise one. **D8: as the first
+   task of this phase, add a real `.flopy(...)` to all four existing helpers** (thin
+   raw-FloPy passthrough, same shape as `_RCHPackage.flopy`), align the GHB docstring
+   (currently "same as ()"), and ship `mf.riv`/`mf.evt` with all three entry points as
+   Appendix C promises.
 2. `geopackage.py` resolver method (`GeoPackageSource.drn`) — shared plumbing
    (`_boundary_data`, `_cells`, `_periods`, surface references, `CellSurfaceOffset`).
 3. `advanced.py` spec factory (`drn_spec`).
@@ -383,17 +501,24 @@ art: `specs.py` `ModelType`, `_require_model_type`). Round-trip serialization te
   `mf.src(...)`, `mf.ist(...)`.
 - GWE: `mf.est(...)`, `mf.cnd(...)`, `mf.ctp(...)` (list BC), `mf.esl(...)`.
 Update `examples/mf6/variant_workflow/03_coupled_gwf_gwt.py` + hand-rolled test specs to
-use them (keep one raw-PackageSpec regression test). Registry `FieldSpec` entries for
-`cnc`/`ctp` (blue input hover, earth). Do NOT resurrect `modflow/gwt/`.
+use them (keep one raw-PackageSpec regression test; note the example exercises
+adv/mst/ssm/ic/oc/dis but NOT dsp/cnc/src/ist — those factories need fresh test
+fixtures rather than example retrofits). Registry `FieldSpec` entries for `cnc`/`ctp`
+(blue input hover, earth). Do NOT resurrect `modflow/gwt/`.
 
 ### 5.4 `mf.maw` and `mf.hfb`
 - **MAW:** high-level `mf.maw(wells=[...], context=)` computing connections from point +
   screen interval against layer elevations (new `MAWBuilder` in `modflow/mf6/maw.py`,
   UZFBuilder-shaped) + `.flopy` raw form. Slow e2e on the canonical grid.
 - **HFB:** cell-*pair* records; on DISV pairs must share a face crossed by the barrier
-  line. RESEARCH STEP first: read `grid/voronoi.py` + `grid/connectivity.py` for a
-  shared-edge-with-geometry API; if absent, build the edge lookup there with unit tests,
-  then `mf.hfb.gpkg(path, hydchr=...)`.
+  line. RESEARCH RESOLVED (rev. 4): no public shared-edge-with-geometry API exists —
+  `shared_face_length` returns only a float and `find_adjacent_*` return ids — **but
+  `build_disu_connectivity` (grid/connectivity.py) already computes the per-pair
+  shared-face LineStrings internally and discards them.** Lift that segment logic into
+  a public edge-lookup API (keyed by cell pair, intersectable with a barrier
+  LineString; handle lines clipping cell corners or running coincident with faces),
+  with unit tests, then `mf.hfb.gpkg(path, hydchr=...)`. Grid modules live at
+  `modflow/mf6/grid/` (there is no top-level `myflopy/grid/`).
 
 ### 5.5 `mf.dis` / `mf.disu` passthroughs (D4)
 Thin factories mirroring `mf.disv`, using 5.3A dispatch (Gwf/Gwt/Gwe/Prt dis classes;
@@ -420,11 +545,19 @@ bakes arrays), then SFR/LAK. Clear error when a lazy GIS package has no grid.
 In priority order: UZF as a `parameterize` target; raster-driven zone arrays for
 `style="zone"`; Tikhonov/preferred-value regularization helpers; sensitivity/
 identifiability helpers. Facade COMPILES to native pyEMU PstFrom — never a parallel
-engine.
+engine. (All four items re-verified still open 2026-07-14. Schedule: anytime after
+5.3; its visualization counterpart is 6.4.)
+
+### 5.9 Explicit non-goal: CSUB
+
+`mf.csub` (compaction/subsidence) is deliberately OUT of this plan — rarely requested
+for the Voronoi-first use cases and large (interbed data model). Recorded here because
+`docs/myflopy_context.md` cites "plan §5.1–5.4" for the CSUB gap; this section makes
+that pointer resolve. Revisit on user demand.
 
 ---
 
-## Phase 6 — Full model-type integration: GWT, GWE, PRT, PEST-IES (~6–10 days)
+## Phase 6 — Full model-type integration: GWT, GWE, PRT, PEST-IES (~7–15 days)
 
 **Goal:** every model type myflopy claims (`mf.gwf/gwt/gwe/prt`) and the calibration
 layer get the SAME first-class treatment heads already have: a results accessor in the
@@ -445,15 +578,23 @@ Heads, concentration, and temperature are the same shape: a binary output file r
 `HeadsPlus` twice.** Instead:
 1. Read `HeadsPlus` (`modflow/mf6/headsplus.py`) and factor the file-agnostic core into
    a parameterized base (or make `HeadsPlus` itself take `text`/`label`/`unit`
-   parameters). FloPy's `HeadFile` reads concentration/temperature binaries via
-   `text="concentration"` / `"temperature"` (verify against the installed flopy;
-   concentration output is declared by GWT OC `concentration_filerecord`, `.ucn` by
-   convention).
+   parameters). SCOPE NOTE (rev. 4): slightly bigger than text/label/unit — the single
+   file-open is one `super().__init__` call, but `map()` couples to
+   `model.cor(type='hds')` and the `head_hover` default, so the cor/SpatialView
+   plumbing needs a value-kind hook too; other head-isms to parameterize:
+   `value_name='head'`, the `.hds` default path, elev→head renames, the 1e29/1e30 dry
+   sentinels. FloPy's `HeadFile` reads concentration/temperature binaries via
+   `text="concentration"` / `"temperature"` (verify against the installed flopy — this
+   sub-claim is still UNVERIFIED as of rev. 4, flopy was absent from the review
+   machine; concentration output is declared by GWT OC `concentration_filerecord`,
+   `.ucn` by convention).
 2. Instantiate: `model.hds` (existing, unchanged public behavior), `model.conc` (GWT),
    `model.temp` (GWE). Each carries: `.array()`, `.wide()/.long()`, the grammar verbs
    `map/xs/plot/mosaic/animate`, contours, and the hover sugar
-   (`hover_layers`/`hover_surfaces` — `LayerTable` is already field-generic, so
-   per-layer concentration tables + surfaces merge work for free).
+   (`hover_layers`/`hover_surfaces` — `LayerTable` is field-generic as claimed, with
+   two head-isms to fix for conc/temp: the hardcoded `head`/`bot` column-header
+   literal in the surfaces variant, and `_mark_dry` (head-below-bottom dagger), which
+   must default off for non-head fields).
 3. `SimulationBase`/`ModelView`/`Run.model()` must recognize GWT/GWE models: today
    `Run.model()` documents "the preferred myflopy **GWF** model view" — extend model-kind
    detection so a transport/energy model view exposes `conc`/`temp` (and NOT `hds`), and
@@ -469,21 +610,27 @@ Building on 6.0:
 2. **Colorscale:** per D7, `'earth'` default for concentration; Δconc (diff maps) =
    `RdBu`, negative red / positive blue. Add to `test_colorscale_policy.py`.
 3. **Budget:** GWT budget terms (STORAGE-AQUEOUS, SSM, DECAY, …) through the budget
-   explorers — read `budget.py`/`package_budget.py`/`budget_tables.py` and extend the
-   term discovery to transport CBC files; `model.bud` equivalent on the GWT view.
+   explorers. GOOD NEWS (rev. 4): term discovery is already text-generic
+   (`get_unique_record_names`, `build_budget_result_table(budget_text=...)`); the real
+   gap is reader acquisition — `_get_budget_reader` is literally
+   `self.gwf.output.budget()` and `ModelView` is GWF-only (see 6.0.3) — so this is
+   plumbing a transport budget reader/view, not new term tables; `model.bud`
+   equivalent on the GWT view.
 4. **Group/diff:** `GroupConc` mirroring `GroupHeads` (member maps + `diff()` Δconc maps
    via the existing compare payload machinery — it is value-column generic) +
    `compare_hover("conc", "diff", ...)`. Slot into Phase 4.2's `project/group/` layout
    if that split has landed (`group/conc.py`).
 5. **Observations:** `ConcTargets` (measured vs simulated concentration at points)
-   mirroring `HeadTargets` — reuses the 4.1 observations layout; wire into
-   `cal.observe(...)`/`cal.forecast(...)` + `forward_run.py` post-processors so
-   **transport calibration** works end-to-end (this is the PEST tie-in).
-6. **Canonical transport fixture:** tests need a real GWT model. Add a small coupled
-   GWF+GWT variant fixture — promote `examples/mf6/variant_workflow/03_coupled_gwf_gwt.py`
-   into a conftest fixture (slow-marked) or add a `transport=True` option to a small
-   canonical config. Every 6.1 feature gets a slow e2e against it (map renders, hover
-   template asserts, budget table, group diff, obs round-trip).
+   mirroring `HeadTargets` — home: `observations/conc.py` in the 4.1 layout (if 6.1
+   lands before 4.1, add `conc.py` to 4.1's target file list so neither goes stale);
+   wire into `cal.observe(...)`/`cal.forecast(...)` + `forward_run.py` post-processors
+   so **transport calibration** works end-to-end (this is the PEST tie-in).
+6. **Canonical transport fixture (D9, locked):** tests need a real GWT model. Add a
+   `transport=True` option to a small canonical config (one-model-everywhere; do NOT
+   promote example 03 into a second model family). Slow-marked, and **scoped session-
+   or module-wide** so ONE MF6 run serves all 6.1 e2e assertions (see the test-runtime
+   budget in "Sequencing"). Every 6.1 feature gets a slow e2e against it (map renders,
+   hover template asserts, budget table, group diff, obs round-trip).
 
 ### 6.2 GWE results tier (temperature)
 
@@ -512,18 +659,22 @@ style the rest, rather than forcing everything into choropleths:
      one map per group via `viz.mosaic`, synced views).
    These are per-cell payloads → they inherit mosaic/animate/hover for free once built
    through `build_cell_input_map_payload`-style tables.
-2. **Pathline map hover:** `plot_map`/pathline traces are scatter, not choropleth — the
-   hover engine is trace-agnostic (customdata + template), so add a
+2. **Pathline map hover:** CORRECTION (rev. 4): the existing pathline map
+   (`plot_particle_pathlines`, interactive_plotting.py) is pure **matplotlib** (flopy
+   PlotMapView), not plotly scatter — so this step means building a NEW plotly
+   pathline map (scatter traces over the grid choropleth), not styling existing
+   traces. The hover engine is trace-agnostic (customdata + template), so add a
    `pathline_hover()` spec rendering particle id, release point/group, current time,
-   layer; apply `HoverStyle.to_hoverlabel()` to the scatter traces. Read
+   layer; apply `HoverStyle.to_hoverlabel()` to the new scatter traces. Read
    `prt.py:PRTRunResults.plot_map` + `interactive_plotting.py` scene builders first.
 3. **Build-side parity:** add `mf.mip(porosity=)` and `mf.prp(...)` thin factories
    (5.3A dispatch pattern) so a PRT model is fully declarable in a `SimulationSpec`
    without raw PackageSpecs; keep `model.particle_tracking.prt(...)`/`PRTProject` as the
    sanctioned high-level runtime path (it manages FMI/grid copying correctly — do not
    duplicate that logic in specs).
-4. **3-D scene** stays raw plotly (documented viz.py exception). MP3DU untouched except
-   Phase 2.4.
+4. **3-D scene** stays as-is — CORRECTION (rev. 4): it is **PyVista/trame** (not raw
+   plotly); either way it remains a documented viz.py exception. MP3DU untouched
+   except Phase 2.4.
 5. Group story: comparing PRT runs across models = diff of travel-time maps (mechanical
    via the compare payload once 6.3.1 exists) — mark forward-looking, implement only the
    single-model maps + hover now.
@@ -571,7 +722,7 @@ field-map review section in the existing PEST notebooks).
 
 ---
 
-## Phase 7 — FloPy 4 readiness & robustness (~1–2 days)
+## Phase 7 — FloPy 4 readiness & robustness (~2–4 days)
 
 ### 7.1 `_flopy_compat.py` — centralize flopy-internal touchpoints
 
@@ -585,7 +736,9 @@ Create `src/myflopy/_flopy_compat.py` re-exporting every non-`flopy.mf6` symbol 
 one-line "used for" comment; mechanically repoint importers; AST test
 (`tests/test_flopy_compat_boundary.py`): only `_flopy_compat.py` may import
 `flopy.utils/plot/export/discretization`. Keep the `flopy>=3.10,<4` pin. **7.1 lands
-BEFORE Phase 8** so plotting files move exactly once with clean imports.
+BEFORE Phase 8** so plotting files move exactly once with clean imports. (Relative to
+Phase 6: either order works — 6.0's readers route through the compat module if 7.1
+landed first, else get repointed during 7.1; the sequencing block is authoritative.)
 
 ### 7.2 Logging
 
@@ -606,37 +759,45 @@ keep load-bearing fallbacks visible in debug logs.
 
 ### 7.4 Docs debt sweep
 
-Verify/fix the June review's `preferred_api.md` structural issues (unclosed fence,
-content after "Where To Look Next"); add `tests/test_docs_structure.py` (balanced
-fences, resolving local links); gitignore generated PDFs (`myflopy_api_pamphlet.pdf`);
-coordinate any `docs/` reorganization with the manual effort (don't do both).
+RESOLVED (rev. 4): the June review's `preferred_api.md` issues (unclosed fence,
+content after "Where To Look Next") were already fixed by the 2026-06-16 rewrite —
+nothing to do there. Remaining: add `tests/test_docs_structure.py` (balanced fences,
+resolving local links); gitignore generated PDFs (`myflopy_api_pamphlet.pdf` is
+tracked today); coordinate any `docs/` reorganization with the manual effort (don't do
+both). 7.4 ships inside Phase 7's PR — rev-3's "7.4 comes after Phase 8" ordering is
+RETRACTED (it split one phase across a PR boundary, violating ground rule 8, and
+nothing in 7.4 depends on Phase 8).
 
 ---
 
-## Phase 8 — Plotting consolidation into `myflopy/plot/` (D5; ~2–3 days)
+## Phase 8 — Plotting consolidation into `myflopy/plot/` (D5; ~2–5 days)
 
-**Position:** last structural phase — after 4.1 (observations split), Phases 5–6 (no new
-API work targeting moving files), and 7.1 (imports already normalized). Only 7.4's docs
-sweep and Phase 9 come after.
+**Position:** last structural phase — after 4.1 (observations split), 5.1–5.6 + the
+*landed* parts of Phase 6 (no new API work targeting moving files), and 7.1 (imports
+already normalized). CLARIFIED (rev. 4): **5.7 (grid-lazy GIS, forward-looking) does
+NOT gate Phase 8** — it targets spec/geopackage code, not plotting files; and D5's
+"after the god-module splits" means 4.1 specifically (4.2–4.5 don't touch the moving
+files, though they land earlier anyway in the stated order). Only Phase 9 comes after.
 
 **Scope decision (explicit):** the `package_*` explorer family stays put
 (`package_plotting.py`, `package_surface_water.py` are explorer components).
 `datatypes/hover.py` also stays put — it is a spec engine (L0 leaf), not plotting.
 This phase consolidates the *standalone* plotting modules only.
 
-**Verified import graph (re-verify before moving — Phases 4–7 will have touched it):**
+**Verified import graph (CORRECTED 2026-07-14; re-verify before moving — Phases 4–7
+will have touched it):**
 
 | Module (current) | Imported by |
 |------------------|-------------|
-| `utils/datatypes/choros.py` (`Choro`) | `grid/plotting.py`, `package_plotting.py`, `simulation/accessors.py`, `utils/inputs.py`, tests |
-| `utils/datatypes/xsections.py` | `headsplus.py`, `package_plotting.py`, `simulation/accessors.py`, `project/model_group.py`, `model_results_diff.py`, tests |
+| `utils/datatypes/choros.py` (`Choro`) | `grid/plotting.py`, `simulation/accessors.py`, `utils/inputs.py`, 6 test files — NOT `package_plotting.py` (rev-3's edge was phantom; only a local variable name) |
+| `utils/datatypes/xsections.py` | `headsplus.py`, `package_plotting.py`, `simulation/accessors.py`, `project/model_group.py`, `model_results_diff.py`, tests (+221 lines in `985eb9a`) |
 | `mf6/contour_plotting.py` | `choros.py`, 1 test |
 | `mf6/cross_section_plotting.py` | `layers.py`, `interactive_plotting.py`, `mf6/__init__.py` (exported), tests |
 | `mf6/heads_plotting.py` | `headsplus.py` only |
 | `mf6/mf2Dplots.py` | `heads_plotting.py` only |
 | `mf6/budget_plotting.py` | `budget.py` only |
-| `mf6/interactive_plotting.py` | `prt.py`, `simulation/base.py`, `mf6/__init__.py`, `viz.py`, top-level `__init__.py` (12 exported names), tests |
-| `mf6/grid/plotting.py` | `grid/voronoi.py`, `pest/ies.py`, `viz.py`, 1 test |
+| `mf6/interactive_plotting.py` | `prt.py`, `simulation/base.py`, `mf6/__init__.py`, top-level `__init__.py` (**13** exported names — rev-3's "12" was never right), tests — NOT `viz.py` (docstring mention only) |
+| `mf6/grid/plotting.py` | `grid/voronoi.py`, **`grid/__init__.py` (re-export — rev. 3 missed it)**, `pest/ies.py`, 1 test, + the `canonical_02`/`canonical_06` notebooks import `build_choropleth` — NOT `viz.py` (docstring mention only) |
 
 **Target layout** — `src/myflopy/plot/`: `choropleth.py` (Choro), `xsections.py`,
 `contours.py`, `cross_sections.py`, `heads.py` (+ fold the used parts of `mf2Dplots.py`,
@@ -648,11 +809,17 @@ remains the front door.
 `budget` → `heads` → `cross_sections` → `interactive`); per move: `git mv`, fix internal
 imports, old-path facade with 3.1's warning `__getattr__`, repoint internal importers
 (so internal code never triggers its own deprecation warnings), fast suite, commit.
-Update `_EXPORTS` targets (the 12 interactive names) and `mf6/__init__.py`; grep for
-string references (pickles, docs, notebooks); update the layer map (plot/ = L3) and the
-viz.py docstring. **Existing plotting tests must pass unedited** — if they break, the
-move broke something. New `tests/test_plot_layout.py`: new path clean, old path
-warns-and-works, top-level exports resolve.
+Update `_EXPORTS` targets (the 13 interactive names) and `mf6/__init__.py` +
+`grid/__init__.py`; grep for string references (pickles, docs, notebooks — incl. the
+`build_choropleth` imports in the canonical notebooks); update the layer map (plot/ =
+L1 presentation leaves per the corrected 4.4 map) and the viz.py docstring. **Existing
+plotting tests must pass unedited** — if they break, the move broke something
+(`985eb9a` added five more plotting-test importers this rule now covers:
+`test_hover_spec`, `test_colorscale_policy`, `test_view_grammar_composers`,
+`test_group_map_api`, `test_hover_integration`). Note `choros.py` now lazily imports
+`datatypes/hover.py` inside `_build_hover_context` — hover stays put (L0 leaf), the
+edge just needs to survive the move. New `tests/test_plot_layout.py`: new path clean,
+old path warns-and-works, top-level exports resolve.
 
 ---
 
@@ -669,33 +836,48 @@ warns-and-works, top-level exports resolve.
 ## Sequencing, dependencies, effort
 
 ```
-Phase 0 (baseline)      ── prerequisite for everything (BOTH repos clean)
-Phase 1 (distribution)  ── independent; DO FIRST
-Phase 2 (junk/hygiene)  ── independent; cheap; second
-Phase 3 (deprecation)   ── before Phases 4 and 8
-Phase 4 (splits/layering) ── 4.2 blocked on Phase 0
+Phase 0 (baseline)      ── step 1 DONE (both repos committed + clean); remaining:
+                           env provisioning, baseline record + wall time, v0.1.0 tag
+Phase 1 (distribution)  ── independent; DO FIRST (1.1's figs gate is already open)
+Phase 2 (junk/hygiene)  ── independent; cheap; second. 2.4's deprecation warning
+                           depends on 3.1 — land a plain warnings.warn, convert in 3.1
+Phase 3 (deprecation)   ── before Phases 4 and 8; tagging (D11) makes the policy real
+Phase 4 (splits/layering) ── 4.2 PREFERRED before 6.1's group work (else re-derive
+                           the class inventory); 4.5 after 4.1/4.2, no other blockers
 Phase 5 (package API)   ── independent of Phase 4;
-                           order: 5.3A → 5.1 → 5.2 → 5.3B → 5.6 → 5.4 → 5.5 → 5.7
+                           order: D8 .flopy backfill → 5.3A → 5.1 → 5.2 → 5.3B → 5.6
+                           → 5.4 → 5.5 → 5.8 (anytime after 5.3; its viz side is 6.4)
+                           → 5.7 (optional/forward-looking; gates NOTHING)
 Phase 6 (model types)   ── 6.0/6.1 need 5.3 (buildable GWT models for fixtures);
                            6.2 after 6.1; 6.3 and 6.4 independent of 6.1/6.2;
                            6.1.5 (ConcTargets) composes with 4.1's observations split —
                            land whichever comes second on top of the first
-Phase 7 (flopy4/robustness) ── after Phase 2; 7.1 MUST land before Phase 8;
-                           6.0's new readers route through 7.1's compat module if 7.1
-                           landed first (else repoint during 7.1)
-Phase 8 (plotting)      ── after 4.1, Phase 5, Phase 6, and 7.1
+Phase 7 (flopy4/robustness) ── after Phase 2; 7.1 MUST land before Phase 8; 7.1/6.0
+                           in either order (see 7.1); 7.4 ships inside Phase 7's PR
+Phase 8 (plotting)      ── after 4.1, 5.1–5.6, landed Phase 6 work, and 7.1
+                           (5.7 does NOT gate it)
 Phase 9 (wrap-up)       ── last
 ```
 
+**Test-runtime budget (rev. 4):** the canonical fixtures are function-scoped today, so
+every slow e2e re-runs MF6 from scratch; Phases 5–6 mandate many new slow e2e tests
+plus new GWT/GWE/PRT fixtures, so the ~14-min full suite plausibly doubles or triples
+unmanaged. Before 6.1: (a) make the canonical + transport run fixtures session- or
+module-scoped (one MF6 run, many assertions); (b) record the full-suite wall time at
+each phase end next to the Phase 0 baseline — tripwire at 2× the baseline; (c) the
+slow tests run automatically in 1.3's scheduled slow lane.
+
 | Item | Effort | Risk |
 |------|--------|------|
-| 1.1 figs vendoring | M | Low (CI exercises it) |
+| 1.1 figs vendoring | M | Med (figs restructured at `bb1526b` — re-trace at HEAD; CI exercises the snapshot) |
 | 1.2 deps / 1.3 CI / 1.4 lint | S / M / M | Low–Med |
 | 2.1–2.4 junk/hygiene | S–M | Low |
 | 3.1–3.2 deprecation | S | Low |
 | 4.1 observations split | M–L | Med |
-| 4.2 model_group split | L | Med-high (in-flight work) |
+| 4.2 model_group split | L | Med-high (Phase 6 adds Group* classes here — do 4.2 first) |
 | 4.3 surfaces / 4.4 layering | S–M / M | Low |
+| 4.5 second-tier splits (triangle, package_plotting) | M | Low–Med |
+| D8 .flopy backfill (chd/ghb/drn/wel) | S | Low |
 | 5.1 riv / 5.2 evt | M each | Low (proven pattern) |
 | 5.3 gwt/gwe helpers + dispatch | M–L | Med (serialization round-trip) |
 | 5.4 maw/hfb | L | Med-high (HFB geometry) |
@@ -712,57 +894,83 @@ Phase 9 (wrap-up)       ── last
 | 8 plotting consolidation | M–L | Med (9 modules, 12 exports move) |
 | 9 wrap-up | S | Low |
 
-S ≈ ≤half day, M ≈ 1–2 days, L ≈ 3–5 days, XL ≈ 1–2 weeks.
+S ≈ ≤half day, M ≈ 1–2 days, L ≈ 3–5 days, XL ≈ 1–2 weeks. (Rev. 4: phase headers now
+equal the min–max sum of their item rows — rev-3's headers understated Phases 1/4/5/6/7
+by up to ~2×. Phase 5's header excludes 5.7, which is optional/forward-looking.)
 
 ---
 
 ## Appendix A — Verification commands
 
-```powershell
-$env:PYTHONPATH = "src"
-$py = "C:\Users\lukem\Python\mf-env\.venv\Scripts\python.exe"
+Linux (the repo's current home — primary):
 
-& $py -m pytest -m "not slow" -q          # fast suite (after every change-set)
-& $py -m pytest -q                        # full suite (end of each phase; ~14 min)
+```bash
+export PYTHONPATH=src
+py=/home/lukem/python/envs/gw/bin/python   # the only provisioned env (Python 3.14)
+# ONE-TIME (Phase 0 step 2): $py -m pip install pytest nbstripout ruff
+# FOOTGUN: gw also has a non-editable myflopy in site-packages — PYTHONPATH=src is
+# REQUIRED; sanity check: $py -c "import myflopy; print(myflopy.__file__)" → repo path
+
+$py -m pytest -m "not slow" -q            # fast suite (after every change-set)
+$py -m pytest -q                          # full suite (end of each phase; ~14 min)
 
 # import surface smoke
-& $py -c "import myflopy; [getattr(myflopy, n) for n in myflopy.__all__]; print('ok')"
+$py -c "import myflopy; [getattr(myflopy, n) for n in myflopy.__all__]; print('ok')"
 
 grep -rn "lukem" src/myflopy              # must be empty after Phase 2
 grep -rn "X" src tests examples docs --include="*.py"   # orphan check before deleting X
 
-# deferred-import ratchet baseline (~195 on 2026-07-06)
+# deferred-import ratchet baseline (198 on 2026-07-14)
 grep -rn "^\s\+from myflopy" src/myflopy --include="*.py" | wc -l
 
 # hover/colorscale policy quick checks
-& $py -m pytest tests/test_hover_spec.py tests/test_colorscale_policy.py -q
+$py -m pytest tests/test_hover_spec.py tests/test_colorscale_policy.py -q
+git ls-files "*.ipynb" | xargs $py -m nbstripout --dry-run
+```
+
+Windows (mf-env box — same commands via PowerShell):
+
+```powershell
+$env:PYTHONPATH = "src"
+$py = "C:\Users\lukem\Python\mf-env\.venv\Scripts\python.exe"
+& $py -m pytest -m "not slow" -q
+& $py -m pytest -q
 & $py -m nbstripout --dry-run (git ls-files "*.ipynb")
 ```
 
-## Appendix B — Size snapshot (2026-07-06, for drift detection)
+## Appendix B — Size snapshot (2026-07-14, for drift detection)
 
-`src/myflopy` ~57.5k lines / ~90 files. Largest: `observations.py` 2,744 ·
-`model_group.py` 2,572+ · `specs.py` 2,173 · `package_api.py` 1,823 ·
-`package_plotting.py` 1,783+ · `grid/triangle.py` 1,742 · `package_surface_water.py`
-1,740+ · `interactive_plotting.py` 1,344 · `simulation/base.py` 1,262 · `pest/ies.py`
-1,235. Tests: 52 files, ~16k lines, 540 fast-passing (incl. `test_hover_spec.py`,
-`test_hover_integration.py`, `test_colorscale_policy.py`). Tracked repo ~48 MB
-(executed notebooks + mp3du exes — Phase 2 targets).
+`src/myflopy` 61,682 lines / 134 .py files (rev-3's "~90 files" was wrong even against
+its own tree; the +4.2k lines since rev. 3 are dominated by the `962654d` docstring
+commit). Largest: `observations.py` 3,014 · `project/model_group.py` 2,761 ·
+`package_api.py` 2,500 (growth is docstrings, not logic) · `specs.py` 2,315 ·
+`package_plotting.py` 1,914 · `package_surface_water.py` 1,852 · `grid/triangle.py`
+1,822 · `interactive_plotting.py` 1,394 · `datatypes/choros.py` 1,322 ·
+`simulation/base.py` 1,262 (`pest/ies.py` 1,255 is #11). Tests: 51 files, ~15.9k
+lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_TESTS`
++ `canonical_run` users — the raw `def test_` count is 587). Tracked repo 48.6 MB
+(notebooks 31.5 MB + mp3du exes 11.2 MB — Phase 2 targets); `.git` history is
+~170 MiB (out of scope, D3).
 
 ## Appendix C — Master acceptance checklist
 
-- [ ] figs committed in its repo, then vendored; fresh venv `pip install -e .` →
-      `import myflopy.viz` + map-sync post-scripts work without local figs (0, 1.1)
+- [x] figs committed in its repo (`bb1526b`, 2026-07-07) — remaining: vendored; fresh
+      venv `pip install -e .` → `import myflopy.viz` + map-sync post-scripts work
+      without local figs (0, 1.1)
+- [ ] `v0.1.0` tagged at baseline; wheel-build CI job green; scheduled slow lane
+      exists (0, 1.3, D11)
 - [ ] `matplotlib` (+ `seaborn`, `pyyaml`) declared; import-surface smoke green (1.2, 5.6)
 - [ ] CI green on ubuntu + windows (fast suite + ruff); vendored-figs path exercised (1.3, 1.4)
-- [ ] `grep -rn "lukem" src/myflopy` empty; junk modules gone (2.1, 2.2)
+- [ ] `grep -rn "lukem" src/myflopy` empty; junk modules gone incl. the
+      `get_iheads`/`gwt` lazy-export + smoke-test removals (D10) (2.1, 2.2)
 - [ ] Notebooks stripped + pre-commit hook; no `.exe` under `src/`; `tools/mp3du/`
       resolution tested (2.3, 2.4)
 - [ ] Deprecated aliases warn; GHB/DRN collision resolved; policy doc exists (3.x)
 - [ ] `observations/` + `project/group/` packages; old paths work; no active module
       > ~1,800 lines without a written reason (4.1, 4.2)
 - [ ] Layering test + deferred-import ratchet in CI (4.4)
-- [ ] `mf.riv`, `mf.evt` with `()/.gpkg/.flopy` + registry + hover + earth/RdBu policy (5.1, 5.2)
+- [ ] `.flopy` backfilled on chd/ghb/drn/wel with docstrings fixed (D8); `mf.riv`,
+      `mf.evt` with `()/.gpkg/.flopy` + registry + hover + earth/RdBu policy (5.1, 5.2)
 - [ ] `mf.ic/oc/disv` dispatch on GWT/GWE; `mf.adv/dsp/mst/ssm/cnc/src/ist` +
       `mf.est/cnd/ctp/esl` exist; example 03 uses them (5.3)
 - [ ] `mf.dis`/`mf.disu` passthroughs; fail-fast GridSpec tests untouched (5.5)
