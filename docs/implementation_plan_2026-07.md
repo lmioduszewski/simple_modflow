@@ -238,7 +238,10 @@ executables are runtime binaries, not pip deps.
 `.github/workflows/ci.yml`: matrix ubuntu-latest + windows-latest × Python 3.10/3.12
 **+ 3.14** (the local dev interpreter is 3.14 — catch its breakage in CI, not locally);
 `pip install -e .[dev]` → `pytest -m "not slow" -q` → (after 1.4) `ruff check src tests`.
-Fast suite must not need MF6 binaries (that is the `slow` contract). First run will
+CONTRACT CLARIFIED (2026-07-16, from the first real CI run): the fast suite never
+RUNS models, but it does BUILD them — flopy validates exe paths at build time and
+the Voronoi fixtures invoke `triangle` — so the fast job installs the `mf6` +
+`triangle` binaries (`get-modflow --subset mf6,triangle`, seconds). First run will
 surface optional-dep assumptions (pyvista/trame, pymetis/h5py, pyemu) — prefer
 `pytest.importorskip` over fattening the CI install. Add the import-surface smoke step:
 `python -c "import myflopy; [getattr(myflopy, n) for n in myflopy.__all__]"`.
@@ -987,10 +990,13 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
 - [ ] CI green on ubuntu + windows (fast suite + ruff + scoped mypy); vendored-figs
       path exercised — workflows landed 2026-07-16, green pending the first push
       (1.3, 1.4)
-- [ ] `grep -rn "lukem" src/myflopy` empty; junk modules gone incl. the
-      `get_iheads`/`gwt` lazy-export + smoke-test removals (D10) (2.1, 2.2)
-- [ ] Notebooks stripped + pre-commit hook; no `.exe` under `src/`; `tools/mp3du/`
-      resolution tested (2.3, 2.4)
+- [x] `grep -rn "lukem" src/myflopy` empty (2026-07-16); junk modules gone incl. the
+      `get_iheads`/`gwt` lazy-export + smoke-test removals (D10);
+      `test_retired_modules_stay_retired` pins it; live notebooks/examples use
+      home-relative paths (2.1, 2.2)
+- [x] Notebooks stripped (26, −776k lines) + pre-commit hook + strip/render
+      scripts; no `.exe` under `src/` (gitignored forever); `tools/mp3du/`
+      resolution chain tested (6 tests) (2.3, 2.4)
 - [ ] Deprecated aliases warn AND are hidden from autocompletion per D12 (not in
       `__all__`/`dir()`/TYPE_CHECKING/stubs); GHB/DRN collision resolved; policy doc
       exists (3.x)

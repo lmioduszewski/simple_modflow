@@ -25,8 +25,15 @@ jobs:
         # Resolves every lazy export; exercises the vendored-figs fallback
         # (no external figs exists in CI — the permanent drift alarm).
         run: python -c "import myflopy; [getattr(myflopy, n) for n in myflopy.__all__]; import myflopy.viz; print('ok')"
+      - name: Install triangle + mf6 binaries
+        # Fast tests BUILD models (flopy validates exe paths) and generate
+        # Voronoi meshes, but never RUN models — that is the `slow` contract.
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          python -m flopy.utils.get_modflow --subset mf6,triangle "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Fast test suite
-        # The fast suite must not need MF6 binaries (the `slow` contract).
         run: python -m pytest -m "not slow" -q
 
   lint:

@@ -96,6 +96,22 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
   OSes (workflows are verified locally: wheel contains `_vendor`, py310
   grammar parse clean, figs-blocked smokes pass).
 
+## Phase 2 — Junk removal & repo hygiene (2026-07-16, branch `phase-2-hygiene`)
+
+- **Delivered:** 11 modules retired (8 to `attic/` with a README ledger, 3
+  deleted incl. the D10 public-export removals for `get_iheads`/`modflow.gwt`);
+  `test_retired_modules_stay_retired` guard; all `C:\Users\lukem` paths gone
+  from `src/` and live examples (home-relative replacements resolve identically
+  on the author's Windows boxes); all 26 notebooks output-stripped (−776k
+  lines, every notebook now <100 KB) with a pre-commit nbstripout hook +
+  `scripts/strip_notebooks.py` / `render_notebooks.py`; unreferenced
+  `starting_heads.csv` deleted; MP3DU executables moved out of `src/` to the
+  untracked `tools/mp3du/` with a tested 4-step resolution chain
+  (`MYFLOPY_MP3DU_DIR` supported); `src/**/*.exe` gitignored.
+- **Fast suite:** 555 passed / 1 skipped, ~20 s. Ruff + scoped mypy green.
+- **Note:** the tracked checkout shed ~42 MB (31.5 MB notebook outputs +
+  11.2 MB executables); `.git` history keeps the old blobs (D3 — no rewrite).
+
 ### Full-suite runs (append per phase)
 
 | Date | Commit | Result | Wall time |

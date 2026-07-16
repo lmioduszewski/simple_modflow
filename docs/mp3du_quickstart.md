@@ -14,6 +14,16 @@ The supported standalone MP3DU API in `myflopy` is:
 
 Those are the recommended entry points for standalone MP3DU workflows.
 
+## Executables
+
+The MP3DU binaries (`mp3du.exe`, `writep3dgsf.exe`, `writep3doutput.exe`) are
+**not shipped inside the package** (since 2026-07-16). Resolution order:
+
+1. explicit `mp3du_path=`/`writep3dgsf_path=`/`writep3doutput_path=` arguments
+2. the `MYFLOPY_MP3DU_DIR` environment variable (a directory holding all three)
+3. the repo's untracked `tools/mp3du/` directory (see its README)
+4. deprecated: inside the installed package (warns; will be removed)
+
 ## Recommended One-Liner
 
 ```python
