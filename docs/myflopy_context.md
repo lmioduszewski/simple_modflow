@@ -112,7 +112,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Package explorers (`model.packages.<pkg>.inputs/.results`, normalized tables + maps) | ✅ | `package_explorer.py` facade over the `package_*` family; registry in `package_registry.py` |
 | Single-model config inspector (`model.config.settings/ims/tdis/section`) | ✅ | `project/model_config.py`, `simulation/base.py` |
 | **ONE `diff()` verb** — `model.diff(other)` / `group.diff()`, reference-star N-way | ✅ | `project/model_diff.py` (setup: packages + config + LAK/SFR connections), `project/model_results_diff.py` (heads, budget, per-package q, UZF, stage, MVR) |
-| Grouped multi-model access (`group.hds/bud/packages`, member + Δ maps) | ✅ | `project/model_group.py` (`ModelGroup`) — full single↔group symmetry |
+| Grouped multi-model access (`group.hds/bud/packages`, member + Δ maps) | ✅ | `project/group/` (`ModelGroup`; facade `model_group.py`) — full single↔group symmetry |
 | Diff usage guide | ✅ | `docs/model_diff_cheatsheet.md` |
 
 ### Serialization

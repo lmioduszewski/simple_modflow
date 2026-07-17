@@ -62,7 +62,8 @@ def test_flat_shortcut_deprecated_but_returns_the_mirror_object(group, pkg):
 
 
 def test_group_inputs_summary_counts_cells_and_periods(monkeypatch):
-    from myflopy.project import model_group as mg
+    # Patch where the builder is USED: group/inputs.py (plan 4.2 split).
+    from myflopy.project.group import inputs as group_inputs
 
     def stub(model, package_name, *, per=None, layer=None, cells=None):
         data = {
@@ -73,7 +74,7 @@ def test_group_inputs_summary_counts_cells_and_periods(monkeypatch):
             package="ghb", model=model.name
         )
 
-    monkeypatch.setattr(mg, "build_cell_package_input_table", stub)
+    monkeypatch.setattr(group_inputs, "build_cell_package_input_table", stub)
     grp = ModelGroup({"ref": _FakeModel("ref"), "alt": _FakeModel("alt")}, reference="ref")
     summary = grp.packages.ghb.inputs.summary().set_index("model")
     assert summary.loc["ref", "cells"] == 2  # cells 10, 11

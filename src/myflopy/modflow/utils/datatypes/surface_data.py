@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
-from myflopy.modflow.utils.surfaces import InterpolatedSurface
+from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 
 
 class ModelSurface:

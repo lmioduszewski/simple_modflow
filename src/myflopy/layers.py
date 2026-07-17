@@ -525,7 +525,7 @@ class LayerBuildResult:
         inline in a notebook."""
         import plotly.graph_objects as go
 
-        from myflopy.modflow.utils.surfaces import InterpolatedSurface
+        from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 
         names = self._resolve_surface_names(layer)
         crs = str(getattr(self.vor, "crs", None))

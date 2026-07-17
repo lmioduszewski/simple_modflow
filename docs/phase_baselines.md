@@ -141,6 +141,29 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
   CLAUDE.md engine-class list. Notebooks already used the `*FromVector`
   names — verified, no edits needed.
 
+## Phase 4 — Structural splits & import hygiene (2026-07-17, branch `phase-4-splits`)
+
+- **Delivered:** 4.1 `observations.py` (3,014 lines) → `observations/`
+  package (7 modules + re-exporting root; pest's private
+  `_normalize_row_labels` cross-import kept alive); 4.2 `model_group.py`
+  (2,711 lines) → `project/group/` package (11 modules; `model_group.py`
+  stays as a full facade; annotation-only ModelGroup back-references under
+  TYPE_CHECKING keep the graph acyclic); 4.3 `InterpolatedSurface` →
+  `mf6/grid/interpolated_surface.py` with the old `modflow/utils/surfaces`
+  path as a warned facade (+1 `__compatibility__` entry) and zero-importer
+  `rasterize_points` attic'd; 4.4 import-layering pin derived from the real
+  AST graph (`scripts/derive_import_layers.py` → `tests/import_layers.json`
+  + `docs/import_layering.md`) — the module-level graph is ALREADY acyclic
+  (143 modules, depths 0..13) — plus the deferred-import ratchet
+  (`tests/deferred_import_allowlist.json`, exact-match per module): honest
+  AST baseline 75, burned down to **55** via 20 safe hoists.
+- **Deviations (recorded in the plan banner):** `GroupOutputs` →
+  `group/packages.py` (avoids a results↔lak cycle); §4.5 second-tier splits
+  deferred to Phase 8 prep per the plan's own note.
+- **Fast suite:** 578 passed / 1 skipped, ~21 s. Ruff + scoped mypy green.
+- **Splits are mechanical:** code moved verbatim, import headers derived
+  from each module's AST; both split commits show +import-headers only.
+
 ### Full-suite runs (append per phase)
 
 | Date | Commit | Result | Wall time |
@@ -151,3 +174,4 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 | 2026-07-16 | Phase 1 end (`phase-1-distribution`) | 588 passed / 2 skipped / 1 failed (only the MPI environment limitation; layout smoke now skips; +12 new Phase-1 tests; parallel/xugrid extras now exercised) | 11m23s (within the 20 min tripwire) |
 | 2026-07-16 | Phase 2 end (`phase-2-hygiene`) | **609 passed / 1 skipped / 0 failed — fully green** (MPI-enabled mf6 6.8.0.dev0 installed; the 1 skip is the author-machine-only sample data) | 14m21s (within the 20 min tripwire) |
 | 2026-07-17 | Phase 3 end (`phase-3-deprecation`) | **620 passed / 1 skipped / 0 failed — fully green** (+11 deprecation tests; suite ran under the new `error:myflopy:DeprecationWarning` filter) | 11m24s (within the 20 min tripwire) |
+| 2026-07-17 | Phase 4 end (`phase-4-splits`) | **632 passed / 1 skipped / 0 failed — fully green** (+12: layout tests for both splits, layering + ratchet pins) | 11m44s (within the 20 min tripwire) |

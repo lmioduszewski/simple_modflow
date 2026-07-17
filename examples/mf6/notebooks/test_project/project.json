@@ -1,0 +1,6 @@
+{
+  "project": {
+    "name": "test_project",
+    "spec": "specs/project_spec.json"
+  }
+}

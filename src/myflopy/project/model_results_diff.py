@@ -24,6 +24,10 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.package_explorer import DiffSpatialView, FieldMappable
+from myflopy.modflow.utils.datatypes.xsections import XSection
+from myflopy.project.group.lak import GroupLakStageResults
+from myflopy.project.group.results import GroupCellPackageResults
+from myflopy.project.group.sfr import GroupSfrStageResults
 
 # Default tolerances for the ``within_tolerance`` test: |diff| <= atol + rtol*|ref|.
 _DEFAULT_ATOL = 1e-3
@@ -125,8 +129,6 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
         head differences read directly off the profiles; ``model`` narrows to
         one compared model.
         """
-
-        from myflopy.modflow.utils.datatypes.xsections import XSection
 
         names = [self.group.reference, *self._targets(model)]
         return {
@@ -572,8 +574,6 @@ class MvrResultDiff(_ResultDiffBase):
     def _cell_diff(self, package: str, term: str) -> CellBudgetResultDiff:
         """Build a cell-budget diff for one package's mover ``term`` (FROM/TO-MVR)."""
 
-        from myflopy.project.model_group import GroupCellPackageResults
-
         accessor = GroupCellPackageResults(
             self.group, package, budget_text=term, value_name="q"
         )
@@ -629,8 +629,6 @@ class LakResultsDiffNamespace(CellResultsDiffNamespace):
     def stage(self) -> StageResultDiff:
         """Lake-stage difference vs the reference model (per lake / period)."""
 
-        from myflopy.project.model_group import GroupLakStageResults
-
         return StageResultDiff(self._diff, GroupLakStageResults(self.group), entity="lake")
 
 
@@ -650,7 +648,5 @@ class SfrResultsDiffNamespace(CellResultsDiffNamespace):
     @property
     def stage(self) -> StageResultDiff:
         """Reach-stage difference vs the reference model (per reach / period)."""
-
-        from myflopy.project.model_group import GroupSfrStageResults
 
         return StageResultDiff(self._diff, GroupSfrStageResults(self.group), entity="reach")

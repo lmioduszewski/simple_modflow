@@ -15,6 +15,7 @@ import flopy.utils.binaryfile as bf
 import numpy as np
 import pandas as pd
 
+from myflopy._optional import require
 from myflopy.modflow.mf6.heads_observations import (
     get_obs_cells as _get_obs_cells,
 )
@@ -38,6 +39,7 @@ from myflopy.modflow.mf6.heads_plotting import (
 )
 from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
+from myflopy.modflow.utils.datatypes.hover import head_hover
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -412,8 +414,6 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         ...     final.sel(layer=k).ugrid.plot(ax=ax)
         """
 
-        from myflopy._optional import require
-
         xu = require("xugrid", feature="to_xugrid() unstructured-grid export")
         import xarray as xr  # guaranteed present: xarray is a xugrid dependency
 
@@ -483,8 +483,6 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         if self.model is None:
             raise ValueError("HeadsPlus.map() requires a parent model.")
         if hover is None:
-            from myflopy.modflow.utils.datatypes.hover import head_hover
-
             hover = head_hover(layers=hover_layers, surfaces=hover_surfaces)
         choro = self.model.cor(
             per=per,
