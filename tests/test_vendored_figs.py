@@ -159,7 +159,9 @@ def _runtime_figs_importers() -> list[str]:
             else:
                 continue
             if "figs" in roots and not _is_type_checking(node.lineno):
-                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+                # as_posix(): keep separators OS-independent so the viz.py
+                # exemption check below matches on Windows too.
+                offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
     return offenders
 
 
