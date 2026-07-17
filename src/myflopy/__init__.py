@@ -2,8 +2,10 @@
 
 Package-first helpers such as ``mf.lak(...)`` and ``mf.rch(...)`` are the
 preferred top-level API. Lower-level builders and ``*_spec`` factories remain
-available as compatibility imports, but they are intentionally omitted from
-``__all__`` and ``dir(myflopy)`` so discovery points at the package-first path.
+available as engine imports (``__engine__``), but they are intentionally
+omitted from ``__all__`` and ``dir(myflopy)`` so discovery points at the
+package-first path. Deprecated names are tracked in ``__compatibility__``
+(see ``docs/deprecation_policy.md``).
 """
 
 from __future__ import annotations
@@ -474,8 +476,33 @@ _SECOND_TIER_EXPORTS = {
 __preferred__ = tuple(
     sorted(name for name in _EXPORTS if name not in _SECOND_TIER_EXPORTS)
 )
-__compatibility__ = tuple(sorted(_SECOND_TIER_EXPORTS))
+__engine__ = tuple(sorted(_SECOND_TIER_EXPORTS))
 __all__ = list(__preferred__)
+
+# Warned compatibility aliases — the authoritative registry required by
+# docs/deprecation_policy.md. Every name here resolves with a
+# DeprecationWarning via __getattr__ only (hidden from __all__/dir()/
+# TYPE_CHECKING per D12) and may be removed two tagged releases after the
+# release that deprecated it. tests/test_deprecation.py cross-checks this
+# tuple against the registry in myflopy/_deprecation.py.
+__compatibility__ = (
+    "myflopy.modflow.mf6.DRN",
+    "myflopy.modflow.mf6.GHB",
+    "myflopy.modflow.mf6.drn.DRN",
+    "myflopy.modflow.mf6.ghb.GHB",
+    "myflopy.modflow.mp3du.particles.PRT",
+    "myflopy.modflow.mp3du.particles.PrtDisv",
+    "myflopy.modflow.mp3du.particles.PrtFmi",
+    "myflopy.modflow.mp3du.particles.PrtMip",
+    "myflopy.modflow.mp3du.particles.PrtOc",
+    "myflopy.modflow.mp3du.particles.PrtPrp",
+    "myflopy.project.model_group.ModelGroup.chd",
+    "myflopy.project.model_group.ModelGroup.drn",
+    "myflopy.project.model_group.ModelGroup.ghb",
+    "myflopy.project.model_group.ModelGroup.rch",
+    "myflopy.project.model_group.ModelGroup.uzf",
+    "myflopy.project.model_group.ModelGroup.wel",
+)
 
 
 def __getattr__(name: str) -> Any:

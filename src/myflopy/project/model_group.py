@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import warnings
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -11,6 +10,7 @@ from typing import Generic, TypeVar
 import numpy as np
 import pandas as pd
 
+from myflopy._deprecation import deprecated_instance_getattr
 from myflopy.modflow.mf6.package_explorer import (
     FieldMappable,
     LakStageResultsExplorer,
@@ -50,16 +50,6 @@ from myflopy.modflow.utils.datatypes.hover import (
 )
 
 TResultsNamespace = TypeVar("TResultsNamespace")
-
-
-def _warn_deprecated(old: str, new: str) -> None:
-    """Emit a ``DeprecationWarning`` steering callers from ``old`` to ``new``."""
-
-    warnings.warn(
-        f"{old} is deprecated and will be removed in a future release; use {new}.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 def _coerce_kstpkper(model, per: int | None = None, kstpkper: tuple[int, int] | None = None):
@@ -2626,58 +2616,18 @@ class ModelGroup:
     # These duplicate ``group.packages.<pkg>.inputs`` (which mirrors the
     # single-model ``model.packages.<pkg>.inputs``) and have no single-model
     # equivalent, so they are deprecated in favor of the mirrored path.
-    _DEPRECATED_ATTRS = ("rch", "chd", "drn", "ghb", "wel", "uzf")
-
-    def __dir__(self):
-        """Hide the deprecated flat shortcuts from tab-completion / dir().
-
-        They still work (with a DeprecationWarning) for back-compat, but should
-        not be advertised -- use ``group.packages.<pkg>.inputs`` instead.
-        """
-
-        return [name for name in super().__dir__() if name not in self._DEPRECATED_ATTRS]
-
-    @property
-    def rch(self) -> GroupPackageInputs:
-        """Deprecated. Use ``group.packages.rch.inputs``."""
-
-        _warn_deprecated("ModelGroup.rch", "group.packages.rch.inputs")
-        return self._rch
-
-    @property
-    def chd(self) -> GroupPackageInputs:
-        """Deprecated. Use ``group.packages.chd.inputs``."""
-
-        _warn_deprecated("ModelGroup.chd", "group.packages.chd.inputs")
-        return self._chd
-
-    @property
-    def drn(self) -> GroupPackageInputs:
-        """Deprecated. Use ``group.packages.drn.inputs``."""
-
-        _warn_deprecated("ModelGroup.drn", "group.packages.drn.inputs")
-        return self._drn
-
-    @property
-    def ghb(self) -> GroupPackageInputs:
-        """Deprecated. Use ``group.packages.ghb.inputs``."""
-
-        _warn_deprecated("ModelGroup.ghb", "group.packages.ghb.inputs")
-        return self._ghb
-
-    @property
-    def wel(self) -> GroupPackageInputs:
-        """Deprecated. Use ``group.packages.wel.inputs``."""
-
-        _warn_deprecated("ModelGroup.wel", "group.packages.wel.inputs")
-        return self._wel
-
-    @property
-    def uzf(self) -> GroupUzfInputs:
-        """Deprecated. Use ``group.packages.uzf.inputs``."""
-
-        _warn_deprecated("ModelGroup.uzf", "group.packages.uzf.inputs")
-        return self._uzf
+    # Resolved only via __getattr__ so they stay out of dir()/completion (D12).
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "rch": ("_rch", "group.packages.rch.inputs", "0.1.0"),
+            "chd": ("_chd", "group.packages.chd.inputs", "0.1.0"),
+            "drn": ("_drn", "group.packages.drn.inputs", "0.1.0"),
+            "ghb": ("_ghb", "group.packages.ghb.inputs", "0.1.0"),
+            "wel": ("_wel", "group.packages.wel.inputs", "0.1.0"),
+            "uzf": ("_uzf", "group.packages.uzf.inputs", "0.1.0"),
+        },
+        "myflopy.project.model_group.ModelGroup",
+    )
 
     @property
     def run_ids(self) -> list[str]:

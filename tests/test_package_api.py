@@ -245,10 +245,10 @@ def test_simulation_requires_a_model():
 def test_drn_helper_runs_grid_only():
     # F3: a boundary helper given only a grid (no model) must keep the grid and
     # not null it out when there is no model.nper.
-    from myflopy.modflow.mf6.drn import DRN
+    from myflopy.modflow.mf6.drn import DRNFromVector
 
     vor = _two_cell_grid()
-    helper = DRN(vor=vor)
+    helper = DRNFromVector(vor=vor)
     assert helper.vor is vor
     assert helper.nper is None
 

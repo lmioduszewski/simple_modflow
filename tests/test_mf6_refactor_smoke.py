@@ -46,14 +46,14 @@ from myflopy import (
     simple_model_spec as package_simple_model_spec,
 )
 from myflopy.modflow import geotiff_to_contours  # noqa: E402
-from myflopy.modflow.mf6 import (  # noqa: E402
-    DRN as PackageDRN,
-)
-from myflopy.modflow.mf6 import (
-    GHB as PackageGHB,
-)
 from myflopy.modflow.mf6 import (
     DisvGrid as PackageDisvGrid,
+)
+from myflopy.modflow.mf6 import (  # noqa: E402
+    DRNFromVector as PackageDRNFromVector,
+)
+from myflopy.modflow.mf6 import (
+    GHBFromVector as PackageGHBFromVector,
 )
 from myflopy.modflow.mf6 import (
     ModelRegion as PackageModelRegion,
@@ -88,8 +88,8 @@ from myflopy.modflow.mf6.cross_section_plotting import (  # noqa: E402
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
-from myflopy.modflow.mf6.drn import DRN, DRNFromVector  # noqa: E402
-from myflopy.modflow.mf6.ghb import GHB, GHBFromVector  # noqa: E402
+from myflopy.modflow.mf6.drn import DRNFromVector  # noqa: E402
+from myflopy.modflow.mf6.ghb import GHBFromVector  # noqa: E402
 from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity  # noqa: E402
 from myflopy.modflow.mf6.grid.helpers import densify_poly, signed_area  # noqa: E402
 from myflopy.modflow.mf6.grid.plotting import GridSection  # noqa: E402
@@ -609,9 +609,7 @@ def test_imports_and_custom_figs_are_available():
     assert myflopy.__version__
     assert SimulationBase is not None
     assert TriangleGrid is not None
-    assert DRN is not None
     assert DRNFromVector is not None
-    assert GHB is not None
     assert GHBFromVector is not None
     assert RechargeFromShp is not None
     assert RCHFromVector is not None
@@ -636,8 +634,8 @@ def test_imports_and_custom_figs_are_available():
     assert PackageDisvGrid is DisvGrid
     assert PackageTemporalDiscretization is TemporalDiscretization
     assert PackageOutputControl is OutputControl
-    assert PackageDRN is DRN
-    assert PackageGHB is GHB
+    assert PackageDRNFromVector is DRNFromVector
+    assert PackageGHBFromVector is GHBFromVector
     assert read_gpkg is not None
     assert read_shp_gpkg is not None
     assert geotiff_to_contours is not None
@@ -2773,13 +2771,13 @@ def test_vector_builder_aliases_are_consistent_across_packages():
             crs=vor.crs,
         ).set_index("name")
 
-        drn = DRN(model=model, vor=vor, idomain=[1, 0])
+        drn = DRNFromVector(model=model, vor=vor, idomain=[1, 0])
         drn._gdf = boundary_gdf
         drn._intersections = pd.Series({"left": [0, 1]}, name="intersect")
         assert drn.from_vector() == drn.from_polygons()
         assert drn.get_drn_from_poly() == drn.from_polygons()
 
-        ghb = GHB(model=model, vor=vor, idomain=[1, 0])
+        ghb = GHBFromVector(model=model, vor=vor, idomain=[1, 0])
         ghb._gdf = boundary_gdf
         ghb._edge_intersections = pd.Series({"left": [0, 1]}, name="intersect")
         assert ghb.from_vector() == ghb.from_polygons()

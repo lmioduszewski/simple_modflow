@@ -32,9 +32,12 @@ def test_top_level_exports_signal_package_first_api():
     assert "lak" in dir(mf)
     assert "LAKBuilder" not in dir(mf)
     assert "lak_spec" not in dir(mf)
-    assert "LAKBuilder" in mf.__compatibility__
-    assert "lak_spec" in mf.__compatibility__
-    assert "Wells" in mf.__compatibility__
+    # Engine tier (unwarned, importable, hidden from discovery). The old
+    # __compatibility__ name now tracks warned deprecated aliases instead
+    # (docs/deprecation_policy.md).
+    assert "LAKBuilder" in mf.__engine__
+    assert "lak_spec" in mf.__engine__
+    assert "Wells" in mf.__engine__
 
 
 def test_second_tier_top_level_exports_remain_explicitly_importable():

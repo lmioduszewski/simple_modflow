@@ -39,8 +39,9 @@ import myflopy
 for name in myflopy.__all__:
     getattr(myflopy, name)
 
-# The lazy-export surface beyond __all__ must also stay importable.
-for name in getattr(myflopy, "__compatibility__", ()):
+# The lazy-export surface beyond __all__ (the unwarned engine tier) must
+# also stay importable.
+for name in getattr(myflopy, "__engine__", ()):
     getattr(myflopy, name)
 
 print("ok")

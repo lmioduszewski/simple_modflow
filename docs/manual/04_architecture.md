@@ -331,10 +331,15 @@ intentionally split:
   the core spec/grid/context types. This is what `dir(myflopy)` and tab-completion
   show, and what this manual teaches: `mf.gwf`, `mf.disv`, `mf.ghb`, `mf.sfr`,
   `mf.Project`, `mf.SimulationSpec`, `mf.ModelContext`, `mf.LayerStack`, …
-- **Compatibility surface** (`myflopy.__compatibility__`) — the engine classes and
-  raw `*_spec` factories (`SFRBuilder`, `LAKBuilder`, `ghb_spec`, …). These remain
+- **Engine surface** (`myflopy.__engine__`) — the engine classes and raw
+  `*_spec` factories (`SFRBuilder`, `LAKBuilder`, `ghb_spec`, …). These remain
   importable for power users and internal use but are kept out of the discovery
-  surface so newcomers are steered to the facade.
+  surface so newcomers are steered to the facade. They are fully supported —
+  hidden is not deprecated.
+- **Compatibility surface** (`myflopy.__compatibility__`) — the *deprecated*
+  names. Each resolves only through `__getattr__` with a `DeprecationWarning`
+  naming its replacement, is hidden from `dir()`/completion, and lives at least
+  two tagged releases before removal. See `docs/deprecation_policy.md`.
 
 Imports are lazy: `myflopy/__init__.py` maps each public name to its module and
 resolves it on first access through `__getattr__`. The practical upshot — you pay

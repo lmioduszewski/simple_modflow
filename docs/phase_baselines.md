@@ -94,9 +94,13 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 - **Repo defects fixed:** layout smoke test no longer requires untracked local
   data (mkdir + skip); pyvista tests importorskip; pest tests' pyemu guard
   gap remains for 3 tests (they raise a clear ModuleNotFoundError — acceptable).
-- **Still open for Phase 1 acceptance:** first push → remote CI green on both
-  OSes (workflows are verified locally: wheel contains `_vendor`, py310
-  grammar parse clean, figs-blocked smokes pass).
+- **Phase 1 acceptance CLOSED 2026-07-17:** remote CI green on both OSes —
+  all 8 jobs (ubuntu+windows × py3.10/3.12/3.14, lint, wheel) at `cc62159`.
+  Took 7 fix iterations: binaries in the fast job, figs import in a test,
+  py3.10 `tomllib`, Windows subprocess env (`SystemRoot`), `cygpath -w` for
+  `GITHUB_PATH`, and finally backslash-vs-slash offender paths inside the
+  figs AST-guard test (`.as_posix()` fix — Windows had 541/542 passing all
+  along). Diagnosed in minutes once `gh auth login` gave log access.
 
 ## Phase 2 — Junk removal & repo hygiene (2026-07-16, branch `phase-2-hygiene`)
 
@@ -114,6 +118,29 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 - **Note:** the tracked checkout shed ~42 MB (31.5 MB notebook outputs +
   11.2 MB executables); `.git` history keeps the old blobs (D3 — no rewrite).
 
+## Phase 3 — Deprecation mechanics (2026-07-17, branch `phase-3-deprecation`)
+
+- **Delivered:** `src/myflopy/_deprecation.py` — the single deprecation
+  mechanism (`warn_deprecated`, `deprecated_module_getattr` returning a
+  `__getattr__`/`__dir__` pair with fallback chaining, `deprecated_instance_getattr`
+  for class attributes, plus a registry); `docs/deprecation_policy.md`;
+  `__compatibility__` repurposed as the authoritative warned-alias tuple
+  (16 fully-qualified names) with the old second-tier meaning renamed
+  `__engine__`; GHB/DRN vector builders flipped to their real
+  `GHBFromVector`/`DRNFromVector` names (old spellings warn + hidden per
+  D12 at both the modules and the mf6 facade; the simulation-layer OO `GHB`
+  keeps its name); absorbed all three pre-existing ad-hoc mechanisms
+  (model_group `_warn_deprecated` properties → class `__getattr__`, mp3du
+  legacy-PRT `__getattr__`, mp3du exe-path plain warning); pytest
+  `error:myflopy:DeprecationWarning` filter so internal code can never
+  trigger a deprecated alias silently.
+- **Fast suite:** 566 passed / 1 skipped, ~20 s. Ruff green; scoped mypy
+  green (now includes `_deprecation.py`).
+- **Docs synced in the same pass:** deprecation policy (new), manual
+  §4.8 tiers, codebase_structure, refactor review report (resolved note),
+  CLAUDE.md engine-class list. Notebooks already used the `*FromVector`
+  names — verified, no edits needed.
+
 ### Full-suite runs (append per phase)
 
 | Date | Commit | Result | Wall time |
@@ -123,3 +150,4 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 | 2026-07-16 | `d7a39e1`+fix | **BASELINE: 580 passed / 1 skipped / 2 failed (both known: layout smoke, MPI)** | **9m51s** |
 | 2026-07-16 | Phase 1 end (`phase-1-distribution`) | 588 passed / 2 skipped / 1 failed (only the MPI environment limitation; layout smoke now skips; +12 new Phase-1 tests; parallel/xugrid extras now exercised) | 11m23s (within the 20 min tripwire) |
 | 2026-07-16 | Phase 2 end (`phase-2-hygiene`) | **609 passed / 1 skipped / 0 failed — fully green** (MPI-enabled mf6 6.8.0.dev0 installed; the 1 skip is the author-machine-only sample data) | 14m21s (within the 20 min tripwire) |
+| 2026-07-17 | Phase 3 end (`phase-3-deprecation`) | **620 passed / 1 skipped / 0 failed — fully green** (+11 deprecation tests; suite ran under the new `error:myflopy:DeprecationWarning` filter) | 11m24s (within the 20 min tripwire) |
