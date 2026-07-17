@@ -164,6 +164,44 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 - **Splits are mechanical:** code moved verbatim, import headers derived
   from each module's AST; both split commits show +import-headers only.
 
+## Suite speedup (2026-07-17, branch `phase-4.6-fast-suite`)
+
+Goal: full suite under a minute, feature-complete. Root causes measured with
+`--durations=0`: 2 IES e2e tests ≈ 270 s (126 pestpp forward runs at ~1.4 s of
+Python/pyemu import each), the canonical fixture rebuilt+rerun 21× (~7 s each),
+8-part splits on the 2,500-cell grid, and 5,001-parameter PstFrom builds.
+
+- **`CanonicalModelConfig.testing()`** — 21×21 cells (441/layer),
+  `steps_per_period=1`: the smallest profile satisfying every
+  `CANONICAL_MODEL_CONTRACT` clause (nlay=4, nper≥6, SFR reaches≥40, pond/
+  springs/regions non-empty). All 13 packages + 5 observation families intact.
+  Build 0.46 s, mf6 run 0.58 s. `validation()`/full untouched (notebooks).
+- **Session-scoped `canonical_model`/`canonical_run`** — built+run once per
+  session, shared read-only; `canonical_run_fresh` exists for mutating tests
+  (none needed it — all 122 consumer tests passed unchanged). Profile
+  switchable: `SIMPLE_MODFLOW_CANONICAL_PROFILE=validation pytest` (the weekly
+  slow lane runs this, so size-dependent behavior stays covered weekly).
+- **IES trims** — `iterations=1`, `ies_lambda_mults=1.0`,
+  `lambda_scale_fac=1.0` (single upgrade candidate; deterministic seeds) +
+  `workers=4` (now also covers the previously-untested parallel PANTHER
+  path; the serial pestpp runner stays covered by the prior-MC test):
+  126 forward runs → 24 across both e2e tests.
+- **Calibration-demo trio** on `testing()` (pilot-point `pp_space` retuned
+  8→4 for the smaller domain); large-multilayer slider test renders 6×4
+  frames instead of 12×8 (same external-frame + dry/NaN-mask behavior).
+- **pytest-xdist** (`dev` extra) with `--dist worksteal` in addopts (only
+  active with `-n`; plain `pytest` stays serial) + heavies-first scheduling
+  hint in conftest. Plain `--dist load` left a 20 s tail; worksteal fixed it.
+- **`canonical_fast_tour.ipynb`** — the fast profile end-to-end in a
+  notebook (optional full-suite cell, heads/animations/scatter/IES review);
+  executes clean in ~31 s including a real 4-worker PESTPP-IES run.
+
+**Results** (20-core Linux box): serial full suite 11m44s → **2m49s**;
+`pytest -n 10` → **47.5 s** (632 passed / 1 skipped, everything still
+executed against real mf6/pestpp/mpiexec binaries). Fast lane (`-m "not
+slow"`) unchanged at ~21 s serial. **New tripwire: 6 min serial / 2 min at
+`-n 10`** (2× baseline, replacing the old 20-min tripwire).
+
 ### Full-suite runs (append per phase)
 
 | Date | Commit | Result | Wall time |
@@ -175,3 +213,4 @@ mkdir -p examples/mf6/artifacts                        # gitignored, asserted by
 | 2026-07-16 | Phase 2 end (`phase-2-hygiene`) | **609 passed / 1 skipped / 0 failed — fully green** (MPI-enabled mf6 6.8.0.dev0 installed; the 1 skip is the author-machine-only sample data) | 14m21s (within the 20 min tripwire) |
 | 2026-07-17 | Phase 3 end (`phase-3-deprecation`) | **620 passed / 1 skipped / 0 failed — fully green** (+11 deprecation tests; suite ran under the new `error:myflopy:DeprecationWarning` filter) | 11m24s (within the 20 min tripwire) |
 | 2026-07-17 | Phase 4 end (`phase-4-splits`) | **632 passed / 1 skipped / 0 failed — fully green** (+12: layout tests for both splits, layering + ratchet pins) | 11m44s (within the 20 min tripwire) |
+| 2026-07-17 | Suite speedup (`phase-4.6-fast-suite`) | **632 passed / 1 skipped / 0 failed — fully green** (testing() profile + session fixture + IES trims) | **2m49s serial; 47.5s at `-n 10`** (new tripwire: 6 min serial) |

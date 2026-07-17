@@ -387,8 +387,14 @@ def test_head_layer_mosaic_has_high_resolution_default_and_direct_controls(monke
 def test_large_multilayer_results_use_external_frames_and_mask_dry_values(tmp_path):
     workspace = _workspace("large_multilayer_slider")
     try:
-        model = _large_multilayer_model("large_multilayer_slider", workspace)
-        frames = _large_head_frames()
+        # 4 layers x 6 periods keeps every exercised behavior (external
+        # frames, the 1e30 dry mask in frame 2, the NaN in frame 4 on layer 3)
+        # while rendering a fraction of the PNG panels.
+        nlay, nper = 4, 6
+        model = _large_multilayer_model(
+            "large_multilayer_slider", workspace, nlay=nlay, nper=nper
+        )
+        frames = _large_head_frames(nlay=nlay, nper=nper)
         style = ModelMapStyle(show_contours=True, dpi=45, figsize=(5, 4))
 
         map_result = export_head_map_slider_html(
@@ -403,8 +409,8 @@ def test_large_multilayer_results_use_external_frames_and_mask_dry_values(tmp_pa
             model,
             tmp_path / "large_mosaic.html",
             head_frames=frames,
-            layers=list(range(8)),
-            ncols=4,
+            layers=list(range(nlay)),
+            ncols=2,
             style=style,
             embed_frames=False,
         )
@@ -413,20 +419,20 @@ def test_large_multilayer_results_use_external_frames_and_mask_dry_values(tmp_pa
             LineString([(0.5, 0.5), (39.5, 24.5)]),
             tmp_path / "large_cross_section.html",
             head_frames=frames,
-            labels=[f"period {period + 1}" for period in range(12)],
+            labels=[f"period {period + 1}" for period in range(nper)],
             dpi=45,
             embed_frames=False,
             show_legend=False,
         )
 
         for result in (map_result, mosaic_result, cross_section_result):
-            assert result.frame_count == 12
+            assert result.frame_count == nper
             assert not result.embedded_frames
             assert result.frame_directory is not None
-            assert len(list(result.frame_directory.glob("*.png"))) == 12
+            assert len(list(result.frame_directory.glob("*.png"))) == nper
             html = result.path.read_text(encoding="utf-8")
             assert "data:image/png;base64," not in html
-            assert "frame_00011.png" in html
+            assert f"frame_{nper - 1:05d}.png" in html  # last frame referenced
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

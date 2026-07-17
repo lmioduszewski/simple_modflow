@@ -48,6 +48,7 @@ dev = [
   "mypy>=1.10",
   "nbstripout>=0.7",
   "pytest>=8.0",
+  "pytest-xdist>=3.5",
   "ruff>=0.5",
 ]
 parallel = [
@@ -147,7 +148,11 @@ files = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-p no:cacheprovider"
+# --dist worksteal only takes effect with -n (pytest-xdist): idle workers
+# steal queued tests, which is what keeps the multi-second PEST/parallel
+# tests from defining the wall time. Plain `pytest` stays serial.
+# Full suite: `pytest -n 10 --dist worksteal` ~= 45-60 s on a 20-core box.
+addopts = "-p no:cacheprovider --dist worksteal"
 testpaths = ["tests"]
 filterwarnings = [
   # myflopy's own deprecation warnings start with the fully-qualified old

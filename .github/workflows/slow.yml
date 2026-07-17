@@ -31,5 +31,10 @@ jobs:
             https://github.com/usgs/pestpp/releases/download/5.2.16/pestpp-5.2.16-linux.tar.gz
           tar -xzf /tmp/pestpp.tar.gz -C /tmp
           cp /tmp/bin/pestpp-* "$HOME/.local/bin/"
-      - name: Full test suite
-        run: python -m pytest -q
+      - name: Full test suite (big canonical profile)
+        # The day-to-day suite runs the smallest contract-complete canonical
+        # profile; this weekly lane re-runs everything on the 50x50
+        # validation profile so size-dependent behavior stays covered.
+        env:
+          SIMPLE_MODFLOW_CANONICAL_PROFILE: validation
+        run: python -m pytest -q -n auto

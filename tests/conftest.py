@@ -46,30 +46,77 @@ def tmp_path():
         pass
 
 
-@pytest.fixture
+# The canonical model is built and mf6-run ONCE per session and shared:
+# every profile is contract-complete (all 13 packages + 5 observation
+# families), so tests exercise identical features regardless of size. The
+# suite defaults to the smallest contract-complete profile; the weekly slow
+# CI lane (and anyone locally) can re-run everything on a bigger profile via
+#   SIMPLE_MODFLOW_CANONICAL_PROFILE=validation pytest
+_CANONICAL_PROFILES = {
+    "testing": CanonicalModelConfig.testing,
+    "validation": CanonicalModelConfig.validation,
+    "full": CanonicalModelConfig,
+}
+
+
+@pytest.fixture(scope="session")
 def canonical_config():
-    """Return the scaled validation profile of the authoritative model."""
+    """Return the session's canonical-model profile (default: testing)."""
 
-    return CanonicalModelConfig.validation()
+    profile = os.environ.get("SIMPLE_MODFLOW_CANONICAL_PROFILE", "testing")
+    return _CANONICAL_PROFILES[profile]()
 
 
-@pytest.fixture
-def canonical_model(tmp_path, canonical_config):
-    """Build and contract-check the canonical model for integration tests."""
+@pytest.fixture(scope="session")
+def _canonical_session_dir():
+    """Session-lifetime workspace for the shared canonical build/run."""
 
-    model = build_canonical_model(tmp_path / "canonical", config=canonical_config)
+    root = _pytest_temp_root()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"canonical_{uuid4().hex[:10]}"
+    path.mkdir(parents=True, exist_ok=False)
+    yield path
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        pass
+
+
+@pytest.fixture(scope="session")
+def canonical_model(canonical_config, _canonical_session_dir):
+    """Build and contract-check the shared canonical model (once per session)."""
+
+    model = build_canonical_model(
+        _canonical_session_dir / "canonical", config=canonical_config
+    )
     CANONICAL_MODEL_CONTRACT.validate(model)
     return model
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def canonical_run(canonical_model):
-    """Run and return the contract-checked canonical integration model."""
+    """Run (once per session) and return the contract-checked canonical model.
+
+    Shared across tests: consumers must treat the model and its workspace as
+    read-only. Tests that mutate the model or write into its workspace build
+    their own copy instead (see ``canonical_run_fresh``).
+    """
 
     success, report = canonical_model.run_simulation()
     assert success, "\n".join(report[-30:])
     CANONICAL_MODEL_CONTRACT.validate(canonical_model)
     return canonical_model
+
+
+@pytest.fixture
+def canonical_run_fresh(tmp_path, canonical_config):
+    """A private, freshly built + run canonical model for mutating tests."""
+
+    model = build_canonical_model(tmp_path / "canonical", config=canonical_config)
+    success, report = model.run_simulation()
+    assert success, "\n".join(report[-30:])
+    CANONICAL_MODEL_CONTRACT.validate(model)
+    return model
 
 
 # --- Slow-test marking -------------------------------------------------------
@@ -138,5 +185,25 @@ def pytest_collection_modifyitems(config, items):
             item.path.stem in _SLOW_MODULES
             or item.originalname in _SLOW_TESTS
             or "canonical_run" in item.fixturenames
+            or "canonical_run_fresh" in item.fixturenames
         ):
             item.add_marker(slow)
+
+    # Schedule the few multi-second tests first: under pytest-xdist they then
+    # start immediately instead of defining a long tail. Only the true
+    # heavies are promoted — promoting every slow-marked test stampedes
+    # dozens of subprocess-spawning tests onto the CPU at once, which is
+    # slower. Stable sort keeps natural order otherwise.
+    priority = {
+        "test_run_ies_end_to_end_and_assess_with_ies_results",
+        "test_ies_capture_field_and_spatial_maps_end_to_end",
+        "test_prior_monte_carlo_and_conflict_end_to_end",
+        "test_refined_end_to_end_model_can_run_with_preferred_builder_api",
+        "test_canonical_model_prepares_contiguous_partitions_across_representative_part_counts",
+        "test_master_example_full_profile_boundary_heads_stay_above_cell_bottoms",
+        "test_master_example_validation_profile_runs_complex_package_topology",
+        "test_canonical_eight_part_split_runs_with_mpi",
+        "test_canonical_eight_part_split_runs_with_local_lake_connections",
+        "test_pilot_point_k_parameterization_on_voronoi",
+    }
+    items.sort(key=lambda item: 0 if item.originalname in priority else 1)

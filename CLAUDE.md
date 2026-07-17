@@ -5,6 +5,15 @@
 - Active development branch: `myflopy`
 - Package lives at `src/myflopy/` on that branch
 
+## Test suite (fast by design)
+- Full 633-test suite: `pytest -n 10` ≈ **45–60 s** (worksteal dist is in
+  addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
+- Tests share ONE session-scoped canonical model on
+  `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
+  all 13 packages + 5 obs families). Weekly CI re-runs everything on the 50×50
+  profile via `SIMPLE_MODFLOW_CANONICAL_PROFILE=validation`.
+- Tour/verify interactively: `examples/mf6/notebooks/canonical_fast_tour.ipynb`.
+
 ## What this project is
 A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 - **Voronoi/unstructured grids** (DISV/DISU) via `VoronoiGridPlus` + `TriangleGrid`

@@ -107,6 +107,22 @@ class CanonicalModelConfig:
 
         return cls(nrow=50, ncol=50, nlay=4, nper=6, cell_size=100.0)
 
+    @classmethod
+    def testing(cls) -> CanonicalModelConfig:
+        """Return the smallest contract-complete profile, for the test suite.
+
+        Feature-complete but small: every canonical package (13) and
+        observation family (5) is still built and the full
+        ``CANONICAL_MODEL_CONTRACT`` still validates — the grid is simply as
+        coarse as the contract floors allow (SFR reaches >= 40, pond/spring
+        cells present, three non-empty regions), and single time steps keep
+        the transient schedule at the ``nper >= 6`` floor. The notebooks and
+        the weekly slow CI lane keep using :meth:`validation` /
+        the full default profile; see ``docs/phase_baselines.md``.
+        """
+
+        return cls(nrow=21, ncol=21, nlay=4, nper=6, cell_size=100.0, steps_per_period=1)
+
     @property
     def ncpl(self) -> int:
         """Cells per layer (``nrow * ncol``)."""

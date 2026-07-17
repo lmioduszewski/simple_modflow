@@ -29,6 +29,7 @@ except Exception:
             sys.path.insert(0, str(dep_path))
 
 from myflopy.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
+from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig  # noqa: E402
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.observations import (  # noqa: E402
     DrnFlowTargets,
@@ -1245,7 +1246,16 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     cal.forecast(forecast)
     cal.build("run_ies_demo.pst", noptmax=0)
 
-    ies = cal.run_ies(reals=6, iterations=2, noise=True)
+    # iterations=1 + lambda_scale_fac=1.0 cut pestpp forward runs 82 -> 20
+    # while still exercising prior + posterior; workers=4 also covers the
+    # parallel PESTPP-IES agent path (previously untested).
+    # ies_lambda_mults=1.0 + lambda_scale_fac=1.0 tests a single upgrade
+    # candidate per iteration: 82 -> 12 pestpp forward runs. Deterministic
+    # (fixed demo seed + pestpp's fixed default ies seed).
+    ies = cal.run_ies(
+        reals=6, iterations=1, noise=True, workers=4,
+        ies_lambda_mults=1.0, lambda_scale_fac=1.0,
+    )
 
     assert isinstance(ies, IesResults)
     assert ies.iterations[0] == 0
@@ -1346,7 +1356,12 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
     assert len(captured) == int(model.vor.ncpl)
     assert bool((captured["weight"] == 0).all())
 
-    ies = cal.run_ies(reals=6, iterations=1)
+    # workers=4 keeps this off the parallel suite's critical path; the
+    # serial pestpp runner path stays covered by the prior-MC test. The
+    # trimmed lambda sweep cuts pestpp forward runs 44 -> 20.
+    ies = cal.run_ies(
+        reals=6, iterations=1, workers=4, ies_lambda_mults=1.0, lambda_scale_fac=1.0
+    )
 
     assert any(info["target"] == "k" for info in ies.capture_fields)
     field = ies.field("k")
@@ -1371,7 +1386,9 @@ def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path
         build_canonical_calibration_demo,
     )
 
-    demo = build_canonical_calibration_demo(tmp_path / "model", n_head_wells=8)
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=8
+    )
     assert demo.model.gwf.modelgrid.nlay == 4
     assert demo.head_targets.locations_gdf.shape[0] == 8
     assert demo.forecast_targets.locations_gdf.shape[0] == 1
@@ -1407,7 +1424,11 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
     )
 
     demo = build_canonical_calibration_demo(
-        tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
+        tmp_path / "model",
+        config=CanonicalModelConfig.testing(),
+        n_head_wells=6,
+        start_k_constant=10.0,
+        start_k_layers=(0, 1),
     )
     cal = demo.model.pest(
         "gk", workspace=tmp_path / "tmpl",
@@ -1445,13 +1466,19 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
     )
 
     demo = build_canonical_calibration_demo(
-        tmp_path / "model", n_head_wells=6, start_k_constant=10.0, start_k_layers=(0, 1)
+        tmp_path / "model",
+        config=CanonicalModelConfig.testing(),
+        n_head_wells=6,
+        start_k_constant=10.0,
+        start_k_layers=(0, 1),
     )
     cal = demo.model.pest(
         "ppk", workspace=tmp_path / "tmpl",
         start_datetime="2024-01-01",
     )
-    cal.parameterize("k", style="pilotpoints", pp_space=8, layers=[0, 1],
+    # pp_space=4 on the 2,100 m testing-profile domain -> ~5x5 net (>= 10 pp);
+    # the old pp_space=8 was sized for the 5,000 m validation domain.
+    cal.parameterize("k", style="pilotpoints", pp_space=4, layers=[0, 1],
                      bounds=(0.05, 20.0), physical=(0.001, 300.0), capture=True)
     cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)

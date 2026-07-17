@@ -94,7 +94,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |
 | Adaptive time stepping (ATS; zero-based `ats=` periods) | ✅ | `simulation/discretization.py` (`TemporalDiscretization(ats=...)`) |
 | xarray/ugrid interchange (`to_xugrid`, NetCDF-ready) | ✅ | `grid/voronoi.py` `VoronoiGridPlus.to_xugrid`, `headsplus.py` `HeadsPlus.to_xugrid` (extra: `xugrid`) |
-| Canonical model contract (standardized signals) | ✅ | `canonical.py`, `canonical_example.py` |
+| Canonical model contract (standardized signals) | ✅ | `canonical.py`, `canonical_example.py`; profiles: full 100×100, `validation()` 50×50, `testing()` 21×21 (smallest contract-complete; the test suite's shared session fixture + `canonical_fast_tour.ipynb`) |
 
 ### Visualization front door, grammar, hover, colors
 | Capability | Status | Where |
