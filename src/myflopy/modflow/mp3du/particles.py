@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import shutil
 import subprocess
-import warnings
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -16,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from myflopy._deprecation import deprecated_module_getattr, warn_deprecated
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
@@ -54,13 +53,11 @@ def resolve_mp3du_executable(name: str, explicit: Path | str | None = None) -> P
         return repo_candidate
     legacy = _MODULE_DIR / name
     if legacy.exists():
-        # Plain warning for now; converted to the 3.1 deprecation helper when
-        # that lands (plan 2.4 sequencing note).
-        warnings.warn(
-            f"Loading {name} from inside the myflopy package is deprecated; "
-            "place MP3DU executables in tools/mp3du/ or set MYFLOPY_MP3DU_DIR.",
-            DeprecationWarning,
-            stacklevel=2,
+        # Behavior deprecation (not an alias, so not in __compatibility__).
+        warn_deprecated(
+            f"myflopy.modflow.mp3du: loading {name} from inside the package",
+            "tools/mp3du/ or MYFLOPY_MP3DU_DIR",
+            since="0.1.0",
         )
         return legacy
     return repo_candidate
@@ -1059,18 +1056,15 @@ def run_particle_tracking(
     return result
 
 
-def __getattr__(name: str):
-    """Redirect legacy PRT helper names to ``mp3du.legacy_prt`` with a deprecation warning."""
-
-    if name in _LEGACY_PRT_NAMES:
-        warnings.warn(
-            "Legacy FloPy/MODFLOW PRT helpers moved to "
-            "'myflopy.modflow.mp3du.legacy_prt'. They remain available for workflows "
-            "that experiment with MODFLOW PRT, but the supported MP3DU API is "
-            "ParticleTrackingInput / prepare_particle_tracking / run_particle_tracking.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        module = importlib.import_module("myflopy.modflow.mp3du.legacy_prt")
-        return getattr(module, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# Legacy FloPy/MODFLOW PRT helpers moved to mp3du.legacy_prt; the supported
+# MP3DU API is ParticleTrackingInput / prepare_particle_tracking /
+# run_particle_tracking. Warned + hidden from dir()/completion per D12.
+_DEPRECATED = {
+    name: (
+        f"myflopy.modflow.mp3du.legacy_prt:{name}",
+        f"myflopy.modflow.mp3du.legacy_prt.{name}",
+        "0.1.0",
+    )
+    for name in _LEGACY_PRT_NAMES
+}
+__getattr__, __dir__ = deprecated_module_getattr(_DEPRECATED, __name__)

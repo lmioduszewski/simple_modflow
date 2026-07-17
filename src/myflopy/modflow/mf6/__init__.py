@@ -5,6 +5,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from myflopy._deprecation import deprecated_module_getattr
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.boundaries import Boundaries
     from myflopy.modflow.mf6.canonical import (
@@ -20,6 +22,8 @@ if TYPE_CHECKING:
         CanonicalModelConfig,
         build_canonical_model,
     )
+    from myflopy.modflow.mf6.drn import DRNFromVector
+    from myflopy.modflow.mf6.ghb import GHBFromVector
     from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from myflopy.modflow.mf6.interactive_plotting import (
@@ -95,11 +99,11 @@ _EXPORTS = {
     "ParallelSplitResults": ("myflopy.modflow.mf6.parallel", "ParallelSplitResults"),
     "ParallelSplitRun": ("myflopy.modflow.mf6.parallel", "ParallelSplitRun"),
     "StandaloneHtmlSlider": ("myflopy.modflow.mf6.interactive_plotting", "StandaloneHtmlSlider"),
-    "DRN": ("myflopy.modflow.mf6.drn", "DRN"),
+    "DRNFromVector": ("myflopy.modflow.mf6.drn", "DRNFromVector"),
     "DisuGrid": ("myflopy.modflow.mf6.simulation.discretization", "DisuGrid"),
     "DisvGrid": ("myflopy.modflow.mf6.simulation.discretization", "DisvGrid"),
     "Drains": ("myflopy.modflow.mf6.simulation.packages", "Drains"),
-    "GHB": ("myflopy.modflow.mf6.ghb", "GHB"),
+    "GHBFromVector": ("myflopy.modflow.mf6.ghb", "GHBFromVector"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
     "LakeStageTargets": ("myflopy.modflow.mf6.observations", "LakeStageTargets"),
@@ -202,7 +206,7 @@ _EXPORTS = {
 __all__ = sorted([*_SUBMODULES.keys(), *_EXPORTS.keys()])
 
 
-def __getattr__(name: str):
+def _lazy_getattr(name: str):
     """Lazily import a submodule or public export on first attribute access."""
 
     if name in _SUBMODULES:
@@ -216,7 +220,20 @@ def __getattr__(name: str):
     return getattr(module, attr_name)
 
 
-def __dir__():
+def _lazy_dir():
     """Advertise the lazily-exported names for tab-completion."""
 
     return sorted(list(globals().keys()) + __all__)
+
+
+# Deprecated aliases (implementation plan 3.2): the bare GHB/DRN spellings
+# resolve to the vector builders with a warning, hidden from completion (D12).
+# The bare GHB name at the simulation layer (simulation/packages.py) is a
+# different, non-deprecated class.
+_DEPRECATED = {
+    "DRN": ("myflopy.modflow.mf6.drn:DRNFromVector", "DRNFromVector", "0.2.0"),
+    "GHB": ("myflopy.modflow.mf6.ghb:GHBFromVector", "GHBFromVector", "0.2.0"),
+}
+__getattr__, __dir__ = deprecated_module_getattr(
+    _DEPRECATED, __name__, fallback_getattr=_lazy_getattr, fallback_dir=_lazy_dir
+)

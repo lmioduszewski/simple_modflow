@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._deprecation import deprecated_module_getattr
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
@@ -23,7 +24,7 @@ idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
 
-class DRN(Boundaries):
+class DRNFromVector(Boundaries):
     """Build drain stress-period data from polygons or explicit cell selections."""
 
     def __init__(
@@ -249,5 +250,10 @@ class DRN(Boundaries):
         return drn_dict
 
 
-# Preferred alias for the vector-driven drain builder API.
-DRNFromVector = DRN
+# Deprecated alias (implementation plan 3.2): the vector builder's real name
+# is DRNFromVector, matching the other *FromVector builders. Warned + hidden
+# from dir()/completion per D12.
+_DEPRECATED = {
+    "DRN": ("myflopy.modflow.mf6.drn:DRNFromVector", "DRNFromVector", "0.2.0"),
+}
+__getattr__, __dir__ = deprecated_module_getattr(_DEPRECATED, __name__)

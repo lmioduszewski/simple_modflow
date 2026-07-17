@@ -200,6 +200,11 @@ Recommendation:
   remove it from the preferred `mf6` export surface in a future deprecation
   cycle.
 
+> **RESOLVED (2026-07-16, implementation plan 3.2):** `GHBFromVector` /
+> `DRNFromVector` are now the real class names; the bare `GHB`/`DRN`
+> spellings warn and are hidden from completion (`docs/deprecation_policy.md`).
+> The simulation-layer `GHB` package wrapper keeps its name.
+
 ### Priority 1: Generated examples and outputs dominate the repository
 
 The branch tracks:

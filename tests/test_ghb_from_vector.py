@@ -1,4 +1,4 @@
-"""Regression test: GHB.from_vector tolerates missing optional attribute fields.
+"""Regression test: GHBFromVector.from_vector tolerates missing optional attribute fields.
 
 `from_polygons` used to read every field (name/elev/height/cond/layer/min_elev)
 unconditionally, so a GHB shapefile that only carried the fields it uses (e.g.
@@ -18,7 +18,7 @@ from myflopy.modflow.mf6.canonical_example import (
     CanonicalModelConfig,
     rectangular_voronoi,
 )
-from myflopy.modflow.mf6.ghb import GHB
+from myflopy.modflow.mf6.ghb import GHBFromVector
 
 
 def test_ghb_from_vector_tolerates_missing_optional_fields(tmp_path):
@@ -43,7 +43,7 @@ def test_ghb_from_vector_tolerates_missing_optional_fields(tmp_path):
         crs=vor.crs,
     ).to_file(shp)
 
-    ghb = GHB(vor=vor, shp_gpkg=shp, uid="name")
+    ghb = GHBFromVector(vor=vor, shp_gpkg=shp, uid="name")
     spd = ghb.from_vector()  # must not raise KeyError on the missing fields
 
     assert 0 in spd
@@ -81,8 +81,8 @@ def test_ghb_from_vector_selects_all_cells_in_polygon_not_just_grid_edge(tmp_pat
         crs=vor.crs,
     ).to_file(shp)
 
-    all_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_vector()                     # all cells
-    edge_cells = GHB(vor=vor, shp_gpkg=shp, uid="name").from_polygons(edges_only=True)   # grid-edge only
+    all_cells = GHBFromVector(vor=vor, shp_gpkg=shp, uid="name").from_vector()                     # all cells
+    edge_cells = GHBFromVector(vor=vor, shp_gpkg=shp, uid="name").from_polygons(edges_only=True)   # grid-edge only
 
     all_ids = {rec[0] for rec in all_cells[0]}
     edge_ids = {rec[0] for rec in edge_cells[0]}

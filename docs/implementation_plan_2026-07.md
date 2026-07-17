@@ -334,6 +334,12 @@ order (monkeypatched env, tmp dirs).
 
 ## Phase 3 — Deprecation mechanics & API-surface cleanup (~1 day)
 
+> **DONE 2026-07-16** (branch `phase-3-deprecation`; see `docs/phase_baselines.md`
+> and `docs/deprecation_policy.md`). Notes: the repurposed `__compatibility__`
+> holds fully-qualified warned-alias names; the old second-tier meaning moved to
+> `__engine__`; the mp3du legacy-PRT `__getattr__` and exe-path warning were
+> absorbed into the helper alongside model_group's `_warn_deprecated`.
+
 ### 3.1 Deprecation helper + policy
 
 `src/myflopy/_deprecation.py` with `warn_deprecated(old, new, *, since)` and
@@ -982,14 +988,14 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       subprocess tests prove `import myflopy.viz` + post-script injection work
       without local figs; wheel verified to contain the snapshot) (0, 1.1)
 - [x] `v0.1.0` tagged at baseline (2026-07-16); wheel-build CI job written and
-      verified locally; scheduled slow lane exists — remote green pending the
-      first push (0, 1.3, D11)
+      verified locally; scheduled slow lane exists (0, 1.3, D11)
 - [x] `matplotlib` + `seaborn` + `openpyxl` declared; dash/osgeo lazified with
       subprocess isolation tests; import-surface smoke green (`pyyaml` lands with
       5.6) (1.2)
-- [ ] CI green on ubuntu + windows (fast suite + ruff + scoped mypy); vendored-figs
-      path exercised — workflows landed 2026-07-16, green pending the first push
-      (1.3, 1.4)
+- [x] CI green on ubuntu + windows (fast suite + ruff + scoped mypy); vendored-figs
+      path exercised — all 8 jobs green 2026-07-17 (`cc62159`) after 7 fix
+      iterations; the final Windows blocker was backslash-vs-slash paths in the
+      figs AST-guard test itself (1.3, 1.4)
 - [x] `grep -rn "lukem" src/myflopy` empty (2026-07-16); junk modules gone incl. the
       `get_iheads`/`gwt` lazy-export + smoke-test removals (D10);
       `test_retired_modules_stay_retired` pins it; live notebooks/examples use
@@ -997,9 +1003,12 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
 - [x] Notebooks stripped (26, −776k lines) + pre-commit hook + strip/render
       scripts; no `.exe` under `src/` (gitignored forever); `tools/mp3du/`
       resolution chain tested (6 tests) (2.3, 2.4)
-- [ ] Deprecated aliases warn AND are hidden from autocompletion per D12 (not in
+- [x] Deprecated aliases warn AND are hidden from autocompletion per D12 (not in
       `__all__`/`dir()`/TYPE_CHECKING/stubs); GHB/DRN collision resolved; policy doc
-      exists (3.x)
+      exists (3.x) — done 2026-07-16: `_deprecation.py` (module + instance
+      `__getattr__` helpers, registry), `__compatibility__` repurposed (old
+      second-tier meaning renamed `__engine__`), model_group/mp3du ad-hoc
+      mechanisms absorbed, `error:myflopy:DeprecationWarning` pytest filter
 - [ ] `observations/` + `project/group/` packages; old paths work; no active module
       > ~1,800 lines without a written reason (4.1, 4.2)
 - [ ] Layering test + deferred-import ratchet in CI (4.4)

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._deprecation import deprecated_module_getattr
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
@@ -22,7 +23,7 @@ idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
 
 
-class GHB(Boundaries):
+class GHBFromVector(Boundaries):
     """Build MF6 GHB stress-period data from GIS features and per-period values."""
 
     def __init__(
@@ -319,6 +320,11 @@ class GHB(Boundaries):
         return True
 
 
-# Preferred alias for the vector-driven general-head-boundary builder API.
-GHBFromVector = GHB
+# Deprecated alias (implementation plan 3.2): the vector builder's real name
+# is GHBFromVector; the bare GHB spelling collided with the OO package class
+# in simulation/packages.py. Warned + hidden from dir()/completion per D12.
+_DEPRECATED = {
+    "GHB": ("myflopy.modflow.mf6.ghb:GHBFromVector", "GHBFromVector", "0.2.0"),
+}
+__getattr__, __dir__ = deprecated_module_getattr(_DEPRECATED, __name__)
 

@@ -143,11 +143,19 @@ files = [
   "src/myflopy/workspace.py",
   "src/myflopy/advanced.py",
   "src/myflopy/builders.py",
+  "src/myflopy/_deprecation.py",
 ]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
+filterwarnings = [
+  # myflopy's own deprecation warnings start with the fully-qualified old
+  # name ("myflopy..."); escalate them to errors so internal code and
+  # un-asserted test paths can never trigger a deprecated alias. Tests
+  # exercise the aliases through pytest.warns (docs/deprecation_policy.md).
+  "error:myflopy:DeprecationWarning",
+]
 markers = [
   "canonical: integration test that must use the authoritative canonical model",
   "unit: intentionally isolated small-fixture test that does not claim canonical coverage",

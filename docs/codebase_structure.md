@@ -88,17 +88,20 @@ This is the main MF6 implementation area.
 - [src/myflopy/modflow/mf6/boundary_support.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/boundary_support.py)
   Shared support functions for boundary packages.
 - [src/myflopy/modflow/mf6/drn.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/drn.py)
-  Drain-specific workflow helpers. Preferred vector-builder name:
-  `DRNFromVector` (compatibility name: `DRN`).
+  Drain-specific workflow helpers. Vector-builder class: `DRNFromVector`
+  (the old `DRN` spelling warns and is hidden from completion; see
+  `docs/deprecation_policy.md`).
 - [src/myflopy/modflow/mf6/ghb.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/ghb.py)
-  General-head-boundary workflow helpers. Preferred vector-builder name:
-  `GHBFromVector` (compatibility name: `GHB`).
+  General-head-boundary workflow helpers. Vector-builder class:
+  `GHBFromVector` (the old `GHB` spelling warns and is hidden from
+  completion; the unrelated OO package class in `simulation/packages.py`
+  keeps the `GHB` name — see `docs/deprecation_policy.md`).
 - [src/myflopy/modflow/mf6/chd.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/chd.py)
   Vector-driven constant-head builders. Preferred builder name:
   `CHDFromVector`.
 - [src/myflopy/modflow/mf6/recharge.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/recharge.py)
   Recharge-specific workflow helpers. Preferred vector-builder name:
-  `RCHFromVector` (compatibility name: `RechargeFromShp`).
+  `RCHFromVector` (unwarned alias of `RechargeFromShp`; both stay public).
 - [src/myflopy/modflow/mf6/kflow.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/kflow.py)
   Vector-driven hydraulic-conductivity/material-property builders. Preferred
   builder name: `KFromVector`.
