@@ -240,10 +240,14 @@ lifecycle itself is top-level `workspace.py`, above).
 - [src/myflopy/project/run_model.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/run_model.py)
   `LoadedMf6Run`: lazy file-backed model loader for existing MF6 directories
   (`mf.load_mf6_run(path)`).
-- [src/myflopy/project/model_group.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_group.py)
-  `ModelGroup`: grouped multi-model API mirroring the single-model surface —
-  `group.hds`, `group.bud`, `group.packages.<pkg>.inputs/.results`, member maps
-  and mosaics, and the entry to `group.diff()`.
+- [src/myflopy/project/group/](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/group/__init__.py)
+  `ModelGroup` (`core.py`) and the grouped multi-model API mirroring the
+  single-model surface — `group.hds`, `group.bud`,
+  `group.packages.<pkg>.inputs/.results`, member maps and mosaics, and the
+  entry to `group.diff()`. Split from the former single-module
+  `model_group.py` (plan 4.2): `spatial/budget/inputs/results` + per-package
+  `sfr/lak/uzf/surface_water` + `packages` namespaces + `_shared` helpers.
+  `project/model_group.py` remains as a full facade over this package.
 - [src/myflopy/project/model_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_diff.py)
   The `ModelDiff` setup tiers behind the ONE `diff()` verb: package structural +
   value diffs, config diff, LAK/SFR connection-geometry diff, `report()`.
@@ -309,7 +313,7 @@ PEST / parallel tests are auto-marked `slow` in `conftest.py`). Highlights:
 - If you are working on Voronoi or Triangle grids: start in [grid/triangle.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/triangle.py:1) and [grid/voronoi.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/voronoi.py:1).
 - If you are diagnosing stream/lake/mover coupling problems: start in [surface_water_validation.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/surface_water_validation.py:1), then check [sfr.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/sfr.py:1) and [lakes.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/lakes.py:1).
 - If you are reopening existing runs: start in [project/run_model.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/run_model.py:1).
-- If you are comparing runs: start in [project/model_group.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_group.py:1).
+- If you are comparing runs: start in [project/group/](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/group/__init__.py) (facade: `project/model_group.py`).
 - If you are working on the preferred package input tables and choropleths:
   start in [package_explorer.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/package_explorer.py:1),
   then check [simulation/accessors.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/simulation/accessors.py:1)

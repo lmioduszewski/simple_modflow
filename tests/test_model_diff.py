@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from myflopy.project import model_diff as md
-from myflopy.project import model_group as mg
+from myflopy.project.group import inputs as group_inputs
 from myflopy.project.model_config import ModelConfig
 from myflopy.project.model_group import ModelGroup
 
@@ -61,7 +61,8 @@ def tables(monkeypatch):
         return frame.reset_index(drop=True)
 
     monkeypatch.setattr(md, "build_cell_package_input_table", stub)
-    monkeypatch.setattr(mg, "build_cell_package_input_table", stub)
+    # Patch where the builder is USED: group/inputs.py (plan 4.2 split).
+    monkeypatch.setattr(group_inputs, "build_cell_package_input_table", stub)
     return registry
 
 
