@@ -170,6 +170,11 @@ Grid construction, Voronoi handling, plotting, and optimization.
   `VoronoiGridPlus` implementation and grid utilities.
 - [src/myflopy/modflow/mf6/grid/plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/plotting.py)
   Grid-specific plotting helpers.
+- [src/myflopy/modflow/mf6/grid/interpolated_surface.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/interpolated_surface.py)
+  `InterpolatedSurface`: model-aware interpolated surfaces + plotly traces
+  (moved from `modflow/utils/surfaces.py` in plan 4.3; the old path is a
+  warned facade). Distinct from the declarative `myflopy/surfaces.py` engine
+  and the `grid/surfaces.py` raster sampler.
 - [src/myflopy/modflow/mf6/grid/mesh_quality.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/mesh_quality.py)
   Mesh quality metrics and reporting.
 - [src/myflopy/modflow/mf6/grid/geometry_cleanup.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/grid/geometry_cleanup.py)

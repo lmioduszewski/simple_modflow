@@ -16,8 +16,8 @@ from shapely import line_locate_point
 from shapely.geometry import LineString
 
 from myflopy import viz as f
+from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.utils.animations import Animation
-from myflopy.modflow.utils.surfaces import InterpolatedSurface
 from myflopy.viz import Fig
 
 

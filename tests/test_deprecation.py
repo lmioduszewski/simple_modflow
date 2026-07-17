@@ -161,6 +161,16 @@ def test_simulation_layer_ghb_is_a_different_undeprecated_class():
     assert SimulationGHB is not GHBFromVector
 
 
+def test_legacy_utils_surfaces_path_warns_resolves_and_hides():
+    # Plan 4.3: InterpolatedSurface moved to mf6/grid/interpolated_surface.
+    import myflopy.modflow.utils.surfaces as legacy_surfaces
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    with pytest.warns(DeprecationWarning, match="interpolated_surface"):
+        assert legacy_surfaces.InterpolatedSurface is InterpolatedSurface
+    assert "InterpolatedSurface" not in dir(legacy_surfaces)
+
+
 # ---------------------------------------------------------------------------
 # legacy PRT aliases (mp3du) — absorbed ad-hoc __getattr__
 # ---------------------------------------------------------------------------
@@ -189,6 +199,7 @@ def test_compatibility_registry_matches_the_helpers_exactly():
     import myflopy.modflow.mf6.drn  # noqa: F401
     import myflopy.modflow.mf6.ghb  # noqa: F401
     import myflopy.modflow.mp3du.particles  # noqa: F401
+    import myflopy.modflow.utils.surfaces  # noqa: F401
     import myflopy.project.model_group  # noqa: F401
 
     registered = set(registered_deprecations())

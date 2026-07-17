@@ -73,6 +73,7 @@ never call a deprecated alias, and tests must exercise aliases explicitly.
 | `myflopy.modflow.mf6.GHB` (facade) and `myflopy.modflow.mf6.ghb.GHB` | `GHBFromVector` (same modules) | 0.2.0 | 0.4.0 |
 | `myflopy.modflow.mf6.DRN` (facade) and `myflopy.modflow.mf6.drn.DRN` | `DRNFromVector` (same modules) | 0.2.0 | 0.4.0 |
 | `ModelGroup.rch/.chd/.drn/.ghb/.wel/.uzf` flat shortcuts | `group.packages.<pkg>.inputs` | 0.1.0 | 0.3.0 |
+| `myflopy.modflow.utils.surfaces.InterpolatedSurface` | `myflopy.modflow.mf6.grid.interpolated_surface.InterpolatedSurface` | 0.2.0 | 0.4.0 |
 | `myflopy.modflow.mp3du.particles.PRT/PrtMip/PrtOc/PrtPrp/PrtDisv/PrtFmi` | `myflopy.modflow.mp3du.legacy_prt.<name>` | 0.1.0 | 0.3.0 |
 
 Behavior deprecations (warned, not aliases): loading MP3DU executables from

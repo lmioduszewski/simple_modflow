@@ -496,6 +496,7 @@ __compatibility__ = (
     "myflopy.modflow.mp3du.particles.PrtMip",
     "myflopy.modflow.mp3du.particles.PrtOc",
     "myflopy.modflow.mp3du.particles.PrtPrp",
+    "myflopy.modflow.utils.surfaces.InterpolatedSurface",
     "myflopy.project.model_group.ModelGroup.chd",
     "myflopy.project.model_group.ModelGroup.drn",
     "myflopy.project.model_group.ModelGroup.ghb",

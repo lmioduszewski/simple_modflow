@@ -413,7 +413,7 @@ def test_surface_trace_builds_one_go_surface(real_vor):
     import numpy as np
     import plotly.graph_objects as go
 
-    from myflopy.modflow.utils.surfaces import InterpolatedSurface
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
     isurf = InterpolatedSurface(
