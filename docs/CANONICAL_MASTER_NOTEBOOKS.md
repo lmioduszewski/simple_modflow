@@ -15,6 +15,11 @@ header and visual language. Each notebook combines explanatory Markdown,
 annotated executable code, interpretation guidance, and a clear handoff to the
 next topic.
 
+0. `canonical_fast_tour.ipynb`: the whole surface in about a minute — builds
+   the smallest contract-complete profile (`CanonicalModelConfig.testing()`,
+   the same one the test suite shares), optionally fires the entire myflopy
+   test suite from a cell, then tours heads/maps/animations, package results,
+   observation scatterplots, and a real 4-worker PESTPP-IES ensemble.
 1. `canonical_00_model_and_build.ipynb`: conceptual model, mesh, build, and run.
 2. `canonical_01_packages_and_observations.ipynb`: packages, named regions, and targets.
 3. `canonical_02_visual_diagnostics.ipynb`: pronounced visual signals and standalone exports.
