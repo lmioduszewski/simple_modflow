@@ -33,6 +33,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from myflopy import viz
+from myflopy._optional import require
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
 _PRIOR_COLOR = viz.PALETTE.prior
@@ -63,8 +64,6 @@ _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
 
 def _import_pyemu():
     """Import pyEMU (a required optional dependency for reading PESTPP-IES results)."""
-
-    from myflopy._optional import require
 
     return require("pyemu", feature="reading PESTPP-IES results")
 

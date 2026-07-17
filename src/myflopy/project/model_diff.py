@@ -30,25 +30,30 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.package_explorer import DiffSpatialView, LeafFieldSugar
+from myflopy.modflow.mf6.package_explorer import (
+    DiffSpatialView,
+    LeafFieldSugar,
+    get_default_package_value_column,
+    get_package_input_field_names,
+)
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
     build_lak_connection_table,
     build_sfr_reach_table,
 )
 from myflopy.project.model_group import GroupPackageInputs
+from myflopy.project.model_results_diff import (
+    BudgetResultDiff,
+    CellResultsDiffNamespace,
+    HeadsResultDiff,
+    LakResultsDiffNamespace,
+    MvrResultDiff,
+    SfrResultsDiffNamespace,
+    UzfResultsDiffNamespace,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from myflopy.project.model_group import ModelGroup
-    from myflopy.project.model_results_diff import (
-        BudgetResultDiff,
-        CellResultsDiffNamespace,
-        HeadsResultDiff,
-        LakResultsDiffNamespace,
-        MvrResultDiff,
-        SfrResultsDiffNamespace,
-        UzfResultsDiffNamespace,
-    )
 
 # Cell-based stress-period BC packages the Phase-1 diff understands. These match
 # the packages the ModelGroup exposes as GroupPackageInputs accessors.
@@ -132,8 +137,6 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
     def _field_names(self) -> list[str]:
         """The registry-declared input field names for this package."""
 
-        from myflopy.modflow.mf6.package_explorer import get_package_input_field_names
-
         return get_package_input_field_names(self.package_name)
 
     def _field_node(self, name: str) -> PackageDiff:
@@ -182,8 +185,6 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
 
     def _series_value_column(self, frame) -> str:
         """The ``<field>_diff`` column ``plot()`` draws (validated against ``frame``)."""
-
-        from myflopy.modflow.mf6.package_explorer import get_default_package_value_column
 
         field = self.field_name or get_default_package_value_column(self.package_name)
         column = f"{field}_diff"
@@ -504,8 +505,6 @@ class _BcPackageDiffNode:
     def results(self) -> CellResultsDiffNamespace:
         """Computed cell-budget difference (field ``q``); requires runs."""
 
-        from myflopy.project.model_results_diff import CellResultsDiffNamespace
-
         return CellResultsDiffNamespace(self._diff, self.package_name)
 
     def __repr__(self) -> str:
@@ -532,8 +531,6 @@ class _LakDiffNode:
     @property
     def results(self) -> LakResultsDiffNamespace:
         """Computed lake results difference -- fields ``q`` and ``stage``."""
-
-        from myflopy.project.model_results_diff import LakResultsDiffNamespace
 
         return LakResultsDiffNamespace(self._diff)
 
@@ -562,8 +559,6 @@ class _SfrDiffNode:
     def results(self) -> SfrResultsDiffNamespace:
         """Computed stream results difference -- fields ``q`` and ``stage``."""
 
-        from myflopy.project.model_results_diff import SfrResultsDiffNamespace
-
         return SfrResultsDiffNamespace(self._diff)
 
     def __repr__(self) -> str:
@@ -585,8 +580,6 @@ class _UzfDiffNode:
     def results(self) -> UzfResultsDiffNamespace:
         """Computed UZF results difference -- fields ``gwrch`` and ``sat``."""
 
-        from myflopy.project.model_results_diff import UzfResultsDiffNamespace
-
         return UzfResultsDiffNamespace(self._diff)
 
     def __repr__(self) -> str:
@@ -607,8 +600,6 @@ class _MvrDiffNode:
     @property
     def results(self) -> MvrResultDiff:
         """Mover-flow difference per moved package and direction."""
-
-        from myflopy.project.model_results_diff import MvrResultDiff
 
         return MvrResultDiff(self._diff)
 
@@ -898,15 +889,11 @@ class ModelDiff:
         Mirrors ``model.hds`` / ``group.hds``; requires completed runs.
         """
 
-        from myflopy.project.model_results_diff import HeadsResultDiff
-
         return HeadsResultDiff(self)
 
     @property
     def bud(self) -> BudgetResultDiff:
         """Volumetric (listing) budget difference per term vs the reference."""
-
-        from myflopy.project.model_results_diff import BudgetResultDiff
 
         return BudgetResultDiff(self)
 

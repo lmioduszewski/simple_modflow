@@ -1,0 +1,15 @@
+{
+  "grids": [],
+  "kind": "Project",
+  "layout": {
+    "grids_dir": "grids",
+    "inputs_dir": "inputs",
+    "packages_dir": "packages",
+    "root": "test_project",
+    "simulations_dir": "simulations",
+    "specs_dir": "specs"
+  },
+  "name": "test_project",
+  "packages": [],
+  "simulations": []
+}

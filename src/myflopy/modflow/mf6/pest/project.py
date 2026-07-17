@@ -11,6 +11,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from myflopy._optional import require
 from myflopy.modflow.mf6.observations import (
     DrnFlowTargets,
     HeadTargets,
@@ -97,8 +98,6 @@ def build_forward_run_command(template_workspace: Path, interpreter: str) -> str
 
 def _import_pyemu():
     """Import pyEMU lazily with a workflow-oriented error message."""
-
-    from myflopy._optional import require
 
     return require("pyemu", feature="PestProject workflows")
 

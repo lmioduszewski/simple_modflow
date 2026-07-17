@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from myflopy.viz import Fig, mpl_axes
+from myflopy.viz import Fig, mpl_axes, shared_map_view, subplots
+from myflopy.viz import mosaic as viz_mosaic
 
 if TYPE_CHECKING:
     pass
@@ -579,8 +580,6 @@ def _xy_panels_bounds(panels):
 
 def _xy_mosaic_plotly(panels, *, ncols, title, xaxis_title, yaxis_title, markers):
     """Shared-scale grid of xy panels (series or section profiles)."""
-
-    from myflopy.viz import subplots
 
     if not panels:
         raise ValueError("mosaic requires at least one panel.")
@@ -1371,9 +1370,6 @@ class SpatialView:
     def _plotly_mosaic(self, panels, *, ncols, title, sync_views=True):
         """Compose ``Choro`` panels into one synchronized Plotly small-multiples figure."""
 
-        # one composer engine: the leaf mosaic is sugar over viz.mosaic
-        from myflopy.viz import mosaic as viz_mosaic
-
         return viz_mosaic(
             list(panels),
             ncols=int(ncols),
@@ -1627,8 +1623,6 @@ class SpatialView:
 
         if not frames:
             raise ValueError("animate requires at least one frame.")
-        from myflopy.viz import shared_map_view
-
         names = [str(label) for label, _ in frames]
         traces = [choro.get_choropleth() for _, choro in frames]
         fig = go.Figure(data=[traces[0]])
