@@ -236,7 +236,7 @@ Throughout, two example models recur so the code stays concrete:
 - 20.3 Specs (`specs.py`)
 - 20.4 Grids & layers (`voronoi.py`, `triangle.py`, `layers.py`, `surfaces.py`)
 - 20.5 Sources & GIS (`sources.py`, `geopackage.py`)
-- 20.6 Observations & PEST (`observations.py`, `pest/`)
+- 20.6 Observations & PEST (`observations/`, `pest/`)
 - 20.7 Visualization, PRT, parallel
 - 20.8 The legacy OO engine (`SFRBuilder`, `LAKBuilder`, `UZFBuilder`, `RCHBuilder`, `MVRBuilder`, `SimulationBase`)
 

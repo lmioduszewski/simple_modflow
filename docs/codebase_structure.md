@@ -129,11 +129,15 @@ This is the main MF6 implementation area.
   Observation lookup and observation-head table shaping for `HeadsPlus`.
 - [src/myflopy/modflow/mf6/heads_plotting.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/heads_plotting.py)
   Heads plotting and choropleth presentation helpers for `HeadsPlus`.
-- [src/myflopy/modflow/mf6/observations.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/observations.py)
-  Reusable observation-target layer: `HeadTargets`, `LakeStageTargets`,
-  `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, their model-bound
-  wrappers (`model.targets`), and the `TargetRegistry`. The same target datasets
-  drive plotting, residual statistics, and PEST setup.
+- [src/myflopy/modflow/mf6/observations/](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/observations/__init__.py)
+  Reusable observation-target package (split from the former single module,
+  plan 4.1): `heads.py`/`lake.py`/`sfr.py`/`drn.py` hold `HeadTargets`,
+  `LakeStageTargets`, `SfrStageTargets`/`SfrFlowTargets`, `DrnFlowTargets`
+  and their model-bound wrappers (`model.targets`); `registry.py` the
+  `TargetRegistry`; `plots.py` the shared bound-series plots; `_shared.py`
+  the normalization helpers. The package root re-exports everything, so both
+  import paths work. The same target datasets drive plotting, residual
+  statistics, and PEST setup.
 - [src/myflopy/modflow/mf6/package_registry.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/modflow/mf6/package_registry.py)
   Registry metadata (`FieldSpec`/`ResultSpec`) behind the package explorers —
   default value columns, budget terms, and the **colorscale policy** defaults.
