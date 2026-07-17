@@ -381,6 +381,16 @@ repoint `modflow/mf6/__init__.py`'s `"GHB"`/`"DRN"` export entries, update docs.
 
 ## Phase 4 — Structural splits & import hygiene (~6–12 days)
 
+> **4.1–4.4 DONE 2026-07-17** (branch `phase-4-splits`; see
+> `docs/phase_baselines.md`). Deviations from the sketches below, decided
+> against the real graph: `GroupOutputs` lives in `group/packages.py` (not
+> `results.py`) to avoid a results↔lak cycle; the layering pin is the
+> derived depth map (`docs/import_layering.md`, an output of
+> `scripts/derive_import_layers.py`) rather than the L0–L6 sketch — the
+> module graph was found ALREADY acyclic. §4.5 second-tier splits
+> (triangle/package_plotting) deliberately deferred: not blocking, and
+> `package_plotting` is better split with Phase 8 prep as §4.5 itself notes.
+
 **Mechanic:** create the new package, move code in small mechanical commits, keep the old
 module as a re-export facade, change zero user-facing paths, run the fast suite after
 each move. No renames, no "improvements" during a split.
@@ -1009,9 +1019,16 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       `__getattr__` helpers, registry), `__compatibility__` repurposed (old
       second-tier meaning renamed `__engine__`), model_group/mp3du ad-hoc
       mechanisms absorbed, `error:myflopy:DeprecationWarning` pytest filter
-- [ ] `observations/` + `project/group/` packages; old paths work; no active module
-      > ~1,800 lines without a written reason (4.1, 4.2)
-- [ ] Layering test + deferred-import ratchet in CI (4.4)
+- [x] `observations/` + `project/group/` packages; old paths work; no active module
+      > ~1,800 lines without a written reason (4.1, 4.2) — done 2026-07-17; the
+      four modules still over the line (`specs.py` 2,333, `package_plotting.py`
+      1,906, `package_surface_water.py` 1,852, `grid/triangle.py` 1,822) carry
+      their written reasons in §4.5 / §5 (cohesive or split planned there)
+- [x] Layering test + deferred-import ratchet in CI (4.4) — done 2026-07-17:
+      map derived from the real AST graph (`scripts/derive_import_layers.py`;
+      143 modules, ALREADY acyclic, depths 0..13); honest ratchet baseline 75
+      by AST count (the old 198 grep also matched TYPE_CHECKING imports),
+      burned down to 55 (20 hoists)
 - [ ] `.flopy` backfilled on chd/ghb/drn/wel with docstrings fixed (D8); `mf.riv`,
       `mf.evt` with `()/.gpkg/.flopy` + registry + hover + earth/RdBu policy (5.1, 5.2)
 - [ ] `mf.ic/oc/disv` dispatch on GWT/GWE; `mf.adv/dsp/mst/ssm/cnc/src/ist` +
