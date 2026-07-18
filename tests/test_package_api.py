@@ -168,6 +168,28 @@ def test_package_api_rch_uses_builder_by_default_and_flopy_for_direct_data():
     assert direct.metadata == {}
 
 
+def test_simple_list_bcs_have_a_real_flopy_escape_hatch():
+    # D8: chd/ghb/drn/wel each carry .flopy(...) (thin raw-FloPy passthrough,
+    # same spec as the direct () form) so all list BCs share the three entry
+    # points their docstrings advertise: () / .gpkg / .flopy.
+    cases = {
+        "chd": {0: [[(0, 0), 10.0]]},
+        "ghb": {0: [[(0, 5), 86.0, 50.0]]},
+        "drn": {0: [[(0, 12), 95.0, 30.0]]},
+        "wel": {0: [[(0, 42), -500.0]]},
+    }
+    for name, spd in cases.items():
+        helper = getattr(mf, name)
+        direct = helper(stress_period_data=spd)
+        hatch = helper.flopy(stress_period_data=spd)
+        assert hatch.name == name
+        assert hatch.options == direct.options
+        # builders are functools.partial instances (never compare equal
+        # directly); same build function + same FloPy package class
+        assert hatch.builder.func is direct.builder.func
+        assert hatch.builder.args == direct.builder.args
+
+
 def test_package_api_advanced_helpers_and_flopy_escape_hatches():
     context = mf.ModelContext(domain=np.array([[1, 1]]))
 

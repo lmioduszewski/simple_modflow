@@ -1051,6 +1051,38 @@ class _CHDPackage:
 
         return chd_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "chd",
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style CHD spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, head], ...]}``.
+        name : str, default "chd"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfchd`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.chd.flopy(stress_period_data={0: [[(0, 0), 10.0]]})
+        """
+
+        return chd_spec(stress_period_data, name=name, boundnames=boundnames, **options)
+
     def gpkg(
         self,
         path: PathLike,
@@ -1141,7 +1173,7 @@ class _GHBPackage:
     - ``mf.ghb(stress_period_data=...)`` -- direct MF6 records;
     - ``mf.ghb.gpkg(path, context=, nper=)`` -- build records from GeoPackage
       features (auto-reprojected and mapped onto cells);
-    - same as ``()`` here (the FloPy-native form).
+    - ``mf.ghb.flopy(...)`` -- the FloPy-native form.
 
     Examples
     --------
@@ -1182,6 +1214,47 @@ class _GHBPackage:
         Examples
         --------
         >>> mf.ghb(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})
+        """
+
+        return ghb_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "ghb",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style GHB spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, bhead, cond], ...]}``.
+        name : str, default "ghb"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfghb`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.ghb.flopy(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})
         """
 
         return ghb_spec(
@@ -1317,6 +1390,38 @@ class _DRNPackage:
 
         return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "drn",
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style DRN spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, elev, cond], ...]}``.
+        name : str, default "drn"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfdrn`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.drn.flopy(stress_period_data={0: [[(0, 12), 95.0, 30.0]]})
+        """
+
+        return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
+
     def gpkg(
         self,
         path: PathLike,
@@ -1440,6 +1545,48 @@ class _WELPackage:
         Examples
         --------
         >>> mf.wel(stress_period_data={0: [[(0, 42), -500.0]]})   # extraction
+        """
+
+        return wel_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "wel",
+        auxiliary: Any = None,
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style WEL spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, rate], ...]}`` -- **negative to
+            pump out**, positive to inject.
+        name : str, default "wel"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfwel`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.wel.flopy(stress_period_data={0: [[(0, 42), -500.0]]})
         """
 
         return wel_spec(
