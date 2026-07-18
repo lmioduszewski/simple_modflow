@@ -5,6 +5,13 @@
 - Active development branch: `myflopy`
 - Package lives at `src/myflopy/` on that branch
 
+## Compromise ledger (standing user rule, 2026-07-17)
+**`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
+test-fidelity trade, judgment call, or considered-but-omitted optional inside
+delivered work. Any change that makes such a call MUST add/update its ledger
+entry **in the same pass** (it is part of the docs-always-in-sync rule).
+Entries are removed only when the compromise is actually undone.
+
 ## Test suite (fast by design)
 - Full 633-test suite: `pytest -n 10` ≈ **45–60 s** (worksteal dist is in
   addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
