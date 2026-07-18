@@ -3,6 +3,7 @@ from __future__ import annotations
 import flopy
 import geopandas as gpd
 import numpy as np
+import pytest
 from shapely.geometry import Polygon
 
 import myflopy as mf
@@ -146,6 +147,9 @@ def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
             "conductance": [25.0],
             "stage": [9.5],
             "rbot": [7.5],
+            "surface": [10.0],
+            "et_rate": [0.002],
+            "depth": [2.5],
         },
         geometry=[Polygon([(0, 0), (2, 0), (2, 1), (0, 1)])],
         crs=grid.crs,
@@ -164,6 +168,45 @@ def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
     assert riv_direct.name == "riv"
     assert riv_gpkg.metadata["source_type"] == "geopackage"
     assert riv_gpkg.options["stress_period_data"][0][0] == [(0, 0), 9.5, 25.0, 7.5, "drain"]
+
+    # mf.evt.gpkg: the helper's ~10 keyword forwards are exercised here with
+    # DISTINCT values per field, so a swapped/dropped forward (rate=depth,
+    # missing surface=) changes the asserted record instead of passing silently.
+    evt_direct = mf.evt(stress_period_data={0: [[(0, 0), 10.0, 0.002, 2.5]]})
+    evt_gpkg = mf.evt.gpkg(gpkg, context=context, nper=1, rate="et_rate")
+
+    assert evt_direct.name == "evt"
+    assert evt_gpkg.metadata["source_type"] == "geopackage"
+    assert evt_gpkg.options["stress_period_data"][0][0] == [(0, 0), 10.0, 0.002, 2.5, "drain"]
+
+    # segmented ET cannot come from feature mapping (no pxdp/petm per record):
+    # rejected up front rather than failing deep inside FloPy at build time
+    with pytest.raises(ValueError, match="nseg=1 only"):
+        mf.evt.gpkg(gpkg, context=context, nper=1, rate="et_rate", nseg=2)
+
+
+def test_riv_evt_forward_optional_package_arguments():
+    # nseg and auxiliary are forwarded, not silently defaulted: deleting either
+    # forward in _EVTPackage/_RIVPackage would leave the spec at its default
+    # and this is the only assertion that would notice.
+    segmented = mf.evt(
+        stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5, 0.5, 0.3]]}, nseg=2
+    )
+    assert segmented.options["nseg"] == 2
+    assert mf.evt.flopy(
+        stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5, 0.5, 0.3]]}, nseg=2
+    ).options["nseg"] == 2
+
+    riv_aux = mf.riv(
+        stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5, 1.0]]}, auxiliary=["temp"]
+    )
+    assert riv_aux.options["auxiliary"] == ["temp"]
+    assert mf.riv.flopy(
+        stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5, 1.0]]}, auxiliary=["temp"]
+    ).options["auxiliary"] == ["temp"]
+    assert mf.evt(
+        stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5, 1.0]]}, auxiliary=["temp"]
+    ).options["auxiliary"] == ["temp"]
 
 
 def test_package_api_rch_uses_builder_by_default_and_flopy_for_direct_data():

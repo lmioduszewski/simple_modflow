@@ -38,6 +38,7 @@ _PACKAGE_SUFFIX_TO_TYPE = {
     "disu": "DISU",
     "disv": "DISV",
     "drn": "DRN",
+    "evt": "EVT",
     "ghb": "GHB",
     "ic": "IC",
     "lak": "LAK",
@@ -45,9 +46,11 @@ _PACKAGE_SUFFIX_TO_TYPE = {
     "npf": "NPF",
     "oc": "OC",
     "rch": "RCH",
+    "riv": "RIV",
     "sfr": "SFR",
     "sto": "STO",
     "uzf": "UZF",
+    "wel": "WEL",
 }
 _PACKAGE_TYPE_TO_SUFFIX = {value: key for key, value in _PACKAGE_SUFFIX_TO_TYPE.items()}
 _CORE_PACKAGE_TYPES = {"DIS", "DISU", "DISV", "OC"}

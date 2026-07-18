@@ -409,7 +409,7 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
 
 
 # Packages with a per-cell budget diff via group.packages.<pkg>.results.q.
-_CELL_BUDGET_PACKAGES = ("ghb", "drn", "chd", "wel", "rch", "sfr", "lak")
+_CELL_BUDGET_PACKAGES = ("ghb", "drn", "chd", "riv", "wel", "rch", "evt", "sfr", "lak")
 
 
 class CellResultsDiffNamespace(FieldMappable):
@@ -564,7 +564,11 @@ class MvrResultDiff(_ResultDiffBase):
     those terms per package and direction across models.
     """
 
-    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "wel", "rch")
+    # Packages MF6 accepts as mover providers/receivers (FloPy exposes a
+    # ``mover`` option on each). EVT is absent because it has none; "rch" is a
+    # pre-existing entry that also has none -- harmless, the term lookup below
+    # is try-wrapped and simply finds nothing.
+    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "riv", "wel", "rch")
     _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
     _COLUMNS = [
         "model", "package", "direction", "value", "n",

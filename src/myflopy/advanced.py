@@ -293,8 +293,10 @@ def evt_spec(
     """Return a list-based EVT (evapotranspiration) package spec from raw FloPy data.
 
     The data form behind ``mf.evt.flopy(...)``. Builds the list (cell-by-cell)
-    form of :class:`flopy.mf6.ModflowGwfevt`; ``maxbound`` is inferred from the
-    largest period's record count. With the default ``nseg=1`` each record is
+    form of :class:`flopy.mf6.ModflowGwfevt`. ``maxbound`` is left to FloPy,
+    which computes it from ``stress_period_data`` at write time -- so every
+    native input shape (a dict of record lists, a bare list, periods set to
+    ``None``) passes through verbatim. With the default ``nseg=1`` each record is
     ``(cellid, surface, rate, depth)``; for segmented ET pass ``nseg`` and
     include the ``pxdp``/``petm`` (and, with ``surf_rate_specified``, ``petm0``)
     record values FloPy expects.
@@ -319,7 +321,6 @@ def evt_spec(
         name,
         {
             "stress_period_data": stress_period_data,
-            "maxbound": max((len(records) for records in stress_period_data.values()), default=0),
             "nseg": nseg,
             "auxiliary": auxiliary,
             "boundnames": boundnames,

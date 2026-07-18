@@ -512,7 +512,11 @@ colorscale assertions in the style of `test_hover_integration.py`.
 > **DONE 2026-07-17** (branch `phase-5-package-api`): all four pieces — `_RIVPackage`
 > (`()`/`.gpkg` incl. `CellSurfaceOffset` stage/rbot/`.flopy`), `GeoPackageSource.riv`,
 > `riv_spec`, registry entry (stage/cond/rbot `earth`, result q `RdBu`) + explorer/
-> group/diff wiring via the registry-generic paths + `mf.riv`/`riv_spec` lazy exports.
+> group wiring via the registry-generic paths + `mf.riv`/`riv_spec` lazy exports.
+> CORRECTION (2026-07-18, post-review): the **diff** tier is NOT registry-generic —
+> `_DIFF_PACKAGES` (`model_diff.py`) and `_CELL_BUDGET_PACKAGES`
+> (`model_results_diff.py`) are hardcoded and were extended explicitly; the
+> original DONE note overclaimed this. Any future list BC must extend both.
 > Input hover rides the generic per-field `cell_input_hover` path like every other
 > list BC (no bespoke extra-fields hover was needed). MF6 e2e:
 > `test_geopackage_specs_run_through_project` runs RIV and asserts explorer

@@ -2207,11 +2207,20 @@ class _EVTPackage:
         boundnames : bool, default True
             Enable named boundaries.
         **options
-            Extra ``flopy.mf6.ModflowGwfevt`` options (e.g. ``nseg``).
+            Extra ``flopy.mf6.ModflowGwfevt`` options. Note ``nseg`` must stay
+            ``1`` here: mapped features yield ``(cellid, surface, rate, depth)``
+            records with no ``pxdp``/``petm`` values, so segmented ET is
+            rejected (build segmented records yourself and pass them to
+            ``mf.evt(...)`` / ``mf.evt.flopy(...)``).
 
         Returns
         -------
         PackageSpec
+
+        Raises
+        ------
+        ValueError
+            If ``nseg`` other than ``1`` is given.
 
         Examples
         --------
@@ -3006,6 +3015,7 @@ __all__ = [
     "chd",
     "disv",
     "drn",
+    "evt",
     "ghb",
     "gwe",
     "gwf",
@@ -3018,6 +3028,7 @@ __all__ = [
     "oc",
     "prt",
     "rch",
+    "riv",
     "sfr",
     "simulation",
     "sto",

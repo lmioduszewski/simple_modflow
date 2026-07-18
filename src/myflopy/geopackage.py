@@ -482,7 +482,22 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a list-based EVT package spec from GeoPackage features."""
+        """Return a list-based EVT package spec from GeoPackage features.
+
+        Single-segment ET only: feature mapping emits fixed
+        ``(cellid, surface, rate, depth)`` records, which is exactly the
+        ``nseg=1`` record shape. Segmented ET needs ``nseg - 1`` extra
+        ``pxdp``/``petm`` values per record that no feature mapping supplies,
+        so it is rejected here rather than failing later inside FloPy.
+        """
+
+        if int(options.get("nseg", 1)) != 1:
+            raise ValueError(
+                "GeoPackage-driven EVT supports nseg=1 only: mapped features "
+                "yield (cellid, surface, rate, depth) records with no pxdp/petm "
+                "values. For segmented ET, assemble the records yourself and "
+                "use mf.evt(...) / mf.evt.flopy(...) with nseg=."
+            )
 
         return evt_spec(
             self._boundary_data(surface, rate, depth, boundnames=boundnames),

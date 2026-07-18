@@ -13,7 +13,7 @@ entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
 ## Test suite (fast by design)
-- Full 633-test suite: `pytest -n 10` ≈ **45–60 s** (worksteal dist is in
+- Full 636-test suite: `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
   addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —

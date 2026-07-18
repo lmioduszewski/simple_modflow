@@ -78,6 +78,10 @@
      `()`/`.flopy` with explicitly assembled records.
    - Why: per-segment GeoPackage column conventions would be speculative API.
    - Impact: GIS-driven segmented ET is not one call.
+   - UPDATE 2026-07-18 (post-review): the limit is now enforced, not implied —
+     `GeoPackageSource.evt` raises a clear `ValueError` on `nseg != 1` instead
+     of letting FloPy fail later with an opaque record-shape error, and the
+     `.gpkg` docstring no longer advertises `nseg` as a usable option.
    - Revisit: if a real model needs segmented ET from GIS.
 
 8. **RIV input hover is the generic per-field hover, not the sketched
@@ -110,6 +114,62 @@
     - Why: the parameterization backlog is plan §5.8; not silently in 5.1/5.2
       scope — listed here so the asymmetry with sibling BCs is visible.
     - Revisit: fold into §5.8 when it runs.
+
+## Phase 5 adversarial review follow-up (2026-07-18)
+
+An ultracode review of the D8/riv/evt diff confirmed 9 findings; all were fixed
+(see the review-fixes commit). The residue below is what was deliberately NOT
+done, plus one assurance gap in the review itself.
+
+12. **The review that vetted this work was only ~50% complete.**
+    - What: of 26 review agents, 13 verify agents died mid-run on a Fable 5
+      usage limit. Their findings were never adjudicated. I hand-verified the
+      plausible ones (diff tier, artifact suffix map, mover packages, group
+      symmetry, doc counts — all fixed) but the rest were dropped unexamined:
+      registry `default_input` choices, export-tier placement, a
+      registry-parity loop, and a legacy `model.bud()` zero-basing claim.
+    - Why: usage limit, not a judgment call.
+    - Impact: riv/evt carry less adversarial assurance than the confirmed-fix
+      list implies.
+    - Revisit: re-run the review workflow on the merged branch when budget
+      allows; it is cheap to resume (`resumeFromRunId`).
+
+13. **`rch_spec` keeps the fragile `maxbound` inference that was removed from
+    `evt_spec`.**
+    - What: `evt_spec` no longer computes `maxbound` (it crashed on FloPy-native
+      inputs: a bare list, or a period set to `None`). `rch_spec`
+      (`advanced.py`) still does the identical `max(len(...) for ... .values())`
+      and still crashes the same way.
+    - Why: pre-existing, outside this diff's blast radius; changing it alters a
+      shipped package's spec contents.
+    - Impact: `mf.rch.flopy([...])` (bare-list form) raises AttributeError
+      where every other list BC accepts it.
+    - Revisit: spawned as a follow-up task; safe to fix (FloPy computes
+      MAXBOUND at write time) but wants its own test.
+
+14. **`_MOVER_PACKAGES` still lists `rch`, which has no mover support.**
+    - What: added `riv` (FloPy confirms `mover=True`); left the pre-existing
+      `rch` entry, which FloPy shows has no `mover` option.
+    - Why: harmless — the budget-term lookup is `try`-wrapped and finds
+      nothing — and removing it is an out-of-scope behavior change.
+    - Revisit: whenever the mover diff is next touched.
+
+15. **RIV/EVT input maps hover one field at a time (unchanged from entry 8).**
+    - Confirmed still true post-review; the generic per-field hover is what all
+      list BCs use. Not a regression, just not the plan's sketch.
+
+16. **Mutation-testing residue is a real process hazard.**
+    - What: the review's test-quality agents mutated `package_api.py` and
+      `advanced.py` in the shared working tree and did not revert. One verifier
+      then read the mutated tree and reported a false defect ("nseg forward
+      deleted") as fact.
+    - Why: workflow agents ran without `isolation: "worktree"`.
+    - Impact: none persisted (mutations were uncommitted and reverted), but a
+      review verdict was contaminated, and a careless `git restore` during
+      cleanup briefly wiped uncommitted fixes.
+    - Revisit: run review workflows that may mutate code with
+      `isolation: "worktree"`, and always `git status` before trusting a
+      subagent's file-based claim.
 
 ## Notebook session-state call (2026-07-17, `c578b53`)
 
