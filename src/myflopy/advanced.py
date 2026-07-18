@@ -202,6 +202,46 @@ def ghb_spec(
     return PackageSpec(name, _factory(flopy.mf6.ModflowGwfghb), values)
 
 
+def riv_spec(
+    stress_period_data,
+    *,
+    name: str = "riv",
+    auxiliary=None,
+    boundnames: bool = False,
+    **options,
+) -> PackageSpec:
+    """Return a RIV (river) package spec from raw FloPy stress-period data.
+
+    The data form behind ``mf.riv.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfriv` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, stage, cond, rbot, [aux...], [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
+
+    values = _named_options(
+        name,
+        {
+            "stress_period_data": stress_period_data,
+            "auxiliary": auxiliary,
+            "boundnames": boundnames,
+            "save_flows": True,
+            **options,
+        },
+    )
+    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfriv), values)
+
+
 def rch_spec(
     stress_period_data,
     *,
@@ -239,6 +279,56 @@ def rch_spec(
         },
     )
     return PackageSpec(name, _factory(flopy.mf6.ModflowGwfrch), values)
+
+
+def evt_spec(
+    stress_period_data,
+    *,
+    name: str = "evt",
+    nseg: int = 1,
+    auxiliary=None,
+    boundnames: bool = False,
+    **options,
+) -> PackageSpec:
+    """Return a list-based EVT (evapotranspiration) package spec from raw FloPy data.
+
+    The data form behind ``mf.evt.flopy(...)``. Builds the list (cell-by-cell)
+    form of :class:`flopy.mf6.ModflowGwfevt`. ``maxbound`` is left to FloPy,
+    which computes it from ``stress_period_data`` at write time -- so every
+    native input shape (a dict of record lists, a bare list, periods set to
+    ``None``) passes through verbatim. With the default ``nseg=1`` each record is
+    ``(cellid, surface, rate, depth)``; for segmented ET pass ``nseg`` and
+    include the ``pxdp``/``petm`` (and, with ``surf_rate_specified``, ``petm0``)
+    record values FloPy expects.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, surface, rate, depth, [...], [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    nseg
+        Number of ET segments (default 1, the plain linear-decay form).
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
+
+    values = _named_options(
+        name,
+        {
+            "stress_period_data": stress_period_data,
+            "nseg": nseg,
+            "auxiliary": auxiliary,
+            "boundnames": boundnames,
+            "save_flows": True,
+            **options,
+        },
+    )
+    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfevt), values)
 
 
 def uzf_spec(
@@ -514,10 +604,12 @@ def mvr_spec(
 __all__ = [
     "chd_spec",
     "drn_spec",
+    "evt_spec",
     "ghb_spec",
     "lak_spec",
     "mvr_spec",
     "rch_spec",
+    "riv_spec",
     "sfr_spec",
     "uzf_spec",
     "wel_spec",

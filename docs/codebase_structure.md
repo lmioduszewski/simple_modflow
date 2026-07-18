@@ -46,7 +46,7 @@ working on it.
 
 - [src/myflopy/package_api.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/package_api.py)
   THE preferred model-building surface: `mf.gwf/gwt/gwe/prt`, `mf.disv/ic/npf/
-  sto/oc/tdis/ims`, list BCs (`mf.chd/ghb/drn/wel/rch` with `()`/`.gpkg`/`.flopy`),
+  sto/oc/tdis/ims`, list BCs (`mf.chd/ghb/drn/riv/wel/rch/evt` with `()`/`.gpkg`/`.flopy`),
   advanced `mf.uzf/sfr/lak/mvr`, mover connections.
 - [src/myflopy/specs.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/specs.py)
   `PackageSpec`, `ModelSpec`, `ModelContext`, `ExchangeSpec`, `SimulationSpec`,

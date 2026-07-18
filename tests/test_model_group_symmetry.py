@@ -32,12 +32,50 @@ def group():
 
 
 def test_group_packages_expose_inputs_and_results(group):
-    for pkg in ("rch", "chd", "drn", "ghb", "wel"):
+    # riv/evt are included: they are cell-stress list BCs like the rest, so the
+    # group accessors must exist. They deliberately have NO deprecated flat
+    # shortcut (see the parametrized test below) -- new packages ship only the
+    # mirrored group.packages.<pkg>.inputs path.
+    for pkg in ("rch", "chd", "drn", "ghb", "riv", "wel", "evt"):
         accessor = getattr(group.packages, pkg)
         assert hasattr(accessor, "inputs"), pkg
         assert hasattr(accessor, "results"), pkg
+        # each accessor is wired to its OWN package (a copy-paste of another
+        # package's private attr would otherwise pass the hasattr checks)
+        assert accessor.inputs.package_name == pkg
     assert hasattr(group.packages.uzf, "inputs")
     assert hasattr(group.packages.uzf, "results")
+
+
+def test_diff_tier_covers_exactly_the_group_cell_bc_accessors(group):
+    """The hardcoded diff package lists must track the group's list-BC accessors.
+
+    Regression guard (2026-07-18): adding ``mf.riv``/``mf.evt`` added group
+    accessors but not the diff lists, so ``group.diff().packages.riv`` raised
+    AttributeError while ``group.packages.riv`` worked -- and the comment above
+    ``_DIFF_PACKAGES`` claimed the two matched. Neither list is registry-driven,
+    so pin the invariant instead of trusting the comment.
+    """
+
+    from myflopy.project.model_diff import _DIFF_PACKAGES
+    from myflopy.project.model_results_diff import _CELL_BUDGET_PACKAGES
+
+    group_bcs = {
+        value.package_name
+        for value in vars(group).values()
+        if isinstance(value, GroupPackageInputs)
+    }
+    assert group_bcs, "expected the group to expose cell-stress BC accessors"
+    assert group_bcs == set(_DIFF_PACKAGES), (
+        "every group list-BC accessor must be diffable: "
+        f"group-only={sorted(group_bcs - set(_DIFF_PACKAGES))}, "
+        f"diff-only={sorted(set(_DIFF_PACKAGES) - group_bcs)}"
+    )
+    # the results side carries the same BCs (plus the advanced sfr/lak terms)
+    assert group_bcs <= set(_CELL_BUDGET_PACKAGES), (
+        "cell-budget diff is missing: "
+        f"{sorted(group_bcs - set(_CELL_BUDGET_PACKAGES))}"
+    )
 
 
 def test_inputs_accessor_exposes_the_standard_verbs(group):

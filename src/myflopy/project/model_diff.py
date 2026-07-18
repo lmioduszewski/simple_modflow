@@ -56,8 +56,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from myflopy.project.model_group import ModelGroup
 
 # Cell-based stress-period BC packages the Phase-1 diff understands. These match
-# the packages the ModelGroup exposes as GroupPackageInputs accessors.
-_DIFF_PACKAGES: tuple[str, ...] = ("rch", "chd", "drn", "ghb", "wel")
+# the packages the ModelGroup exposes as GroupPackageInputs accessors -- the two
+# lists are hardcoded and must be extended TOGETHER when a list BC is added
+# (see project/group/core.py). test_model_diff pins the invariant.
+_DIFF_PACKAGES: tuple[str, ...] = ("rch", "chd", "drn", "ghb", "riv", "wel", "evt")
 
 # Advanced packages diffed by connection/reach geometry (Phase 3).
 _CONNECTION_PACKAGES: tuple[str, ...] = ("lak", "sfr")

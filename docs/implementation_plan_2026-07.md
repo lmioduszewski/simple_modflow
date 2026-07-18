@@ -80,7 +80,7 @@ ambiguity arises that this plan does not cover, stop and ask the user — do not
 | D5 | Plotting consolidation | **Do it**, as its own late phase (Phase 8), after the god-module splits (Phase 4), API completion (Phases 5–6), and the `_flopy_compat` boundary (Phase 7.1). Details in Phase 8. |
 | D6 | Hover defaults | DONE (see "Completed"). Heads default `layers="active+strip"`; sectioned/styled hover is the default everywhere; `custom_hover` stays as the raw escape hatch. |
 | D7 | Colorscales | DONE (see "Completed"). Diverging only for signed q-like + diff maps; `'earth'` for everything else. New surfaces added by this plan MUST follow this policy. |
-| D8 | `.flopy` on simple list BCs | **Add a real `.flopy(...)` escape hatch** to `mf.chd/ghb/drn/wel` (they never had one — only rch/uzf/sfr/lak/mvr do, though the chd/drn/wel docstrings advertise it) and ship `mf.riv`/`mf.evt` with all three entry points. Details in Phase 5.0. |
+| D8 | `.flopy` on simple list BCs | First half DONE 2026-07-17 (branch `phase-5-package-api`): real `.flopy(...)` on `mf.chd/ghb/drn/wel` (thin passthrough shaped like `_RCHPackage.flopy`), GHB docstring aligned, pinned by `test_simple_list_bcs_have_a_real_flopy_escape_hatch`. Remaining: ship `mf.riv`/`mf.evt` with all three entry points (Phases 5.1–5.2). |
 | D9 | GWT test fixture | **`transport=True` option on the small canonical config** (one-model-everywhere), NOT a promotion of example 03 into a second model family. GWE mirrors it in 6.2. Details in Phase 6.1.6. |
 | D10 | `iheads.py` + `modflow/gwt/` removal | **Hard-delete now** (Phase 2.1) including their lazy-export map entries and smoke-test imports — they are public exports, not orphans. Justified pre-1.0 with zero tagged releases; note in the changelog. |
 | D11 | Release/tagging | **Tag `v0.1.0` at the Phase 0 baseline commit**, then bump+tag at milestones (`v0.2.0` after Phase 1, `v0.3.0` after Phases 4–5). This starts 3.1's "≥ 2 tagged releases" deprecation clock and anchors the CI wheel build. |
@@ -509,11 +509,34 @@ Every list-style boundary package = four pieces (DRN is the reference):
 colorscale assertions in the style of `test_hover_integration.py`.
 
 ### 5.1 `mf.riv` — do first
+> **DONE 2026-07-17** (branch `phase-5-package-api`): all four pieces — `_RIVPackage`
+> (`()`/`.gpkg` incl. `CellSurfaceOffset` stage/rbot/`.flopy`), `GeoPackageSource.riv`,
+> `riv_spec`, registry entry (stage/cond/rbot `earth`, result q `RdBu`) + explorer/
+> group wiring via the registry-generic paths + `mf.riv`/`riv_spec` lazy exports.
+> CORRECTION (2026-07-18, post-review): the **diff** tier is NOT registry-generic —
+> `_DIFF_PACKAGES` (`model_diff.py`) and `_CELL_BUDGET_PACKAGES`
+> (`model_results_diff.py`) are hardcoded and were extended explicitly; the
+> original DONE note overclaimed this. Any future list BC must extend both.
+> Input hover rides the generic per-field `cell_input_hover` path like every other
+> list BC (no bespoke extra-fields hover was needed). MF6 e2e:
+> `test_geopackage_specs_run_through_project` runs RIV and asserts explorer
+> table/colorscales on the completed run.
+
 RIV records `(cellid, stage, cond, rbot)`. All four pieces; `.gpkg` with surface
 references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=("cond",
 "rbot"))`; colorscale `earth`; result q joins the RdBu q family.
 
 ### 5.2 `mf.evt`
+> **DONE 2026-07-17** (branch `phase-5-package-api`): `_EVTPackage` (`()`/`.gpkg`/
+> `.flopy`, `nseg=1` default param, segments via `nseg` + record values),
+> `GeoPackageSource.evt` (areal polygon→cell mapping on the shared `_boundary_data`
+> plumbing — the same machinery `.rch` uses), `evt_spec` (maxbound inferred like
+> `rch_spec`), registry entry (`surface/rate/depth` earth, q `RdBu`) + explorer/group
+> wiring + lazy exports. DEVIATION from the sketch: no separate `EVTBuilder` — the
+> RCH *builder* form (domain-computed top-active cells) stays RCH-specific;
+> `CellSurfaceOffset` on `.gpkg` covers "surface = cell top ± offset". Revisit only on
+> real demand. MF6 e2e: `test_geopackage_specs_run_through_project`.
+
 EVT `(cellid, surface, rate, depth [, pxdp, petm, petm0])`; `nseg` via options. Reuse the
 RCH areal-mapping prior art (`RCHBuilder`, `GeoPackageSource.rch`). Earth colorscale,
 blue input hover.

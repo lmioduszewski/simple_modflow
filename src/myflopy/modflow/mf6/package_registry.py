@@ -90,6 +90,19 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "q": ResultSpec("q", budget_text="GHB", value_name="q", colorscale="RdBu"),
         },
     ),
+    "riv": PackageExplorerSpec(
+        name="riv",
+        default_input="stage",
+        colorscale="earth",
+        inputs={
+            "stage": FieldSpec("stage", label="River stage", colorscale="earth"),
+            "cond": FieldSpec("cond", label="Riverbed conductance", colorscale="earth"),
+            "rbot": FieldSpec("rbot", label="River bottom", colorscale="earth"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="RIV", value_name="q", colorscale="RdBu"),
+        },
+    ),
     "wel": PackageExplorerSpec(
         name="wel",
         default_input="q",
@@ -99,6 +112,19 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         },
         results={
             "q": ResultSpec("q", budget_text="WEL", value_name="q", colorscale="RdBu"),
+        },
+    ),
+    "evt": PackageExplorerSpec(
+        name="evt",
+        default_input="rate",
+        colorscale="earth",
+        inputs={
+            "surface": FieldSpec("surface", label="ET surface", colorscale="earth"),
+            "rate": FieldSpec("rate", label="Maximum ET rate", colorscale="earth"),
+            "depth": FieldSpec("depth", label="Extinction depth", colorscale="earth"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="EVT", value_name="q", colorscale="RdBu"),
         },
     ),
     "uzf": PackageExplorerSpec(

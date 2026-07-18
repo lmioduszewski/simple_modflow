@@ -19,10 +19,12 @@ import geopandas as gpd
 from myflopy.advanced import (
     chd_spec,
     drn_spec,
+    evt_spec,
     ghb_spec,
     lak_spec,
     mvr_spec,
     rch_spec,
+    riv_spec,
     sfr_spec,
     uzf_spec,
     wel_spec,
@@ -1051,6 +1053,38 @@ class _CHDPackage:
 
         return chd_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "chd",
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style CHD spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, head], ...]}``.
+        name : str, default "chd"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfchd`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.chd.flopy(stress_period_data={0: [[(0, 0), 10.0]]})
+        """
+
+        return chd_spec(stress_period_data, name=name, boundnames=boundnames, **options)
+
     def gpkg(
         self,
         path: PathLike,
@@ -1141,7 +1175,7 @@ class _GHBPackage:
     - ``mf.ghb(stress_period_data=...)`` -- direct MF6 records;
     - ``mf.ghb.gpkg(path, context=, nper=)`` -- build records from GeoPackage
       features (auto-reprojected and mapped onto cells);
-    - same as ``()`` here (the FloPy-native form).
+    - ``mf.ghb.flopy(...)`` -- the FloPy-native form.
 
     Examples
     --------
@@ -1182,6 +1216,47 @@ class _GHBPackage:
         Examples
         --------
         >>> mf.ghb(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})
+        """
+
+        return ghb_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "ghb",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style GHB spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, bhead, cond], ...]}``.
+        name : str, default "ghb"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfghb`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.ghb.flopy(stress_period_data={0: [[(0, 5), 86.0, 50.0]]})
         """
 
         return ghb_spec(
@@ -1317,6 +1392,38 @@ class _DRNPackage:
 
         return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
 
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "drn",
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style DRN spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, elev, cond], ...]}``.
+        name : str, default "drn"
+            Package name.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfdrn`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.drn.flopy(stress_period_data={0: [[(0, 12), 95.0, 30.0]]})
+        """
+
+        return drn_spec(stress_period_data, name=name, boundnames=boundnames, **options)
+
     def gpkg(
         self,
         path: PathLike,
@@ -1391,6 +1498,189 @@ class _DRNPackage:
         )
 
 
+class _RIVPackage:
+    """Package-first RIV (river) helpers.
+
+    A river exchanges water with the aquifer through a streambed conductance:
+    head-dependent in both directions while the water table is above the river
+    bottom (``rbot``), and a fixed stage-to-rbot leakage once it drops below --
+    the standard boundary for streams too small to warrant SFR routing. Three
+    entry points:
+
+    - ``mf.riv(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.riv.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells;
+    - ``mf.riv.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.riv(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})   # (cellid, stage, cond, rbot)
+    >>> mf.riv.gpkg("bcs.gpkg", layer="river", context=ctx, nper=1)
+    """
+
+    def __call__(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "riv",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a RIV package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, stage, cond, rbot], ...]}`` --
+            river stage, riverbed conductance, and river-bottom elevation per
+            ``(layer, cell)`` on a DISV grid.
+        name : str, default "riv"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})
+        """
+
+        return riv_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "riv",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style RIV spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, stage, cond, rbot], ...]}``.
+        name : str, default "riv"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv.flopy(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})
+        """
+
+        return riv_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def gpkg(
+        self,
+        path: PathLike,
+        *,
+        context: ModelContext,
+        nper: int,
+        stage: RowValue = "stage",
+        conductance: RowValue = "conductance",
+        rbot: RowValue = "rbot",
+        layer: str | None = None,
+        name_field: str | None = "name",
+        layer_field: str | None = "layer",
+        period_field: str | None = None,
+        layer_base: int = 1,
+        period_base: int = 0,
+        name: str = "riv",
+        edges_only: bool = False,
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a RIV package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of river features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        stage : str or CellSurfaceOffset, default "stage"
+            River stage -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (relative to a cell surface).
+        conductance : str or CellSurfaceOffset, default "conductance"
+            Riverbed conductance -- an attribute column or a constant.
+        rbot : str or CellSurfaceOffset, default "rbot"
+            River-bottom elevation -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (e.g. stage minus a channel depth).
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "riv"
+            Package name.
+        edges_only : bool, default False
+            Keep only grid-boundary cells.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv.gpkg("bcs.gpkg", layer="river", context=ctx, nper=1)
+        """
+
+        return _source(
+            path,
+            context=context,
+            nper=nper,
+            layer=layer,
+            name_field=name_field,
+            layer_field=layer_field,
+            period_field=period_field,
+            layer_base=layer_base,
+            period_base=period_base,
+        ).riv(
+            stage=stage,
+            conductance=conductance,
+            rbot=rbot,
+            name=name,
+            edges_only=edges_only,
+            boundnames=boundnames,
+            **options,
+        )
+
+
 class _WELPackage:
     """Package-first WEL (well) helpers.
 
@@ -1440,6 +1730,48 @@ class _WELPackage:
         Examples
         --------
         >>> mf.wel(stress_period_data={0: [[(0, 42), -500.0]]})   # extraction
+        """
+
+        return wel_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "wel",
+        auxiliary: Any = None,
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style WEL spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, rate], ...]}`` -- **negative to
+            pump out**, positive to inject.
+        name : str, default "wel"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfwel`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.wel.flopy(stress_period_data={0: [[(0, 42), -500.0]]})
         """
 
         return wel_spec(
@@ -1712,6 +2044,203 @@ class _RCHPackage:
             period_base=period_base,
         ).rch(
             recharge=recharge,
+            name=name,
+            boundnames=boundnames,
+            **options,
+        )
+
+
+class _EVTPackage:
+    """Package-first EVT (evapotranspiration) helpers.
+
+    Areally-distributed ET drawn from the water table: full ``rate`` at the ET
+    ``surface``, decaying linearly to zero at extinction ``depth`` below it (the
+    default single-segment form; segmented curves via ``nseg``). Three entry
+    points:
+
+    - ``mf.evt(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.evt.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells (areal polygons, like ``mf.rch.gpkg``);
+    - ``mf.evt.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})   # (cellid, surface, rate, depth)
+    >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
+    """
+
+    def __call__(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "evt",
+        nseg: int = 1,
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return an EVT package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, surface, rate, depth], ...]}`` --
+            ET surface elevation, maximum ET rate (L/T), and extinction depth
+            per ``(layer, cell)`` on a DISV grid (the ``nseg=1`` record form).
+        name : str, default "evt"
+            Package name.
+        nseg : int, default 1
+            Number of ET segments; segmented records add ``pxdp``/``petm``
+            values (see :func:`myflopy.advanced.evt_spec`).
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
+        """
+
+        return evt_spec(
+            stress_period_data,
+            name=name,
+            nseg=nseg,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "evt",
+        nseg: int = 1,
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style EVT spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, surface, rate, depth], ...]}``
+            (plus ``pxdp``/``petm``/``petm0`` values for segmented forms).
+        name : str, default "evt"
+            Package name.
+        nseg : int, default 1
+            Number of ET segments.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.evt.flopy(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
+        """
+
+        return evt_spec(
+            stress_period_data,
+            name=name,
+            nseg=nseg,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def gpkg(
+        self,
+        path: PathLike,
+        *,
+        context: ModelContext,
+        nper: int,
+        surface: RowValue = "surface",
+        rate: RowValue = "rate",
+        depth: RowValue = "depth",
+        layer: str | None = None,
+        name_field: str | None = "name",
+        layer_field: str | None = "layer",
+        period_field: str | None = None,
+        layer_base: int = 1,
+        period_base: int = 0,
+        name: str = "evt",
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return an EVT package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of ET-zone features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        surface : str or CellSurfaceOffset, default "surface"
+            ET surface elevation -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (e.g. the cell top).
+        rate : str or CellSurfaceOffset, default "rate"
+            Maximum ET rate (L/T) -- an attribute column or a constant.
+        depth : str or CellSurfaceOffset, default "depth"
+            Extinction depth below the ET surface -- an attribute column or a
+            constant.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "evt"
+            Package name.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options. Note ``nseg`` must stay
+            ``1`` here: mapped features yield ``(cellid, surface, rate, depth)``
+            records with no ``pxdp``/``petm`` values, so segmented ET is
+            rejected (build segmented records yourself and pass them to
+            ``mf.evt(...)`` / ``mf.evt.flopy(...)``).
+
+        Returns
+        -------
+        PackageSpec
+
+        Raises
+        ------
+        ValueError
+            If ``nseg`` other than ``1`` is given.
+
+        Examples
+        --------
+        >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
+        """
+
+        return _source(
+            path,
+            context=context,
+            nper=nper,
+            layer=layer,
+            name_field=name_field,
+            layer_field=layer_field,
+            period_field=period_field,
+            layer_base=layer_base,
+            period_base=period_base,
+        ).evt(
+            surface=surface,
+            rate=rate,
+            depth=depth,
             name=name,
             boundnames=boundnames,
             **options,
@@ -2472,8 +3001,10 @@ def lak_connection(lak_spec: PackageSpec, lake_id: str) -> MoverConnection:
 chd = _CHDPackage()
 ghb = _GHBPackage()
 drn = _DRNPackage()
+riv = _RIVPackage()
 wel = _WELPackage()
 rch = _RCHPackage()
+evt = _EVTPackage()
 uzf = _UZFPackage()
 sfr = _SFRPackage()
 lak = _LAKPackage()
@@ -2484,6 +3015,7 @@ __all__ = [
     "chd",
     "disv",
     "drn",
+    "evt",
     "ghb",
     "gwe",
     "gwf",
@@ -2496,6 +3028,7 @@ __all__ = [
     "oc",
     "prt",
     "rch",
+    "riv",
     "sfr",
     "simulation",
     "sto",

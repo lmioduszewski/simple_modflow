@@ -5,8 +5,15 @@
 - Active development branch: `myflopy`
 - Package lives at `src/myflopy/` on that branch
 
+## Compromise ledger (standing user rule, 2026-07-17)
+**`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
+test-fidelity trade, judgment call, or considered-but-omitted optional inside
+delivered work. Any change that makes such a call MUST add/update its ledger
+entry **in the same pass** (it is part of the docs-always-in-sync rule).
+Entries are removed only when the compromise is actually undone.
+
 ## Test suite (fast by design)
-- Full 633-test suite: `pytest -n 10` ≈ **45–60 s** (worksteal dist is in
+- Full 636-test suite: `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
   addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
@@ -41,7 +48,7 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
        └─ ModelSpec = mf.gwf(name, context=…, packages=[…])   ← one model
             ├─ ModelContext(grid=, domain=, surfaces=, dates=)  ← geometry; rides on the MODEL, not the project
             └─ packages: mf.disv, mf.npf/ic/sto/oc,
-                         mf.chd/ghb/drn/wel/rch (+ .gpkg / .flopy),
+                         mf.chd/ghb/drn/riv/wel/rch/evt (+ .gpkg / .flopy),
                          mf.uzf/sfr/lak (+ .flopy), mf.mvr
 ```
 - **`Project(root, name=)`** (`workspace.py`): `add_grid/add_package/add_simulation` (reusable
@@ -52,7 +59,7 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
 - **Package-first surface**: `mf.gwf/gwt/gwe/prt`; `mf.disv`; `mf.ic/npf/sto/oc/tdis/ims`;
-  list BCs `mf.chd/ghb/drn/wel/rch` each with `()` (direct data), `.gpkg(path, context=, nper=)`
+  list BCs `mf.chd/ghb/drn/riv/wel/rch/evt` each with `()` (direct data), `.gpkg(path, context=, nper=)`
   (from GeoPackage), `.flopy(...)` (raw FloPy escape hatch); advanced `mf.uzf/sfr/lak` (`()` =
   high-level builder, `.flopy(...)` = raw); `mf.mvr` with `mf.Move(mf.MoverConnection("sfr",0),
   mf.MoverConnection("lak",0))`. **MVR is validated**: moved packages must be declared in the
@@ -148,7 +155,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `GridSpec.from_object` for a built structured/existing grid.
 - **LGR parent-child model pairs** — absent (niche for a Voronoi-first toolkit)
 
-Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/wel/rch`,
+Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/riv/wel/rch/evt`,
 `mf.ghb.gpkg`, legacy `Boundaries`), CRS reprojection (vector + raster), layer surfaces +
 reconcile + **pinch-out/idomain** (`surfaces.py`), SFR from centerline (`SFRBuilder`),
 recharge from GIS/PRISM (`RCHBuilder`).
