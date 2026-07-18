@@ -61,6 +61,11 @@
 
 ## Phase 5 — D8 / mf.riv / mf.evt (2026-07-17, branch `phase-5-package-api`)
 
+> Entries 6, 13 and 14 below are now **scheduled** rather than open-ended: plan
+> §4.7 (package declaration consolidation) absorbs them — 4.7.5 builds the
+> `_ArealBuilder`/`EVTBuilder` (entry 6), 4.7.1 fixes `rch_spec` (13) and the
+> budget/mover lists (14). They stay listed until the code actually lands.
+
 6. **No `EVTBuilder` (no file-less whole-domain EVT form).**
    - What: `mf.evt` has `()` / `.gpkg` / `.flopy` but no builder form like
      `mf.rch(context=, nper=, recharge=)` that self-selects top-active cells.
@@ -121,18 +126,17 @@ An ultracode review of the D8/riv/evt diff confirmed 9 findings; all were fixed
 (see the review-fixes commit). The residue below is what was deliberately NOT
 done, plus one assurance gap in the review itself.
 
-12. **The review that vetted this work was only ~50% complete.**
-    - What: of 26 review agents, 13 verify agents died mid-run on a Fable 5
-      usage limit. Their findings were never adjudicated. I hand-verified the
-      plausible ones (diff tier, artifact suffix map, mover packages, group
-      symmetry, doc counts — all fixed) but the rest were dropped unexamined:
-      registry `default_input` choices, export-tier placement, a
-      registry-parity loop, and a legacy `model.bud()` zero-basing claim.
-    - Why: usage limit, not a judgment call.
-    - Impact: riv/evt carry less adversarial assurance than the confirmed-fix
-      list implies.
-    - Revisit: re-run the review workflow on the merged branch when budget
-      allows; it is cheap to resume (`resumeFromRunId`).
+12. ~~**The review that vetted this work was only ~50% complete.**~~
+    **RESOLVED 2026-07-18** — the review was re-run to completion (18/18 agents,
+    worktree-isolated; 4 confirmed of 14 claims). All four dropped dimensions
+    were adjudicated. It found: riv/evt `default_input` unpinned by any test;
+    `_PackageDiffNamespace` missing riv/evt properties (static-typing only);
+    and — the serious one — a **legacy budget off-by-one** for riv/evt, coupled
+    to a pre-existing double-subtraction in `group/budget.py` that makes
+    `group.bud('drn'|'ghb')` wrong today. Those findings are NOT yet fixed;
+    they are scheduled as plan **4.7.1** (they must be fixed together — fixing
+    either alone trades one off-by-one for another, verified). Entry retained
+    only as the pointer to that work; delete when 4.7.1 lands.
 
 13. **`rch_spec` keeps the fragile `maxbound` inference that was removed from
     `evt_spec`.**

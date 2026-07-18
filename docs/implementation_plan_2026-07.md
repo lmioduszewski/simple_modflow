@@ -480,11 +480,130 @@ largest file in the explorer family; `package_surface_water.py` is at 1,852. Rev
 colorscale helpers) behind the explorer facade, here or as Phase 8 prep. `specs.py` is
 cohesive — leave below ~2,500 (currently 2,315).
 
+### 4.6 Suite speedup — DONE 2026-07-17
+
+Not originally a plan phase; recorded in `docs/phase_baselines.md` (branch
+`phase-4.6-fast-suite`). Full suite 11m44s → 47.5s at `-n 10` via the
+`CanonicalModelConfig.testing()` profile + session-scoped fixtures. Numbered here so
+4.7 below is continuous.
+
+### 4.7 Package declaration consolidation (the DRY keystone) — ~5–8 days
+
+> **DO THIS BEFORE 5.3.** 5.3 adds ~11 GWT/GWE packages. At the current ~20
+> declaration sites each, that is ~220 hand-edits with a **measured ~50% miss rate**
+> (see evidence). Consolidating first makes 5.3 dramatically cheaper and is the only
+> way to stop paying this tax per package.
+
+**The thesis: do not build a new abstraction — finish the one that exists.**
+`modflow/mf6/package_registry.py` is already data-driven and it *works*: colorscales,
+field names, budget terms and explorer wiring all flow from it, for every package,
+with zero misses. The defect is that ~20 OTHER sites re-declare package knowledge
+instead of reading from it. This phase extends the registry into a complete package
+descriptor and deletes its competitors.
+
+**Evidence this is not speculative (all from the 2026-07-17/18 riv+evt work):**
+- `mf.riv`/`mf.evt` shipped with a documented four-piece checklist, the canonical
+  docs rule, and TWO adversarial reviews — and still **missed 6–8 sites**
+  (`package_api.__all__`, `_DIFF_PACKAGES`, `_CELL_BUDGET_PACKAGES`,
+  `_PACKAGE_SUFFIX_TO_TYPE`, `budget_tables` basing, `_PackageDiffNamespace`
+  properties, `SUPPORTED_PACKAGE_ARTIFACT_TYPES`).
+- **`wel` — a long-shipped package — is missing from the artifact subsystem
+  entirely** (`components.py` `SUPPORTED_PACKAGE_ARTIFACT_TYPES`). Nobody noticed.
+  Proof the tax is not a new-package problem; the lists silently rot.
+- The **budget off-by-one** (riv/evt 1-based vs everything else 0-based) is a direct
+  symptom: a hardcoded set in `budget_tables.py:63` omitted riv/evt, and
+  `project/group/budget.py:33` "compensates" with an `if node.min() >= 1` heuristic
+  that *guesses* what the set should have told it. Two bugs that cancel for riv/evt
+  and leave `group.bud('drn'|'ghb')` **wrong today**.
+
+**Confirmed declaration sites (floor, not ceiling — 20+):** `advanced.py` (11
+`*_spec` + `__all__` + imports) · `geopackage.py` (7 BC resolvers + imports) ·
+`package_api.py` (11 `_XPackage` classes + singletons + `__all__` + imports) ·
+`package_registry.py` (the intended SSOT) · `package_model.py` `ModelPackages`
+properties · `group/core.py` (`_<pkg>` attrs + deprecated-alias map) ·
+`group/packages.py` properties · `model_diff.py` (`_DIFF_PACKAGES` +
+`_PackageDiffNamespace` properties) · `model_results_diff.py`
+(`_CELL_BUDGET_PACKAGES`, `_MOVER_PACKAGES`) · `run_model.py`
+(`_PACKAGE_SUFFIX_TO_TYPE`) · `budget_tables.py` (zero-basing set) ·
+`components.py` (artifact types + 2 branch sets) · `__init__.py` (`_EXPORTS`,
+`_SECOND_TIER_EXPORTS`, 2 TYPE_CHECKING blocks) · `simulation/base.py` accessors ·
+`choros.py` hardcoded `bud('rch')`.
+
+#### 4.7.0 Make equivalence provable FIRST (do not skip)
+Golden-snapshot tests, landed before any refactor: (a) every `mf.<pkg>` public
+signature (methods, params, defaults); (b) every `*_spec` output (`options` dict +
+builder func/args) from fixed inputs; (c) the package set visible in each of the ~20
+surfaces. Without this, "behavior-preserving" is a claim, not a fact. The snapshot
+doubles as a table of every current inconsistency.
+
+#### 4.7.1 Fix the live bugs first — do NOT refactor onto a broken baseline
+Small, independent, one commit each: the budget-basing pair (`budget_tables.py` set +
+delete `group/budget.py`'s `min()>=1` heuristic **in the same pass** — fixing either
+alone trades one off-by-one for another, verified); artifact subsystem
+(`wel`/`riv`/`evt`); `default_input` pinned by a table-driven loop over all
+`cell_stress` entries (mirroring `test_colorscale_policy.py`); `_PackageDiffNamespace`
+riv/evt properties; `rch_spec` maxbound.
+
+#### 4.7.2 Grow the registry into a complete package descriptor
+Add what the other sites need: FloPy class, record field order, `.gpkg` field
+defaults, capabilities (`edges_only`/`mover`/`auxiliary`/`boundnames` default), file
+suffix, budget text, **node basing**, tier flags (diffable, artifact-serializable),
+and a per-package prose blurb (see exceptions). Pure data + tests asserting the
+descriptor equals today's hardcoded values. **Zero behavior change** — the safe
+keystone.
+
+#### 4.7.3 Delete the hardcoded lists, one commit each, lowest risk first
+`_PACKAGE_SUFFIX_TO_TYPE` → `_DIFF_PACKAGES`/`_CELL_BUDGET_PACKAGES`/
+`_MOVER_PACKAGES` → budget basing → `components.py` artifact sets →
+`package_api.__all__` + `__init__` export tiers → namespace properties. Each becomes
+derived-from-registry, each guarded by 4.7.0's snapshot.
+
+#### 4.7.4 Collapse the per-package code
+One `_list_bc_spec(descriptor, data, **opts)` with the 7 named `*_spec` as thin
+wrappers (public names/signatures preserved); one `_bc_from_features(descriptor,
+**fields)` behind the 7 resolvers; one `_ListBCPackage(descriptor)` replacing the 7
+helper classes. Permanently kills the divergence class that produced the `evt_spec`
+maxbound crash. Biggest LOC win (`package_api.py` is 3,038 lines, mostly repeated
+structure) and the most public API touched — so do it LAST, behind 4.7.0.
+
+#### 4.7.5 Extract `_ArealBuilder`; add `EVTBuilder`
+Lift `RCHBuilder`'s cell selection + value broadcasting into a shared base; `EVTBuilder`
+becomes a thin subclass whose only new piece is `_resolve_surface` (delegating to the
+existing `Surface`/`CellSurfaceOffset` engine, NOT reading `gdf_topbtm` directly).
+Resolves ledger entry 6.
+
+#### 4.7.6 The payoff test
+Register a synthetic package descriptor in a test and assert it appears automatically
+in every surface (spec factory, `.gpkg` resolver, helper, explorer, group, diff,
+artifacts, exports, suffix map, budget basing). If it passes, riv/evt's 6-site miss is
+structurally impossible and 5.3 becomes mechanical.
+
+#### What deliberately STAYS duplicated (the "good reason not to" list)
+- **Static-typing surface.** Generated properties degrade `diff.packages.riv` to `Any`
+  downstream (the package ships `py.typed`) — proven by review 2026-07-18. Generate at
+  runtime BUT emit a **checked-in `.pyi` from the registry**, with a test that the stub
+  matches. DRY must not cost type safety.
+- **Per-package prose docstrings.** Template the *structure* from the descriptor; keep
+  the prose as descriptor data. Do not trade doc quality for DRY.
+- **Advanced packages (SFR/LAK/UZF/MVR).** Real data-model differences (reaches,
+  connections, outlets). Share the spec wrapper + registry entry, NOT the record
+  machinery.
+- **Genuinely package-specific logic**, e.g. MVR's package-ordering validation.
+- CHD having no conductance, WEL being signed, EVT being areal are **data** in the
+  descriptor, not code branches.
+
 ---
 
 ## Phase 5 — Package API completion (~8–15 days excluding 5.7, independent of Phase 4)
 
 ### 5.0 The pattern to replicate (read first)
+
+> **SUPERSEDED IN SPIRIT BY 4.7 (2026-07-18).** The "four pieces" below is the
+> minimum, not the whole job: riv/evt followed it exactly and still missed 6–8
+> declaration sites, because ~20 places encode package knowledge. If 4.7 has landed,
+> add the registry descriptor and let the surfaces derive — the list below is then
+> historical. If 4.7 has NOT landed, follow it AND grep for every hardcoded package
+> tuple/set first (4.7 lists the confirmed sites).
 
 Every list-style boundary package = four pieces (DRN is the reference):
 1. `package_api.py` helper class (`_DRNPackage`: `__call__` direct data / `.gpkg` GIS /
@@ -542,6 +661,10 @@ RCH areal-mapping prior art (`RCHBuilder`, `GeoPackageSource.rch`). Earth colors
 blue input hover.
 
 ### 5.3 GWT/GWE package-first helpers + model-type-aware core helpers
+
+> **PREFER 4.7 FIRST.** This sub-phase adds ~11 packages; at the current ~20
+> declaration sites each that is ~220 hand-edits at a measured ~50% miss rate. After
+> 4.7 it is one descriptor per package plus genuinely new physics code.
 
 **Part A — model-type dispatch (prerequisite for 5.5 and 6.1/6.2):** `mf.ic`/`mf.oc`/
 `mf.disv` hardcode `ModflowGwf*` classes (verified) so they cannot serve GWT/GWE models.
@@ -906,10 +1029,14 @@ Phase 2 (junk/hygiene)  ── independent; cheap; second. 2.4's deprecation war
                            depends on 3.1 — land a plain warnings.warn, convert in 3.1
 Phase 3 (deprecation)   ── before Phases 4 and 8; tagging (D11) makes the policy real
 Phase 4 (splits/layering) ── 4.2 PREFERRED before 6.1's group work (else re-derive
-                           the class inventory); 4.5 after 4.1/4.2, no other blockers
-Phase 5 (package API)   ── independent of Phase 4;
-                           order: D8 .flopy backfill → 5.3A → 5.1 → 5.2 → 5.3B → 5.6
-                           → 5.4 → 5.5 → 5.8 (anytime after 5.3; its viz side is 6.4)
+                           the class inventory); 4.5 after 4.1/4.2, no other blockers;
+                           4.6 DONE; 4.7 (declaration consolidation) STRONGLY PREFERRED
+                           before 5.3 — and its 4.7.1 bug-fix step is independent and
+                           should land regardless (fixes a live off-by-one)
+Phase 5 (package API)   ── independent of Phase 4 EXCEPT 5.3, which should follow 4.7;
+                           order: D8 .flopy backfill → 5.1 → 5.2 (all DONE) → [4.7] →
+                           5.3A → 5.3B → 5.6 → 5.4 → 5.5 → 5.8 (anytime after 5.3;
+                           its viz side is 6.4)
                            → 5.7 (optional/forward-looking; gates NOTHING)
 Phase 6 (model types)   ── 6.0/6.1 need 5.3 (buildable GWT models for fixtures);
                            6.2 after 6.1; 6.3 and 6.4 independent of 6.1/6.2;
@@ -940,6 +1067,11 @@ slow tests run automatically in 1.3's scheduled slow lane.
 | 4.2 model_group split | L | Med-high (Phase 6 adds Group* classes here — do 4.2 first) |
 | 4.3 surfaces / 4.4 layering | S–M / M | Low |
 | 4.5 second-tier splits (triangle, package_plotting) | M | Low–Med |
+| 4.7.0 golden snapshots / 4.7.1 live-bug fixes | S / S–M | Low (pure safety net; 4.7.1 fixes wrong numbers) |
+| 4.7.2 registry descriptor | M | Low (data only, zero behavior change) |
+| 4.7.3 derive the ~20 lists | M–L | Med (one commit each, snapshot-guarded) |
+| 4.7.4 collapse spec/resolver/helper triplication | L | Med–High (most public API touched — do last) |
+| 4.7.5 `_ArealBuilder` + EVTBuilder | M | Med (refactors shipped RCH behavior) |
 | D8 .flopy backfill (chd/ghb/drn/wel) | S | Low |
 | 5.1 riv / 5.2 evt | M each | Low (proven pattern) |
 | 5.3 gwt/gwe helpers + dispatch | M–L | Med (serialization round-trip) |

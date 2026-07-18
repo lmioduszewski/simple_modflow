@@ -5,6 +5,13 @@
 - Active development branch: `myflopy`
 - Package lives at `src/myflopy/` on that branch
 
+## Adding a package? Read plan §4.7 FIRST (2026-07-18)
+Package knowledge is currently re-declared in **~20 hardcoded sites** across `src/`.
+`mf.riv`/`mf.evt` followed the documented four-piece checklist and still missed 6–8 of
+them; `wel` is missing from the artifact subsystem to this day. Plan §4.7 consolidates
+these onto the existing `package_registry.py` descriptor. Until it lands, adding a
+package means grepping every hardcoded package tuple/set — §4.7 lists the confirmed ones.
+
 ## Compromise ledger (standing user rule, 2026-07-17)
 **`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
 test-fidelity trade, judgment call, or considered-but-omitted optional inside
