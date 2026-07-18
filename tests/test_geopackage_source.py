@@ -49,6 +49,8 @@ def _write_inputs(path):
             "head_1": [10.5, 8.5],
             "conductance": [2.0, 3.0],
             "elevation": [8.0, 7.0],
+            "stage": [9.5, 8.5],
+            "rbot": [7.5, 6.5],
             "rate": [-1.0, -2.0],
             "recharge": [0.001, 0.002],
             "k": [5.0, 10.0],
@@ -78,6 +80,7 @@ def test_geopackage_source_builds_specs_and_arrays(tmp_path):
     chd = source.chd(head=["head_0", "head_1"])
     ghb = source.ghb(head="head_0")
     drn = source.drn()
+    riv = source.riv()
     wel = source.wel()
     rch = source.rch()
     k = source.k_array(value="k", nlay=1, defaults=1.0)
@@ -86,6 +89,10 @@ def test_geopackage_source_builds_specs_and_arrays(tmp_path):
     assert chd.options["stress_period_data"][1] == [[(0, 0), 10.5, "left"]]
     assert ghb.options["stress_period_data"][0] == [[(0, 0), 10.0, 2.0, "left"]]
     assert drn.options["stress_period_data"][0] == [[(0, 0), 8.0, 2.0, "left"]]
+    assert riv.options["stress_period_data"][0] == [[(0, 0), 9.5, 2.0, 7.5, "left"]]
+    assert riv.metadata["fields"] == {
+        "stage": "stage", "conductance": "conductance", "rbot": "rbot",
+    }
     assert wel.options["stress_period_data"][0] == [[(0, 0), -1.0, "left"]]
     assert rch.options["stress_period_data"][0] == [[(0, 0), 0.001, "left"]]
     assert k.tolist() == [[5.0, 1.0]]
@@ -114,12 +121,29 @@ def test_geopackage_specs_run_through_project(tmp_path):
     flow = baseline.model("gpkg_flow")
     flow = flow.with_package(source.chd(head="head_0"))
     flow = flow.with_package(source.ghb(head="head_0"))
+    flow = flow.with_package(source.riv())
     simulation = baseline.with_model(flow)
 
     run = Project(tmp_path / "project").run("baseline", simulation)
 
     assert run.success is True
     assert isinstance(run.built.models["gpkg_flow"].packages["ghb"], flopy.mf6.ModflowGwfghb)
+    assert isinstance(run.built.models["gpkg_flow"].packages["riv"], flopy.mf6.ModflowGwfriv)
+
+    # the riv explorer surface works end-to-end on the completed run: registry
+    # fields in the input table, earth input map, RdBu signed-q results
+    from myflopy import load_mf6_run
+
+    view = load_mf6_run(run.workspace)
+    inputs = view.packages.riv.inputs.get()
+    assert {"stage", "cond", "rbot"}.issubset(inputs.columns)
+    assert float(inputs.loc[inputs["cell"] == 0, "stage"].iloc[0]) == 9.5
+    stage_map = view.packages.riv.inputs.map(per=0)
+    assert stage_map.colorscale == "earth"
+    q = view.packages.riv.results.q.get()
+    assert not q.empty  # RIV budget term recorded by the run
+    q_map = view.packages.riv.results.q.map(per=0)
+    assert q_map.colorscale == "RdBu"
 
 
 def test_geopackage_source_supports_long_period_format_and_clear_field_errors(tmp_path):

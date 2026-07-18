@@ -144,6 +144,8 @@ def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
             "layer": [1],
             "elevation": [8.5],
             "conductance": [25.0],
+            "stage": [9.5],
+            "rbot": [7.5],
         },
         geometry=[Polygon([(0, 0), (2, 0), (2, 1), (0, 1)])],
         crs=grid.crs,
@@ -155,6 +157,13 @@ def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
     assert direct.name == "drn"
     assert from_gpkg.metadata["source_type"] == "geopackage"
     assert len(from_gpkg.options["stress_period_data"][0]) == 2
+
+    riv_direct = mf.riv(stress_period_data={0: [[(0, 0), 9.5, 25.0, 7.5]]})
+    riv_gpkg = mf.riv.gpkg(gpkg, context=context, nper=1)
+
+    assert riv_direct.name == "riv"
+    assert riv_gpkg.metadata["source_type"] == "geopackage"
+    assert riv_gpkg.options["stress_period_data"][0][0] == [(0, 0), 9.5, 25.0, 7.5, "drain"]
 
 
 def test_package_api_rch_uses_builder_by_default_and_flopy_for_direct_data():
@@ -176,6 +185,7 @@ def test_simple_list_bcs_have_a_real_flopy_escape_hatch():
         "chd": {0: [[(0, 0), 10.0]]},
         "ghb": {0: [[(0, 5), 86.0, 50.0]]},
         "drn": {0: [[(0, 12), 95.0, 30.0]]},
+        "riv": {0: [[(0, 7), 98.0, 40.0, 96.5]]},
         "wel": {0: [[(0, 42), -500.0]]},
     }
     for name, spd in cases.items():

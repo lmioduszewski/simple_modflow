@@ -16,6 +16,7 @@ from myflopy import (
     ghb_spec,
     lak_spec,
     mvr_spec,
+    riv_spec,
     sfr_spec,
     uzf_spec,
     wel_spec,
@@ -124,6 +125,7 @@ def test_advanced_specs_build_and_write_with_flopy_310(tmp_path):
             PackageSpec("sto", flopy.mf6.ModflowGwfsto, {"steady_state": {0: True}}),
             wel_spec({0: [[(0, 0, 1), -0.1, "supply"]]}),
             ghb_spec({0: [[(0, 0, 2), 9.0, 1.0]]}),
+            riv_spec({0: [[(0, 0, 0), 9.5, 1.0, 8.5]]}),
             uzf_spec(
                 [[0, (0, 0, 1), 1, -1, 0.0, 0.1, 0.05, 0.3, 0.1, 3.5]],
                 {0: [[0, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]},
@@ -167,13 +169,14 @@ def test_advanced_specs_build_and_write_with_flopy_310(tmp_path):
     built = simulation.build_flopy(tmp_path)
     built.simulation.write_simulation(silent=True)
 
-    assert list(built.models["advanced"].packages)[4:10] == [
+    assert list(built.models["advanced"].packages)[4:11] == [
         "wel",
         "ghb",
+        "riv",
         "uzf",
         "lak",
         "sfr",
         "mvr",
     ]
-    for suffix in ("wel", "ghb", "uzf", "lak", "sfr", "mvr"):
+    for suffix in ("wel", "ghb", "riv", "uzf", "lak", "sfr", "mvr"):
         assert (tmp_path / f"advanced.{suffix}").exists()

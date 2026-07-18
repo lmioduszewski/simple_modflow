@@ -9,7 +9,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 
-from myflopy.advanced import chd_spec, drn_spec, ghb_spec, rch_spec, wel_spec
+from myflopy.advanced import chd_spec, drn_spec, ghb_spec, rch_spec, riv_spec, wel_spec
 from myflopy.specs import ModelContext, PackageSpec
 
 SurfaceReference = str
@@ -400,6 +400,34 @@ class GeoPackageSource:
             **options,
         ).with_metadata(
             **self._metadata("drn", elevation=elevation, conductance=conductance)
+        )
+
+    def riv(
+        self,
+        *,
+        stage: RowValue = "stage",
+        conductance: RowValue = "conductance",
+        rbot: RowValue = "rbot",
+        name: str = "riv",
+        edges_only: bool = False,
+        boundnames: bool = True,
+        **options,
+    ) -> PackageSpec:
+        """Return a RIV package spec from GeoPackage features."""
+
+        return riv_spec(
+            self._boundary_data(
+                stage,
+                conductance,
+                rbot,
+                edges_only=edges_only,
+                boundnames=boundnames,
+            ),
+            name=name,
+            boundnames=boundnames,
+            **options,
+        ).with_metadata(
+            **self._metadata("riv", stage=stage, conductance=conductance, rbot=rbot)
         )
 
     def wel(

@@ -114,6 +114,12 @@ class GroupPackages:
         return GroupPackageAccessor(self.group._ghb)
 
     @property
+    def riv(self) -> GroupPackageAccessor:
+        """Grouped river package input helpers."""
+
+        return GroupPackageAccessor(self.group._riv)
+
+    @property
     def wel(self) -> GroupPackageAccessor:
         """Grouped well package input helpers."""
 

@@ -509,6 +509,15 @@ Every list-style boundary package = four pieces (DRN is the reference):
 colorscale assertions in the style of `test_hover_integration.py`.
 
 ### 5.1 `mf.riv` — do first
+> **DONE 2026-07-17** (branch `phase-5-package-api`): all four pieces — `_RIVPackage`
+> (`()`/`.gpkg` incl. `CellSurfaceOffset` stage/rbot/`.flopy`), `GeoPackageSource.riv`,
+> `riv_spec`, registry entry (stage/cond/rbot `earth`, result q `RdBu`) + explorer/
+> group/diff wiring via the registry-generic paths + `mf.riv`/`riv_spec` lazy exports.
+> Input hover rides the generic per-field `cell_input_hover` path like every other
+> list BC (no bespoke extra-fields hover was needed). MF6 e2e:
+> `test_geopackage_specs_run_through_project` runs RIV and asserts explorer
+> table/colorscales on the completed run.
+
 RIV records `(cellid, stage, cond, rbot)`. All four pieces; `.gpkg` with surface
 references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=("cond",
 "rbot"))`; colorscale `earth`; result q joins the RdBu q family.

@@ -16,12 +16,14 @@ from myflopy.modflow.mf6.package_registry import (
 
 def test_non_signed_inputs_default_to_earth():
     # every non-signed input field and package default is the earth scale
-    for package in ("rch", "chd", "drn", "ghb"):
+    for package in ("rch", "chd", "drn", "ghb", "riv"):
         assert get_default_package_colorscale(package) == "earth"
     for field in ("finf", "pet", "extdp", "extwc", "ha", "hroot", "rootact"):
         assert get_default_package_colorscale(f"uzf_{field}") == "earth"
     assert get_default_package_colorscale("drn_cond") == "earth"
     assert get_default_package_colorscale("ghb_bhead") == "earth"
+    for field in ("stage", "cond", "rbot"):
+        assert get_default_package_colorscale(f"riv_{field}") == "earth"
 
 
 def test_signed_q_fields_keep_diverging_scales():
@@ -29,7 +31,7 @@ def test_signed_q_fields_keep_diverging_scales():
     assert get_default_package_colorscale("wel") == "RdBu"
     assert get_package_explorer_spec("wel").inputs["q"].colorscale == "RdBu"
     # every package's q RESULT keeps a diverging scale
-    for package in ("rch", "chd", "drn", "ghb", "wel", "sfr", "lak"):
+    for package in ("rch", "chd", "drn", "ghb", "riv", "wel", "sfr", "lak"):
         assert get_package_result_spec(package, "q").colorscale == "RdBu"
 
 

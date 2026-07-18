@@ -90,6 +90,19 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "q": ResultSpec("q", budget_text="GHB", value_name="q", colorscale="RdBu"),
         },
     ),
+    "riv": PackageExplorerSpec(
+        name="riv",
+        default_input="stage",
+        colorscale="earth",
+        inputs={
+            "stage": FieldSpec("stage", label="River stage", colorscale="earth"),
+            "cond": FieldSpec("cond", label="Riverbed conductance", colorscale="earth"),
+            "rbot": FieldSpec("rbot", label="River bottom", colorscale="earth"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="RIV", value_name="q", colorscale="RdBu"),
+        },
+    ),
     "wel": PackageExplorerSpec(
         name="wel",
         default_input="q",

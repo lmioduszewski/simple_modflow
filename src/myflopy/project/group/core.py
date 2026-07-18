@@ -71,6 +71,7 @@ class ModelGroup:
         self._chd = GroupPackageInputs(self, "chd")
         self._drn = GroupPackageInputs(self, "drn")
         self._ghb = GroupPackageInputs(self, "ghb")
+        self._riv = GroupPackageInputs(self, "riv")
         self._wel = GroupPackageInputs(self, "wel")
         self._uzf = GroupUzfInputs(self)
         self.packages = GroupPackages(self)

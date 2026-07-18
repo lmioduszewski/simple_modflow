@@ -202,6 +202,46 @@ def ghb_spec(
     return PackageSpec(name, _factory(flopy.mf6.ModflowGwfghb), values)
 
 
+def riv_spec(
+    stress_period_data,
+    *,
+    name: str = "riv",
+    auxiliary=None,
+    boundnames: bool = False,
+    **options,
+) -> PackageSpec:
+    """Return a RIV (river) package spec from raw FloPy stress-period data.
+
+    The data form behind ``mf.riv.flopy(...)``. Wraps
+    :class:`flopy.mf6.ModflowGwfriv` with ``save_flows`` enabled.
+
+    Parameters
+    ----------
+    stress_period_data
+        FloPy mapping ``{per: [(cellid, stage, cond, rbot, [aux...], [bname]), ...]}``.
+    name
+        Package name used for ``pname`` and the output filename.
+    auxiliary
+        Optional auxiliary variable name(s).
+    boundnames
+        Enable named boundaries (default ``False``).
+    **options
+        Extra keyword options passed straight to the FloPy constructor.
+    """
+
+    values = _named_options(
+        name,
+        {
+            "stress_period_data": stress_period_data,
+            "auxiliary": auxiliary,
+            "boundnames": boundnames,
+            "save_flows": True,
+            **options,
+        },
+    )
+    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfriv), values)
+
+
 def rch_spec(
     stress_period_data,
     *,
@@ -518,6 +558,7 @@ __all__ = [
     "lak_spec",
     "mvr_spec",
     "rch_spec",
+    "riv_spec",
     "sfr_spec",
     "uzf_spec",
     "wel_spec",

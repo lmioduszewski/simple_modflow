@@ -23,6 +23,7 @@ from myflopy.advanced import (
     lak_spec,
     mvr_spec,
     rch_spec,
+    riv_spec,
     sfr_spec,
     uzf_spec,
     wel_spec,
@@ -1496,6 +1497,189 @@ class _DRNPackage:
         )
 
 
+class _RIVPackage:
+    """Package-first RIV (river) helpers.
+
+    A river exchanges water with the aquifer through a streambed conductance:
+    head-dependent in both directions while the water table is above the river
+    bottom (``rbot``), and a fixed stage-to-rbot leakage once it drops below --
+    the standard boundary for streams too small to warrant SFR routing. Three
+    entry points:
+
+    - ``mf.riv(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.riv.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells;
+    - ``mf.riv.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.riv(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})   # (cellid, stage, cond, rbot)
+    >>> mf.riv.gpkg("bcs.gpkg", layer="river", context=ctx, nper=1)
+    """
+
+    def __call__(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "riv",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a RIV package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, stage, cond, rbot], ...]}`` --
+            river stage, riverbed conductance, and river-bottom elevation per
+            ``(layer, cell)`` on a DISV grid.
+        name : str, default "riv"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})
+        """
+
+        return riv_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "riv",
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style RIV spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, stage, cond, rbot], ...]}``.
+        name : str, default "riv"
+            Package name.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv.flopy(stress_period_data={0: [[(0, 7), 98.0, 40.0, 96.5]]})
+        """
+
+        return riv_spec(
+            stress_period_data,
+            name=name,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def gpkg(
+        self,
+        path: PathLike,
+        *,
+        context: ModelContext,
+        nper: int,
+        stage: RowValue = "stage",
+        conductance: RowValue = "conductance",
+        rbot: RowValue = "rbot",
+        layer: str | None = None,
+        name_field: str | None = "name",
+        layer_field: str | None = "layer",
+        period_field: str | None = None,
+        layer_base: int = 1,
+        period_base: int = 0,
+        name: str = "riv",
+        edges_only: bool = False,
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a RIV package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of river features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        stage : str or CellSurfaceOffset, default "stage"
+            River stage -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (relative to a cell surface).
+        conductance : str or CellSurfaceOffset, default "conductance"
+            Riverbed conductance -- an attribute column or a constant.
+        rbot : str or CellSurfaceOffset, default "rbot"
+            River-bottom elevation -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (e.g. stage minus a channel depth).
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "riv"
+            Package name.
+        edges_only : bool, default False
+            Keep only grid-boundary cells.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfriv`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.riv.gpkg("bcs.gpkg", layer="river", context=ctx, nper=1)
+        """
+
+        return _source(
+            path,
+            context=context,
+            nper=nper,
+            layer=layer,
+            name_field=name_field,
+            layer_field=layer_field,
+            period_field=period_field,
+            layer_base=layer_base,
+            period_base=period_base,
+        ).riv(
+            stage=stage,
+            conductance=conductance,
+            rbot=rbot,
+            name=name,
+            edges_only=edges_only,
+            boundnames=boundnames,
+            **options,
+        )
+
+
 class _WELPackage:
     """Package-first WEL (well) helpers.
 
@@ -2619,6 +2803,7 @@ def lak_connection(lak_spec: PackageSpec, lake_id: str) -> MoverConnection:
 chd = _CHDPackage()
 ghb = _GHBPackage()
 drn = _DRNPackage()
+riv = _RIVPackage()
 wel = _WELPackage()
 rch = _RCHPackage()
 uzf = _UZFPackage()

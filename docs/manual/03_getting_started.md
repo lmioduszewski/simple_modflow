@@ -30,7 +30,7 @@ Project                  durable workspace + run/scenario lifecycle (holds NO ge
        └─ ModelSpec      one model = mf.gwf(name, context=ctx, packages=[...])
             ├─ ModelContext   grid + domain(idomain) + surfaces + dates  ← rides on the MODEL
             └─ packages       mf.disv, mf.ic/npf/sto/oc,
-                              mf.chd/ghb/drn/wel/rch,
+                              mf.chd/ghb/drn/riv/wel/rch,
                               mf.uzf/sfr/lak, mf.mvr
 ```
 
@@ -196,7 +196,7 @@ This is the geometry every builder reads. It rides on the model.
 
 ### Step 5 — boundary conditions (three forms)
 
-Every list boundary condition (`chd`, `ghb`, `drn`, `wel`, `rch`) comes in three
+Every list boundary condition (`chd`, `ghb`, `drn`, `riv`, `wel`, `rch`) comes in three
 forms:
 
 ```python
@@ -436,7 +436,7 @@ unless noted.
 | Call | Purpose |
 |---|---|
 | `mf.disv / mf.ic / mf.npf / mf.sto / mf.oc` | Core flow packages. |
-| `mf.chd / mf.ghb / mf.drn / mf.wel / mf.rch` | List BCs — each `()`, `.gpkg()`, or `.flopy()`. |
+| `mf.chd / mf.ghb / mf.drn / mf.riv / mf.wel / mf.rch` | List BCs — each `()`, `.gpkg()`, or `.flopy()`. |
 | `mf.uzf / mf.sfr / mf.lak` | Unsaturated zone / streams / lakes. |
 | `mf.mvr` + `mf.Move` + `mf.sfr_connection / mf.lak_connection` | Water mover with semantic endpoints. |
 

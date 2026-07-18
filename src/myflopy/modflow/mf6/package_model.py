@@ -221,6 +221,12 @@ class ModelPackages:
         return PackageExplorer(self.model, "ghb")
 
     @property
+    def riv(self) -> PackageExplorer:
+        """River package exploration helpers."""
+
+        return PackageExplorer(self.model, "riv")
+
+    @property
     def wel(self) -> PackageExplorer:
         """Well package exploration helpers."""
 
