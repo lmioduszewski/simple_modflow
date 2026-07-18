@@ -669,7 +669,7 @@ def _xy_animation_plotly(frames, *, title, xaxis_title, yaxis_title, markers):
         ]
 
     names = [str(label) for label, _ in frames]
-    fig = go.Figure(data=_traces(frames[0][1]))
+    fig = Fig(data=_traces(frames[0][1]))
     fig.frames = [
         go.Frame(data=_traces(lines), name=str(label)) for label, lines in frames
     ]
@@ -1490,9 +1490,10 @@ class SpatialView:
         sections, heads leaves), or ``"plot"`` (series). ``over="period"``
         sweeps stress periods (maps and sections); ``over="model"`` sweeps the
         group's models (any kind). ``backend="plotly"`` returns an interactive
-        figure with play/slider; ``backend="mpl"`` a matplotlib
-        ``FuncAnimation``. Both are objects for the caller to display or save --
-        nothing is written to disk.
+        house ``viz.Fig`` (pan-drag, scroll-zoom, house template) with
+        play/slider; ``backend="mpl"`` a matplotlib ``FuncAnimation``. Both are
+        objects for the caller to display or save -- nothing is written to
+        disk.
         """
 
         kind_key = str(kind).lower()
@@ -1625,7 +1626,7 @@ class SpatialView:
             raise ValueError("animate requires at least one frame.")
         names = [str(label) for label, _ in frames]
         traces = [choro.get_choropleth() for _, choro in frames]
-        fig = go.Figure(data=[traces[0]])
+        fig = Fig(data=[traces[0]])
         fig.frames = [
             go.Frame(data=[trace], name=name)
             for name, trace in zip(names, traces, strict=False)

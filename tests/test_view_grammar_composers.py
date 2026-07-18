@@ -188,6 +188,7 @@ def test_map_animation_frames_are_fitted_to_data():
     }
     host._spatial_map = lambda *, per, layer, model, **kwargs: boxes[model]
     fig = host.animate(kind="map", over="model")
+    assert isinstance(fig, viz.Fig)  # house figure, not a bare go.Figure
     assert len(fig.frames) == 2
     # the single animated map is framed to data (union 0,0,6,6), not the world
     assert fig.layout.map.center is not None and fig.layout.map.zoom is not None
@@ -277,7 +278,10 @@ def test_plot_mosaic_mpl_backend_and_errors():
 def test_plot_animation_flips_over_models():
     host = _FakeSeriesHost(_series_frame(), models=["a", "b"])
     fig = host.animate(kind="plot")
-    assert isinstance(fig, go.Figure)
+    # a house viz.Fig: pan-drag + scroll-zoom defaults, not a bare go.Figure
+    assert isinstance(fig, viz.Fig)
+    assert fig.layout.template.layout.dragmode == "pan"
+    assert fig._config.get("scrollZoom") is True
     assert [frame.name for frame in fig.frames] == ["a", "b"]
     assert len(fig.frames[0].data) == 2  # lake lines per frame
 
@@ -348,7 +352,9 @@ def test_composers_render_on_canonical(canonical_run):
 
     # -- single model: animated + mosaicked cross sections -------------------
     xs_animation = model.hds.animate(kind="xs", line=line)  # over periods
-    assert isinstance(xs_animation, go.Figure) and len(xs_animation.frames) >= 2
+    # the house viz.Fig carries the interaction defaults (pan, scroll-zoom)
+    assert isinstance(xs_animation, viz.Fig) and len(xs_animation.frames) >= 2
+    assert xs_animation.layout.template.layout.dragmode == "pan"
     assert isinstance(
         model.hds.animate(kind="xs", line=line, backend="mpl"), FuncAnimation
     )

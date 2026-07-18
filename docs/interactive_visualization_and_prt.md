@@ -38,6 +38,11 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   gaining/losing "q"-like fields (gaining = blue) and for diff maps
   (negative = red, positive = blue); everything else uses the house
   brown-to-blue `earth` scale.
+- **Every interactive figure is a house `viz.Fig`** (never a bare
+  `go.Figure`): maps, mosaics, and `animate` figures all carry the house
+  template (`dragmode="pan"`, styled axes/fonts) and the interaction config
+  (`scrollZoom`, no logo) on `show()`, `write_html()`, and notebook-inline
+  display alike. Pinned by `test_view_grammar_composers.py`.
 
 ## Install 3D Support
 
