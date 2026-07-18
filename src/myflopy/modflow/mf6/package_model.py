@@ -233,6 +233,12 @@ class ModelPackages:
         return PackageExplorer(self.model, "wel")
 
     @property
+    def evt(self) -> PackageExplorer:
+        """Evapotranspiration package exploration helpers."""
+
+        return PackageExplorer(self.model, "evt")
+
+    @property
     def uzf(self) -> UzfPackageExplorer:
         """UZF package exploration helpers."""
 

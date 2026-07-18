@@ -55,7 +55,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | Declarative sources (raster, shape, table, geopackage, literal) | ✅ | `sources.py` (`RasterSource`, `ShapeSource`, `TableSource`, `GeoPackageSourceSpec`, `LiteralSource`) |
-| GeoPackage feature → cell pipeline | ✅ | `geopackage.py` `GeoPackageSource` (`.chd/.ghb/.drn/.riv/.wel/.rch`) |
+| GeoPackage feature → cell pipeline | ✅ | `geopackage.py` `GeoPackageSource` (`.chd/.ghb/.drn/.riv/.wel/.rch/.evt`) |
 | CRS reprojection of vector sources | ✅ | `boundaries.py` `Boundaries.gdf` (`to_crs`) |
 | CRS reprojection of rasters | ✅ | `grid/surfaces.py` (fixed 2026-06) |
 | Import existing MODFLOW layer surfaces | 🟡 | `LayerStack.from_modflow` / `LayerSurfaces.from_modflow` read top/botm/idomain from a built MF6 model; a raw array-file *source* reader is still missing |
@@ -63,12 +63,13 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### Boundary conditions
 | Capability | Status | Where |
 |---|---|---|
-| CHD/GHB/DRN/RIV/WEL/RCH/UZF package builders | ✅ | `package_api.py` (`_CHDPackage`…`_MVRPackage`), `advanced.py` `*_spec` |
+| CHD/GHB/DRN/RIV/WEL/RCH/EVT/UZF package builders | ✅ | `package_api.py` (`_CHDPackage`…`_MVRPackage`), `advanced.py` `*_spec` |
 | **BCs auto-built from GIS** (polygon/line) | ✅ | `mf.ghb.gpkg(...)`, `mf.drn.gpkg(...)`; `GeoPackageSource`; legacy `Boundaries` |
 | Perimeter / edge-cell BCs (CHD/GHB on grid edge) | ✅ | `Boundaries.edge_intersections`, `edges_only=True` on `.gpkg()` builders |
 | Cells ordered along a line (for line BCs / SFR) | ✅ | `Boundaries.sorted_cells_along_line` |
 | Recharge from GIS + PRISM precip scaling + area scaling | ✅ | `recharge.py` `RCHBuilder`, `PrismPrecipScaling`, `Boundaries.shp_to_vor_poly_scale` |
 | Dedicated RIV builder | ✅ | `mf.riv` (`_RIVPackage`: `()`/`.gpkg`/`.flopy`), `riv_spec`, `GeoPackageSource.riv`, registry entry (`stage/cond/rbot` earth, q RdBu) — added 2026-07-17 |
+| Dedicated EVT builder | ✅ | `mf.evt` (`_EVTPackage`: `()`/`.gpkg`/`.flopy`, `nseg=1` default), `evt_spec`, `GeoPackageSource.evt`, registry entry (`surface/rate/depth` earth, q RdBu) — added 2026-07-17 |
 
 ### Advanced packages
 | Capability | Status | Where |
@@ -143,11 +144,12 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 > 2026-07-14 — every claim re-verified against the code; read its "Resolved decisions"
 > D8–D11 before starting).
 
-1. **EVT / MAW / HFB packages** — no support yet (plan §5.2–5.4). DONE 2026-07-17:
-   D8 (`mf.chd/ghb/drn/wel` each carry a real `.flopy(...)` escape hatch,
-   `test_simple_list_bcs_have_a_real_flopy_escape_hatch`) and §5.1 `mf.riv` (all four
-   pieces: helper + `GeoPackageSource.riv` + `riv_spec` + registry/explorers).
-   CSUB is an explicit non-goal (plan §5.9). Also `mf.dis`/`mf.disu` passthroughs (§5.5).
+1. **MAW / HFB packages** — no support yet (plan §5.4). DONE 2026-07-17: D8
+   (`mf.chd/ghb/drn/wel` each carry a real `.flopy(...)` escape hatch,
+   `test_simple_list_bcs_have_a_real_flopy_escape_hatch`), §5.1 `mf.riv`, and §5.2
+   `mf.evt` (each with all four pieces: helper + `GeoPackageSource` resolver +
+   `*_spec` + registry/explorers). CSUB is an explicit non-goal (plan §5.9).
+   Also `mf.dis`/`mf.disu` passthroughs (§5.5).
 2. **GWT/GWE integration** — package helpers (§5.3: `mf.adv/dsp/mst/ssm/cnc/...`,
    `mf.est/cnd/ctp/...`, model-type dispatch for `mf.ic/oc/disv`) AND the results tier
    (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,

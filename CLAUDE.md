@@ -41,7 +41,7 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
        └─ ModelSpec = mf.gwf(name, context=…, packages=[…])   ← one model
             ├─ ModelContext(grid=, domain=, surfaces=, dates=)  ← geometry; rides on the MODEL, not the project
             └─ packages: mf.disv, mf.npf/ic/sto/oc,
-                         mf.chd/ghb/drn/riv/wel/rch (+ .gpkg / .flopy),
+                         mf.chd/ghb/drn/riv/wel/rch/evt (+ .gpkg / .flopy),
                          mf.uzf/sfr/lak (+ .flopy), mf.mvr
 ```
 - **`Project(root, name=)`** (`workspace.py`): `add_grid/add_package/add_simulation` (reusable
@@ -52,7 +52,7 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
 - **Package-first surface**: `mf.gwf/gwt/gwe/prt`; `mf.disv`; `mf.ic/npf/sto/oc/tdis/ims`;
-  list BCs `mf.chd/ghb/drn/riv/wel/rch` each with `()` (direct data), `.gpkg(path, context=, nper=)`
+  list BCs `mf.chd/ghb/drn/riv/wel/rch/evt` each with `()` (direct data), `.gpkg(path, context=, nper=)`
   (from GeoPackage), `.flopy(...)` (raw FloPy escape hatch); advanced `mf.uzf/sfr/lak` (`()` =
   high-level builder, `.flopy(...)` = raw); `mf.mvr` with `mf.Move(mf.MoverConnection("sfr",0),
   mf.MoverConnection("lak",0))`. **MVR is validated**: moved packages must be declared in the
@@ -148,7 +148,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `GridSpec.from_object` for a built structured/existing grid.
 - **LGR parent-child model pairs** — absent (niche for a Voronoi-first toolkit)
 
-Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/riv/wel/rch`,
+Already built — do NOT rebuild: GIS-driven BCs (`GeoPackageSource.chd/ghb/drn/riv/wel/rch/evt`,
 `mf.ghb.gpkg`, legacy `Boundaries`), CRS reprojection (vector + raster), layer surfaces +
 reconcile + **pinch-out/idomain** (`surfaces.py`), SFR from centerline (`SFRBuilder`),
 recharge from GIS/PRISM (`RCHBuilder`).

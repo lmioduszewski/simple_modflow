@@ -132,7 +132,7 @@ Throughout, two example models recur so the code stays concrete:
 
 **9. Boundary Conditions** — *[09_boundary_conditions.md](09_boundary_conditions.md)*
 - 9.1 The three forms of every list BC: direct `()`, GIS-driven `.gpkg()`, raw `.flopy()`
-- 9.2 `mf.chd`, `mf.ghb`, `mf.drn`, `mf.riv`, `mf.wel`, `mf.rch`
+- 9.2 `mf.chd`, `mf.ghb`, `mf.drn`, `mf.riv`, `mf.wel`, `mf.rch`, `mf.evt`
 - 9.3 GIS-driven BCs in depth: `GeoPackageSource` and `mf.X.gpkg(path, layer=, context=, nper=)`
 - 9.4 Field mapping, layer/period base conventions, single-field vs. per-period sequences
 - 9.5 Recharge as array vs. list; from rasters/PRISM via `RCHBuilder`

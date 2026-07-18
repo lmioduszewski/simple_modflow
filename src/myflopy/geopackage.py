@@ -9,7 +9,15 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 
-from myflopy.advanced import chd_spec, drn_spec, ghb_spec, rch_spec, riv_spec, wel_spec
+from myflopy.advanced import (
+    chd_spec,
+    drn_spec,
+    evt_spec,
+    ghb_spec,
+    rch_spec,
+    riv_spec,
+    wel_spec,
+)
 from myflopy.specs import ModelContext, PackageSpec
 
 SurfaceReference = str
@@ -463,6 +471,27 @@ class GeoPackageSource:
             boundnames=boundnames,
             **options,
         ).with_metadata(**self._metadata("rch", recharge=recharge))
+
+    def evt(
+        self,
+        *,
+        surface: RowValue = "surface",
+        rate: RowValue = "rate",
+        depth: RowValue = "depth",
+        name: str = "evt",
+        boundnames: bool = True,
+        **options,
+    ) -> PackageSpec:
+        """Return a list-based EVT package spec from GeoPackage features."""
+
+        return evt_spec(
+            self._boundary_data(surface, rate, depth, boundnames=boundnames),
+            name=name,
+            boundnames=boundnames,
+            **options,
+        ).with_metadata(
+            **self._metadata("evt", surface=surface, rate=rate, depth=depth)
+        )
 
     def k_array(
         self,

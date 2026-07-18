@@ -19,6 +19,7 @@ import geopandas as gpd
 from myflopy.advanced import (
     chd_spec,
     drn_spec,
+    evt_spec,
     ghb_spec,
     lak_spec,
     mvr_spec,
@@ -2049,6 +2050,194 @@ class _RCHPackage:
         )
 
 
+class _EVTPackage:
+    """Package-first EVT (evapotranspiration) helpers.
+
+    Areally-distributed ET drawn from the water table: full ``rate`` at the ET
+    ``surface``, decaying linearly to zero at extinction ``depth`` below it (the
+    default single-segment form; segmented curves via ``nseg``). Three entry
+    points:
+
+    - ``mf.evt(stress_period_data=...)`` -- direct MF6 records;
+    - ``mf.evt.gpkg(path, context=, nper=)`` -- build records from GeoPackage
+      features mapped onto cells (areal polygons, like ``mf.rch.gpkg``);
+    - ``mf.evt.flopy(...)`` -- the FloPy-native form.
+
+    Examples
+    --------
+    >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})   # (cellid, surface, rate, depth)
+    >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
+    """
+
+    def __call__(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "evt",
+        nseg: int = 1,
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return an EVT package spec from direct MF6 stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, surface, rate, depth], ...]}`` --
+            ET surface elevation, maximum ET rate (L/T), and extinction depth
+            per ``(layer, cell)`` on a DISV grid (the ``nseg=1`` record form).
+        name : str, default "evt"
+            Package name.
+        nseg : int, default 1
+            Number of ET segments; segmented records add ``pxdp``/``petm``
+            values (see :func:`myflopy.advanced.evt_spec`).
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
+        """
+
+        return evt_spec(
+            stress_period_data,
+            name=name,
+            nseg=nseg,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def flopy(
+        self,
+        *,
+        stress_period_data: Any,
+        name: str = "evt",
+        nseg: int = 1,
+        auxiliary: Any = None,
+        boundnames: bool = False,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return a direct (list-based) FloPy-style EVT spec from stress-period data.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy mapping ``{period: [[cellid, surface, rate, depth], ...]}``
+            (plus ``pxdp``/``petm``/``petm0`` values for segmented forms).
+        name : str, default "evt"
+            Package name.
+        nseg : int, default 1
+            Number of ET segments.
+        auxiliary : optional
+            Auxiliary variable name(s) forwarded to FloPy.
+        boundnames : bool, default False
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.evt.flopy(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
+        """
+
+        return evt_spec(
+            stress_period_data,
+            name=name,
+            nseg=nseg,
+            auxiliary=auxiliary,
+            boundnames=boundnames,
+            **options,
+        )
+
+    def gpkg(
+        self,
+        path: PathLike,
+        *,
+        context: ModelContext,
+        nper: int,
+        surface: RowValue = "surface",
+        rate: RowValue = "rate",
+        depth: RowValue = "depth",
+        layer: str | None = None,
+        name_field: str | None = "name",
+        layer_field: str | None = "layer",
+        period_field: str | None = None,
+        layer_base: int = 1,
+        period_base: int = 0,
+        name: str = "evt",
+        boundnames: bool = True,
+        **options: Any,
+    ) -> PackageSpec:
+        """Return an EVT package spec built from GeoPackage features mapped onto the grid.
+
+        Parameters
+        ----------
+        path : Path or str
+            GeoPackage/shapefile of ET-zone features (auto-reprojected to the grid CRS).
+        context : ModelContext
+            Carries the grid/domain the features are mapped onto.
+        nper : int
+            Number of stress periods.
+        surface : str or CellSurfaceOffset, default "surface"
+            ET surface elevation -- an attribute column, a constant, or a
+            :class:`CellSurfaceOffset` (e.g. the cell top).
+        rate : str or CellSurfaceOffset, default "rate"
+            Maximum ET rate (L/T) -- an attribute column or a constant.
+        depth : str or CellSurfaceOffset, default "depth"
+            Extinction depth below the ET surface -- an attribute column or a
+            constant.
+        layer, name_field, layer_field, period_field, layer_base, period_base :
+            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        name : str, default "evt"
+            Package name.
+        boundnames : bool, default True
+            Enable named boundaries.
+        **options
+            Extra ``flopy.mf6.ModflowGwfevt`` options (e.g. ``nseg``).
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
+        """
+
+        return _source(
+            path,
+            context=context,
+            nper=nper,
+            layer=layer,
+            name_field=name_field,
+            layer_field=layer_field,
+            period_field=period_field,
+            layer_base=layer_base,
+            period_base=period_base,
+        ).evt(
+            surface=surface,
+            rate=rate,
+            depth=depth,
+            name=name,
+            boundnames=boundnames,
+            **options,
+        )
+
+
 class _UZFPackage:
     """Package-first UZF (unsaturated-zone flow) helpers.
 
@@ -2806,6 +2995,7 @@ drn = _DRNPackage()
 riv = _RIVPackage()
 wel = _WELPackage()
 rch = _RCHPackage()
+evt = _EVTPackage()
 uzf = _UZFPackage()
 sfr = _SFRPackage()
 lak = _LAKPackage()

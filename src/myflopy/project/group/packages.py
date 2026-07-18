@@ -126,6 +126,12 @@ class GroupPackages:
         return GroupPackageAccessor(self.group._wel)
 
     @property
+    def evt(self) -> GroupPackageAccessor:
+        """Grouped evapotranspiration package input helpers."""
+
+        return GroupPackageAccessor(self.group._evt)
+
+    @property
     def uzf(self) -> GroupUzfPackageAccessor:
         """Grouped UZF input helpers."""
 

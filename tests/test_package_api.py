@@ -186,6 +186,7 @@ def test_simple_list_bcs_have_a_real_flopy_escape_hatch():
         "ghb": {0: [[(0, 5), 86.0, 50.0]]},
         "drn": {0: [[(0, 12), 95.0, 30.0]]},
         "riv": {0: [[(0, 7), 98.0, 40.0, 96.5]]},
+        "evt": {0: [[(0, 3), 100.0, 2.0e-3, 2.5]]},
         "wel": {0: [[(0, 42), -500.0]]},
     }
     for name, spd in cases.items():

@@ -114,6 +114,19 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "q": ResultSpec("q", budget_text="WEL", value_name="q", colorscale="RdBu"),
         },
     ),
+    "evt": PackageExplorerSpec(
+        name="evt",
+        default_input="rate",
+        colorscale="earth",
+        inputs={
+            "surface": FieldSpec("surface", label="ET surface", colorscale="earth"),
+            "rate": FieldSpec("rate", label="Maximum ET rate", colorscale="earth"),
+            "depth": FieldSpec("depth", label="Extinction depth", colorscale="earth"),
+        },
+        results={
+            "q": ResultSpec("q", budget_text="EVT", value_name="q", colorscale="RdBu"),
+        },
+    ),
     "uzf": PackageExplorerSpec(
         name="uzf",
         kind="uzf",

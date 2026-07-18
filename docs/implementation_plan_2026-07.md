@@ -523,6 +523,16 @@ references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=
 "rbot"))`; colorscale `earth`; result q joins the RdBu q family.
 
 ### 5.2 `mf.evt`
+> **DONE 2026-07-17** (branch `phase-5-package-api`): `_EVTPackage` (`()`/`.gpkg`/
+> `.flopy`, `nseg=1` default param, segments via `nseg` + record values),
+> `GeoPackageSource.evt` (areal polygon→cell mapping on the shared `_boundary_data`
+> plumbing — the same machinery `.rch` uses), `evt_spec` (maxbound inferred like
+> `rch_spec`), registry entry (`surface/rate/depth` earth, q `RdBu`) + explorer/group
+> wiring + lazy exports. DEVIATION from the sketch: no separate `EVTBuilder` — the
+> RCH *builder* form (domain-computed top-active cells) stays RCH-specific;
+> `CellSurfaceOffset` on `.gpkg` covers "surface = cell top ± offset". Revisit only on
+> real demand. MF6 e2e: `test_geopackage_specs_run_through_project`.
+
 EVT `(cellid, surface, rate, depth [, pxdp, petm, petm0])`; `nseg` via options. Reuse the
 RCH areal-mapping prior art (`RCHBuilder`, `GeoPackageSource.rch`). Earth colorscale,
 blue input hover.

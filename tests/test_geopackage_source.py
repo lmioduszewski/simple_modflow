@@ -51,6 +51,9 @@ def _write_inputs(path):
             "elevation": [8.0, 7.0],
             "stage": [9.5, 8.5],
             "rbot": [7.5, 6.5],
+            "surface": [10.0, 9.0],
+            "et_rate": [0.002, 0.003],
+            "depth": [2.5, 2.0],
             "rate": [-1.0, -2.0],
             "recharge": [0.001, 0.002],
             "k": [5.0, 10.0],
@@ -81,6 +84,7 @@ def test_geopackage_source_builds_specs_and_arrays(tmp_path):
     ghb = source.ghb(head="head_0")
     drn = source.drn()
     riv = source.riv()
+    evt = source.evt(rate="et_rate")
     wel = source.wel()
     rch = source.rch()
     k = source.k_array(value="k", nlay=1, defaults=1.0)
@@ -92,6 +96,11 @@ def test_geopackage_source_builds_specs_and_arrays(tmp_path):
     assert riv.options["stress_period_data"][0] == [[(0, 0), 9.5, 2.0, 7.5, "left"]]
     assert riv.metadata["fields"] == {
         "stage": "stage", "conductance": "conductance", "rbot": "rbot",
+    }
+    assert evt.options["stress_period_data"][0] == [[(0, 0), 10.0, 0.002, 2.5, "left"]]
+    assert evt.options["nseg"] == 1
+    assert evt.metadata["fields"] == {
+        "surface": "surface", "rate": "et_rate", "depth": "depth",
     }
     assert wel.options["stress_period_data"][0] == [[(0, 0), -1.0, "left"]]
     assert rch.options["stress_period_data"][0] == [[(0, 0), 0.001, "left"]]
@@ -122,6 +131,7 @@ def test_geopackage_specs_run_through_project(tmp_path):
     flow = flow.with_package(source.chd(head="head_0"))
     flow = flow.with_package(source.ghb(head="head_0"))
     flow = flow.with_package(source.riv())
+    flow = flow.with_package(source.evt(rate="et_rate"))
     simulation = baseline.with_model(flow)
 
     run = Project(tmp_path / "project").run("baseline", simulation)
@@ -129,9 +139,10 @@ def test_geopackage_specs_run_through_project(tmp_path):
     assert run.success is True
     assert isinstance(run.built.models["gpkg_flow"].packages["ghb"], flopy.mf6.ModflowGwfghb)
     assert isinstance(run.built.models["gpkg_flow"].packages["riv"], flopy.mf6.ModflowGwfriv)
+    assert isinstance(run.built.models["gpkg_flow"].packages["evt"], flopy.mf6.ModflowGwfevt)
 
-    # the riv explorer surface works end-to-end on the completed run: registry
-    # fields in the input table, earth input map, RdBu signed-q results
+    # the riv/evt explorer surfaces work end-to-end on the completed run:
+    # registry fields in the input table, earth input map, RdBu signed-q results
     from myflopy import load_mf6_run
 
     view = load_mf6_run(run.workspace)
@@ -144,6 +155,13 @@ def test_geopackage_specs_run_through_project(tmp_path):
     assert not q.empty  # RIV budget term recorded by the run
     q_map = view.packages.riv.results.q.map(per=0)
     assert q_map.colorscale == "RdBu"
+
+    evt_inputs = view.packages.evt.inputs.get()
+    assert {"surface", "rate", "depth"}.issubset(evt_inputs.columns)
+    assert view.packages.evt.inputs.map(per=0).colorscale == "earth"
+    evt_q = view.packages.evt.results.q.get()
+    assert not evt_q.empty  # EVT budget term recorded by the run
+    assert view.packages.evt.results.q.map(per=0).colorscale == "RdBu"
 
 
 def test_geopackage_source_supports_long_period_format_and_clear_field_errors(tmp_path):
