@@ -67,12 +67,17 @@ For SFR package binary output:
 - auxiliary `FLOW-AREA` is written for this term
 
 Implications for `myflopy`:
-- SFR exchange sign convention:
-  - positive `q` = stream losing to groundwater
-  - negative `q` = groundwater gaining to stream
-- raw SFR choropleths should therefore use:
-  - blue for gaining reaches
-  - red for losing reaches
+- That is the RAW MF6 sign. **myflopy normalizes it at the read boundary**
+  (`build_sfr_budget_result_table`, 2026-07-19) so every surface-water package
+  reports one convention, always from the FEATURE's point of view:
+  - **positive `q` = the stream/lake GAINS water from the aquifer**
+  - **negative `q` = the stream/lake LOSES water to the aquifer**
+- LAK needs no flip: its package budget is already lake's-perspective. SFR's
+  cell record is flow-from-reach-to-cell, so it is negated exactly once.
+  Before this, a losing reach and a losing lake reported OPPOSITE signs.
+- Colours follow from the same rule, via `_exchange_colorscale`:
+  - blue where the feature gains
+  - red where it loses
 - SFR exchange map values are more meaningful when normalized by reach length
   rather than plotted as raw volumetric `q`
 

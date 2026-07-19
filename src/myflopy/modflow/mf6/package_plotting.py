@@ -87,12 +87,15 @@ def _exchange_colorscale(*, gaining_sign: int) -> list[list[object]]:
     """
 
     scale = _blue_white_red_diverging_colorscale()
-    if int(gaining_sign) < 0:
-        return scale
-    # gaining is positive -> blue must sit at the POSITIVE end instead
-    return [[position, colour] for position, (_, colour) in zip(
-        [entry[0] for entry in scale], reversed(scale), strict=True
-    )]
+    if int(gaining_sign) > 0:
+        # blue must sit at the POSITIVE end
+        return [
+            [position, colour]
+            for position, (_, colour) in zip(
+                [entry[0] for entry in scale], reversed(scale), strict=True
+            )
+        ]
+    return scale
 
 
 def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.ndarray:

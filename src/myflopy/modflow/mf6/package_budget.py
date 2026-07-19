@@ -19,6 +19,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_term_filter,
     split_cellid_columns,
 )
+from myflopy.modflow.mf6.package_registry import get_package_result_spec
 from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
 )
@@ -258,6 +259,19 @@ def build_sfr_long_profile_table(
     )
 
 
+
+def _raw_gaining_sign(package: str, result: str = "q") -> int:
+    """The RAW MF6 sign that means this package's feature gains water.
+
+    Used to normalize a package's exchange to myflopy's one convention
+    (positive = the surface-water feature gains). See
+    ``ResultSpec.gaining_sign``.
+    """
+
+    spec = get_package_result_spec(package, result)
+    return int(spec.gaining_sign) if spec is not None else -1
+
+
 def build_sfr_budget_result_table(
     model: SimulationBase,
     *,
@@ -292,7 +306,23 @@ def build_sfr_budget_result_table(
     )
     frame["reach"] = frame["reach"].astype("Int64")
     if value_name == "q":
-        q_series = pd.to_numeric(frame["q"], errors="coerce")
+        # NORMALIZE THE SIGN to myflopy's surface-water convention:
+        #   positive = the stream GAINS water from the aquifer
+        #   negative = the stream LOSES water to the aquifer
+        #
+        # MF6 writes this record as flow FROM the reach TO the GWF cell, i.e.
+        # the opposite, so it is negated exactly once, here at the read
+        # boundary. LAK's package budget is already lake's-perspective and
+        # needs no flip -- which is why the two used to disagree, and why a
+        # perched losing lake and a losing reach reported opposite signs for
+        # the same physical direction (fixed 2026-07-19).
+        #
+        # ``ResultSpec.gaining_sign`` records the RAW MF6 sign per package and
+        # is what drives this; everything downstream may assume the normalized
+        # convention.
+        raw_gaining_sign = _raw_gaining_sign("sfr")
+        q_series = pd.to_numeric(frame["q"], errors="coerce") * raw_gaining_sign
+        frame["q"] = q_series
         rlen_series = pd.to_numeric(frame["rlen"], errors="coerce")
         frame["q_per_length"] = np.where(
             rlen_series > 0.0, q_series / rlen_series, np.nan
@@ -840,7 +870,10 @@ def build_surface_water_exchange_cell_table(
                 / pd.to_numeric(grouped["rlen"], errors="coerce"),
                 np.nan,
             )
-            grouped["exchange_intensity"] = -pd.to_numeric(
+            # No negation here any more: build_sfr_budget_result_table
+            # normalizes SFR's sign at the read boundary, so q_per_length is
+            # already positive-means-gaining like LAK's.
+            grouped["exchange_intensity"] = pd.to_numeric(
                 grouped["q_per_length"], errors="coerce"
             )
             grouped["source"] = "sfr"

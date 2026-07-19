@@ -1409,7 +1409,8 @@ class SfrProfileView:
             Whether to show stream-groundwater exchange on a secondary axis.
         signed_exchange
             When ``True`` (the default) draw exchange as per-reach bars colored
-            by sign -- blue where the reach gains, red where it loses, matching
+            by sign -- blue where the reach gains (positive q under myflopy's
+            normalized surface-water convention), red where it loses, matching
             the SFR map colorscale. When ``False`` draw one unsigned line.
         plot_fig
             If ``True``, call ``show()`` on the created figure.
@@ -1541,7 +1542,7 @@ class SfrProfileView:
             y=frame["q"],
             name="Exchange q (blue gains, red loses)",
             marker={
-                "color": np.where(q < 0.0, gaining_color, losing_color).tolist(),
+                "color": np.where(q > 0.0, gaining_color, losing_color).tolist(),
                 "line": {"width": 0},
             },
             opacity=0.55,

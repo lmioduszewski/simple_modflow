@@ -140,24 +140,25 @@ def test_the_registry_records_each_packages_gaining_sign():
     assert get_package_result_spec("lak", "q").gaining_sign == 1
 
 
-def test_lak_and_sfr_really_do_disagree_on_sign(canonical_run):
-    """Guard the premise: if MF6 ever agreed, the reversal would be wrong.
+def test_lak_and_sfr_agree_on_sign_after_normalization(canonical_run):
+    """Both packages must report losing as NEGATIVE once normalized.
 
-    The canonical lake is perched and leaks downward while its stream has both
-    gaining and losing reaches -- so the two sources must show opposite signs
-    for the same physical direction. If this ever fails, re-derive
-    ``gaining_sign`` before touching the colours.
+    MF6 writes them from opposite perspectives -- SFR's cell record is
+    flow-from-reach-to-cell, LAK's package budget is lake's-perspective -- and
+    myflopy negates SFR at the read boundary so callers never have to know.
+    Before 2026-07-19 a losing reach and a losing lake reported opposite signs.
     """
 
     lak_q = canonical_run.packages.lak.results.q.get()["q"].astype(float)
     assert (lak_q <= 0).all() and lak_q.min() < -1.0, (
         f"expected the perched lake to lose (negative q), got {lak_q.min()}..{lak_q.max()}"
     )
+    # ...and after normalization SFR agrees: losing is negative for BOTH
 
     sfr_q = canonical_run.packages.sfr.results.profile.get(
         per=canonical_run.nper - 1
     )["q"].astype(float)
-    assert (sfr_q > 0).any(), "expected some losing reaches with POSITIVE q"
+    assert (sfr_q < 0).any(), "expected some losing reaches with NEGATIVE q"
 
 
 def test_lak_plot_budget_keeps_positive_blue(canonical_run):
