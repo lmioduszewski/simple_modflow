@@ -631,11 +631,42 @@ diff is exactly that one line.
 > assertion becomes circular and must be deleted in the same commit — otherwise
 > it silently stops testing anything.
 
-#### 4.7.3 Delete the hardcoded lists, one commit each, lowest risk first
-`_PACKAGE_SUFFIX_TO_TYPE` → `_DIFF_PACKAGES`/`_CELL_BUDGET_PACKAGES`/
-`_MOVER_PACKAGES` → budget basing → `components.py` artifact sets →
-`package_api.__all__` + `__init__` export tiers → namespace properties. Each becomes
-derived-from-registry, each guarded by 4.7.0's snapshot.
+#### 4.7.3 Delete the hardcoded lists — DONE 2026-07-18 (5 commits)
+Five commits, lowest risk first, each verified identical to the literal it
+replaced and each retiring its own now-circular scaffold test:
+
+1. `_CELL_BUDGET_PACKAGES` + `_MOVER_PACKAGES` ← `tiers.results_diffable`,
+   `capabilities.mover`
+2. `_DIFF_PACKAGES` + `_CONNECTION_PACKAGES` ← `tiers.diffable`,
+   `tiers.connection_diffable`
+3. budget node basing ← `zero_base_budget_nodes` (was inferring from `kind`)
+4. `_PACKAGE_SUFFIX_TO_TYPE` ← `file_suffix` ∪ structural suffixes
+5. artifact sets ← `tiers.artifact_serializable` / `artifact_apply_order` ∪
+   `{ic, npf, mvr}`
+
+**The union matters.** Three of these lists contain entries that are *not*
+registry packages — `dis/disu/disv/ic/mvr/npf/oc/sto` in the suffix map,
+`ic/npf/mvr` in the artifacts. They are structural packages with no per-package
+behaviour to describe, so they stay explicit. Replacing any of those lists
+wholesale would have silently dropped them and broken package discovery or
+artifact restore.
+
+**Each retirement got a replacement aimed at the NEW failure mode**, not a
+weaker version of the old one — suffix collision between the two sources; a
+serializable package with no apply order (falls back to 999, i.e. after `mvr`,
+which references packages that must already exist); duplicate order numbers;
+diff tiers overlapping. All mutation-verified.
+
+Still hand-written, deliberately: the `ModelGroup` `GroupPackageInputs`
+accessors and the `SimulationBase` package properties. Those are code objects
+rather than data — they belong with 4.7.4's collapse. Their `model_accessor`
+flag stays scaffold-tested against the real classes, which remains a genuine
+cross-check rather than a circular one.
+
+> The `test_diff_tier_covers_exactly_the_group_cell_bc_accessors` invariant
+> inverted usefully: it used to compare two hand-typed lists, and now
+> cross-checks the registry against the still-hardcoded group accessors. It is
+> what catches the next package added to the descriptor but not the group.
 
 #### 4.7.4 Collapse the per-package code
 One `_list_bc_spec(descriptor, data, **opts)` with the 7 named `*_spec` as thin

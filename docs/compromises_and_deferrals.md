@@ -362,17 +362,15 @@ done, plus one assurance gap in the review itself.
 
 ## Package descriptor — plan 4.7.2 (2026-07-18)
 
-27. **The descriptor is written but not yet read.**
-    - What: all nine knowledge fields now live on `PackageExplorerSpec`, but
-      every consumer still uses its own hardcoded list. Nothing behaves
-      differently.
-    - Why: that is the design. 4.7.2 is deliberately zero-behaviour-change so
-      the risky part (4.7.3/4.7.4 deleting ~92 sites) starts from a descriptor
-      already *proven* equal to the code it replaces.
-    - Impact: temporary duplication — the truth exists twice until 4.7.3. The
-      duplication is safe because `tests/test_package_descriptor.py` fails the
-      moment the two disagree.
-    - Revisit: 4.7.3, one list per commit.
+27. ~~**The descriptor is written but not yet read.**~~
+    **RESOLVED 2026-07-18 in 4.7.3** (5 commits). Six lists across five
+    subsystems now derive from the descriptor: the results-diff pair, the
+    model-diff pair, budget node basing, the suffix map, and the artifact sets.
+    Each was verified identical to the literal it replaced before the literal
+    was deleted.
+    **Still hand-written by choice:** the `ModelGroup` `GroupPackageInputs`
+    accessors and the `SimulationBase` package properties — code objects, not
+    data, so they belong with 4.7.4.
 
 28. **The `RETIRE WITH 4.7.3` tests become circular the moment they are wrong.**
     - What: the tier, suffix and node-basing assertions compare the descriptor
@@ -416,3 +414,44 @@ done, plus one assurance gap in the review itself.
       the resolvers, not a naive zip. Both are pinned against live sources, so
       the mapping can be derived rather than guessed.
     - Revisit: 4.7.4.
+
+## 4.7.3 list deletion (2026-07-18)
+
+32. **Three derived lists are unions, not pure derivations.**
+    - What: `_PACKAGE_SUFFIX_TO_TYPE` keeps an explicit `_NON_REGISTRY_SUFFIXES`
+      (`dis disu disv ic mvr npf oc sto`), and the artifact sets keep
+      `_NON_REGISTRY_ARTIFACT_TYPES/_ORDER` (`ic npf mvr`).
+    - Why: those are structural packages — discretization, initial conditions,
+      node properties, output control, the mover — with no per-package
+      behaviour (fields, results, capabilities) for the registry to describe.
+      Forcing them in would make the registry a list of "packages that exist"
+      rather than a descriptor of package behaviour.
+    - Impact: two sources of truth remain for those lists, and the merge order
+      matters — the non-registry half merges LAST, so a suffix or order claimed
+      by both would silently shadow the registry. Both are now tested
+      (collision, duplicate order, bracketing).
+    - Revisit: if the registry ever grows a "structural" kind; not planned.
+
+33. **Iteration order of the derived lists changed.**
+    - What: `_CELL_BUDGET_PACKAGES`, `_MOVER_PACKAGES` and `_CONNECTION_PACKAGES`
+      now follow the registry's declaration order rather than their previous
+      hand-written order. Sets are identical.
+    - Why: preserving the old order would have meant re-encoding it somewhere,
+      which is the duplication being removed.
+    - Impact: `MvrResultDiff.summary()` and the cell-budget diff build their
+      rows in a different order. No test pins row order and the API snapshot
+      stores these sorted, so nothing observable changed — but a consumer that
+      relied on positional order rather than the `package` column would break.
+    - Revisit: if row order ever becomes contractual, sort explicitly.
+
+34. **Scaffold retirement is a manual obligation, not an enforced one.**
+    - What: five `RETIRE WITH 4.7.3` tests were deleted as their lists went, and
+      each retirement is documented in place. Nothing mechanically prevents a
+      future refactor from leaving a scaffold behind once it goes circular.
+    - Why: detecting "this assertion has become tautological" is not something
+      pytest can do; it needs a human noticing that both sides now come from
+      one source.
+    - Impact: a stale scaffold passes unconditionally and reads as coverage.
+      Mitigated by the in-place retirement notes explaining where the coverage
+      moved, so the next reader can tell deletion from omission.
+    - Revisit: 4.7.4, which will make several more assertions circular.
