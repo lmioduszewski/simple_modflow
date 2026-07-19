@@ -758,6 +758,51 @@ class SimulationBase:
 
         return self.package("rch")
 
+    # -- cell-based boundary packages -----------------------------------------
+    # Added 2026-07-18 (plan 4.7.7). Only rch/uzf/sfr/lak existed, so
+    # ``model.rch`` worked while ``model.chd`` raised AttributeError -- not a
+    # design decision, just where someone stopped. Written out rather than
+    # generated: a ``.pyi`` stub replaces the WHOLE module for type checkers,
+    # so generating six properties would mean hand-maintaining a stub for every
+    # other public name in this file. ``test_package_descriptor.py`` now asserts
+    # this list is complete against the registry, so forgetting one fails.
+
+    @property
+    def chd(self):
+        """Return the MF6 CHD package attached to this model."""
+
+        return self.package("chd")
+
+    @property
+    def drn(self):
+        """Return the MF6 DRN package attached to this model."""
+
+        return self.package("drn")
+
+    @property
+    def ghb(self):
+        """Return the MF6 GHB package attached to this model."""
+
+        return self.package("ghb")
+
+    @property
+    def riv(self):
+        """Return the MF6 RIV package attached to this model."""
+
+        return self.package("riv")
+
+    @property
+    def wel(self):
+        """Return the MF6 WEL package attached to this model."""
+
+        return self.package("wel")
+
+    @property
+    def evt(self):
+        """Return the MF6 EVT package attached to this model."""
+
+        return self.package("evt")
+
     def bud(self, package: str = None):
         """Return budget information, optionally filtered to one package."""
 

@@ -752,6 +752,34 @@ new package is 3 documented declarations plus 4 namespace properties. The
 category that produced the original six-site miss is closed; the category that
 remains is visible, enumerated, and machine-checked.
 
+#### 4.7.7 Complete the namespace accessors — DONE 2026-07-18
+Scoped down from "generate the properties + emit a `.pyi`" after measuring.
+
+**The measurement:** of the four namespace classes, `ModelPackages`,
+`GroupPackages` and `_PackageDiffNamespace` were already **complete**. Only
+`SimulationBase` was missing anything — six accessors, so `model.rch` worked
+while `model.chd` raised `AttributeError`. Not a design decision; someone wrote
+four and stopped.
+
+**Why generation was rejected:** a `.pyi` stub **replaces the whole module** for
+type checkers. Generating six properties would have meant hand-maintaining stubs
+for every other public name in four large modules — a large, brittle artifact to
+solve a one-class problem. Runtime generation without stubs would degrade
+`diff.packages.riv` to `Any` for everyone downstream, since the package ships
+`py.typed`.
+
+**Shipped instead:** the six accessors written out (uniform
+`self.package("<pkg>")`, same as the four that existed), all ten
+`model_accessor` flags flipped to `True`, and the descriptor test upgraded from
+"does the flag match reality" — which merely *documented* the gap — to
+`test_every_namespace_exposes_every_registry_package`, which asserts all four
+namespaces cover the whole registry. Mutation-verified: deleting one accessor
+fails it. The API snapshot recorded exactly six additions.
+
+So the per-package cost of these four surfaces is unchanged in lines but changed
+in kind: forgetting one is now impossible to miss rather than invisible until a
+user hits `AttributeError`.
+
 #### What deliberately STAYS duplicated (the "good reason not to" list)
 - **Static-typing surface.** Generated properties degrade `diff.packages.riv` to `Any`
   downstream (the package ships `py.typed`) — proven by review 2026-07-18. Generate at

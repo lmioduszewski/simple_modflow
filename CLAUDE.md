@@ -9,8 +9,9 @@
 A 6-angle agent sweep measured **92 sites in `src/` that encode per-package knowledge**,
 carrying **33 unintended gaps** today. `mf.riv`/`mf.evt` followed the documented
 four-piece checklist, under two adversarial reviews, and still left gaps; `wel` is
-missing from the artifact subsystem, and `model.chd/drn/ghb/wel` accessors don't exist
-while `model.rch/uzf/sfr/lak` do — rot that predates riv/evt. Plan §4.7 consolidates
+missing from the artifact subsystem, and `model.chd/drn/ghb/riv/wel/evt` accessors
+didn't exist while `model.rch/uzf/sfr/lak` did — rot that predates riv/evt.
+(Both are now FIXED: artifacts in 4.7.3, the six accessors in 4.7.7.) Plan §4.7 consolidates
 these onto the existing `package_registry.py` descriptor and lists the sites. Note 6 of
 the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed".
 
@@ -20,8 +21,11 @@ budget basing, suffix map, all three artifact sets, budget term). **7 still need
 hand-writing**: the `<pkg>_spec` factory, the `package_api` helper class and the
 `GeoPackageSource` resolver — all deliberate, they carry prose and explicit
 signatures — plus four namespace properties (`ModelPackages`, `SimulationBase`,
-`GroupPackages`, `_PackageDiffNamespace`), which are deferred pending a
-registry-generated `.pyi`. `tests/test_package_descriptor_payoff.py` is the
+`GroupPackages`, `_PackageDiffNamespace`). Those four stay hand-written **on
+purpose** (4.7.7): a `.pyi` stub replaces a whole module for type checkers, so
+generating them would mean hand-maintaining stubs for every other public name in
+four large modules. Instead `test_package_descriptor.py` asserts all four
+namespaces cover the whole registry, so a half-wired package fails immediately. `tests/test_package_descriptor_payoff.py` is the
 machine-checked version of this list and fails in BOTH directions: adding a
 hand-written site, or closing one without recording it.
 

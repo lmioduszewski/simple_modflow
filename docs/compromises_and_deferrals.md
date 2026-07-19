@@ -589,3 +589,32 @@ same day, which is the useful part of the result.
       all judgment lives in the test module.
     - Revisit: if the probe grows past ~60 lines, move it to a real file under
       `scripts/` so it can be linted.
+
+## 4.7.7 namespace accessors (2026-07-18)
+
+42. ~~**Four namespace properties remain hand-written, blocked on typing.**~~
+    **RESOLVED 2026-07-18, by rejecting the premise.** The entry assumed the
+    fix was "generate them + emit a registry-derived `.pyi`". Measuring first
+    showed three of the four classes were already complete — only
+    `SimulationBase` was missing anything, six accessors. And the `.pyi` half
+    was worse than described: a stub file **replaces the whole module** for type
+    checkers, so it would have meant hand-maintaining stubs for every other
+    public name in four large modules.
+    Shipped the six accessors plus
+    `test_every_namespace_exposes_every_registry_package`, which asserts all
+    four namespaces cover the registry. See entry 44 for what that leaves.
+
+44. **The four namespace classes still write one property per package.**
+    - What: adding a package still means four hand-written properties.
+    - Why: generating them costs static typing (see 42), and the classes are not
+      uniform anyway — `ModelPackages.uzf` returns `UzfPackageExplorer`,
+      `GroupPackages.sfr` returns a parameterized
+      `GroupResultsOnlyPackageAccessor[...]`, `_PackageDiffNamespace.lak`
+      returns `_LakDiffNode`. Only the seven cell-stress packages share a shape;
+      generating just those would leave the advanced ones hand-written anyway,
+      for a third of the benefit and all of the typing cost.
+    - Impact: four edits per new package — but a forgotten one now fails a test
+      immediately rather than surfacing as an `AttributeError` months later,
+      which is the failure that actually happened.
+    - Revisit: if the advanced explorer types are ever unified, generation
+      becomes worth reconsidering.

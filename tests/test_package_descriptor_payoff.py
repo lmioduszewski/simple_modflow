@@ -56,11 +56,12 @@ AUTOMATIC_SURFACES = frozenset(
 #: * the first three are DELIBERATE (ledger 38) -- named factories, helper
 #:   classes and resolvers carry per-package prose and explicit signatures, and
 #:   generating them would cost documentation quality and IDE completion;
-#: * the last four are namespace PROPERTIES, deferred out of 4.7.3/4.7.4. The
-#:   plan's "stays duplicated" note says generating them degrades
-#:   `diff.packages.riv` to `Any` for downstream users (myflopy ships
-#:   `py.typed`), so closing them needs a checked-in `.pyi` generated from the
-#:   registry, not just runtime generation.
+#: * the last four are namespace PROPERTIES, hand-written on purpose (4.7.7).
+#:   Generating them would need a `.pyi` stub to stay visible to type checkers
+#:   -- and a stub replaces the WHOLE module, so it would mean hand-maintaining
+#:   stubs for every other public name in four large modules. Completeness is
+#:   enforced by assertion instead: see
+#:   `test_every_namespace_exposes_every_registry_package`.
 MANUAL_SURFACES = frozenset(
     {
         "advanced.zzz_spec",

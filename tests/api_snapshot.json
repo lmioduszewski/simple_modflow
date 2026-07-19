@@ -808,7 +808,11 @@
       "budget_cumulative",
       "budget_incremental",
       "cellids",
+      "chd",
       "config",
+      "drn",
+      "evt",
+      "ghb",
       "grid_type",
       "hds",
       "idomain",
@@ -829,6 +833,7 @@
       "per_dates",
       "pest_runs",
       "rch",
+      "riv",
       "sfr",
       "sfr_output",
       "srf",
@@ -837,6 +842,7 @@
       "uzf",
       "uzf_output",
       "visualize",
+      "wel",
       "workspace"
     ],
     "advanced.__all__": [

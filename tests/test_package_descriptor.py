@@ -298,19 +298,50 @@ def test_artifact_apply_order_is_unambiguous_across_both_sources():
     assert max(registry_orders) < _NON_REGISTRY_ARTIFACT_ORDER["mvr"]
 
 
-def test_model_accessor_flag_matches_simulation_base():
-    """RETIRE WITH 4.7.3.
+def test_every_namespace_exposes_every_registry_package():
+    """All four package namespaces must cover the whole registry.
 
-    Several packages deliberately have no ``model.<pkg>`` accessor today
-    (CLAUDE.md notes chd/drn/ghb/wel are missing while rch/uzf/sfr/lak exist).
-    The descriptor records the gap rather than papering over it.
+    Was a "does the flag match reality" check that documented a gap: ``model.rch``
+    worked while ``model.chd`` raised AttributeError, because someone wrote four
+    accessors and stopped. 4.7.7 filled the six in and turned this into a
+    completeness assertion, so the next package cannot be half-wired.
+
+    Not circular. These four classes write their properties by hand -- the
+    registry does not generate them (a ``.pyi`` stub replaces a whole module for
+    type checkers, so generating them would cost far more than it saves). This
+    compares two genuinely independent things.
     """
 
+    from myflopy.modflow.mf6.package_model import ModelPackages
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+    from myflopy.project.group.packages import GroupPackages
+    from myflopy.project.model_diff import _PackageDiffNamespace
 
-    for package in ALL_PACKAGES:
-        actual = isinstance(getattr(SimulationBase, package, None), property)
-        assert spec(package).tiers.model_accessor == actual, package
+    namespaces = {
+        "ModelPackages": ModelPackages,
+        "SimulationBase": SimulationBase,
+        "GroupPackages": GroupPackages,
+        "_PackageDiffNamespace": _PackageDiffNamespace,
+    }
+    for label, namespace in namespaces.items():
+        missing = [
+            package
+            for package in ALL_PACKAGES
+            if not isinstance(getattr(namespace, package, None), property)
+        ]
+        assert not missing, (
+            f"{label} is missing accessors for {missing} -- every registry "
+            "package must be reachable from every namespace"
+        )
+
+
+def test_model_accessor_flag_is_now_true_for_everything():
+    """The descriptor should no longer be recording a gap that is closed."""
+
+    ungated = [name for name in ALL_PACKAGES if not spec(name).tiers.model_accessor]
+    assert not ungated, (
+        f"{ungated} claim to have no model accessor, but 4.7.7 added them all"
+    )
 
 
 # ---------------------------------------------------------------------------
