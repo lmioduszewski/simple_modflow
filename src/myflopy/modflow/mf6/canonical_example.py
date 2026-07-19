@@ -25,6 +25,12 @@ L2   lower unconfined alluvium (main aquifer)  yes
 L3   lacustrine-clay aquitard                  no
 L4   confined basin-fill aquifer               no
 ==== ======================================== ===========
+
+**Observations.** The model is synthetic, so there are no field measurements.
+The head targets carry *synthetic* "measured" values sampled from the regional
+water table -- see :func:`_synthetic_head_observations` for how and why. They
+are deliberately not copies of the simulated heads, so residuals, ``stats()``
+and ``calibration_plot()`` all show something real rather than a tautology.
 """
 
 from __future__ import annotations
@@ -632,6 +638,7 @@ def build_transient_model(
         infiltration_pond_cells=infiltration_pond_cells,
         shallow_well=shallow_well,
         deep_well=deep_well,
+        regional=regional,
     )
     OutputControl(
         model=model,
@@ -713,6 +720,59 @@ def _write_surface_water_inputs(workspace: Path, config: CanonicalModelConfig) -
     return {"lakes": [lake], "streams": [north_trib, south_trib, main_stem]}
 
 
+#: Wells whose "measured" head is only meaningful before pumping starts.
+_PUMPED_HEAD_TARGETS = ("shallow_pumping", "deep_pumping")
+
+
+def _synthetic_head_observations(
+    config: CanonicalModelConfig,
+    head_locations: dict[str, tuple[int, int]],
+    regional: np.ndarray,
+) -> pd.DataFrame:
+    """Sample "measured" heads off the regional water table at each head target.
+
+    The canonical model is synthetic, so there are no field measurements. These
+    stand in for a regional water-level survey: each value is the regional water
+    table (the same expression that seeds initial conditions) evaluated at the
+    well's layer, plus a small deterministic per-well survey offset.
+
+    They are deliberately NOT sampled from the simulated heads. The regional
+    surface is the *conceptual* water table, and the simulated heads depart from
+    it precisely where the model's stresses bite -- pumping, the perched lake,
+    the gaining/losing stream. That departure is what the residuals show, which
+    makes the calibration plot instructive rather than a tautology.
+
+    Values at the two **pumping** wells are limited to the first stress period.
+    A regional survey number is not a valid measurement inside a well that is
+    actively drawing down (the deep well swings ~45 ft once pumping ramps), and
+    carrying it forward would plant one meaningless outlier that dominates every
+    residual statistic. NaN elsewhere; ``compare()`` drops those rows.
+    """
+
+    # Deterministic, seeded off the well name so the offsets never shift between
+    # runs or platforms (no global RNG, no run-to-run drift in the notebooks).
+    offsets = {
+        name: 0.4 * ((index % 5) - 2)
+        for index, name in enumerate(sorted(head_locations))
+    }
+
+    times: list[int] = []
+    names: list[str] = []
+    heads: list[float] = []
+    for period in range(config.nper):
+        for name, (layer, cell) in head_locations.items():
+            times.append(period)
+            names.append(name)
+            if period > 0 and name in _PUMPED_HEAD_TARGETS:
+                heads.append(np.nan)
+                continue
+            # Matches the initial-conditions expression: the regional table
+            # declines 0.6 ft per layer down the column.
+            heads.append(float(regional[cell]) - 0.6 * layer + offsets[name])
+
+    return pd.DataFrame({"time": times, "name": names, "head": heads})
+
+
 def _attach_canonical_targets(
     model: SimulationBase,
     config: CanonicalModelConfig,
@@ -725,6 +785,7 @@ def _attach_canonical_targets(
     infiltration_pond_cells: list[int],
     shallow_well: int,
     deep_well: int,
+    regional: np.ndarray,
 ) -> None:
     """Register the canonical model's head/stage/flow observation targets on ``model``."""
 
@@ -743,17 +804,7 @@ def _attach_canonical_targets(
             {"name": name, "layer": layer, "cell": cell}
             for name, (layer, cell) in head_locations.items()
         ],
-        values=pd.DataFrame(
-            {
-                "time": [period for period in range(config.nper) for _ in head_locations],
-                "name": [
-                    name
-                    for _period in range(config.nper)
-                    for name in head_locations
-                ],
-                "head": np.nan,
-            }
-        ),
+        values=_synthetic_head_observations(config, head_locations, regional),
     )
     model.targets.lake_stage = LakeStageTargets(locations={lake_id: 0})
     reaches = [int(value) for value in sfr.stream_reaches[main_stem]]

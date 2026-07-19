@@ -76,6 +76,58 @@ def _require_compare_columns(frame: pd.DataFrame, required: set[str], *, caller:
     return frame.copy()
 
 
+def _describe_empty_pairing(
+    frame: pd.DataFrame, target_column: str, simulated_column: str
+) -> str:
+    """Explain why a cross plot has no points, naming the side that is missing.
+
+    A calibration plot with nothing on it is almost always a data problem --
+    all-NaN observations, or a join that matched no rows -- and styled-but-empty
+    axes hide that completely. Diagnosing it here means the caller is told which
+    column failed instead of being left to guess from a blank figure.
+    """
+
+    observed = frame[target_column].notna().sum()
+    simulated = frame[simulated_column].notna().sum()
+    if not len(frame):
+        return "the compare table is empty (no target rows at all)."
+    if not observed and not simulated:
+        return (
+            f"both {target_column!r} and {simulated_column!r} are entirely NaN "
+            f"across {len(frame)} rows."
+        )
+    if not observed:
+        return (
+            f"{target_column!r} is entirely NaN across {len(frame)} rows -- the "
+            f"targets carry no measured values, so there is nothing to compare "
+            f"the {simulated} simulated values against."
+        )
+    if not simulated:
+        return (
+            f"{simulated_column!r} is entirely NaN across {len(frame)} rows -- "
+            f"the model produced no simulated values at the {observed} target "
+            f"locations (was the model run?)."
+        )
+    return (
+        f"no row has BOTH {target_column!r} and {simulated_column!r} present "
+        f"({observed} observed and {simulated} simulated values, but they never "
+        f"coincide) -- usually a name/time join that did not line up."
+    )
+
+
+def _warn_empty_cross_plot(reason: str, *, caller: str) -> str:
+    """Warn about an empty cross plot and return the on-figure annotation text."""
+
+    import warnings
+
+    warnings.warn(
+        f"{caller} has no points to plot: {reason}",
+        UserWarning,
+        stacklevel=3,
+    )
+    return f"No paired observed/simulated values<br><br>{reason}"
+
+
 def _sort_compare_by_time(frame: pd.DataFrame) -> pd.DataFrame:
     """Sort a compare-style DataFrame by time/per when possible."""
 
@@ -258,11 +310,20 @@ class CalibrationPlot(f.Fig):
         ``"matplotlib"`` (static matplotlib/seaborn).
         """
 
-        frame = _require_compare_columns(
+        checked = _require_compare_columns(
             compare,
             {target_column, simulated_column},
             caller="CalibrationPlot.from_obs_vs_sim(...)",
-        ).dropna(subset=[target_column, simulated_column])
+        )
+        frame = checked.dropna(subset=[target_column, simulated_column])
+        empty_note = (
+            _warn_empty_cross_plot(
+                _describe_empty_pairing(checked, target_column, simulated_column),
+                caller="CalibrationPlot.from_obs_vs_sim(...)",
+            )
+            if frame.empty
+            else None
+        )
 
         baseline = None
         values = [frame[target_column], frame[simulated_column]]
@@ -290,6 +351,18 @@ class CalibrationPlot(f.Fig):
             ax.set_ylabel(yaxis_title)
             ax.set_title(title)
             ax.legend()
+            if empty_note is not None:
+                ax.text(
+                    0.5,
+                    0.5,
+                    empty_note.replace("<br>", "\n"),
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    wrap=True,
+                    color="#8a2f2f",
+                )
             if add_stats and not frame.empty:
                 stats = calculate_calibration_statistics(frame[target_column], frame[simulated_column])
                 text = "\n".join(f"{key} = {value:.3g}" for key, value in stats.items())
@@ -324,6 +397,21 @@ class CalibrationPlot(f.Fig):
             xaxis_title=xaxis_title,
             yaxis_title=yaxis_title,
         )
+        if empty_note is not None:
+            fig.add_annotation(
+                text=empty_note,
+                showarrow=False,
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                align="center",
+                font={"size": 13, "color": "#8a2f2f"},
+                bgcolor="rgba(255,255,255,0.85)",
+                bordercolor="#8a2f2f",
+                borderwidth=1,
+                borderpad=10,
+            )
         if add_stats and not frame.empty:
             fig.add_stats(observed=frame[target_column], simulated=frame[simulated_column])
         return fig

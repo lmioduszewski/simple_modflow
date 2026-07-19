@@ -229,3 +229,89 @@ done, plus one assurance gap in the review itself.
       The pre-strip file was backed up to the session scratchpad
       (`canonical_fast_tour.with_outputs.ipynb`) in case it is wanted.
     - Revisit: n/a.
+
+## Calibration plot + canonical head observations (2026-07-18)
+
+21. **The canonical model's "measured" heads are synthetic, not data.**
+    - What: head targets sample the regional water table (the surface that also
+      seeds initial conditions) plus a small deterministic per-well offset,
+      rather than carrying real measurements or `NaN`.
+    - Why: the model is synthetic — there are no measurements. Before this,
+      every head target was `NaN`, which made `compare()`, `stats()`,
+      `residuals()` and `calibration_plot()` all vacuous, and produced the
+      reported blank calibration plot. Sampling the *conceptual* surface rather
+      than the simulated heads keeps residuals real; copying simulated heads
+      would make the calibration plot a tautology.
+    - Impact: the demo scatter shows a **systematic bias** (RMSE ≈ 6.6 ft on a
+      ~33 ft head range, ~20%). That is honest — the regional surface is an
+      approximation, and the model departs from it near pumping, the lake and
+      the streams — but it is not a *well-calibrated* looking demo.
+    - Revisit: **superseded by entry 25** — the user has asked for a
+      well-calibrated demo, so this bias is a shortfall to close, not a
+      compromise to keep.
+
+22. **Pumping wells are observed only at period 0.**
+    - What: `shallow_pumping` / `deep_pumping` carry a measured value in the
+      first stress period and `NaN` afterwards.
+    - Why: a regional-survey value is not a valid measurement inside a well that
+      is actively drawing down (the deep well swings ~45 ft once pumping ramps).
+      Carrying it forward would plant one meaningless outlier that dominates
+      every residual statistic.
+    - Impact: 14 paired points instead of 24; the pumping wells contribute one
+      pre-development baseline each.
+    - Revisit: if time-varying synthetic observations are ever generated from a
+      truth run (that is what `canonical_calibration.py` already does for PEST).
+
+23. **The empty-cross-plot diagnosis warns rather than raising.**
+    - What: `CalibrationPlot.from_obs_vs_sim` emits a `UserWarning` and draws an
+      on-figure box when nothing pairs, instead of raising.
+    - Why: an empty overlap is a legitimate intermediate state (targets declared
+      before a run, a join still being built). Raising would break notebooks
+      mid-tour; silence was the original defect.
+    - Impact: a script that ignores warnings still gets a figure — but it now
+      carries a visible annotation, so the failure cannot pass unnoticed in a
+      notebook.
+    - Revisit: if a strict mode is ever wanted, add `on_empty="raise"`.
+
+24. **Only the `obs_vs_sim` path got the diagnosis.**
+    - What: `from_timeseries`, `from_residuals_by_period`, and the `"heads"`
+      MultiIndex path can still render empty without explanation.
+    - Why: `obs_vs_sim` is the default path behind every
+      `targets.<family>.calibration_plot()`, so it covers the reported defect
+      and all five target families. The others take different frame shapes and
+      would each need their own diagnosis.
+    - Impact: an empty time-series plot is still silent.
+    - Revisit: when the view-layer sweep in plan §4.8 lands.
+
+25. **OUTSTANDING (user requirement, 2026-07-18): the fast tour must show a
+    WELL-CALIBRATED model.**
+    - What: `canonical_fast_tour.ipynb` currently renders a calibration scatter
+      with a visible systematic bias — RMSE ≈ 6.6 ft on a ~33 ft head range
+      (~20%), with `regional_center` biased ≈ −9 ft and `pond_mound` ≈ +3.7 ft
+      in every period. The user's requirement is that the flagship notebook
+      show a *well-calibrated* model, not merely a non-empty one.
+    - Why it is not yet met: the "measured" heads are sampled from the regional
+      water table, which is the **conceptual** surface used to seed initial
+      conditions, not the model's converged solution. The two differ by several
+      feet wherever the stresses bite. Fixing the plot (entry 23) and populating
+      the targets (entry 21) made the calibration tier *work*; neither was aimed
+      at making it look *good*.
+    - Constraint that shapes the fix: the observations must not simply be copies
+      of the simulated heads, or the scatter becomes a tautology that teaches
+      nothing (see entry 21).
+    - Candidate approaches, in rough order of preference:
+      1. Sample observations from the regional surface but **calibrate the
+         surface itself** — fit the `146.0 - 60.0*xn + 0.45*cross_relief`
+         coefficients (and the 0.6 ft/layer decline) so the conceptual table
+         tracks the converged solution. Keeps observations independent of the
+         run while shrinking the bias; also improves initial conditions.
+      2. **Widen the observation network.** Only 4 head targets exist and 2 are
+         pumping wells — a thin, stress-dominated network by construction. Add
+         valley-floor monitoring wells away from the pumping/lake/stream
+         influence, where the regional surface is already a good approximation.
+      3. Derive observations from a **truth run plus small noise**, the pattern
+         `canonical_calibration.py::_truth_head_targets` already uses for the
+         PEST notebooks. Gives an excellent-looking scatter, but makes the
+         canonical targets depend on having run, and residuals become pure
+         injected noise.
+    - Revisit: next session. Entry 21 stays until this lands.

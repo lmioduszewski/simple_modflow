@@ -680,6 +680,26 @@ frames that are not one mappable field — had no rule, so they accreted as
 view deliberately has no `map()`. Best done as one sweep with its own snapshot
 diff, alongside 4.7's package consolidation.
 
+**Also landed 2026-07-18 (same user report, second defect).**
+`targets.heads.calibration_plot()` drew fully formatted but empty axes. Two
+causes, both fixed:
+
+- **The plot could not say it was empty.** `CalibrationPlot.from_obs_vs_sim`
+  dropped unpaired rows and rendered whatever survived — nothing. It now
+  diagnoses *which side* is missing (all-NaN observed / all-NaN simulated /
+  no overlapping rows / empty table), in the caller's own column names, as both
+  a `UserWarning` and an on-figure annotation, on both backends. This is the
+  default path behind **all five** target families, not just heads.
+- **The canonical model had no measured heads.** Every head target carried
+  `head: np.nan`, so `stats()` and `residuals()` were vacuous too. Targets now
+  sample the regional water table (§`_synthetic_head_observations`), giving 14
+  paired points and real statistics. Ledger entries 21–24 record the trade-offs
+  (systematic ~20% RMSE bias; pumping wells observed pre-pumping only; warn
+  rather than raise; only the `obs_vs_sim` path diagnosed).
+
+Tests: `tests/test_calibration_plot_empty.py` (9),
+`tests/test_canonical_head_observations.py` (9).
+
 ---
 
 ## Phase 5 — Package API completion (~8–15 days excluding 5.7, independent of Phase 4)
