@@ -694,11 +694,19 @@ causes, both fixed:
   `head: np.nan`, so `stats()` and `residuals()` were vacuous too. Targets now
   sample the regional water table (§`_synthetic_head_observations`), giving 14
   paired points and real statistics. Ledger entries 21–24 record the trade-offs
-  (systematic ~20% RMSE bias; pumping wells observed pre-pumping only; warn
-  rather than raise; only the `obs_vs_sim` path diagnosed).
+  (warn rather than raise; only the `obs_vs_sim` path diagnosed).
+- **Follow-on, same day: the demo now reads as well calibrated.** The first fix
+  left a ~20%-of-range systematic bias; the user's requirement is that the fast
+  tour show a *well-calibrated* model. Closed by combining a fitted observation
+  surface with a wider network — **RMSE 2.07 ft = 3.9% of head range, ME
+  +0.05 ft** (testing, which the fast tour uses); 4.3% / −0.03 ft on validation.
+  Note `regional` itself could NOT be refitted: it drives CHD/GHB/initial
+  conditions/SFR/RIV, so fitting it to the solution is circular. Ledger entry
+  25 records the method and the two findings that mattered.
 
 Tests: `tests/test_calibration_plot_empty.py` (9),
-`tests/test_canonical_head_observations.py` (9).
+`tests/test_canonical_head_observations.py` (11, including the
+well-calibrated contract: RMSE < 5% of range and |ME| < 0.75 ft).
 
 ---
 

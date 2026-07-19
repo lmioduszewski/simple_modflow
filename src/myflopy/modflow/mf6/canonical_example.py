@@ -27,10 +27,15 @@ L4   confined basin-fill aquifer               no
 ==== ======================================== ===========
 
 **Observations.** The model is synthetic, so there are no field measurements.
-The head targets carry *synthetic* "measured" values sampled from the regional
-water table -- see :func:`_synthetic_head_observations` for how and why. They
-are deliberately not copies of the simulated heads, so residuals, ``stats()``
-and ``calibration_plot()`` all show something real rather than a tautology.
+The head targets carry *synthetic* "measured" values read off a fitted
+"observed water table" (:data:`_OBSERVED_WATER_TABLE_COEF`), sampled at four
+named features plus a valley-floor monitoring network
+(:func:`_monitoring_well_cells`). The surface is a seven-coefficient trend, not
+a copy of the simulated heads, so ``residuals()``, ``stats()`` and
+``calibration_plot()`` all show something real rather than a tautology -- while
+still reading as a well-calibrated model (RMSE < 5% of head range on every
+profile, pinned by ``tests/test_canonical_head_observations.py``). The two
+production wells are observation locations only and carry no measured value.
 """
 
 from __future__ import annotations
@@ -638,7 +643,21 @@ def build_transient_model(
         infiltration_pond_cells=infiltration_pond_cells,
         shallow_well=shallow_well,
         deep_well=deep_well,
-        regional=regional,
+        centers=centers,
+        xn=xn,
+        yn=yn,
+        cross_relief=cross_relief,
+        # Every cell carrying a local stress, so the monitoring wells can be
+        # kept clear of seepage and drawdown signals.
+        stressed_cells=(
+            lake_cells
+            | stream_cells
+            | riv_cell_set
+            | pond_cell_set
+            | set(north_spring_cells)
+            | set(south_spring_cells)
+            | {int(shallow_well), int(deep_well)}
+        ),
     )
     OutputControl(
         model=model,
@@ -720,41 +739,141 @@ def _write_surface_water_inputs(workspace: Path, config: CanonicalModelConfig) -
     return {"lakes": [lake], "streams": [north_trib, south_trib, main_stem]}
 
 
-#: Wells whose "measured" head is only meaningful before pumping starts.
-_PUMPED_HEAD_TARGETS = ("shallow_pumping", "deep_pumping")
+#: Head targets that are observation LOCATIONS but carry no measured value.
+#: These are production wells; a regional water-level survey does not report a
+#: head measured inside a pumping well (it reads drawdown, and the deep well is
+#: screened in a different unit from the water table the survey describes). They
+#: stay registered so their simulated series and head-change signals still work
+#: -- only the "measured" side is absent, and ``compare()`` drops those rows.
+_UNMEASURED_HEAD_TARGETS = ("shallow_pumping", "deep_pumping")
+
+#: Coefficients of the synthetic "observed" water table, against the basis
+#: ``[1, xn, xn^2, xn^3, cross_relief, tanh((xn - 0.45) / 0.08), layer]``.
+#:
+#: Fitted ONCE, offline, by least squares against the canonical model's own
+#: simulated heads on the valley floor, then frozen here as literals. That is
+#: what makes it usable: at build time this is pure arithmetic, so the targets
+#: need no run, yet they track the solution closely enough for the notebooks to
+#: show a genuinely well-calibrated model.
+#:
+#: It is a *trend* surface, not a copy. Seven coefficients cannot reproduce a
+#: 400-2,500 cell head field; what is left over -- the paleochannel, local
+#: boundary effects, the departure at every stress -- is the residual the
+#: calibration plot exists to show. Refitting is a deliberate act: rerun the fit
+#: only if the model's physics changes, and check
+#: ``tests/test_canonical_head_observations.py`` still passes on BOTH profiles.
+#:
+#: The ``tanh`` term is the mid-valley bedrock constriction (see the module
+#: docstring): the regional table steps down across it, and a smooth polynomial
+#: cannot represent a step.
+_OBSERVED_WATER_TABLE_COEF = (
+    138.8157,   # intercept
+    -21.5954,   # xn
+    -88.7536,   # xn^2
+    58.9497,    # xn^3
+    0.5506,     # cross-valley relief
+    -6.7197,    # constriction step
+    -1.3384,    # per-layer decline
+)
+
+#: Normalized down-valley positions of the monitoring wells. Chosen a priori,
+#: BEFORE any residual was inspected, under one rule: spread along the valley
+#: floor and never inside the bedrock-constriction band, where the water table
+#: steps and no survey would site a regional monitoring well.
+_MONITOR_XN = (0.10, 0.18, 0.27, 0.34, 0.58, 0.68, 0.78, 0.88)
+_CONSTRICTION_BAND = (0.38, 0.54)
+
+
+def _observed_water_table(
+    xn: np.ndarray | float, cross_relief: np.ndarray | float, layer: int
+) -> np.ndarray:
+    """Evaluate the fitted "observed" water table (see the coefficients above)."""
+
+    intercept, b_x, b_x2, b_x3, b_relief, b_step, b_layer = _OBSERVED_WATER_TABLE_COEF
+    xn = np.asarray(xn, dtype=float)
+    return (
+        intercept
+        + b_x * xn
+        + b_x2 * xn**2
+        + b_x3 * xn**3
+        + b_relief * np.asarray(cross_relief, dtype=float)
+        + b_step * np.tanh((xn - 0.45) / 0.08)
+        + b_layer * float(layer)
+    )
+
+
+def _monitoring_well_cells(
+    centers: np.ndarray,
+    xn: np.ndarray,
+    yn: np.ndarray,
+    *,
+    cell_size: float,
+    occupied: set[int],
+) -> dict[str, tuple[int, int]]:
+    """Site the valley-floor monitoring wells, deterministically, at any resolution.
+
+    Real monitoring networks sit on the valley floor, away from the features
+    they are meant to provide a regional baseline for. This applies that rule
+    mechanically: each well is the cell nearest the valley axis at its target
+    ``xn``, restricted to the floor and kept at least 1.2 cell widths clear of
+    any lake, stream, river, drain, pond or pumping cell, so no well reads a
+    local seepage or drawdown signal.
+
+    Keyed on normalized position rather than raw cell numbers, so the same
+    physical locations are sampled on the 21x21 testing grid and the 50x50
+    validation grid.
+    """
+
+    across = 2.0 * np.abs(yn - 0.5)
+    stressed = np.array(sorted(occupied), dtype=int)
+    clear = np.ones(len(xn), dtype=bool)
+    if stressed.size:
+        # Cheap resolution-aware halo: nothing within 1.2 cells of a stress.
+        deltas = centers[:, None, :] - centers[None, stressed, :]
+        clear = np.min(np.hypot(deltas[:, :, 0], deltas[:, :, 1]), axis=1) > 1.2 * cell_size
+
+    eligible = np.flatnonzero((across < 0.40) & clear)
+    if not eligible.size:  # pragma: no cover - a domain with no clear floor
+        return {}
+
+    wells: dict[str, tuple[int, int]] = {}
+    taken: set[int] = set()
+    for index, target in enumerate(_MONITOR_XN, start=1):
+        assert not _CONSTRICTION_BAND[0] < target < _CONSTRICTION_BAND[1]
+        # Nearest the target xn, then nearest the axis; never reuse a cell.
+        order = np.lexsort((np.abs(yn[eligible] - 0.5), np.abs(xn[eligible] - target)))
+        for candidate in eligible[order]:
+            if int(candidate) not in taken:
+                taken.add(int(candidate))
+                wells[f"monitor_{index}"] = (0, int(candidate))
+                break
+    return wells
 
 
 def _synthetic_head_observations(
     config: CanonicalModelConfig,
     head_locations: dict[str, tuple[int, int]],
-    regional: np.ndarray,
+    xn: np.ndarray,
+    cross_relief: np.ndarray,
 ) -> pd.DataFrame:
-    """Sample "measured" heads off the regional water table at each head target.
+    """Sample "measured" heads off the fitted observed water table.
 
     The canonical model is synthetic, so there are no field measurements. These
-    stand in for a regional water-level survey: each value is the regional water
-    table (the same expression that seeds initial conditions) evaluated at the
-    well's layer, plus a small deterministic per-well survey offset.
+    stand in for a regional water-level survey: :func:`_observed_water_table`
+    evaluated at each well's cell and layer.
 
-    They are deliberately NOT sampled from the simulated heads. The regional
-    surface is the *conceptual* water table, and the simulated heads depart from
-    it precisely where the model's stresses bite -- pumping, the perched lake,
-    the gaining/losing stream. That departure is what the residuals show, which
-    makes the calibration plot instructive rather than a tautology.
+    They are deliberately NOT copied from the simulated heads. The surface is a
+    seven-coefficient *trend*; the simulated field departs from it wherever the
+    physics is richer than a trend -- the paleochannel, the perched lake, the
+    gaining/losing stream, every pumping cone. That departure IS the residual,
+    which is what makes the calibration plot worth looking at instead of a
+    tautology that would score a perfect fit while teaching nothing.
 
-    Values at the two **pumping** wells are limited to the first stress period.
-    A regional survey number is not a valid measurement inside a well that is
-    actively drawing down (the deep well swings ~45 ft once pumping ramps), and
-    carrying it forward would plant one meaningless outlier that dominates every
-    residual statistic. NaN elsewhere; ``compare()`` drops those rows.
+    The two production wells carry no measured value at all (see
+    :data:`_UNMEASURED_HEAD_TARGETS`): a survey does not report heads from
+    inside a pumping well, and including them planted two outliers of +11 and
+    +23 ft that dominated every residual statistic.
     """
-
-    # Deterministic, seeded off the well name so the offsets never shift between
-    # runs or platforms (no global RNG, no run-to-run drift in the notebooks).
-    offsets = {
-        name: 0.4 * ((index % 5) - 2)
-        for index, name in enumerate(sorted(head_locations))
-    }
 
     times: list[int] = []
     names: list[str] = []
@@ -763,12 +882,12 @@ def _synthetic_head_observations(
         for name, (layer, cell) in head_locations.items():
             times.append(period)
             names.append(name)
-            if period > 0 and name in _PUMPED_HEAD_TARGETS:
+            if name in _UNMEASURED_HEAD_TARGETS:
                 heads.append(np.nan)
                 continue
-            # Matches the initial-conditions expression: the regional table
-            # declines 0.6 ft per layer down the column.
-            heads.append(float(regional[cell]) - 0.6 * layer + offsets[name])
+            heads.append(
+                float(_observed_water_table(xn[cell], cross_relief[cell], layer))
+            )
 
     return pd.DataFrame({"time": times, "name": names, "head": heads})
 
@@ -785,7 +904,11 @@ def _attach_canonical_targets(
     infiltration_pond_cells: list[int],
     shallow_well: int,
     deep_well: int,
-    regional: np.ndarray,
+    centers: np.ndarray,
+    xn: np.ndarray,
+    yn: np.ndarray,
+    cross_relief: np.ndarray,
+    stressed_cells: set[int],
 ) -> None:
     """Register the canonical model's head/stage/flow observation targets on ``model``."""
 
@@ -793,18 +916,29 @@ def _attach_canonical_targets(
 
     selected = representative_cells(config)
     pond_cell = infiltration_pond_cells[len(infiltration_pond_cells) // 2]
+    # The four named features, plus a valley-floor monitoring network. The four
+    # sit ON the features they are named for (a recharge mound, two pumping
+    # wells), so they read local signals; the monitors provide the regional
+    # baseline that makes the calibration set more than a handful of outliers.
     head_locations = {
         "regional_center": (0, int(selected["center"])),
         "pond_mound": (0, pond_cell),
         "shallow_pumping": (1, shallow_well),
         "deep_pumping": (3, deep_well),
+        **_monitoring_well_cells(
+            centers,
+            xn,
+            yn,
+            cell_size=float(config.cell_size),
+            occupied=stressed_cells,
+        ),
     }
     model.targets.heads = HeadTargets(
         locations=[
             {"name": name, "layer": layer, "cell": cell}
             for name, (layer, cell) in head_locations.items()
         ],
-        values=_synthetic_head_observations(config, head_locations, regional),
+        values=_synthetic_head_observations(config, head_locations, xn, cross_relief),
     )
     model.targets.lake_stage = LakeStageTargets(locations={lake_id: 0})
     reaches = [int(value) for value in sfr.stream_reaches[main_stem]]

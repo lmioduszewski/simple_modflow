@@ -95,23 +95,65 @@ def test_observations_are_not_copies_of_the_simulated_heads(compare):
     assert residual.max() < 25.0, f"residuals implausibly large: {residual.max()}"
 
 
-def test_pumping_wells_are_observed_only_before_pumping(compare):
-    """A regional value inside a drawn-down well is not a measurement."""
+def test_production_wells_carry_no_measured_value(compare):
+    """A survey does not report a head measured inside a pumping well.
+
+    They stay registered as observation LOCATIONS -- their simulated series and
+    head-change signals are still used -- but the measured side is absent.
+    Including them planted +11 ft and +23 ft outliers that dominated every
+    residual statistic.
+    """
 
     for name in ("shallow_pumping", "deep_pumping"):
         rows = compare[compare["name"] == name]
-        observed = rows.dropna(subset=["head_target"])
-        assert set(observed["time"]) == {0}, (
-            f"{name} should be observed only at period 0, got {sorted(set(observed['time']))}"
-        )
+        assert not rows.empty, f"{name} must remain an observation location"
+        assert rows["head_target"].isna().all(), f"{name} must carry no measured value"
+        assert rows["sim_head"].notna().any(), f"{name} must still simulate"
 
 
-def test_unpumped_wells_are_observed_every_period(compare, canonical_run):
-    """The monitoring wells carry the full series."""
+def test_monitoring_wells_are_observed_every_period(compare, canonical_run):
+    """The regional network carries the full series."""
 
-    for name in ("regional_center", "pond_mound"):
+    monitors = [name for name in compare["name"].unique() if str(name).startswith("monitor_")]
+    assert len(monitors) >= 6, f"thin monitoring network: {monitors}"
+    for name in [*monitors, "regional_center", "pond_mound"]:
         rows = compare[compare["name"] == name].dropna(subset=["head_target"])
-        assert len(rows) == canonical_run.nper
+        assert len(rows) == canonical_run.nper, name
+
+
+# ---------------------------------------------------------------------------
+# the user requirement: the fast tour must show a WELL-calibrated model
+# ---------------------------------------------------------------------------
+
+
+def test_the_model_reads_as_well_calibrated(canonical_run):
+    """RMSE under 5% of the observed head range, and essentially unbiased.
+
+    This is the contract behind the fast tour's calibration scatter (ledger
+    entry 25). 5% of range is the usual "good fit" benchmark; the mean-error
+    bound is what stops a surface that is merely *precise* while sitting
+    systematically high or low, which is what the first attempt did (RMSE 6.6 ft
+    = 20% of range, with every well biased the same direction).
+    """
+
+    stats = canonical_run.targets.heads.stats().iloc[0]
+    paired = canonical_run.targets.heads.compare().dropna(
+        subset=["head_target", "sim_head"]
+    )
+    simulated = paired["sim_head"].astype(float)
+    head_range = float(simulated.max() - simulated.min())
+
+    rmse = float(stats["rmse"])
+    assert head_range > 20.0, "head range too small for the ratio to mean anything"
+    assert rmse / head_range < 0.05, (
+        f"RMSE {rmse:.2f} ft is {100 * rmse / head_range:.1f}% of the "
+        f"{head_range:.1f} ft head range; the fast tour must show a "
+        "well-calibrated model (ledger entry 25)"
+    )
+    assert abs(float(stats["mean_error"])) < 0.75, (
+        f"mean error {float(stats['mean_error']):+.2f} ft -- the observation "
+        "surface has drifted into a systematic bias"
+    )
 
 
 def test_observations_are_deterministic(canonical_config):
@@ -119,27 +161,46 @@ def test_observations_are_deterministic(canonical_config):
 
     from myflopy.modflow.mf6.canonical_example import _synthetic_head_observations
 
-    regional = np.linspace(150.0, 90.0, 400)
+    xn = np.linspace(0.0, 1.0, 400)
+    relief = np.zeros(400)
     locations = {"a": (0, 10), "b": (2, 250)}
 
-    first = _synthetic_head_observations(canonical_config, locations, regional)
-    second = _synthetic_head_observations(canonical_config, locations, regional)
+    first = _synthetic_head_observations(canonical_config, locations, xn, relief)
+    second = _synthetic_head_observations(canonical_config, locations, xn, relief)
     assert first.equals(second)
 
 
-def test_layer_decline_matches_initial_conditions():
-    """The sampled value follows the regional table down the column."""
+def test_the_observed_surface_declines_down_valley_and_with_depth():
+    """The fitted surface must keep the physical shape it stands in for."""
 
-    from myflopy.modflow.mf6.canonical_example import _synthetic_head_observations
+    from myflopy.modflow.mf6.canonical_example import _observed_water_table
 
-    class _Config:
-        nper = 1
+    xn = np.linspace(0.05, 0.95, 25)
+    surface = _observed_water_table(xn, np.zeros_like(xn), 0)
+    assert surface[0] > surface[-1] + 30.0, "no down-valley decline"
+    assert np.all(np.diff(surface) < 0.0), "the water table must fall monotonically"
 
-    regional = np.full(300, 120.0)
-    # Same well name in both, so the per-well survey offset cancels and only
-    # the layer term is under test.
-    shallow = _synthetic_head_observations(_Config(), {"w": (0, 5)}, regional)
-    deep = _synthetic_head_observations(_Config(), {"w": (3, 5)}, regional)
+    deeper = _observed_water_table(xn, np.zeros_like(xn), 3)
+    assert np.all(deeper < surface), "head must decline with depth"
 
-    drop = float(shallow["head"].iloc[0]) - float(deep["head"].iloc[0])
-    assert drop == pytest.approx(3 * 0.6, abs=1e-9)
+
+def test_monitoring_wells_avoid_every_stress_cell(canonical_run):
+    """A monitor reading seepage or drawdown is not a regional baseline."""
+
+    locations = canonical_run.targets.heads.get()
+    monitors = locations[locations["name"].astype(str).str.startswith("monitor_")]
+    assert not monitors.empty
+
+    model = canonical_run
+    stressed = set()
+    for record in model.gwf.lak.connectiondata.get_data():
+        stressed.add(int(record[2][-1]))
+    for record in model.gwf.sfr.packagedata.get_data():
+        stressed.add(int(record[1][-1]))
+    for package in ("riv", "wel", "drn"):
+        data = getattr(model.gwf, package).stress_period_data.get_data(0)
+        for record in data if data is not None else []:
+            stressed.add(int(record[0][-1]))
+
+    overlap = sorted(set(monitors["cell"].astype(int)) & stressed)
+    assert not overlap, f"monitoring wells sit on stress cells: {overlap}"

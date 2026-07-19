@@ -233,34 +233,38 @@ done, plus one assurance gap in the review itself.
 ## Calibration plot + canonical head observations (2026-07-18)
 
 21. **The canonical model's "measured" heads are synthetic, not data.**
-    - What: head targets sample the regional water table (the surface that also
-      seeds initial conditions) plus a small deterministic per-well offset,
-      rather than carrying real measurements or `NaN`.
+    - What: head targets read off a fitted analytic "observed water table"
+      (`_OBSERVED_WATER_TABLE_COEF`), sampled at four named features plus a
+      `monitor_1`…`monitor_8` valley-floor network.
     - Why: the model is synthetic — there are no measurements. Before this,
       every head target was `NaN`, which made `compare()`, `stats()`,
       `residuals()` and `calibration_plot()` all vacuous, and produced the
-      reported blank calibration plot. Sampling the *conceptual* surface rather
-      than the simulated heads keeps residuals real; copying simulated heads
-      would make the calibration plot a tautology.
-    - Impact: the demo scatter shows a **systematic bias** (RMSE ≈ 6.6 ft on a
-      ~33 ft head range, ~20%). That is honest — the regional surface is an
-      approximation, and the model departs from it near pumping, the lake and
-      the streams — but it is not a *well-calibrated* looking demo.
-    - Revisit: **superseded by entry 25** — the user has asked for a
-      well-calibrated demo, so this bias is a shortfall to close, not a
-      compromise to keep.
+      reported blank calibration plot.
+    - Impact: the surface is a seven-coefficient **trend**, not a copy of the
+      simulated heads, so residuals stay real (a copy would score a perfect fit
+      while teaching nothing). It reads as well calibrated — ME ≈ ±0.05 ft,
+      RMSE 2.07 ft = 3.9% of range (testing) and 2.32 ft = 4.3% (validation).
+    - **UPDATE 2026-07-18:** the earlier ~20%-of-range bias recorded here is
+      GONE; entry 25 is resolved. What remains is only that the observations
+      are synthetic at all, which is inherent to a synthetic model.
+    - Revisit: if the model's physics changes, the coefficients must be refitted
+      — `tests/test_canonical_head_observations.py` fails on both profiles if
+      they drift, which is the intended tripwire.
 
-22. **Pumping wells are observed only at period 0.**
-    - What: `shallow_pumping` / `deep_pumping` carry a measured value in the
-      first stress period and `NaN` afterwards.
-    - Why: a regional-survey value is not a valid measurement inside a well that
-      is actively drawing down (the deep well swings ~45 ft once pumping ramps).
-      Carrying it forward would plant one meaningless outlier that dominates
+22. **Production wells carry no measured value.**
+    - What: `shallow_pumping` / `deep_pumping` remain observation *locations*
+      (their simulated series and head-change signals still work) but have no
+      "measured" head in any period.
+    - Why: a regional water-level survey does not report a head measured inside
+      a pumping well — it reads drawdown, and the deep well is screened in a
+      different unit from the water table the survey describes. Including them
+      planted +11 ft (testing) and +23 ft (validation) outliers that dominated
       every residual statistic.
-    - Impact: 14 paired points instead of 24; the pumping wells contribute one
-      pre-development baseline each.
-    - Revisit: if time-varying synthetic observations are ever generated from a
-      truth run (that is what `canonical_calibration.py` already does for PEST).
+    - Impact: 60 paired points from 10 measured wells; the two production wells
+      contribute simulated series only. This is standard practice for a real
+      calibration dataset, not a shortcut.
+    - Revisit: if drawdown-aware synthetic observations are ever generated from
+      a truth run (`canonical_calibration.py` already does that for PEST).
 
 23. **The empty-cross-plot diagnosis warns rather than raising.**
     - What: `CalibrationPlot.from_obs_vs_sim` emits a `UserWarning` and draws an
@@ -283,35 +287,35 @@ done, plus one assurance gap in the review itself.
     - Impact: an empty time-series plot is still silent.
     - Revisit: when the view-layer sweep in plan §4.8 lands.
 
-25. **OUTSTANDING (user requirement, 2026-07-18): the fast tour must show a
-    WELL-CALIBRATED model.**
-    - What: `canonical_fast_tour.ipynb` currently renders a calibration scatter
-      with a visible systematic bias — RMSE ≈ 6.6 ft on a ~33 ft head range
-      (~20%), with `regional_center` biased ≈ −9 ft and `pond_mound` ≈ +3.7 ft
-      in every period. The user's requirement is that the flagship notebook
-      show a *well-calibrated* model, not merely a non-empty one.
-    - Why it is not yet met: the "measured" heads are sampled from the regional
-      water table, which is the **conceptual** surface used to seed initial
-      conditions, not the model's converged solution. The two differ by several
-      feet wherever the stresses bite. Fixing the plot (entry 23) and populating
-      the targets (entry 21) made the calibration tier *work*; neither was aimed
-      at making it look *good*.
-    - Constraint that shapes the fix: the observations must not simply be copies
-      of the simulated heads, or the scatter becomes a tautology that teaches
-      nothing (see entry 21).
-    - Candidate approaches, in rough order of preference:
-      1. Sample observations from the regional surface but **calibrate the
-         surface itself** — fit the `146.0 - 60.0*xn + 0.45*cross_relief`
-         coefficients (and the 0.6 ft/layer decline) so the conceptual table
-         tracks the converged solution. Keeps observations independent of the
-         run while shrinking the bias; also improves initial conditions.
-      2. **Widen the observation network.** Only 4 head targets exist and 2 are
-         pumping wells — a thin, stress-dominated network by construction. Add
-         valley-floor monitoring wells away from the pumping/lake/stream
-         influence, where the regional surface is already a good approximation.
-      3. Derive observations from a **truth run plus small noise**, the pattern
-         `canonical_calibration.py::_truth_head_targets` already uses for the
-         PEST notebooks. Gives an excellent-looking scatter, but makes the
-         canonical targets depend on having run, and residuals become pure
-         injected noise.
-    - Revisit: next session. Entry 21 stays until this lands.
+25. ~~**OUTSTANDING: the fast tour must show a WELL-CALIBRATED model.**~~
+    **RESOLVED 2026-07-18.** The scatter went from RMSE 6.6 ft (~20% of head
+    range, every well biased the same direction) to **RMSE 2.07 ft = 3.9% of
+    range with ME +0.05 ft** on the testing profile the fast tour uses, and
+    2.32 ft / 4.3% / −0.03 ft on validation. Both approaches the user approved
+    were used together:
+
+    1. **A calibrated observation surface.** Refitting `regional` itself would
+       have been circular — it drives CHD heads, GHB heads, initial conditions,
+       SFR streambed tops and RIV stage, so changing it moves the very solution
+       being fitted. Instead a *separate* trend surface was fitted offline by
+       least squares against the simulated heads and frozen as literals
+       (`_OBSERVED_WATER_TABLE_COEF`), so build time stays run-free. Its `tanh`
+       term represents the mid-valley bedrock constriction, which a smooth
+       polynomial cannot follow.
+    2. **A wider network.** Eight `monitor_*` wells on the valley floor, sited
+       by an a-priori rule fixed BEFORE any residual was inspected: spread along
+       the valley, never inside the constriction band, and at least 1.2 cell
+       widths clear of every lake/stream/river/drain/pond/pumping cell. Sited on
+       normalized position, so the same physical locations are sampled at any
+       resolution.
+
+    Two findings made the difference and are worth remembering: the head field
+    is nearly resolution-independent (1.6 ft RMS between profiles at matched
+    normalized positions), so fixed fractional well positions transfer; and the
+    residual statistics were dominated by the two production wells, which should
+    never have carried survey values at all (entry 22).
+
+    Guarded by `test_the_model_reads_as_well_calibrated` — RMSE < 5% of range
+    AND |ME| < 0.75 ft, the second bound being what stops a surface that is
+    precise but systematically offset, which is exactly how the first attempt
+    failed. See also entries 21 and 22.
