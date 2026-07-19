@@ -47,13 +47,52 @@ def _symmetric_color_limit(values: Iterable[float]) -> float:
 
 
 def _blue_white_red_diverging_colorscale() -> list[list[object]]:
-    """Return a blue-white-red diverging colorscale for signed maps."""
+    """Return a blue-white-red diverging colorscale for signed maps.
+
+    Plotly maps position 0.0 to ``zmin`` and 1.0 to ``zmax``, so this is
+    blue at the NEGATIVE end and red at the POSITIVE end. Use
+    :func:`_exchange_colorscale` for surface-water exchange rather than
+    reaching for this directly -- which sign means "gaining" is a per-package
+    fact, not a constant.
+    """
 
     return [
         [0.0, "#1f77b4"],
         [0.5, "#ffffff"],
         [1.0, "#d62728"],
     ]
+
+
+def _exchange_colorscale(*, gaining_sign: int) -> list[list[object]]:
+    """Return a scale where the FEATURE gaining is blue and losing is red.
+
+    The house convention is stated from the surface-water feature's point of
+    view and is the same for every package: a lake or stream **gaining** water
+    from the aquifer is BLUE, **losing** water to it is RED (flow in blue, flow
+    out red, increase blue, decrease red).
+
+    The raw sign that means "gaining" is NOT the same everywhere -- SFR's cell
+    record is written flow-from-reach-to-cell (gaining is negative), while LAK's
+    package budget is written from the lake's perspective (gaining is positive).
+    Passing ``gaining_sign`` from the registry rather than hardcoding a scale is
+    what stops the two from drifting apart again: ``lak`` and
+    ``surface_water`` both shipped showing losing as blue because an SFR comment
+    was copied to them without re-deriving the sign.
+
+    Parameters
+    ----------
+    gaining_sign
+        ``-1`` when a negative value means the feature gains (SFR's convention),
+        ``+1`` when a positive value does (LAK's).
+    """
+
+    scale = _blue_white_red_diverging_colorscale()
+    if int(gaining_sign) < 0:
+        return scale
+    # gaining is positive -> blue must sit at the POSITIVE end instead
+    return [[position, colour] for position, (_, colour) in zip(
+        [entry[0] for entry in scale], reversed(scale), strict=True
+    )]
 
 
 def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.ndarray:

@@ -18,7 +18,28 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class ResultSpec:
-    """Registry metadata for one package result term."""
+    """Registry metadata for one package result term.
+
+    ``gaining_sign`` is the sign of the value that means **the feature is
+    gaining water from the aquifer**. It is not cosmetic: MF6 writes these
+    records from different perspectives depending on which file they come from,
+    and every signed exchange plot needs to know which way round this term is.
+
+    * ``-1`` -- the model's cell-by-cell record, written as "flow FROM the
+      feature TO the GWF cell", so a negative value means the feature gains.
+      This is SFR's ``SFR`` record.
+    * ``+1`` -- a package budget file, written from the FEATURE's perspective,
+      so a positive value means water entering the feature. This is LAK's
+      ``GWF`` record.
+
+    Verified against the canonical model: its perched lake leaks downward and
+    reports ``GWF`` in the range -5888..0, while its losing stream reaches
+    report positive ``q``. Same physical direction, opposite signs.
+
+    Getting this wrong inverts gaining and losing on a map, which is how
+    ``lak``/``surface_water`` shipped showing losing as blue -- an SFR comment
+    was copied without re-deriving the sign.
+    """
 
     name: str
     budget_text: str
@@ -26,6 +47,7 @@ class ResultSpec:
     label: str | None = None
     colorscale: str | None = None
     diverging: bool = True
+    gaining_sign: int = -1
 
 
 @dataclass(frozen=True)
@@ -407,7 +429,16 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         ),
         kind="surface_water",
         results={
-            "q": ResultSpec("q", budget_text="GWF", value_name="q", colorscale="RdBu"),
+            # LAK's GWF record comes from the LAK package budget file, written
+            # from the LAKE's perspective: positive = water entering the lake.
+            # Opposite to SFR's cell record -- see ResultSpec.gaining_sign.
+            "q": ResultSpec(
+                "q",
+                budget_text="GWF",
+                value_name="q",
+                colorscale="RdBu",
+                gaining_sign=1,
+            ),
         },
     ),
 }

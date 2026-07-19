@@ -35,6 +35,7 @@ from myflopy.modflow.mf6.package_plotting import (
     SpatialView,
     _apply_backend,
     _blue_white_red_diverging_colorscale,
+    _exchange_colorscale,
     _symmetric_color_limit,
     build_cell_input_map_payload,
     build_lak_q_map_payload,
@@ -43,6 +44,7 @@ from myflopy.modflow.mf6.package_plotting import (
 )
 from myflopy.modflow.mf6.package_registry import (
     get_default_budget_term,
+    get_package_result_spec,
 )
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
@@ -61,6 +63,17 @@ from myflopy.modflow.utils.datatypes.hover import (
     sfr_hover,
     surface_water_hover,
 )
+
+
+def _gaining_sign(package: str, result: str = "q") -> int:
+    """The sign of ``q`` that means this package's feature GAINS water.
+
+    Read from the registry so the answer lives in one place -- see
+    ``ResultSpec.gaining_sign`` for why it differs between SFR and LAK.
+    """
+
+    spec = get_package_result_spec(package, result)
+    return int(spec.gaining_sign) if spec is not None else -1
 
 
 def _join_feature_stage(frame, stage_table, *, per=None):
@@ -200,7 +213,10 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # SFR's cell record is flow FROM reach TO cell, so gaining is
+            # negative. Declared via the registry rather than assumed.
+            colorscale=colorscale
+            or _exchange_colorscale(gaining_sign=_gaining_sign("sfr")),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -352,8 +368,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # match the SFR convention: gaining (negative q) blue, losing red
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # NOT the SFR convention: LAK's GWF record comes from the LAK
+            # package budget, written from the LAKE's perspective, so gaining is
+            # POSITIVE. This map shipped inverted -- losing lakes drew blue --
+            # because the SFR comment was copied here without re-deriving it.
+            colorscale=colorscale
+            or _exchange_colorscale(gaining_sign=_gaining_sign("lak")),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -1708,8 +1728,11 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # signed exchange: gaining (negative) blue, losing red, like SFR/LAK
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # ``exchange_intensity`` is normalized so POSITIVE = the feature
+            # gaining (see build_surface_water_exchange_cell_table). The old
+            # comment here claimed the opposite and contradicted that docstring
+            # two lines up, so this map also drew losing as blue.
+            colorscale=colorscale or _exchange_colorscale(gaining_sign=1),
             **kwargs,
         )
         return _apply_backend(choro, backend)
