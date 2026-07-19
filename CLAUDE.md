@@ -6,11 +6,13 @@
 - Package lives at `src/myflopy/` on that branch
 
 ## Adding a package? Read plan §4.7 FIRST (2026-07-18)
-Package knowledge is currently re-declared in **~20 hardcoded sites** across `src/`.
-`mf.riv`/`mf.evt` followed the documented four-piece checklist and still missed 6–8 of
-them; `wel` is missing from the artifact subsystem to this day. Plan §4.7 consolidates
-these onto the existing `package_registry.py` descriptor. Until it lands, adding a
-package means grepping every hardcoded package tuple/set — §4.7 lists the confirmed ones.
+A 6-angle agent sweep measured **92 sites in `src/` that encode per-package knowledge**,
+carrying **33 unintended gaps** today. `mf.riv`/`mf.evt` followed the documented
+four-piece checklist, under two adversarial reviews, and still left gaps; `wel` is
+missing from the artifact subsystem, and `model.chd/drn/ghb/wel` accessors don't exist
+while `model.rch/uzf/sfr/lak` do — rot that predates riv/evt. Plan §4.7 consolidates
+these onto the existing `package_registry.py` descriptor and lists the sites. Note 6 of
+the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed".
 
 ## Compromise ledger (standing user rule, 2026-07-17)
 **`docs/compromises_and_deferrals.md`** records every deliberate scope cut,

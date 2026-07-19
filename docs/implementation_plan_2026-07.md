@@ -487,11 +487,12 @@ Not originally a plan phase; recorded in `docs/phase_baselines.md` (branch
 `CanonicalModelConfig.testing()` profile + session-scoped fixtures. Numbered here so
 4.7 below is continuous.
 
-### 4.7 Package declaration consolidation (the DRY keystone) — ~5–8 days
+### 4.7 Package declaration consolidation (the DRY keystone) — ~8–12 days
 
-> **DO THIS BEFORE 5.3.** 5.3 adds ~11 GWT/GWE packages. At the current ~20
-> declaration sites each, that is ~220 hand-edits with a **measured ~50% miss rate**
-> (see evidence). Consolidating first makes 5.3 dramatically cheaper and is the only
+> **DO THIS BEFORE 5.3.** 5.3 adds ~11 GWT/GWE packages. Against **92 sites in
+> `src/` that encode per-package knowledge**, that is a very large number of
+> hand-edits at a **measured miss rate that already left 33 unintended gaps** in the
+> current code. Consolidating first makes 5.3 dramatically cheaper and is the only
 > way to stop paying this tax per package.
 
 **The thesis: do not build a new abstraction — finish the one that exists.**
@@ -503,31 +504,48 @@ descriptor and deletes its competitors.
 
 **Evidence this is not speculative (all from the 2026-07-17/18 riv+evt work):**
 - `mf.riv`/`mf.evt` shipped with a documented four-piece checklist, the canonical
-  docs rule, and TWO adversarial reviews — and still **missed 6–8 sites**
-  (`package_api.__all__`, `_DIFF_PACKAGES`, `_CELL_BUDGET_PACKAGES`,
-  `_PACKAGE_SUFFIX_TO_TYPE`, `budget_tables` basing, `_PackageDiffNamespace`
-  properties, `SUPPORTED_PACKAGE_ARTIFACT_TYPES`).
-- **`wel` — a long-shipped package — is missing from the artifact subsystem
-  entirely** (`components.py` `SUPPORTED_PACKAGE_ARTIFACT_TYPES`). Nobody noticed.
-  Proof the tax is not a new-package problem; the lists silently rot.
+  docs rule, and TWO adversarial reviews — and **33 unintended gaps remain**
+  (6–8 were caught and fixed post-review: `package_api.__all__`, `_DIFF_PACKAGES`,
+  `_CELL_BUDGET_PACKAGES`, `_PACKAGE_SUFFIX_TO_TYPE`, plus the artifact set).
+- **The rot is not new-package-specific.** `wel` is missing from the artifact
+  subsystem entirely; `model.chd/drn/ghb/wel` convenience accessors don't exist
+  while `model.rch/uzf/sfr/lak` do; `components.py:423` omits `drn/ghb/rch/wel`.
+  These predate riv/evt by a long way and nobody noticed — the lists silently rot
+  whether or not packages are being added.
 - The **budget off-by-one** (riv/evt 1-based vs everything else 0-based) is a direct
   symptom: a hardcoded set in `budget_tables.py:63` omitted riv/evt, and
   `project/group/budget.py:33` "compensates" with an `if node.min() >= 1` heuristic
   that *guesses* what the set should have told it. Two bugs that cancel for riv/evt
   and leave `group.bud('drn'|'ghb')` **wrong today**.
 
-**Confirmed declaration sites (floor, not ceiling — 20+):** `advanced.py` (11
-`*_spec` + `__all__` + imports) · `geopackage.py` (7 BC resolvers + imports) ·
-`package_api.py` (11 `_XPackage` classes + singletons + `__all__` + imports) ·
-`package_registry.py` (the intended SSOT) · `package_model.py` `ModelPackages`
-properties · `group/core.py` (`_<pkg>` attrs + deprecated-alias map) ·
-`group/packages.py` properties · `model_diff.py` (`_DIFF_PACKAGES` +
-`_PackageDiffNamespace` properties) · `model_results_diff.py`
-(`_CELL_BUDGET_PACKAGES`, `_MOVER_PACKAGES`) · `run_model.py`
-(`_PACKAGE_SUFFIX_TO_TYPE`) · `budget_tables.py` (zero-basing set) ·
-`components.py` (artifact types + 2 branch sets) · `__init__.py` (`_EXPORTS`,
-`_SECOND_TIER_EXPORTS`, 2 TYPE_CHECKING blocks) · `simulation/base.py` accessors ·
-`choros.py` hardcoded `bud('rch')`.
+**Measured site inventory (6-angle agent sweep, 2026-07-18, deduped by file:line).**
+An earlier hand estimate of "~20" was wrong by 4.6×; the real figures are:
+
+| Bucket | Count | Meaning |
+|---|---|---|
+| Sites in `src/` encoding per-package knowledge | **92** | the consolidation surface |
+| — already complete (list every cell_stress pkg) | 34 | someone remembered; still boilerplate |
+| — **true unintended gaps** | **33** | a package is silently absent — latent bugs |
+| — feature gaps (PEST targets, obs families, canonical model) | 19 | real per-package work, NOT boilerplate |
+| — intentional absences (deprecated / frozen legacy tiers) | 6 | **must NOT be extended** |
+| Sites outside `src/` (tests, docs, examples) | 28 | also need updating per package |
+
+Do not "fix" all 58 non-complete sites: 6 are intentional (deprecated-alias maps and
+the frozen legacy OO tier correctly exclude riv/evt — D12), and 19 are genuine
+feature decisions (e.g. `riv` as a PEST `parameterize` target is ledger entry 10, not
+a missed edit). **The 33 are the bug surface.** Notable examples, all verified:
+`budget_tables.py:63` (the live off-by-one), `components.py` ×6 (artifact capture /
+restore — `wel` missing too), `simulation/base.py:736-756` (convenience accessors
+exist for only 4 of 10 packages — `model.rch/uzf/sfr/lak` yes, `model.chd/drn/ghb/
+wel/riv/evt` no), `model_diff.py:629-632` (static-typing properties),
+`simulation/__init__.py` ×3 (export maps), `simplemodel.py` ×3 (per-package
+dispatch), `choros.py:470`, `budget.py:196` + `budget_plotting.py:88` (hardcoded
+`"drn"` defaults), `mfsimbase.py:49`, `boundaries.py:81`, `utils/inputs.py:19`,
+`mp3du/particles.py` ×2, `parallel.py:229`.
+
+Full machine-readable inventory: re-run the sweep workflow
+(`docs/` has no copy — regenerate with the `package-declaration-inventory` workflow;
+6 agents, ~13 min) or read `src/` for the symbols above.
 
 #### 4.7.0 Make equivalence provable FIRST (do not skip)
 Golden-snapshot tests, landed before any refactor: (a) every `mf.<pkg>` public
@@ -599,8 +617,9 @@ structurally impossible and 5.3 becomes mechanical.
 ### 5.0 The pattern to replicate (read first)
 
 > **SUPERSEDED IN SPIRIT BY 4.7 (2026-07-18).** The "four pieces" below is the
-> minimum, not the whole job: riv/evt followed it exactly and still missed 6–8
-> declaration sites, because ~20 places encode package knowledge. If 4.7 has landed,
+> minimum, not the whole job: riv/evt followed it exactly and still left 33
+> unintended gaps, because **92 places** in `src/` encode package knowledge (see the
+> measured inventory in 4.7). If 4.7 has landed,
 > add the registry descriptor and let the surfaces derive — the list below is then
 > historical. If 4.7 has NOT landed, follow it AND grep for every hardcoded package
 > tuple/set first (4.7 lists the confirmed sites).
@@ -662,9 +681,9 @@ blue input hover.
 
 ### 5.3 GWT/GWE package-first helpers + model-type-aware core helpers
 
-> **PREFER 4.7 FIRST.** This sub-phase adds ~11 packages; at the current ~20
-> declaration sites each that is ~220 hand-edits at a measured ~50% miss rate. After
-> 4.7 it is one descriptor per package plus genuinely new physics code.
+> **PREFER 4.7 FIRST.** This sub-phase adds ~11 packages against a measured **92
+> per-package declaration sites** in `src/` (which today carry 33 unintended gaps).
+> After 4.7 it is one descriptor per package plus genuinely new physics code.
 
 **Part A — model-type dispatch (prerequisite for 5.5 and 6.1/6.2):** `mf.ic`/`mf.oc`/
 `mf.disv` hardcode `ModflowGwf*` classes (verified) so they cannot serve GWT/GWE models.
