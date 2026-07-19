@@ -110,26 +110,14 @@ def test_capabilities_match_the_live_flopy_signature(package):
     assert capabilities.observations == ("observations" in parameters), package
 
 
-def test_the_mover_list_equals_the_mover_capability():
-    """RETIRE WITH 4.7.3. Closes ledger entry 14.
-
-    ``MvrResultDiff._MOVER_PACKAGES`` carried ``rch`` for years even though MF6
-    has no RCH mover. It was harmless (the lookup is try-wrapped and found
-    nothing) and had been deliberately deferred rather than missed. 4.7.2 is
-    where the registry can finally state the truth from FloPy itself, so the
-    list was corrected to match and this asserts they agree exactly — a
-    stronger invariant than documenting the discrepancy.
-    """
-
-    from myflopy.project.model_results_diff import MvrResultDiff
-
-    hardcoded = set(MvrResultDiff._MOVER_PACKAGES)
-    truthful = {name for name in ALL_PACKAGES if spec(name).capabilities.mover}
-
-    assert hardcoded == truthful, (
-        f"only in the list: {sorted(hardcoded - truthful)}; "
-        f"only in the registry: {sorted(truthful - hardcoded)}"
-    )
+# RETIRED IN 4.7.3: ``test_the_mover_list_equals_the_mover_capability``.
+# ``MvrResultDiff._MOVER_PACKAGES`` is now DERIVED from
+# ``capabilities.mover``, so asserting the two agree would compare the registry
+# with itself and pass unconditionally. Coverage did not disappear, it moved
+# up the chain: ``test_capabilities_match_the_live_flopy_signature`` checks
+# ``capabilities.mover`` against the live FloPy constructor, and the derived
+# tuple inherits that guarantee. Ledger entry 14 (``rch`` wrongly listed) is
+# closed and the error class is now unrepresentable.
 
 
 def _record_fields_from_dfn(package: str) -> tuple[str, ...]:
@@ -228,15 +216,29 @@ def test_diffable_flags_match_model_diff():
         assert tiers.connection_diffable == (package in _CONNECTION_PACKAGES), package
 
 
-def test_results_diffable_flags_match_model_results_diff():
-    """RETIRE WITH 4.7.3."""
+# RETIRED IN 4.7.3: ``test_results_diffable_flags_match_model_results_diff``.
+# ``_CELL_BUDGET_PACKAGES`` is now derived from ``tiers.results_diffable``.
+# Unlike ``mover`` there is no independent source to check the flag against --
+# which packages are worth results-diffing is a judgment, and the descriptor is
+# now where that judgment lives. Behavioural coverage is in
+# ``tests/test_model_results_diff.py``, which exercises the diff end to end.
+
+
+def test_the_results_diff_namespace_still_covers_every_flagged_package():
+    """Guards the derivation itself: every flagged package must be reachable.
+
+    Not circular -- it checks the *consumer* can actually build a namespace for
+    each package the registry claims, which is the thing that would break if a
+    descriptor flag and the subsystem's real capability diverged.
+    """
 
     from myflopy.project.model_results_diff import _CELL_BUDGET_PACKAGES
 
-    for package in ALL_PACKAGES:
-        assert spec(package).tiers.results_diffable == (
-            package in _CELL_BUDGET_PACKAGES
-        ), package
+    flagged = {name for name in ALL_PACKAGES if spec(name).tiers.results_diffable}
+    assert flagged, "no package is flagged results_diffable"
+    assert set(_CELL_BUDGET_PACKAGES) == flagged
+    # uzf is deliberately absent -- it has no per-cell q term (ledger 4.7 gaps)
+    assert "uzf" not in flagged
 
 
 def test_artifact_flags_and_order_match_components():

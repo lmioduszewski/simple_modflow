@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.package_explorer import DiffSpatialView, FieldMappable
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.utils.datatypes.xsections import XSection
 from myflopy.project.group.lak import GroupLakStageResults
 from myflopy.project.group.results import GroupCellPackageResults
@@ -409,7 +410,13 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
 
 
 # Packages with a per-cell budget diff via group.packages.<pkg>.results.q.
-_CELL_BUDGET_PACKAGES = ("ghb", "drn", "chd", "riv", "wel", "rch", "evt", "sfr", "lak")
+# Derived from the registry (plan 4.7.3) -- adding a package to the descriptor
+# with ``results_diffable=True`` is now the only edit needed.
+_CELL_BUDGET_PACKAGES = tuple(
+    name
+    for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+    if spec.tiers.results_diffable
+)
 
 
 class CellResultsDiffNamespace(FieldMappable):
@@ -565,13 +572,15 @@ class MvrResultDiff(_ResultDiffBase):
     """
 
     # Packages MF6 accepts as mover providers/receivers, i.e. exactly those
-    # whose FloPy constructor exposes a ``mover`` option. CHD, EVT and RCH have
-    # none. ``rch`` sat in this tuple for years (ledger entry 14) doing nothing
-    # -- the term lookup below is try-wrapped, so it always found nothing --
-    # and was removed in 4.7.2 once the registry could state the truth.
-    # ``tests/test_package_descriptor.py`` now pins this tuple against
-    # ``PackageCapabilities.mover``; 4.7.3 deletes it in favour of the registry.
-    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "riv", "wel")
+    # whose FloPy constructor exposes a ``mover`` option (CHD, EVT and RCH have
+    # none). Derived from the registry as of 4.7.3; ``rch`` was wrongly listed
+    # here for years (ledger entry 14) and deriving it makes that class of
+    # error unrepresentable.
+    _MOVER_PACKAGES = tuple(
+        name
+        for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.capabilities.mover
+    )
     _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
     _COLUMNS = [
         "model", "package", "direction", "value", "n",
