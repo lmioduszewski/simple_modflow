@@ -252,22 +252,50 @@ def test_the_results_diff_namespace_still_covers_every_flagged_package():
     assert "uzf" not in flagged
 
 
-def test_artifact_flags_and_order_match_components():
-    """RETIRE WITH 4.7.3."""
+# RETIRED IN 4.7.3: ``test_artifact_flags_and_order_match_components``.
+# Both artifact sets are now derived from ``tiers``. The tests below target the
+# union's own failure modes instead.
 
-    from myflopy.project.components import (
-        PACKAGE_ARTIFACT_APPLY_ORDER,
-        SUPPORTED_PACKAGE_ARTIFACT_TYPES,
-    )
+
+def test_every_serializable_package_has_an_apply_order():
+    """A serializable package with no order silently falls back to 999.
+
+    That fallback would place it AFTER ``mvr`` (100), and the mover references
+    packages that must already exist — so the artifact would restore into a
+    model whose mover had already been applied against a missing package.
+    """
 
     for package in ALL_PACKAGES:
         tiers = spec(package).tiers
-        assert tiers.artifact_serializable == (
-            package in SUPPORTED_PACKAGE_ARTIFACT_TYPES
-        ), package
-        assert tiers.artifact_apply_order == PACKAGE_ARTIFACT_APPLY_ORDER.get(
-            package
-        ), package
+        if tiers.artifact_serializable:
+            assert tiers.artifact_apply_order is not None, package
+        else:
+            assert tiers.artifact_apply_order is None, package
+
+
+def test_artifact_apply_order_is_unambiguous_across_both_sources():
+    """Two packages sharing an order number have an undefined relative order."""
+
+    from myflopy.project.components import (
+        _NON_REGISTRY_ARTIFACT_ORDER,
+        PACKAGE_ARTIFACT_APPLY_ORDER,
+    )
+
+    orders = list(PACKAGE_ARTIFACT_APPLY_ORDER.values())
+    assert len(orders) == len(set(orders)), (
+        f"duplicate apply order: {sorted(PACKAGE_ARTIFACT_APPLY_ORDER.items())}"
+    )
+    assert orders == sorted(orders), "apply order dict must be ordered low-to-high"
+
+    # the structural packages must bracket the registry ones: static state
+    # first, mover last
+    registry_orders = [
+        spec(name).tiers.artifact_apply_order
+        for name in ALL_PACKAGES
+        if spec(name).tiers.artifact_apply_order is not None
+    ]
+    assert min(registry_orders) > _NON_REGISTRY_ARTIFACT_ORDER["npf"]
+    assert max(registry_orders) < _NON_REGISTRY_ARTIFACT_ORDER["mvr"]
 
 
 def test_model_accessor_flag_matches_simulation_base():

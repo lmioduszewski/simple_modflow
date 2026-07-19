@@ -31,29 +31,38 @@ def _list_bc_artifact_types() -> frozenset[str]:
 
 
 LIST_BC_ARTIFACT_TYPES = _list_bc_artifact_types()
-SUPPORTED_PACKAGE_ARTIFACT_TYPES = LIST_BC_ARTIFACT_TYPES | {
-    "ic",
-    "npf",
-    "uzf",
-    "lak",
-    "sfr",
-    "mvr",
-}
-PACKAGE_ARTIFACT_APPLY_ORDER = {
-    "ic": 10,
-    "npf": 20,
-    "rch": 30,
-    "evt": 35,
-    "chd": 40,
-    "wel": 45,
-    "drn": 50,
-    "ghb": 60,
-    "riv": 65,
-    "uzf": 70,
-    "lak": 80,
-    "sfr": 90,
-    "mvr": 100,
-}
+
+# Artifact-capable packages that carry no explorer metadata, so are absent from
+# the registry: static arrays (ic/npf) and the mover, which describes transfers
+# between packages rather than a package's own cells.
+_NON_REGISTRY_ARTIFACT_TYPES = {"ic", "npf", "mvr"}
+_NON_REGISTRY_ARTIFACT_ORDER = {"ic": 10, "npf": 20, "mvr": 100}
+
+# Registry-derived (plan 4.7.3). The order values matter: artifacts are
+# re-applied low-to-high so a package never lands before something it depends
+# on -- ic/npf establish the grid's static state first, the boundaries follow,
+# and mvr goes last because it references packages that must already exist.
+SUPPORTED_PACKAGE_ARTIFACT_TYPES = frozenset(
+    {
+        name
+        for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.tiers.artifact_serializable
+    }
+    | _NON_REGISTRY_ARTIFACT_TYPES
+)
+PACKAGE_ARTIFACT_APPLY_ORDER = dict(
+    sorted(
+        {
+            **{
+                name: spec.tiers.artifact_apply_order
+                for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+                if spec.tiers.artifact_apply_order is not None
+            },
+            **_NON_REGISTRY_ARTIFACT_ORDER,
+        }.items(),
+        key=lambda item: item[1],
+    )
+)
 
 
 class PackageCompatibilityError(ValueError):
