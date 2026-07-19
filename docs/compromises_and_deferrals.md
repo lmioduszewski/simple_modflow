@@ -139,18 +139,13 @@ done, plus one assurance gap in the review itself.
     review; entry kept as the record of what it found. Delete at the next
     ledger tidy.
 
-13. **`rch_spec` keeps the fragile `maxbound` inference that was removed from
-    `evt_spec`.**
-    - What: `evt_spec` no longer computes `maxbound` (it crashed on FloPy-native
-      inputs: a bare list, or a period set to `None`). `rch_spec`
-      (`advanced.py`) still does the identical `max(len(...) for ... .values())`
-      and still crashes the same way.
-    - Why: pre-existing, outside this diff's blast radius; changing it alters a
-      shipped package's spec contents.
-    - Impact: `mf.rch.flopy([...])` (bare-list form) raises AttributeError
-      where every other list BC accepts it.
-    - Revisit: spawned as a follow-up task; safe to fix (FloPy computes
-      MAXBOUND at write time) but wants its own test.
+13. ~~**`rch_spec` keeps the fragile `maxbound` inference.**~~
+    **RESOLVED 2026-07-18** — removed, matching `evt_spec` and every other list
+    BC. Verified behavior-preserving: FloPy computes `MAXBOUND` at write time and
+    the written `.rch` file is byte-identical (`MAXBOUND 3` for a 3-record
+    period). `test_list_bc_specs_accept_every_native_flopy_input_shape` now
+    covers all 7 list BCs against a bare list, a `None` period, and an empty
+    dict, and asserts none of them pre-compute `maxbound`.
 
 14. **`_MOVER_PACKAGES` still lists `rch`, which has no mover support.**
     - What: added `riv` (FloPy confirms `mover=True`); left the pre-existing

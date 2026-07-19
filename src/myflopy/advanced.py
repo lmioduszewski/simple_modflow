@@ -252,9 +252,12 @@ def rch_spec(
     """Return a list-based RCH (recharge) package spec from raw FloPy data.
 
     The data form behind ``mf.rch.flopy(...)``. Builds the list (cell-by-cell)
-    form of :class:`flopy.mf6.ModflowGwfrch`; ``maxbound`` is inferred from the
-    largest period's record count. (For the array form, or recharge derived from
-    GIS/PRISM rasters, use the ``mf.rch(...)`` / ``RCHBuilder`` high-level path.)
+    form of :class:`flopy.mf6.ModflowGwfrch`. ``maxbound`` is left to FloPy,
+    which computes it from ``stress_period_data`` at write time -- so every
+    native input shape (a dict of record lists, a bare list, periods set to
+    ``None``) passes through verbatim. (For the array form, or recharge derived
+    from GIS/PRISM rasters, use the ``mf.rch(...)`` / ``RCHBuilder`` high-level
+    path.)
 
     Parameters
     ----------
@@ -272,7 +275,6 @@ def rch_spec(
         name,
         {
             "stress_period_data": stress_period_data,
-            "maxbound": max((len(records) for records in stress_period_data.values()), default=0),
             "boundnames": boundnames,
             "save_flows": True,
             **options,

@@ -185,6 +185,28 @@ def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
         mf.evt.gpkg(gpkg, context=context, nper=1, rate="et_rate", nseg=2)
 
 
+def test_list_bc_specs_accept_every_native_flopy_input_shape():
+    # The *_spec factories promise native FloPy inputs are taken "verbatim".
+    # rch_spec and evt_spec used to pre-compute maxbound with
+    # `max(len(r) for r in spd.values())`, which assumes a dict of sized lists --
+    # so a bare list raised AttributeError and a None period raised TypeError,
+    # while every sibling accepted both. FloPy computes MAXBOUND at write time,
+    # so the inference was unnecessary as well as wrong. Cover all list BCs so
+    # neither reintroduces it.
+    shapes = {
+        "bare list": [[(0, 0), 1.0]],
+        "none period": {0: [[(0, 0), 1.0]], 1: None},
+        "empty dict": {},
+    }
+    for name in ("chd", "ghb", "drn", "riv", "wel", "rch", "evt"):
+        helper = getattr(mf, name)
+        for label, spd in shapes.items():
+            spec = helper.flopy(stress_period_data=spd)
+            assert spec.name == name, f"{name} / {label}"
+            # maxbound is FloPy's job; pre-computing it is what broke these
+            assert "maxbound" not in spec.options, f"{name} / {label}"
+
+
 def test_riv_evt_forward_optional_package_arguments():
     # nseg and auxiliary are forwarded, not silently defaulted: deleting either
     # forward in _EVTPackage/_RIVPackage would leave the spec at its default

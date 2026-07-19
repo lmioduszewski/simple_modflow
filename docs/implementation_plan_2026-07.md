@@ -573,8 +573,12 @@ doubles as a table of every current inconsistency.
 > loudly; the diff-property guard lives beside the `_DIFF_PACKAGES` invariant test
 > because `py.typed` makes a `__getattr__`-only package type as `Any` downstream.
 
-Remaining, small and independent, one commit each: artifact subsystem
-(`wel`/`riv`/`evt`); `rch_spec` maxbound (task already spawned).
+> **`rch_spec` maxbound DONE 2026-07-18** — removed (FloPy computes MAXBOUND at
+> write time; written file verified byte-identical). All 7 list BCs are now covered
+> against bare-list / `None`-period / empty-dict inputs.
+
+Remaining: the artifact subsystem (`components.py` -- `wel` is missing too, and
+predates riv/evt).
 
 #### 4.7.2 Grow the registry into a complete package descriptor
 Add what the other sites need: FloPy class, record field order, `.gpkg` field
