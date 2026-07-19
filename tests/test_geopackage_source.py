@@ -246,3 +246,64 @@ def test_geopackage_source_supports_cell_surface_offsets(tmp_path):
         "offset": "height_above_bottom",
         "minimum": "min_elev",
     }
+
+
+# ---------------------------------------------------------------------------
+# guards on the shared resolver body (plan 4.7.4)
+# ---------------------------------------------------------------------------
+
+
+def test_record_field_order_is_checked_against_the_descriptor():
+    """Silently reordering a record is the one mistake that runs and is wrong.
+
+    The seven resolvers now share one body, so a wrapper passing its fields in
+    the wrong order would build ``(cellid, rbot, cond, stage)`` for RIV -- a
+    model MF6 accepts and solves, with the river bottom used as the stage. The
+    shared body checks the order against ``gpkg_defaults`` instead of trusting
+    the call site.
+    """
+
+    import inspect
+
+    from myflopy.geopackage import GeoPackageSource
+    from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+
+    body = inspect.getsource(GeoPackageSource._bc_from_features)
+    assert "not in the descriptor's" in body, "the order assertion was removed"
+
+    # every resolver's own signature must list its fields in descriptor order,
+    # which is what that assertion compares against at run time
+    for package in ("chd", "ghb", "drn", "riv", "wel", "rch", "evt"):
+        expected = tuple(_PACKAGE_EXPLORER_SPECS[package].gpkg_defaults)
+        parameters = [
+            name
+            for name in inspect.signature(getattr(GeoPackageSource, package)).parameters
+            if name in expected
+        ]
+        assert tuple(parameters) == expected, (
+            f"{package}: resolver declares {tuple(parameters)}, "
+            f"descriptor says {expected}"
+        )
+
+
+def test_edges_only_is_rejected_for_packages_that_cannot_support_it():
+    """WEL/RCH/EVT map every intersecting cell; a silent no-op would mislead."""
+
+    import inspect
+
+    from myflopy.geopackage import GeoPackageSource
+    from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+
+    for package in ("wel", "rch", "evt"):
+        assert not _PACKAGE_EXPLORER_SPECS[package].capabilities.edges_only
+        # ...and the resolver does not offer the parameter at all, so the guard
+        # in the shared body is a backstop rather than the primary defence
+        assert "edges_only" not in inspect.signature(
+            getattr(GeoPackageSource, package)
+        ).parameters, package
+
+    for package in ("chd", "ghb", "drn", "riv"):
+        assert _PACKAGE_EXPLORER_SPECS[package].capabilities.edges_only
+        assert "edges_only" in inspect.signature(
+            getattr(GeoPackageSource, package)
+        ).parameters, package

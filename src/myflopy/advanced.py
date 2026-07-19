@@ -23,6 +23,7 @@ from typing import Any
 
 import flopy
 
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import PackageSpec
 
 
@@ -48,6 +49,47 @@ def _factory(constructor):
     # functools.partial over a module-level function (not a lambda) so the
     # resulting PackageSpec can be pickled and reused across variants/sessions.
     return functools.partial(_build_named, constructor)
+
+
+def _list_bc_spec(
+    package: str,
+    stress_period_data,
+    *,
+    name: str,
+    boundnames: bool,
+    **options,
+) -> PackageSpec:
+    """Build one cell-based list-BC spec from its registry descriptor.
+
+    The seven ``*_spec`` factories below are thin wrappers over this. They keep
+    their own names, signatures and docstrings -- those are the public,
+    IDE-facing surface and each documents a genuinely different boundary -- but
+    the body is here, once.
+
+    That is the point: the bodies had drifted before. ``evt_spec`` and
+    ``rch_spec`` each grew a ``maxbound`` that FloPy already computes from
+    ``stress_period_data`` at write time, which crashed on any period whose
+    record count differed. With one body, "we never set maxbound" is a property
+    of the shared implementation rather than something seven functions have to
+    independently keep remembering.
+
+    ``options`` is splatted last, so a caller can still override anything --
+    including ``save_flows``.
+    """
+
+    return PackageSpec(
+        name,
+        _factory(getattr(flopy.mf6, _PACKAGE_EXPLORER_SPECS[package].flopy_class)),
+        _named_options(
+            name,
+            {
+                "stress_period_data": stress_period_data,
+                "boundnames": boundnames,
+                "save_flows": True,
+                **options,
+            },
+        ),
+    )
 
 
 def wel_spec(
@@ -77,17 +119,14 @@ def wel_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "auxiliary": auxiliary,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "wel",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        auxiliary=auxiliary,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfwel), values)
 
 
 def chd_spec(
@@ -114,16 +153,13 @@ def chd_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "chd",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfchd), values)
 
 
 def drn_spec(
@@ -150,16 +186,13 @@ def drn_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "drn",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfdrn), values)
 
 
 def ghb_spec(
@@ -189,17 +222,14 @@ def ghb_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "auxiliary": auxiliary,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "ghb",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        auxiliary=auxiliary,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfghb), values)
 
 
 def riv_spec(
@@ -229,17 +259,14 @@ def riv_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "auxiliary": auxiliary,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "riv",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        auxiliary=auxiliary,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfriv), values)
 
 
 def rch_spec(
@@ -271,16 +298,13 @@ def rch_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "rch",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfrch), values)
 
 
 def evt_spec(
@@ -319,18 +343,15 @@ def evt_spec(
         Extra keyword options passed straight to the FloPy constructor.
     """
 
-    values = _named_options(
-        name,
-        {
-            "stress_period_data": stress_period_data,
-            "nseg": nseg,
-            "auxiliary": auxiliary,
-            "boundnames": boundnames,
-            "save_flows": True,
-            **options,
-        },
+    return _list_bc_spec(
+        "evt",
+        stress_period_data,
+        name=name,
+        boundnames=boundnames,
+        nseg=nseg,
+        auxiliary=auxiliary,
+        **options,
     )
-    return PackageSpec(name, _factory(flopy.mf6.ModflowGwfevt), values)
 
 
 def uzf_spec(

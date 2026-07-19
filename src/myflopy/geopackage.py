@@ -18,6 +18,7 @@ from myflopy.advanced import (
     riv_spec,
     wel_spec,
 )
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import ModelContext, PackageSpec
 
 SurfaceReference = str
@@ -97,6 +98,17 @@ def _required_value_fields(value: RowValue) -> set[str]:
     if isinstance(value, str):
         return {value}
     return set(value) if isinstance(value, (list, tuple)) else set()
+
+
+_SPEC_FACTORIES = {
+    "chd": chd_spec,
+    "drn": drn_spec,
+    "evt": evt_spec,
+    "ghb": ghb_spec,
+    "rch": rch_spec,
+    "riv": riv_spec,
+    "wel": wel_spec,
+}
 
 
 def _metadata_value(value: RowValue):
@@ -342,6 +354,50 @@ class GeoPackageSource:
             "period_base": self.period_base,
         }
 
+    def _bc_from_features(
+        self,
+        package: str,
+        *,
+        name: str,
+        boundnames: bool,
+        edges_only: bool = False,
+        options: dict[str, Any] | None = None,
+        **fields: RowValue,
+    ) -> PackageSpec:
+        """Map features to cells and build one list-BC spec, driven by the registry.
+
+        The seven public resolvers are thin wrappers over this. They keep their
+        own signatures -- each names its package's real columns with real
+        defaults, which is what makes ``mf.riv.gpkg(stage=..., rbot=...)``
+        discoverable -- while the mapping, the spec call and the provenance
+        metadata happen here once.
+
+        ``fields`` must be passed in MF6 record order; the assertion below
+        checks that against the descriptor rather than trusting the call site,
+        because silently reordering a record is the one mistake in this file
+        that would produce a model that runs and is wrong.
+        """
+
+        descriptor = _PACKAGE_EXPLORER_SPECS[package]
+        expected = tuple(descriptor.gpkg_defaults)
+        assert tuple(fields) == expected, (
+            f"{package}: fields {tuple(fields)} are not in the descriptor's "
+            f"record order {expected}"
+        )
+
+        data_options: dict[str, Any] = {"boundnames": boundnames}
+        if descriptor.capabilities.edges_only:
+            data_options["edges_only"] = edges_only
+        elif edges_only:
+            raise ValueError(f"{package} features cannot be restricted to grid edges.")
+
+        return _SPEC_FACTORIES[package](
+            self._boundary_data(*fields.values(), **data_options),
+            name=name,
+            boundnames=boundnames,
+            **(options or {}),
+        ).with_metadata(**self._metadata(package, **fields))
+
     def chd(
         self,
         *,
@@ -353,12 +409,10 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a CHD package spec from GeoPackage features."""
 
-        return chd_spec(
-            self._boundary_data(head, edges_only=edges_only, boundnames=boundnames),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(**self._metadata("chd", head=head))
+        return self._bc_from_features(
+            "chd", name=name, boundnames=boundnames, edges_only=edges_only,
+            options=options, head=head,
+        )
 
     def ghb(
         self,
@@ -372,17 +426,10 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a GHB package spec from GeoPackage features."""
 
-        return ghb_spec(
-            self._boundary_data(
-                head,
-                conductance,
-                edges_only=edges_only,
-                boundnames=boundnames,
-            ),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(**self._metadata("ghb", head=head, conductance=conductance))
+        return self._bc_from_features(
+            "ghb", name=name, boundnames=boundnames, edges_only=edges_only,
+            options=options, head=head, conductance=conductance,
+        )
 
     def drn(
         self,
@@ -396,18 +443,9 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a DRN package spec from GeoPackage features."""
 
-        return drn_spec(
-            self._boundary_data(
-                elevation,
-                conductance,
-                edges_only=edges_only,
-                boundnames=boundnames,
-            ),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(
-            **self._metadata("drn", elevation=elevation, conductance=conductance)
+        return self._bc_from_features(
+            "drn", name=name, boundnames=boundnames, edges_only=edges_only,
+            options=options, elevation=elevation, conductance=conductance,
         )
 
     def riv(
@@ -423,19 +461,9 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a RIV package spec from GeoPackage features."""
 
-        return riv_spec(
-            self._boundary_data(
-                stage,
-                conductance,
-                rbot,
-                edges_only=edges_only,
-                boundnames=boundnames,
-            ),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(
-            **self._metadata("riv", stage=stage, conductance=conductance, rbot=rbot)
+        return self._bc_from_features(
+            "riv", name=name, boundnames=boundnames, edges_only=edges_only,
+            options=options, stage=stage, conductance=conductance, rbot=rbot,
         )
 
     def wel(
@@ -448,12 +476,9 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a WEL package spec from GeoPackage features."""
 
-        return wel_spec(
-            self._boundary_data(rate, boundnames=boundnames),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(**self._metadata("wel", rate=rate))
+        return self._bc_from_features(
+            "wel", name=name, boundnames=boundnames, options=options, rate=rate,
+        )
 
     def rch(
         self,
@@ -465,12 +490,10 @@ class GeoPackageSource:
     ) -> PackageSpec:
         """Return a list-based RCH package spec from GeoPackage features."""
 
-        return rch_spec(
-            self._boundary_data(recharge, boundnames=boundnames),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(**self._metadata("rch", recharge=recharge))
+        return self._bc_from_features(
+            "rch", name=name, boundnames=boundnames, options=options,
+            recharge=recharge,
+        )
 
     def evt(
         self,
@@ -499,13 +522,9 @@ class GeoPackageSource:
                 "use mf.evt(...) / mf.evt.flopy(...) with nseg=."
             )
 
-        return evt_spec(
-            self._boundary_data(surface, rate, depth, boundnames=boundnames),
-            name=name,
-            boundnames=boundnames,
-            **options,
-        ).with_metadata(
-            **self._metadata("evt", surface=surface, rate=rate, depth=depth)
+        return self._bc_from_features(
+            "evt", name=name, boundnames=boundnames, options=options,
+            surface=surface, rate=rate, depth=depth,
         )
 
     def k_array(

@@ -503,3 +503,47 @@ same day, which is the useful part of the result.
     half of the old code independently. Note this survived 4.7.3(5/5), which
     edited the same file — deriving one list in a module does not find the
     others.
+
+## 4.7.4 collapse (2026-07-18)
+
+38. **The helper classes were NOT collapsed — the plan's premise was wrong.**
+    - What: plan §4.7.4 called for `_ListBCPackage(descriptor)` replacing the 7
+      `_CHDPackage`-style classes in `package_api.py`, on the stated grounds
+      that the file is "3,038 lines, mostly repeated structure". Measured, the
+      seven list-BC classes are 61% hand-written docstrings, 21% signatures and
+      17% executable body.
+    - Why declined (user decision, 2026-07-18): the collapse would delete ~747
+      lines of package-specific prose in favour of generated text, and replace
+      257 lines of explicit signatures with `**kwargs` — so
+      `mf.riv.gpkg(stage=..., rbot=...)` would lose its named parameters,
+      defaults and IDE completion. That trades the public surface's
+      discoverability, which the user has twice said they care about, for ~150
+      lines.
+    - Impact: the seven classes remain, each ~175 lines of mostly documentation.
+      Anyone adding a list BC still writes a helper class by hand — but it is a
+      docstring-writing exercise, not logic duplication, since the bodies are
+      now one-line delegations to the shared `*_spec`.
+    - Revisit: only if the *bodies* diverge again. Prose duplication is not the
+      thing 4.7 exists to remove.
+
+39. **4.7.4 added lines rather than removing them.**
+    - What: net +40 lines across `advanced.py` and `geopackage.py`, against a
+      plan that billed this as the "biggest LOC win".
+    - Why: the two shared bodies carry docstrings explaining the invariants they
+      now own (why `maxbound` is never set; why record order is asserted). The
+      deleted code was ~10-line dict literals with no explanation.
+    - Impact: the win is real but categorical rather than numeric — a divergence
+      class is gone. Do not use LOC as the success measure for 4.7.5/4.7.6.
+    - Revisit: n/a.
+
+40. **The record-order assertion is an `assert`, not a raise.**
+    - What: `_bc_from_features` uses a bare `assert` to check field order
+      against the descriptor, so it vanishes under `python -O`.
+    - Why: it guards an internal call-site contract (the seven wrappers), not
+      user input — the public signatures make the order unreachable from
+      outside. A `ValueError` would imply callers can trigger it.
+    - Impact: under `-O` a future wrapper written with swapped fields would
+      build a wrong model silently. Mitigated by
+      `test_record_field_order_is_checked_against_the_descriptor`, which also
+      checks each resolver's declared signature order statically.
+    - Revisit: if myflopy is ever run under `-O` in anger.

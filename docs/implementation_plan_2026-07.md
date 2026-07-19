@@ -668,13 +668,42 @@ cross-check rather than a circular one.
 > cross-checks the registry against the still-hardcoded group accessors. It is
 > what catches the next package added to the descriptor but not the group.
 
-#### 4.7.4 Collapse the per-package code
-One `_list_bc_spec(descriptor, data, **opts)` with the 7 named `*_spec` as thin
-wrappers (public names/signatures preserved); one `_bc_from_features(descriptor,
-**fields)` behind the 7 resolvers; one `_ListBCPackage(descriptor)` replacing the 7
-helper classes. Permanently kills the divergence class that produced the `evt_spec`
-maxbound crash. Biggest LOC win (`package_api.py` is 3,038 lines, mostly repeated
-structure) and the most public API touched — so do it LAST, behind 4.7.0.
+#### 4.7.4 Collapse the per-package code — DONE 2026-07-18 (scoped down)
+Shipped: one `_list_bc_spec(package, data, **opts)` behind the 7 named `*_spec`
+wrappers, and one `GeoPackageSource._bc_from_features(package, **fields)` behind
+the 7 resolvers. Every public name, signature and docstring is unchanged —
+**`api_snapshot.json` came out byte-identical, which is the proof.**
+
+**NOT shipped, and the plan text above was wrong to ask for it:**
+`_ListBCPackage(descriptor)` replacing the 7 helper classes. The premise
+("3,038 lines, mostly repeated structure") does not survive measurement. The
+seven list-BC classes are 1,230 lines:
+
+| | lines | share |
+|---|---|---|
+| docstrings | 747 | **61%** |
+| signatures | 257 | 21% |
+| executable bodies | 205 | 17% |
+
+It is repeated *shape around hand-written prose*, not repeated logic. Each
+docstring documents a genuinely different boundary (RIV's `rbot` cutover, DRN's
+one-way flow, EVT's extinction depth) with worked record layouts. Collapsing
+them would delete ~747 lines of prose in favour of generated text and replace
+257 lines of explicit signatures with `**kwargs` — losing named parameters,
+defaults and IDE completion on the public surface — to save ~150 lines of thin
+delegation. Declined by the user 2026-07-18 (ledger 38).
+
+**"Biggest LOC win" also did not hold.** The shipped collapse is +40 lines net:
+the two shared bodies carry real docstrings explaining the invariants, and that
+is worth more than the lines saved. The value delivered is the divergence class,
+not the line count — "we never set `maxbound`" is now a property of one shared
+implementation rather than something seven functions each have to remember,
+which is exactly the bug that crashed `evt_spec`/`rch_spec`.
+
+Two guards came free with the shared bodies, both mutation-verified: the record
+field order is checked against `gpkg_defaults` (a silently reordered RIV record
+builds a model that runs and is wrong), and `edges_only` is rejected for the
+packages whose descriptor says they cannot support it.
 
 #### 4.7.5 Extract `_ArealBuilder`; add `EVTBuilder`
 Lift `RCHBuilder`'s cell selection + value broadcasting into a shared base; `EVTBuilder`
