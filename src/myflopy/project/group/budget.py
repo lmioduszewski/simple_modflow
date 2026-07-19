@@ -19,24 +19,12 @@ class GroupBudget:
         self.group = group
         self.package = None if package is None else str(package).lower()
 
-    @staticmethod
-    def _normalize_nodes(frame: pd.DataFrame) -> pd.DataFrame:
-        """Normalize budget node columns to zero-based indexing when needed."""
-
-        normalized = frame.copy()
-        for column in ("node", "node2"):
-            if column in normalized.columns:
-                numeric = pd.to_numeric(normalized[column], errors="coerce")
-                mask = numeric.notna()
-                if mask.any():
-                    ints = numeric.loc[mask].astype(int)
-                    if int(ints.min()) >= 1:
-                        normalized[column] = numeric
-                        normalized.loc[mask, column] = (ints - 1).astype(float)
-                    else:
-                        normalized[column] = numeric
-                        normalized.loc[mask, column] = ints.astype(float)
-        return normalized
+    # NOTE: there is deliberately no node re-normalization here. ``model.bud()``
+    # already returns zero-based nodes (``budget_tables._zero_base_budget_frame``).
+    # This class used to re-apply an ``if node.min() >= 1: subtract 1`` heuristic
+    # on top of that, which is only valid on RAW MF6 records; on already-normalized
+    # frames it silently shifted every package that does not happen to touch cell 0
+    # one cell low. Pinned by tests/test_budget_node_basing.py.
 
     def get(
         self,
@@ -67,7 +55,6 @@ class GroupBudget:
                 renamed["level_1"] = "kstpkper"
             if renamed:
                 frame = frame.rename(columns=renamed)
-            frame = self._normalize_nodes(frame)
             frame["model"] = model_name
             frames.append(frame)
 

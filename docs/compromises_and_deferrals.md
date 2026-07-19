@@ -127,16 +127,14 @@ An ultracode review of the D8/riv/evt diff confirmed 9 findings; all were fixed
 done, plus one assurance gap in the review itself.
 
 12. ~~**The review that vetted this work was only ~50% complete.**~~
-    **RESOLVED 2026-07-18** — the review was re-run to completion (18/18 agents,
-    worktree-isolated; 4 confirmed of 14 claims). All four dropped dimensions
-    were adjudicated. It found: riv/evt `default_input` unpinned by any test;
-    `_PackageDiffNamespace` missing riv/evt properties (static-typing only);
-    and — the serious one — a **legacy budget off-by-one** for riv/evt, coupled
-    to a pre-existing double-subtraction in `group/budget.py` that makes
-    `group.bud('drn'|'ghb')` wrong today. Those findings are NOT yet fixed;
-    they are scheduled as plan **4.7.1** (they must be fixed together — fixing
-    either alone trades one off-by-one for another, verified). Entry retained
-    only as the pointer to that work; delete when 4.7.1 lands.
+    **RESOLVED 2026-07-18** — review re-run to completion (18/18 agents,
+    worktree-isolated; 4 confirmed of 14 claims). The **budget off-by-one is now
+    FIXED** (commit below): it was worse than reported — `model.bud()` returned
+    1-based nodes for **chd, riv, wel AND evt** (chd/wel predate riv/evt by
+    years), while `group.bud('drn'|'ghb')` came back one cell low. Both halves
+    were fixed together as required. Still open from that review, carried into
+    plan 4.7.1: riv/evt `default_input` unpinned by any test, and
+    `_PackageDiffNamespace` missing riv/evt properties (static-typing only).
 
 13. **`rch_spec` keeps the fragile `maxbound` inference that was removed from
     `evt_spec`.**

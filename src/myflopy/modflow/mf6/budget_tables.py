@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from myflopy.modflow.mf6.boundaries import Boundaries
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
@@ -49,8 +50,30 @@ def raw_budget(model: SimulationBase, gwf_package: str | None = None):
     return budget_reader.get_data(text=gwf_package)
 
 
+def _cell_based_budget_packages() -> frozenset[str]:
+    """Packages whose budget ``node`` is a model cell, from the package registry.
+
+    Derived rather than hardcoded: a hardcoded ``{"drn", "ghb", "rch"}`` silently
+    left ``chd``/``riv``/``wel``/``evt`` on MF6's raw 1-based node ids for as long
+    as those packages have existed (see ``tests/test_budget_node_basing.py``).
+    Advanced packages (SFR/LAK/UZF) are deliberately excluded -- their records
+    carry feature ids, not model cells, and are normalized on their own paths.
+    """
+
+    return frozenset(
+        name
+        for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.kind == "cell_stress"
+    )
+
+
 def _zero_base_budget_frame(frame: pd.DataFrame, gwf_package: str) -> pd.DataFrame:
     """Normalize package budget node columns to zero-based indexing when needed.
+
+    MF6 writes 1-based node ids; myflopy is zero-based throughout, so every
+    cell-based boundary package is shifted here exactly once. Callers must NOT
+    re-normalize the result -- doing so is what made ``group.bud('drn')`` come
+    back a cell low (fixed 2026-07-18).
 
     Notes
     -----
@@ -60,7 +83,7 @@ def _zero_base_budget_frame(frame: pd.DataFrame, gwf_package: str) -> pd.DataFra
     """
 
     normalized = frame.copy()
-    if gwf_package in {"drn", "ghb", "rch"}:
+    if gwf_package in _cell_based_budget_packages():
         index_names = normalized.index.names
         new_index = pd.MultiIndex.from_tuples([(int(node) - 1, kstpkper) for node, kstpkper in normalized.index])
         new_index = new_index.set_names(index_names)

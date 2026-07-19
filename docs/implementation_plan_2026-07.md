@@ -555,9 +555,18 @@ surfaces. Without this, "behavior-preserving" is a claim, not a fact. The snapsh
 doubles as a table of every current inconsistency.
 
 #### 4.7.1 Fix the live bugs first — do NOT refactor onto a broken baseline
-Small, independent, one commit each: the budget-basing pair (`budget_tables.py` set +
-delete `group/budget.py`'s `min()>=1` heuristic **in the same pass** — fixing either
-alone trades one off-by-one for another, verified); artifact subsystem
+> **Budget-basing pair DONE 2026-07-18.** Scope was larger than the review reported:
+> `model.bud()` returned MF6's raw 1-based nodes for **chd, riv, wel and evt** (chd
+> and wel long predate riv/evt), while `group.bud('drn'|'ghb')` came back one cell
+> low from a double-subtraction. Fixed together: `_zero_base_budget_frame` now derives
+> its package set from the registry's `cell_stress` entries instead of a hardcoded
+> `{"drn","ghb","rch"}` (a preview of 4.7.3), and `GroupBudget._normalize_nodes` is
+> deleted — `budget.df` is already normalized. New `tests/test_budget_node_basing.py`
+> pins all three paths (legacy `bud()`, group, and the registry explorer) against
+> ground truth taken from each package's own stress-period data; it failed 14 ways
+> before the fix.
+
+Remaining, small and independent, one commit each: artifact subsystem
 (`wel`/`riv`/`evt`); `default_input` pinned by a table-driven loop over all
 `cell_stress` entries (mirroring `test_colorscale_policy.py`); `_PackageDiffNamespace`
 riv/evt properties; `rch_spec` maxbound.
