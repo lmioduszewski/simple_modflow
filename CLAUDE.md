@@ -14,6 +14,17 @@ while `model.rch/uzf/sfr/lak` do — rot that predates riv/evt. Plan §4.7 conso
 these onto the existing `package_registry.py` descriptor and lists the sites. Note 6 of
 the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed".
 
+**What adding a package actually costs (measured 2026-07-18, plan 4.7.6):** one
+descriptor entry reaches **9 surfaces automatically** (diff tiers, mover list,
+budget basing, suffix map, all three artifact sets, budget term). **7 still need
+hand-writing**: the `<pkg>_spec` factory, the `package_api` helper class and the
+`GeoPackageSource` resolver — all deliberate, they carry prose and explicit
+signatures — plus four namespace properties (`ModelPackages`, `SimulationBase`,
+`GroupPackages`, `_PackageDiffNamespace`), which are deferred pending a
+registry-generated `.pyi`. `tests/test_package_descriptor_payoff.py` is the
+machine-checked version of this list and fails in BOTH directions: adding a
+hand-written site, or closing one without recording it.
+
 **As of 4.7.2 (2026-07-18) `package_registry.py` is the single source of per-package
 truth** — FloPy class, record fields, `.gpkg` defaults, capabilities, tier flags,
 file suffix, budget node basing, prose blurb, for all 10 packages. Adding a package

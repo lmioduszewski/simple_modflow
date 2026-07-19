@@ -711,11 +711,46 @@ becomes a thin subclass whose only new piece is `_resolve_surface` (delegating t
 existing `Surface`/`CellSurfaceOffset` engine, NOT reading `gdf_topbtm` directly).
 Resolves ledger entry 6.
 
-#### 4.7.6 The payoff test
-Register a synthetic package descriptor in a test and assert it appears automatically
-in every surface (spec factory, `.gpkg` resolver, helper, explorer, group, diff,
-artifacts, exports, suffix map, budget basing). If it passes, riv/evt's 6-site miss is
-structurally impossible and 5.3 becomes mechanical.
+#### 4.7.6 The payoff test — DONE 2026-07-18
+`tests/test_package_descriptor_payoff.py` registers a synthetic descriptor in a
+**fresh interpreter** (the derived lists are module-level constants, so it must
+inject before any consumer imports) and reports where it lands.
+
+**Measured answer: 9 surfaces automatic, 7 still hand-written.**
+
+| automatic (no second edit) | still hand-written |
+|---|---|
+| `_DIFF_PACKAGES` | `advanced.<pkg>_spec` ¹ |
+| `_CELL_BUDGET_PACKAGES` | `package_api.<pkg>` helper ¹ |
+| `_MOVER_PACKAGES` | `GeoPackageSource.<pkg>` ¹ |
+| `budget_tables.cell_based` | `ModelPackages.<pkg>` ² |
+| `run_model.suffix_map` | `SimulationBase.<pkg>` ² |
+| `components.LIST_BC` | `GroupPackages.<pkg>` ² |
+| `components.SUPPORTED` | `_PackageDiffNamespace.<pkg>` ² |
+| `components.APPLY_ORDER` | |
+| `registry.budget_term` | |
+
+¹ **deliberate** (ledger 38): named factories, helper classes and resolvers carry
+per-package prose and explicit signatures. Generating them costs documentation
+quality and IDE completion.
+² **deferred**: namespace properties. The "stays duplicated" note below says
+generating these degrades `diff.packages.riv` to `Any` downstream (the package
+ships `py.typed`), so closing them needs a checked-in `.pyi` generated from the
+registry — runtime generation alone is a regression.
+
+So the plan's "assert it appears in EVERY surface" was never achievable as
+written, and would have failed on day one. The test asserts the honest thing
+instead, and is a **ratchet in both directions**: a new hand-written site fails
+it, and so does closing one without moving the name out of `MANUAL_SURFACES` —
+progress must be recorded, not absorbed. All three failure modes are
+mutation-verified.
+
+**Is 5.3 mechanical now?** Partly, and measurably so. The artifact subsystem —
+where `wel` was missing for its entire life and `riv`/`evt` from birth — is now
+automatic, as are the diff tiers, suffix map and budget basing. What remains per
+new package is 3 documented declarations plus 4 namespace properties. The
+category that produced the original six-site miss is closed; the category that
+remains is visible, enumerated, and machine-checked.
 
 #### What deliberately STAYS duplicated (the "good reason not to" list)
 - **Static-typing surface.** Generated properties degrade `diff.packages.riv` to `Any`

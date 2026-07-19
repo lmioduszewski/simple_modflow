@@ -547,3 +547,45 @@ same day, which is the useful part of the result.
       `test_record_field_order_is_checked_against_the_descriptor`, which also
       checks each resolver's declared signature order statically.
     - Revisit: if myflopy is ever run under `-O` in anger.
+
+## 4.7.6 payoff test (2026-07-18)
+
+41. **The payoff test asserts 9-of-16 automatic, not "every surface".**
+    - What: plan §4.7.6 asked for a test that a synthetic descriptor "appears
+      automatically in every surface". Measured, 9 surfaces are automatic and 7
+      are not, so that assertion would have failed the day it was written.
+    - Why: 3 of the 7 are deliberate (ledger 38 — prose and signatures), and 4
+      are namespace properties deferred pending a registry-generated `.pyi`.
+      Neither group is an oversight; both are recorded decisions.
+    - Impact: the test asserts the true split and ratchets both ways, which is
+      strictly more useful than a green light that would have required lying
+      about scope. The plan text is corrected rather than the test weakened.
+    - Revisit: each time a manual surface is closed.
+
+42. **Four namespace properties remain hand-written, blocked on typing.**
+    - What: `ModelPackages.<pkg>`, `SimulationBase.<pkg>`, `GroupPackages.<pkg>`
+      and `_PackageDiffNamespace.<pkg>` must still be written per package.
+    - Why: generating them at runtime degrades `diff.packages.riv` to `Any` for
+      downstream users, because myflopy ships `py.typed` and static analysers
+      cannot see runtime-generated properties. The plan's own "stays
+      duplicated" list calls for emitting a checked-in `.pyi` from the registry
+      with a test that the stub matches — that is the real unit of work, and it
+      was never in 4.7.3's or 4.7.4's scope.
+    - Impact: this is the largest remaining per-package cost, and it is what
+      keeps 5.3 from being fully mechanical. Note `SimulationBase` accessors are
+      also *incomplete* today (rch/uzf/sfr/lak exist; chd/drn/ghb/wel/riv/evt do
+      not), so generating them would close a real gap as well as a DRY one.
+    - Revisit: as its own step, before or alongside 5.3.
+
+43. **The payoff probe runs in a subprocess.**
+    - What: `tests/test_package_descriptor_payoff.py` shells out to a fresh
+      interpreter rather than monkeypatching in-process.
+    - Why: the derived lists are module-level constants evaluated at import, so
+      an in-process injection would not propagate, and `importlib.reload` would
+      leave other modules holding stale references — actively dangerous under
+      `-n 10` with a session-scoped canonical model.
+    - Impact: ~1.6 s per run and the probe body lives as a string, so it is not
+      linted or type-checked. Kept short and assertion-free for that reason;
+      all judgment lives in the test module.
+    - Revisit: if the probe grows past ~60 lines, move it to a real file under
+      `scripts/` so it can be linted.
