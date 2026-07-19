@@ -14,6 +14,11 @@ while `model.rch/uzf/sfr/lak` do — rot that predates riv/evt. Plan §4.7 conso
 these onto the existing `package_registry.py` descriptor and lists the sites. Note 6 of
 the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed".
 
+**Changing the package API?** `tests/api_snapshot.json` pins every helper signature,
+`*_spec` output, and per-surface package list. If a change is intentional, rerun
+`python scripts/derive_api_snapshot.py` and **review the diff** — it is the public-API
+change log. An un-regenerated snapshot fails CI.
+
 ## Compromise ledger (standing user rule, 2026-07-17)
 **`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
 test-fidelity trade, judgment call, or considered-but-omitted optional inside

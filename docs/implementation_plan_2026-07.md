@@ -548,6 +548,20 @@ Full machine-readable inventory: re-run the sweep workflow
 6 agents, ~13 min) or read `src/` for the symbols above.
 
 #### 4.7.0 Make equivalence provable FIRST (do not skip)
+> **DONE 2026-07-19.** `tests/api_snapshot.json` (1,162 lines) + regeneration script
+> `scripts/derive_api_snapshot.py` + `tests/test_api_snapshot.py`. Covers all three
+> dimensions: **23** helper signatures (every public method, parameter kind and
+> default), **11** `*_spec` outputs from fixed literal inputs (name, builder identity,
+> `requires`, and `option_summary` so data payloads are summarized not dumped), and
+> **17** surfaces. Mutation-verified against the two failure modes 4.7.4 actually
+> risks: silently changing a helper default, and silently dropping an option from a
+> spec factory — both fail the snapshot. The script's `--check` mode runs inside the
+> test, so a snapshot nobody regenerated fails CI. Intentional API changes: rerun the
+> script and REVIEW THE DIFF, which is then the public-API change log for the PR.
+> A `test_snapshot_covers_the_whole_public_package_surface` guard stops the net
+> silently shrinking (a snapshot that stops covering something would still pass a
+> plain equality check).
+
 Golden-snapshot tests, landed before any refactor: (a) every `mf.<pkg>` public
 signature (methods, params, defaults); (b) every `*_spec` output (`options` dict +
 builder func/args) from fixed inputs; (c) the package set visible in each of the ~20
