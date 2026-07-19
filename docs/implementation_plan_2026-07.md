@@ -601,13 +601,35 @@ doubles as a table of every current inconsistency.
 > to the old hardcoded set. `tests/test_package_artifact_round_trip.py` covers all 7
 > list BCs end to end; mutation-verified.
 
-#### 4.7.2 Grow the registry into a complete package descriptor
-Add what the other sites need: FloPy class, record field order, `.gpkg` field
-defaults, capabilities (`edges_only`/`mover`/`auxiliary`/`boundnames` default), file
-suffix, budget text, **node basing**, tier flags (diffable, artifact-serializable),
-and a per-package prose blurb (see exceptions). Pure data + tests asserting the
-descriptor equals today's hardcoded values. **Zero behavior change** — the safe
-keystone.
+#### 4.7.2 Grow the registry into a complete package descriptor — DONE 2026-07-18
+Added to `PackageExplorerSpec`, for all 10 packages: `flopy_class` (a **string**,
+so the registry keeps zero imports and the deferred-import ratchet is
+undisturbed), `record_fields`, `gpkg_defaults`, `capabilities`
+(`mover`/`auxiliary`/`boundnames`/`observations`/`edges_only`), `tiers`
+(`diffable`/`connection_diffable`/`results_diffable`/`artifact_serializable`/
+`artifact_apply_order`/`model_accessor`), `file_suffix`, `zero_base_budget_nodes`,
+and a hand-written `blurb`. Budget text already existed via `ResultSpec`.
+
+**Nothing consumes it yet** — that is 4.7.3. The value is entirely in
+`tests/test_package_descriptor.py` (80 tests), where **every assertion reads the
+ORIGINAL source rather than repeating the literal**: capabilities against
+`inspect.signature` of the live FloPy class, `record_fields` against FloPy's own
+**dfn**, `gpkg_defaults` against the live `GeoPackageSource` signatures, tiers
+against the real tuples, node basing against `budget_tables`. A test that merely
+restated the registry would pass while the descriptor was wrong. Mutation-verified
+across five assertion families.
+
+**One behaviour change, deliberate:** `rch` was removed from
+`MvrResultDiff._MOVER_PACKAGES` (ledger entry 14, open since 5.1). MF6 has no RCH
+mover, the lookup was try-wrapped and always found nothing, so this is
+unobservable — and it turns a documented discrepancy into an equality invariant
+against `capabilities.mover`. The API snapshot caught it, was regenerated, and the
+diff is exactly that one line.
+
+> **Note for 4.7.3:** the tier/suffix/node-basing tests are marked
+> `RETIRE WITH 4.7.3` in the file. When a hardcoded list is deleted, its
+> assertion becomes circular and must be deleted in the same commit — otherwise
+> it silently stops testing anything.
 
 #### 4.7.3 Delete the hardcoded lists, one commit each, lowest risk first
 `_PACKAGE_SUFFIX_TO_TYPE` → `_DIFF_PACKAGES`/`_CELL_BUDGET_PACKAGES`/

@@ -29,8 +29,63 @@ class ResultSpec:
 
 
 @dataclass(frozen=True)
+class PackageCapabilities:
+    """What MF6/FloPy will accept for one package.
+
+    Mirrors the live FloPy constructor -- ``tests/test_package_descriptor.py``
+    asserts each flag against ``inspect.signature`` rather than against a
+    literal, so a FloPy upgrade that changes a package's options fails loudly
+    instead of leaving the registry quietly wrong.
+
+    ``edges_only`` is the odd one out: it is a *myflopy* capability, not an MF6
+    one -- whether ``GeoPackageSource.<pkg>`` can restrict mapped features to
+    perimeter cells. Only the head-dependent boundaries expose it.
+    """
+
+    mover: bool = False
+    auxiliary: bool = True
+    boundnames: bool = True
+    observations: bool = True
+    edges_only: bool = False
+
+
+@dataclass(frozen=True)
+class PackageTiers:
+    """Which cross-cutting subsystems cover one package.
+
+    These are deliberately separate booleans rather than one "supported" flag:
+    the subsystems genuinely disagree about which packages they handle, and
+    several of those disagreements are unintended gaps (plan 4.7). Recording
+    them per tier is what makes the gaps visible instead of implied.
+    """
+
+    #: input-diffable row-by-row (``model_diff._DIFF_PACKAGES``)
+    diffable: bool = False
+    #: input-diffed by connection/reach geometry (``_CONNECTION_PACKAGES``)
+    connection_diffable: bool = False
+    #: results-diffable per cell (``model_results_diff._CELL_BUDGET_PACKAGES``)
+    results_diffable: bool = False
+    #: capturable/restorable as a run artifact (``project.components``)
+    artifact_serializable: bool = False
+    #: relative order artifacts are re-applied in; None when not serializable
+    artifact_apply_order: int | None = None
+    #: has a direct ``SimulationBase.<pkg>`` accessor (several do NOT -- 4.7)
+    model_accessor: bool = False
+
+
+@dataclass(frozen=True)
 class PackageExplorerSpec:
-    """Registry metadata for one MF6 package explorer."""
+    """Registry metadata for one MF6 package explorer.
+
+    Plan 4.7.2 grew this from explorer-only metadata into the single source of
+    per-package truth. The fields below the original five are the knowledge
+    that was previously restated at ~92 sites across ``geopackage.py``,
+    ``package_api.py``, ``advanced.py``, ``run_model.py``, ``budget_tables.py``,
+    ``model_diff.py`` and ``components.py``. Nothing consumes them yet -- 4.7.3
+    deletes the hardcoded lists one at a time -- but every value is pinned by a
+    test that reads the ORIGINAL source, so the descriptor cannot drift away
+    from the code it is about to replace.
+    """
 
     name: str
     kind: str = "cell_stress"
@@ -39,6 +94,31 @@ class PackageExplorerSpec:
     inputs: dict[str, FieldSpec] = field(default_factory=dict)
     results: dict[str, ResultSpec] = field(default_factory=dict)
 
+    # -- 4.7.2: the knowledge the other sites currently restate ---------------
+    #: FloPy class NAME, not the class. Kept as a string so this module stays
+    #: import-free and the deferred-import ratchet is undisturbed; callers do
+    #: ``getattr(flopy.mf6, spec.flopy_class)``.
+    flopy_class: str | None = None
+    #: stress-period record fields AFTER the cellid, in MF6 order. Empty for
+    #: the advanced packages, whose input is packagedata, not a flat record.
+    record_fields: tuple[str, ...] = ()
+    #: ``GeoPackageSource.<pkg>`` parameter -> the column name it defaults to.
+    #: Empty when the package has no GeoPackage resolver.
+    gpkg_defaults: dict[str, str] = field(default_factory=dict)
+    capabilities: PackageCapabilities = field(default_factory=PackageCapabilities)
+    tiers: PackageTiers = field(default_factory=PackageTiers)
+    #: the MF6 input-file suffix (``model.<suffix>``)
+    file_suffix: str | None = None
+    #: MF6 reports this package's budget node numbers 1-based, so readers must
+    #: subtract one. True for the cell-stress list BCs; the advanced packages
+    #: report feature numbers instead. Got this wrong for years -- see the
+    #: budget off-by-one fixed in 4.7.1.
+    zero_base_budget_nodes: bool = False
+    #: one hand-written sentence naming what the package IS, hydrologically.
+    #: Not generated: prose stays human-written (see the deprecation policy's
+    #: companion rule for docstrings).
+    blurb: str = ""
+
 
 _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     # Colorscale policy: diverging red/white/blue is reserved for signed,
@@ -46,6 +126,20 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     # house brown-to-blue "earth" scale (the mounding-figure default).
     "rch": PackageExplorerSpec(
         name="rch",
+        flopy_class="ModflowGwfrch",
+        record_fields=("recharge",),
+        gpkg_defaults={"recharge": "recharge"},
+        capabilities=PackageCapabilities(mover=False, edges_only=False),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=30,
+            model_accessor=True,
+        ),
+        file_suffix="rch",
+        zero_base_budget_nodes=True,
+        blurb=("Areally distributed recharge applied to the top active cell."),
         default_input="recharge",
         colorscale="earth",
         inputs={
@@ -57,6 +151,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "chd": PackageExplorerSpec(
         name="chd",
+        flopy_class="ModflowGwfchd",
+        record_fields=("head",),
+        gpkg_defaults={"head": "head"},
+        capabilities=PackageCapabilities(mover=False, edges_only=True),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=40,
+            model_accessor=False,
+        ),
+        file_suffix="chd",
+        zero_base_budget_nodes=True,
+        blurb=(
+            "Constant-head cells that hold a prescribed head, sourcing or sinking whatever flow that requires."
+        ),
         default_input="head",
         colorscale="earth",
         inputs={
@@ -68,6 +178,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "drn": PackageExplorerSpec(
         name="drn",
+        flopy_class="ModflowGwfdrn",
+        record_fields=("elev", "cond"),
+        gpkg_defaults={"elevation": "elevation", "conductance": "conductance"},
+        capabilities=PackageCapabilities(mover=True, edges_only=True),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=50,
+            model_accessor=False,
+        ),
+        file_suffix="drn",
+        zero_base_budget_nodes=True,
+        blurb=(
+            "Drains that remove water only while head stands above the drain elevation, and never add any."
+        ),
         default_input="elev",
         colorscale="earth",
         inputs={
@@ -80,6 +206,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "ghb": PackageExplorerSpec(
         name="ghb",
+        flopy_class="ModflowGwfghb",
+        record_fields=("bhead", "cond"),
+        gpkg_defaults={"head": "head", "conductance": "conductance"},
+        capabilities=PackageCapabilities(mover=True, edges_only=True),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=60,
+            model_accessor=False,
+        ),
+        file_suffix="ghb",
+        zero_base_budget_nodes=True,
+        blurb=(
+            "General-head boundary: flow proportional to the difference between a distant boundary head and the cell head, through a fixed conductance."
+        ),
         default_input="bhead",
         colorscale="earth",
         inputs={
@@ -92,6 +234,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "riv": PackageExplorerSpec(
         name="riv",
+        flopy_class="ModflowGwfriv",
+        record_fields=("stage", "cond", "rbot"),
+        gpkg_defaults={"stage": "stage", "conductance": "conductance", "rbot": "rbot"},
+        capabilities=PackageCapabilities(mover=True, edges_only=True),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=65,
+            model_accessor=False,
+        ),
+        file_suffix="riv",
+        zero_base_budget_nodes=True,
+        blurb=(
+            "A river reach exchanging flow with the aquifer through a streambed conductance, limited by the bed bottom once the aquifer falls below it."
+        ),
         default_input="stage",
         colorscale="earth",
         inputs={
@@ -105,6 +263,20 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "wel": PackageExplorerSpec(
         name="wel",
+        flopy_class="ModflowGwfwel",
+        record_fields=("q",),
+        gpkg_defaults={"rate": "rate"},
+        capabilities=PackageCapabilities(mover=True, edges_only=False),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=45,
+            model_accessor=False,
+        ),
+        file_suffix="wel",
+        zero_base_budget_nodes=True,
+        blurb=("Wells injecting or withdrawing a specified volumetric rate, independent of head."),
         default_input="q",
         colorscale="RdBu",
         inputs={
@@ -116,6 +288,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "evt": PackageExplorerSpec(
         name="evt",
+        flopy_class="ModflowGwfevt",
+        record_fields=("surface", "rate", "depth"),
+        gpkg_defaults={"surface": "surface", "rate": "rate", "depth": "depth"},
+        capabilities=PackageCapabilities(mover=False, edges_only=False),
+        tiers=PackageTiers(
+            diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=35,
+            model_accessor=False,
+        ),
+        file_suffix="evt",
+        zero_base_budget_nodes=True,
+        blurb=(
+            "Evapotranspiration drawn from the water table at a rate that falls from a maximum at the ET surface to zero at the extinction depth."
+        ),
         default_input="rate",
         colorscale="earth",
         inputs={
@@ -129,6 +317,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "uzf": PackageExplorerSpec(
         name="uzf",
+        flopy_class="ModflowGwfuzf",
+        record_fields=(),
+        gpkg_defaults={},
+        capabilities=PackageCapabilities(mover=True, edges_only=False),
+        tiers=PackageTiers(
+            diffable=False,
+            results_diffable=False,
+            artifact_serializable=True,
+            artifact_apply_order=70,
+            model_accessor=True,
+        ),
+        file_suffix="uzf",
+        zero_base_budget_nodes=False,
+        blurb=(
+            "Unsaturated-zone flow routing infiltration through a vadose column before it reaches the water table, with optional vadose ET."
+        ),
         kind="uzf",
         inputs={
             "finf": FieldSpec("finf", label="UZF infiltration", colorscale="earth"),
@@ -160,6 +364,23 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "sfr": PackageExplorerSpec(
         name="sfr",
+        flopy_class="ModflowGwfsfr",
+        record_fields=(),
+        gpkg_defaults={},
+        capabilities=PackageCapabilities(mover=True, edges_only=False),
+        tiers=PackageTiers(
+            diffable=False,
+            connection_diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=90,
+            model_accessor=True,
+        ),
+        file_suffix="sfr",
+        zero_base_budget_nodes=False,
+        blurb=(
+            "Streamflow routing through connected reaches, exchanging with the aquifer along the way."
+        ),
         kind="surface_water",
         results={
             "q": ResultSpec("q", budget_text="SFR", value_name="q", colorscale="RdBu"),
@@ -167,6 +388,23 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
     "lak": PackageExplorerSpec(
         name="lak",
+        flopy_class="ModflowGwflak",
+        record_fields=(),
+        gpkg_defaults={},
+        capabilities=PackageCapabilities(mover=True, edges_only=False),
+        tiers=PackageTiers(
+            diffable=False,
+            connection_diffable=True,
+            results_diffable=True,
+            artifact_serializable=True,
+            artifact_apply_order=80,
+            model_accessor=True,
+        ),
+        file_suffix="lak",
+        zero_base_budget_nodes=False,
+        blurb=(
+            "A lake whose stage responds to its own water balance while it exchanges with the aquifer through lakebed connections."
+        ),
         kind="surface_water",
         results={
             "q": ResultSpec("q", budget_text="GWF", value_name="q", colorscale="RdBu"),

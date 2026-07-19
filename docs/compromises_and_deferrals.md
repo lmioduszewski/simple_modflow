@@ -63,8 +63,16 @@
 
 > Entries 6, 13 and 14 below are now **scheduled** rather than open-ended: plan
 > §4.7 (package declaration consolidation) absorbs them — 4.7.5 builds the
-> `_ArealBuilder`/`EVTBuilder` (entry 6), 4.7.1 fixes `rch_spec` (13) and the
-> budget/mover lists (14). They stay listed until the code actually lands.
+> `_ArealBuilder`/`EVTBuilder` (entry 6), 4.7.1 fixed `rch_spec` (13) and the
+> budget lists, and §4.7.2 carries the mover list (14). They stay listed until
+> the code actually lands.
+>
+> **Correction (2026-07-18):** this banner previously said 4.7.1 would fix
+> entry 14 (`rch` in `_MOVER_PACKAGES`). 4.7.1 shipped and did NOT — entry 14
+> itself always recorded that as a deliberate out-of-scope deferral, so the
+> banner overstated the promise, not the entry. Moved to 4.7.2, where `mover`
+> becomes a declared descriptor capability and the fix lands with its permanent
+> home. Flagged by the 2026-07-18 next-step survey.
 
 6. **No `EVTBuilder` (no file-less whole-domain EVT form).**
    - What: `mf.evt` has `()` / `.gpkg` / `.flopy` but no builder form like
@@ -147,12 +155,16 @@ done, plus one assurance gap in the review itself.
     covers all 7 list BCs against a bare list, a `None` period, and an empty
     dict, and asserts none of them pre-compute `maxbound`.
 
-14. **`_MOVER_PACKAGES` still lists `rch`, which has no mover support.**
-    - What: added `riv` (FloPy confirms `mover=True`); left the pre-existing
-      `rch` entry, which FloPy shows has no `mover` option.
-    - Why: harmless — the budget-term lookup is `try`-wrapped and finds
-      nothing — and removing it is an out-of-scope behavior change.
-    - Revisit: whenever the mover diff is next touched.
+14. ~~**`_MOVER_PACKAGES` still lists `rch`, which has no mover support.**~~
+    **RESOLVED 2026-07-18 in 4.7.2.** `rch` removed; the tuple is now exactly
+    the seven packages whose FloPy constructor exposes `mover`
+    (`drn ghb riv wel uzf sfr lak`). Unobservable — MF6 has no RCH mover, so the
+    try-wrapped lookup always found nothing — and it upgrades a documented
+    discrepancy into an equality invariant: `test_the_mover_list_equals_the_mover_capability`
+    asserts the tuple equals `PackageCapabilities.mover` derived from live FloPy.
+    The API snapshot caught the change and its diff is that one line.
+    (A survey agent claimed `ghb` was wrong here too; checked against live
+    FloPy — GHB **is** a valid MF6 mover provider, so only `rch` was wrong.)
 
 15. **RIV/EVT input maps hover one field at a time (unchanged from entry 8).**
     - Confirmed still true post-review; the generic per-field hover is what all
@@ -347,3 +359,60 @@ done, plus one assurance gap in the review itself.
       runs and so belongs in the weekly lane, not per-push CI.
     - Revisit: next time the canonical model's physics is touched, or sooner if
       the calibration test ever fails.
+
+## Package descriptor — plan 4.7.2 (2026-07-18)
+
+27. **The descriptor is written but not yet read.**
+    - What: all nine knowledge fields now live on `PackageExplorerSpec`, but
+      every consumer still uses its own hardcoded list. Nothing behaves
+      differently.
+    - Why: that is the design. 4.7.2 is deliberately zero-behaviour-change so
+      the risky part (4.7.3/4.7.4 deleting ~92 sites) starts from a descriptor
+      already *proven* equal to the code it replaces.
+    - Impact: temporary duplication — the truth exists twice until 4.7.3. The
+      duplication is safe because `tests/test_package_descriptor.py` fails the
+      moment the two disagree.
+    - Revisit: 4.7.3, one list per commit.
+
+28. **The `RETIRE WITH 4.7.3` tests become circular the moment they are wrong.**
+    - What: the tier, suffix and node-basing assertions compare the descriptor
+      against the hardcoded list. Once 4.7.3 deletes a list and derives it from
+      the descriptor, that test compares the registry with itself and passes
+      unconditionally.
+    - Why: unavoidable for a "prove equality before replacing" step — the test
+      is a migration scaffold, not a permanent invariant.
+    - Impact: a stale scaffold would give false confidence, which is worse than
+      no test. Each is marked `RETIRE WITH 4.7.3` in the file, the obligation is
+      stated in the module docstring, in CLAUDE.md, and in the plan.
+    - Revisit: delete each assertion in the same commit that deletes its list.
+
+29. **`evt.record_fields` records the `nseg=1` prefix, not the full record.**
+    - What: FloPy's dfn lists `surface rate depth pxdp petm petm0`; the
+      descriptor carries `("surface", "rate", "depth")`.
+    - Why: myflopy's GeoPackage path supports `nseg=1` only and raises on
+      anything else (entry 7), so the segmented tail has no generator to feed.
+    - Impact: 4.7.4 must not assume `record_fields` is the complete MF6 record
+      for every package. The test asserts it IS a prefix of the dfn rather than
+      hardcoding three names, so a reordering upstream still fails.
+    - Revisit: with entry 7, if segmented ET from GIS is ever built.
+
+30. **The registry still covers GWF packages only.**
+    - What: 10 GWF packages are described; the GWT/GWE/PRT analogues are absent.
+    - Why: plan 5.3 adds those packages and is explicitly gated behind 4.7.
+      Describing packages that do not yet have a package-first surface would be
+      speculative.
+    - Impact: 5.3 must extend the descriptor rather than assume it is complete —
+      which is precisely the discipline 4.7 exists to establish.
+    - Revisit: 5.3.
+
+31. **`gpkg_defaults` records parameter names, not MF6 record names.**
+    - What: for DRN it is `{"elevation": "elevation", "conductance": "conductance"}`
+      while `record_fields` is `("elev", "cond")`. The two vocabularies differ
+      on purpose — GeoPackage columns are user-facing and verbose, MF6 record
+      fields are terse.
+    - Why: the resolver signature is the contract for `.gpkg` callers; renaming
+      either side to match the other would be a breaking API change for no gain.
+    - Impact: 4.7.4 needs an explicit mapping between the two when it collapses
+      the resolvers, not a naive zip. Both are pinned against live sources, so
+      the mapping can be derived rather than guessed.
+    - Revisit: 4.7.4.

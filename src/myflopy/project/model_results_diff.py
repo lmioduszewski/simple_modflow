@@ -564,11 +564,14 @@ class MvrResultDiff(_ResultDiffBase):
     those terms per package and direction across models.
     """
 
-    # Packages MF6 accepts as mover providers/receivers (FloPy exposes a
-    # ``mover`` option on each). EVT is absent because it has none; "rch" is a
-    # pre-existing entry that also has none -- harmless, the term lookup below
-    # is try-wrapped and simply finds nothing.
-    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "riv", "wel", "rch")
+    # Packages MF6 accepts as mover providers/receivers, i.e. exactly those
+    # whose FloPy constructor exposes a ``mover`` option. CHD, EVT and RCH have
+    # none. ``rch`` sat in this tuple for years (ledger entry 14) doing nothing
+    # -- the term lookup below is try-wrapped, so it always found nothing --
+    # and was removed in 4.7.2 once the registry could state the truth.
+    # ``tests/test_package_descriptor.py`` now pins this tuple against
+    # ``PackageCapabilities.mover``; 4.7.3 deletes it in favour of the registry.
+    _MOVER_PACKAGES = ("lak", "sfr", "uzf", "drn", "ghb", "riv", "wel")
     _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
     _COLUMNS = [
         "model", "package", "direction", "value", "n",

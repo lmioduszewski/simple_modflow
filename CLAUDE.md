@@ -14,6 +14,16 @@ while `model.rch/uzf/sfr/lak` do — rot that predates riv/evt. Plan §4.7 conso
 these onto the existing `package_registry.py` descriptor and lists the sites. Note 6 of
 the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed".
 
+**As of 4.7.2 (2026-07-18) `package_registry.py` is the single source of per-package
+truth** — FloPy class, record fields, `.gpkg` defaults, capabilities, tier flags,
+file suffix, budget node basing, prose blurb, for all 10 packages. Adding a package
+means adding ONE descriptor entry there. The ~92 hardcoded sites still exist and are
+still authoritative until 4.7.3 deletes them one at a time; until then
+`tests/test_package_descriptor.py` proves the descriptor equals them, asserting
+against the live FloPy signature/dfn and the real lists rather than repeating
+literals. Its `RETIRE WITH 4.7.3` tests must be deleted as each list goes, or they
+become circular and stop testing anything.
+
 **Changing the package API?** `tests/api_snapshot.json` pins every helper signature,
 `*_spec` output, and per-surface package list. If a change is intentional, rerun
 `python scripts/derive_api_snapshot.py` and **review the diff** — it is the public-API
@@ -40,7 +50,7 @@ entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
 ## Test suite (fast by design)
-- Full 636-test suite: `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
+- Full suite (**705 passed / 1 skipped**, 2026-07-18): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
   addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
