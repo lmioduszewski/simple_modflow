@@ -40,6 +40,59 @@ def test_canonical_fixture_enforces_complete_model_contract(canonical_model):
     assert areas.loc[canonical_model.get_region_cells("all_streams")].median() < areas.median() * 0.90
 
 
+def test_canonical_evt_and_uzf_footprints_stay_disjoint(canonical_model):
+    """EVT (groundwater ET) must never overlap UZF (unsaturated-zone ET).
+
+    The canonical UZF runs with ``simulate_et`` auto-enabled (it is passed
+    ``pet``/``extdp``) but WITHOUT ``linear_gwet``/``square_gwet``, so it removes
+    ET from the vadose zone only, while EVT removes it from groundwater. Applying
+    both to the same cells would double-count a single PET demand. UZF covers the
+    valley floor, EVT the walls -- if a future change grows either footprint into
+    the other, this fails instead of silently double-counting.
+    """
+
+    evt_cells = set(canonical_model.get_region_cells("upland_et"))
+    uzf_cells = set(canonical_model.get_region_cells("uzf_active"))
+
+    assert evt_cells, "canonical model exposes no EVT region"
+    assert uzf_cells, "canonical model exposes no UZF region"
+    assert not (evt_cells & uzf_cells), (
+        "EVT and UZF share cells -> ET is double-counted: "
+        f"{sorted(evt_cells & uzf_cells)[:10]}"
+    )
+    # the un-routed outlet river is likewise carved out of the UZF footprint,
+    # exactly as the lake and stream cells are
+    riv_cells = set(canonical_model.get_region_cells("outlet_river"))
+    assert riv_cells and not (riv_cells & uzf_cells)
+
+
+def test_canonical_riv_and_evt_carry_real_flux(canonical_run):
+    """riv/evt are contract packages, so they must do physical work, not just exist."""
+
+    riv = canonical_run.packages.riv.results.q.get()
+    assert not riv.empty
+    # an outlet river in equilibrium with the water table both gains and loses;
+    # this also keeps the signed-q RdBu colorscale exercised in both directions
+    assert riv["q"].min() < 0.0 < riv["q"].max()
+
+    evt = canonical_run.packages.evt.results.q.get()
+    assert not evt.empty
+    assert (evt["q"] <= 0.0).all(), "ET may only remove water"
+    period0 = evt[evt["per"] == evt["per"].min()]
+    active = int((period0["q"].abs() > 1e-9).sum())
+    # a strict subset transpires: cells shallower than the extinction depth draw
+    # water, deeper ones yield exactly zero -- that partition IS the feature
+    assert 0 < active < len(period0)
+
+    expected_fields = {
+        "riv": {"stage", "cond", "rbot"},
+        "evt": {"surface", "rate", "depth"},
+    }
+    for package, fields in expected_fields.items():
+        columns = set(getattr(canonical_run.packages, package).inputs.get().columns)
+        assert fields <= columns, f"{package} inputs missing {sorted(fields - columns)}"
+
+
 def test_master_example_full_profile_boundary_heads_stay_above_cell_bottoms():
     workspace = ROOT / ".pytest-work" / "master_example_full_boundary_check"
     shutil.rmtree(workspace, ignore_errors=True)

@@ -21,7 +21,7 @@
      (`SIMPLE_MODFLOW_CANONICAL_PROFILE=validation`), the 100×100 full profile
      only manually.
    - Why: full suite 11m44s → 47.5s; every profile is contract-complete (all
-     13 packages + 5 obs families), so *feature* coverage is unchanged.
+     15 packages + 5 obs families), so *feature* coverage is unchanged.
    - Impact: day-to-day tests exercise smaller matrices; resolution-dependent
      numerical regressions would surface weekly, not per-push.
    - Revisit: if a bug ever slips through that validation() would have caught,
@@ -100,18 +100,18 @@
    - Revisit: if multi-field input hover is wanted, add it for ALL list BCs
      at once, not riv alone.
 
-9. **RIV/EVT are not in the canonical model.**
-   - What: the canonical valley model (and its 13-package contract) was not
-     extended; riv/evt e2e coverage lives in
-     `test_geopackage_specs_run_through_project` (small 2-cell MF6 run with
-     explorer/colorscale assertions).
-   - Why: touching the canonical contract ripples through every profile,
-     fixture, notebook, and the parallel-split/PEST suites — out of proportion
-     for two list BCs whose machinery is shared with proven siblings.
-   - Impact: riv/evt never run inside the big integration matrix (groups,
-     diffs, PEST, splits all exercise the canonical model only).
-   - Revisit: if riv/evt-specific integration bugs appear, or at the next
-     deliberate canonical-contract revision.
+9. ~~**RIV/EVT are not in the canonical model.**~~
+   **RESOLVED 2026-07-18.** Both are now contract packages (13 → 15), so they
+   run inside the full integration matrix (groups, diffs, PEST, parallel
+   splits). Placement was chosen to avoid double-counting ET: **EVT sits on the
+   valley walls alongside RCH** (the standard recharge/ET pairing) and is
+   **disjoint from UZF**, which covers the floor and — verified — runs with
+   `simulate_et` auto-enabled but no `linear_gwet`/`square_gwet`, i.e. vadose-zone
+   ET only. **RIV is the un-routed outlet river below the lake** (xn 0.92–0.99),
+   carved out of the UZF footprint exactly as the lake/stream cells are.
+   Pinned by `test_canonical_evt_and_uzf_footprints_stay_disjoint` (mutation-tested:
+   growing UZF onto the walls fails it) and
+   `test_canonical_riv_and_evt_carry_real_flux`.
 
 10. **RIV/EVT are not PEST `parameterize` targets.**
     - What: `cal.parameterize` supports `chd`/`ghb.cond`/`drn.cond`/`wel`

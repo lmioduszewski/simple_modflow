@@ -658,7 +658,9 @@ colorscale assertions in the style of `test_hover_integration.py`.
 > Input hover rides the generic per-field `cell_input_hover` path like every other
 > list BC (no bespoke extra-fields hover was needed). MF6 e2e:
 > `test_geopackage_specs_run_through_project` runs RIV and asserts explorer
-> table/colorscales on the completed run.
+> table/colorscales on the completed run. **Canonical integration DONE 2026-07-18:**
+> RIV is the un-routed outlet river below the lake (xn 0.92-0.99), carved out of
+> the UZF footprint like the lake/stream cells; contract now 15 packages.
 
 RIV records `(cellid, stage, cond, rbot)`. All four pieces; `.gpkg` with surface
 references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=("cond",
@@ -674,6 +676,11 @@ references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=
 > RCH *builder* form (domain-computed top-active cells) stays RCH-specific;
 > `CellSurfaceOffset` on `.gpkg` covers "surface = cell top ± offset". Revisit only on
 > real demand. MF6 e2e: `test_geopackage_specs_run_through_project`.
+> **Canonical integration DONE 2026-07-18:** EVT sits on the valley walls beside
+> RCH (standard recharge/ET pairing) and is DISJOINT from UZF, which does
+> vadose-zone ET only (`simulate_et` auto-on via pet/extdp, no linear/square_gwet).
+> Overlapping them would double-count one PET demand; the disjointness is pinned
+> by `test_canonical_evt_and_uzf_footprints_stay_disjoint`.
 
 EVT `(cellid, surface, rate, depth [, pxdp, petm, petm0])`; `nseg` via options. Reuse the
 RCH areal-mapping prior art (`RCHBuilder`, `GeoPackageSource.rch`). Earth colorscale,

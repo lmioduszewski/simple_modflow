@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, Polygon
 
+from myflopy.advanced import evt_spec, riv_spec
 from myflopy.modflow.mf6.canonical import (
     CANONICAL_MODEL_CONTRACT,
     irregular_voronoi_grid,
@@ -323,6 +324,39 @@ def build_transient_model(
     }
     Recharge(model=model, rch_dict=mountain_front_recharge)
 
+    # --- EVT: upland groundwater ET on the same walls as the recharge --------
+    # Deliberately co-located with RCH (net flux = recharge - ET, the standard
+    # pairing) and deliberately DISJOINT from UZF, which covers the valley floor
+    # only. UZF runs with simulate_et auto-enabled (it is passed pet/extdp) but
+    # WITHOUT linear_gwet/square_gwet, so it removes ET from the unsaturated zone
+    # alone; EVT removes it from groundwater. Applying both to the same cells
+    # would double-count one PET demand, so the footprints must not overlap.
+    # extdp is sized against the measured wall depth-to-water (~5.8-29 m): the
+    # shallower toe-of-slope cells transpire, the deep ones yield zero, which is
+    # exactly what an extinction depth means.
+    evt_surface = top  # land surface
+    evt_data = {
+        period: [
+            [
+                (0, int(cell)),
+                float(evt_surface[cell]),
+                float(1.3e-4 * (1.0 + 0.30 * np.sin(period * 2.0 * np.pi / config.nper))),
+                18.0,
+            ]
+            for cell in wall
+        ]
+        for period in range(config.nper)
+    }
+    evt_spec(evt_data, name="evt").build(model.gwf)
+    model.add_region_from_cells(
+        "upland_et",
+        [(0, int(cell)) for cell in wall],
+        category="boundary",
+        package="evt",
+        tags=["evt"],
+        overwrite=True,
+    )
+
     # --- WEL: shallow (L2) and deep (L4) valley-floor pumping ----------------
     # Period 0 is a no-pump steady-state baseline so drawdown/capture is the
     # difference between any pumping period and period 0.
@@ -483,14 +517,55 @@ def build_transient_model(
     )
     mvr.build().build(model.gwf)
 
-    # --- UZF: unsaturated zone + ET across the valley floor ------------------
     lake_cells = {int(cell) for cells in lak.lake_cells.values() for cell in cells}
     stream_cells = {int(cell) for cells in sfr.stream_cells.values() for cell in cells}
+
+    # --- RIV: the un-routed outlet river below the lake ----------------------
+    # The SFR network terminates in the lake; this is the river carrying its
+    # outflow east to the valley mouth. It is a RIV rather than an SFR reach
+    # precisely because it needs no routing -- the textbook reason to choose RIV.
+    # It sits between the lake's east shore (xn 0.92) and the GHB column (xn 1.0),
+    # and is excluded from UZF below exactly as the lake and stream cells are.
+    outlet = (xn > 0.92) & (xn < 0.99) & (across < 0.25)
+    riv_cells = [
+        int(cell)
+        for cell in np.flatnonzero(outlet)
+        if cell not in lake_cells and cell not in stream_cells
+    ]
+    if not riv_cells:
+        raise ValueError("canonical model: the outlet-river band selected no cells.")
+    riv_data = {
+        period: [
+            [
+                (0, cell),
+                float(regional[cell] - 5.0),   # stage: incised outlet channel
+                150.0 + 20.0 * (cell % 3),      # streambed conductance
+                float(regional[cell] - 9.0),   # rbot, kept below the water table
+            ]
+            for cell in riv_cells
+        ]
+        for period in range(config.nper)
+    }
+    riv_spec(riv_data, name="riv").build(model.gwf)
+    model.add_region_from_cells(
+        "outlet_river",
+        [(0, cell) for cell in riv_cells],
+        category="boundary",
+        package="riv",
+        tags=["riv"],
+        overwrite=True,
+    )
+
+    # --- UZF: unsaturated zone + ET across the valley floor ------------------
+    riv_cell_set = set(riv_cells)
     floor = (across < 0.62)
     uzf_cells = [
         (0, cell)
         for cell in range(config.ncpl)
-        if floor[cell] and cell not in lake_cells and cell not in stream_cells
+        if floor[cell]
+        and cell not in lake_cells
+        and cell not in stream_cells
+        and cell not in riv_cell_set
     ]
     infiltration_pond_cells = [
         cell
