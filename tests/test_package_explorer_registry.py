@@ -76,6 +76,43 @@ def test_package_explorer_facade_reexports_split_module_surfaces():
     assert expected.issubset(set(package_explorer.__all__))
 
 
+def test_every_cell_bc_default_input_is_pinned():
+    """``default_input`` drives every bare ``inputs.map()`` -- pin all of them.
+
+    Table-driven on purpose (same shape as ``test_colorscale_policy``): rch/drn/wel
+    were pinned individually, so chd/ghb/riv/evt drifted in unpinned. Swapping
+    riv "stage" -> "cond" or evt "rate" -> "depth" passed the whole suite before
+    this existed, silently changing what every bare riv/evt map draws.
+
+    The rule the values follow: head-like BCs default to their driving head,
+    flux-like BCs default to their flux.
+    """
+
+    expected = {
+        "chd": "head",       # driving head
+        "drn": "elev",       # driving head (drain elevation)
+        "ghb": "bhead",      # driving head
+        "riv": "stage",      # driving head
+        "rch": "recharge",   # flux
+        "wel": "q",          # flux
+        "evt": "rate",       # flux
+    }
+    from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+
+    cell_bcs = {
+        name for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.kind == "cell_stress"
+    }
+    assert cell_bcs == set(expected), (
+        "a cell BC was added or removed without pinning its default_input: "
+        f"{sorted(cell_bcs ^ set(expected))}"
+    )
+    for package, field in expected.items():
+        assert get_default_package_value_column(package) == field, package
+        # the default must be a real declared field, not a typo
+        assert field in _PACKAGE_EXPLORER_SPECS[package].inputs, package
+
+
 def test_package_explorer_registry_preserves_existing_defaults():
     assert get_default_package_value_column("rch") == "recharge"
     assert get_default_package_value_column("drn") == "elev"

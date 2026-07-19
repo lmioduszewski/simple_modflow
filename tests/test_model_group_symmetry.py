@@ -77,6 +77,20 @@ def test_diff_tier_covers_exactly_the_group_cell_bc_accessors(group):
         f"{sorted(group_bcs - set(_CELL_BUDGET_PACKAGES))}"
     )
 
+    # ...and each is reachable as an EXPLICIT property, not just via __getattr__.
+    # The package ships py.typed, so a package resolved only through __getattr__
+    # types as Any downstream -- indistinguishable from a typo (2026-07-18 review).
+    from myflopy.project.model_diff import _PackageDiffNamespace
+
+    declared = {
+        name for name, value in vars(_PackageDiffNamespace).items()
+        if isinstance(value, property)
+    }
+    assert group_bcs <= declared, (
+        "diff.packages.<pkg> resolves at runtime but is invisible to static "
+        f"analysis for: {sorted(group_bcs - declared)}"
+    )
+
 
 def test_inputs_accessor_exposes_the_standard_verbs(group):
     inputs = group.packages.ghb.inputs

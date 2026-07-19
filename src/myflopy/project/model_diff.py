@@ -648,9 +648,19 @@ class _PackageDiffNamespace:
         return _BcPackageDiffNode(self._diff, "ghb")
 
     @property
+    def riv(self) -> _BcPackageDiffNode:
+        """River (RIV) difference node."""
+        return _BcPackageDiffNode(self._diff, "riv")
+
+    @property
     def wel(self) -> _BcPackageDiffNode:
         """Well (WEL) difference node."""
         return _BcPackageDiffNode(self._diff, "wel")
+
+    @property
+    def evt(self) -> _BcPackageDiffNode:
+        """Evapotranspiration (EVT) difference node."""
+        return _BcPackageDiffNode(self._diff, "evt")
 
     @property
     def lak(self) -> _LakDiffNode:

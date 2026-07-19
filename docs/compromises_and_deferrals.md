@@ -132,9 +132,12 @@ done, plus one assurance gap in the review itself.
     FIXED** (commit below): it was worse than reported — `model.bud()` returned
     1-based nodes for **chd, riv, wel AND evt** (chd/wel predate riv/evt by
     years), while `group.bud('drn'|'ghb')` came back one cell low. Both halves
-    were fixed together as required. Still open from that review, carried into
-    plan 4.7.1: riv/evt `default_input` unpinned by any test, and
-    `_PackageDiffNamespace` missing riv/evt properties (static-typing only).
+    were fixed together as required. **All four confirmed findings are now
+    closed** (2026-07-18): the budget pair, plus `default_input` pinning (now
+    table-driven over the registry's `cell_stress` set) and the
+    `_PackageDiffNamespace` riv/evt properties. Nothing outstanding from this
+    review; entry kept as the record of what it found. Delete at the next
+    ledger tidy.
 
 13. **`rch_spec` keeps the fragile `maxbound` inference that was removed from
     `evt_spec`.**

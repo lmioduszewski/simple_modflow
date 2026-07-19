@@ -566,10 +566,15 @@ doubles as a table of every current inconsistency.
 > ground truth taken from each package's own stress-period data; it failed 14 ways
 > before the fix.
 
+> **`default_input` pinning and `_PackageDiffNamespace` properties DONE 2026-07-18**
+> — both mutation-verified (swapping riv `stage`->`cond` and dropping the riv diff
+> property each now fail). The default_input test is table-driven over the registry's
+> `cell_stress` set, so a new BC is covered automatically and an unpinned one fails
+> loudly; the diff-property guard lives beside the `_DIFF_PACKAGES` invariant test
+> because `py.typed` makes a `__getattr__`-only package type as `Any` downstream.
+
 Remaining, small and independent, one commit each: artifact subsystem
-(`wel`/`riv`/`evt`); `default_input` pinned by a table-driven loop over all
-`cell_stress` entries (mirroring `test_colorscale_policy.py`); `_PackageDiffNamespace`
-riv/evt properties; `rch_spec` maxbound.
+(`wel`/`riv`/`evt`); `rch_spec` maxbound (task already spawned).
 
 #### 4.7.2 Grow the registry into a complete package descriptor
 Add what the other sites need: FloPy class, record field order, `.gpkg` field
