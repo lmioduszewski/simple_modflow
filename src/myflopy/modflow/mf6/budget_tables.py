@@ -58,12 +58,18 @@ def _cell_based_budget_packages() -> frozenset[str]:
     as those packages have existed (see ``tests/test_budget_node_basing.py``).
     Advanced packages (SFR/LAK/UZF) are deliberately excluded -- their records
     carry feature ids, not model cells, and are normalized on their own paths.
+
+    Reads the descriptor's explicit ``zero_base_budget_nodes`` flag as of 4.7.3.
+    It previously inferred the answer from ``kind == "cell_stress"``, which was
+    right but indirect: node basing is a property of how MF6 *writes the budget
+    file*, and tying it to a display-oriented ``kind`` would have quietly broken
+    the day a cell-stress package reported feature ids (or vice versa).
     """
 
     return frozenset(
         name
         for name, spec in _PACKAGE_EXPLORER_SPECS.items()
-        if spec.kind == "cell_stress"
+        if spec.zero_base_budget_nodes
     )
 
 

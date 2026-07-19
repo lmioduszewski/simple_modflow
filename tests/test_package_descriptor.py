@@ -301,23 +301,22 @@ def test_file_suffix_matches_run_model():
         assert _PACKAGE_SUFFIX_TO_TYPE[suffix].lower() == package, package
 
 
-def test_zero_base_budget_nodes_matches_budget_tables():
-    """RETIRE WITH 4.7.3.
+# RETIRED IN 4.7.3: ``test_zero_base_budget_nodes_matches_budget_tables``.
+# ``_cell_based_budget_packages()`` now reads ``zero_base_budget_nodes``
+# directly, so asserting they agree is circular. The behavioural guarantee --
+# that a budget node actually lands on the right cell -- is pinned end to end
+# by ``tests/test_budget_node_basing.py``, which is where the off-by-one that
+# motivated all of this was caught.
 
-    This is the flag behind the budget off-by-one fixed in 4.7.1 — MF6 reports
-    1-based node numbers for the cell-stress list BCs. Getting it wrong was a
-    live bug for years, so it is pinned against the deriving function itself.
+
+def test_node_basing_still_splits_cell_stress_from_advanced():
+    """The flag must agree with ``kind``, which is the physical reason for it.
+
+    Kept (not retired): this is a descriptor-internal consistency check, not a
+    comparison against the consumer. It is what would catch a new package
+    declared ``cell_stress`` but left un-flagged -- exactly the shape of the
+    original bug, where chd/riv/wel/evt were cell-based but never normalized.
     """
-
-    from myflopy.modflow.mf6.budget_tables import _cell_based_budget_packages
-
-    cell_based = set(_cell_based_budget_packages())
-    for package in ALL_PACKAGES:
-        assert spec(package).zero_base_budget_nodes == (package in cell_based), package
-
-
-def test_node_basing_splits_cell_stress_from_advanced():
-    """The flag must track ``kind``, which is the physical reason behind it."""
 
     for package in ALL_PACKAGES:
         entry = spec(package)
