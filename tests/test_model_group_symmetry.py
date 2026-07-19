@@ -53,8 +53,13 @@ def test_diff_tier_covers_exactly_the_group_cell_bc_accessors(group):
     Regression guard (2026-07-18): adding ``mf.riv``/``mf.evt`` added group
     accessors but not the diff lists, so ``group.diff().packages.riv`` raised
     AttributeError while ``group.packages.riv`` worked -- and the comment above
-    ``_DIFF_PACKAGES`` claimed the two matched. Neither list is registry-driven,
-    so pin the invariant instead of trusting the comment.
+    ``_DIFF_PACKAGES`` claimed the two matched.
+
+    Updated for 4.7.3: ``_DIFF_PACKAGES`` is now DERIVED from the registry, so
+    this no longer compares two hand-typed lists. It is now the guard on the
+    GROUP side -- ``project/group/core.py`` still writes its
+    ``GroupPackageInputs`` accessors out by hand, so this is what catches a
+    package added to the registry but not to the group.
     """
 
     from myflopy.project.model_diff import _DIFF_PACKAGES

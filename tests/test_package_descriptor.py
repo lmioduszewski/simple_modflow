@@ -205,15 +205,26 @@ def test_edges_only_capability_matches_the_resolver(package):
 # ---------------------------------------------------------------------------
 
 
-def test_diffable_flags_match_model_diff():
-    """RETIRE WITH 4.7.3."""
+# RETIRED IN 4.7.3: ``test_diffable_flags_match_model_diff``.
+# ``_DIFF_PACKAGES`` and ``_CONNECTION_PACKAGES`` are now derived from
+# ``tiers.diffable`` / ``tiers.connection_diffable``. The real invariant --
+# that the diff tier matches the ModelGroup's still-hardcoded
+# ``GroupPackageInputs`` accessors -- lives in
+# ``tests/test_model_group_symmetry.py`` and is now a genuine cross-check
+# between the registry and the group, rather than between two hand-typed lists.
 
-    from myflopy.project.model_diff import _CONNECTION_PACKAGES, _DIFF_PACKAGES
+
+def test_diffable_and_connection_tiers_are_disjoint():
+    """A package is diffed row-by-row OR by connection geometry, never both.
+
+    Not circular: it constrains the descriptor's own shape. The two diff paths
+    build different frames, so a package flagged for both would silently take
+    whichever branch ran first.
+    """
 
     for package in ALL_PACKAGES:
         tiers = spec(package).tiers
-        assert tiers.diffable == (package in _DIFF_PACKAGES), package
-        assert tiers.connection_diffable == (package in _CONNECTION_PACKAGES), package
+        assert not (tiers.diffable and tiers.connection_diffable), package
 
 
 # RETIRED IN 4.7.3: ``test_results_diffable_flags_match_model_results_diff``.

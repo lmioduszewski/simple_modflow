@@ -36,6 +36,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_input_field_names,
 )
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
     build_lak_connection_table,
@@ -55,14 +56,21 @@ from myflopy.project.model_results_diff import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from myflopy.project.model_group import ModelGroup
 
-# Cell-based stress-period BC packages the Phase-1 diff understands. These match
-# the packages the ModelGroup exposes as GroupPackageInputs accessors -- the two
-# lists are hardcoded and must be extended TOGETHER when a list BC is added
-# (see project/group/core.py). test_model_diff pins the invariant.
-_DIFF_PACKAGES: tuple[str, ...] = ("rch", "chd", "drn", "ghb", "riv", "wel", "evt")
+# Cell-based stress-period BC packages the Phase-1 diff understands, derived
+# from the registry (plan 4.7.3). The ModelGroup's GroupPackageInputs accessors
+# (project/group/core.py) are still written out by hand and must stay in step;
+# ``test_diff_tier_covers_exactly_the_group_cell_bc_accessors`` pins that, and
+# is now the guard on the GROUP side rather than on both.
+_DIFF_PACKAGES: tuple[str, ...] = tuple(
+    name for name, spec in _PACKAGE_EXPLORER_SPECS.items() if spec.tiers.diffable
+)
 
 # Advanced packages diffed by connection/reach geometry (Phase 3).
-_CONNECTION_PACKAGES: tuple[str, ...] = ("lak", "sfr")
+_CONNECTION_PACKAGES: tuple[str, ...] = tuple(
+    name
+    for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+    if spec.tiers.connection_diffable
+)
 _LAK_IDENTITY = (
     "lake", "layer", "cell", "claktype", "belev", "telev", "connlen", "connwidth",
 )
