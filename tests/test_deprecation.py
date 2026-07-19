@@ -198,6 +198,7 @@ def test_compatibility_registry_matches_the_helpers_exactly():
     import myflopy.modflow.mf6  # noqa: F401
     import myflopy.modflow.mf6.drn  # noqa: F401
     import myflopy.modflow.mf6.ghb  # noqa: F401
+    import myflopy.modflow.mf6.package_surface_water  # noqa: F401
     import myflopy.modflow.mp3du.particles  # noqa: F401
     import myflopy.modflow.utils.surfaces  # noqa: F401
     import myflopy.project.model_group  # noqa: F401

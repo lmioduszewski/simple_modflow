@@ -500,6 +500,8 @@ __compatibility__ = (
     "myflopy.modflow.mf6.GHB",
     "myflopy.modflow.mf6.drn.DRN",
     "myflopy.modflow.mf6.ghb.GHB",
+    "myflopy.modflow.mf6.package_surface_water.SfrResultsNamespace.long_profile",
+    "myflopy.modflow.mf6.package_surface_water.SfrResultsNamespace.plot_long_profile",
     "myflopy.modflow.mp3du.particles.PRT",
     "myflopy.modflow.mp3du.particles.PrtDisv",
     "myflopy.modflow.mp3du.particles.PrtFmi",

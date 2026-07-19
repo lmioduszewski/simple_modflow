@@ -19,6 +19,19 @@ the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed
 `python scripts/derive_api_snapshot.py` and **review the diff** — it is the public-API
 change log. An un-regenerated snapshot fails CI.
 
+## Adding a table, plot, or map to a package? Read `docs/view_layer_conventions.md`
+The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every noun
+is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
+`map`/`xs`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
+method pair; add a view class exposed as a noun property.
+Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
+drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
+policy helper, not hex literals at the call site.
+Only the *spatial* half of this was documented before 2026-07-18; derived tables
+had no rule, and the gap produced `sfr.results.long_profile`/`plot_long_profile`
+plus ~20 lines of hand-rolled matplotlib in two notebooks that redrew — off-color —
+a figure the library already built.
+
 ## Compromise ledger (standing user rule, 2026-07-17)
 **`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
 test-fidelity trade, judgment call, or considered-but-omitted optional inside

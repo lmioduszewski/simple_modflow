@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy import viz as figs
+from myflopy._deprecation import deprecated_instance_getattr
 from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
@@ -1289,83 +1290,115 @@ class SfrBudgetNamespace:
         )
 
 
-class SfrResultsNamespace(FieldMappable):
-    """Namespace for SFR result explorers.
+def _signed_exchange_colors() -> tuple[str, str]:
+    """Return the ``(gaining, losing)`` bar colors for signed exchange plots.
 
-    Fields: ``q`` (stream-groundwater exchange, the default) and ``stage``.
-    Use ``results.map(field="stage")`` or ``results.stage.map()``.
+    Both are read off ``_blue_white_red_diverging_colorscale`` rather than
+    written out, so discrete bars and continuous maps cannot drift apart. The
+    pairing follows the documented convention (``docs/mf6io_reference.md``):
+    negative ``q`` is groundwater gaining to the stream and renders BLUE,
+    positive ``q`` is the stream losing to groundwater and renders RED.
     """
 
-    _default_field = "q"
+    scale = _blue_white_red_diverging_colorscale()
+    return str(scale[0][1]), str(scale[-1][1])
 
-    def _field_names(self):
-        """The mappable SFR result fields: exchange ``q`` and ``stage``."""
 
-        return ["q", "stage"]
+class SfrProfileView:
+    """The SFR long profile: one merged reach-ordered table and its figure.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the SFR results namespace to ``model``."""
+    Follows the house view shape (``docs/view_layer_conventions.md``) -- a noun
+    reached from the results namespace, carrying ``get`` for the frame, ``plot``
+    for the figure, and ``summary`` for the compact digest. Calling the view
+    rebinds the stress period, so these are the same figure::
+
+        model.packages.sfr.results.profile.plot(per=3)
+        model.packages.sfr.results.profile(per=3).plot()
+
+    The table merges reach geometry, streambed elevations, simulated stage, and
+    stream-groundwater exchange, so it feeds custom analysis as readily as it
+    feeds ``plot``.
+    """
+
+    def __init__(self, model: SimulationBase, *, per: int = 0):
+        """Bind the profile view to ``model`` at stress period ``per``."""
 
         self.model = model
+        self.per = int(per)
 
-    @property
-    def stage(self) -> StageResultsExplorer:
-        """Return the stream stage explorer mapped to reach cells."""
+    def __repr__(self) -> str:
+        """Show the bound period, since it is the view's only state."""
 
-        return SfrStageResultsExplorer(self.model)
+        return f"{type(self).__name__}(per={self.per})"
 
-    @property
-    def q(self) -> SfrBudgetResultsExplorer:
-        """Return the stream-groundwater exchange result explorer."""
+    def __call__(self, *, per: int) -> SfrProfileView:
+        """Return an equivalent view bound to stress period ``per``."""
 
-        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q")
-        return SfrBudgetResultsExplorer(
-            self.model, budget_text=budget_text, value_name=value_name
+        return type(self)(self.model, per=per)
+
+    def _period(self, per: int | None) -> int:
+        """Resolve an explicit ``per`` against the period bound to this view."""
+
+        return self.per if per is None else int(per)
+
+    def get(self, *, per: int | None = None) -> pd.DataFrame:
+        """Return the merged reach-ordered profile table."""
+
+        return build_sfr_long_profile_table(self.model, per=self._period(per))
+
+    def summary(self, *, per: int | None = None) -> pd.DataFrame:
+        """Return a compact digest of the profile's stage and exchange fields."""
+
+        frame = self.get(per=per)
+        return summarize_input_table(
+            frame,
+            label="sfr.results.profile",
+            value_columns=[
+                column
+                for column in ("stage", "streambed_top", "q", "q_per_length")
+                if column in frame.columns
+            ],
         )
 
-    def long_profile(self, *, per: int = 0) -> pd.DataFrame:
-        """Return a merged SFR long-profile table for one stress period.
-
-        The returned table aligns stage, stream-groundwater exchange, and
-        packagedata-derived geometry fields by reach. It is useful for custom
-        analysis as well as for the higher-level ``plot_long_profile`` helper.
-        """
-
-        return build_sfr_long_profile_table(self.model, per=per)
-
-    def plot_long_profile(
+    def plot(
         self,
         *,
-        per: int = 0,
+        per: int | None = None,
         x: str = "distance",
         include_stage: bool = True,
         include_streambed: bool = True,
         include_exchange: bool = True,
+        signed_exchange: bool = True,
         plot_fig: bool = False,
         return_fig: bool = True,
     ):
-        """Plot a richer SFR long profile with common hydrologic overlays.
+        """Plot the long profile with the common hydrologic overlays.
 
         Parameters
         ----------
         per
-            Zero-based stress period to plot.
+            Zero-based stress period; defaults to the period bound to the view.
         x
-            Either ``"distance"`` for cumulative stream distance or
-            ``"reach"`` for raw reach number.
+            Either ``"distance"`` for cumulative stream distance or ``"reach"``
+            for raw reach number.
         include_stage
             Whether to show simulated stream stage.
         include_streambed
             Whether to show streambed top and bottom elevations.
         include_exchange
             Whether to show stream-groundwater exchange on a secondary axis.
+        signed_exchange
+            When ``True`` (the default) draw exchange as per-reach bars colored
+            by sign -- blue where the reach gains, red where it loses, matching
+            the SFR map colorscale. When ``False`` draw one unsigned line.
         plot_fig
             If ``True``, call ``show()`` on the created figure.
         return_fig
             If ``True``, return the created figure.
         """
 
-        frame = self.long_profile(per=per)
+        period = self._period(per)
+        frame = self.get(per=period)
         fig = figs.Fig()
         if frame.empty:
             if plot_fig:
@@ -1423,20 +1456,12 @@ class SfrResultsNamespace(FieldMappable):
                 ),
             )
         if include_exchange and "q" in frame.columns:
-            fig.add_scattergl(
-                x=frame[x_column],
-                y=frame["q"],
-                mode="lines+markers",
-                name="Exchange q",
-                line={"color": "#d62728", "width": 2},
-                marker={"size": 6, "symbol": "diamond"},
-                yaxis="y2",
+            self._add_exchange_trace(
+                fig,
+                frame=frame,
+                x_column=x_column,
                 customdata=customdata,
-                hovertemplate=(
-                    "reach=%{customdata[0]}<br>"
-                    "cell=%{customdata[1]}<br>"
-                    "q=%{y}<extra></extra>"
-                ),
+                signed=signed_exchange,
             )
             fig.update_layout(
                 yaxis2={
@@ -1451,13 +1476,148 @@ class SfrResultsNamespace(FieldMappable):
         fig.update_layout(
             xaxis_title="Stream Distance" if x_column == "distance_mid" else "Reach",
             yaxis_title="Elevation / Stage",
-            title=f"SFR long profile (per={per})",
+            title=f"SFR long profile (per={period})",
         )
         if plot_fig:
             fig.show()
         if return_fig:
             return fig
         return None
+
+    @staticmethod
+    def _add_exchange_trace(fig, *, frame, x_column, customdata, signed: bool) -> None:
+        """Add the exchange trace, as signed bars or as one unsigned line."""
+
+        hovertemplate = (
+            "reach=%{customdata[0]}<br>"
+            "cell=%{customdata[1]}<br>"
+            "q=%{y}<extra></extra>"
+        )
+        if not signed:
+            fig.add_scattergl(
+                x=frame[x_column],
+                y=frame["q"],
+                mode="lines+markers",
+                name="Exchange q",
+                line={"color": "#d62728", "width": 2},
+                marker={"size": 6, "symbol": "diamond"},
+                yaxis="y2",
+                customdata=customdata,
+                hovertemplate=hovertemplate,
+            )
+            return
+
+        gaining_color, losing_color = _signed_exchange_colors()
+        q = pd.to_numeric(frame["q"], errors="coerce").to_numpy(float)
+        positions = pd.to_numeric(frame[x_column], errors="coerce").to_numpy(float)
+        # One bar per reach, sized just under the reach spacing so adjacent
+        # bars read as separate reaches. A single reach has no spacing to
+        # measure, so fall back to plotly's own default width.
+        spacing = np.diff(np.sort(positions[np.isfinite(positions)]))
+        spacing = spacing[spacing > 0.0]
+        width = float(np.median(spacing)) * 0.9 if spacing.size else None
+        fig.add_bar(
+            x=frame[x_column],
+            y=frame["q"],
+            name="Exchange q (blue gains, red loses)",
+            marker={
+                "color": np.where(q < 0.0, gaining_color, losing_color).tolist(),
+                "line": {"width": 0},
+            },
+            opacity=0.55,
+            width=width,
+            yaxis="y2",
+            customdata=customdata,
+            hovertemplate=hovertemplate,
+        )
+
+
+class SfrResultsNamespace(FieldMappable):
+    """Namespace for SFR result explorers.
+
+    Fields: ``q`` (stream-groundwater exchange, the default) and ``stage``.
+    Use ``results.map(field="stage")`` or ``results.stage.map()``.
+    """
+
+    _default_field = "q"
+
+    def _field_names(self):
+        """The mappable SFR result fields: exchange ``q`` and ``stage``."""
+
+        return ["q", "stage"]
+
+    def __init__(self, model: SimulationBase):
+        """Bind the SFR results namespace to ``model``."""
+
+        self.model = model
+
+    @property
+    def stage(self) -> StageResultsExplorer:
+        """Return the stream stage explorer mapped to reach cells."""
+
+        return SfrStageResultsExplorer(self.model)
+
+    @property
+    def q(self) -> SfrBudgetResultsExplorer:
+        """Return the stream-groundwater exchange result explorer."""
+
+        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q")
+        return SfrBudgetResultsExplorer(
+            self.model, budget_text=budget_text, value_name=value_name
+        )
+
+    @property
+    def profile(self) -> SfrProfileView:
+        """Return the long-profile view: ``.get()`` for the table, ``.plot()``.
+
+        Named ``profile`` to match ``results.stage.profile`` one level down --
+        inside an SFR namespace a profile can only be longitudinal, so "long"
+        carried no information. This namespace-level view merges every field;
+        the field-level ones cover a single field.
+        """
+
+        return SfrProfileView(self.model)
+
+    # -- backing methods for the pre-view spellings ---------------------------
+    # ``profile`` replaced two older names when the derived tables became view
+    # objects. These bodies preserve the OLD return values exactly (a DataFrame
+    # and an unsigned-line figure); the mapping below is the only place the old
+    # spellings appear, and they resolve solely through __getattr__ so they stay
+    # out of dir()/completion (D12).
+    #
+    # Deliberately named ``_legacy_*`` rather than echoing the old spelling: a
+    # private member called ``_long_profile_frame`` would still surface the
+    # retired name in IDE completion, which is exactly what D12 exists to stop.
+    def _legacy_profile_frame(self, *, per: int = 0) -> pd.DataFrame:
+        """Back the retired frame spelling; returns what it always returned."""
+
+        return self.profile.get(per=per)
+
+    def _legacy_profile_plot(self, **kwargs):
+        """Back the retired plot spelling.
+
+        Pins ``signed_exchange=False`` so it keeps drawing the single unsigned
+        line it always drew; signed bars are the new ``profile.plot()`` default.
+        """
+
+        kwargs.setdefault("signed_exchange", False)
+        return self.profile.plot(**kwargs)
+
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "long_profile": (
+                "_legacy_profile_frame",
+                "model.packages.sfr.results.profile.get",
+                "0.1.0",
+            ),
+            "plot_long_profile": (
+                "_legacy_profile_plot",
+                "model.packages.sfr.results.profile.plot",
+                "0.1.0",
+            ),
+        },
+        "myflopy.modflow.mf6.package_surface_water.SfrResultsNamespace",
+    )
 
 
 class SurfaceWaterExchangeResultsExplorer(SpatialView):
@@ -1838,6 +1998,7 @@ __all__ = [
     "LakStageChangeExplorer",
     "LakConnectionsExplorer",
     "SfrStageResultsExplorer",
+    "SfrProfileView",
     "LakResultsNamespace",
     "LakBudgetNamespace",
     "SfrBudgetNamespace",

@@ -12,6 +12,24 @@ How myflopy retires a public name without breaking existing scripts
    out of `__all__`, `dir()`, `TYPE_CHECKING` import blocks, and any stubs.
    Old code runs with a warning; IDEs and tab-completion never suggest the
    old names to anyone.
+
+   **The name must not echo anywhere an IDE reads.** myflopy ships `py.typed`
+   with no stubs, so editors read this source directly — which makes four
+   surfaces visible, not one:
+
+   - `dir()` and `__all__` (the obvious two);
+   - **every attribute in the class/module dict, including underscore
+     members** — editors do offer them. A private method backing an alias must
+     therefore be named for what it *does*, not for the retired spelling:
+     `_legacy_profile_frame`, never `_long_profile_frame`;
+   - **every docstring shown in a tooltip.** Do not explain a live parameter by
+     reference to the retired name ("…which is what `plot_long_profile` did").
+     The alias's own replacement text is where that belongs.
+
+   The only places a retired spelling may appear are the alias mapping passed
+   to `_deprecation`, `myflopy.__compatibility__`, and this policy's docs.
+   `tests/test_sfr_profile_view.py::test_retired_spellings_are_invisible_to_ide_completion`
+   is the reference guard; copy it when deprecating a name.
 3. **A deprecated name lives at least two tagged releases** after its
    `since` version before it may be removed. The clock is real: `v0.1.0`
    was tagged at the Phase 0 baseline and releases bump at plan milestones

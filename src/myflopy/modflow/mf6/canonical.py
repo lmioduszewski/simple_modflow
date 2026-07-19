@@ -245,7 +245,7 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
         min/max routed flow for the period.
     """
 
-    profile = model.packages.sfr.results.long_profile(per=per)
+    profile = model.packages.sfr.results.profile.get(per=per)
     stage = profile["stage"].to_numpy(dtype=float)
     streambed_top = profile["streambed_top"].to_numpy(dtype=float)
     exchange = profile["q"].to_numpy(dtype=float)

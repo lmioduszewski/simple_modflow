@@ -102,6 +102,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 |---|---|---|
 | Plotting front door (`viz.Fig/subplots/mpl_axes/PALETTE`, figs backend) | ✅ | `viz.py` — import every figure from here, not raw plotly/matplotlib. figs is vendored (`myflopy/_vendor/figs`, synced via `scripts/sync_vendored_figs.py`): viz.py imports the live figs first and falls back to the snapshot, so pip installs work without the local figs project |
 | Unified view grammar: `map/plot/xs` + `mosaic/animate` on every leaf (model / group / diff), `backend="plotly"\|"mpl"` | ✅ | `package_plotting.py` (`SpatialView`, composers), `viz.mosaic` |
+| **Derived-table views** (`<pkg>.<inputs\|results>.<noun>.<verb>` for merged tables, not just mappable fields) | ✅ | **`docs/view_layer_conventions.md` is the normative rule.** Reference impl: `SfrProfileView` (`sfr.results.profile`). Before 2026-07-18 derived tables sat OUTSIDE the grammar as `foo()`/`plot_foo()` pairs — that gap is what let two notebooks hand-roll matplotlib over a built-in |
 | Map mosaics framed to data + **synced pan/zoom** (`sync_views=`) | ✅ | `viz.py` (`shared_map_view`, `_map_sync_post_script`), `Choro.map_view` |
 | **Sectioned hover** (`HoverSpec`/`HoverStyle`; layer/surface tables, dry marking; `hover_*` sugar on every map verb) | ✅ | `utils/datatypes/hover.py`; defaults wired on all choropleth paths; LAK/SFR maps join feature stage |
 | **Colorscale policy** (diverging only for signed q-like + diff maps; `'earth'` otherwise) | ✅ | `package_registry.py` + call sites; pinned by `tests/test_colorscale_policy.py` |

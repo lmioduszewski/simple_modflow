@@ -649,6 +649,37 @@ structurally impossible and 5.3 becomes mechanical.
 - CHD having no conductance, WEL being signed, EVT being areal are **data** in the
   descriptor, not code branches.
 
+### 4.8 View-layer conventions — PARTIALLY DONE 2026-07-18
+
+Not originally a plan phase. Opened by a user report: a notebook cell hand-rolled
+~20 lines of matplotlib to redraw `sfr.results.plot_long_profile`, losing
+`scrollZoom`/pan/the house template and coloring gaining reaches **green** against
+the documented blue (`docs/mf6io_reference.md`).
+
+Root cause: the **spatial** half of the view grammar was documented
+(`map/plot/xs` + `mosaic/animate` on every leaf) but **derived tables** — merged
+frames that are not one mappable field — had no rule, so they accreted as
+`foo()` + `plot_foo()` method pairs in five different verb spellings.
+
+**Done:**
+- `docs/view_layer_conventions.md` — the normative rule, both halves:
+  `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`, every noun an object,
+  every object answering the same verbs. Linked from `CLAUDE.md`.
+- `SfrProfileView` (`sfr.results.profile`) as the reference implementation:
+  `get`/`summary`/`plot`, `__call__(per=)` rebinding, and `signed_exchange=True`
+  drawing per-reach bars colored off the **shared** diverging scale so discrete
+  and continuous renderings cannot drift.
+- `long_profile` / `plot_long_profile` → D12 warned aliases preserving their old
+  return values exactly (the plot alias pins `signed_exchange=False`).
+- Both notebooks collapsed to the one-liner; `canonical.py` migrated.
+- `tests/test_sfr_profile_view.py` (15 tests; the sign-convention assertion is
+  mutation-verified).
+
+**Remaining (see ledger entries 17–18):** the field-level `plot_profile` /
+`plot_budget` / bare `plot` verbs still use their old spellings, and the profile
+view deliberately has no `map()`. Best done as one sweep with its own snapshot
+diff, alongside 4.7's package consolidation.
+
 ---
 
 ## Phase 5 — Package API completion (~8–15 days excluding 5.7, independent of Phase 4)

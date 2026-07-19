@@ -182,3 +182,50 @@ done, plus one assurance gap in the review itself.
     - Impact: none if the judgment was right; user was flagged and can flip
       it back if `True` was intended.
     - Revisit: user says so.
+
+## SFR profile view + view-layer convention (2026-07-18)
+
+17. **The profile view has no `.map()`.**
+    - What: `SfrProfileView` answers `get`/`summary`/`plot` but not `map`/`xs`/
+      `mosaic`/`animate`, so it is not a full citizen of the spatial grammar.
+    - Why: the profile is a merged multi-field table; `map()` would have to ask
+      "which field?", and `sfr.results.q.map()` / `sfr.results.stage.map()`
+      already answer that per field. Adding an ambiguous verb to satisfy
+      symmetry would make the API worse, not better.
+    - Impact: `docs/view_layer_conventions.md` says spatial verbs apply to
+      "spatial nouns", which the profile is not. The asymmetry is documented
+      rather than hidden.
+    - Revisit: if a `profile.map(field=...)` need appears in practice.
+
+18. **Only SFR's derived table was converted; the other loose plot verbs stay.**
+    - What: `sfr.results.q.plot_profile`, `sfr.results.stage.plot_profile`,
+      `lak.…plot_budget`, and the bare `plot` on the field explorers keep their
+      current spellings. Only `long_profile`/`plot_long_profile` moved onto the
+      view shape.
+    - Why: those are *field*-level verbs already inside the documented spatial
+      grammar, and they were not what the user reported. Converting them is a
+      mechanical follow-on best done as one sweep with its own snapshot diff.
+    - Impact: the convention doc is normative for NEW nouns; existing
+      field-level `plot_*` verbs are not yet uniform with it.
+    - Revisit: as a view-layer pass alongside plan §4.7's package consolidation.
+
+19. **`docs/refactor_review_report.md` still lists `long_profile(...)`.**
+    - What: its API inventory (line ~851) names the now-deprecated spelling.
+    - Why: that file is a **dated snapshot** ("Date: 2026-06-12") of a review,
+      not a living reference; editing it would falsify the record of what the
+      API looked like then.
+    - Impact: a reader of that file could copy a deprecated name — but it warns
+      on use and names its replacement.
+    - Revisit: if the report is ever converted into a living document.
+
+20. **The user's executed `canonical_fast_tour.ipynb` outputs were discarded.**
+    - What: the working tree carried a 103,008-line output diff from a real
+      run (13 of 22 cells). Editing cell 11 required touching the file, so the
+      outputs were stripped per D2 and the notebook reset to HEAD before the
+      source edit was reapplied.
+    - Why: committing a source fix under a 103k-line output diff makes the
+      change unreviewable, and D2 forbids tracked outputs regardless.
+    - Impact: none that is not regenerable — the fast tour re-runs in ~1 min.
+      The pre-strip file was backed up to the session scratchpad
+      (`canonical_fast_tour.with_outputs.ipynb`) in case it is wanted.
+    - Revisit: n/a.
