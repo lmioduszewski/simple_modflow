@@ -205,6 +205,14 @@ def test_list_bc_specs_accept_every_native_flopy_input_shape():
             assert spec.name == name, f"{name} / {label}"
             # maxbound is FloPy's job; pre-computing it is what broke these
             assert "maxbound" not in spec.options, f"{name} / {label}"
+            # "verbatim" means verbatim: the payload reaches the spec untouched,
+            # including a period explicitly set to None
+            assert spec.options["stress_period_data"] == spd, f"{name} / {label}"
+    assert (
+        mf.rch.flopy(stress_period_data=shapes["none period"])
+        .options["stress_period_data"][1]
+        is None
+    )
 
 
 def test_riv_evt_forward_optional_package_arguments():
