@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
 
@@ -32,26 +33,37 @@ def _infer_model_name(workspace: Path) -> str:
     return name_files[0].stem
 
 
-_PACKAGE_SUFFIX_TO_TYPE = {
-    "chd": "CHD",
+# Structural packages every model has, which carry no explorer metadata and so
+# are absent from the registry. Kept explicit: the registry describes packages
+# with per-package *behaviour* (fields, results, capabilities), and discretization
+# or output control has none of that to describe.
+_NON_REGISTRY_SUFFIXES = {
     "dis": "DIS",
     "disu": "DISU",
     "disv": "DISV",
-    "drn": "DRN",
-    "evt": "EVT",
-    "ghb": "GHB",
     "ic": "IC",
-    "lak": "LAK",
     "mvr": "MVR",
     "npf": "NPF",
     "oc": "OC",
-    "rch": "RCH",
-    "riv": "RIV",
-    "sfr": "SFR",
     "sto": "STO",
-    "uzf": "UZF",
-    "wel": "WEL",
 }
+
+# Boundary/advanced packages come from the registry (plan 4.7.3); the union is
+# what file discovery recognizes. A package added to the registry is discovered
+# automatically -- it was possible before to add one and silently have its file
+# ignored on reopen.
+_PACKAGE_SUFFIX_TO_TYPE = dict(
+    sorted(
+        {
+            **{
+                spec.file_suffix: spec.name.upper()
+                for spec in _PACKAGE_EXPLORER_SPECS.values()
+                if spec.file_suffix
+            },
+            **_NON_REGISTRY_SUFFIXES,
+        }.items()
+    )
+)
 _PACKAGE_TYPE_TO_SUFFIX = {value: key for key, value in _PACKAGE_SUFFIX_TO_TYPE.items()}
 _CORE_PACKAGE_TYPES = {"DIS", "DISU", "DISV", "OC"}
 

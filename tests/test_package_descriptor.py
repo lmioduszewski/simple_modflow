@@ -290,15 +290,35 @@ def test_model_accessor_flag_matches_simulation_base():
 # ---------------------------------------------------------------------------
 
 
-def test_file_suffix_matches_run_model():
-    """RETIRE WITH 4.7.3."""
+# RETIRED IN 4.7.3: ``test_file_suffix_matches_run_model``.
+# ``_PACKAGE_SUFFIX_TO_TYPE`` is now the union of registry-derived suffixes and
+# the structural ones (dis/ic/npf/oc/sto/mvr/...). Checking a registry package
+# appears there is circular. The union has its own failure mode instead, tested
+# below: a suffix claimed by both halves.
 
-    from myflopy.project.run_model import _PACKAGE_SUFFIX_TO_TYPE
 
+def test_registry_and_structural_suffixes_do_not_collide():
+    """The union must not let one source silently shadow the other.
+
+    ``_NON_REGISTRY_SUFFIXES`` is merged AFTER the registry, so a suffix in both
+    would take the structural spelling and quietly mistype a real package on
+    reopen. Nothing else would notice.
+    """
+
+    from myflopy.project.run_model import (
+        _NON_REGISTRY_SUFFIXES,
+        _PACKAGE_SUFFIX_TO_TYPE,
+    )
+
+    registry_suffixes = {
+        spec(name).file_suffix for name in ALL_PACKAGES if spec(name).file_suffix
+    }
+    collisions = registry_suffixes & set(_NON_REGISTRY_SUFFIXES)
+    assert not collisions, f"suffix claimed by both sources: {sorted(collisions)}"
+
+    # and every registry package still round-trips to its own type
     for package in ALL_PACKAGES:
-        suffix = spec(package).file_suffix
-        assert suffix in _PACKAGE_SUFFIX_TO_TYPE, f"{package}: {suffix} unmapped"
-        assert _PACKAGE_SUFFIX_TO_TYPE[suffix].lower() == package, package
+        assert _PACKAGE_SUFFIX_TO_TYPE[spec(package).file_suffix] == package.upper()
 
 
 # RETIRED IN 4.7.3: ``test_zero_base_budget_nodes_matches_budget_tables``.
