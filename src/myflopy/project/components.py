@@ -324,6 +324,13 @@ def build_package_artifact(
         boundnames = _extract_mf6_value(package, "boundnames")
         if boundnames is not None:
             package_data["boundnames"] = bool(boundnames)
+        # MVR participation is package state: a restored DRN/GHB/RIV/WEL with
+        # MOVER off breaks any mvr record naming it. Captured for exactly the
+        # packages FloPy accepts ``mover`` on (registry capability), which is
+        # why this is not hardcoded -- it was hardcoded to {uzf,lak,sfr} and
+        # silently dropped mover from every list BC.
+        if _PACKAGE_EXPLORER_SPECS[package_type].capabilities.mover:
+            package_data["mover"] = bool(_extract_mf6_value(package, "mover", False))
         if package_type == "evt":
             # part of EVT's record shape, so it has to survive the round trip
             package_data["nseg"] = _extract_mf6_value(package, "nseg", 1)
@@ -468,7 +475,17 @@ def _artifact_dependencies(artifact: PackageArtifact) -> set[str]:
             for item in row if isinstance(row, list) else [row]:
                 if isinstance(item, str) and item.lower() in SUPPORTED_PACKAGE_ARTIFACT_TYPES:
                     dependencies.add(item.lower())
-    if artifact.package_type in {"uzf", "lak", "sfr"} and artifact.package_data.get("mover", False):
+    # Any mover-capable package that actually has MOVER set depends on mvr.
+    # Was hardcoded to {"uzf","lak","sfr"}, so a mover-bearing list BC produced
+    # no dependency and the loss could not be caught by ordering validation.
+    mover_capable = {
+        name
+        for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.capabilities.mover
+    }
+    if artifact.package_type in mover_capable and artifact.package_data.get(
+        "mover", False
+    ):
         dependencies.add("mvr")
     dependencies.discard(artifact.package_type)
     return dependencies
@@ -626,6 +643,12 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
         boundnames = artifact.package_data.get("boundnames")
         if boundnames is not None:
             values["boundnames"] = boundnames
+        # Re-apply MVR participation. ``.get`` rather than a bare index so
+        # artifacts captured before this was stored still restore -- they simply
+        # carry no mover, which matches how they were captured.
+        mover = artifact.package_data.get("mover")
+        if mover is not None:
+            values["mover"] = bool(mover)
         # EVT's segment count is part of its record shape, so it must round-trip
         if package_type == "evt":
             values["nseg"] = artifact.package_data.get("nseg", 1)

@@ -235,21 +235,18 @@ def test_diffable_and_connection_tiers_are_disjoint():
 # ``tests/test_model_results_diff.py``, which exercises the diff end to end.
 
 
-def test_the_results_diff_namespace_still_covers_every_flagged_package():
-    """Guards the derivation itself: every flagged package must be reachable.
-
-    Not circular -- it checks the *consumer* can actually build a namespace for
-    each package the registry claims, which is the thing that would break if a
-    descriptor flag and the subsystem's real capability diverged.
-    """
-
-    from myflopy.project.model_results_diff import _CELL_BUDGET_PACKAGES
-
-    flagged = {name for name in ALL_PACKAGES if spec(name).tiers.results_diffable}
-    assert flagged, "no package is flagged results_diffable"
-    assert set(_CELL_BUDGET_PACKAGES) == flagged
-    # uzf is deliberately absent -- it has no per-cell q term (ledger 4.7 gaps)
-    assert "uzf" not in flagged
+# DELETED 2026-07-18 (adversarial review): the replacement written here was
+# itself circular. It asserted ``set(_CELL_BUDGET_PACKAGES) == flagged`` while
+# ``_CELL_BUDGET_PACKAGES`` is *derived from* ``tiers.results_diffable`` — both
+# sides came from the registry, so it could never fail. It was added in the
+# same commit that documented circular scaffolds as the hazard to avoid, which
+# is a fair illustration of how easily one slips through.
+#
+# No honest consumer-side check exists to replace it: ``_CELL_BUDGET_PACKAGES``
+# has NO consumer in ``src/`` at all (only the snapshot script and tests read
+# it), so the flag currently drives no behaviour to test. The one genuine
+# cross-check lives in ``tests/test_model_group_symmetry.py``, which compares
+# it against the ModelGroup's still-hardcoded accessors. See ledger entry 35.
 
 
 # RETIRED IN 4.7.3: ``test_artifact_flags_and_order_match_components``.
@@ -285,7 +282,10 @@ def test_artifact_apply_order_is_unambiguous_across_both_sources():
     assert len(orders) == len(set(orders)), (
         f"duplicate apply order: {sorted(PACKAGE_ARTIFACT_APPLY_ORDER.items())}"
     )
-    assert orders == sorted(orders), "apply order dict must be ordered low-to-high"
+    # NOTE: no "assert orders == sorted(orders)" here. The dict is BUILT with
+    # sorted(key=item[1]), so that assertion holds for any input and tests the
+    # constructor expression rather than the data (adversarial review,
+    # 2026-07-18). The duplicate check above is the one that can actually fail.
 
     # the structural packages must bracket the registry ones: static state
     # first, mover last

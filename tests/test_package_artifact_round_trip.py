@@ -120,3 +120,91 @@ def test_evt_nseg_survives_the_round_trip(canonical_model):
         canonical_model, artifact_id="evt_nseg", package_name="evt"
     )
     assert artifact.package_data.get("nseg") == 1
+
+
+def test_mover_survives_the_round_trip_for_every_mover_capable_list_bc(
+    canonical_run_fresh,
+):
+    """A restored list BC must keep MOVER, or any mvr record naming it breaks.
+
+    Found by the 4.7.3 adversarial review (2026-07-18). Capture, restore AND
+    dependency inference each hardcoded the mover set to ``{uzf, lak, sfr}``,
+    so ``mf.drn(spd, mover=True)`` captured, restored, and came back with MOVER
+    off — silently. Nothing caught it: this file asserted only
+    stress_period_data/auxiliary/boundnames, and ``_artifact_dependencies``
+    reported no ``mvr`` dependency, so ordering validation could not notice
+    either.
+
+    The set is now the registry's ``capabilities.mover``, which is itself
+    pinned against the live FloPy constructor, so this covers whichever list
+    BCs FloPy accepts ``mover`` on rather than a list someone remembered.
+    """
+
+    import myflopy as mf
+    from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+    from myflopy.project.components import _artifact_dependencies
+
+    mover_capable = sorted(
+        name
+        for name in LIST_BC_ARTIFACT_TYPES
+        if _PACKAGE_EXPLORER_SPECS[name].capabilities.mover
+    )
+    assert mover_capable, "no mover-capable list BC -- the registry regressed"
+
+    target = canonical_run_fresh
+    for package_type in mover_capable:
+        record = {
+            "drn": [[(0, 0), 10.0, 1.5]],
+            "ghb": [[(0, 0), 10.0, 1.5]],
+            "riv": [[(0, 0), 10.0, 1.5, 8.0]],
+            "wel": [[(0, 0), -1.0]],
+        }[package_type]
+
+        target.gwf.remove_package(package_type)
+        getattr(mf, package_type).flopy(
+            stress_period_data={0: record}, mover=True
+        ).build(target.gwf)
+
+        artifact = build_package_artifact(
+            target, artifact_id=f"{package_type}_mover", package_name=package_type
+        )
+        assert artifact.package_data.get("mover") is True, (
+            f"{package_type}: mover not captured"
+        )
+        assert "mvr" in _artifact_dependencies(artifact), (
+            f"{package_type}: a mover-bearing artifact must depend on mvr"
+        )
+
+        target.gwf.remove_package(package_type)
+        apply_package_artifact(target, artifact, validate=True)
+
+        restored = target.gwf.get_package(package_type).mover.get_data()
+        assert restored, f"{package_type}: mover lost on restore (got {restored!r})"
+
+
+def test_artifacts_without_mover_stay_clean(canonical_model):
+    """Packages that never had MOVER must not gain it, or acquire a false dep."""
+
+    from myflopy.project.components import _artifact_dependencies
+
+    artifact = build_package_artifact(
+        canonical_model, artifact_id="drn_plain", package_name="drn"
+    )
+    assert artifact.package_data.get("mover") is False
+    assert "mvr" not in _artifact_dependencies(artifact)
+
+
+def test_non_mover_capable_packages_store_no_mover_key(canonical_model):
+    """chd/rch/evt have no MF6 mover; storing the key would imply otherwise."""
+
+    from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+
+    for package_type in sorted(LIST_BC_ARTIFACT_TYPES):
+        if _PACKAGE_EXPLORER_SPECS[package_type].capabilities.mover:
+            continue
+        artifact = build_package_artifact(
+            canonical_model,
+            artifact_id=f"{package_type}_nomover",
+            package_name=package_type,
+        )
+        assert "mover" not in artifact.package_data, package_type

@@ -455,3 +455,51 @@ done, plus one assurance gap in the review itself.
       Mitigated by the in-place retirement notes explaining where the coverage
       moved, so the next reader can tell deletion from omission.
     - Revisit: 4.7.4, which will make several more assertions circular.
+
+## 4.7.3 adversarial review follow-up (2026-07-18)
+
+A review of the 4.7.2+4.7.3 diff raised 27 candidates; 6 survived independent
+refutation, of which 2 were verified-clean negatives and 1 was cosmetic. The
+three actionable ones are below — two were defects in the tests written the
+same day, which is the useful part of the result.
+
+35. **`_CELL_BUDGET_PACKAGES` has no consumer in `src/`.**
+    - What: the constant is read only by `scripts/derive_api_snapshot.py` and
+      two test modules. No production code uses it, so `tiers.results_diffable`
+      currently drives nothing.
+    - Why not removed: it is part of the pinned API surface, and
+      `tests/test_model_group_symmetry.py` uses it as a genuine cross-check
+      (hardcoded group accessors vs the registry). Deleting a snapshot-pinned
+      constant is a bigger change than a review-fix pass should carry.
+    - Impact: a reader may assume the flag gates per-cell results diffing when
+      it gates nothing; the real diff path reaches packages another way.
+    - Revisit: 4.7.4 — either wire it into the results-diff namespace or delete
+      it and drop the tier flag.
+
+36. **The review found a circular test in the commit that documented circular
+    tests as the hazard.**
+    - What: `test_the_results_diff_namespace_still_covers_every_flagged_package`
+      asserted `set(_CELL_BUDGET_PACKAGES) == flagged` while
+      `_CELL_BUDGET_PACKAGES` is derived from that same flag. Never able to
+      fail. Written in the same pass as ledger 28, which warns about exactly
+      this.
+    - Why it happened: the retirement notes correctly identified WHICH tests
+      went circular, then the replacement re-introduced the property by reading
+      the derived constant instead of a consumer.
+    - Impact: deleted, not rewritten — no honest consumer-side check exists
+      while entry 35 stands. Also removed a tautological
+      `assert orders == sorted(orders)` whose subject is built with `sorted()`.
+    - Revisit: treat "does this assertion's other side trace back to the
+      registry?" as a checklist item for every 4.7.4 replacement test.
+
+37. ~~**Artifact capture/restore dropped MOVER from every list BC.**~~
+    **FIXED 2026-07-18 in the same pass.** `components.py` hardcoded the mover
+    set to `{uzf, lak, sfr}` in three places (capture, restore, dependency
+    inference), so `mf.drn(spd, mover=True)` captured and restored with MOVER
+    off — silent, and `_artifact_dependencies` reported no `mvr` dependency, so
+    ordering validation could not catch it either. All three now read
+    `capabilities.mover`. Guarded by three tests in
+    `tests/test_package_artifact_round_trip.py`, verified to fail against each
+    half of the old code independently. Note this survived 4.7.3(5/5), which
+    edited the same file — deriving one list in a module does not find the
+    others.
