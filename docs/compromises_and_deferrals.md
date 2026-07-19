@@ -319,3 +319,31 @@ done, plus one assurance gap in the review itself.
     AND |ME| < 0.75 ft, the second bound being what stops a surface that is
     precise but systematically offset, which is exactly how the first attempt
     failed. See also entries 21 and 22.
+
+26. **The observation-surface coefficients have no regeneration script.**
+    - What: `_OBSERVED_WATER_TABLE_COEF` in `canonical_example.py` is seven
+      frozen float literals. They were produced by a least-squares fit against
+      the canonical model's simulated heads in a **throwaway session**; that fit
+      was never committed, so the numbers cannot be reproduced or updated from
+      anything in the repo.
+    - Why not done in the same pass: the fit needs a built *and run* canonical
+      model on both profiles (~2 minutes), which makes it a `scripts/` tool
+      rather than part of the build or the test suite. Landing the calibration
+      result was the user's ask; the tooling around it was not.
+    - Impact: **this is the fragile part of the well-calibrated demo.** If the
+      model's physics changes — K field, boundaries, layer geometry, the
+      regional gradient — the coefficients silently stop matching.
+      `test_the_model_reads_as_well_calibrated` will *catch* the drift (RMSE
+      < 5% of range, |ME| < 0.75 ft), so it fails loudly rather than quietly,
+      but whoever hits that failure has to reconstruct the fitting procedure
+      from the docstring and this entry instead of rerunning a script.
+    - Shape of the fix: `scripts/fit_observation_surface.py`, the honest
+      counterpart to `scripts/derive_api_snapshot.py` — build + run both
+      profiles, fit the documented basis
+      `[1, xn, xn^2, xn^3, cross_relief, tanh((xn - 0.45) / 0.08), layer]` over
+      the valley-floor cells, print the coefficients for pasting, and report
+      RMSE/ME per profile against the test's thresholds. A `--check` mode could
+      verify the committed literals still fit, though that would cost two model
+      runs and so belongs in the weekly lane, not per-push CI.
+    - Revisit: next time the canonical model's physics is touched, or sooner if
+      the calibration test ever fails.
