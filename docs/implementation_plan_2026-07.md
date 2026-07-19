@@ -577,8 +577,15 @@ doubles as a table of every current inconsistency.
 > write time; written file verified byte-identical). All 7 list BCs are now covered
 > against bare-list / `None`-period / empty-dict inputs.
 
-Remaining: the artifact subsystem (`components.py` -- `wel` is missing too, and
-predates riv/evt).
+> **Artifact subsystem DONE 2026-07-18 — 4.7.1 is now COMPLETE.** `wel`/`riv`/`evt`
+> are supported; the type set and the capture/restore branches are registry-driven.
+> Two latent bugs surfaced while fixing it: chd/drn CAPTURED `auxiliary` and dropped
+> it on restore, and `boundnames` never round-tripped at all — it changes the record
+> SHAPE (a trailing boundname field), so restoring without it made FloPy misparse
+> every row and leave `NaN` cellids. That would have silently corrupted `wel`
+> artifacts (canonical `wel` has `boundnames=True`) even if wel had simply been added
+> to the old hardcoded set. `tests/test_package_artifact_round_trip.py` covers all 7
+> list BCs end to end; mutation-verified.
 
 #### 4.7.2 Grow the registry into a complete package descriptor
 Add what the other sites need: FloPy class, record field order, `.gpkg` field

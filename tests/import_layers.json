@@ -119,7 +119,7 @@
  "myflopy.modflow.utils.validators": 0,
  "myflopy.package_api": 4,
  "myflopy.project": 13,
- "myflopy.project.components": 0,
+ "myflopy.project.components": 1,
  "myflopy.project.group": 12,
  "myflopy.project.group._shared": 0,
  "myflopy.project.group.budget": 0,

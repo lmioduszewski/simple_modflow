@@ -12,14 +12,43 @@ from typing import Any
 import flopy
 import numpy as np
 
-SUPPORTED_PACKAGE_ARTIFACT_TYPES = {"chd", "drn", "ghb", "ic", "npf", "rch", "uzf", "lak", "sfr", "mvr"}
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+
+
+def _list_bc_artifact_types() -> frozenset[str]:
+    """Cell-based list BCs, from the package registry rather than a literal.
+
+    Hardcoding this set is what left `wel` unsupported for its entire life and
+    `riv`/`evt` unsupported from birth: capture, restore, and dependency
+    inference each carried their own copy of the package list.
+    """
+
+    return frozenset(
+        name
+        for name, spec in _PACKAGE_EXPLORER_SPECS.items()
+        if spec.kind == "cell_stress"
+    )
+
+
+LIST_BC_ARTIFACT_TYPES = _list_bc_artifact_types()
+SUPPORTED_PACKAGE_ARTIFACT_TYPES = LIST_BC_ARTIFACT_TYPES | {
+    "ic",
+    "npf",
+    "uzf",
+    "lak",
+    "sfr",
+    "mvr",
+}
 PACKAGE_ARTIFACT_APPLY_ORDER = {
     "ic": 10,
     "npf": 20,
     "rch": 30,
+    "evt": 35,
     "chd": 40,
+    "wel": 45,
     "drn": 50,
     "ghb": 60,
+    "riv": 65,
     "uzf": 70,
     "lak": 80,
     "sfr": 90,
@@ -272,13 +301,23 @@ def build_package_artifact(
             f"Package artifact support is not implemented for package type '{package_type}'."
         )
 
-    if package_type in {"chd", "drn", "ghb", "rch"}:
+    if package_type in LIST_BC_ARTIFACT_TYPES:
         package_data = {
             "stress_period_data": _extract_stress_period_data(package),
         }
         auxiliary = _extract_mf6_value(package, "auxiliary")
         if auxiliary is not None:
             package_data["auxiliary"] = list(auxiliary)
+        # boundnames changes the RECORD SHAPE (a trailing boundname field), so it
+        # must round-trip or FloPy misparses every row on restore -- shifting the
+        # cellid out and leaving NaN. Note FloPy distinguishes False from None
+        # here: an explicit False still emits the column, so store it verbatim.
+        boundnames = _extract_mf6_value(package, "boundnames")
+        if boundnames is not None:
+            package_data["boundnames"] = bool(boundnames)
+        if package_type == "evt":
+            # part of EVT's record shape, so it has to survive the round trip
+            package_data["nseg"] = _extract_mf6_value(package, "nseg", 1)
     elif package_type == "ic":
         package_data = {
             "strt": _extract_mf6_value(package, "strt"),
@@ -557,41 +596,33 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
     if validate:
         validate_package_artifact_compatibility(artifact, model)
 
-    if artifact.package_type in {"chd", "drn", "ghb", "rch"}:
-        stress_period_data = _restore_stress_period_data(artifact.package_data)
+    if artifact.package_type in LIST_BC_ARTIFACT_TYPES:
+        # One registry-driven branch for every cell-based list BC. Previously
+        # chd/drn/ghb/rch each had a near-identical hand-written block, which is
+        # how riv/evt/wel came to be unsupported and how chd/drn ended up
+        # CAPTURING `auxiliary` but silently dropping it on restore.
+        package_type = artifact.package_type
+        constructor = getattr(flopy.mf6, f"ModflowGwf{package_type}")
+        values: dict[str, Any] = {
+            "pname": package_type,
+            "print_input": False,
+            "print_flows": False,
+            "save_flows": True,
+            "stress_period_data": _restore_stress_period_data(artifact.package_data),
+            "filename": f"{model.name}.{package_type}",
+        }
         auxiliary = artifact.package_data.get("auxiliary")
-
-    if artifact.package_type == "chd":
-        package = flopy.mf6.ModflowGwfchd(
-            model.gwf,
-            print_input=False,
-            print_flows=False,
-            save_flows=True,
-            filename=f"{model.name}.chd",
-            pname="chd",
-            stress_period_data=stress_period_data,
-        )
-    elif artifact.package_type == "drn":
-        package = flopy.mf6.ModflowGwfdrn(
-            model.gwf,
-            print_input=False,
-            print_flows=False,
-            save_flows=True,
-            filename=f"{model.name}.drn",
-            pname="drn",
-            stress_period_data=stress_period_data,
-        )
-    elif artifact.package_type == "ghb":
-        package = flopy.mf6.ModflowGwfghb(
-            model.gwf,
-            print_input=False,
-            print_flows=False,
-            save_flows=True,
-            filename=f"{model.name}.ghb",
-            pname="ghb",
-            stress_period_data=stress_period_data,
-            auxiliary=auxiliary,
-        )
+        if auxiliary is not None:
+            values["auxiliary"] = auxiliary
+        boundnames = artifact.package_data.get("boundnames")
+        if boundnames is not None:
+            values["boundnames"] = boundnames
+        # EVT's segment count is part of its record shape, so it must round-trip
+        if package_type == "evt":
+            values["nseg"] = artifact.package_data.get("nseg", 1)
+        # maxbound is deliberately NOT set: FloPy computes it from
+        # stress_period_data at write time (see advanced.py's *_spec factories).
+        package = constructor(model.gwf, **values)
     elif artifact.package_type == "ic":
         package = flopy.mf6.modflow.mfgwfic.ModflowGwfic(
             model.gwf,
@@ -611,19 +642,6 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             save_saturation=True,
             save_specific_discharge=artifact.package_data.get("save_specific_discharge", True),
             filename=f"{model.name}.npf",
-        )
-    elif artifact.package_type == "rch":
-        maxbound = max((len(rows) for rows in stress_period_data.values()), default=0)
-        package = flopy.mf6.ModflowGwfrch(
-            model.gwf,
-            pname="rch",
-            print_input=False,
-            print_flows=False,
-            save_flows=True,
-            maxbound=maxbound,
-            stress_period_data=stress_period_data,
-            filename=f"{model.name}.rch",
-            auxiliary=auxiliary,
         )
     elif artifact.package_type == "uzf":
         package = flopy.mf6.ModflowGwfuzf(
