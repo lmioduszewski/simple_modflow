@@ -618,3 +618,65 @@ same day, which is the useful part of the result.
       which is the failure that actually happened.
     - Revisit: if the advanced explorer types are ever unified, generation
       becomes worth reconsidering.
+
+## Q sign convention — decided 2026-07-19, NOT YET IMPLEMENTED
+
+45. **OUTSTANDING: keep MF6's raw `q` signs; name the reference frame instead.**
+    - **User decision, verbatim intent:** all `q` values must match MF6's own
+      sign. Diverging from MF6 "is just asking for trouble". The ambiguity is
+      resolved by naming the reference frame in the **column**, and by saying it
+      in the docstrings — never by negating data.
+
+      | column | reference | negative means |
+      |---|---|---|
+      | `q_gwf` | the GWF cell | discharge **out of the aquifer** |
+      | `q_lake` / `q_sfr` | the surface-water feature | the **feature is losing** |
+
+      Which frame applies follows from the FILE the record came from:
+      `.cbc` cell records (SFR, DRN, RIV, CHD, WEL) are aquifer-referenced and
+      mutually consistent; package budget files (LAK's `GWF` record) are
+      feature-referenced. The trap is that LAK's record is *named* `GWF` but
+      written from the lake's point of view — verified, the canonical perched
+      lake is losing and reports −5888.
+    - **Accessor stays `q`** (`model.packages.lak.results.q`) so the
+      `results.<noun>.<verb>` grammar stays uniform (`docs/view_layer_conventions.md`).
+      Only the DataFrame column becomes frame-explicit.
+    - **Plots/maps** keep gaining = blue, losing = red — reached by knowing the
+      declared frame, not by consuming pre-flipped data.
+    - **Work required (none of it done yet):**
+      1. REVERT the normalization in `build_sfr_budget_result_table` (commit
+         `382530e`) and the downstream comparison flips it forced
+         (`canonical.py` gaining/losing counts, the long-profile signed bars,
+         `tests/test_sfr_profile_view.py`, `tests/test_colorscale_policy.py`).
+      2. Replace `ResultSpec.raw_gaining_sign` with a declared reference frame
+         (`"gwf"` / `"feature"`).
+      3. Rename value columns to `q_gwf` / `q_lake` / `q_sfr`; docstrings state
+         the frame. Snapshot regen; group/diff/PEST columns follow.
+      4. Re-point the three exchange maps at the declared frame.
+      5. DRN then resolves by naming rather than flipping — see entry 46.
+    - Revisit: next session; this is the top of the queue.
+
+46. **DRN's PEST series is sign-inconsistent with SFR/LAK (audit finding).**
+    - What: the canonical springs discharge — the feature GAINS — and
+      `targets.drn_flow.simulated_series()` reports −1274.9, while a gaining SFR
+      reach reported +864 after the (now-to-be-reverted) normalization.
+      `pest/forward_run.py` writes that series straight into the PEST simulated
+      CSV, so observed discharge entered as a positive number yields a residual
+      of ~−2550 with no warning.
+    - Why not fixed yet: DRN was never in the surface-water convention, and its
+      display layer and targets are currently consistent *with each other*.
+      Normalizing only the targets would CREATE a plot-vs-PEST disagreement.
+    - Resolution under entry 45: DRN is `.cbc`-sourced, so it is `q_gwf` —
+      aquifer-referenced, negative = out of the aquifer. Naming makes it correct
+      and consistent without flipping anything or breaking existing PEST runs.
+    - Revisit: with entry 45.
+
+47. **The 2026-07-19 sign audit surfaced 29 confirmed findings; 2 triaged.**
+    - What: an exhaustive sweep traced 64 read paths for SFR/LAK exchange.
+      Confirmed and acted on: the DRN inconsistency (entry 46) and the SFR map
+      inversion I introduced (fixed in `3738cca`). The remaining ~27 are
+      untriaged.
+    - Impact: unknown until triaged — they are *confirmed* findings, not
+      candidates, so some may be real defects.
+    - Revisit: triage the remainder after entry 45 lands, since the reference-frame
+      rename will resolve or invalidate several of them.
