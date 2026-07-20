@@ -265,11 +265,11 @@ def _raw_gaining_sign(package: str, result: str = "q") -> int:
 
     Used to normalize a package's exchange to myflopy's one convention
     (positive = the surface-water feature gains). See
-    ``ResultSpec.gaining_sign``.
+    ``ResultSpec.raw_gaining_sign``.
     """
 
     spec = get_package_result_spec(package, result)
-    return int(spec.gaining_sign) if spec is not None else -1
+    return int(spec.raw_gaining_sign) if spec is not None else -1
 
 
 def build_sfr_budget_result_table(
@@ -317,7 +317,7 @@ def build_sfr_budget_result_table(
         # perched losing lake and a losing reach reported opposite signs for
         # the same physical direction (fixed 2026-07-19).
         #
-        # ``ResultSpec.gaining_sign`` records the RAW MF6 sign per package and
+        # ``ResultSpec.raw_gaining_sign`` records the RAW MF6 sign per package and
         # is what drives this; everything downstream may assume the normalized
         # convention.
         raw_gaining_sign = _raw_gaining_sign("sfr")

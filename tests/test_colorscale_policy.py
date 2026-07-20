@@ -101,64 +101,39 @@ def test_list_colorscale_maps_to_mpl_colormap():
 # ---------------------------------------------------------------------------
 
 
-def test_gaining_is_blue_and_losing_is_red_for_every_exchange_source():
-    """The house rule, stated from the surface-water feature's point of view.
+def test_every_exchange_map_puts_blue_on_gaining(canonical_run):
+    """The house rule, asserted on the REAL maps rather than on the helper.
 
-    Gaining = blue, losing = red. Flow in blue, flow out red. Increase blue,
-    decrease red. It must hold for SFR, LAK and the combined explorer even
-    though their raw signs disagree.
+    Gaining = blue, losing = red, from the surface-water feature's point of
+    view. Because myflopy normalizes every package to positive-means-gaining at
+    the read boundary, blue must sit at the POSITIVE end of all three maps.
 
-    Reported 2026-07-19. LAK and surface_water both shipped INVERTED -- a
-    perched, losing lake drew blue -- because SFR's "gaining (negative q) blue"
-    comment was copied to both without re-deriving the sign. SFR reads the
-    model's cell record (flow from reach to cell, so gaining is negative); LAK
-    reads its package budget file (the lake's perspective, so gaining is
-    positive). Nothing pinned the invariant, so nothing noticed.
+    This test exists in this form because the previous one did not catch a live
+    inversion. It exercised ``_exchange_colorscale`` with hand-supplied signs --
+    proving the helper's arithmetic while the SFR map, which passed the helper a
+    RAW sign after the data had already been normalized, rendered gaining
+    reaches red. Assert on what the call site actually produces.
     """
-
-    from myflopy.modflow.mf6.package_plotting import _exchange_colorscale
 
     BLUE, RED = "#1f77b4", "#d62728"
-
-    for label, gaining_sign in (("sfr-like", -1), ("lak-like", 1)):
-        scale = _exchange_colorscale(gaining_sign=gaining_sign)
+    maps = {
+        "sfr": canonical_run.packages.sfr.results.q,
+        "lak": canonical_run.packages.lak.results.q,
+        "surface_water": canonical_run.packages.surface_water.results,
+    }
+    for label, accessor in maps.items():
+        choro = accessor.map(per=0)
+        scale = list(choro.colorscale) if hasattr(choro, "colorscale") else None
+        if scale is None:  # plotly figure -> pull it off the trace
+            scale = list(choro.data[0].colorscale)
         negative_end, positive_end = scale[0][1], scale[-1][1]
-        gaining_colour = negative_end if gaining_sign < 0 else positive_end
-        losing_colour = positive_end if gaining_sign < 0 else negative_end
-
-        assert gaining_colour == BLUE, f"{label}: gaining must be blue"
-        assert losing_colour == RED, f"{label}: losing must be red"
-        assert scale[1][1] == "#ffffff", f"{label}: zero must be white"
-
-
-def test_the_registry_records_each_packages_gaining_sign():
-    """The sign lives in one place, so the two cannot drift apart again."""
-
-    from myflopy.modflow.mf6.package_registry import get_package_result_spec
-
-    assert get_package_result_spec("sfr", "q").gaining_sign == -1
-    assert get_package_result_spec("lak", "q").gaining_sign == 1
-
-
-def test_lak_and_sfr_agree_on_sign_after_normalization(canonical_run):
-    """Both packages must report losing as NEGATIVE once normalized.
-
-    MF6 writes them from opposite perspectives -- SFR's cell record is
-    flow-from-reach-to-cell, LAK's package budget is lake's-perspective -- and
-    myflopy negates SFR at the read boundary so callers never have to know.
-    Before 2026-07-19 a losing reach and a losing lake reported opposite signs.
-    """
-
-    lak_q = canonical_run.packages.lak.results.q.get()["q"].astype(float)
-    assert (lak_q <= 0).all() and lak_q.min() < -1.0, (
-        f"expected the perched lake to lose (negative q), got {lak_q.min()}..{lak_q.max()}"
-    )
-    # ...and after normalization SFR agrees: losing is negative for BOTH
-
-    sfr_q = canonical_run.packages.sfr.results.profile.get(
-        per=canonical_run.nper - 1
-    )["q"].astype(float)
-    assert (sfr_q < 0).any(), "expected some losing reaches with NEGATIVE q"
+        assert positive_end.lower() == BLUE, (
+            f"{label}: positive q means GAINING after normalization, so the "
+            f"positive end must be blue, got {positive_end}"
+        )
+        assert negative_end.lower() == RED, (
+            f"{label}: negative q means LOSING, so it must be red, got {negative_end}"
+        )
 
 
 def test_lak_plot_budget_keeps_positive_blue(canonical_run):

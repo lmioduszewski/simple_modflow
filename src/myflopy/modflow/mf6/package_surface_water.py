@@ -42,10 +42,7 @@ from myflopy.modflow.mf6.package_plotting import (
     build_sfr_q_map_payload,
     build_surface_water_q_map_payload,
 )
-from myflopy.modflow.mf6.package_registry import (
-    get_default_budget_term,
-    get_package_result_spec,
-)
+from myflopy.modflow.mf6.package_registry import get_default_budget_term
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
     PackageBudgetTermExplorer,
@@ -63,17 +60,6 @@ from myflopy.modflow.utils.datatypes.hover import (
     sfr_hover,
     surface_water_hover,
 )
-
-
-def _gaining_sign(package: str, result: str = "q") -> int:
-    """The sign of ``q`` that means this package's feature GAINS water.
-
-    Read from the registry so the answer lives in one place -- see
-    ``ResultSpec.gaining_sign`` for why it differs between SFR and LAK.
-    """
-
-    spec = get_package_result_spec(package, result)
-    return int(spec.gaining_sign) if spec is not None else -1
 
 
 def _join_feature_stage(frame, stage_table, *, per=None):
@@ -215,8 +201,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             hover_ks=False,
             # SFR's cell record is flow FROM reach TO cell, so gaining is
             # negative. Declared via the registry rather than assumed.
-            colorscale=colorscale
-            or _exchange_colorscale(gaining_sign=_gaining_sign("sfr")),
+            colorscale=colorscale or _exchange_colorscale(),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -372,8 +357,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             # package budget, written from the LAKE's perspective, so gaining is
             # POSITIVE. This map shipped inverted -- losing lakes drew blue --
             # because the SFR comment was copied here without re-deriving it.
-            colorscale=colorscale
-            or _exchange_colorscale(gaining_sign=_gaining_sign("lak")),
+            colorscale=colorscale or _exchange_colorscale(),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -1733,7 +1717,7 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             # gaining (see build_surface_water_exchange_cell_table). The old
             # comment here claimed the opposite and contradicted that docstring
             # two lines up, so this map also drew losing as blue.
-            colorscale=colorscale or _exchange_colorscale(gaining_sign=1),
+            colorscale=colorscale or _exchange_colorscale(),
             **kwargs,
         )
         return _apply_backend(choro, backend)

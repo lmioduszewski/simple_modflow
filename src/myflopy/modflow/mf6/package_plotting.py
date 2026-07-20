@@ -63,40 +63,23 @@ def _blue_white_red_diverging_colorscale() -> list[list[object]]:
     ]
 
 
-def _exchange_colorscale(*, gaining_sign: int) -> list[list[object]]:
-    """Return a scale where the FEATURE gaining is blue and losing is red.
+def _exchange_colorscale() -> list[list[object]]:
+    """Return the scale for surface-water exchange: gaining blue, losing red.
 
-    The house convention is stated from the surface-water feature's point of
-    view and is the same for every package: a lake or stream **gaining** water
-    from the aquifer is BLUE, **losing** water to it is RED (flow in blue, flow
-    out red, increase blue, decrease red).
+    Takes no arguments on purpose. myflopy normalizes every package's exchange
+    at the read boundary so that **positive always means the feature gains**
+    (see ``build_sfr_budget_result_table``), which makes the correct scale a
+    constant: blue at the positive end, red at the negative end.
 
-    The raw sign that means "gaining" is NOT the same everywhere -- SFR's cell
-    record is written flow-from-reach-to-cell (gaining is negative), while LAK's
-    package budget is written from the lake's perspective (gaining is positive).
-    Passing ``gaining_sign`` from the registry rather than hardcoding a scale is
-    what stops the two from drifting apart again: ``lak`` and
-    ``surface_water`` both shipped showing losing as blue because an SFR comment
-    was copied to them without re-deriving the sign.
-
-    Parameters
-    ----------
-    gaining_sign
-        ``-1`` when a negative value means the feature gains (SFR's convention),
-        ``+1`` when a positive value does (LAK's).
+    It used to take a per-package ``gaining_sign``. That parameter was the bug:
+    the same field named the RAW MF6 sign used for normalizing AND was passed
+    here, so SFR -- normalized to positive-gaining but still declaring raw -1 --
+    briefly rendered gaining reaches red. There is no per-package answer to give
+    downstream of the normalizer, so the parameter is gone.
     """
 
-    scale = _blue_white_red_diverging_colorscale()
-    if int(gaining_sign) > 0:
-        # blue must sit at the POSITIVE end
-        return [
-            [position, colour]
-            for position, (_, colour) in zip(
-                [entry[0] for entry in scale], reversed(scale), strict=True
-            )
-        ]
-    return scale
-
+    blue, white, red = "#1f77b4", "#ffffff", "#d62728"
+    return [[0.0, red], [0.5, white], [1.0, blue]]
 
 def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.ndarray:
     """Return static package arrays as a consistent ``(nlay, ncpl)`` array."""

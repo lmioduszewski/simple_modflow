@@ -20,8 +20,10 @@ class FieldSpec:
 class ResultSpec:
     """Registry metadata for one package result term.
 
-    ``gaining_sign`` is the sign of the value that means **the feature is
-    gaining water from the aquifer**. It is not cosmetic: MF6 writes these
+    ``raw_gaining_sign`` is the sign **as MF6 writes it** that means the
+    feature is gaining water from the aquifer. It exists so the read boundary
+    can normalize; **after normalization every package is positive-means-gaining
+    and nothing downstream should consult this field.** It is not cosmetic: MF6 writes these
     records from different perspectives depending on which file they come from,
     and every signed exchange plot needs to know which way round this term is.
 
@@ -38,7 +40,9 @@ class ResultSpec:
 
     Getting this wrong inverts gaining and losing on a map, which is how
     ``lak``/``surface_water`` shipped showing losing as blue -- an SFR comment
-    was copied without re-deriving the sign.
+    was copied without re-deriving the sign. Using it *after* normalization
+    inverts them too: that briefly broke the SFR map on 2026-07-19, which is
+    why the name now says RAW.
     """
 
     name: str
@@ -47,7 +51,7 @@ class ResultSpec:
     label: str | None = None
     colorscale: str | None = None
     diverging: bool = True
-    gaining_sign: int = -1
+    raw_gaining_sign: int = -1
 
 
 @dataclass(frozen=True)
@@ -437,7 +441,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
                 budget_text="GWF",
                 value_name="q",
                 colorscale="RdBu",
-                gaining_sign=1,
+                raw_gaining_sign=1,
             ),
         },
     ),
