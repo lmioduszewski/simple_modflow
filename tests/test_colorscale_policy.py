@@ -105,17 +105,32 @@ def test_every_exchange_map_puts_blue_on_gaining(canonical_run):
     """The house rule, asserted on the REAL maps rather than on the helper.
 
     Gaining = blue, losing = red, from the surface-water feature's point of
-    view. Because myflopy normalizes every package to positive-means-gaining at
-    the read boundary, blue must sit at the POSITIVE end of all three maps.
+    view. myflopy keeps MF6's RAW sign and never normalizes ``q``, so *which
+    end* is gaining differs by reference frame:
 
-    This test exists in this form because the previous one did not catch a live
-    inversion. It exercised ``_exchange_colorscale`` with hand-supplied signs --
-    proving the helper's arithmetic while the SFR map, which passed the helper a
-    RAW sign after the data had already been normalized, rendered gaining
-    reaches red. Assert on what the call site actually produces.
+    * ``sfr`` is aquifer-referenced (the "gwf" frame): gaining is NEGATIVE, so
+      blue must sit at the NEGATIVE end.
+    * ``lak`` is feature-referenced: gaining is POSITIVE, blue at the POSITIVE
+      end.
+    * ``surface_water`` draws the normalized ``exchange_intensity`` field
+      (positive = gaining), so it follows the feature orientation too.
+
+    This test exists in this form because an earlier one did not catch a live
+    inversion: it exercised ``_exchange_colorscale`` with hand-supplied signs,
+    proving the helper's arithmetic while the real SFR map rendered gaining
+    reaches red. Assert on what the call site actually produces, and derive the
+    expected end from the registry frame so the colour and the declared sign
+    cannot drift apart.
     """
 
     BLUE, RED = "#1f77b4", "#d62728"
+    # frame per map: sfr/lak from the registry, surface_water is the normalized
+    # exchange_intensity field (feature-oriented: positive = gaining).
+    frames = {
+        "sfr": get_package_result_spec("sfr", "q").reference_frame,
+        "lak": get_package_result_spec("lak", "q").reference_frame,
+        "surface_water": "feature",
+    }
     maps = {
         "sfr": canonical_run.packages.sfr.results.q,
         "lak": canonical_run.packages.lak.results.q,
@@ -126,13 +141,20 @@ def test_every_exchange_map_puts_blue_on_gaining(canonical_run):
         scale = list(choro.colorscale) if hasattr(choro, "colorscale") else None
         if scale is None:  # plotly figure -> pull it off the trace
             scale = list(choro.data[0].colorscale)
-        negative_end, positive_end = scale[0][1], scale[-1][1]
-        assert positive_end.lower() == BLUE, (
-            f"{label}: positive q means GAINING after normalization, so the "
-            f"positive end must be blue, got {positive_end}"
+        negative_end, positive_end = scale[0][1].lower(), scale[-1][1].lower()
+        # gaining end: negative for the "gwf" frame, positive for "feature".
+        gaining_end, losing_end = (
+            (negative_end, positive_end)
+            if frames[label] == "gwf"
+            else (positive_end, negative_end)
         )
-        assert negative_end.lower() == RED, (
-            f"{label}: negative q means LOSING, so it must be red, got {negative_end}"
+        assert gaining_end == BLUE, (
+            f"{label} ({frames[label]} frame): the GAINING end must be blue, "
+            f"got {gaining_end}"
+        )
+        assert losing_end == RED, (
+            f"{label} ({frames[label]} frame): the LOSING end must be red, "
+            f"got {losing_end}"
         )
 
 

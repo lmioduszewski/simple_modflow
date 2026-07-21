@@ -118,11 +118,12 @@ def _exchange_trace(fig):
 
 
 def test_signed_exchange_colors_gaining_blue_and_losing_red(profile):
-    """Blue where the reach gains (q>0), red where it loses (q<0).
+    """Blue where the reach gains (q<0), red where it loses (q>0).
 
-    myflopy normalizes SFR's raw MF6 sign at the read boundary so that
-    POSITIVE means the stream gains, matching LAK and the combined explorer
-    (``docs/mf6io_reference.md``).
+    SFR keeps MF6's RAW sign: the cell record is flow FROM the reach TO the
+    aquifer (the "gwf" frame), so NEGATIVE q means the reach gains. myflopy does
+    not normalize it (``docs/mf6io_reference.md``); the frame is declared, and
+    the colours orient to it.
     """
 
     frame = profile.get()
@@ -135,7 +136,7 @@ def test_signed_exchange_colors_gaining_blue_and_losing_red(profile):
         _blue_white_red_diverging_colorscale()[-1][1]
     )
     colors = np.asarray(_exchange_trace(profile.plot()).marker.color)
-    np.testing.assert_array_equal(colors, np.where(q > 0.0, gaining, losing))
+    np.testing.assert_array_equal(colors, np.where(q < 0.0, gaining, losing))
 
 
 def test_signed_bar_colors_track_the_shared_map_scale(profile):

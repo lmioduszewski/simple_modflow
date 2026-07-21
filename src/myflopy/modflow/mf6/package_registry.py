@@ -20,29 +20,33 @@ class FieldSpec:
 class ResultSpec:
     """Registry metadata for one package result term.
 
-    ``raw_gaining_sign`` is the sign **as MF6 writes it** that means the
-    feature is gaining water from the aquifer. It exists so the read boundary
-    can normalize; **after normalization every package is positive-means-gaining
-    and nothing downstream should consult this field.** It is not cosmetic: MF6 writes these
-    records from different perspectives depending on which file they come from,
-    and every signed exchange plot needs to know which way round this term is.
+    ``reference_frame`` declares whose point of view MF6 wrote this record from.
+    myflopy keeps MF6's RAW sign everywhere and never negates ``q``; the
+    ambiguity that a gaining stream and a gaining lake report opposite signs is
+    resolved by naming the frame -- both in this field (so plots orient their
+    colours) and in the emitted column (``q_gwf`` vs ``q_lake``).
 
-    * ``-1`` -- the model's cell-by-cell record, written as "flow FROM the
-      feature TO the GWF cell", so a negative value means the feature gains.
-      This is SFR's ``SFR`` record.
-    * ``+1`` -- a package budget file, written from the FEATURE's perspective,
-      so a positive value means water entering the feature. This is LAK's
-      ``GWF`` record.
+    * ``"gwf"`` -- an aquifer-referenced cell-by-cell (.cbc) record, written as
+      "flow FROM the feature TO the GWF cell". A GAINING feature is therefore
+      NEGATIVE (water leaving the aquifer). This is SFR's ``SFR`` record and
+      every list BC (CHD/DRN/GHB/RIV/WEL/RCH/EVT). Column: ``q_gwf``.
+    * ``"feature"`` -- a feature-referenced package budget file, written from the
+      FEATURE's perspective, so a positive value means water ENTERING the
+      feature (gaining). This is LAK's ``GWF`` record -- named ``GWF`` in the
+      file but written lake's-perspective, which is the trap. Column: ``q_lake``.
 
     Verified against the canonical model: its perched lake leaks downward and
-    reports ``GWF`` in the range -5888..0, while its losing stream reaches
-    report positive ``q``. Same physical direction, opposite signs.
+    reports ``GWF`` in the range -5888..0 (feature frame: negative = losing),
+    while its losing stream reaches report positive ``q`` (gwf frame: positive =
+    losing). Same physical direction, opposite signs -- exactly why the frame
+    must be declared rather than assumed.
 
-    Getting this wrong inverts gaining and losing on a map, which is how
-    ``lak``/``surface_water`` shipped showing losing as blue -- an SFR comment
-    was copied without re-deriving the sign. Using it *after* normalization
-    inverts them too: that briefly broke the SFR map on 2026-07-19, which is
-    why the name now says RAW.
+    Unlike the ``raw_gaining_sign`` field this replaced, ``reference_frame``
+    cannot go stale: it describes what MF6 *wrote*, and the data is never
+    flipped out from under it. The old field named both the raw sign and the
+    effective sign, which are equal only before a normalization step -- so it
+    silently inverted the SFR map on 2026-07-19 when consulted after that step.
+    There is no normalization step any more.
     """
 
     name: str
@@ -51,7 +55,7 @@ class ResultSpec:
     label: str | None = None
     colorscale: str | None = None
     diverging: bool = True
-    raw_gaining_sign: int = -1
+    reference_frame: str = "gwf"
 
 
 @dataclass(frozen=True)
@@ -435,13 +439,13 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         results={
             # LAK's GWF record comes from the LAK package budget file, written
             # from the LAKE's perspective: positive = water entering the lake.
-            # Opposite to SFR's cell record -- see ResultSpec.gaining_sign.
+            # Opposite frame to SFR's cell record -- see ResultSpec.reference_frame.
             "q": ResultSpec(
                 "q",
                 budget_text="GWF",
                 value_name="q",
                 colorscale="RdBu",
-                raw_gaining_sign=1,
+                reference_frame="feature",
             ),
         },
     ),

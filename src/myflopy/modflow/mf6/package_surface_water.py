@@ -42,7 +42,10 @@ from myflopy.modflow.mf6.package_plotting import (
     build_sfr_q_map_payload,
     build_surface_water_q_map_payload,
 )
-from myflopy.modflow.mf6.package_registry import get_default_budget_term
+from myflopy.modflow.mf6.package_registry import (
+    get_default_budget_term,
+    get_package_result_spec,
+)
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
     PackageBudgetTermExplorer,
@@ -199,9 +202,10 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # SFR's cell record is flow FROM reach TO cell, so gaining is
-            # negative. Declared via the registry rather than assumed.
-            colorscale=colorscale or _exchange_colorscale(),
+            # SFR's cell record is flow FROM reach TO cell (the "gwf" frame), so
+            # gaining is negative. The orientation is derived from the registry,
+            # not assumed, so it cannot drift from the data.
+            colorscale=colorscale or _exchange_colorscale(_exchange_frame("sfr")),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -353,11 +357,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # NOT the SFR convention: LAK's GWF record comes from the LAK
-            # package budget, written from the LAKE's perspective, so gaining is
-            # POSITIVE. This map shipped inverted -- losing lakes drew blue --
-            # because the SFR comment was copied here without re-deriving it.
-            colorscale=colorscale or _exchange_colorscale(),
+            # NOT the SFR frame: LAK's GWF record comes from the LAK package
+            # budget, written from the LAKE's perspective (the "feature" frame),
+            # so gaining is POSITIVE. This map once shipped inverted -- losing
+            # lakes drew blue -- because a frame literal was copied from SFR;
+            # deriving it from the registry removes that whole failure mode.
+            colorscale=colorscale or _exchange_colorscale(_exchange_frame("lak")),
             **kwargs,
         )
         return _apply_backend(choro, backend)
@@ -1294,14 +1299,27 @@ class SfrBudgetNamespace:
         )
 
 
+def _exchange_frame(package: str) -> str:
+    """The declared reference frame for a package's exchange ``q``.
+
+    Reads ``ResultSpec.reference_frame`` from the registry so a map's colour
+    orientation is derived from the same field that documents the sign, never a
+    literal at the call site that could fall out of step with the data.
+    """
+
+    spec = get_package_result_spec(package, "q")
+    return spec.reference_frame if spec is not None else "gwf"
+
+
 def _signed_exchange_colors() -> tuple[str, str]:
     """Return the ``(gaining, losing)`` bar colors for signed exchange plots.
 
     Both are read off ``_blue_white_red_diverging_colorscale`` rather than
     written out, so discrete bars and continuous maps cannot drift apart. The
-    pairing follows the documented convention (``docs/mf6io_reference.md``):
-    negative ``q`` is groundwater gaining to the stream and renders BLUE,
-    positive ``q`` is the stream losing to groundwater and renders RED.
+    colours are frame-independent (gaining is always blue, losing always red);
+    which *sign* of ``q`` is gaining is a per-frame fact the caller applies. The
+    signed SFR profile bars are in the "gwf" frame, where negative ``q`` is the
+    reach gaining (BLUE) and positive ``q`` is the reach losing (RED).
     """
 
     scale = _blue_white_red_diverging_colorscale()
@@ -1526,7 +1544,9 @@ class SfrProfileView:
             y=frame["q"],
             name="Exchange q (blue gains, red loses)",
             marker={
-                "color": np.where(q > 0.0, gaining_color, losing_color).tolist(),
+                # SFR's q keeps MF6's raw sign (the "gwf" frame): NEGATIVE q is
+                # the reach gaining -> blue; positive q is losing -> red.
+                "color": np.where(q < 0.0, gaining_color, losing_color).tolist(),
                 "line": {"width": 0},
             },
             opacity=0.55,
@@ -1713,11 +1733,12 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # ``exchange_intensity`` is normalized so POSITIVE = the feature
-            # gaining (see build_surface_water_exchange_cell_table). The old
-            # comment here claimed the opposite and contradicted that docstring
-            # two lines up, so this map also drew losing as blue.
-            colorscale=colorscale or _exchange_colorscale(),
+            # This map draws ``exchange_intensity``, myflopy's OWN unified field,
+            # which is normalized so POSITIVE = the feature gains (see
+            # build_surface_water_exchange_cell_table). That matches the
+            # "feature" orientation -- blue at the positive end -- regardless of
+            # each source package's own raw frame.
+            colorscale=colorscale or _exchange_colorscale("feature"),
             **kwargs,
         )
         return _apply_backend(choro, backend)

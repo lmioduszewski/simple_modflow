@@ -63,22 +63,29 @@ def _blue_white_red_diverging_colorscale() -> list[list[object]]:
     ]
 
 
-def _exchange_colorscale() -> list[list[object]]:
-    """Return the scale for surface-water exchange: gaining blue, losing red.
+def _exchange_colorscale(frame: str) -> list[list[object]]:
+    """Return the exchange scale oriented for ``frame``: gaining blue, losing red.
 
-    Takes no arguments on purpose. myflopy normalizes every package's exchange
-    at the read boundary so that **positive always means the feature gains**
-    (see ``build_sfr_budget_result_table``), which makes the correct scale a
-    constant: blue at the positive end, red at the negative end.
+    ``frame`` is a ``ResultSpec.reference_frame`` value and MUST be supplied --
+    which sign means "gaining" is a property of the source file, not a constant,
+    because myflopy keeps MF6's raw sign and never normalizes it:
 
-    It used to take a per-package ``gaining_sign``. That parameter was the bug:
-    the same field named the RAW MF6 sign used for normalizing AND was passed
-    here, so SFR -- normalized to positive-gaining but still declaring raw -1 --
-    briefly rendered gaining reaches red. There is no per-package answer to give
-    downstream of the normalizer, so the parameter is gone.
+    * ``"gwf"`` -- an aquifer-referenced cell (.cbc) record: MF6 writes flow FROM
+      the feature TO the cell, so a GAINING feature is NEGATIVE. Blue sits at the
+      negative end -> ``[blue, white, red]``. (SFR and the list BCs.)
+    * ``"feature"`` -- a feature-referenced package budget file (LAK's ``GWF``
+      record) OR myflopy's normalized ``exchange_intensity``: a gaining feature
+      is POSITIVE. Blue sits at the positive end -> ``[red, white, blue]``.
+
+    Plotly maps position 0.0 to ``zmin`` and 1.0 to ``zmax``. Passing a stale
+    frame is what inverted the SFR map on 2026-07-19; callers now derive it from
+    the registry, which describes what MF6 wrote and so cannot drift from the
+    data.
     """
 
     blue, white, red = "#1f77b4", "#ffffff", "#d62728"
+    if frame == "gwf":
+        return [[0.0, blue], [0.5, white], [1.0, red]]
     return [[0.0, red], [0.5, white], [1.0, blue]]
 
 def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.ndarray:

@@ -268,11 +268,11 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
         "dry_reach_count": int((~wet).sum()),
         "minimum_depth": float(np.nanmin(depth)) if wet.any() else np.nan,
         "maximum_depth": float(np.nanmax(depth)) if wet.any() else np.nan,
-        # MF6 SFR GWF flow is positive from the stream to groundwater.
-        # positive q = the stream GAINS (myflopy normalizes SFR's raw MF6 sign
-        # at the read boundary, 2026-07-19), so losing reaches are negative.
-        "losing_reach_count": int((exchange < -tolerance).sum()),
-        "gaining_reach_count": int((exchange > tolerance).sum()),
+        # SFR's q keeps MF6's raw sign: the cell record is flow FROM the reach
+        # TO groundwater, so positive q = the reach LOSES and negative q = the
+        # reach GAINS (the "gwf" frame; see ResultSpec.reference_frame).
+        "losing_reach_count": int((exchange > tolerance).sum()),
+        "gaining_reach_count": int((exchange < -tolerance).sum()),
         "minimum_routed_flow": float(np.nanmin(routed_flow)) if routed_flow.size else np.nan,
         "maximum_routed_flow": float(np.nanmax(routed_flow)) if routed_flow.size else np.nan,
     }

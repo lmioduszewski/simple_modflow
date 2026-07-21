@@ -19,7 +19,6 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_term_filter,
     split_cellid_columns,
 )
-from myflopy.modflow.mf6.package_registry import get_package_result_spec
 from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
 )
@@ -260,25 +259,20 @@ def build_sfr_long_profile_table(
 
 
 
-def _raw_gaining_sign(package: str, result: str = "q") -> int:
-    """The RAW MF6 sign that means this package's feature gains water.
-
-    Used to normalize a package's exchange to myflopy's one convention
-    (positive = the surface-water feature gains). See
-    ``ResultSpec.raw_gaining_sign``.
-    """
-
-    spec = get_package_result_spec(package, result)
-    return int(spec.raw_gaining_sign) if spec is not None else -1
-
-
 def build_sfr_budget_result_table(
     model: SimulationBase,
     *,
     budget_text: str = "SFR",
     value_name: str = "q",
 ) -> pd.DataFrame:
-    """Return a normalized SFR exchange-result table with reach ids attached."""
+    """Return the SFR exchange-result table with reach ids attached.
+
+    The ``q`` column carries MF6's RAW sign from the SFR cell-by-cell record:
+    flow FROM the reach TO the GWF cell (aquifer-referenced, the "gwf" frame),
+    so a NEGATIVE value means the reach gains water from the aquifer. It is not
+    normalized -- ``ResultSpec.reference_frame`` declares the frame so plots can
+    orient their colours, and the column is presented as ``q_gwf`` downstream.
+    """
 
     frame = build_budget_result_table(
         model,
@@ -306,23 +300,15 @@ def build_sfr_budget_result_table(
     )
     frame["reach"] = frame["reach"].astype("Int64")
     if value_name == "q":
-        # NORMALIZE THE SIGN to myflopy's surface-water convention:
-        #   positive = the stream GAINS water from the aquifer
-        #   negative = the stream LOSES water to the aquifer
-        #
-        # MF6 writes this record as flow FROM the reach TO the GWF cell, i.e.
-        # the opposite, so it is negated exactly once, here at the read
-        # boundary. LAK's package budget is already lake's-perspective and
-        # needs no flip -- which is why the two used to disagree, and why a
-        # perched losing lake and a losing reach reported opposite signs for
-        # the same physical direction (fixed 2026-07-19).
-        #
-        # ``ResultSpec.raw_gaining_sign`` records the RAW MF6 sign per package and
-        # is what drives this; everything downstream may assume the normalized
-        # convention.
-        raw_gaining_sign = _raw_gaining_sign("sfr")
-        q_series = pd.to_numeric(frame["q"], errors="coerce") * raw_gaining_sign
-        frame["q"] = q_series
+        # Keep MF6's RAW sign -- do NOT normalize. This is the SFR cell-by-cell
+        # record, aquifer-referenced (the "gwf" frame):
+        #   negative q = the reach GAINS water from the aquifer
+        #   positive q = the reach LOSES water to the aquifer
+        # q_per_length inherits that sign so the table and the map agree. Which
+        # sign means "gaining" is declared by ResultSpec.reference_frame, not
+        # baked into the data -- see that field for why this is safer than the
+        # negation that briefly inverted the SFR map on 2026-07-19.
+        q_series = pd.to_numeric(frame["q"], errors="coerce")
         rlen_series = pd.to_numeric(frame["rlen"], errors="coerce")
         frame["q_per_length"] = np.where(
             rlen_series > 0.0, q_series / rlen_series, np.nan
@@ -870,10 +856,13 @@ def build_surface_water_exchange_cell_table(
                 / pd.to_numeric(grouped["rlen"], errors="coerce"),
                 np.nan,
             )
-            # No negation here any more: build_sfr_budget_result_table
-            # normalizes SFR's sign at the read boundary, so q_per_length is
-            # already positive-means-gaining like LAK's.
-            grouped["exchange_intensity"] = pd.to_numeric(
+            # exchange_intensity is myflopy's OWN unified field (positive =
+            # feature gains; see this function's docstring), NOT a raw q. SFR's
+            # q_per_length is aquifer-referenced (gaining is negative), so negate
+            # it here to match LAK, whose feature-referenced q is already
+            # positive-means-gaining. The negation lives on this derived field,
+            # never on the raw q column, which keeps MF6's sign.
+            grouped["exchange_intensity"] = -pd.to_numeric(
                 grouped["q_per_length"], errors="coerce"
             )
             grouped["source"] = "sfr"
