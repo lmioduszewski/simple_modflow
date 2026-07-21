@@ -619,9 +619,9 @@ same day, which is the useful part of the result.
     - Revisit: if the advanced explorer types are ever unified, generation
       becomes worth reconsidering.
 
-## Q sign convention — decided 2026-07-19, NOT YET IMPLEMENTED
+## Q sign convention — decided 2026-07-19, IMPLEMENTED 2026-07-20
 
-45. **OUTSTANDING: keep MF6's raw `q` signs; name the reference frame instead.**
+45. **DONE: keep MF6's raw `q` signs; name the reference frame instead.**
     - **User decision, verbatim intent:** all `q` values must match MF6's own
       sign. Diverging from MF6 "is just asking for trouble". The ambiguity is
       resolved by naming the reference frame in the **column**, and by saying it
@@ -629,32 +629,49 @@ same day, which is the useful part of the result.
 
       | column | reference | negative means |
       |---|---|---|
-      | `q_gwf` | the GWF cell | discharge **out of the aquifer** |
-      | `q_lake` / `q_sfr` | the surface-water feature | the **feature is losing** |
+      | `q_gwf` | the GWF cell | discharge **out of the aquifer** (the feature *gains*) |
+      | `q_lake` | the lake | the lake **loses** |
 
       Which frame applies follows from the FILE the record came from:
-      `.cbc` cell records (SFR, DRN, RIV, CHD, WEL) are aquifer-referenced and
-      mutually consistent; package budget files (LAK's `GWF` record) are
-      feature-referenced. The trap is that LAK's record is *named* `GWF` but
-      written from the lake's point of view — verified, the canonical perched
-      lake is losing and reports −5888.
+      `.cbc` cell records (SFR, DRN, RIV, CHD, WEL, GHB, RCH, EVT) are
+      aquifer-referenced (`q_gwf`) and mutually consistent; package budget files
+      (LAK's `GWF` record) are feature-referenced (`q_lake`). The trap is that
+      LAK's record is *named* `GWF` but written from the lake's point of view —
+      verified, the canonical perched lake is losing and reports ≈ −5888.
+    - **SFR is `q_gwf`, not `q_sfr`.** The decision doc floated `q_sfr` with
+      "negative = losing", but SFR's exchange is the aquifer's `.cbc` `SFR`
+      record — *aquifer*-referenced, so negative = gaining, identical in frame to
+      every list BC. Confirmed on the canonical model (41 gaining reaches, all
+      `q < 0`). The user chose `q_gwf` (honest to the data) over `q_sfr`. Only
+      LAK, which really is feature-referenced, gets a per-feature name (`q_lake`).
     - **Accessor stays `q`** (`model.packages.lak.results.q`) so the
       `results.<noun>.<verb>` grammar stays uniform (`docs/view_layer_conventions.md`).
-      Only the DataFrame column becomes frame-explicit.
-    - **Plots/maps** keep gaining = blue, losing = red — reached by knowing the
-      declared frame, not by consuming pre-flipped data.
-    - **Work required (none of it done yet):**
-      1. REVERT the normalization in `build_sfr_budget_result_table` (commit
-         `382530e`) and the downstream comparison flips it forced
-         (`canonical.py` gaining/losing counts, the long-profile signed bars,
-         `tests/test_sfr_profile_view.py`, `tests/test_colorscale_policy.py`).
-      2. Replace `ResultSpec.raw_gaining_sign` with a declared reference frame
-         (`"gwf"` / `"feature"`).
-      3. Rename value columns to `q_gwf` / `q_lake` / `q_sfr`; docstrings state
-         the frame. Snapshot regen; group/diff/PEST columns follow.
-      4. Re-point the three exchange maps at the declared frame.
-      5. DRN then resolves by naming rather than flipping — see entry 46.
-    - Revisit: next session; this is the top of the queue.
+      The explorer now carries a `result_name` (`"q"`, the accessor) distinct
+      from `value_name` (`"q_gwf"`/`"q_lake"`, the emitted column); only the
+      DataFrame column and its docstrings became frame-explicit.
+    - **Scope: all user-facing q tables** (user's choice) — the result
+      explorers *and* the group-compare + model-diff tables. Diff columns follow
+      the raw name: `q_gwf` → `reference_q_gwf`, `q_gwf_diff`. Generic `.budget`
+      term tables and the MVR mover-flow diff stay `q` (multi-term budget values
+      with no gaining/losing ambiguity). The combined `surface_water` map draws
+      the derived `exchange_intensity` field (normalized, positive = gaining).
+    - **Plots/maps** keep gaining = blue, losing = red — reached by
+      `_exchange_colorscale(frame)`, oriented from `ResultSpec.reference_frame`,
+      not from pre-flipped data.
+    - **What the implementation did (all landed):**
+      1. Reverted the normalization in `build_sfr_budget_result_table` (commit
+         `382530e`) and every downstream flip — commit 1 of 2.
+      2. Replaced `ResultSpec.raw_gaining_sign` with `reference_frame`
+         (`"gwf"`/`"feature"`); it describes the source file, so it can't go
+         stale the way the old sign did.
+      3. Renamed the columns via `value_name`, a TRUE rename at the read boundary
+         so any missed consumer fails loudly; `result_name` keeps the accessor.
+         `test_package_descriptor.py` now asserts value_name matches the frame.
+      4. Re-pointed the three single-model maps and the two group maps.
+      5. PEST is untouched: SFR flow obs take `.abs()`; DRN reads the separate
+         legacy budget path. DRN resolves by naming (entry 46) — no run changes.
+    - **Two bugs surfaced and fixed while implementing** (see entry 48).
+    - Done: 2026-07-20. Removed from the outstanding queue.
 
 46. **DRN's PEST series is sign-inconsistent with SFR/LAK (audit finding).**
     - What: the canonical springs discharge — the feature GAINS — and
@@ -669,7 +686,9 @@ same day, which is the useful part of the result.
     - Resolution under entry 45: DRN is `.cbc`-sourced, so it is `q_gwf` —
       aquifer-referenced, negative = out of the aquifer. Naming makes it correct
       and consistent without flipping anything or breaking existing PEST runs.
-    - Revisit: with entry 45.
+      **Resolved 2026-07-20** with entry 45: DRN's exchange column is now `q_gwf`
+      and its docstring states the frame; the PEST target series is unchanged
+      (still MF6's raw sign), so no calibration run shifts.
 
 47. **The 2026-07-19 sign audit surfaced 29 confirmed findings; 2 triaged.**
     - What: an exhaustive sweep traced 64 read paths for SFR/LAK exchange.
@@ -678,5 +697,25 @@ same day, which is the useful part of the result.
       untriaged.
     - Impact: unknown until triaged — they are *confirmed* findings, not
       candidates, so some may be real defects.
-    - Revisit: triage the remainder after entry 45 lands, since the reference-frame
-      rename will resolve or invalidate several of them.
+    - Revisit: triage the remainder now that entry 45 has landed, since the
+      reference-frame rename resolved or invalidated several of them.
+
+48. **Two bugs surfaced while implementing the reference-frame rename (entry 45).**
+    - **Group LAK map was inverted** (pre-existing). The single-model LAK map was
+      fixed in `c55ea23` to put gaining on blue, but that fix never reached the
+      group layer: `project/group/lak.py` kept the raw blue-at-negative scale, so
+      a gaining lake drew red on `group.packages.lak.results.q.map(...)` while the
+      single-model map drew it blue. Fixed by orienting both group maps from the
+      declared frame (`_exchange_colorscale("feature")` for LAK,
+      `"gwf"` for SFR); verified the two maps now agree.
+    - **xdist masked a silent-skip.** After the rename, the SFR profile plot's
+      guard `if "q" in frame.columns` silently dropped the exchange trace (the
+      column is now `q_gwf`), and `build_sfr_q_map_payload` read a missing `"q"`.
+      The full suite under `pytest -n 10` reported **green** while the same tests
+      **failed serially** (`-n0`) — a session-fixture/xdist interaction hid real
+      failures behind a passing count. Both were caught only by running serially
+      and by a direct scripted check of `results.q.map()`.
+    - **Standing lesson (added to the q-sign memory):** a green xdist count is not
+      proof. Verify a sign/column change **serially** and by observing the real
+      call site (`.map()`, `.plot()`), not just via a hand-built frame — the same
+      failure mode that let the 2026-07-19 map inversion ship through a green test.

@@ -21,6 +21,7 @@ anything. Each such test is marked ``RETIRE WITH 4.7.3``.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -54,6 +55,42 @@ def test_every_package_carries_the_whole_descriptor(package):
     assert entry.blurb.strip().endswith("."), f"{package}: blurb is not a sentence"
     assert entry.capabilities is not None
     assert entry.tiers is not None
+
+
+@pytest.mark.parametrize("package", ALL_PACKAGES)
+def test_exchange_q_column_names_its_reference_frame(package):
+    """Every signed exchange ``q`` result names its frame in the column.
+
+    myflopy keeps MF6's raw sign and disambiguates by naming the reference frame
+    in the emitted column (never by negating data):
+
+    * ``reference_frame == "gwf"``  -> column ``q_gwf``  (aquifer-referenced .cbc
+      record; gaining is negative)
+    * ``reference_frame == "feature"`` -> column ``q_<package>`` (feature budget
+      file; gaining is positive)
+
+    The accessor stays ``results.q`` regardless. This guards a future package
+    from setting a ``value_name`` that disagrees with its declared frame.
+    """
+
+    q_spec = spec(package).results.get("q")
+    if q_spec is None:  # not every package has a signed exchange q (e.g. uzf)
+        return
+    assert q_spec.reference_frame in {"gwf", "feature"}, package
+    if q_spec.reference_frame == "gwf":
+        # one shared name for every aquifer-referenced .cbc record
+        assert q_spec.value_name == "q_gwf", (
+            f"{package}: an aquifer-referenced q must be column 'q_gwf', "
+            f"got {q_spec.value_name!r}"
+        )
+    else:
+        # feature-referenced: a readable q_<feature-noun> (e.g. q_lake), never
+        # the generic gwf name -- so the two frames are never confusable.
+        assert re.fullmatch(r"q_[a-z]+", q_spec.value_name), (
+            f"{package}: a feature-referenced q must be a q_<noun> column, "
+            f"got {q_spec.value_name!r}"
+        )
+        assert q_spec.value_name != "q_gwf", package
 
 
 @pytest.mark.parametrize("package", LIST_BCS)

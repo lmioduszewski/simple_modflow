@@ -71,15 +71,17 @@ def test_canonical_riv_and_evt_carry_real_flux(canonical_run):
 
     riv = canonical_run.packages.riv.results.q.get()
     assert not riv.empty
-    # an outlet river in equilibrium with the water table both gains and loses;
-    # this also keeps the signed-q RdBu colorscale exercised in both directions
-    assert riv["q"].min() < 0.0 < riv["q"].max()
+    # riv/evt are aquifer-referenced .cbc records, so the exchange column names
+    # its frame: q_gwf (negative = out of the aquifer). An outlet river in
+    # equilibrium with the water table both gains and loses, which also keeps the
+    # signed-q RdBu colorscale exercised in both directions.
+    assert riv["q_gwf"].min() < 0.0 < riv["q_gwf"].max()
 
     evt = canonical_run.packages.evt.results.q.get()
     assert not evt.empty
-    assert (evt["q"] <= 0.0).all(), "ET may only remove water"
+    assert (evt["q_gwf"] <= 0.0).all(), "ET may only remove water"
     period0 = evt[evt["per"] == evt["per"].min()]
-    active = int((period0["q"].abs() > 1e-9).sum())
+    active = int((period0["q_gwf"].abs() > 1e-9).sum())
     # a strict subset transpires: cells shallower than the extinction depth draw
     # water, deeper ones yield exactly zero -- that partition IS the feature
     assert 0 < active < len(period0)

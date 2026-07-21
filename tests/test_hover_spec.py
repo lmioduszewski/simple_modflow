@@ -262,7 +262,7 @@ def test_sfr_q_payload_passes_joined_stage_through_to_hover():
     frame = pd.DataFrame(
         {
             "cell": [0, 0, 1],
-            "q": [-10.0, -5.0, 2.0],
+            "q_gwf": [-10.0, -5.0, 2.0],  # aquifer-referenced exchange (raw MF6 sign)
             "rlen": [10.0, 5.0, 20.0],
             "reach": [1, 2, 3],
             "package": ["sfr"] * 3,
@@ -284,7 +284,7 @@ def test_lak_q_payload_passes_stage_and_skips_when_absent():
     with_stage = pd.DataFrame(
         {
             "cell": [0],
-            "q": [-38.1],
+            "q_lake": [-38.1],  # feature-referenced exchange (raw MF6 sign)
             "flow_area": [91.0],
             "lake": [2],
             "stage": [12.31],

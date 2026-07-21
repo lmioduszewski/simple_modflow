@@ -129,7 +129,7 @@ def test_package_explorer_registry_adds_wel_semantics():
     assert spec.kind == "cell_stress"
     assert spec.default_input == "q"
     assert spec.inputs["q"].label == "Well flow"
-    assert get_default_budget_term("wel") == ("WEL", "q")
+    assert get_default_budget_term("wel") == ("WEL", "q_gwf")
 
 
 def test_package_explorer_registry_exposes_uzf_period_fields():
@@ -151,7 +151,9 @@ def test_model_packages_exposes_registry_backed_wel_accessors():
     assert packages.wel.results.q.package_name == "wel"
     assert packages.wel.results.q.budget_text == "WEL"
     assert packages.rch.results.fields["field"].tolist() == ["q"]
-    assert packages.rch.results.q.value_name == "q"
+    # accessor stays results.q; the emitted COLUMN names its frame (q_gwf)
+    assert packages.rch.results.q.result_name == "q"
+    assert packages.rch.results.q.value_name == "q_gwf"
     assert packages.uzf.inputs.pet.field_name == "pet"
     assert packages.uzf.inputs.rootact.field_name == "rootact"
     assert packages.uzf.inputs.fields["field"].tolist() == [

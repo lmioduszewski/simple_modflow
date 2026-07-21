@@ -149,7 +149,11 @@ class GroupCellPackageResults(_GroupSpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        if self.value_name == "q":
+        # The signed exchange columns name their reference frame (q_gwf / q_lake);
+        # "q" is only the legacy raw name. All three take the diverging RdBu scale
+        # with a symmetric, zero-centred range.
+        is_exchange = self.value_name in {"q", "q_gwf", "q_lake"}
+        if is_exchange:
             absmax = _symmetric_color_limit(values)
             kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
             kwargs.setdefault("zmax", absmax if absmax > 0 else None)
@@ -159,7 +163,7 @@ class GroupCellPackageResults(_GroupSpatialView):
             result_hover(
                 self.value_name,
                 title=f"{self.package_name.upper()} {self.value_name}",
-                units={"q": "ft³/d"} if self.value_name == "q" else None,
+                units={self.value_name: "ft³/d"} if is_exchange else None,
             ),
         )
         return target_model.cor(
@@ -172,7 +176,7 @@ class GroupCellPackageResults(_GroupSpatialView):
             hover_ks=False,
             colorscale=(
                 colorscale
-                or ("RdBu" if self.value_name == "q" else None)
+                or ("RdBu" if is_exchange else None)
                 or get_default_package_colorscale(self.package_name)
                 or "earth"
             ),

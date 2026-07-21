@@ -108,7 +108,7 @@ def test_sfr_flow_compare_survives_float_geometry_noise():
             "per": [0], "reach": pd.array([475], dtype="Int64"), "layer": [0],
             "cell": [105], "rlen": [16.000493], "distance_start": [0.0],
             "distance_mid": [16564.632017], "distance_end": [16580.0],
-            "q": [-166.294714], "q_per_length": [-166.294714 / 16.000493],
+            "q_gwf": [-166.294714], "q_per_length": [-166.294714 / 16.000493],
             "node": [105], "node2": [475],
         }
     )
@@ -117,7 +117,7 @@ def test_sfr_flow_compare_survives_float_geometry_noise():
     variant["kstpkper"] = [(9, 0)]
     variant["rlen"] = [16.000000]            # FP noise vs 16.000493
     variant["distance_mid"] = [16564.632264]  # FP noise vs ...017
-    variant["q"] = [-166.331694]
+    variant["q_gwf"] = [-166.331694]
     variant["q_per_length"] = [-166.331694 / 16.0]
     combined = pd.concat([ref, variant], ignore_index=True)
     acc.get = lambda **kwargs: combined.copy()
@@ -126,7 +126,8 @@ def test_sfr_flow_compare_survives_float_geometry_noise():
     assert len(comp) == 1  # the shared reach survives the FP-noisy geometry
     row = comp.iloc[0]
     assert row["reach"] == 475
-    assert row["q_diff"] == pytest.approx(-166.331694 - (-166.294714))
+    # the exchange column names its frame (q_gwf), so its diff follows suit
+    assert row["q_gwf_diff"] == pytest.approx(-166.331694 - (-166.294714))
 
 
 def test_cell_budget_compare_reduces_multi_step_period_no_cartesian():

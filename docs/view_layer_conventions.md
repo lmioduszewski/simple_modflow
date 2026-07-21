@@ -112,6 +112,33 @@ where the same noun means the same thing scoped to one field:
 
 Namespace-level nouns merge fields; field-level nouns cover a single field.
 
+## Signed exchange columns name their reference frame
+
+The **accessor** for a package's groundwater exchange is always `results.q`
+(one noun, every package). The **DataFrame column** that `.get()` emits, however,
+names the reference frame the sign is measured in — because myflopy keeps MF6's
+raw sign and never negates data to force one convention:
+
+| column | source record | reference frame | negative means |
+|---|---|---|---|
+| `q_gwf` | aquifer `.cbc` cell record (SFR + every list BC) | the GWF cell | discharge **out of the aquifer** (the feature *gains*) |
+| `q_lake` | LAK package budget file | the lake | the lake **loses** |
+
+So `model.packages.sfr.results.q.get()` has a `q_gwf` column and
+`model.packages.lak.results.q.get()` has a `q_lake` column; both carry MF6's
+exact sign. Which frame a package is in is declared once, on
+`ResultSpec.reference_frame` (`package_registry.py`), and drives the column name,
+the map's colour orientation, and the docstrings together — never a literal at a
+call site. Plots always show gaining blue / losing red by consulting that frame,
+so a package's colours and its declared sign cannot drift apart. Derived columns
+(`q_per_length`, `q_per_area`, `q_diff`) keep their own names; the combined
+`surface_water` map draws myflopy's own normalized `exchange_intensity` field
+(positive = gaining).
+
+Never resolve the SFR-vs-LAK sign difference by negating one package's data:
+that diverges from every MF6 file and, once a downstream consumer flips it back,
+silently inverts a map (it did, on 2026-07-19). Name the frame instead.
+
 ## Changing a noun's name
 
 Renames go through the standard deprecation mechanism (`_deprecation.py`,

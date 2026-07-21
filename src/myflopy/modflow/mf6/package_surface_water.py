@@ -118,11 +118,15 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         model: SimulationBase,
         *,
         budget_text: str = "SFR",
-        value_name: str = "q",
+        value_name: str = "q_gwf",
     ):
-        """Bind an SFR budget-result explorer (defaults to the ``SFR`` term's ``q``)."""
+        """Bind an SFR budget-result explorer (defaults to the ``SFR`` term's ``q_gwf``).
 
-        super().__init__(model, "sfr", budget_text, value_name)
+        ``value_name`` is the emitted column (``q_gwf`` -- the SFR exchange is
+        aquifer-referenced); the accessor stays ``results.q`` via ``result_name``.
+        """
+
+        super().__init__(model, "sfr", budget_text, value_name, result_name="q")
 
     def get(
         self,
@@ -188,6 +192,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
+            value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
@@ -277,11 +282,15 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         model: SimulationBase,
         *,
         budget_text: str = "GWF",
-        value_name: str = "q",
+        value_name: str = "q_lake",
     ):
-        """Bind a LAK budget-result explorer (defaults to the ``GWF`` exchange ``q``)."""
+        """Bind a LAK budget-result explorer (defaults to the ``GWF`` exchange ``q_lake``).
 
-        super().__init__(model, "lak", budget_text, value_name)
+        ``value_name`` is the emitted column (``q_lake`` -- LAK's exchange is
+        feature-referenced); the accessor stays ``results.q`` via ``result_name``.
+        """
+
+        super().__init__(model, "lak", budget_text, value_name, result_name="q")
 
     def get(
         self,
@@ -343,6 +352,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
+            value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
@@ -390,6 +400,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         """
 
         frame = self.get(per=per, connection_type=connection_type)
+        q = self.value_name  # feature-referenced exchange column (q_lake)
         if frame.empty:
             return pd.DataFrame(
                 columns=[
@@ -397,7 +408,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
                     "lake",
                     "claktype",
                     "record_count",
-                    "q",
+                    q,
                     "flow_area",
                     "q_per_area",
                 ]
@@ -406,7 +417,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             frame.groupby(["per", "lake", "claktype"], dropna=False, as_index=False)
             .agg(
                 record_count=("cell", "size"),
-                q=("q", "sum"),
+                **{q: (q, "sum")},
                 flow_area=("flow_area", "sum"),
             )
             .sort_values(["per", "lake", "claktype"])
@@ -414,7 +425,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         )
         summary["q_per_area"] = np.where(
             pd.to_numeric(summary["flow_area"], errors="coerce") > 0.0,
-            pd.to_numeric(summary["q"], errors="coerce")
+            pd.to_numeric(summary[q], errors="coerce")
             / pd.to_numeric(summary["flow_area"], errors="coerce"),
             np.nan,
         )
@@ -445,8 +456,13 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         """
 
         summary = self.budget_summary(per=per, connection_type=connection_type)
-        if value not in {"q", "flow_area", "q_per_area"}:
-            raise ValueError("value must be one of: 'q', 'flow_area', 'q_per_area'")
+        # Accept the accessor-facing "q" as an alias for the frame-named column.
+        if value == "q":
+            value = self.value_name
+        if value not in {self.value_name, "flow_area", "q_per_area"}:
+            raise ValueError(
+                f"value must be one of: 'q', {self.value_name!r}, 'flow_area', 'q_per_area'"
+            )
         if ax is None:
             fig, ax = mpl_axes(figsize=(8, 4))
         else:
@@ -832,7 +848,7 @@ class LakResultsNamespace(FieldMappable):
         ``map(...)`` renders ``sum(q) / sum(flow_area)`` by cell.
         """
 
-        budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q")
+        budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q_lake")
         return LakBudgetResultsExplorer(
             self.model, budget_text=budget_text, value_name=value_name
         )
@@ -1377,7 +1393,7 @@ class SfrProfileView:
             label="sfr.results.profile",
             value_columns=[
                 column
-                for column in ("stage", "streambed_top", "q", "q_per_length")
+                for column in ("stage", "streambed_top", "q_gwf", "q_per_length")
                 if column in frame.columns
             ],
         )
@@ -1411,9 +1427,9 @@ class SfrProfileView:
             Whether to show stream-groundwater exchange on a secondary axis.
         signed_exchange
             When ``True`` (the default) draw exchange as per-reach bars colored
-            by sign -- blue where the reach gains (positive q under myflopy's
-            normalized surface-water convention), red where it loses, matching
-            the SFR map colorscale. When ``False`` draw one unsigned line.
+            by sign -- blue where the reach gains (NEGATIVE q_gwf: SFR's cell
+            record is aquifer-referenced, MF6's raw sign), red where it loses,
+            matching the SFR map colorscale. When ``False`` draw one unsigned line.
         plot_fig
             If ``True``, call ``show()`` on the created figure.
         return_fig
@@ -1478,7 +1494,7 @@ class SfrProfileView:
                     "stage=%{y}<extra></extra>"
                 ),
             )
-        if include_exchange and "q" in frame.columns:
+        if include_exchange and "q_gwf" in frame.columns:
             self._add_exchange_trace(
                 fig,
                 frame=frame,
@@ -1519,7 +1535,7 @@ class SfrProfileView:
         if not signed:
             fig.add_scattergl(
                 x=frame[x_column],
-                y=frame["q"],
+                y=frame["q_gwf"],
                 mode="lines+markers",
                 name="Exchange q",
                 line={"color": "#d62728", "width": 2},
@@ -1531,7 +1547,7 @@ class SfrProfileView:
             return
 
         gaining_color, losing_color = _signed_exchange_colors()
-        q = pd.to_numeric(frame["q"], errors="coerce").to_numpy(float)
+        q = pd.to_numeric(frame["q_gwf"], errors="coerce").to_numpy(float)
         positions = pd.to_numeric(frame[x_column], errors="coerce").to_numpy(float)
         # One bar per reach, sized just under the reach spacing so adjacent
         # bars read as separate reaches. A single reach has no spacing to
@@ -1541,7 +1557,7 @@ class SfrProfileView:
         width = float(np.median(spacing)) * 0.9 if spacing.size else None
         fig.add_bar(
             x=frame[x_column],
-            y=frame["q"],
+            y=frame["q_gwf"],
             name="Exchange q (blue gains, red loses)",
             marker={
                 # SFR's q keeps MF6's raw sign (the "gwf" frame): NEGATIVE q is
@@ -1586,7 +1602,7 @@ class SfrResultsNamespace(FieldMappable):
     def q(self) -> SfrBudgetResultsExplorer:
         """Return the stream-groundwater exchange result explorer."""
 
-        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q")
+        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q_gwf")
         return SfrBudgetResultsExplorer(
             self.model, budget_text=budget_text, value_name=value_name
         )

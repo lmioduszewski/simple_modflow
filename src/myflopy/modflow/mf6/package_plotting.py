@@ -149,12 +149,14 @@ def build_sfr_q_map_payload(
     layer: int | None,
     multiplier: float = 1.0,
     fill_value: float = 0.0,
+    value_column: str = "q_gwf",
 ) -> tuple[list[float], dict[str, list]]:
     """Convert SFR exchange rows into a cell choropleth normalized by reach length.
 
     The mapped value is ``sum(q) / sum(rlen)`` within each cell, which is more
     meaningful than raw exchange magnitude alone when reach lengths vary across
-    cells.
+    cells. ``value_column`` is the frame's exchange column (``q_gwf``); it keeps
+    MF6's raw aquifer-referenced sign, so gaining reaches are negative.
     """
 
     full_index = pd.Index(range(int(ncpl)), name="cell")
@@ -173,10 +175,10 @@ def build_sfr_q_map_payload(
         return values.tolist(), hover
 
     selected = frame.copy()
-    selected["q"] = pd.to_numeric(selected["q"], errors="coerce")
+    selected[value_column] = pd.to_numeric(selected[value_column], errors="coerce")
     selected["rlen"] = pd.to_numeric(selected["rlen"], errors="coerce")
     grouped = selected.groupby("cell", dropna=False)
-    q_sum = grouped["q"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
+    q_sum = grouped[value_column].sum(min_count=1).reindex(full_index, fill_value=np.nan)
     rlen_sum = grouped["rlen"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
     values = pd.Series(float(fill_value), index=full_index, dtype=float)
     valid = rlen_sum > 0.0
@@ -222,11 +224,14 @@ def build_lak_q_map_payload(
     layer: int | None,
     multiplier: float = 1.0,
     fill_value: float = 0.0,
+    value_column: str = "q_lake",
 ) -> tuple[list[float], dict[str, list]]:
     """Convert LAK exchange rows into a cell choropleth normalized by area.
 
     The mapped value is ``sum(q) / sum(flow_area)`` within each cell, giving a
     lake-groundwater exchange intensity with units of length per time.
+    ``value_column`` is the frame's exchange column (``q_lake``); it keeps MF6's
+    raw feature-referenced sign, so a gaining lake is positive.
     """
 
     full_index = pd.Index(range(int(ncpl)), name="cell")
@@ -245,10 +250,10 @@ def build_lak_q_map_payload(
         return values.tolist(), hover
 
     selected = frame.copy()
-    selected["q"] = pd.to_numeric(selected["q"], errors="coerce")
+    selected[value_column] = pd.to_numeric(selected[value_column], errors="coerce")
     selected["flow_area"] = pd.to_numeric(selected["flow_area"], errors="coerce")
     grouped = selected.groupby("cell", dropna=False)
-    q_sum = grouped["q"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
+    q_sum = grouped[value_column].sum(min_count=1).reindex(full_index, fill_value=np.nan)
     area_sum = (
         grouped["flow_area"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
     )

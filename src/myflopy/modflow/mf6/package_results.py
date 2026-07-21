@@ -45,17 +45,22 @@ class CellBudgetResultsExplorer(SpatialView):
         package_name: str,
         budget_text: str,
         value_name: str,
+        result_name: str | None = None,
     ):
         """Bind one cell-based result term: its MF6 ``budget_text`` and output column.
 
-        ``value_name`` is the normalized column (e.g. ``"q"``) and doubles as the
-        SpatialView value label; ``package_name`` is lowercased.
+        ``result_name`` is the registry/accessor identity (e.g. ``"q"``, the name
+        behind ``results.q``); ``value_name`` is the emitted DataFrame COLUMN
+        (e.g. ``"q_gwf"``), which names its reference frame. The two differ for
+        the signed exchange results and are equal for everything else.
+        ``package_name`` is lowercased.
         """
 
         self.model = model
         self.package_name = str(package_name).lower()
         self.budget_text = str(budget_text)
         self.value_name = str(value_name)
+        self.result_name = str(result_name) if result_name is not None else str(value_name)
 
     def get(
         self,
@@ -191,18 +196,18 @@ class CellBudgetResultsExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        if self.value_name == "q":
+        if self.result_name == "q":
             absmax = _symmetric_color_limit(values)
             kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
             kwargs.setdefault("zmax", absmax if absmax > 0 else None)
             kwargs.setdefault("zmid", 0.0)
-        result_spec = get_package_result_spec(self.package_name, self.value_name)
+        result_spec = get_package_result_spec(self.package_name, self.result_name)
         kwargs.setdefault(
             "hover_spec",
             result_hover(
                 self.value_name,
                 title=f"{self.package_name.upper()} {self.value_name}",
-                units={"q": "ft³/d"} if self.value_name == "q" else None,
+                units={self.value_name: "ft³/d"} if self.result_name == "q" else None,
             ),
         )
         choro = self.model.cor(
@@ -400,6 +405,7 @@ class CellPackageResultsNamespace(FieldMappable):
             self.package_name,
             result_spec.budget_text,
             result_spec.value_name,
+            result_name=result_name,
         )
 
     @property
@@ -409,13 +415,15 @@ class CellPackageResultsNamespace(FieldMappable):
         result_spec = get_package_result_spec(self.package_name, "q")
         if result_spec is None:
             return CellBudgetResultsExplorer(
-                self.model, self.package_name, self.package_name.upper(), "q"
+                self.model, self.package_name, self.package_name.upper(), "q",
+                result_name="q",
             )
         return CellBudgetResultsExplorer(
             self.model,
             self.package_name,
             result_spec.budget_text,
             result_spec.value_name,
+            result_name="q",
         )
 
 
@@ -502,7 +510,8 @@ class UzfResultsNamespace(FieldMappable):
                 f"{type(self).__name__!s} has no UZF result field {field_name!r}"
             )
         return CellBudgetResultsExplorer(
-            self.model, "uzf", result_spec.budget_text, result_spec.value_name
+            self.model, "uzf", result_spec.budget_text, result_spec.value_name,
+            result_name=field_name,
         )
 
     def __getattr__(self, field_name: str) -> CellBudgetResultsExplorer:

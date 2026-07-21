@@ -46,9 +46,16 @@ For LAK package binary output:
   `iconn` value
 
 Implications for `myflopy`:
-- LAK exchange sign convention:
-  - positive `q` = lake losing to groundwater
-  - negative `q` = groundwater gaining to lake
+- LAK exchange sign convention (the **feature** reference frame). LAK's `GWF`
+  term comes from the LAK *package budget file*, which — like every MF6
+  advanced-package budget — is written from the feature's own balance, inflows
+  positive:
+  - positive `q` = groundwater entering the lake = **lake GAINS**
+  - negative `q` = **lake LOSES** to groundwater
+  - Verified on the canonical model: the perched lake leaks downward (loses) and
+    reports `GWF` in roughly `-5888..0`.
+  - myflopy keeps this RAW sign and names the column **`q_lake`** so the frame is
+    explicit; the accessor stays `results.q`. See `ResultSpec.reference_frame`.
 - LAK package-output rows must be matched back to `lak.connectiondata`
   using:
   - lake id
@@ -67,17 +74,27 @@ For SFR package binary output:
 - auxiliary `FLOW-AREA` is written for this term
 
 Implications for `myflopy`:
-- That is the RAW MF6 sign. **myflopy normalizes it at the read boundary**
-  (`build_sfr_budget_result_table`, 2026-07-19) so every surface-water package
-  reports one convention, always from the FEATURE's point of view:
-  - **positive `q` = the stream/lake GAINS water from the aquifer**
-  - **negative `q` = the stream/lake LOSES water to the aquifer**
-- LAK needs no flip: its package budget is already lake's-perspective. SFR's
-  cell record is flow-from-reach-to-cell, so it is negated exactly once.
-  Before this, a losing reach and a losing lake reported OPPOSITE signs.
-- Colours follow from the same rule, via `_exchange_colorscale`:
-  - blue where the feature gains
-  - red where it loses
+- SFR exchange sign convention (the **gwf** reference frame). Unlike LAK, SFR's
+  exchange here is the aquifer's cell-by-cell (`.cbc`) `SFR` record, written as
+  flow FROM the reach TO the GWF cell:
+  - positive `q` = flow from reach into the aquifer = **reach LOSES**
+  - negative `q` = **reach GAINS** water from the aquifer
+  - Verified on the canonical model: the mostly-gaining stream reports `q` in
+    roughly `-864..150`, with the gaining reaches negative.
+- myflopy keeps this RAW MF6 sign — it does **not** normalize (an earlier
+  normalization was reverted on 2026-07-20 because it diverged from every MF6
+  file and, when consulted after the flip, inverted the SFR map). Instead the
+  ambiguity that a gaining stream and a gaining lake report opposite signs is
+  resolved by **naming the reference frame in the column**:
+  - SFR and the list BCs → **`q_gwf`** (aquifer frame; gaining is negative)
+  - LAK → **`q_lake`** (feature frame; gaining is positive)
+  - The accessor stays `results.q` for both; only the DataFrame column and its
+    docstrings name the frame. See `ResultSpec.reference_frame`.
+- Colours are oriented to the declared frame, via `_exchange_colorscale(frame)`:
+  blue on whichever end is gaining (negative for `gwf`, positive for `feature`),
+  red on losing. The combined `surface_water` map draws myflopy's own normalized
+  `exchange_intensity` field (positive = gaining), so it uses the feature
+  orientation.
 - SFR exchange map values are more meaningful when normalized by reach length
   rather than plotted as raw volumetric `q`
 

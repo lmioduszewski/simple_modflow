@@ -24,6 +24,17 @@ from myflopy.modflow.mf6.observations._shared import (
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 
 
+def _exchange_column(frame: pd.DataFrame) -> str:
+    """Return the SFR exchange column, tolerating the frame name (``q_gwf``).
+
+    ``sfr.results.q.get()`` names the exchange column by its reference frame
+    (``q_gwf``); older/mock frames may still use the bare ``q``. This flow
+    observation takes ``.abs()`` of it, so the frame's sign is irrelevant here.
+    """
+
+    return "q_gwf" if "q_gwf" in frame.columns else "q"
+
+
 @dataclass
 class SfrStageTargets:
     """Observed SFR stage time series tied to named reaches, for review or PEST.
@@ -310,7 +321,9 @@ class SfrFlowTargets:
                 return pd.DataFrame(columns=["per", "reach", "sim_flow"])
             flow["per"] = pd.to_numeric(flow["per"], errors="coerce").astype(int)
             flow["reach"] = pd.to_numeric(flow["reach"], errors="coerce").astype(int)
-            flow["sim_flow"] = _clean_observation_output_values(flow["q"]).abs()
+            flow["sim_flow"] = _clean_observation_output_values(
+                flow[_exchange_column(flow)]
+            ).abs()
             return flow.loc[:, ["per", "reach", "sim_flow"]]
 
         flow = model.outputs.sfr.bud.get("FLOW-JA-FACE")
@@ -323,7 +336,9 @@ class SfrFlowTargets:
                 return pd.DataFrame(columns=["per", "reach", "sim_flow"])
             fallback["per"] = pd.to_numeric(fallback["per"], errors="coerce").astype(int)
             fallback["reach"] = pd.to_numeric(fallback["reach"], errors="coerce").astype(int)
-            fallback["sim_flow"] = _clean_observation_output_values(fallback["q"]).abs()
+            fallback["sim_flow"] = _clean_observation_output_values(
+                fallback[_exchange_column(fallback)]
+            ).abs()
             return fallback.loc[:, ["per", "reach", "sim_flow"]]
 
         frame = flow.copy()

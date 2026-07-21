@@ -10,7 +10,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.package_explorer import (
     LakStageResultsExplorer,
-    _blue_white_red_diverging_colorscale,
+    _exchange_colorscale,
     _normalize_connection_type_filter,
     _symmetric_color_limit,
     build_cell_input_map_payload,
@@ -38,8 +38,12 @@ if TYPE_CHECKING:
 class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
 
-    def __init__(self, group: ModelGroup, *, budget_text: str = "GWF", value_name: str = "q"):
-        """Bind a grouped LAK exchange accessor (defaults to the ``GWF`` term's ``q``)."""
+    def __init__(self, group: ModelGroup, *, budget_text: str = "GWF", value_name: str = "q_lake"):
+        """Bind a grouped LAK exchange accessor (defaults to the ``GWF`` term's ``q_lake``).
+
+        LAK's exchange is feature-referenced, so the emitted column is
+        ``q_lake`` (accessor stays ``results.q``).
+        """
 
         super().__init__(group, "lak", budget_text=budget_text, value_name=value_name)
 
@@ -95,17 +99,18 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             return pd.DataFrame()
 
         reference = self.group.reference
-        value_columns = ["q", "q_per_area"] if "q_per_area" in data.columns else ["q"]
+        q = self.value_name  # feature-referenced exchange column (q_lake)
+        value_columns = [q, "q_per_area"] if "q_per_area" in data.columns else [q]
         key_columns = [column for column in data.columns if column not in {"model", *value_columns}]
         ref = data[data["model"] == reference].drop(columns=["model"]).copy()
         rename_map = {column: f"reference_{column}" for column in value_columns}
         ref = ref.rename(columns=rename_map)
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
         comp["reference_model"] = reference
-        comp["q_diff"] = comp["q"].astype(float) - comp["reference_q"].astype(float)
+        comp[f"{q}_diff"] = comp[q].astype(float) - comp[f"reference_{q}"].astype(float)
         if "q_per_area" in value_columns:
             comp["q_per_area_diff"] = comp["q_per_area"].astype(float) - comp["reference_q_per_area"].astype(float)
-        ordered = ["model", "reference_model", *key_columns, "q", "reference_q", "q_diff"]
+        ordered = ["model", "reference_model", *key_columns, q, f"reference_{q}", f"{q}_diff"]
         if "q_per_area" in value_columns:
             ordered.extend(["q_per_area", "reference_q_per_area", "q_per_area_diff"])
         result = comp[ordered]
@@ -148,6 +153,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
+            value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
@@ -163,7 +169,11 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             hover_heads=False,
             hover_ks=False,
             # match the SFR convention: gaining (negative q) blue, losing red
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # LAK exchange is feature-referenced (gaining is POSITIVE), so blue
+            # sits at the positive end -- matching the single-model LAK map. Using
+            # the raw blue-at-negative scale here inverted the group map (gaining
+            # drew red) while the single-model map drew it blue.
+            colorscale=colorscale or _exchange_colorscale("feature"),
             **kwargs,
         )
 
@@ -194,10 +204,11 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             selected = frame[frame["model"] == current_model_name].copy()
             if selected.empty:
                 return pd.DataFrame(columns=["cell", "q_per_area"])
-            selected["q"] = pd.to_numeric(selected["q"], errors="coerce")
+            q = self.value_name
+            selected[q] = pd.to_numeric(selected[q], errors="coerce")
             selected["flow_area"] = pd.to_numeric(selected["flow_area"], errors="coerce")
-            grouped = selected.groupby("cell", as_index=False).agg({"q": "sum", "flow_area": "sum"})
-            grouped["q_per_area"] = np.where(grouped["flow_area"] > 0.0, grouped["q"] / grouped["flow_area"], np.nan)
+            grouped = selected.groupby("cell", as_index=False).agg({q: "sum", "flow_area": "sum"})
+            grouped["q_per_area"] = np.where(grouped["flow_area"] > 0.0, grouped[q] / grouped["flow_area"], np.nan)
             return grouped[["cell", "q_per_area"]]
 
         reference = _normalized_by_cell(data, self.group.reference).rename(

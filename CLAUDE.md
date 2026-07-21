@@ -65,8 +65,10 @@ entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
 ## Test suite (fast by design)
-- Full suite (**705 passed / 1 skipped**, 2026-07-18): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
-  addopts); serial ≈ 2m49s; inner loop `pytest -m "not slow"` ≈ 21 s.
+- Full suite (**804 passed / 1 skipped**, 2026-07-20): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ 2m30s; inner loop `pytest -m "not slow"` ≈ 21 s.
+  **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
+  can report green while serial catches real failures (see ledger 48).
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50

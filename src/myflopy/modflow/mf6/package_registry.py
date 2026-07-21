@@ -176,7 +176,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "recharge": FieldSpec("recharge", label="Recharge", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="RCH", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="RCH", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "chd": PackageExplorerSpec(
@@ -203,7 +203,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "head": FieldSpec("head", label="Constant head", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="CHD", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="CHD", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "drn": PackageExplorerSpec(
@@ -231,7 +231,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "cond": FieldSpec("cond", label="Drain conductance", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="DRN", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="DRN", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "ghb": PackageExplorerSpec(
@@ -259,7 +259,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "cond": FieldSpec("cond", label="Boundary conductance", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="GHB", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="GHB", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "riv": PackageExplorerSpec(
@@ -288,7 +288,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "rbot": FieldSpec("rbot", label="River bottom", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="RIV", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="RIV", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "wel": PackageExplorerSpec(
@@ -313,7 +313,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "q": FieldSpec("q", label="Well flow", colorscale="RdBu"),
         },
         results={
-            "q": ResultSpec("q", budget_text="WEL", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="WEL", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "evt": PackageExplorerSpec(
@@ -342,7 +342,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "depth": FieldSpec("depth", label="Extinction depth", colorscale="earth"),
         },
         results={
-            "q": ResultSpec("q", budget_text="EVT", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="EVT", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "uzf": PackageExplorerSpec(
@@ -413,7 +413,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         ),
         kind="surface_water",
         results={
-            "q": ResultSpec("q", budget_text="SFR", value_name="q", colorscale="RdBu"),
+            "q": ResultSpec("q", budget_text="SFR", value_name="q_gwf", colorscale="RdBu"),
         },
     ),
     "lak": PackageExplorerSpec(
@@ -443,7 +443,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
             "q": ResultSpec(
                 "q",
                 budget_text="GWF",
-                value_name="q",
+                value_name="q_lake",
                 colorscale="RdBu",
                 reference_frame="feature",
             ),

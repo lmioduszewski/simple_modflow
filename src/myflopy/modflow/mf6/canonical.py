@@ -248,7 +248,7 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
     profile = model.packages.sfr.results.profile.get(per=per)
     stage = profile["stage"].to_numpy(dtype=float)
     streambed_top = profile["streambed_top"].to_numpy(dtype=float)
-    exchange = profile["q"].to_numpy(dtype=float)
+    exchange = profile["q_gwf"].to_numpy(dtype=float)
     wet = np.isfinite(stage) & (stage > -1.0e20)
     depth = np.where(wet, stage - streambed_top, np.nan)
 

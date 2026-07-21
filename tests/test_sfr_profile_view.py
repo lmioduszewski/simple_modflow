@@ -55,8 +55,10 @@ def test_profile_frame_carries_the_merged_fields(profile):
 
     frame = profile.get()
     assert not frame.empty
-    for column in ("reach", "cell", "distance_mid", "streambed_top", "stage", "q"):
+    for column in ("reach", "cell", "distance_mid", "streambed_top", "stage", "q_gwf"):
         assert column in frame.columns, column
+    # the accessor stays results.profile but the exchange column names its frame
+    assert "q" not in frame.columns, "raw 'q' should be renamed to its frame (q_gwf)"
     # one row per reach -- the merge must not fan out
     assert frame["reach"].is_unique
 
@@ -127,7 +129,7 @@ def test_signed_exchange_colors_gaining_blue_and_losing_red(profile):
     """
 
     frame = profile.get()
-    q = pd.to_numeric(frame["q"], errors="coerce").to_numpy(float)
+    q = pd.to_numeric(frame["q_gwf"], errors="coerce").to_numpy(float)
     assert (q < 0).any() and (q > 0).any(), (
         "the canonical stream must both gain and lose for this test to bite"
     )

@@ -10,7 +10,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.package_explorer import (
     SfrStageResultsExplorer,
-    _blue_white_red_diverging_colorscale,
+    _exchange_colorscale,
     _symmetric_color_limit,
     build_group_input_compare_map_payload,
     build_sfr_budget_result_table,
@@ -37,8 +37,12 @@ if TYPE_CHECKING:
 class GroupSfrBudgetResults(GroupCellPackageResults):
     """Grouped SFR exchange accessor with reach-length-normalized maps."""
 
-    def __init__(self, group: ModelGroup, *, budget_text: str = "SFR", value_name: str = "q"):
-        """Bind a grouped SFR exchange accessor (defaults to the ``SFR`` term's ``q``)."""
+    def __init__(self, group: ModelGroup, *, budget_text: str = "SFR", value_name: str = "q_gwf"):
+        """Bind a grouped SFR exchange accessor (defaults to the ``SFR`` term's ``q_gwf``).
+
+        The SFR exchange is aquifer-referenced, so the emitted column is
+        ``q_gwf`` (accessor stays ``results.q``).
+        """
 
         super().__init__(group, "sfr", budget_text=budget_text, value_name=value_name)
 
@@ -89,14 +93,15 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         data = _reduce_to_period_end(data)
 
         reference = self.group.reference
-        value_columns = ["q", "q_per_length"] if "q_per_length" in data.columns else ["q"]
+        q = self.value_name  # aquifer-referenced exchange column (q_gwf)
+        value_columns = [q, "q_per_length"] if "q_per_length" in data.columns else [q]
         key_columns = _stable_compare_keys(data, value_columns)
         ref = data[data["model"] == reference][key_columns + value_columns].copy()
         rename_map = {column: f"reference_{column}" for column in value_columns}
         ref = ref.rename(columns=rename_map)
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
         comp["reference_model"] = reference
-        comp["q_diff"] = comp["q"].astype(float) - comp["reference_q"].astype(float)
+        comp[f"{q}_diff"] = comp[q].astype(float) - comp[f"reference_{q}"].astype(float)
         if "q_per_length" in value_columns:
             comp["q_per_length_diff"] = (
                 comp["q_per_length"].astype(float) - comp["reference_q_per_length"].astype(float)
@@ -105,9 +110,9 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             "model",
             "reference_model",
             *key_columns,
-            "q",
-            "reference_q",
-            "q_diff",
+            q,
+            f"reference_{q}",
+            f"{q}_diff",
         ]
         if "q_per_length" in value_columns:
             ordered.extend(["q_per_length", "reference_q_per_length", "q_per_length_diff"])
@@ -148,6 +153,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
+            value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
@@ -162,7 +168,9 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # SFR exchange is aquifer-referenced (gaining is NEGATIVE), so blue
+            # sits at the negative end -- matching the single-model SFR map.
+            colorscale=colorscale or _exchange_colorscale("gwf"),
             **kwargs,
         )
 
@@ -192,10 +200,11 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             selected = frame[frame["model"] == current_model_name].copy()
             if selected.empty:
                 return pd.DataFrame(columns=["cell", "q_per_length"])
-            selected["q"] = pd.to_numeric(selected["q"], errors="coerce")
+            q = self.value_name
+            selected[q] = pd.to_numeric(selected[q], errors="coerce")
             selected["rlen"] = pd.to_numeric(selected["rlen"], errors="coerce")
-            grouped = selected.groupby("cell", as_index=False).agg({"q": "sum", "rlen": "sum"})
-            grouped["q_per_length"] = np.where(grouped["rlen"] > 0.0, grouped["q"] / grouped["rlen"], np.nan)
+            grouped = selected.groupby("cell", as_index=False).agg({q: "sum", "rlen": "sum"})
+            grouped["q_per_length"] = np.where(grouped["rlen"] > 0.0, grouped[q] / grouped["rlen"], np.nan)
             return grouped[["cell", "q_per_length"]]
 
         reference = _normalized_by_cell(data, self.group.reference).rename(

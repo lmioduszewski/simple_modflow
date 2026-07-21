@@ -50,7 +50,7 @@ class GroupPackageAccessor:
 
         budget_text, value_name = get_default_budget_term(self.inputs.package_name) or (
             self.inputs.package_name.upper(),
-            "q",
+            "q_gwf",
         )
         return GroupCellPackageResultsNamespace(
             GroupCellPackageResults(
@@ -141,7 +141,7 @@ class GroupPackages:
     def sfr(self) -> GroupResultsOnlyPackageAccessor[GroupSfrResultsNamespace]:
         """Grouped SFR result helpers."""
 
-        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q")
+        budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q_gwf")
         return GroupResultsOnlyPackageAccessor(
             GroupSfrResultsNamespace(
                 GroupSfrBudgetResults(
@@ -156,7 +156,7 @@ class GroupPackages:
     def lak(self) -> GroupLakPackageAccessor:
         """Grouped LAK geometry and result helpers."""
 
-        budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q")
+        budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q_lake")
         results_namespace = GroupLakResultsNamespace(
             GroupLakBudgetResults(
                 self.group,

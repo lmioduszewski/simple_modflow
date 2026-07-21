@@ -95,7 +95,11 @@ def build_budget_result_table(
         frame["kstpkper"] = [tuple(int(value) for value in kstpkper)] * len(frame)
         frame["per"] = int(kstpkper[1])
         if value_name != "q" and "q" in frame.columns:
-            frame[value_name] = pd.to_numeric(frame["q"], errors="coerce")
+            # TRUE rename (drop FloPy's raw "q"): the public column carries the
+            # reference frame in its name (q_gwf / q_lake). Renaming rather than
+            # duplicating means any consumer that still reads a bare "q" fails
+            # loudly instead of silently reading a stale copy.
+            frame = frame.rename(columns={"q": value_name})
         frames.append(frame)
 
     if not frames:
@@ -149,7 +153,7 @@ def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
 
 
 def build_sfr_long_profile_table(
-    model: SimulationBase, *, per: int = 0
+    model: SimulationBase, *, per: int = 0, value_name: str = "q_gwf"
 ) -> pd.DataFrame:
     """Return one merged SFR long-profile table for a selected stress period.
 
@@ -224,6 +228,11 @@ def build_sfr_long_profile_table(
         / pd.to_numeric(profile["rlen"], errors="coerce"),
         np.nan,
     )
+    # The exchange column is aquifer-referenced (the "gwf" frame); present it
+    # under its frame-explicit public name (q_gwf) while the derived
+    # q_per_length keeps its own name.
+    if value_name != "q":
+        profile = profile.rename(columns={"q": value_name})
     profile["model"] = model.name
     profile["package"] = "sfr"
     profile["per"] = int(per)
@@ -247,7 +256,7 @@ def build_sfr_long_profile_table(
         "streambed_top",
         "streambed_bottom",
         "stage",
-        "q",
+        value_name,
         "q_per_length",
     ]
     remaining = [column for column in profile.columns if column not in ordered]
@@ -299,16 +308,19 @@ def build_sfr_budget_result_table(
         reach_map, on=["layer", "cell"], how="left", suffixes=("", "_pkg")
     )
     frame["reach"] = frame["reach"].astype("Int64")
-    if value_name == "q":
+    has_per_length = value_name in frame.columns and "rlen" in frame.columns
+    if has_per_length:
         # Keep MF6's RAW sign -- do NOT normalize. This is the SFR cell-by-cell
         # record, aquifer-referenced (the "gwf" frame):
-        #   negative q = the reach GAINS water from the aquifer
-        #   positive q = the reach LOSES water to the aquifer
+        #   negative = the reach GAINS water from the aquifer
+        #   positive = the reach LOSES water to the aquifer
         # q_per_length inherits that sign so the table and the map agree. Which
         # sign means "gaining" is declared by ResultSpec.reference_frame, not
         # baked into the data -- see that field for why this is safer than the
-        # negation that briefly inverted the SFR map on 2026-07-19.
-        q_series = pd.to_numeric(frame["q"], errors="coerce")
+        # negation that briefly inverted the SFR map on 2026-07-19. The exchange
+        # column is named by ``value_name`` (``q_gwf`` on the public path, ``q``
+        # when an internal caller asks for the raw name).
+        q_series = pd.to_numeric(frame[value_name], errors="coerce")
         rlen_series = pd.to_numeric(frame["rlen"], errors="coerce")
         frame["q_per_length"] = np.where(
             rlen_series > 0.0, q_series / rlen_series, np.nan
@@ -327,7 +339,7 @@ def build_sfr_budget_result_table(
         "distance_end",
         value_name,
     ]
-    if value_name == "q":
+    if has_per_length:
         ordered.append("q_per_length")
     remaining = [column for column in frame.columns if column not in ordered]
     return frame[ordered + remaining]
@@ -421,7 +433,10 @@ def build_lak_budget_result_table(
         frame["kstpkper"] = [(0, 0)] * len(frame)
         frame["per"] = 0
     if value_name != "q" and "q" in frame.columns:
-        frame[value_name] = pd.to_numeric(frame["q"], errors="coerce")
+        # TRUE rename: LAK's GWF record is feature-referenced, so the public
+        # column names its frame (q_lake). Renaming rather than duplicating means
+        # a missed bare-"q" read fails loudly. See ResultSpec.reference_frame.
+        frame = frame.rename(columns={"q": value_name})
 
     connectiondata = pd.DataFrame(model.lak.connectiondata.get_data()).copy()
     connectiondata = split_cellid_columns(connectiondata)
@@ -549,9 +564,10 @@ def build_lak_budget_result_table(
                 ]
                 frame = frame.drop(columns=[fallback_column])
 
-    if value_name == "q":
+    has_per_area = value_name in frame.columns and "FLOW-AREA" in frame.columns
+    if has_per_area:
         flow_area = pd.to_numeric(frame.get("FLOW-AREA"), errors="coerce")
-        q_series = pd.to_numeric(frame["q"], errors="coerce")
+        q_series = pd.to_numeric(frame[value_name], errors="coerce")
         frame["flow_area"] = flow_area
         frame["q_per_area"] = np.where(flow_area > 0.0, q_series / flow_area, np.nan)
 
@@ -570,7 +586,7 @@ def build_lak_budget_result_table(
         "connwidth",
         value_name,
     ]
-    if value_name == "q":
+    if has_per_area:
         ordered.extend(["flow_area", "q_per_area"])
     remaining = [column for column in frame.columns if column not in ordered]
     return frame[ordered + remaining]
