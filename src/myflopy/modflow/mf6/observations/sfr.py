@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -308,11 +309,19 @@ class SfrFlowTargets:
     def _package_flow_table(self, model) -> pd.DataFrame:
         """Build a per-period, per-reach simulated-flow table from the SFR budget output.
 
-        Prefers the FLOW-JA-FACE through-flow (outbound rows, plus TO-MVR), falling
-        back to the ``sfr.results.q`` cell budget; returns ``per``/``reach``/``sim_flow``.
+        Uses the FLOW-JA-FACE in-channel *routing* through-flow (outbound rows, plus
+        TO-MVR) and returns ``per``/``reach``/``sim_flow``. If routing flow is
+        unavailable on a real model it returns an empty frame with a warning — it does
+        **not** substitute ``sfr.results.q`` (the stream-aquifer *exchange*, a different
+        physical quantity, ~1e2 leakage), because relabeling that as ``sim_flow`` would
+        silently feed PEST the wrong quantity under the streamflow column name.
         """
 
         if not hasattr(model, "outputs"):
+            # Mock-only accommodation: a real model is a ``SimulationBase`` and always
+            # exposes ``.outputs`` (a property), so this branch never runs in
+            # production. Test doubles without ``.outputs`` feed flow-shaped data
+            # through ``results.q``; keep reading it so those doubles resolve.
             try:
                 flow = model.packages.sfr.results.q.get().copy()
             except Exception:
@@ -328,18 +337,21 @@ class SfrFlowTargets:
 
         flow = model.outputs.sfr.bud.get("FLOW-JA-FACE")
         if not isinstance(flow, pd.DataFrame) or flow.empty:
-            try:
-                fallback = model.packages.sfr.results.q.get().copy()
-            except Exception:
-                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
-            if fallback.empty:
-                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
-            fallback["per"] = pd.to_numeric(fallback["per"], errors="coerce").astype(int)
-            fallback["reach"] = pd.to_numeric(fallback["reach"], errors="coerce").astype(int)
-            fallback["sim_flow"] = _clean_observation_output_values(
-                fallback[_exchange_column(fallback)]
-            ).abs()
-            return fallback.loc[:, ["per", "reach", "sim_flow"]]
+            # In-channel routing flow is unavailable — e.g. the SFR budget was saved
+            # on a different cadence than heads, so ``SFRBudget.get`` swallowed the
+            # length-mismatch ``ValueError`` and returned the raw record list (a
+            # non-DataFrame). Do NOT substitute ``sfr.results.q`` here: that is the
+            # stream-aquifer exchange, and feeding it to PEST as ``sim_flow`` would be
+            # a silent wrong-quantity calibration. Surface the gap instead.
+            warnings.warn(
+                "SFR in-channel routing flow (FLOW-JA-FACE) is unavailable, so no "
+                "simulated SFR flow can be produced. Returning no simulated values "
+                "rather than substituting the stream-aquifer exchange "
+                "(sfr.results.q), which is a different physical quantity.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return pd.DataFrame(columns=["per", "reach", "sim_flow"])
 
         frame = flow.copy()
         frame["per"] = frame["kstpkper"].apply(lambda values: int(values[1]))

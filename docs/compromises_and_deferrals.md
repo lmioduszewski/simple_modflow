@@ -713,18 +713,46 @@ same day, which is the useful part of the result.
     - Done: 2026-07-21.
 
 49. **Two pre-existing, non-sign SFR observation/plot issues (audit tail).**
-    - `observations/sfr.py` `SfrFlowTargets._package_flow_table` **fallback**
-      branch returns the aquifer *exchange* (~1e2) under the column `sim_flow`,
-      while the primary FLOW-JA-FACE branch returns in-channel *routing* flow —
-      two different physical quantities under one name. Only fires when
-      FLOW-JA-FACE is unavailable (not a normal run), and unrelated to the sign
-      work, so left as-is.
-    - `budget.py` `SFRBudget.plot_flows` names an SFR reach-to-reach series
-      `riv_flows` (a misnomer — no RIV package is read), and the audit noted a
-      separate method-shape concern it did not fully spell out.
-    - Both are low-severity, pre-date the sign work, and change PEST/plot
-      semantics if touched — deferred rather than folded into the rename.
-    - Revisit: opportunistically, or when SFR observations are next revised.
+    A 6-agent adversarial review (2026-07-21) verified what each really needed:
+    49a warranted a small fix; 49b stays deferred.
+    - **49a — FIXED (`observations/sfr.py` `SfrFlowTargets._package_flow_table`).**
+      When in-channel FLOW-JA-FACE *routing* flow was unavailable, the fallback
+      relabeled the stream-aquifer *exchange* (`sfr.results.q`, ~1e2 leakage) as
+      `sim_flow` and fed it to PEST — two different physical quantities under one
+      name, silently. The original ledger rationale ("only fires when FLOW-JA-FACE
+      is unavailable, not a normal run") was **wrong in both directions**: a
+      genuinely-absent record *crashes* on the unwrapped `.get()` at
+      `sfr.py:329`, and the fallback actually fires on a **real** model when
+      FLOW-JA-FACE is present but the SFR budget was saved on a different cadence
+      than heads — `SFRBudget.get` swallows the length-mismatch `ValueError`
+      (`budget.py:343-351`) and returns the raw record list (a non-DataFrame), so
+      `not isinstance(flow, pd.DataFrame)` is True. Fix: the routing-missing branch
+      now **warns and returns an empty frame** instead of substituting the
+      exchange, so PEST/`compare` surface a *missing* value rather than fitting the
+      wrong quantity. Two tests added (`test_mf6_pest.py`): one covers the primary
+      FLOW-JA-FACE aggregation path (outbound-sum + TO-MVR), which had **no
+      coverage** before; one asserts the refusal-to-substitute + warning. The
+      mock-only branch (`not hasattr(model, "outputs")`) is left as-is on purpose —
+      a real model always exposes `.outputs`, so it never runs in production; only
+      test doubles reach it, and one existing test depends on it. Done: 2026-07-21.
+    - **49b — DEFERRED (`budget.py` `SFRBudget.plot_flows`).** Names an SFR
+      reach-to-reach series `riv_flows` (a misnomer — no RIV package is read); the
+      unstated "method-shape concern" is that it is the `plot_<noun>()` anti-pattern
+      the view-layer conventions forbid — it `fig.show()`s and returns `None`
+      instead of a `viz.Fig`. Verified **zero callers** (not in any notebook, doc,
+      `__all__`, or `api_snapshot.json`; reachable only via the legacy
+      `model.outputs.sfr.bud` accessor). The misnomer is a *local variable* — the
+      plotted trace is `stream {i}`, so nothing mislabeled reaches output; it is
+      cosmetic. Its real correctness gaps (fragile `get('flow')` substring term
+      selection; no per-reach groupby / TO-MVR aggregation; unnormalized single
+      `(kstp,kper)` selector) only bite *if the dead method is called*, which
+      nothing does. A bare delete was rejected: the modern routing noun
+      `model.packages.sfr.budget.flow_ja_face` has **no `.plot()`** equivalent, so
+      deletion is a small capability regression that belongs with adding the
+      replacement verb — scope, not triage.
+    - Revisit 49b: when SFR observations / the SFR budget view layer are next
+      revised, retire `plot_flows` into `flow_ja_face.plot()` (returning `viz.Fig`)
+      and carry over its three correctness gaps, rather than patching a dead method.
 
 48. **Two bugs surfaced while implementing the reference-frame rename (entry 45).**
     - **Group LAK map was inverted** (pre-existing). The single-model LAK map was

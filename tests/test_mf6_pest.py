@@ -635,6 +635,83 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     assert len(drn_continuous["drn_flow.csv"]) == 2
 
 
+def _fake_flow_ja_face_model():
+    """A model whose SFR budget exposes FLOW-JA-FACE routing flow (+ TO-MVR).
+
+    Exercises the *primary* path of ``SfrFlowTargets._package_flow_table`` — the one
+    a real, properly-run model hits — which the mock in ``_fake_surface_water_model``
+    (no ``.outputs``) never reaches. Node/rno numbering is 1-based, matching MF6.
+    """
+
+    flow_ja_face = pd.DataFrame(
+        {
+            "kstpkper": [(0, 0), (0, 0), (0, 0), (0, 0)],
+            "node": [1, 1, 2, 3],       # 1-based; -> reaches 0, 0, 1, 2
+            "node2": [2, 3, 1, 2],
+            "q": [-4.0, -2.0, 4.0, -1.5],  # outbound rows are negative
+        }
+    )
+    to_mvr = pd.DataFrame({"kstpkper": [(0, 0)], "node": [3], "q": [0.5]})
+
+    def _get(text):
+        if text == "FLOW-JA-FACE":
+            return flow_ja_face.copy()
+        if text == "TO-MVR":
+            return to_mvr.copy()
+        return None
+
+    return SimpleNamespace(
+        outputs=SimpleNamespace(sfr=SimpleNamespace(bud=SimpleNamespace(get=_get)))
+    )
+
+
+def test_sfr_flow_table_uses_flow_ja_face_routing_and_aggregates():
+    # Covers the primary FLOW-JA-FACE branch: outbound rows summed per reach, plus
+    # TO-MVR folded in. (Diverging reach 0 has two outbound rows; reach 2 also moves
+    # water via TO-MVR; the inbound-only reach 1 is excluded.)
+    targets = SfrFlowTargets(
+        locations={"reach_000": 0, "reach_002": 2},
+        values={"per": [0], "reach_000": [0.0], "reach_002": [0.0]},
+        time_column="per",
+        value_column="flow",
+    )
+    frame = targets._package_flow_table(_fake_flow_ja_face_model())
+    by_reach = frame.set_index("reach")["sim_flow"]
+    assert pytest.approx(by_reach.loc[0]) == 6.0   # 4.0 + 2.0 outbound rows summed
+    assert pytest.approx(by_reach.loc[2]) == 2.0   # 1.5 outbound + 0.5 TO-MVR
+    assert 1 not in by_reach.index                  # inbound-only reach dropped
+
+
+def test_sfr_flow_table_refuses_to_substitute_exchange_for_missing_routing():
+    # Ledger 49a: when FLOW-JA-FACE routing flow is unavailable on a real model
+    # (e.g. SFRBudget.get returned the raw record list on a cadence mismatch), the
+    # table must NOT relabel the stream-aquifer exchange (sfr.results.q) as sim_flow.
+    exchange = pd.DataFrame({"per": [0], "reach": [0], "q_gwf": [123.0]})
+
+    def _get(text):
+        return None  # routing flow unavailable -> not a DataFrame
+
+    model = SimpleNamespace(
+        outputs=SimpleNamespace(sfr=SimpleNamespace(bud=SimpleNamespace(get=_get))),
+        packages=SimpleNamespace(
+            sfr=SimpleNamespace(
+                results=SimpleNamespace(q=SimpleNamespace(get=lambda: exchange.copy()))
+            )
+        ),
+    )
+    targets = SfrFlowTargets(
+        locations={"reach_000": 0},
+        values={"per": [0], "reach_000": [0.0]},
+        time_column="per",
+        value_column="flow",
+    )
+    with pytest.warns(UserWarning, match="routing flow"):
+        frame = targets._package_flow_table(model)
+    assert frame.empty                              # no simulated values, not wrong ones
+    assert list(frame.columns) == ["per", "reach", "sim_flow"]
+    assert 123.0 not in frame["sim_flow"].values    # exchange never leaks in as flow
+
+
 def test_surface_water_targets_prefer_direct_mf6_observation_csvs():
     model = _fake_surface_water_model()
     workspace = _project_temp_dir("surface_water_obs_csv_preference")
