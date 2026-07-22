@@ -745,3 +745,26 @@ same day, which is the useful part of the result.
       proof. Verify a sign/column change **serially** and by observing the real
       call site (`.map()`, `.plot()`), not just via a hand-built frame — the same
       failure mode that let the 2026-07-19 map inversion ship through a green test.
+
+50. **Flat-bottom `bathy` lake: WARN, not raise (judgment call).**
+    - `LAKBuilder`'s `bathy` mode connects a cell to a neighbor only where its
+      lake bottom is BELOW the neighbor's (an exposed step). A flat `lake_bottom`
+      has no steps, so a multi-cell bathy lake produces ZERO horizontal
+      connections — a lake with no lateral aquifer exchange (an earlier config
+      dropped from 39 horizontal connections to 0 this way).
+    - **Chose a warning over a hard error.** The geometry is internally
+      consistent, not malformed, and the codebase already had an intentional test
+      (`test_bathy_scalar_bottom_makes_no_exposed_steps`) plus fixtures relying on
+      it building. Raising would break internally-consistent configs; a
+      `UserWarning` surfaces the likely mistake and names the three real choices
+      (real bathymetry / `rectangular` / `only_vertical`) while letting it build.
+    - **Trade recorded:** a warning can be missed (a hard error cannot), so a
+      genuinely-degenerate lake can still reach a run. Accepted because the config
+      is valid MF6 and the user's guidance was "internally consistent — needs a
+      guard, not a fix." Revisit only if silent degenerate lakes recur in
+      practice.
+    - Two incidental flat-`bathy` test fixtures were cleaned up rather than left
+      warning: `_wide_lake_builder` became `rectangular` (its docstring promised
+      per-cell sidewall building, which flat bathy never did), and
+      `test_replace_lak_on_loaded_run` (a replace-mechanism test, not a geometry
+      one) filters the expected warning.

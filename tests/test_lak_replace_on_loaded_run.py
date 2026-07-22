@@ -76,6 +76,11 @@ def _lak_strt(model) -> float:
 
 
 @pytest.mark.slow
+# This test uses a minimal flat 'automatic' (bathy) lake purely to exercise the
+# LAK replace-on-loaded-run mechanism, not its connection geometry; the
+# flat-bottom bathy guard warning (no exposed steps -> vertical connections only)
+# is expected and irrelevant here.
+@pytest.mark.filterwarnings("ignore:Lake .* produced no horizontal")
 def test_replace_lak_on_loaded_run(tmp_path):
     # 1) build + run a model containing a LAK package.
     run1 = _build_lake_model(tmp_path / "proj", starting_stage=92.0, bed_leakance=0.2)

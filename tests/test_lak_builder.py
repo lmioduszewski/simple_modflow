@@ -231,6 +231,11 @@ def _wide_lake_builder() -> LAKBuilder:
         lake_id_field="name",
         starting_stage={"wide": 11.0},
         lake_bottom={"wide": 8.0},
+        # A flat-bottomed lake is 'rectangular' (edges-only sidewalls), which is
+        # what actually exercises per-cell sidewall building -- flat 'bathy' has
+        # no exposed steps and would build zero horizontal connections.
+        lake_top={"wide": 11.0},
+        connection_modes="rectangular",
         bed_leakance=0.1,
     )
 
@@ -335,6 +340,51 @@ def test_rectangular_vault_has_no_horizontals():
     assert len(_verticals(builder, "basin")) == 2
 
 
+def test_bathy_flat_bottom_multi_cell_is_guarded():
+    """A multi-cell 'bathy' lake with a flat bottom has no exposed steps, so it
+    emits zero horizontal connections -- a lake with no lateral aquifer exchange.
+    The geometry is internally consistent, so it WARNS (rather than raising) and
+    names the three real choices."""
+
+    builder = _rect_builder(connection_modes="bathy")  # flat bottom 6.0, cells 3 & 4
+    with pytest.warns(UserWarning, match="no horizontal") as record:
+        connections = builder.connections
+    assert _horizontals(builder, "basin") == []  # still builds, just no sidewalls
+    assert connections  # vertical connections remain
+    message = str(record[0].message)
+    assert "rectangular" in message and "only_vertical" in message and "bathymetry" in message
+
+
+def test_bathy_single_cell_flat_lake_is_not_guarded():
+    """The guard is only for the multi-cell degeneracy; a single-cell bathy lake
+    legitimately has no interior faces and must still build without warning."""
+
+    grid = _grid()
+    lakes = gpd.GeoDataFrame(
+        {"name": ["pond"]},
+        geometry=[Polygon([(0.05, 1.05), (0.95, 1.05), (0.95, 1.95), (0.05, 1.95)])],
+        crs=grid.crs,
+    )  # one cell (cell 3)
+    builder = LAKBuilder(
+        context=ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int)),
+        nper=1,
+        lakes=lakes,
+        lake_id_field="name",
+        starting_stage={"pond": 7.0},
+        lake_bottom={"pond": 6.0},
+        lake_top={"pond": 11.0},
+        bed_leakance=0.1,
+        connection_modes="bathy",
+    )
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        verticals = _verticals(builder, "pond")
+    assert len(verticals) == 1  # builds
+    assert not [w for w in caught if "no horizontal" in str(w.message)]  # no guard warning
+
+
 def test_rectangular_requires_lake_top():
     builder = _rect_builder(lake_top=None)
     with pytest.raises(ValueError, match="lake_top is required"):
@@ -397,8 +447,11 @@ def test_bathy_connects_only_up_exposed_steps_and_spans_layers():
 
 
 def test_bathy_scalar_bottom_makes_no_exposed_steps():
-    # A flat (scalar) bottom in bathy mode has no steps -> vertical connections only.
+    # A flat (scalar) bottom in bathy mode has no steps -> vertical connections
+    # only. Internally consistent but degenerate, so it warns (see
+    # test_bathy_flat_bottom_multi_cell_is_guarded).
     builder = _rect_builder(connection_modes="bathy", lake_bottom={"basin": 6.0},
                             lake_top=None)
-    assert _horizontals(builder, "basin") == []
+    with pytest.warns(UserWarning, match="no horizontal"):
+        assert _horizontals(builder, "basin") == []
     assert len(_verticals(builder, "basin")) == 2

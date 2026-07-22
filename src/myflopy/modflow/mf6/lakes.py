@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from numbers import Real
@@ -540,7 +541,14 @@ class LAKBuilder:
         return tuple(mode)
 
     def _only_vertical(self, lake_id: str) -> bool:
-        """Vault case for a lake: skip all horizontal connections (concrete walls)."""
+        """Sealed-sides (concrete bottomless vault) case: only vertical (bottom)
+        connections, no horizontal exchange at all -- not even at the perimeter.
+
+        Distinct from a ``rectangular`` edges-only lake (``rectangular_interior``
+        ``False``), which still connects through its PERIMETER sidewalls (a lined
+        trench open at the edges). Use ``only_vertical`` when the walls are
+        impermeable on every side and only the bottom exchanges with the aquifer.
+        """
         value = self.only_vertical
         if isinstance(value, Mapping):
             return bool(value.get(lake_id, False))
@@ -554,13 +562,24 @@ class LAKBuilder:
         return value
 
     def _rectangular_interior(self, lake_id: str) -> bool:
-        """Whether a rectangular lake also connects through its interior faces.
+        """Whether a rectangular lake also connects through its INTERIOR faces.
 
-        Default ``False`` = edges only (lined trench/vault: no interior exposed face).
-        ``True`` (or a per-lake mapping) connects every cell to every neighbor, matching
-        a permeable-fill basin (e.g. clean gravel) that is hydraulically continuous with
-        the aquifer through all faces -- which also spreads the lake-stage coupling over
-        many connections and stabilizes a small basin that drains near-empty.
+        This is a PHYSICAL choice about the basin's construction, not a numerical
+        or solver tuning knob -- pick it from whether the interior faces actually
+        conduct water, never to nudge convergence.
+
+        * ``False`` (default) = edges only. The flat bottom is one infiltration
+          surface and only the perimeter cells expose a vertical sidewall to the
+          aquifer -- a lined trench, or an infiltration basin with an impermeable
+          liner between adjacent lake cells.
+        * ``True`` (or a per-lake mapping) connects every lake cell to every
+          neighbor, representing a basin whose fill is permeable (e.g. clean
+          gravel) so the aquifer stays hydraulically continuous through the
+          interior faces too.
+
+        For a lake sealed on EVERY side (a concrete bottomless vault) use
+        ``only_vertical`` instead -- that removes the perimeter connections this
+        mode still keeps.
         """
         value = self.rectangular_interior
         if isinstance(value, Mapping):
@@ -759,15 +778,44 @@ class LAKBuilder:
                 result.extend((lake_id, connection) for connection in mode)
                 continue
             only_vertical = self._only_vertical(lake_id)
-            for cell in self.lake_cells[lake_id]:
+            lake_cells = self.lake_cells[lake_id]
+            horizontal = 0
+            for cell in lake_cells:
                 vertical = self._vertical_connection(lake_id, cell, mode)
                 if vertical is not None:
                     result.append((lake_id, vertical))
                 if only_vertical:  # vault: concrete sidewalls, no horizontal exchange
                     continue
-                result.extend(
-                    (lake_id, connection)
-                    for connection in self._sidewall_connections(lake_id, cell, mode)
+                for connection in self._sidewall_connections(lake_id, cell, mode):
+                    horizontal += 1
+                    result.append((lake_id, connection))
+            # Guard the degenerate bathy+flat-bottom config: 'bathy' connects a
+            # cell to a neighbor only where its lake bottom is BELOW the
+            # neighbor's (an exposed step). A flat lake_bottom has no steps, so a
+            # multi-cell bathy lake produces ZERO horizontal connections -- a
+            # lake with no lateral aquifer exchange, which is almost never
+            # intended (an earlier canonical config dropped from 39 horizontal
+            # connections to 0 this way). The geometry is internally consistent,
+            # so warn (rather than raise) and point at the three real choices.
+            if (
+                mode == "bathy"
+                and not only_vertical
+                and len(lake_cells) > 1
+                and horizontal == 0
+            ):
+                warnings.warn(
+                    f"Lake '{lake_id}' uses 'bathy' connections but produced no "
+                    f"horizontal (sidewall) connections across its "
+                    f"{len(lake_cells)} cells: its lake_bottom is flat, so there "
+                    f"are no exposed steps to connect through, leaving the lake "
+                    f"with no lateral aquifer exchange. If that is not intended, "
+                    f"either give lake_bottom real bathymetry (a raster or "
+                    f"per-cell mapping with varying elevations), or use "
+                    f"connection_modes='rectangular' for a flat-bottomed "
+                    f"infiltration basin (edges only), or only_vertical=True for "
+                    f"a sealed concrete vault (bottom only).",
+                    UserWarning,
+                    stacklevel=2,
                 )
         object.__setattr__(self, "_connections", tuple(result))
         return self._connections
