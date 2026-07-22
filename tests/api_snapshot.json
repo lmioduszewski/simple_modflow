@@ -78,7 +78,15 @@
     },
     "evt": {
       "__call__": [
-        "stress_period_data:KEYWORD_ONLY=<required>",
+        "stress_period_data:KEYWORD_ONLY=None",
+        "context:KEYWORD_ONLY=None",
+        "nper:KEYWORD_ONLY=None",
+        "rate:KEYWORD_ONLY=None",
+        "depth:KEYWORD_ONLY=None",
+        "surface:KEYWORD_ONLY=None",
+        "cells:KEYWORD_ONLY='top_active'",
+        "layer:KEYWORD_ONLY=0",
+        "name_by_cell:KEYWORD_ONLY=None",
         "name:KEYWORD_ONLY='evt'",
         "nseg:KEYWORD_ONLY=1",
         "auxiliary:KEYWORD_ONLY=None",
@@ -907,6 +915,7 @@
       "wel"
     ],
     "myflopy.__engine__": [
+      "EVTBuilder",
       "LAKBuilder",
       "MVRBuilder",
       "PackageBuilder",

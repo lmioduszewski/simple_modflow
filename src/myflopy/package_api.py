@@ -31,6 +31,7 @@ from myflopy.advanced import (
 )
 from myflopy.builders import build_ims
 from myflopy.geopackage import GeoPackageSource, RowValue
+from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.lakes import (
     LAKBuilder,
     LakeConnection,
@@ -2055,9 +2056,11 @@ class _EVTPackage:
 
     Areally-distributed ET drawn from the water table: full ``rate`` at the ET
     ``surface``, decaying linearly to zero at extinction ``depth`` below it (the
-    default single-segment form; segmented curves via ``nseg``). Three entry
-    points:
+    default single-segment form; segmented curves via ``nseg``). Entry points:
 
+    - ``mf.evt(context=, nper=, rate=, depth=)`` -- high-level builder; picks the
+      top-active cells from the domain and resolves the ET ``surface`` (default
+      model top / land surface) through the surface engine, like ``mf.rch(context=...)``;
     - ``mf.evt(stress_period_data=...)`` -- direct MF6 records;
     - ``mf.evt.gpkg(path, context=, nper=)`` -- build records from GeoPackage
       features mapped onto cells (areal polygons, like ``mf.rch.gpkg``);
@@ -2065,6 +2068,8 @@ class _EVTPackage:
 
     Examples
     --------
+    >>> ctx = mf.ModelContext(grid=vor, domain=idomain, surfaces=vor.gdf_topbtm)
+    >>> mf.evt(context=ctx, nper=1, rate=2.0e-3, depth=2.5)              # top-active cells, surface = cell top
     >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})   # (cellid, surface, rate, depth)
     >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
     """
@@ -2072,28 +2077,64 @@ class _EVTPackage:
     def __call__(
         self,
         *,
-        stress_period_data: Any,
+        stress_period_data: Any = None,
+        context: ModelContext | None = None,
+        nper: int | None = None,
+        rate: Any = None,
+        depth: Any = None,
+        surface: Any = None,
+        cells: str | Sequence[int | tuple[int, int]] = "top_active",
+        layer: int = 0,
+        name_by_cell: Mapping[int | tuple[int, int], str] | None = None,
         name: str = "evt",
         nseg: int = 1,
         auxiliary: Any = None,
         boundnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return an EVT package spec from direct MF6 stress-period data.
+        """Return an EVT package spec, either from direct data or the domain-aware builder.
+
+        Two mutually exclusive forms:
+
+        * **Direct** -- pass ``stress_period_data=`` for a list-based EVT spec.
+        * **Builder** -- pass ``context=``, ``nper=``, ``rate=`` and ``depth=`` to
+          compute the ET cells from the model domain automatically and resolve the
+          ET ``surface`` (default cell top) through the surface engine.
 
         Parameters
         ----------
-        stress_period_data : dict
-            FloPy mapping ``{period: [[cellid, surface, rate, depth], ...]}`` --
+        stress_period_data : dict, optional
+            Direct form: ``{period: [[cellid, surface, rate, depth], ...]}`` --
             ET surface elevation, maximum ET rate (L/T), and extinction depth
             per ``(layer, cell)`` on a DISV grid (the ``nseg=1`` record form).
+        context : ModelContext, optional
+            Builder form: carries the grid/domain used to select ET cells and the
+            surfaces used to resolve the ET surface elevation.
+        nper : int, optional
+            Builder form: number of stress periods.
+        rate, depth : scalar, sequence, or {period: ...}, optional
+            Builder form: the maximum ET flux rate (L/T) and extinction depth (L)
+            -- a constant, one value per selected cell, or a per-period mapping.
+        surface : optional
+            Builder form: the ET surface elevation. Defaults to the model top /
+            land surface (``CellSurfaceOffset("model_top")``); also accepts a
+            numeric constant, a per-cell sequence / ``{cellid: value}`` mapping,
+            or a numeric ``CellSurfaceOffset``.
+        cells : str or sequence, default "top_active"
+            Builder form: which cells receive ET (``"top_active"``,
+            ``"all_active"``, or explicit ``int`` / ``(layer, cell)`` ids).
+        layer : int, default 0
+            Builder form: layer used when ``cells`` are bare cell ints.
+        name_by_cell : mapping, optional
+            Builder form: optional ``{cell: boundname}`` mapping.
         name : str, default "evt"
             Package name.
         nseg : int, default 1
-            Number of ET segments; segmented records add ``pxdp``/``petm``
-            values (see :func:`myflopy.advanced.evt_spec`).
+            Direct form: number of ET segments; segmented records add
+            ``pxdp``/``petm`` values (see :func:`myflopy.advanced.evt_spec`). The
+            builder form is single-segment only (``nseg=1``).
         auxiliary : optional
-            Auxiliary variable name(s) forwarded to FloPy.
+            Direct form: auxiliary variable name(s) forwarded to FloPy.
         boundnames : bool, default False
             Enable named boundaries.
         **options
@@ -2103,19 +2144,48 @@ class _EVTPackage:
         -------
         PackageSpec
 
+        Raises
+        ------
+        TypeError
+            If neither ``stress_period_data`` nor the full builder set
+            (``context``/``nper``/``rate``/``depth``) is given.
+
         Examples
         --------
-        >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
+        >>> ctx = mf.ModelContext(grid=vor, domain=idomain, surfaces=vor.gdf_topbtm)
+        >>> mf.evt(context=ctx, nper=1, rate=2.0e-3, depth=2.5)             # top-active cells
+        >>> mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})  # explicit records
         """
 
-        return evt_spec(
-            stress_period_data,
-            name=name,
-            nseg=nseg,
-            auxiliary=auxiliary,
+        if stress_period_data is not None:
+            return evt_spec(
+                stress_period_data,
+                name=name,
+                nseg=nseg,
+                auxiliary=auxiliary,
+                boundnames=boundnames,
+                **options,
+            )
+        if context is None or nper is None or rate is None or depth is None:
+            raise TypeError(
+                "mf.evt requires either stress_period_data=, or the builder "
+                "arguments context=, nper=, rate=, and depth=."
+            )
+        builder_kwargs: dict[str, Any] = dict(
+            context=context,
+            nper=nper,
+            rate=rate,
+            depth=depth,
+            cells=cells,
+            layer=layer,
+            name_by_cell=name_by_cell,
             boundnames=boundnames,
-            **options,
+            name=name,
+            options=options,
         )
+        if surface is not None:
+            builder_kwargs["surface"] = surface
+        return EVTBuilder(**builder_kwargs).build()
 
     def flopy(
         self,

@@ -69,7 +69,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Cells ordered along a line (for line BCs / SFR) | ✅ | `Boundaries.sorted_cells_along_line` |
 | Recharge from GIS + PRISM precip scaling + area scaling | ✅ | `recharge.py` `RCHBuilder`, `PrismPrecipScaling`, `Boundaries.shp_to_vor_poly_scale` |
 | Dedicated RIV builder | ✅ | `mf.riv` (`_RIVPackage`: `()`/`.gpkg`/`.flopy`), `riv_spec`, `GeoPackageSource.riv`, registry entry (`stage/cond/rbot` earth, q RdBu) — added 2026-07-17 — in the canonical model as the un-routed lake-outlet river (2026-07-18) |
-| Dedicated EVT builder | ✅ | `mf.evt` (`_EVTPackage`: `()`/`.gpkg`/`.flopy`, `nseg=1` default), `evt_spec`, `GeoPackageSource.evt`, registry entry (`surface/rate/depth` earth, q RdBu) — added 2026-07-17 — in the canonical model on the valley walls, disjoint from UZF (2026-07-18) |
+| Dedicated EVT builder | ✅ | `mf.evt` (`_EVTPackage`: `()`/`.gpkg`/`.flopy`, `nseg=1` default), `evt_spec`, `GeoPackageSource.evt`, registry entry (`surface/rate/depth` earth, q RdBu) — added 2026-07-17 — in the canonical model on the valley walls, disjoint from UZF (2026-07-18). File-less whole-domain builder `mf.evt(context=, nper=, rate=, depth=)` via `EVTBuilder` (shared `_ArealBuilder` base with `RCHBuilder`), surface default `model_top` — added 2026-07-21 (§4.7.5) |
 
 ### Advanced packages
 | Capability | Status | Where |

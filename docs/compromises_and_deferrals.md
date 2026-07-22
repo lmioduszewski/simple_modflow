@@ -61,11 +61,10 @@
 
 ## Phase 5 — D8 / mf.riv / mf.evt (2026-07-17, branch `phase-5-package-api`)
 
-> Entries 6, 13 and 14 below are now **scheduled** rather than open-ended: plan
-> §4.7 (package declaration consolidation) absorbs them — 4.7.5 builds the
-> `_ArealBuilder`/`EVTBuilder` (entry 6), 4.7.1 fixed `rch_spec` (13) and the
-> budget lists, and §4.7.2 carries the mover list (14). They stay listed until
-> the code actually lands.
+> Entries 6, 13 and 14 below were **scheduled** rather than open-ended: plan
+> §4.7 (package declaration consolidation) absorbed them — 4.7.5 built the
+> `_ArealBuilder`/`EVTBuilder` (entry 6, **RESOLVED 2026-07-21**), 4.7.1 fixed
+> `rch_spec` (13) and the budget lists, and §4.7.2 carries the mover list (14).
 >
 > **Correction (2026-07-18):** this banner previously said 4.7.1 would fix
 > entry 14 (`rch` in `_MOVER_PACKAGES`). 4.7.1 shipped and did NOT — entry 14
@@ -74,16 +73,17 @@
 > becomes a declared descriptor capability and the fix lands with its permanent
 > home. Flagged by the 2026-07-18 next-step survey.
 
-6. **No `EVTBuilder` (no file-less whole-domain EVT form).**
-   - What: `mf.evt` has `()` / `.gpkg` / `.flopy` but no builder form like
+6. **No `EVTBuilder` (no file-less whole-domain EVT form). — RESOLVED 2026-07-21 (plan §4.7.5).**
+   - What: `mf.evt` had `()` / `.gpkg` / `.flopy` but no builder form like
      `mf.rch(context=, nper=, recharge=)` that self-selects top-active cells.
-   - Why: `RCHBuilder` broadcasts one value per cell; EVT needs a per-cell
-     *elevation* (`surface`), which is new design surface, not reuse.
-     `mf.evt.gpkg(..., surface=CellSurfaceOffset("cell_top"))` covers the
-     areal land-surface case through the proven mapping engine.
-   - Impact: whole-domain ET requires a domain-covering polygon or direct
-     `stress_period_data`.
-   - Revisit: on real user demand (recorded in plan §5.2 banner).
+   - Resolution: `mf.evt(context=, nper=, rate=, depth=)` now builds a file-less
+     whole-domain EVT package via `EVTBuilder`, a thin subclass of the new shared
+     `_ArealBuilder` base (`modflow/mf6/areal.py`, extracted from `RCHBuilder`).
+     The per-cell ET `surface` -- the one piece with no RCH analogue -- resolves
+     through the shared `SurfaceResolver`/`CellSurfaceOffset` engine (default
+     `model_top`/land surface), never reading `gdf_topbtm` columns directly.
+     `rate`/`depth` reuse the RCH value-broadcast machinery verbatim. Deferred
+     scope for the builder is recorded in entry 51.
 
 7. **EVT `.gpkg` emits only the `nseg=1` record shape.**
    - What: `GeoPackageSource.evt` maps `surface/rate/depth` (4-field records).
@@ -796,3 +796,27 @@ same day, which is the useful part of the result.
       per-cell sidewall building, which flat bathy never did), and
       `test_replace_lak_on_loaded_run` (a replace-mechanism test, not a geometry
       one) filters the expected warning.
+
+51. **`_ArealBuilder`/`EVTBuilder` deferred scope (plan §4.7.5, 2026-07-21).**
+    The 4.7.5 extraction was kept minimal by explicit user decision ("do the
+    minimal but record the quirks as future things on the ledger"). Deferred:
+    - **Segmented ET (`nseg>1`)** — the builder emits only the single-segment
+      `(cellid, surface, rate, depth)` record; `pxdp`/`petm`/`petm0`/
+      `surf_rate_specified` and `auxiliary` are direct/`.flopy`-form only (mirrors
+      entry 7's `.gpkg` `nseg=1` limit). RCH has no segmentation analogue.
+    - **`cell_top` surface for a cell top-active in a layer below 0** — needs
+      per-layer `layer_N_top` surface columns (the same requirement the `.gpkg`
+      path already has). The builder default is `model_top` (land surface), which
+      resolves for every column regardless of top-active layer, so this only bites
+      a caller who explicitly passes `CellSurfaceOffset("cell_top")` on a deep
+      top-active cell.
+    - **`surface_only` cells keyword is a `top_active` alias** — accepted by
+      `__post_init__` but `_ArealBuilder.selected_cells` takes the first active
+      layer for both (inherited verbatim from `RCHBuilder`; `UZFBuilder`
+      distinguishes `surface_only`). Not "fixed" to avoid changing shipped RCH.
+    - **No-domain `top_active` == `all_active`** — with `context.domain is None`
+      both selectors return every cell on `layer` (inherited RCH behavior).
+    - **`_ArealBuilder` is not yet consumed by `UZFBuilder`**, a third
+      independent reimplementation of the same idomain selection; it diverges on
+      `surface_only` semantics, so folding it in is its own follow-up.
+    Revisit any of these on real user demand.

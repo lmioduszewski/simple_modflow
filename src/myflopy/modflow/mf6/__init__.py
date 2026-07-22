@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         build_canonical_model,
     )
     from myflopy.modflow.mf6.drn import DRNFromVector
+    from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
     from myflopy.modflow.mf6.ghb import GHBFromVector
     from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
@@ -131,6 +132,7 @@ _EXPORTS = {
     "PRTProject": ("myflopy.modflow.mf6.prt", "PRTProject"),
     "PRTReleasePoints": ("myflopy.modflow.mf6.prt", "PRTReleasePoints"),
     "PRTRunResults": ("myflopy.modflow.mf6.prt", "PRTRunResults"),
+    "EVTBuilder": ("myflopy.modflow.mf6.evapotranspiration", "EVTBuilder"),
     "Recharge": ("myflopy.modflow.mf6.simulation.packages", "Recharge"),
     "RCHBuilder": ("myflopy.modflow.mf6.recharge", "RCHBuilder"),
     "RechargeFromShp": ("myflopy.modflow.mf6.recharge", "RechargeFromShp"),

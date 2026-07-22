@@ -56,6 +56,7 @@ if TYPE_CHECKING:
         CanonicalModelConfig,
         build_canonical_model,
     )
+    from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
     from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from myflopy.modflow.mf6.interactive_plotting import (
@@ -272,6 +273,7 @@ _EXPORTS = {
     "StreamConnection": ("myflopy.modflow.mf6.sfr", "StreamConnection"),
     "StreamDiversion": ("myflopy.modflow.mf6.sfr", "StreamDiversion"),
     "StreamNetwork": ("myflopy.modflow.mf6.sfr", "StreamNetwork"),
+    "EVTBuilder": ("myflopy.modflow.mf6.evapotranspiration", "EVTBuilder"),
     "RCHBuilder": ("myflopy.modflow.mf6.recharge", "RCHBuilder"),
     "UZFBuilder": ("myflopy.modflow.mf6.uzf", "UZFBuilder"),
     "Wells": ("myflopy.modflow.mf6.simulation.packages", "Wells"),
@@ -458,6 +460,7 @@ _EXPORTS = {
 }
 
 _SECOND_TIER_EXPORTS = {
+    "EVTBuilder",
     "LAKBuilder",
     "MVRBuilder",
     "PackageBuilder",

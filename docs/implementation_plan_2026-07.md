@@ -708,11 +708,19 @@ field order is checked against `gpkg_defaults` (a silently reordered RIV record
 builds a model that runs and is wrong), and `edges_only` is rejected for the
 packages whose descriptor says they cannot support it.
 
-#### 4.7.5 Extract `_ArealBuilder`; add `EVTBuilder`
-Lift `RCHBuilder`'s cell selection + value broadcasting into a shared base; `EVTBuilder`
-becomes a thin subclass whose only new piece is `_resolve_surface` (delegating to the
-existing `Surface`/`CellSurfaceOffset` engine, NOT reading `gdf_topbtm` directly).
-Resolves ledger entry 6.
+#### 4.7.5 Extract `_ArealBuilder`; add `EVTBuilder` — DONE 2026-07-21
+Lifted `RCHBuilder`'s cell selection + value broadcasting into a shared
+`_ArealBuilder` base (`modflow/mf6/areal.py`, layer 2) with three subclass hooks
+(`_row_for`, `_make_spec`, `_build_metadata`) plus `_prepared` for per-build
+precompute; `RCHBuilder` is now a thin subclass with behavior unchanged. `EVTBuilder`
+(`modflow/mf6/evapotranspiration.py`) adds `rate`/`depth` (reusing the base broadcast)
+and the one genuinely new piece, `_resolve_surface`, which delegates to the shared
+`SurfaceResolver`/`CellSurfaceOffset` engine (extracted from `GeoPackageSource` in
+4.7.5a) — never reading `gdf_topbtm` directly. `mf.evt(context=, nper=, rate=, depth=)`
+overloads the existing `__call__` exactly like `mf.rch`; `mf.EVTBuilder` is exported
+in `__engine__`. Default surface is `model_top` (land surface), which resolves for
+every column. Resolves ledger entry 6; deferred scope in ledger entry 51. Kept
+minimal per user decision (three commits: 4.7.5a resolver, 4.7.5b base, 4.7.5c EVT).
 
 #### 4.7.6 The payoff test — DONE 2026-07-18
 `tests/test_package_descriptor_payoff.py` registers a synthetic descriptor in a
@@ -918,10 +926,11 @@ references for stage/rbot. Input hover: `cell_input_hover("stage", extra_fields=
 > `GeoPackageSource.evt` (areal polygon→cell mapping on the shared `_boundary_data`
 > plumbing — the same machinery `.rch` uses), `evt_spec` (maxbound inferred like
 > `rch_spec`), registry entry (`surface/rate/depth` earth, q `RdBu`) + explorer/group
-> wiring + lazy exports. DEVIATION from the sketch: no separate `EVTBuilder` — the
-> RCH *builder* form (domain-computed top-active cells) stays RCH-specific;
-> `CellSurfaceOffset` on `.gpkg` covers "surface = cell top ± offset". Revisit only on
-> real demand. MF6 e2e: `test_geopackage_specs_run_through_project`.
+> wiring + lazy exports. MF6 e2e: `test_geopackage_specs_run_through_project`.
+> **UPDATE 2026-07-21 (§4.7.5):** the earlier "no separate `EVTBuilder`" deviation
+> is now reversed — `mf.evt(context=, nper=, rate=, depth=)` ships a file-less
+> builder form via `EVTBuilder`, a thin subclass of the shared `_ArealBuilder`
+> base extracted from `RCHBuilder`. Ledger entry 6 RESOLVED.
 > **Canonical integration DONE 2026-07-18:** EVT sits on the valley walls beside
 > RCH (standard recharge/ET pairing) and is DISJOINT from UZF, which does
 > vadose-zone ET only (`simulate_et` auto-on via pet/extdp, no linear/square_gwet).
@@ -1343,7 +1352,7 @@ slow tests run automatically in 1.3's scheduled slow lane.
 | 4.7.2 registry descriptor | M | Low (data only, zero behavior change) |
 | 4.7.3 derive the ~20 lists | M–L | Med (one commit each, snapshot-guarded) |
 | 4.7.4 collapse spec/resolver/helper triplication | L | Med–High (most public API touched — do last) |
-| 4.7.5 `_ArealBuilder` + EVTBuilder | M | Med (refactors shipped RCH behavior) |
+| 4.7.5 `_ArealBuilder` + EVTBuilder — DONE 2026-07-21 | M | Med (refactors shipped RCH behavior; landed with RCH behavior unchanged) |
 | D8 .flopy backfill (chd/ghb/drn/wel) | S | Low |
 | 5.1 riv / 5.2 evt | M each | Low (proven pattern) |
 | 5.3 gwt/gwe helpers + dispatch | M–L | Med (serialization round-trip) |

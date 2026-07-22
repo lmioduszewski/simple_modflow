@@ -89,7 +89,7 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 **The package-first API in `package_api.py` is THE preferred, canonical way to build models.**
 Prefer it for all new model-building work; do not reach for the legacy OO path below unless
 you have a specific reason. The OO builder classes (`SFRBuilder`, `LAKBuilder`, `UZFBuilder`,
-`RCHBuilder`, `MVRBuilder`, `GHBFromVector`, `Recharge`, …) are the **engine underneath** the
+`RCHBuilder`, `EVTBuilder`, `MVRBuilder`, `GHBFromVector`, `Recharge`, …) are the **engine underneath** the
 package-first facade, not a competing API — e.g. `mf.uzf(...)` literally calls
 `UZFBuilder(...).build()`. (The canonical model in `canonical_example.py` is written in the
 older imperative builder style for historical/computed-cell reasons; that does NOT make the
