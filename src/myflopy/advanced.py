@@ -23,7 +23,10 @@ from typing import Any
 
 import flopy
 
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import (
+    _PACKAGE_EXPLORER_SPECS,
+    advanced_output_filerecords,
+)
 from myflopy.specs import PackageSpec
 
 
@@ -401,9 +404,7 @@ def uzf_spec(
             "mover": mover,
             "simulate_et": simulate_et,
             "save_flows": True,
-            "budget_filerecord": "{model_name}_budget.uzf",
-            "budgetcsv_filerecord": f"{{model_name}}_{name}_budget.csv",
-            "package_convergence_filerecord": f"{{model_name}}_{name}_package_convergence.csv",
+            **advanced_output_filerecords("uzf", name),
             **options,
         },
     )
@@ -464,10 +465,7 @@ def lak_spec(
             "perioddata": perioddata,
             "mover": mover,
             "save_flows": True,
-            "stage_filerecord": f"{{model_name}}_{name}_stage.lak",
-            "budget_filerecord": f"{{model_name}}_{name}_budget.lak",
-            "budgetcsv_filerecord": "{model_name}_lake_budget.csv",
-            "package_convergence_filerecord": "{model_name}_lake_convergence.csv",
+            **advanced_output_filerecords("lak", name),
             **options,
         },
     )
@@ -525,8 +523,7 @@ def sfr_spec(
             "diversions": diversions,
             "mover": mover,
             "save_flows": True,
-            "stage_filerecord": f"{{model_name}}_{name}_stage.sfr",
-            "budget_filerecord": f"{{model_name}}_{name}_budget.sfr",
+            **advanced_output_filerecords("sfr", name),
             **options,
         },
     )

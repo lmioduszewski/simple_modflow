@@ -103,6 +103,44 @@ def test_uzf_builder_can_prepare_a_spec_without_live_model():
     assert sorted(package.options["perioddata"]) == [0, 1]
 
 
+def test_advanced_output_filerecords_carry_the_name_and_never_collide():
+    """Every uzf/lak/sfr output filerecord includes ``{name}``, so two packages
+    of the same type never share an output file.
+
+    Regression: uzf ``budget_filerecord`` used to ignore ``name`` and two UZF
+    packages both wrote ``{model}_budget.uzf``; the SFR artifact restore wrote
+    ``sfr_budget.sfr`` with no model name, so two restored models collided.
+    """
+
+    from myflopy.modflow.mf6.package_registry import advanced_output_filerecords
+
+    for pkg in ("uzf", "lak", "sfr"):
+        one = advanced_output_filerecords(pkg, "one", "m")
+        two = advanced_output_filerecords(pkg, "two", "m")
+        assert not (set(one.values()) & set(two.values())), pkg
+        assert all(rec.startswith("m_one_") for rec in one.values()), one
+    # the SFR-restore bug: the model name must be present
+    assert (
+        advanced_output_filerecords("sfr", "sfr", "mdl")["budget_filerecord"]
+        == "mdl_sfr_budget.sfr"
+    )
+
+
+def test_advanced_specs_route_filerecords_through_the_shared_helper():
+    """Build and artifact-restore share ONE filerecord source, so a restored
+    package's output files match the ones the original build wrote."""
+
+    from myflopy.modflow.mf6.package_registry import advanced_output_filerecords
+
+    for pkg, spec in (
+        ("uzf", uzf_spec([], {})),
+        ("lak", lak_spec([], [], {})),
+        ("sfr", sfr_spec([], [], {})),
+    ):
+        for key, value in advanced_output_filerecords(pkg, pkg).items():
+            assert spec.options[key] == value, f"{pkg}.{key}"
+
+
 def test_advanced_specs_build_and_write_with_flopy_310(tmp_path):
     flow = ModelSpec(
         "advanced",

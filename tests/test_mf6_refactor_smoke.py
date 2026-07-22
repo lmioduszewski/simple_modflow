@@ -1302,7 +1302,7 @@ def test_rch_and_uzf_can_run_together():
         outdir = workspace / "rch_uzf_smoke"
         assert (outdir / "rch_uzf_smoke.uzf").exists()
         assert (outdir / "rch_uzf_smoke.rch").exists()
-        assert (outdir / "rch_uzf_smoke_budget.uzf").exists()
+        assert (outdir / "rch_uzf_smoke_uzf_budget.uzf").exists()
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

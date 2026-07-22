@@ -4,6 +4,51 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Suffix (kind.ext) for each output filerecord an advanced package (uzf/lak/sfr)
+# emits. The full record is always ``{model_name}_{name}_{suffix}`` -- see
+# advanced_output_filerecords.
+_ADVANCED_OUTPUT_FILERECORD_SUFFIXES: dict[str, dict[str, str]] = {
+    "uzf": {
+        "budget_filerecord": "budget.uzf",
+        "budgetcsv_filerecord": "budget.csv",
+        "package_convergence_filerecord": "package_convergence.csv",
+    },
+    "lak": {
+        "stage_filerecord": "stage.lak",
+        "budget_filerecord": "budget.lak",
+        "budgetcsv_filerecord": "budget.csv",
+        "package_convergence_filerecord": "package_convergence.csv",
+    },
+    "sfr": {
+        "stage_filerecord": "stage.sfr",
+        "budget_filerecord": "budget.sfr",
+    },
+}
+
+
+def advanced_output_filerecords(
+    package_type: str, name: str, model_name: str = "{model_name}"
+) -> dict[str, str]:
+    """The MF6 output filerecords for one advanced package (uzf/lak/sfr).
+
+    Every record is uniquely named ``{model_name}_{name}_{kind}.{ext}``. This is
+    the ONE source of truth shared by the ``*_spec`` factories (build), the
+    legacy imperative ``.uzf()`` path, and
+    :func:`myflopy.project.components.apply_package_artifact` (restore), so that
+    (a) two packages of the same type never collide on an output file -- e.g.
+    ``uzf`` budget used to ignore ``name`` and two UZF packages both wrote
+    ``{model}_budget.uzf`` -- and (b) a restored package's output files match the
+    ones the original build wrote.
+
+    Lives here (layer 0, the single source of per-package truth) so every build
+    and restore path can import it downward at module level. ``model_name``
+    defaults to the literal ``"{model_name}"`` template the spec factories
+    resolve later via ``str.format``; the restore path passes a concrete name.
+    """
+
+    suffixes = _ADVANCED_OUTPUT_FILERECORD_SUFFIXES[package_type]
+    return {key: f"{model_name}_{name}_{suffix}" for key, suffix in suffixes.items()}
+
 
 @dataclass(frozen=True)
 class FieldSpec:

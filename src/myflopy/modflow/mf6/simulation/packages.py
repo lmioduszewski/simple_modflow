@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 import flopy
 import numpy as np
 
+from myflopy.modflow.mf6.package_registry import advanced_output_filerecords
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -637,14 +639,15 @@ class UZF:
         if nuzfcells is None:
             nuzfcells = int(np.bincount(model.modelgrid.idomain[0])[1])
 
+        # Shared helper: keeps this legacy imperative path's output filenames
+        # identical to the uzf_spec build path and the artifact-restore path (a
+        # uzf captured here restores unchanged).
         self.uzf = flopy.mf6.ModflowGwfuzf(
             model=model.gwf,
             print_input=print_input,
             print_flows=print_flows,
             save_flows=save_flows,
-            budget_filerecord=f'{model.name}_budget.uzf',
-            budgetcsv_filerecord=f'{model.name}_uzf_budget.csv',
-            package_convergence_filerecord=f'{model.name}_uzf_package_convergence.csv',
+            **advanced_output_filerecords("uzf", "uzf", model.name),
             mover=mover,
             simulate_et=simulate_et,
             linear_gwet=linear_gwet,

@@ -12,7 +12,10 @@ from typing import Any
 import flopy
 import numpy as np
 
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import (
+    _PACKAGE_EXPLORER_SPECS,
+    advanced_output_filerecords,
+)
 
 
 def _list_bc_artifact_types() -> frozenset[str]:
@@ -691,9 +694,7 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             simulate_gwseep=artifact.package_data.get("simulate_gwseep", False),
             unsat_etwc=artifact.package_data.get("unsat_etwc", False),
             unsat_etae=artifact.package_data.get("unsat_etae", False),
-            budget_filerecord=f"{model.name}_budget.uzf",
-            budgetcsv_filerecord=f"{model.name}_uzf_budget.csv",
-            package_convergence_filerecord=f"{model.name}_uzf_package_convergence.csv",
+            **advanced_output_filerecords("uzf", "uzf", model.name),
             ntrailwaves=artifact.package_data.get("ntrailwaves", 7),
             nwavesets=artifact.package_data.get("nwavesets", 40),
             filename=f"{model.name}.uzf",
@@ -705,10 +706,7 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             print_input=False,
             print_flows=False,
             print_stage=True,
-            stage_filerecord=f"{model.name}_stage.lak",
-            budget_filerecord=f"{model.name}_budget.lak",
-            budgetcsv_filerecord=f"{model.name}_lake_budget.csv",
-            package_convergence_filerecord=f"{model.name}_lake_convergence.csv",
+            **advanced_output_filerecords("lak", "lak", model.name),
             mover=artifact.package_data.get("mover", False),
             surfdep=artifact.package_data.get("surfdep"),
             time_conversion=artifact.package_data.get("time_conversion"),
@@ -740,8 +738,7 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             maximum_picard_iterations=artifact.package_data.get("maximum_picard_iterations"),
             maximum_iterations=artifact.package_data.get("maximum_iterations"),
             maximum_depth_change=artifact.package_data.get("maximum_depth_change"),
-            budget_filerecord="sfr_budget.sfr",
-            stage_filerecord="sfr_stage.sfr",
+            **advanced_output_filerecords("sfr", "sfr", model.name),
             length_conversion=artifact.package_data.get("length_conversion"),
             time_conversion=artifact.package_data.get("time_conversion"),
             mover=artifact.package_data.get("mover", False),
