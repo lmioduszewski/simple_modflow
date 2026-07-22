@@ -55,11 +55,15 @@ Rules that hold for all of them:
   `dragmode='pan'`, `scrollZoom`, and the house template. Returning a bare
   figure silently drops all three — it is the defect this convention exists to
   prevent, and it has now happened twice (`hds.animate`, and these notebooks).
-- **Colors follow the policy**, not the call site. Signed q-like fields use
-  `_blue_white_red_diverging_colorscale()` — gaining/negative BLUE, losing/
-  positive RED (`docs/mf6io_reference.md`). Read the endpoints off that helper
-  rather than writing hex literals, so discrete and continuous renderings
-  cannot drift apart.
+- **Colors follow the policy**, not the call site. Signed exchange fields use
+  `_exchange_colorscale(frame)`, which puts BLUE on whichever end is gaining for
+  the declared reference frame — the negative end for `gwf` (SFR + list BCs),
+  the positive end for `feature` (LAK, and the normalized `exchange_intensity`).
+  See "Signed exchange columns name their reference frame" below and
+  `docs/mf6io_reference.md`. Read the endpoints off the helper rather than
+  writing hex literals or hardcoding one orientation, so discrete and continuous
+  renderings cannot drift apart — and so a package's colours cannot disagree
+  with its declared sign.
 - **Period selection is `per=`** on the verb, and a noun may also be *called*
   to bind a period once: `results.profile(per=3).plot()` ==
   `results.profile.plot(per=3)`. Calling a noun returns a new bound view; it

@@ -36,10 +36,13 @@ Both repos are clean as of rev. 4 (2026-07-14); nothing below is in-flight anymo
    `tests/test_hover_integration.py` (11 slow, canonical).
 2. **Colorscale policy** (user decision, pinned in `tests/test_colorscale_policy.py`):
    red/white/blue diverging ONLY for (a) signed gaining/losing "q"-like exchange fields —
-   SFR/LAK/combined-SW use `_blue_white_red_diverging_colorscale()` (gaining/negative =
-   BLUE, losing/positive = RED); per-package `q` results keep `"RdBu"` — and (b) ALL
-   diff/compare maps (`"RdBu"` + `zmid=0` → negative RED, positive BLUE). **Everything
-   else defaults to `'earth'`** (Plotly brown→cream→blue; the mounding-figure look).
+   SFR/LAK/combined-SW use `_exchange_colorscale(frame)`, which orients BLUE onto the
+   gaining end per the declared reference frame (negative for `gwf` = SFR + list BCs,
+   positive for `feature` = LAK / normalized `exchange_intensity`); per-package `q`
+   results keep `"RdBu"` — and (b) ALL diff/compare maps (`"RdBu"` + `zmid=0` → negative
+   RED, positive BLUE). **Everything else defaults to `'earth'`** (Plotly
+   brown→cream→blue; the mounding-figure look). (The frame-naming replaced an earlier
+   normalization; see `docs/compromises_and_deferrals.md` §45.)
    Centralized in `package_registry.py` specs + call-site fallbacks. `Choro.colorscale`
    setter now accepts explicit `[[pos, color], ...]` lists (was silently dropping them —
    SFR's documented scale had never rendered) and `plot_mpl` builds a

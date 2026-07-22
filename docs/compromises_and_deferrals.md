@@ -690,15 +690,41 @@ same day, which is the useful part of the result.
       and its docstring states the frame; the PEST target series is unchanged
       (still MF6's raw sign), so no calibration run shifts.
 
-47. **The 2026-07-19 sign audit surfaced 29 confirmed findings; 2 triaged.**
-    - What: an exhaustive sweep traced 64 read paths for SFR/LAK exchange.
-      Confirmed and acted on: the DRN inconsistency (entry 46) and the SFR map
-      inversion I introduced (fixed in `3738cca`). The remaining ~27 are
-      untriaged.
-    - Impact: unknown until triaged — they are *confirmed* findings, not
-      candidates, so some may be real defects.
-    - Revisit: triage the remainder now that entry 45 has landed, since the
-      reference-frame rename resolved or invalidated several of them.
+47. **The 2026-07-19 sign audit (64 read paths, 63 locations) — TRIAGED 2026-07-21.**
+    - The audit traced every SFR/LAK exchange read. Recovered its findings from
+      the workflow journal and triaged all against post-rename code:
+    - **Resolved by the revert (entry 45).** Every "raw-vs-normalized disagree"
+      finding — `group.bud()`/`model.bud("sfr"|"lak").df`, the raw `budget_tables`
+      reads, the `GroupBudget` split — is moot: nothing is normalized any more, so
+      the raw escape-hatch reads and the `results.q` reads now carry the *same*
+      MF6 sign (they differ only in column name: `q` vs `q_gwf`/`q_lake`).
+    - **Resolved by the rename + its fixes.** The `gaining_sign` dual-meaning
+      (→ `reference_frame`); all six map inversions (single + group × SFR/LAK/SW);
+      the `mf6io_reference.md` LAK/SFR contradiction; the `_signed_exchange_colors`
+      docstring; the circular colorscale test (rebuilt to assert on real maps).
+    - **Four sites the audit flagged that the main rename pass MISSED, now fixed
+      2026-07-21:** (a) `group/surface_water.py` combined map was still inverted
+      (drew gaining red) — the only map I hadn't re-pointed; (b) the stale policy
+      bullet in `view_layer_conventions.md` and (c) in `implementation_plan §2`
+      that instructed the old blue-at-negative rule; (d) `canonical_02` cell 7 read
+      `profile['q']` (now `q_gwf`). A new `test_every_group_exchange_map_puts_blue_
+      on_gaining` covers the group tier that had no test.
+    - **Surviving items — separable, pre-existing, non-sign (see entry 49).**
+    - Done: 2026-07-21.
+
+49. **Two pre-existing, non-sign SFR observation/plot issues (audit tail).**
+    - `observations/sfr.py` `SfrFlowTargets._package_flow_table` **fallback**
+      branch returns the aquifer *exchange* (~1e2) under the column `sim_flow`,
+      while the primary FLOW-JA-FACE branch returns in-channel *routing* flow —
+      two different physical quantities under one name. Only fires when
+      FLOW-JA-FACE is unavailable (not a normal run), and unrelated to the sign
+      work, so left as-is.
+    - `budget.py` `SFRBudget.plot_flows` names an SFR reach-to-reach series
+      `riv_flows` (a misnomer — no RIV package is read), and the audit noted a
+      separate method-shape concern it did not fully spell out.
+    - Both are low-severity, pre-date the sign work, and change PEST/plot
+      semantics if touched — deferred rather than folded into the rename.
+    - Revisit: opportunistically, or when SFR observations are next revised.
 
 48. **Two bugs surfaced while implementing the reference-frame rename (entry 45).**
     - **Group LAK map was inverted** (pre-existing). The single-model LAK map was

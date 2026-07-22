@@ -158,6 +158,43 @@ def test_every_exchange_map_puts_blue_on_gaining(canonical_run):
         )
 
 
+def test_every_group_exchange_map_puts_blue_on_gaining(canonical_run):
+    """Same house rule on the GROUP tier — where an inversion once shipped silently.
+
+    The single-model LAK map was fixed in c55ea23, but the group LAK and combined
+    group surface_water maps kept the raw blue-at-negative scale and drew gaining
+    features red, with no test to catch it. This asserts the group maps agree with
+    their single-model twins by orienting blue onto the gaining end per frame.
+    """
+
+    import myflopy as mf
+    from myflopy.project.group.core import ModelGroup
+
+    BLUE, RED = "#1f77b4", "#d62728"
+    reloaded = mf.load_mf6_run(canonical_run.workspace)
+    group = ModelGroup({"a": canonical_run, "b": reloaded}, reference="a")
+    # sfr is the gwf frame (gaining negative); lak and the combined exchange are
+    # the feature frame (gaining positive).
+    cases = {
+        "sfr": (group.packages.sfr.results.q.map(per=0, model_name="b"), "gwf"),
+        "lak": (group.packages.lak.results.q.map(per=0, model_name="b"), "feature"),
+        "surface_water": (
+            group.packages.surface_water.results.map(per=0, model_name="b"),
+            "feature",
+        ),
+    }
+    for label, (choro, frame) in cases.items():
+        scale = list(choro.colorscale) if getattr(choro, "colorscale", None) else list(
+            choro.data[0].colorscale
+        )
+        negative_end, positive_end = scale[0][1].lower(), scale[-1][1].lower()
+        gaining_end, losing_end = (
+            (negative_end, positive_end) if frame == "gwf" else (positive_end, negative_end)
+        )
+        assert gaining_end == BLUE, f"group {label} ({frame}): gaining end must be blue"
+        assert losing_end == RED, f"group {label} ({frame}): losing end must be red"
+
+
 def test_lak_plot_budget_keeps_positive_blue(canonical_run):
     """``plot_budget`` was already correct -- do not "fix" it.
 

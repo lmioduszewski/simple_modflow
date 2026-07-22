@@ -9,7 +9,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.package_explorer import (
     FieldMappable,
-    _blue_white_red_diverging_colorscale,
+    _exchange_colorscale,
     _symmetric_color_limit,
     build_surface_water_exchange_cell_table,
     build_surface_water_q_map_payload,
@@ -105,8 +105,11 @@ class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
             custom_hover=hover,
             hover_heads=False,
             hover_ks=False,
-            # signed exchange: gaining (negative) blue, losing red, like SFR/LAK
-            colorscale=colorscale or _blue_white_red_diverging_colorscale(),
+            # The combined map draws the normalized exchange_intensity field
+            # (positive = the feature gains), so blue sits at the positive end --
+            # the "feature" orientation, matching the single-model surface_water
+            # map. The old blue-at-negative scale drew gaining cells red here.
+            colorscale=colorscale or _exchange_colorscale("feature"),
             **kwargs,
         )
 
