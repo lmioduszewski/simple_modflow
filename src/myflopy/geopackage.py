@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import geopandas as gpd
 import numpy as np
@@ -76,8 +76,12 @@ class CellSurfaceOffset:
             fields.add(self.minimum)
         return fields
 
-    def resolve(self, source: GeoPackageSource, row, *, layer: int, cell: int) -> float:
-        """Return the resolved elevation/head for one mapped cell."""
+    def resolve(self, source: SupportsSurfaceValue, row, *, layer: int, cell: int) -> float:
+        """Return the resolved elevation/head for one mapped cell.
+
+        ``source`` is anything exposing ``surface_value`` -- a :class:`GeoPackageSource`
+        (the file path) or a :class:`SurfaceResolver` (the file-less areal-builder path).
+        """
 
         surface = source.surface_value(self.reference, layer=layer, cell=cell)
         value = surface + self._row_or_value(row, self.offset)
@@ -85,6 +89,91 @@ class CellSurfaceOffset:
         if minimum is not None:
             value = max(value, minimum)
         return float(value)
+
+
+class SupportsSurfaceValue(Protocol):
+    """Anything that can resolve a model/cell surface elevation for a cell."""
+
+    def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceResolver:
+    """Resolve model/cell surface elevations for :class:`CellSurfaceOffset`.
+
+    Wraps a :class:`~myflopy.specs.ModelContext` and owns the single copy of the
+    ``top``/``bottom`` column lookup. Both :class:`GeoPackageSource` (the file
+    path) and the file-less areal builders (``mf.evt(context=...)``) resolve a
+    ``cell_top`` / ``model_top`` / ``cell_bottom`` elevation through this one
+    place, so the ``gdf_topbtm`` column layout is never re-encoded at a call site.
+    """
+
+    context: ModelContext
+
+    @property
+    def grid(self):
+        """Grid helper carried by the model context."""
+
+        return self.context.grid
+
+    def _surfaces(self):
+        """The surface source for :class:`CellSurfaceOffset`: the context's, else the grid's top/botm."""
+
+        surfaces = self.context.surfaces
+        if surfaces is None:
+            surfaces = getattr(self.grid, "gdf_topbtm", None)
+        if surfaces is None:
+            raise ValueError(
+                "ModelContext.surfaces or grid.gdf_topbtm is required for CellSurfaceOffset."
+            )
+        return surfaces
+
+    @staticmethod
+    def _cell_sequence(value: Any, cell: int) -> float:
+        """One cell's value from a scalar (broadcast) or a per-cell array."""
+
+        array = np.asarray(value, dtype=float)
+        if array.ndim == 0:
+            return float(array)
+        return float(array.reshape(-1)[cell])
+
+    def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
+        """Return a model/cell surface value for a mapped boundary cell."""
+
+        surfaces = self._surfaces()
+        if isinstance(surfaces, dict):
+            if reference in {"model_top", "cell_top"} and layer == 0:
+                return self._cell_sequence(surfaces["top"], cell)
+            if reference == "model_top":
+                return self._cell_sequence(surfaces["top"], cell)
+            bottom = surfaces.get("bottom", surfaces.get("botm"))
+            if bottom is None:
+                raise ValueError("Surface dictionary requires 'bottom' or 'botm'.")
+            bottom_array = np.asarray(bottom, dtype=float)
+            if reference == "cell_top":
+                if bottom_array.ndim == 1:
+                    raise ValueError("cell_top for layers below 0 requires multilayer bottom surfaces.")
+                return self._cell_sequence(bottom_array[layer - 1], cell)
+            if bottom_array.ndim == 1:
+                if layer != 0:
+                    raise ValueError("cell_bottom for layers below 0 requires multilayer bottom surfaces.")
+                return self._cell_sequence(bottom_array, cell)
+            return self._cell_sequence(bottom_array[layer], cell)
+
+        columns = getattr(surfaces, "columns", ())
+        if reference == "model_top":
+            candidates = (0, "top", "model_top")
+        elif reference == "cell_top":
+            candidates = ((0, "top", "model_top") if layer == 0 else (layer, f"layer_{layer}_top"))
+        else:
+            candidates = (layer + 1, "bottom" if layer == 0 else f"layer_{layer}_bottom")
+        for column in candidates:
+            if column in columns:
+                return float(surfaces.loc[cell, column])
+        raise ValueError(
+            f"Could not resolve {reference!r} for layer {layer}; available surface columns are {list(columns)!r}."
+        )
 
 
 RowValue = str | int | float | list[str] | tuple[str, ...] | CellSurfaceOffset
@@ -220,63 +309,14 @@ class GeoPackageSource:
             cells = [cell for cell in cells if cell in edge_cells]
         return [int(cell) for cell in cells if self._active(layer, int(cell))]
 
-    def _surfaces(self):
-        """The surface source for :class:`CellSurfaceOffset`: the context's, else the grid's top/botm."""
-
-        surfaces = self.context.surfaces
-        if surfaces is None:
-            surfaces = getattr(self.grid, "gdf_topbtm", None)
-        if surfaces is None:
-            raise ValueError(
-                "ModelContext.surfaces or grid.gdf_topbtm is required for CellSurfaceOffset."
-            )
-        return surfaces
-
-    @staticmethod
-    def _cell_sequence(value: Any, cell: int) -> float:
-        """One cell's value from a scalar (broadcast) or a per-cell array."""
-
-        array = np.asarray(value, dtype=float)
-        if array.ndim == 0:
-            return float(array)
-        return float(array.reshape(-1)[cell])
-
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
-        """Return a model/cell surface value for a mapped boundary cell."""
+        """Return a model/cell surface value for a mapped boundary cell.
 
-        surfaces = self._surfaces()
-        if isinstance(surfaces, dict):
-            if reference in {"model_top", "cell_top"} and layer == 0:
-                return self._cell_sequence(surfaces["top"], cell)
-            if reference == "model_top":
-                return self._cell_sequence(surfaces["top"], cell)
-            bottom = surfaces.get("bottom", surfaces.get("botm"))
-            if bottom is None:
-                raise ValueError("Surface dictionary requires 'bottom' or 'botm'.")
-            bottom_array = np.asarray(bottom, dtype=float)
-            if reference == "cell_top":
-                if bottom_array.ndim == 1:
-                    raise ValueError("cell_top for layers below 0 requires multilayer bottom surfaces.")
-                return self._cell_sequence(bottom_array[layer - 1], cell)
-            if bottom_array.ndim == 1:
-                if layer != 0:
-                    raise ValueError("cell_bottom for layers below 0 requires multilayer bottom surfaces.")
-                return self._cell_sequence(bottom_array, cell)
-            return self._cell_sequence(bottom_array[layer], cell)
+        Delegates to the shared :class:`SurfaceResolver` so the ``gdf_topbtm``
+        column layout lives in exactly one place (also used by ``mf.evt(context=...)``).
+        """
 
-        columns = getattr(surfaces, "columns", ())
-        if reference == "model_top":
-            candidates = (0, "top", "model_top")
-        elif reference == "cell_top":
-            candidates = ((0, "top", "model_top") if layer == 0 else (layer, f"layer_{layer}_top"))
-        else:
-            candidates = (layer + 1, "bottom" if layer == 0 else f"layer_{layer}_bottom")
-        for column in candidates:
-            if column in columns:
-                return float(surfaces.loc[cell, column])
-        raise ValueError(
-            f"Could not resolve {reference!r} for layer {layer}; available surface columns are {list(columns)!r}."
-        )
+        return SurfaceResolver(self.context).surface_value(reference, layer=layer, cell=cell)
 
     def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int):
         """Resolve one value spec for a cell: surface offset, numeric constant, or (per-period) field."""
