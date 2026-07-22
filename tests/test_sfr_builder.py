@@ -113,6 +113,27 @@ def test_sfr_builder_supports_explicit_locations_and_node_connections():
     assert nodes.network.connections[0] == StreamConnection("tributary", "main")
 
 
+def test_sfr_builder_broadcasts_scalar_rates_but_keeps_inflow_a_point_source():
+    """A scalar RATE (rainfall/evaporation) applies to EVERY reach; a scalar
+    INFLOW is a volumetric point source at the single headwater reach.
+
+    Regression: a scalar rate used to land on the first reach only, so e.g.
+    ``rainfall=0.002`` silently wetted one reach of the whole network.
+    """
+
+    builder = _builder(rainfall=0.002, inflow=500.0)
+    all_reaches = sorted(int(r) for r in builder.reaches.index)
+    period0 = builder.perioddata[0]
+
+    rain = [row for row in period0 if row[1] == "RAINFALL"]
+    assert sorted(row[0] for row in rain) == all_reaches  # one row per reach
+    assert all(row[2] == 0.002 for row in rain)
+
+    inflow = [row for row in period0 if row[1] == "INFLOW"]
+    assert [row[0] for row in inflow] == [int(builder.reaches.index[0])]
+    assert inflow[0][2] == 500.0
+
+
 def test_sfr_builder_supports_multiple_reaches_in_one_cell_and_diversions():
     streams = gpd.GeoDataFrame(
         {"name": ["source", "canal"]},

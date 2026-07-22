@@ -679,8 +679,14 @@ class SFRBuilder:
     def _period_setting(self, value: Any, keyword: str) -> dict[int, list[list[Any]]]:
         """Expand an inflow/rainfall/etc setting into per-period MF6 ``[reach, keyword, amount]`` rows.
 
-        Accepts a per-period mapping, a per-reach/location mapping, a scalar
-        (applied to the first reach), or explicit row tuples.
+        Accepts a per-period mapping, a per-reach/location mapping, a scalar, or
+        explicit row tuples.
+
+        A **scalar** is expanded by keyword: ``RAINFALL``/``EVAPORATION``/
+        ``RUNOFF``/``STATUS`` are per-reach quantities and broadcast to EVERY
+        reach (matching :class:`LAKBuilder`'s per-lake broadcast), while
+        ``INFLOW`` is a volumetric point source and enters at the single
+        headwater (first) reach.
         """
 
         if value is None:
@@ -696,7 +702,19 @@ class SFRBuilder:
                     rno = int(location) if isinstance(location, int) else self._reach_at(str(location), "upstream")
                     result[period].append([rno, keyword, amount])
             elif isinstance(current, Real) or isinstance(current, str):
-                result[period].append([int(self.reaches.index[0]), keyword, current])
+                if keyword == "INFLOW":
+                    # Volumetric point source: a scalar enters at the single
+                    # headwater (first) reach. Broadcasting it would inject the
+                    # inflow once per reach.
+                    result[period].append(
+                        [int(self.reaches.index[0]), keyword, current]
+                    )
+                else:
+                    # Per-reach quantity (rate or status): a scalar applies to
+                    # EVERY reach. Previously it landed on the first reach only,
+                    # so e.g. rainfall=0.001 silently wetted one reach.
+                    for rno in self.reaches.index:
+                        result[period].append([int(rno), keyword, current])
             else:
                 for row in current:
                     result[period].append([int(row[0]), keyword, *row[1:]])
