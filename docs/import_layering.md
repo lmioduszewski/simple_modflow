@@ -42,7 +42,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.discretization`
-- `myflopy.modflow.mf6.simulation.packages`
 - `myflopy.modflow.mf6.simulation.runtime`
 - `myflopy.modflow.mf6.surface_water_validation`
 - `myflopy.modflow.mp3du`
@@ -85,6 +84,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.ies` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.mf6.simulation.indexing`
+- `myflopy.modflow.mf6.simulation.packages`
 - `myflopy.modflow.mp3du.legacy_prt`
 - `myflopy.modflow.mp3du.particles`
 - `myflopy.modflow.utils.datatypes.datalists`
@@ -97,6 +97,7 @@ review the diff, commit the regenerated files together.
 
 - `myflopy.advanced`
 - `myflopy.builders`
+- `myflopy.modflow.mf6.areal`
 - `myflopy.modflow.mf6.budget_tables`
 - `myflopy.modflow.mf6.chd`
 - `myflopy.modflow.mf6.drn`
