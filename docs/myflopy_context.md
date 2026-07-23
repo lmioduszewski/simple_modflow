@@ -152,7 +152,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    `*_spec` + registry/explorers). CSUB is an explicit non-goal (plan §5.9).
    Also `mf.dis`/`mf.disu` passthroughs (§5.5).
 2. **GWT/GWE integration** — package helpers (§5.3: `mf.adv/dsp/mst/ssm/cnc/...`,
-   `mf.est/cnd/ctp/...`, model-type dispatch for `mf.ic/oc/disv`) AND the results tier
+   `mf.est/cnd/ctp/...`; **model-type dispatch for `mf.ic/oc/disv` DONE 2026-07-22** —
+   they build the gwf/gwt/gwe FloPy class off the model kind) AND the results tier
    (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,
    group/diff, `ConcTargets` → PEST).
 3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**

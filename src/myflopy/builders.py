@@ -53,6 +53,69 @@ def build_ims(simulation, *, models: Iterable[str], **options):
     return ims
 
 
+# Model-type dispatch for shared core packages (plan 5.3A). ``ic``/``oc``/``disv``
+# are the same package on GWF, GWT and GWE models but map to different FloPy
+# classes; these module-level builders resolve the class from the built model's
+# ``model_type`` (``"gwf6"``/``"gwt6"``/``"gwe6"``). They MUST stay module-level
+# functions: ``PackageSpec`` serializes its builder by importable reference
+# (``specs._callable_ref`` rejects lambdas/closures), and only the function is
+# persisted -- the class tables below are re-read at build time, never serialized.
+# PRT is intentionally absent (MF6 has no ``ModflowPrtic``; PRT builds its own dis
+# via ``mf.prt``); ``npf``/``sto`` are GWF-only in MF6 and are not dispatched.
+_IC_CLASSES = {
+    "gwf6": flopy.mf6.ModflowGwfic,
+    "gwt6": flopy.mf6.ModflowGwtic,
+    "gwe6": flopy.mf6.ModflowGweic,
+}
+_OC_CLASSES = {
+    "gwf6": flopy.mf6.ModflowGwfoc,
+    "gwt6": flopy.mf6.ModflowGwtoc,
+    "gwe6": flopy.mf6.ModflowGweoc,
+}
+_DISV_CLASSES = {
+    "gwf6": flopy.mf6.ModflowGwfdisv,
+    "gwt6": flopy.mf6.ModflowGwtdisv,
+    "gwe6": flopy.mf6.ModflowGwedisv,
+}
+
+
+def _dispatch_core_class(table: dict, model, package_label: str):
+    """Return the model-kind-specific FloPy class for a shared core package.
+
+    Resolves the class from the built model's ``model_type`` (the FloPy instance
+    attribute, ``"gwf6"``/``"gwt6"``/``"gwe6"``), raising a clear error for any
+    kind the package does not support (e.g. PRT, which has no IC package).
+    """
+
+    model_type = getattr(model, "model_type", None)
+    try:
+        return table[model_type]
+    except KeyError:
+        supported = ", ".join(sorted(key.removesuffix("6") for key in table))
+        raise ValueError(
+            f"mf.{package_label} is not available for model type {model_type!r}; "
+            f"supported model types: {supported}."
+        ) from None
+
+
+def build_ic(model, **options):
+    """Build the IC package for the model's kind (GWF/GWT/GWE). Engine under ``mf.ic``."""
+
+    return _dispatch_core_class(_IC_CLASSES, model, "ic")(model, **options)
+
+
+def build_oc(model, **options):
+    """Build the OC package for the model's kind (GWF/GWT/GWE). Engine under ``mf.oc``."""
+
+    return _dispatch_core_class(_OC_CLASSES, model, "oc")(model, **options)
+
+
+def build_disv(model, **options):
+    """Build the DISV package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disv``."""
+
+    return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **options)
+
+
 def _build_two_model_exchange(constructor, simulation, models: tuple[Any, ...], **options):
     """Build a standard two-model MF6 exchange from resolved model objects."""
 

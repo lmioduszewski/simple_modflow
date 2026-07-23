@@ -38,6 +38,12 @@ Everything below is an attribute of the top-level `myflopy` module (imported as
 `mf.disv`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`, `mf.ims`
 — each `mf.<name>(...)` returns a `PackageSpec`.
 
+`mf.ic` / `mf.oc` / `mf.disv` are **model-kind-aware**: they build the
+GWF/GWT/GWE FloPy class off the model's type, so the same helper serves a
+transport or energy model (for GWT/GWE `mf.oc`, pass
+`concentration_filerecord=`/`temperature_filerecord=` via `**options`). `mf.npf`
+and `mf.sto` are GWF-only (MF6 has no GWT/GWE variant).
+
 ### List boundary conditions
 
 Each list BC offers up to three forms; the record fields are its input nouns:

@@ -29,7 +29,7 @@ from myflopy.advanced import (
     uzf_spec,
     wel_spec,
 )
-from myflopy.builders import build_ims
+from myflopy.builders import build_disv, build_ic, build_ims, build_oc
 from myflopy.geopackage import GeoPackageSource, RowValue
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.lakes import (
@@ -811,22 +811,25 @@ def disv(
     }
     if idomain is not None:
         values["idomain"] = idomain
-    return PackageSpec(name, flopy.mf6.ModflowGwfdisv, values)
+    return PackageSpec(name, build_disv, values)
 
 
 def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
-    """Initial-conditions (IC) package: the starting head field.
+    """Initial-conditions (IC) package: the starting dependent-variable field.
+
+    Dispatches on the model kind: starting head (GWF), concentration (GWT), or
+    temperature (GWE).
 
     Parameters
     ----------
     strt : float or array-like
-        Starting head -- a scalar, a per-cell array ``(ncpl,)``, or a
-        ``(nlay, ncpl)`` array. A sensible value (near the water table) helps
-        Newton / under-relaxation runs converge.
+        Starting value -- a scalar, a per-cell array ``(ncpl,)``, or a
+        ``(nlay, ncpl)`` array. For GWF a sensible head (near the water table)
+        helps Newton / under-relaxation runs converge.
     name : str, default "ic"
         Package name.
     **options
-        Extra ``flopy.mf6.ModflowGwfic`` options.
+        Extra ``flopy.mf6.ModflowGw{f,t,e}ic`` options.
 
     Returns
     -------
@@ -838,7 +841,7 @@ def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
     >>> mf.ic(strt=starting_heads)      # per-cell / per-layer array
     """
 
-    return PackageSpec(name, flopy.mf6.ModflowGwfic, {"strt": strt, **options})
+    return PackageSpec(name, build_ic, {"strt": strt, **options})
 
 
 def npf(
@@ -963,24 +966,28 @@ def oc(
 ) -> PackageSpec:
     """Output-control (OC) package: what to save/print and when.
 
-    To get heads and a cell budget on disk you must name the output files
-    (``head_filerecord`` / ``budget_filerecord``) **and** request them in
-    ``saverecord`` -- MF6 errors if you ask to save heads without a head file.
+    Dispatches on the model kind (GWF/GWT/GWE). To get the dependent variable and
+    a cell budget on disk you must name the output files **and** request them in
+    ``saverecord`` -- MF6 errors if you ask to save without an output file.
 
     Parameters
     ----------
     head_filerecord : str, optional
-        Output head file name (e.g. ``"model.hds"``).
+        GWF output head file name (e.g. ``"model.hds"``). For GWT/GWE pass
+        ``concentration_filerecord=`` / ``temperature_filerecord=`` via
+        ``**options`` instead (and the matching ``saverecord`` text).
     budget_filerecord : str, optional
         Output cell-budget file name (e.g. ``"model.cbc"``).
     saverecord : list, optional
-        What/when to save, e.g. ``[("HEAD", "ALL"), ("BUDGET", "LAST")]``.
+        What/when to save, e.g. ``[("HEAD", "ALL"), ("BUDGET", "LAST")]``
+        (use ``"CONCENTRATION"`` / ``"TEMPERATURE"`` for GWT/GWE).
     printrecord : list, optional
         What/when to print to the listing file.
     name : str, default "oc"
         Package name.
     **options
-        Extra ``flopy.mf6.ModflowGwfoc`` options.
+        Extra ``flopy.mf6.ModflowGw{f,t,e}oc`` options (incl. the GWT/GWE
+        ``concentration_filerecord`` / ``temperature_filerecord``).
 
     Returns
     -------
@@ -1001,7 +1008,7 @@ def oc(
     }.items():
         if value is not None:
             values[key] = value
-    return PackageSpec(name, flopy.mf6.ModflowGwfoc, values)
+    return PackageSpec(name, build_oc, values)
 
 
 class _CHDPackage:

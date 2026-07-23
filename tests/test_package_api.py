@@ -135,6 +135,68 @@ def test_package_api_builds_typed_model_specs_for_all_mf6_model_types(tmp_path):
     assert isinstance(built.prt("particles"), flopy.mf6.ModflowPrt)
 
 
+def _disv_values() -> dict:
+    """Minimal two-cell DISV grid dict, model-kind-agnostic."""
+
+    return dict(
+        nlay=1,
+        ncpl=2,
+        nvert=6,
+        vertices=[[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 1.0, 1.0], [3, 0.0, 1.0], [4, 2.0, 0.0], [5, 2.0, 1.0]],
+        cell2d=[[0, 0.5, 0.5, 4, 0, 1, 2, 3], [1, 1.5, 0.5, 4, 1, 4, 5, 2]],
+        top=10.0,
+        botm=0.0,
+    )
+
+
+def test_core_helpers_dispatch_on_model_type(tmp_path):
+    """mf.disv / mf.ic / mf.oc resolve the FloPy class from the model kind (5.3A).
+
+    They stored ``ModflowGwf*`` before; now a module-level dispatch builder picks
+    the gwf/gwt/gwe class off the built model's ``model_type``.
+    """
+
+    expected = {
+        mf.gwf: ("gwf", flopy.mf6.ModflowGwfic, flopy.mf6.ModflowGwfdisv, flopy.mf6.ModflowGwfoc),
+        mf.gwt: ("gwt", flopy.mf6.ModflowGwtic, flopy.mf6.ModflowGwtdisv, flopy.mf6.ModflowGwtoc),
+        mf.gwe: ("gwe", flopy.mf6.ModflowGweic, flopy.mf6.ModflowGwedisv, flopy.mf6.ModflowGweoc),
+    }
+    for helper, (kind, ic_cls, disv_cls, oc_cls) in expected.items():
+        model = helper(kind, packages=[
+            mf.disv(**_disv_values()),
+            mf.ic(strt=0.0),
+            mf.oc(budget_filerecord=f"{kind}.cbc", saverecord=[("BUDGET", "ALL")]),
+        ])
+        built = mf.SimulationSpec(
+            f"s_{kind}",
+            models=(model,),
+            packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=(kind,))),
+        ).build_flopy(tmp_path / kind)
+        flopy_model = built.simulation.get_model(kind)
+        assert isinstance(flopy_model.get_package("ic"), ic_cls)
+        assert isinstance(flopy_model.get_package("disv"), disv_cls)
+        assert isinstance(flopy_model.get_package("oc"), oc_cls)
+
+
+def test_core_helper_dispatch_builders_round_trip_and_reject_prt():
+    """The dispatch builders serialize by importable ref, and raise clearly for PRT."""
+
+    from types import SimpleNamespace
+
+    from myflopy.builders import build_disv, build_ic, build_oc
+
+    assert mf.ic(strt=1.0).to_dict()["builder"] == "myflopy.builders:build_ic"
+    assert mf.oc(budget_filerecord="m.cbc").to_dict()["builder"] == "myflopy.builders:build_oc"
+    assert mf.disv(**_disv_values()).to_dict()["builder"] == "myflopy.builders:build_disv"
+    # round-trip resolves back to the same module-level function
+    assert mf.PackageSpec.from_dict(mf.ic(strt=1.0).to_dict()).builder is build_ic
+
+    # PRT has no IC package; the dispatch must fail loudly, not KeyError.
+    for build in (build_ic, build_oc, build_disv):
+        with pytest.raises(ValueError, match="not available for model type 'prt6'"):
+            build(SimpleNamespace(model_type="prt6"))
+
+
 def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
     grid = _two_cell_grid()
     context = mf.ModelContext(grid=grid, domain=np.array([[1, 1]]))

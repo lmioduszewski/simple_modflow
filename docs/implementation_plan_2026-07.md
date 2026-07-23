@@ -955,10 +955,15 @@ blue input hover.
 > per-package declaration sites** in `src/` (which today carry 33 unintended gaps).
 > After 4.7 it is one descriptor per package plus genuinely new physics code.
 
-**Part A — model-type dispatch (prerequisite for 5.5 and 6.1/6.2):** `mf.ic`/`mf.oc`/
-`mf.disv` hardcode `ModflowGwf*` classes (verified) so they cannot serve GWT/GWE models.
-Add module-level dispatch builders (serialization-safe — `_callable_ref` resolves
-module-level functions):
+**Part A — model-type dispatch — DONE 2026-07-22 (prerequisite for 5.5 and 6.1/6.2):**
+`mf.ic`/`mf.oc`/`mf.disv` hardcoded `ModflowGwf*` classes so they could not serve
+GWT/GWE models. Now they pass module-level dispatch builders (`build_ic`/`build_oc`/
+`build_disv` in `builders.py`, beside `build_ims`) that resolve the FloPy class from the
+built model's `model_type` (`"gwf6"`/`"gwt6"`/`"gwe6"`) via module-level class dicts —
+serialization-safe (`_callable_ref` → `myflopy.builders:build_ic`; the class dicts are
+never serialized). PRT raises a clear error (no `ModflowPrtic`); `npf`/`sto` stay GWF-only
+(MF6 has no GWT/GWE variant). No registry or api_snapshot change (the `__call__`
+signatures are unchanged). Tests in `test_package_api.py`. The original sketch:
 ```python
 _IC_CLASSES = {"gwf": flopy.mf6.ModflowGwfic, "gwt": flopy.mf6.ModflowGwtic,
                "gwe": flopy.mf6.ModflowGweic}
