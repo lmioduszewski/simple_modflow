@@ -86,6 +86,9 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 - **Parallel model workflows** — `ParallelModelWorkflow` in `parallel.py`
 
 ## Canonical model-building API: package-first (use this for new work)
+**`docs/package_api_reference.md` is the human-readable map of the whole API** — the
+`mf.*` build helpers and the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
+read grammar (pinned by `tests/api_snapshot.json` + `package_registry.py`).
 **The package-first API in `package_api.py` is THE preferred, canonical way to build models.**
 Prefer it for all new model-building work; do not reach for the legacy OO path below unless
 you have a specific reason. The OO builder classes (`SFRBuilder`, `LAKBuilder`, `UZFBuilder`,
