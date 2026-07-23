@@ -12,11 +12,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import concerns
 import flopy
 
 import myflopy as mf
-
-import concerns
 
 HERE = Path(__file__).resolve().parent
 GRID = {
@@ -53,22 +52,17 @@ def transport_model() -> mf.ModelSpec:
     return mf.gwt(
         "gwt",
         packages=[
+            # ``dis`` (structured) stays a raw PackageSpec -- there is no mf.dis
+            # helper (myflopy is Voronoi/DISV-first). ic/oc/adv/mst/ssm use the
+            # package-first helpers: mf.ic/mf.oc dispatch on the GWT model kind.
             mf.PackageSpec("dis", flopy.mf6.ModflowGwtdis, dict(GRID)),
-            mf.PackageSpec("ic", flopy.mf6.ModflowGwtic, {"strt": 0.0}),
-            mf.PackageSpec("adv", flopy.mf6.ModflowGwtadv, {"scheme": "UPSTREAM"}),
-            mf.PackageSpec("mst", flopy.mf6.ModflowGwtmst, {"porosity": 0.25}),
-            mf.PackageSpec(
-                "ssm",
-                flopy.mf6.ModflowGwtssm,
-                {"sources": [["chd", "AUX", "concentration"]]},
-            ),
-            mf.PackageSpec(
-                "oc",
-                flopy.mf6.ModflowGwtoc,
-                {
-                    "concentration_filerecord": "gwt.ucn",
-                    "saverecord": [("CONCENTRATION", "ALL")],
-                },
+            mf.ic(strt=0.0),
+            mf.adv(scheme="UPSTREAM"),
+            mf.mst(porosity=0.25),
+            mf.ssm(sources=[["chd", "AUX", "concentration"]]),
+            mf.oc(
+                concentration_filerecord="gwt.ucn",
+                saverecord=[("CONCENTRATION", "ALL")],
             ),
         ],
     )

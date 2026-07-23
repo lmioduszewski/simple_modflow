@@ -85,6 +85,30 @@ mapping, or a `{period: ...}` mapping.
 Movers: `mf.mvr(moves=[mf.Move(mf.MoverConnection("sfr", 0), mf.MoverConnection("lak", 0))])`.
 Moved packages must be declared in the model and ordered before the mover.
 
+### GWT / GWE transport packages
+
+Thin factories (same shape as `mf.ic`), for solute-transport (GWT) and
+energy-transport (GWE) models. Build them on a `mf.gwt(...)` / `mf.gwe(...)` model
+alongside the kind-aware `mf.ic`/`mf.oc`/`mf.disv`.
+
+| factory | package | required args |
+|---|---|---|
+| `mf.adv` | advection (GWT) | `scheme=` (central/upstream/tvd/utvd) |
+| `mf.dsp` | dispersion (GWT) | `alh=`, `ath1=` |
+| `mf.mst` | mobile storage/transfer (GWT) | `porosity=` |
+| `mf.ist` | immobile storage/transfer (GWT) | `porosity=`, `volfrac=`, `zetaim=` |
+| `mf.ssm` | source-sink mixing (GWT) | `sources=` (`[[pname, srctype, auxname], …]`) |
+| `mf.cnc` | constant concentration (GWT, list BC) | `stress_period_data=` → `(cellid, conc)` |
+| `mf.src` | mass-source loading (GWT, list BC) | `stress_period_data=` → `(cellid, smassrate)` |
+| `mf.est` | energy storage/transfer (GWE) | `porosity=`, `heat_capacity_solid=`, `density_solid=` |
+| `mf.cnd` | conduction/dispersion (GWE) | `ktw=`, `kts=` |
+| `mf.ctp` | constant temperature (GWE, list BC) | `stress_period_data=` → `(cellid, temp)` |
+| `mf.esl` | energy source loading (GWE, list BC) | `stress_period_data=` → `(cellid, senerrate)` |
+
+The transport list BCs (`cnc`/`src`/`ctp`/`esl`) are `package_api` factories only —
+no `.gpkg` and no registry entry yet. Concentration/temperature **input maps +
+hover** and the **results tier** (`model.conc`/`model.temp`) are Phase 6.
+
 ### Geometry, layers, context
 
 - `mf.ModelContext(grid=, domain=, surfaces=, dates=)` — attaches to the **model**

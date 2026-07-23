@@ -1011,6 +1011,278 @@ def oc(
     return PackageSpec(name, build_oc, values)
 
 
+# --- GWT (solute transport) packages -------------------------------------------
+# Thin factories, same shape as mf.ic/mf.npf: a PackageSpec around the FloPy class.
+# The GeoPackage/registry/results-tier treatment of the transport list BCs
+# (cnc/ctp input maps + hover, model.conc/temp) is Phase 6, not here (plan 5.3B).
+
+
+def adv(*, scheme: str | None = None, name: str = "adv", **options: Any) -> PackageSpec:
+    """Advection (ADV) package for a GWT model.
+
+    Parameters
+    ----------
+    scheme : str, optional
+        Advection scheme: ``"central"``, ``"upstream"``, ``"tvd"``, or ``"utvd"``
+        (MF6 defaults to upstream). TVD reduces numerical dispersion at more cost.
+    name : str, default "adv"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtadv`` options.
+    """
+
+    values = dict(options)
+    if scheme is not None:
+        values["scheme"] = scheme
+    return PackageSpec(name, flopy.mf6.ModflowGwtadv, values)
+
+
+def dsp(
+    *,
+    alh: Any | None = None,
+    ath1: Any | None = None,
+    diffc: Any | None = None,
+    name: str = "dsp",
+    **options: Any,
+) -> PackageSpec:
+    """Dispersion (DSP) package for a GWT model.
+
+    Parameters
+    ----------
+    alh : float or array-like, optional
+        Longitudinal dispersivity in the horizontal direction.
+    ath1 : float or array-like, optional
+        Transverse dispersivity in the first horizontal direction.
+    diffc : float or array-like, optional
+        Effective molecular diffusion coefficient.
+    name : str, default "dsp"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtdsp`` options (``alv``/``ath2``/``atv``, xt3d flags).
+    """
+
+    values = dict(options)
+    for key, value in {"alh": alh, "ath1": ath1, "diffc": diffc}.items():
+        if value is not None:
+            values[key] = value
+    return PackageSpec(name, flopy.mf6.ModflowGwtdsp, values)
+
+
+def mst(*, porosity: Any, name: str = "mst", **options: Any) -> PackageSpec:
+    """Mobile storage and transfer (MST) package for a GWT model.
+
+    Parameters
+    ----------
+    porosity : float or array-like
+        Mobile-domain porosity (required).
+    name : str, default "mst"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtmst`` options -- ``decay``/``sorption``/
+        ``bulk_density``/``distcoef`` for decay and reactive transport.
+    """
+
+    return PackageSpec(name, flopy.mf6.ModflowGwtmst, {"porosity": porosity, **options})
+
+
+def ist(
+    *,
+    porosity: Any,
+    volfrac: Any,
+    zetaim: Any,
+    name: str = "ist",
+    **options: Any,
+) -> PackageSpec:
+    """Immobile storage and transfer (IST) package for a GWT model (dual-domain).
+
+    Parameters
+    ----------
+    porosity : float or array-like
+        Immobile-domain porosity (required).
+    volfrac : float or array-like
+        Volume fraction of the immobile domain (required).
+    zetaim : float or array-like
+        Mass-transfer rate coefficient between mobile and immobile domains (required).
+    name : str, default "ist"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtist`` options (decay/sorption arrays, filerecords).
+    """
+
+    return PackageSpec(
+        name,
+        flopy.mf6.ModflowGwtist,
+        {"porosity": porosity, "volfrac": volfrac, "zetaim": zetaim, **options},
+    )
+
+
+def ssm(*, sources: Any, name: str = "ssm", **options: Any) -> PackageSpec:
+    """Source-sink mixing (SSM) package for a GWT model.
+
+    Injects solute mass through the flow model's source/sink boundaries (RCH, WEL,
+    GHB, ...), so it is effectively required whenever the paired GWF model has any.
+
+    Parameters
+    ----------
+    sources : list
+        Rows of ``[pname, srctype, auxname]`` naming each flow package and how its
+        concentration is supplied, e.g. ``[["chd", "AUX", "concentration"]]``.
+    name : str, default "ssm"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtssm`` options (``fileinput``, ...).
+    """
+
+    return PackageSpec(name, flopy.mf6.ModflowGwtssm, {"sources": sources, **options})
+
+
+def cnc(*, stress_period_data: Any, name: str = "cnc", **options: Any) -> PackageSpec:
+    """Constant-concentration (CNC) list-BC package for a GWT model.
+
+    Parameters
+    ----------
+    stress_period_data : dict
+        FloPy mapping ``{period: [[cellid, conc], ...]}``.
+    name : str, default "cnc"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtcnc`` options (``boundnames``, ``auxiliary``, ...).
+    """
+
+    return PackageSpec(
+        name, flopy.mf6.ModflowGwtcnc, {"stress_period_data": stress_period_data, **options}
+    )
+
+
+def src(*, stress_period_data: Any, name: str = "src", **options: Any) -> PackageSpec:
+    """Mass-source loading (SRC) list-BC package for a GWT model.
+
+    Parameters
+    ----------
+    stress_period_data : dict
+        FloPy mapping ``{period: [[cellid, smassrate], ...]}`` (solute mass loading rate).
+    name : str, default "src"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwtsrc`` options.
+    """
+
+    return PackageSpec(
+        name, flopy.mf6.ModflowGwtsrc, {"stress_period_data": stress_period_data, **options}
+    )
+
+
+# --- GWE (energy transport) packages -------------------------------------------
+
+
+def est(
+    *,
+    porosity: Any,
+    heat_capacity_solid: Any,
+    density_solid: Any,
+    name: str = "est",
+    **options: Any,
+) -> PackageSpec:
+    """Energy storage and transfer (EST) package for a GWE model.
+
+    Parameters
+    ----------
+    porosity : float or array-like
+        Aquifer porosity (required).
+    heat_capacity_solid : float or array-like
+        Heat capacity of the solid (required).
+    density_solid : float or array-like
+        Density of the solid (required).
+    name : str, default "est"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGweest`` options; the water-side properties
+        (``density_water``, ``heat_capacity_water``, ``latent_heat_vaporization``)
+        carry sensible FloPy defaults.
+    """
+
+    return PackageSpec(
+        name,
+        flopy.mf6.ModflowGweest,
+        {
+            "porosity": porosity,
+            "heat_capacity_solid": heat_capacity_solid,
+            "density_solid": density_solid,
+            **options,
+        },
+    )
+
+
+def cnd(
+    *,
+    ktw: Any | None = None,
+    kts: Any | None = None,
+    alh: Any | None = None,
+    ath1: Any | None = None,
+    name: str = "cnd",
+    **options: Any,
+) -> PackageSpec:
+    """Conduction and dispersion (CND) package for a GWE model.
+
+    Parameters
+    ----------
+    ktw : float or array-like, optional
+        Thermal conductivity of water.
+    kts : float or array-like, optional
+        Thermal conductivity of the solid.
+    alh : float or array-like, optional
+        Longitudinal dispersivity in the horizontal direction.
+    ath1 : float or array-like, optional
+        Transverse dispersivity in the first horizontal direction.
+    name : str, default "cnd"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwecnd`` options.
+    """
+
+    values = dict(options)
+    for key, value in {"ktw": ktw, "kts": kts, "alh": alh, "ath1": ath1}.items():
+        if value is not None:
+            values[key] = value
+    return PackageSpec(name, flopy.mf6.ModflowGwecnd, values)
+
+
+def ctp(*, stress_period_data: Any, name: str = "ctp", **options: Any) -> PackageSpec:
+    """Constant-temperature (CTP) list-BC package for a GWE model.
+
+    Parameters
+    ----------
+    stress_period_data : dict
+        FloPy mapping ``{period: [[cellid, temp], ...]}``.
+    name : str, default "ctp"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGwectp`` options.
+    """
+
+    return PackageSpec(
+        name, flopy.mf6.ModflowGwectp, {"stress_period_data": stress_period_data, **options}
+    )
+
+
+def esl(*, stress_period_data: Any, name: str = "esl", **options: Any) -> PackageSpec:
+    """Energy source loading (ESL) list-BC package for a GWE model.
+
+    Parameters
+    ----------
+    stress_period_data : dict
+        FloPy mapping ``{period: [[cellid, senerrate], ...]}`` (energy source loading rate).
+    name : str, default "esl"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowGweesl`` options.
+    """
+
+    return PackageSpec(
+        name, flopy.mf6.ModflowGweesl, {"stress_period_data": stress_period_data, **options}
+    )
+
+
 class _CHDPackage:
     """Package-first CHD (constant/specified-head boundary) helpers.
 
@@ -3089,9 +3361,16 @@ mvr = _MVRPackage()
 
 
 __all__ = [
+    "adv",
     "chd",
+    "cnc",
+    "cnd",
+    "ctp",
     "disv",
     "drn",
+    "dsp",
+    "esl",
+    "est",
     "evt",
     "ghb",
     "gwe",
@@ -3099,7 +3378,9 @@ __all__ = [
     "gwt",
     "ic",
     "ims",
+    "ist",
     "lak",
+    "mst",
     "mvr",
     "npf",
     "oc",
@@ -3108,6 +3389,8 @@ __all__ = [
     "riv",
     "sfr",
     "simulation",
+    "src",
+    "ssm",
     "sto",
     "tdis",
     "uzf",

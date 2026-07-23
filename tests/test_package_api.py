@@ -197,6 +197,51 @@ def test_core_helper_dispatch_builders_round_trip_and_reject_prt():
             build(SimpleNamespace(model_type="prt6"))
 
 
+def test_gwt_gwe_package_factories_build_real_models(tmp_path):
+    """The 11 GWT/GWE package factories (5.3B) build the right FloPy packages."""
+
+    disv = _disv_values()
+    transport = mf.gwt("trans", packages=[
+        mf.disv(**disv), mf.ic(strt=0.0),
+        mf.adv(scheme="TVD"),
+        mf.dsp(alh=1.0, ath1=0.1),
+        mf.mst(porosity=0.25),
+        mf.ist(porosity=0.05, volfrac=0.2, zetaim=1.0e-3),
+        mf.cnc(stress_period_data={0: [[(0, 0), 100.0]]}),
+        mf.src(stress_period_data={0: [[(0, 1), 0.5]]}),
+        mf.oc(concentration_filerecord="trans.ucn", saverecord=[("CONCENTRATION", "ALL")]),
+    ])
+    energy = mf.gwe("energy", packages=[
+        mf.disv(**disv), mf.ic(strt=10.0),
+        mf.est(porosity=0.25, heat_capacity_solid=800.0, density_solid=2650.0),
+        mf.cnd(ktw=0.6, kts=3.0),
+        mf.ctp(stress_period_data={0: [[(0, 0), 25.0]]}),
+        mf.esl(stress_period_data={0: [[(0, 1), 100.0]]}),
+        mf.oc(temperature_filerecord="energy.ucn", saverecord=[("TEMPERATURE", "ALL")]),
+    ])
+    built = mf.SimulationSpec(
+        "coupled_transport",
+        models=(transport, energy),
+        packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=("trans", "energy"))),
+    ).build_flopy(tmp_path)
+
+    tm = built.simulation.get_model("trans")
+    em = built.simulation.get_model("energy")
+    assert isinstance(tm.get_package("adv"), flopy.mf6.ModflowGwtadv)
+    assert isinstance(tm.get_package("dsp"), flopy.mf6.ModflowGwtdsp)
+    assert isinstance(tm.get_package("mst"), flopy.mf6.ModflowGwtmst)
+    assert isinstance(tm.get_package("ist"), flopy.mf6.ModflowGwtist)
+    assert isinstance(tm.get_package("cnc"), flopy.mf6.ModflowGwtcnc)
+    assert isinstance(tm.get_package("src"), flopy.mf6.ModflowGwtsrc)
+    assert isinstance(em.get_package("est"), flopy.mf6.ModflowGweest)
+    assert isinstance(em.get_package("cnd"), flopy.mf6.ModflowGwecnd)
+    assert isinstance(em.get_package("ctp"), flopy.mf6.ModflowGwectp)
+    assert isinstance(em.get_package("esl"), flopy.mf6.ModflowGweesl)
+    # ssm references flow-model source packages by name; check the spec + its builder ref.
+    ssm = mf.ssm(sources=[["chd", "AUX", "concentration"]])
+    assert ssm.to_dict()["builder"] == "flopy.mf6.modflow.mfgwtssm:ModflowGwtssm"
+
+
 def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):
     grid = _two_cell_grid()
     context = mf.ModelContext(grid=grid, domain=np.array([[1, 1]]))

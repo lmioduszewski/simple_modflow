@@ -1,6 +1,13 @@
 {
   "_comment": "Golden snapshot of the package API (plan 4.7.0). Regenerate with scripts/derive_api_snapshot.py and REVIEW THE DIFF -- an unexpected change here means a refactor altered the public surface.",
   "signatures": {
+    "adv": {
+      "__call__": [
+        "scheme:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='adv'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
     "chd": {
       "__call__": [
         "stress_period_data:KEYWORD_ONLY=<required>",
@@ -28,6 +35,30 @@
         "name:KEYWORD_ONLY='chd'",
         "edges_only:KEYWORD_ONLY=False",
         "boundnames:KEYWORD_ONLY=True",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "cnc": {
+      "__call__": [
+        "stress_period_data:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='cnc'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "cnd": {
+      "__call__": [
+        "ktw:KEYWORD_ONLY=None",
+        "kts:KEYWORD_ONLY=None",
+        "alh:KEYWORD_ONLY=None",
+        "ath1:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='cnd'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "ctp": {
+      "__call__": [
+        "stress_period_data:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='ctp'",
         "options:VAR_KEYWORD=<required>"
       ]
     },
@@ -73,6 +104,31 @@
         "name:KEYWORD_ONLY='drn'",
         "edges_only:KEYWORD_ONLY=False",
         "boundnames:KEYWORD_ONLY=True",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "dsp": {
+      "__call__": [
+        "alh:KEYWORD_ONLY=None",
+        "ath1:KEYWORD_ONLY=None",
+        "diffc:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='dsp'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "esl": {
+      "__call__": [
+        "stress_period_data:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='esl'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "est": {
+      "__call__": [
+        "porosity:KEYWORD_ONLY=<required>",
+        "heat_capacity_solid:KEYWORD_ONLY=<required>",
+        "density_solid:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='est'",
         "options:VAR_KEYWORD=<required>"
       ]
     },
@@ -265,6 +321,15 @@
         "kwargs:VAR_KEYWORD=<required>"
       ]
     },
+    "ist": {
+      "__call__": [
+        "porosity:KEYWORD_ONLY=<required>",
+        "volfrac:KEYWORD_ONLY=<required>",
+        "zetaim:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='ist'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
     "lak": {
       "__call__": [
         "context:KEYWORD_ONLY=<required>",
@@ -306,6 +371,13 @@
         "noutlets:KEYWORD_ONLY=0",
         "ntables:KEYWORD_ONLY=0",
         "mover:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "mst": {
+      "__call__": [
+        "porosity:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='mst'",
         "options:VAR_KEYWORD=<required>"
       ]
     },
@@ -490,6 +562,20 @@
         "complexity:KEYWORD_ONLY='SIMPLE'",
         "exchanges:KEYWORD_ONLY=()",
         "packages:KEYWORD_ONLY=()",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "src": {
+      "__call__": [
+        "stress_period_data:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='src'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "ssm": {
+      "__call__": [
+        "sources:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='ssm'",
         "options:VAR_KEYWORD=<required>"
       ]
     },
@@ -1031,6 +1117,7 @@
       "TriangleGrid",
       "VectorParameterSource",
       "VoronoiGridPlus",
+      "adv",
       "build_canonical_model",
       "build_particle_tracking_scene",
       "canonical_feature_signals",
@@ -1038,8 +1125,14 @@
       "canonical_partition_mask",
       "canonical_sfr_signals",
       "chd",
+      "cnc",
+      "cnd",
+      "ctp",
       "disv",
       "drn",
+      "dsp",
+      "esl",
+      "est",
       "evt",
       "export_cross_section_slider_html",
       "export_head_layer_mosaic_slider_html",
@@ -1054,12 +1147,14 @@
       "gwt",
       "ic",
       "ims",
+      "ist",
       "lak",
       "lak_connection",
       "load_mf6_run",
       "load_run",
       "modflow",
       "modflow_surfaces",
+      "mst",
       "mvr",
       "npf",
       "oc",
@@ -1080,6 +1175,8 @@
       "sfr_connection",
       "simple_model_spec",
       "simulation",
+      "src",
+      "ssm",
       "sto",
       "tdis",
       "uzf",
@@ -1087,9 +1184,16 @@
       "wel"
     ],
     "package_api.__all__": [
+      "adv",
       "chd",
+      "cnc",
+      "cnd",
+      "ctp",
       "disv",
       "drn",
+      "dsp",
+      "esl",
+      "est",
       "evt",
       "ghb",
       "gwe",
@@ -1097,7 +1201,9 @@
       "gwt",
       "ic",
       "ims",
+      "ist",
       "lak",
+      "mst",
       "mvr",
       "npf",
       "oc",
@@ -1106,6 +1212,8 @@
       "riv",
       "sfr",
       "simulation",
+      "src",
+      "ssm",
       "sto",
       "tdis",
       "uzf",
