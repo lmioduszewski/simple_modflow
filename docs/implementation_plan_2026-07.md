@@ -831,10 +831,18 @@ frames that are not one mappable field — had no rule, so they accreted as
 - `tests/test_sfr_profile_view.py` (15 tests; the sign-convention assertion is
   mutation-verified).
 
-**Remaining (see ledger entries 17–18):** the field-level `plot_profile` /
-`plot_budget` / bare `plot` verbs still use their old spellings, and the profile
-view deliberately has no `map()`. Best done as one sweep with its own snapshot
-diff, alongside 4.7's package consolidation.
+**Field-level verb sweep — DONE 2026-07-22 (ledger 18).** `sfr.results.q.profile`
+and `sfr.results.stage.profile` (`SfrReachProfileView`) and `lak.results.q.budget`
+(`LakBudgetView`) are now view nouns answering `get`/`summary`/`plot`; the loose
+`plot_profile`/`plot_budget`/`budget_summary` spellings are D12 warned aliases
+(hidden from completion, exact old returns). One deviation: the SFR field data
+method was itself named `profile()`, so the noun replaces it and the frame comes
+from `q.profile.get()` (no `profile()` df-alias; it had no callers). The LAK budget
+bar stays matplotlib for now (ledger 52). Entry 17 (`profile` has no `map()`)
+stands — spatial verbs live on the field explorers. These verbs are not in
+`api_snapshot.json` (it tracks the `mf.<pkg>` facade), so the snapshot is unchanged;
+callers migrated (2 canonical notebooks, API pamphlet, `test_colorscale_policy`),
+tests added.
 
 **Also landed 2026-07-18 (same user report, second defect).**
 `targets.heads.calibration_plot()` drew fully formatted but empty axes. Two

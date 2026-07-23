@@ -209,17 +209,29 @@ done, plus one assurance gap in the review itself.
       rather than hidden.
     - Revisit: if a `profile.map(field=...)` need appears in practice.
 
-18. **Only SFR's derived table was converted; the other loose plot verbs stay.**
-    - What: `sfr.results.q.plot_profile`, `sfr.results.stage.plot_profile`,
-      `lak.…plot_budget`, and the bare `plot` on the field explorers keep their
-      current spellings. Only `long_profile`/`plot_long_profile` moved onto the
-      view shape.
-    - Why: those are *field*-level verbs already inside the documented spatial
-      grammar, and they were not what the user reported. Converting them is a
-      mechanical follow-on best done as one sweep with its own snapshot diff.
-    - Impact: the convention doc is normative for NEW nouns; existing
-      field-level `plot_*` verbs are not yet uniform with it.
-    - Revisit: as a view-layer pass alongside plan §4.7's package consolidation.
+18. **The loose field-level plot verbs — RESOLVED 2026-07-22 (plan §4.8).**
+    - What was deferred: `sfr.results.q.plot_profile`, `sfr.results.stage.plot_profile`,
+      and `lak.results.q.plot_budget` / `budget_summary` kept their loose spellings
+      when only `long_profile`/`plot_long_profile` moved onto the view shape.
+    - Resolution: each became a view-class noun answering `get`/`summary`/`plot` —
+      `sfr.results.q.profile` and `sfr.results.stage.profile` (both
+      `SfrReachProfileView`), and `lak.results.q.budget` (`LakBudgetView`). The old
+      spellings are D12 warned aliases resolved via `__getattr__` (hidden from
+      completion), preserving their exact old returns. Callers migrated (2 canonical
+      notebooks, the API pamphlet, `test_colorscale_policy`); tests added to
+      `test_sfr_profile_view.py` and `test_colorscale_policy.py`.
+    - **Deviation from the plan's "keep old spellings as warned aliases":** the SFR
+      field explorers' old *data* method was itself named `profile()`, which collides
+      with the new `profile` noun property (a name cannot be both). So `profile`
+      becomes the noun and the frame comes from `q.profile.get()`; there is no warned
+      `profile()`-returns-a-frame alias. Safe because the old `profile()` df method had
+      zero callers. `plot_profile`/`plot_budget`/`budget_summary` (no collision) are
+      proper warned aliases.
+    - **LAK budget figure stays matplotlib** (entry 52) — the `viz.Fig` conversion is
+      a separate view-layer concern, deferred to keep this a pure verb migration with
+      exact-return aliases.
+    - Entry 17 (`profile` has no `.map()`) stands: spatial verbs live on the field
+      explorers (`q.map()`), not on the derived-table nouns.
 
 19. **`docs/refactor_review_report.md` still lists `long_profile(...)`.**
     - What: its API inventory (line ~851) names the now-deprecated spelling.
@@ -796,6 +808,22 @@ same day, which is the useful part of the result.
       per-cell sidewall building, which flat bathy never did), and
       `test_replace_lak_on_loaded_run` (a replace-mechanism test, not a geometry
       one) filters the expected warning.
+
+52. **LAK budget bar (`lak.results.q.budget.plot`) is still matplotlib (plan §4.8, 2026-07-22).**
+    - What: the migrated `budget.plot()` renders the connection-type bar chart with
+      matplotlib (`mpl_axes`, `ax.bar`, hex colors), carried over verbatim from the
+      old `plot_budget`. The house rule is "figures are always `viz.Fig`" with colors
+      from the policy helper, not hex literals.
+    - Why deferred: §4.8 was scoped as a pure *verb* migration (loose `plot_foo` →
+      `noun.plot`) with D12 aliases preserving *exact* returns. Converting the backend
+      mpl→plotly changes the return type and pulls in the discrete signed-color policy
+      plumbing (blue = the lake gains / inflow, red = loses / outflow) — a separable
+      concern that would have bloated the verb sweep and broken the "exact return"
+      alias contract.
+    - Impact: `budget.plot()` and its `plot_budget` alias both return a matplotlib
+      figure; the SFR profile nouns already return `viz.Fig`. One node out of uniform.
+    - Revisit: when the discrete-signed-bar color policy is factored out (the same
+      helper the SFR signed-exchange bars use), convert the LAK budget bar to `viz.Fig`.
 
 51. **`_ArealBuilder`/`EVTBuilder` deferred scope (plan §4.7.5, 2026-07-21).**
     The 4.7.5 extraction was kept minimal by explicit user decision ("do the

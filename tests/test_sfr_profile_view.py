@@ -24,8 +24,11 @@ from myflopy.modflow.mf6.package_plotting import (
     _blue_white_red_diverging_colorscale,
 )
 from myflopy.modflow.mf6.package_surface_water import (
+    SfrBudgetResultsExplorer,
     SfrProfileView,
+    SfrReachProfileView,
     SfrResultsNamespace,
+    SfrStageResultsExplorer,
 )
 
 pytestmark = pytest.mark.slow
@@ -243,3 +246,61 @@ def test_unknown_attributes_still_raise_attribute_error(canonical_run):
 
     with pytest.raises(AttributeError, match="no attribute 'no_such_thing'"):
         canonical_run.packages.sfr.results.no_such_thing
+
+
+# ---------------------------------------------------------------------------
+# 4. the field-level profile nouns (plan 4.8)
+# ---------------------------------------------------------------------------
+
+
+def test_field_level_profiles_are_views_with_the_house_shape(canonical_run):
+    """``q.profile`` / ``stage.profile`` are views (``get``/``plot``/``summary``)."""
+
+    from myflopy import viz as figs
+
+    q = canonical_run.packages.sfr.results.q.profile
+    stage = canonical_run.packages.sfr.results.stage.profile
+    assert isinstance(q, SfrReachProfileView)
+    assert isinstance(stage, SfrReachProfileView)
+    assert isinstance(q.get(), pd.DataFrame)
+    assert not q.summary().empty
+    assert isinstance(q.plot(), figs.Fig)
+    assert isinstance(stage.plot(), figs.Fig)
+
+
+def test_field_profile_call_rebinds_the_period_without_mutating(canonical_run):
+    """``q.profile(per=n)`` rebinds a fresh view; the original stays at its period."""
+
+    q = canonical_run.packages.sfr.results.q.profile
+    last = canonical_run.nper - 1
+    rebound = q(per=last)
+    assert rebound.per == last
+    assert q.per == 0
+
+
+def test_field_profile_plots_its_own_field(canonical_run):
+    """Each field-level profile plots only its field on the y-axis."""
+
+    results = canonical_run.packages.sfr.results
+    assert results.q.profile.plot().layout.yaxis.title.text == results.q.value_name
+    assert results.stage.profile.plot().layout.yaxis.title.text == "stage"
+
+
+def test_field_plot_profile_alias_warns_and_returns_a_figure(canonical_run):
+    """The retired ``plot_profile`` spelling warns and still returns the figure."""
+
+    from myflopy import viz as figs
+
+    results = canonical_run.packages.sfr.results
+    with pytest.warns(DeprecationWarning, match="plot_profile is deprecated"):
+        assert isinstance(results.q.plot_profile(per=0), figs.Fig)
+    with pytest.warns(DeprecationWarning, match="plot_profile is deprecated"):
+        assert isinstance(results.stage.plot_profile(per=0), figs.Fig)
+
+
+def test_field_profile_retired_spelling_stays_out_of_completion():
+    """D12: ``plot_profile`` resolves only via ``__getattr__`` on the field explorers."""
+
+    for cls in (SfrBudgetResultsExplorer, SfrStageResultsExplorer):
+        assert "plot_profile" not in dir(cls)
+        assert not hasattr(cls, "plot_profile")

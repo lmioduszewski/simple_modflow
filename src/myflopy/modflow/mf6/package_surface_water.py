@@ -110,6 +110,124 @@ def join_lak_stage(model, frame, *, per=None):
     return _join_feature_stage(frame, stage_table, per=per)
 
 
+class SfrReachProfileView:
+    """A single-field, reach-ordered SFR profile: one table and its line figure.
+
+    The field-level analogue of :class:`SfrProfileView` -- reached from a field
+    explorer (``sfr.results.q.profile`` / ``sfr.results.stage.profile``), it
+    plots one field (exchange or stage) along the reach / cumulative-distance
+    axis. Follows the house view shape (``docs/view_layer_conventions.md``):
+    ``get`` for the frame, ``plot`` for the figure, ``summary`` for the digest;
+    calling the view rebinds the stress period, so these are the same figure::
+
+        model.packages.sfr.results.q.profile.plot(per=3)
+        model.packages.sfr.results.q.profile(per=3).plot()
+    """
+
+    def __init__(self, explorer, *, y_column: str, y_label: str, label: str, per: int = 0):
+        """Bind the profile to ``explorer`` (a field explorer), field, and period."""
+
+        self.explorer = explorer
+        self.y_column = str(y_column)
+        self.y_label = str(y_label)
+        self.label = str(label)
+        self.per = int(per)
+
+    def __repr__(self) -> str:
+        """Show the plotted field and bound period (the view's only state)."""
+
+        return f"{type(self).__name__}(field={self.y_label!r}, per={self.per})"
+
+    def __call__(self, *, per: int) -> SfrReachProfileView:
+        """Return an equivalent view bound to stress period ``per``."""
+
+        return type(self)(
+            self.explorer, y_column=self.y_column, y_label=self.y_label, label=self.label, per=per
+        )
+
+    def _period(self, per: int | None) -> int:
+        """Resolve an explicit ``per`` against the period bound to this view."""
+
+        return self.per if per is None else int(per)
+
+    def get(self, *, per: int | None = None) -> pd.DataFrame:
+        """Return the reach-ordered profile table for the selected period."""
+
+        frame = self.explorer.get(per=self._period(per))
+        if frame.empty:
+            return frame
+        return frame.sort_values(["reach", "cell"]).reset_index(drop=True)
+
+    def summary(self, *, per: int | None = None) -> pd.DataFrame:
+        """Return a compact digest of the profiled field."""
+
+        frame = self.get(per=per)
+        return summarize_input_table(
+            frame,
+            label=self.label,
+            value_columns=[column for column in (self.y_column,) if column in frame.columns],
+        )
+
+    def plot(
+        self,
+        *,
+        per: int | None = None,
+        x: str = "distance",
+        plot_fig: bool = False,
+        return_fig: bool = True,
+    ):
+        """Plot the field along the reach axis, by cumulative distance or reach number.
+
+        Parameters
+        ----------
+        per
+            Zero-based stress period; defaults to the period bound to the view.
+        x
+            Either ``"distance"`` for cumulative stream distance or ``"reach"``
+            for raw reach number.
+        plot_fig
+            If ``True``, call ``show()`` on the created figure.
+        return_fig
+            If ``True``, return the created figure.
+        """
+
+        period = self._period(per)
+        frame = self.get(per=period)
+        fig = figs.Fig()
+        if frame.empty:
+            if plot_fig:
+                fig.show()
+            if return_fig:
+                return fig
+            return None
+
+        x_column = "distance_mid" if str(x).lower() == "distance" else "reach"
+        if x_column not in frame.columns:
+            raise KeyError(f"Profile x-axis column {x_column!r} was not found.")
+        fig.add_scattergl(
+            x=frame[x_column],
+            y=frame[self.y_column],
+            mode="lines+markers",
+            name=f"SFR {self.y_label} per {period}",
+            customdata=np.column_stack([frame["reach"], frame["cell"]]),
+            hovertemplate=(
+                "reach=%{customdata[0]}<br>"
+                "cell=%{customdata[1]}<br>"
+                f"{self.y_label}=%{{y}}<extra></extra>"
+            ),
+        )
+        fig.update_layout(
+            xaxis_title="Stream Distance" if x_column == "distance_mid" else "Reach",
+            yaxis_title=self.y_label,
+            title=f"SFR {self.y_label} profile (per={period})",
+        )
+        if plot_fig:
+            fig.show()
+        if return_fig:
+            return fig
+        return None
+
+
 class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
     """SFR-specific result explorer with reach-profile helpers."""
 
@@ -144,13 +262,17 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
-    def profile(self, *, per: int = 0) -> pd.DataFrame:
-        """Return one reach-ordered profile table for the selected period."""
+    @property
+    def profile(self) -> SfrReachProfileView:
+        """Return the reach exchange-profile view: ``.get()`` table, ``.plot()`` line, ``.summary()``.
 
-        frame = self.get(per=per)
-        if frame.empty:
-            return frame
-        return frame.sort_values(["reach", "cell"]).reset_index(drop=True)
+        The single-field (``q_gwf``) profile noun. For the merged multi-field
+        profile (stage + streambed + exchange) use ``sfr.results.profile``.
+        """
+
+        return SfrReachProfileView(
+            self, y_column=self.value_name, y_label=self.value_name, label="sfr.results.q.profile"
+        )
 
     def map(
         self,
@@ -215,60 +337,160 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         )
         return _apply_backend(choro, backend)
 
-    def plot_profile(
+    # -- backing method for the pre-view spelling -----------------------------
+    # ``plot_profile`` became ``profile.plot``. This body preserves the OLD return
+    # (the exchange line figure); it resolves solely through __getattr__ so the
+    # retired spelling stays out of dir()/completion (D12). Named ``_legacy_*``
+    # rather than echoing the old name, which would resurface it in completion.
+    def _legacy_profile_plot(self, **kwargs):
+        """Back the retired ``plot_profile`` spelling; returns the same figure."""
+
+        return self.profile.plot(**kwargs)
+
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "plot_profile": (
+                "_legacy_profile_plot",
+                "model.packages.sfr.results.q.profile.plot",
+                "0.1.0",
+            ),
+        },
+        "myflopy.modflow.mf6.package_surface_water.SfrBudgetResultsExplorer",
+    )
+
+
+class LakBudgetView:
+    """LAK groundwater-exchange budget by connection type: table + bar figure.
+
+    Reached from the LAK exchange field (``lak.results.q.budget``); follows the
+    house view shape (``docs/view_layer_conventions.md``) -- ``get`` for the
+    per-lake / per-connection-type summary table, ``plot`` for the bar figure,
+    ``summary`` for a compact digest. Calling the view rebinds the stress period.
+    """
+
+    def __init__(self, explorer, *, per: int = 0):
+        """Bind the budget view to a LAK exchange explorer at period ``per``."""
+
+        self.explorer = explorer
+        self.per = int(per)
+
+    def __repr__(self) -> str:
+        """Show the bound period (the view's only state)."""
+
+        return f"{type(self).__name__}(per={self.per})"
+
+    def __call__(self, *, per: int) -> LakBudgetView:
+        """Return an equivalent view bound to stress period ``per``."""
+
+        return type(self)(self.explorer, per=per)
+
+    def _period(self, per: int | None) -> int:
+        """Resolve an explicit ``per`` against the period bound to this view."""
+
+        return self.per if per is None else int(per)
+
+    def get(
         self,
         *,
-        per: int = 0,
-        x: str = "distance",
-        plot_fig: bool = False,
+        per: int | None = None,
+        connection_type: str | Iterable[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return the exchange summary grouped by period, lake, and connection type."""
+
+        return self.explorer._build_budget_summary(
+            per=self._period(per), connection_type=connection_type
+        )
+
+    def summary(
+        self,
+        *,
+        per: int | None = None,
+        connection_type: str | Iterable[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return a compact digest of the budget summary."""
+
+        frame = self.get(per=per, connection_type=connection_type)
+        if frame.empty:
+            return pd.DataFrame(
+                [{"label": "lak.results.q.budget", "records": 0, "lakes": 0, "connection_types": 0}]
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "label": "lak.results.q.budget",
+                    "records": int(len(frame)),
+                    "lakes": int(frame["lake"].nunique()),
+                    "connection_types": int(frame["claktype"].nunique()),
+                }
+            ]
+        )
+
+    def plot(
+        self,
+        *,
+        per: int | None = None,
+        connection_type: str | Iterable[str] | None = None,
+        value: str = "q_per_area",
+        ax=None,
         return_fig: bool = True,
     ):
-        """Plot one SFR exchange profile by reach or cumulative stream distance.
+        """Plot a compact LAK budget summary by connection type for one period.
+
+        Positive (the lake gains / inflow) draws blue, negative (loses / outflow)
+        red -- the house rule for the feature-referenced LAK exchange.
 
         Parameters
         ----------
         per
-            Zero-based stress period to plot.
-        x
-            Either ``"distance"`` for cumulative stream distance or
-            ``"reach"`` for raw reach number.
-        plot_fig
-            If ``True``, call ``show()`` on the created figure.
+            Zero-based stress period; defaults to the period bound to the view.
+        value
+            Summary field to visualize: ``"q"``, ``"flow_area"``, or ``"q_per_area"``.
+        ax
+            Optional Matplotlib axes to draw onto.
         return_fig
             If ``True``, return the created figure.
         """
 
-        frame = self.profile(per=per)
-        fig = figs.Fig()
-        if frame.empty:
-            if plot_fig:
-                fig.show()
+        period = self._period(per)
+        summary = self.get(per=period, connection_type=connection_type)
+        q = self.explorer.value_name
+        # Accept the accessor-facing "q" as an alias for the frame-named column.
+        if value == "q":
+            value = q
+        if value not in {q, "flow_area", "q_per_area"}:
+            raise ValueError(
+                f"value must be one of: 'q', {q!r}, 'flow_area', 'q_per_area'"
+            )
+        if ax is None:
+            fig, ax = mpl_axes(figsize=(8, 4))
+        else:
+            fig = ax.figure
+        if summary.empty:
+            ax.set_title(f"LAK {value} summary (per={period})")
+            ax.set_xlabel("Connection Type")
+            ax.set_ylabel(value)
             if return_fig:
                 return fig
             return None
 
-        x_column = "distance_mid" if str(x).lower() == "distance" else "reach"
-        if x_column not in frame.columns:
-            raise KeyError(f"Profile x-axis column {x_column!r} was not found.")
-        fig.add_scattergl(
-            x=frame[x_column],
-            y=frame[self.value_name],
-            mode="lines+markers",
-            name=f"SFR {self.value_name} per {per}",
-            customdata=np.column_stack([frame["reach"], frame["cell"]]),
-            hovertemplate=(
-                "reach=%{customdata[0]}<br>"
-                "cell=%{customdata[1]}<br>"
-                f"{self.value_name}=%{{y}}<extra></extra>"
-            ),
+        summary = summary.copy()
+        labels = summary.apply(
+            lambda row: f"Lake {int(row['lake'])}\n{row['claktype']}",
+            axis=1,
         )
-        fig.update_layout(
-            xaxis_title="Stream Distance" if x_column == "distance_mid" else "Reach",
-            yaxis_title=self.value_name,
-            title=f"SFR {self.value_name} profile (per={per})",
-        )
-        if plot_fig:
-            fig.show()
+        colors = []
+        if value == "flow_area":
+            colors = ["#4c78a8" for _ in range(len(summary))]
+        else:
+            for current in pd.to_numeric(summary[value], errors="coerce").fillna(0.0):
+                colors.append("#1f77b4" if current >= 0.0 else "#d62728")
+        ax.bar(labels, summary[value].astype(float), color=colors)
+        ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
+        ax.set_title(f"LAK {value} summary (per={period})")
+        ax.set_xlabel("Lake / Connection Type")
+        ax.set_ylabel(value)
+        ax.tick_params(axis="x", rotation=0)
+        fig.tight_layout()
         if return_fig:
             return fig
         return None
@@ -377,7 +599,16 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         )
         return _apply_backend(choro, backend)
 
-    def budget_summary(
+    @property
+    def budget(self) -> LakBudgetView:
+        """Return the budget-summary view: ``.get()`` table, ``.plot()`` bar, ``.summary()``.
+
+        Summarizes lake-groundwater exchange by period, lake, and connection type.
+        """
+
+        return LakBudgetView(self)
+
+    def _build_budget_summary(
         self,
         *,
         per: int | None = None,
@@ -431,71 +662,37 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         )
         return summary
 
-    def plot_budget(
-        self,
-        *,
-        per: int = 0,
-        connection_type: str | Iterable[str] | None = None,
-        value: str = "q_per_area",
-        ax=None,
-        return_fig: bool = True,
-    ):
-        """Plot a compact LAK budget summary by connection type for one period.
+    # -- backing methods for the pre-view spellings ---------------------------
+    # ``budget_summary``/``plot_budget`` became ``budget.get``/``budget.plot``.
+    # These bodies preserve the OLD returns exactly (a DataFrame and the bar
+    # figure) and resolve solely through __getattr__ so the retired spellings
+    # stay out of dir()/completion (D12). Named ``_legacy_*`` to keep the old
+    # spellings from resurfacing in IDE completion.
+    def _legacy_budget_summary(self, **kwargs) -> pd.DataFrame:
+        """Back the retired ``budget_summary`` spelling; returns the same table."""
 
-        Parameters
-        ----------
-        per
-            Zero-based stress period to plot.
-        value
-            Summary field to visualize. Supported values are ``"q"``,
-            ``"flow_area"``, and ``"q_per_area"``.
-        ax
-            Optional Matplotlib axes object to draw onto.
-        return_fig
-            If ``True``, return the created figure.
-        """
+        return self.budget.get(**kwargs)
 
-        summary = self.budget_summary(per=per, connection_type=connection_type)
-        # Accept the accessor-facing "q" as an alias for the frame-named column.
-        if value == "q":
-            value = self.value_name
-        if value not in {self.value_name, "flow_area", "q_per_area"}:
-            raise ValueError(
-                f"value must be one of: 'q', {self.value_name!r}, 'flow_area', 'q_per_area'"
-            )
-        if ax is None:
-            fig, ax = mpl_axes(figsize=(8, 4))
-        else:
-            fig = ax.figure
-        if summary.empty:
-            ax.set_title(f"LAK {value} summary (per={per})")
-            ax.set_xlabel("Connection Type")
-            ax.set_ylabel(value)
-            if return_fig:
-                return fig
-            return None
+    def _legacy_budget_plot(self, **kwargs):
+        """Back the retired ``plot_budget`` spelling; returns the same figure."""
 
-        summary = summary.copy()
-        labels = summary.apply(
-            lambda row: f"Lake {int(row['lake'])}\n{row['claktype']}",
-            axis=1,
-        )
-        colors = []
-        if value == "flow_area":
-            colors = ["#4c78a8" for _ in range(len(summary))]
-        else:
-            for current in pd.to_numeric(summary[value], errors="coerce").fillna(0.0):
-                colors.append("#1f77b4" if current >= 0.0 else "#d62728")
-        ax.bar(labels, summary[value].astype(float), color=colors)
-        ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.6)
-        ax.set_title(f"LAK {value} summary (per={per})")
-        ax.set_xlabel("Lake / Connection Type")
-        ax.set_ylabel(value)
-        ax.tick_params(axis="x", rotation=0)
-        fig.tight_layout()
-        if return_fig:
-            return fig
-        return None
+        return self.budget.plot(**kwargs)
+
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "budget_summary": (
+                "_legacy_budget_summary",
+                "model.packages.lak.results.q.budget.get",
+                "0.1.0",
+            ),
+            "plot_budget": (
+                "_legacy_budget_plot",
+                "model.packages.lak.results.q.budget.plot",
+                "0.1.0",
+            ),
+        },
+        "myflopy.modflow.mf6.package_surface_water.LakBudgetResultsExplorer",
+    )
 
 
 class LakStageResultsExplorer(StageResultsExplorer):
@@ -752,58 +949,29 @@ class SfrStageResultsExplorer(StageResultsExplorer):
 
         super().__init__(model, "sfr", build_sfr_stage_result_table)
 
-    def profile(self, *, per: int = 0) -> pd.DataFrame:
-        """Return one reach-ordered stage profile for the selected period."""
+    @property
+    def profile(self) -> SfrReachProfileView:
+        """Return the reach stage-profile view: ``.get()`` table, ``.plot()`` line, ``.summary()``."""
 
-        frame = self.get(per=per)
-        if frame.empty:
-            return frame
-        return frame.sort_values(["reach", "cell"]).reset_index(drop=True)
+        return SfrReachProfileView(
+            self, y_column="stage", y_label="stage", label="sfr.results.stage.profile"
+        )
 
-    def plot_profile(
-        self,
-        *,
-        per: int = 0,
-        x: str = "distance",
-        plot_fig: bool = False,
-        return_fig: bool = True,
-    ):
-        """Plot one SFR stage profile by reach or cumulative stream distance."""
+    def _legacy_profile_plot(self, **kwargs):
+        """Back the retired ``plot_profile`` spelling; returns the same stage figure."""
 
-        frame = self.profile(per=per)
-        fig = figs.Fig()
-        if frame.empty:
-            if plot_fig:
-                fig.show()
-            if return_fig:
-                return fig
-            return None
+        return self.profile.plot(**kwargs)
 
-        x_column = "distance_mid" if str(x).lower() == "distance" else "reach"
-        if x_column not in frame.columns:
-            raise KeyError(f"Profile x-axis column {x_column!r} was not found.")
-        fig.add_scattergl(
-            x=frame[x_column],
-            y=frame["stage"],
-            mode="lines+markers",
-            name=f"SFR stage per {per}",
-            customdata=np.column_stack([frame["reach"], frame["cell"]]),
-            hovertemplate=(
-                "reach=%{customdata[0]}<br>"
-                "cell=%{customdata[1]}<br>"
-                "stage=%{y}<extra></extra>"
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "plot_profile": (
+                "_legacy_profile_plot",
+                "model.packages.sfr.results.stage.profile.plot",
+                "0.1.0",
             ),
-        )
-        fig.update_layout(
-            xaxis_title="Stream Distance" if x_column == "distance_mid" else "Reach",
-            yaxis_title="stage",
-            title=f"SFR stage profile (per={per})",
-        )
-        if plot_fig:
-            fig.show()
-        if return_fig:
-            return fig
-        return None
+        },
+        "myflopy.modflow.mf6.package_surface_water.SfrStageResultsExplorer",
+    )
 
 
 class LakResultsNamespace(FieldMappable):
@@ -2044,6 +2212,8 @@ __all__ = [
     "LakConnectionsExplorer",
     "SfrStageResultsExplorer",
     "SfrProfileView",
+    "SfrReachProfileView",
+    "LakBudgetView",
     "LakResultsNamespace",
     "LakBudgetNamespace",
     "SfrBudgetNamespace",

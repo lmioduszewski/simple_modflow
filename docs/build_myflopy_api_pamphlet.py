@@ -192,7 +192,8 @@ PAGES = [
             "",
             "# package explorers go deeper",
             "lak_q = model.packages.lak.results.q.get(per=0)",
-            "model.packages.sfr.results.q.plot_budget()",
+            "model.packages.sfr.results.q.profile.plot()",
+            "model.packages.lak.results.q.budget.plot(per=0)",
             "model.packages.lak.budget.gwf.summary()",
         ],
         "api_notes": [

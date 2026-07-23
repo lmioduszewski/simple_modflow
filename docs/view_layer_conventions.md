@@ -113,8 +113,19 @@ where the same noun means the same thing scoped to one field:
 
 - `sfr.results.profile` — every field along the stream
 - `sfr.results.stage.profile` — one field along the stream
+- `sfr.results.q.profile` — the exchange field along the stream
+- `lak.results.q.budget` — the LAK exchange summarized by connection type
 
 Namespace-level nouns merge fields; field-level nouns cover a single field.
+
+The loose field-level spellings `q.plot_profile` / `stage.plot_profile` /
+`q.plot_budget` / `q.budget_summary` were retired onto these nouns in plan §4.8
+(D12 warned aliases preserve their old returns exactly). One deliberate
+exception: because the SFR field explorers' old data method was itself named
+`profile()`, the noun `profile` replaces it directly — the frame now comes from
+`q.profile.get()`, and there is no warned `profile()`-returns-a-frame alias (the
+name is the noun). The `lak.results.q.budget` figure is still matplotlib pending
+a separate `viz.Fig` conversion (recorded in the compromise ledger).
 
 ## Signed exchange columns name their reference frame
 

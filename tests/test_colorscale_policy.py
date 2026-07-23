@@ -204,5 +204,31 @@ def test_lak_plot_budget_keeps_positive_blue(canonical_run):
     An adversarial review called this inverted; it is not.
     """
 
-    figure = canonical_run.packages.lak.results.q.plot_budget(per=0)
+    figure = canonical_run.packages.lak.results.q.budget.plot(per=0)
     assert figure is not None
+
+
+def test_lak_budget_is_a_view_with_the_house_shape(canonical_run):
+    """``lak.results.q.budget`` is a view: ``get`` table, ``plot`` figure, ``summary``."""
+
+    import pandas as pd
+
+    from myflopy.modflow.mf6.package_surface_water import LakBudgetView
+
+    budget = canonical_run.packages.lak.results.q.budget
+    assert isinstance(budget, LakBudgetView)
+    assert isinstance(budget.get(per=0), pd.DataFrame)
+    assert budget.plot(per=0) is not None
+    assert not budget.summary().empty
+
+
+def test_lak_budget_retired_spellings_warn(canonical_run):
+    """The retired ``budget_summary``/``plot_budget`` spellings warn (D12)."""
+
+    import pytest
+
+    q = canonical_run.packages.lak.results.q
+    with pytest.warns(DeprecationWarning, match="budget_summary is deprecated"):
+        q.budget_summary(per=0)
+    with pytest.warns(DeprecationWarning, match="plot_budget is deprecated"):
+        q.plot_budget(per=0)
