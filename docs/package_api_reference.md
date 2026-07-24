@@ -35,14 +35,31 @@ Everything below is an attribute of the top-level `myflopy` module (imported as
 
 ### Discretization, core, solver
 
-`mf.disv`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`, `mf.ims`
+`mf.disv`, `mf.dis`, `mf.disu`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`, `mf.ims`
 — each `mf.<name>(...)` returns a `PackageSpec`.
 
-`mf.ic` / `mf.oc` / `mf.disv` are **model-kind-aware**: they build the
-GWF/GWT/GWE FloPy class off the model's type, so the same helper serves a
+`mf.ic` / `mf.oc` / `mf.disv` / `mf.dis` / `mf.disu` are **model-kind-aware**: they
+build the GWF/GWT/GWE FloPy class off the model's type, so the same helper serves a
 transport or energy model (for GWT/GWE `mf.oc`, pass
 `concentration_filerecord=`/`temperature_filerecord=` via `**options`). `mf.npf`
 and `mf.sto` are GWF-only (MF6 has no GWT/GWE variant).
+
+**Grid helpers** (`mf.disv` is the default — myflopy is Voronoi/DISV-first):
+
+- `mf.disv(nlay=, ncpl=, nvert=, vertices=, cell2d=, top=, botm=, idomain=)` —
+  vertex/unstructured grid; pull the mesh from a `VoronoiGridPlus` /
+  `vor.get_disv_gridprops()` and the layer arrays from a `LayerStack`.
+- `mf.dis(nlay=, nrow=, ncol=, delr=, delc=, top=, botm=, idomain=)` — structured
+  (row/column) grid; a passthrough for rectilinear or externally supplied models.
+- `mf.disu(nodes=, nja=, top=, bot=, area=, iac=, ja=, idomain=)` — fully
+  unstructured grid with connectivity you supply yourself (`ihc`/`cl12`/`hwva`,
+  `nvert`/`vertices`/`cell2d` via `**options`); prefer `mf.disv` unless ingesting an
+  existing DISU mesh.
+
+`mf.dis`/`mf.disu` build and run, but the choropleth-map / cross-section / animation
+viz targets **DISV/Voronoi** meshes and is not wired for structured or raw-DISU
+grids (use FloPy's own plotting, or DISV). PRT is not dispatched by any grid helper —
+`mf.prt` builds its own dis/disv internally (and MF6 has no `ModflowPrtdisu`).
 
 ### List boundary conditions
 

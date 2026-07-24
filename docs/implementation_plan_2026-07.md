@@ -79,7 +79,7 @@ ambiguity arises that this plan does not cover, stop and ask the user — do not
 | D1 | `figs` dependency | **Vendor a snapshot** into `src/myflopy/_vendor/figs/` with external-first import. Do NOT publish figs to PyPI; do NOT build a no-figs degraded mode. Details in Phase 1.1. |
 | D2 | Executed notebooks | **Strip all outputs from every tracked notebook.** Rendered copies live outside git. Details in Phase 2.3. |
 | D3 | Git-history rewrite | **Not part of this plan.** The agent must never rewrite history or force-push (Appendix D is user-only reference). |
-| D4 | Structured-grid stance | **Add thin `mf.dis` / `mf.disu` passthroughs** (model-type-aware). `GridSpec.structured` stays fail-fast. Details in Phase 5.5. |
+| D4 | Structured-grid stance | **DONE (5.5, 2026-07-23):** thin model-type-aware `mf.dis` / `mf.disu` passthroughs added (dispatch on model kind; PRT excluded; viz stays DISV-only). `GridSpec.structured` stays fail-fast. |
 | D5 | Plotting consolidation | **Do it**, as its own late phase (Phase 8), after the god-module splits (Phase 4), API completion (Phases 5–6), and the `_flopy_compat` boundary (Phase 7.1). Details in Phase 8. |
 | D6 | Hover defaults | DONE (see "Completed"). Heads default `layers="active+strip"`; sectioned/styled hover is the default everywhere; `custom_hover` stays as the raw escape hatch. |
 | D7 | Colorscales | DONE (see "Completed"). Diverging only for signed q-like + diff maps; `'earth'` for everything else. New surfaces added by this plan MUST follow this policy. |
@@ -997,12 +997,26 @@ fixtures rather than example retrofits). Registry `FieldSpec` entries for `cnc`/
   with unit tests, then `mf.hfb.gpkg(path, hydchr=...)`. Grid modules live at
   `modflow/mf6/grid/` (there is no top-level `myflopy/grid/`).
 
-### 5.5 `mf.dis` / `mf.disu` passthroughs (D4)
+### 5.5 `mf.dis` / `mf.disu` passthroughs (D4) — DONE 2026-07-23
 Thin factories mirroring `mf.disv`, using 5.3A dispatch (Gwf/Gwt/Gwe/Prt dis classes;
 note `prt.py` already builds `ModflowPrtdis(v)` internally — don't duplicate).
 `GridSpec.structured` stays fail-fast (`test_gridspec_fail_fast.py` untouched).
 Docstrings state the Voronoi-first stance. Explorer/registry wiring only if the
 explorers can render structured grids — verify, else document DISV-only.
+
+**Delivered:** `_DIS_CLASSES`/`_DISU_CLASSES` + `build_dis`/`build_disu` in
+`builders.py` (gwf6/gwt6/gwe6, keyed on `model_type`, serialization-safe); `mf.dis`
+(nlay/nrow/ncol/delr/delc/top/botm/idomain) and `mf.disu` (nodes/nja/top/bot/area/
+iac/ja/idomain + `**options`) factories in `package_api.py`, both mirroring `mf.disv`
+and dispatching on the model kind. PRT is **excluded** exactly as `mf.disv` is —
+`mf.prt` builds its own dis/disv internally, and MF6 has no `ModflowPrtdisu`; the
+shared dispatch raises a clear `ValueError` for `prt6`. **No registry/explorer
+wiring** — `dis`/`disu` follow `disv`/`ic`/`oc` (not in `package_registry.py`, no
+results tier); the choropleth/xs/animate viz stays DISV/Voronoi-only, now stated in
+the docstrings, `docs/package_api_reference.md`, and ledger. `test_gridspec_fail_fast.py`
+untouched. Tests: `test_dis_dispatch_builds_structured_class_per_kind` + `dis`/`disu`
+added to the round-trip/PRT-rejection test; snapshot regenerated (+2 signatures);
+example 03 + `concerns.dis()` retrofitted to `mf.dis` (both run MF6 green).
 
 ### 5.6 YAML/TOML spec serialization
 `SimulationSpec.to_yaml/from_yaml` (+ optional TOML via stdlib `tomllib` + `tomli-w`
@@ -1482,7 +1496,7 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       `mf.evt` with `()/.gpkg/.flopy` + registry + hover + earth/RdBu policy (5.1, 5.2)
 - [ ] `mf.ic/oc/disv` dispatch on GWT/GWE; `mf.adv/dsp/mst/ssm/cnc/src/ist` +
       `mf.est/cnd/ctp/esl` exist; example 03 uses them (5.3)
-- [ ] `mf.dis`/`mf.disu` passthroughs; fail-fast GridSpec tests untouched (5.5)
+- [x] `mf.dis`/`mf.disu` passthroughs; fail-fast GridSpec tests untouched (5.5) — DONE 2026-07-23
 - [ ] `SimulationSpec.to_yaml/from_yaml` round-trips incl. exchanges/hooks (5.6)
 - [ ] ONE generic dependent-variable surface; `model.conc` + `model.temp` with full
       grammar (map/xs/plot/mosaic/animate), `conc_hover`/`temp_hover`, earth + RdBu-diff

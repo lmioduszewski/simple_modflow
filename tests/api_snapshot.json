@@ -62,6 +62,34 @@
         "options:VAR_KEYWORD=<required>"
       ]
     },
+    "dis": {
+      "__call__": [
+        "nlay:KEYWORD_ONLY=<required>",
+        "nrow:KEYWORD_ONLY=<required>",
+        "ncol:KEYWORD_ONLY=<required>",
+        "delr:KEYWORD_ONLY=<required>",
+        "delc:KEYWORD_ONLY=<required>",
+        "top:KEYWORD_ONLY=<required>",
+        "botm:KEYWORD_ONLY=<required>",
+        "idomain:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='dis'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "disu": {
+      "__call__": [
+        "nodes:KEYWORD_ONLY=<required>",
+        "nja:KEYWORD_ONLY=<required>",
+        "top:KEYWORD_ONLY=<required>",
+        "bot:KEYWORD_ONLY=<required>",
+        "area:KEYWORD_ONLY=<required>",
+        "iac:KEYWORD_ONLY=<required>",
+        "ja:KEYWORD_ONLY=<required>",
+        "idomain:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='disu'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
     "disv": {
       "__call__": [
         "nlay:KEYWORD_ONLY=<required>",
@@ -1128,6 +1156,8 @@
       "cnc",
       "cnd",
       "ctp",
+      "dis",
+      "disu",
       "disv",
       "drn",
       "dsp",
@@ -1189,6 +1219,8 @@
       "cnc",
       "cnd",
       "ctp",
+      "dis",
+      "disu",
       "disv",
       "drn",
       "dsp",

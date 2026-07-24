@@ -60,8 +60,10 @@ def build_ims(simulation, *, models: Iterable[str], **options):
 # functions: ``PackageSpec`` serializes its builder by importable reference
 # (``specs._callable_ref`` rejects lambdas/closures), and only the function is
 # persisted -- the class tables below are re-read at build time, never serialized.
-# PRT is intentionally absent (MF6 has no ``ModflowPrtic``; PRT builds its own dis
-# via ``mf.prt``); ``npf``/``sto`` are GWF-only in MF6 and are not dispatched.
+# PRT is intentionally absent from every table: MF6 has no ``ModflowPrtic`` and
+# ``mf.prt`` builds PRT's own dis/disv internally, so PRT never routes through
+# ``mf.dis``/``mf.disv`` (and MF6 has no ``ModflowPrtdisu`` at all). ``npf``/``sto``
+# are GWF-only in MF6 and are not dispatched.
 _IC_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfic,
     "gwt6": flopy.mf6.ModflowGwtic,
@@ -76,6 +78,16 @@ _DISV_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfdisv,
     "gwt6": flopy.mf6.ModflowGwtdisv,
     "gwe6": flopy.mf6.ModflowGwedisv,
+}
+_DIS_CLASSES = {
+    "gwf6": flopy.mf6.ModflowGwfdis,
+    "gwt6": flopy.mf6.ModflowGwtdis,
+    "gwe6": flopy.mf6.ModflowGwedis,
+}
+_DISU_CLASSES = {
+    "gwf6": flopy.mf6.ModflowGwfdisu,
+    "gwt6": flopy.mf6.ModflowGwtdisu,
+    "gwe6": flopy.mf6.ModflowGwedisu,
 }
 
 
@@ -114,6 +126,18 @@ def build_disv(model, **options):
     """Build the DISV package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disv``."""
 
     return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **options)
+
+
+def build_dis(model, **options):
+    """Build the DIS package for the model's kind (GWF/GWT/GWE). Engine under ``mf.dis``."""
+
+    return _dispatch_core_class(_DIS_CLASSES, model, "dis")(model, **options)
+
+
+def build_disu(model, **options):
+    """Build the DISU package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disu``."""
+
+    return _dispatch_core_class(_DISU_CLASSES, model, "disu")(model, **options)
 
 
 def _build_two_model_exchange(constructor, simulation, models: tuple[Any, ...], **options):

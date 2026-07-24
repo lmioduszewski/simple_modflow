@@ -85,7 +85,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | GWF / GWT / GWE / PRT models + exchanges | ✅ | `package_api.py` `gwf/gwt/gwe/prt`; `builders.py` `build_gwf_{gwt,gwe,prt,gwf}_exchange` |
-| GWT/GWE **package helpers** (adv/dsp/mst/ssm/cnc…; est/cnd/ctp…) | ❌ | raw `PackageSpec(flopy.mf6.ModflowGwt*, ...)` only; `mf.ic/oc/disv` hardcode GWF classes — plan §5.3 |
+| GWT/GWE **package helpers** (adv/dsp/mst/ist/ssm/cnc/src; est/cnd/ctp/esl) | ✅ | `package_api.py` factories build `ModflowGwt*`/`ModflowGwe*` (plan §5.3B); `mf.ic/oc/disv/dis/disu` dispatch the FloPy class on the model kind (§5.3A/§5.5) |
 | GWT/GWE **results tier** (conc/temp reader, maps, group/diff, obs) | ❌ | no concentration/temperature reader exists anywhere — plan §6.0–6.2 |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
 | PRT derived cell maps (travel-time / endpoints choropleths) | ❌ | pathlines/scene/map exist; grammar-integrated cell maps are plan §6.3 |
@@ -150,10 +150,11 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    `test_simple_list_bcs_have_a_real_flopy_escape_hatch`), §5.1 `mf.riv`, and §5.2
    `mf.evt` (each with all four pieces: helper + `GeoPackageSource` resolver +
    `*_spec` + registry/explorers). CSUB is an explicit non-goal (plan §5.9).
-   Also `mf.dis`/`mf.disu` passthroughs (§5.5).
+   `mf.dis`/`mf.disu` passthroughs **DONE 2026-07-23** (§5.5: model-kind dispatch,
+   PRT excluded, viz stays DISV-only).
 2. **GWT/GWE integration** — package helpers (§5.3 **DONE 2026-07-22**: `mf.adv/dsp/
    mst/ist/ssm/cnc/src` (GWT) + `mf.est/cnd/ctp/esl` (GWE); model-type dispatch for
-   `mf.ic/oc/disv` builds the gwf/gwt/gwe FloPy class off the model kind) AND the results tier
+   `mf.ic/oc/disv/dis/disu` builds the gwf/gwt/gwe FloPy class off the model kind) AND the results tier
    (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,
    group/diff, `ConcTargets` → PEST).
 3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**

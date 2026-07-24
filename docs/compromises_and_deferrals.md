@@ -848,3 +848,23 @@ same day, which is the useful part of the result.
       independent reimplementation of the same idomain selection; it diverges on
       `surface_only` semantics, so folding it in is its own follow-up.
     Revisit any of these on real user demand.
+
+53. **`mf.dis`/`mf.disu` build+run but get no myflopy viz (plan §5.5, 2026-07-23).**
+    - What: the new `mf.dis` (structured) and `mf.disu` (fully unstructured)
+      passthroughs produce valid, runnable MF6 models, but the choropleth-map /
+      cross-section / animation view layer targets **DISV/Voronoi** meshes only. A
+      DIS or raw-DISU model has no `.map()`/`.xs()`/`.animate()` rendering from
+      myflopy — a caller falls back to FloPy's own plotting, or uses DISV.
+    - Why: myflopy is Voronoi/DISV-first by design; the whole spatial viz stack
+      (`VoronoiGridPlus`, cell-polygon choropleths) is built on the vertex mesh.
+      Wiring structured/DISU rendering is a large, separate effort with little
+      demand for the Voronoi-first use cases §5.5 targets. The passthroughs exist so
+      structured/externally-supplied grids can be *built* with the same package-first
+      grammar, not to make them first-class in the viz layer.
+    - Also deferred (mirrors `mf.disv`/`ic`/`oc`): **no `package_registry.py` entry
+      and no results tier** for `dis`/`disu` — they are grid packages, not BCs. And
+      **PRT is not dispatched** by any grid helper (`mf.prt` builds its own dis/disv
+      internally; MF6 has no `ModflowPrtdisu`) — the shared dispatch raises a clear
+      `ValueError` for `prt6` rather than growing a fourth column.
+    - Revisit: if structured-grid choropleth/xs rendering is ever requested, it
+      belongs with the Phase-6 generic dependent-variable surface work, not here.

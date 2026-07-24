@@ -149,6 +149,12 @@ def _disv_values() -> dict:
     )
 
 
+def _dis_values() -> dict:
+    """Minimal structured DIS grid dict, model-kind-agnostic (5.5)."""
+
+    return dict(nlay=1, nrow=2, ncol=2, delr=100.0, delc=100.0, top=10.0, botm=0.0)
+
+
 def test_core_helpers_dispatch_on_model_type(tmp_path):
     """mf.disv / mf.ic / mf.oc resolve the FloPy class from the model kind (5.3A).
 
@@ -183,18 +189,48 @@ def test_core_helper_dispatch_builders_round_trip_and_reject_prt():
 
     from types import SimpleNamespace
 
-    from myflopy.builders import build_disv, build_ic, build_oc
+    from myflopy.builders import build_dis, build_disu, build_disv, build_ic, build_oc
 
     assert mf.ic(strt=1.0).to_dict()["builder"] == "myflopy.builders:build_ic"
     assert mf.oc(budget_filerecord="m.cbc").to_dict()["builder"] == "myflopy.builders:build_oc"
     assert mf.disv(**_disv_values()).to_dict()["builder"] == "myflopy.builders:build_disv"
+    assert mf.dis(**_dis_values()).to_dict()["builder"] == "myflopy.builders:build_dis"
+    assert (
+        mf.disu(nodes=2, nja=6, top=[10, 10], bot=[0, 0], area=[1, 1], iac=[2, 2], ja=[0, 1, 1, 0])
+        .to_dict()["builder"]
+        == "myflopy.builders:build_disu"
+    )
     # round-trip resolves back to the same module-level function
     assert mf.PackageSpec.from_dict(mf.ic(strt=1.0).to_dict()).builder is build_ic
 
-    # PRT has no IC package; the dispatch must fail loudly, not KeyError.
-    for build in (build_ic, build_oc, build_disv):
+    # PRT builds its own dis via mf.prt (and MF6 has no ModflowPrtdisu); the shared
+    # dispatch must fail loudly, not KeyError, for every core package.
+    for build in (build_ic, build_oc, build_disv, build_dis, build_disu):
         with pytest.raises(ValueError, match="not available for model type 'prt6'"):
             build(SimpleNamespace(model_type="prt6"))
+
+
+def test_dis_dispatch_builds_structured_class_per_kind(tmp_path):
+    """mf.dis resolves the GWF/GWT/GWE structured DIS class off the model kind (5.5)."""
+
+    expected = {
+        mf.gwf: ("gwf", flopy.mf6.ModflowGwfdis),
+        mf.gwt: ("gwt", flopy.mf6.ModflowGwtdis),
+        mf.gwe: ("gwe", flopy.mf6.ModflowGwedis),
+    }
+    for helper, (kind, dis_cls) in expected.items():
+        model = helper(kind, packages=[
+            mf.dis(**_dis_values()),
+            mf.ic(strt=5.0),
+            mf.oc(budget_filerecord=f"{kind}.cbc", saverecord=[("BUDGET", "ALL")]),
+        ])
+        built = mf.SimulationSpec(
+            f"d_{kind}",
+            models=(model,),
+            packages=(mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=(kind,))),
+        ).build_flopy(tmp_path / kind)
+        flopy_model = built.simulation.get_model(kind)
+        assert isinstance(flopy_model.get_package("dis"), dis_cls)
 
 
 def test_gwt_gwe_package_factories_build_real_models(tmp_path):

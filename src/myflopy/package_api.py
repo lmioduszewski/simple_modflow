@@ -29,7 +29,7 @@ from myflopy.advanced import (
     uzf_spec,
     wel_spec,
 )
-from myflopy.builders import build_disv, build_ic, build_ims, build_oc
+from myflopy.builders import build_dis, build_disu, build_disv, build_ic, build_ims, build_oc
 from myflopy.geopackage import GeoPackageSource, RowValue
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.lakes import (
@@ -812,6 +812,124 @@ def disv(
     if idomain is not None:
         values["idomain"] = idomain
     return PackageSpec(name, build_disv, values)
+
+
+def dis(
+    *,
+    nlay: int,
+    nrow: int,
+    ncol: int,
+    delr: Any,
+    delc: Any,
+    top: Any,
+    botm: Any,
+    idomain: Any | None = None,
+    name: str = "dis",
+    **options: Any,
+) -> PackageSpec:
+    """Structured (row/column) discretization -- DIS.
+
+    myflopy is Voronoi/DISV-first; ``mf.dis`` exists so a plain rectilinear grid can
+    be built with the same package-first grammar, and to interoperate with externally
+    supplied structured models. A DIS model builds and runs, but the choropleth-map /
+    cross-section / animation viz targets DISV/Voronoi meshes and is **not** wired for
+    structured grids -- use FloPy's own plotting, or DISV, for those. Like ``mf.disv``
+    it dispatches the FloPy class off the model kind (GWF/GWT/GWE); PRT builds its own
+    dis via ``mf.prt``.
+
+    Parameters
+    ----------
+    nlay, nrow, ncol
+        Number of layers, rows, and columns.
+    delr, delc
+        Column widths (ncol,) and row heights (nrow,); scalars broadcast.
+    top, botm
+        Model-top (nrow, ncol) and layer bottoms (nlay, nrow, ncol); scalars broadcast.
+    idomain
+        Optional active-domain array (0 = inactive).
+    name : str, default "dis"
+        Package name.
+    **options
+        Extra ``flopy.mf6.Modflow<Kind>dis`` options (e.g. ``xorigin``/``angrot``).
+
+    Returns
+    -------
+    PackageSpec
+    """
+
+    values = {
+        "nlay": nlay,
+        "nrow": nrow,
+        "ncol": ncol,
+        "delr": delr,
+        "delc": delc,
+        "top": top,
+        "botm": botm,
+        **options,
+    }
+    if idomain is not None:
+        values["idomain"] = idomain
+    return PackageSpec(name, build_dis, values)
+
+
+def disu(
+    *,
+    nodes: int,
+    nja: int,
+    top: Any,
+    bot: Any,
+    area: Any,
+    iac: Any,
+    ja: Any,
+    idomain: Any | None = None,
+    name: str = "disu",
+    **options: Any,
+) -> PackageSpec:
+    """Fully unstructured discretization -- DISU (connectivity you supply yourself).
+
+    The most general MF6 grid: an explicit node list plus a hand-built connectivity
+    table (``iac``/``ja`` and, via ``**options``, ``ihc``/``cl12``/``hwva``). myflopy
+    is Voronoi/DISV-first -- prefer ``mf.disv`` with a ``VoronoiGridPlus``, which
+    generates that connectivity for you; reach for ``mf.disu`` only when ingesting an
+    existing DISU mesh. As with ``mf.disv`` the choropleth / cross-section / animation
+    viz targets DISV/Voronoi meshes and is **not** wired for raw DISU. Dispatches the
+    FloPy class off the model kind (GWF/GWT/GWE); MF6 has no ``ModflowPrtdisu``.
+
+    Parameters
+    ----------
+    nodes, nja
+        Number of cells and total connectivity entries (``len(ja)``).
+    top, bot, area
+        Per-node cell top, bottom, and horizontal area (nodes,).
+    iac, ja
+        Connectivity: per-node connection counts (nodes,) and the flattened neighbour
+        list (nja,). Optional ``ihc``/``cl12``/``hwva`` go via ``**options``.
+    idomain
+        Optional active-domain array (0 = inactive).
+    name : str, default "disu"
+        Package name.
+    **options
+        Extra ``flopy.mf6.Modflow<Kind>disu`` options (``nvert``/``vertices``/``cell2d``,
+        ``ihc``/``cl12``/``hwva``, ``xorigin``/``angrot``, ...).
+
+    Returns
+    -------
+    PackageSpec
+    """
+
+    values = {
+        "nodes": nodes,
+        "nja": nja,
+        "top": top,
+        "bot": bot,
+        "area": area,
+        "iac": iac,
+        "ja": ja,
+        **options,
+    }
+    if idomain is not None:
+        values["idomain"] = idomain
+    return PackageSpec(name, build_disu, values)
 
 
 def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
@@ -3366,6 +3484,8 @@ __all__ = [
     "cnc",
     "cnd",
     "ctp",
+    "dis",
+    "disu",
     "disv",
     "drn",
     "dsp",

@@ -10,7 +10,6 @@ identical for unstructured grids.
 
 from __future__ import annotations
 
-import flopy
 import numpy as np
 
 import myflopy as mf
@@ -27,18 +26,14 @@ def dis(top: float = 50.0, botm: float = 0.0) -> mf.PackageSpec:
     variant* on a fixed mesh -- not a new grid.
     """
 
-    return mf.PackageSpec(
-        "dis",
-        flopy.mf6.ModflowGwfdis,
-        {
-            "nlay": NLAY,
-            "nrow": NROW,
-            "ncol": NCOL,
-            "delr": DELR,
-            "delc": DELC,
-            "top": top,
-            "botm": botm,
-        },
+    return mf.dis(
+        nlay=NLAY,
+        nrow=NROW,
+        ncol=NCOL,
+        delr=DELR,
+        delc=DELC,
+        top=top,
+        botm=botm,
     )
 
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import concerns
-import flopy
 
 import myflopy as mf
 
@@ -52,10 +51,10 @@ def transport_model() -> mf.ModelSpec:
     return mf.gwt(
         "gwt",
         packages=[
-            # ``dis`` (structured) stays a raw PackageSpec -- there is no mf.dis
-            # helper (myflopy is Voronoi/DISV-first). ic/oc/adv/mst/ssm use the
-            # package-first helpers: mf.ic/mf.oc dispatch on the GWT model kind.
-            mf.PackageSpec("dis", flopy.mf6.ModflowGwtdis, dict(GRID)),
+            # ``mf.dis`` builds the structured grid (myflopy is Voronoi/DISV-first,
+            # but the passthrough exists); like mf.ic/mf.oc it dispatches the FloPy
+            # class on the GWT model kind (here -> ModflowGwtdis).
+            mf.dis(**GRID),
             mf.ic(strt=0.0),
             mf.adv(scheme="UPSTREAM"),
             mf.mst(porosity=0.25),
