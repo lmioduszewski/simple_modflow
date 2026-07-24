@@ -213,6 +213,51 @@ def test_package_spec_inputs_round_trip_separately_from_options():
     assert loaded.inputs["recharge"].map_to == "grid"
 
 
+def test_list_bc_partial_builders_round_trip(tmp_path):
+    """The 7 list BCs build via a ``functools.partial(_build_named, cls)`` -- a
+    picklable-but-not-importable builder. ``_callable_ref`` now serializes that
+    partial (func ref + a ``$callable`` class ref), so CHD/GHB/DRN/RIV/WEL/RCH/EVT
+    survive ``to_dict`` -> JSON -> ``from_dict`` and still build (plan §5.6A)."""
+
+    import json
+
+    bcs = {
+        "chd": mf.chd(stress_period_data={0: [[(0, 0), 10.0]]}),
+        "ghb": mf.ghb(stress_period_data={0: [[(0, 1), 9.0, 1.0]]}),
+        "drn": mf.drn(stress_period_data={0: [[(0, 1), 9.0, 1.0]]}),
+        "riv": mf.riv(stress_period_data={0: [[(0, 0), 10.0, 1.0, 9.0]]}),
+        "wel": mf.wel(stress_period_data={0: [[(0, 1), -5.0]]}),
+        "rch": mf.rch(stress_period_data={0: [[(0, 0), 0.001]]}),
+        "evt": mf.evt(stress_period_data={0: [[(0, 0), 10.0, 0.002, 1.0]]}),
+    }
+    # The serialized builder is the tagged-partial shape, and it is JSON-safe.
+    chd_payload = bcs["chd"].to_dict()
+    assert chd_payload["builder"] == {
+        "partial": "myflopy.advanced:_build_named",
+        "args": [{"$callable": "flopy.mf6.modflow.mfgwfchd:ModflowGwfchd"}],
+        "keywords": {},
+    }
+    for name, spec in bcs.items():
+        loaded = mf.PackageSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+        assert loaded.to_dict() == spec.to_dict(), name
+
+    # And a full model carrying every list BC round-trips and builds real packages.
+    model = mf.gwf("gwf", packages=[
+        mf.disv(nlay=1, ncpl=2, nvert=6,
+                vertices=[[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 1.0, 1.0], [3, 0.0, 1.0], [4, 2.0, 0.0], [5, 2.0, 1.0]],
+                cell2d=[[0, 0.5, 0.5, 4, 0, 1, 2, 3], [1, 1.5, 0.5, 4, 1, 4, 5, 2]], top=10.0, botm=0.0),
+        mf.ic(strt=5.0), mf.npf(k=1.0), *bcs.values(),
+        mf.oc(budget_filerecord="gwf.cbc", saverecord=[("BUDGET", "ALL")]),
+    ])
+    sim = mf.SimulationSpec("s", models=[model],
+                            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["gwf"])])
+    loaded_sim = mf.SimulationSpec.from_dict(json.loads(json.dumps(sim.to_dict())))
+    built = loaded_sim.build_flopy(tmp_path)
+    flopy_model = built.simulation.get_model("gwf")
+    for name in bcs:
+        assert flopy_model.get_package(name) is not None, name
+
+
 def test_package_ref_round_trip_and_model_package_lookup():
     model = mf.gwf("gwf").with_package("npf/base")
     loaded = mf.ModelSpec.from_dict(model.to_dict())

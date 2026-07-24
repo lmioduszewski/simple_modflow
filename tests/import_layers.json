@@ -141,6 +141,7 @@
  "myflopy.project.run_model": 9,
  "myflopy.sources": 0,
  "myflopy.specs": 1,
+ "myflopy.specs_io": 0,
  "myflopy.surfaces": 2,
  "myflopy.viz": 0,
  "myflopy.workspace": 10

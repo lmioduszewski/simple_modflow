@@ -764,6 +764,15 @@ class Project:
         self.simulations[simulation.name] = simulation
         return simulation
 
+    def add_simulation_from_yaml(self, source: str | Path) -> SimulationSpec:
+        """Load a simulation from a YAML file (or text) and register it (plan §5.6).
+
+        Thin wrapper over :meth:`SimulationSpec.from_yaml` + :meth:`add_simulation`;
+        ``source`` is a ``.yaml`` path (``str``/``Path``) or raw YAML text.
+        """
+
+        return self.add_simulation(SimulationSpec.from_yaml(source))
+
     def simulation(self, name: str) -> SimulationSpec:
         """Return one registered simulation specification by name."""
 

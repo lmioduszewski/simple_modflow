@@ -120,9 +120,9 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### Serialization
 | Capability | Status | Where |
 |---|---|---|
-| `to_dict`/`from_dict` round-trip for all specs | ✅ | `specs.py` — Package/Grid/Model/SimulationSpec **incl. inter-model exchanges + post-build hooks** (importable builders; lambdas/closures fail loud) |
+| `to_dict`/`from_dict` round-trip for all specs | ✅ | `specs.py` — Package/Grid/Model/SimulationSpec **incl. inter-model exchanges, post-build hooks, and list-BC `functools.partial` builders** (§5.6A; importable builders; lambdas/closures fail loud) |
 | Workspace pickling / native MF6 reload | ✅ | `workspace.py`, `project/` (`load_mf6_run`) |
-| **YAML/TOML** config file wrapper | ❌ | no `to_yaml`; would be a thin wrapper over existing `to_dict`/`from_dict` |
+| **YAML** config file wrapper | ✅ | `specs_io.py` — `SimulationSpec.to_yaml`/`from_yaml` + `Project.add_simulation_from_yaml` (§5.6, PyYAML safe mode); example `examples/mf6/yaml_spec/`. **TOML** deferred (no null type; `tomllib` is 3.11+) |
 
 ### PEST / pyemu (`modflow/mf6/pest/`)
 | Capability | Status | Where |
@@ -159,8 +159,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    group/diff, `ConcTargets` → PEST).
 3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**
    (field-map hover/colors, uncertainty maps, prior/posterior mosaics — §6.4).
-4. **YAML/TOML serialization** — thin wrapper over the complete `to_dict`/`from_dict`
-   round-trip (§5.6). *(Low effort.)*
+4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
+   + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC
+   `functools.partial` builders round-trip. **TOML still deferred** (no null type;
+   `tomllib` is 3.11+ vs the `>=3.10` floor — ledger 54).
 5. **PEST raster-driven zones/pilot points**, Tikhonov/preferred-value **regularization**,
    **identifiability**, **UZF parameters** (§5.8). (IES + prior MC + PEST++ workers
    already ship via `run_ies(workers=)`.)

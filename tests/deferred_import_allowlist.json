@@ -28,6 +28,7 @@
  "myflopy.project.group.core": 1,
  "myflopy.project.group.spatial": 1,
  "myflopy.specs": 2,
+ "myflopy.specs_io": 1,
  "myflopy.surfaces": 4,
  "myflopy.workspace": 1
 }

@@ -1,0 +1,64 @@
+# A complete MODFLOW 6 simulation described entirely in YAML (plan §5.6).
+#
+# This is the on-disk form of a `SimulationSpec`: every package is a builder
+# reference (an importable "module:qualname", or a {partial: ...} for the
+# list-BC helpers) plus its options. Load and build it with:
+#
+#     python run.py
+#
+# myflopy is Voronoi/DISV-first; this uses a small structured DIS grid only so
+# the file stays short and hand-readable. `mf.ic`/`mf.oc`/`mf.dis` dispatch the
+# GWF/GWT/GWE FloPy class off the model kind, so `build_dis`/`build_ic`/`build_oc`
+# need no model-type suffix here.
+kind: SimulationSpec
+name: yaml_demo
+models:
+- kind: ModelSpec
+  name: gwf
+  model_type: gwf
+  packages:
+  - kind: PackageSpec
+    name: dis
+    builder: myflopy.builders:build_dis
+    options: {nlay: 1, nrow: 1, ncol: 10, delr: 100.0, delc: 100.0, top: 10.0, botm: 0.0}
+  - kind: PackageSpec
+    name: ic
+    builder: myflopy.builders:build_ic
+    options: {strt: 9.0}
+  - kind: PackageSpec
+    name: npf
+    builder: flopy.mf6.modflow.mfgwfnpf:ModflowGwfnpf
+    options: {k: 1.0, save_specific_discharge: true}
+  # A list boundary condition. Its builder is the shared functools.partial that
+  # myflopy's mf.chd() produces -- serialized as the function ref plus the FloPy
+  # package class as a $callable argument.
+  - kind: PackageSpec
+    name: chd
+    builder:
+      partial: myflopy.advanced:_build_named
+      args:
+      - {$callable: flopy.mf6.modflow.mfgwfchd:ModflowGwfchd}
+      keywords: {}
+    options:
+      pname: chd
+      filename: "{model_name}.chd"
+      stress_period_data:
+        0:
+        - [[0, 0, 0], 10.0]     # west: fixed head 10
+        - [[0, 0, 9], 8.0]      # east: fixed head 8
+  - kind: PackageSpec
+    name: oc
+    builder: myflopy.builders:build_oc
+    options:
+      head_filerecord: gwf.hds
+      budget_filerecord: gwf.cbc
+      saverecord: [[HEAD, ALL], [BUDGET, ALL]]
+packages:
+- kind: PackageSpec
+  name: tdis
+  builder: flopy.mf6.modflow.mftdis:ModflowTdis
+  options: {nper: 1, perioddata: [[1.0, 1, 1.0]]}
+- kind: PackageSpec
+  name: ims
+  builder: myflopy.builders:build_ims
+  options: {models: [gwf], pname: ims, complexity: SIMPLE}

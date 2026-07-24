@@ -142,6 +142,21 @@ hover** and the **results tier** (`model.conc`/`model.temp`) are Phase 6.
 `mf.Project(root, name=)` → `prepare_run`/`run` → `mf.Run`; `mf.load_run` /
 `mf.load_mf6_run`; `mf.ModelGroup`; `mf.ParallelModelWorkflow`.
 
+**Serialization.** Any spec round-trips to a JSON-safe dict (`to_dict()`/
+`from_dict()`) — builders as importable references (including the list-BC
+`functools.partial` builders), sources tagged, paths POSIX-encoded. A whole
+simulation also reads/writes **YAML**:
+
+- `sim.to_yaml()` → YAML string; `sim.to_yaml(path)` also writes the file.
+- `mf.SimulationSpec.from_yaml(source)` — `source` is YAML text, a `Path`, or a
+  filename `str`.
+- `project.add_simulation_from_yaml(path)` — load + register in one call.
+
+A spec whose values aren't JSON-representable (e.g. a computed numpy array baked
+into a package's options) can't serialize — that raises in `to_dict` before YAML
+is involved. TOML is not supported (no null type; `tomllib` is 3.11+). Example:
+`examples/mf6/yaml_spec/`.
+
 ### Observations & PEST
 
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,

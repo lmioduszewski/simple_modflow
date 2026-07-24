@@ -868,3 +868,37 @@ same day, which is the useful part of the result.
       `ValueError` for `prt6` rather than growing a fourth column.
     - Revisit: if structured-grid choropleth/xs rendering is ever requested, it
       belongs with the Phase-6 generic dependent-variable surface work, not here.
+
+54. **YAML serializer ships without TOML (plan §5.6, 2026-07-23).**
+    - What: `SimulationSpec.to_yaml`/`from_yaml` + `Project.add_simulation_from_yaml`
+      (in `specs_io.py`) support **YAML only**. The plan listed "optional TOML via
+      stdlib `tomllib` + `tomli-w` extra"; that was deferred (user-approved).
+    - Why deferred: two concrete frictions for a rarely-used format. (a) **TOML has
+      no null type** — `to_dict()` legitimately emits `None` (e.g. optional builder/
+      workspace fields), which `tomli-w` cannot write; supporting TOML means stripping
+      `None` before dump and tolerating the asymmetry on read. (b) **`tomllib` is
+      stdlib only on 3.11+** while the package targets `requires-python >=3.10`, so
+      the read path would need a `tomli` backport dependency and a version gate. YAML
+      has neither problem (PyYAML is one small pure-Python core dep, safe mode, and
+      represents null natively).
+    - Impact: no `to_toml`/`from_toml`; YAML is the one file format. The dict form
+      (`to_dict`/`from_dict`) is unaffected and remains the substrate any future TOML
+      wrapper would sit on.
+    - Revisit: add TOML if a user wants it AND the floor moves to 3.11 (or a backport
+      dep is acceptable); the null-stripping is the only real design work left.
+
+55. **List-BC builders serialize via a bespoke partial encoding (plan §5.6A, 2026-07-23).**
+    - What: the 7 list BCs (chd/ghb/drn/riv/wel/rch/evt) build through
+      `functools.partial(_build_named, <FloPy class>)` (`advanced.py:_factory`), which
+      is picklable but not importable, so `_callable_ref` used to reject them and they
+      could not `to_dict()`. `_callable_ref`/`_resolve_callable` now special-case
+      `functools.partial`, emitting `{"partial": <func ref>, "args": [{"$callable":
+      <class ref>}], "keywords": {...}}`.
+    - Trade: this couples the serializer to the *shape* of a partial-based builder. It
+      is fully general for any `partial` over importable pieces, but the only builder
+      that uses it today is `_build_named`. An alternative — replacing the partial with
+      a single module-level `build_list_bc` function carrying the class ref in options —
+      was **not** taken: it would churn the artifact/build path and the options shape
+      (and the seven `*_spec` factories' public signatures) for no user-visible gain.
+    - Revisit: if a second, differently-shaped partial builder ever appears, reconsider
+      whether the general partial encoding or a module-level-function refactor is cleaner.

@@ -8,6 +8,7 @@ replace without introducing a framework around FloPy.
 
 from __future__ import annotations
 
+import functools
 import pickle
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
@@ -24,6 +25,7 @@ from myflopy.sources import (
     LiteralSource,
     source_from_dict,
 )
+from myflopy.specs_io import simulation_from_yaml, simulation_to_yaml
 
 Builder = Callable[..., Any]
 Hook = Callable[[Any, dict[str, Any], "ModelContext"], Any]
@@ -221,13 +223,25 @@ def _builder_label(builder: Builder | None) -> str:
     return name
 
 
-def _callable_ref(builder: Builder) -> str:
-    """Serialize a builder callable to a ``"module:qualname"`` reference.
+def _callable_ref(builder: Builder) -> Any:
+    """Serialize a builder callable to a JSON-ready reference.
 
-    Raises if the callable is not importable (e.g. a local/lambda), since such a
-    reference could not be resolved back later.
+    A plain importable callable becomes a ``"module:qualname"`` string. A
+    :func:`functools.partial` over an importable function becomes a dict
+    ``{"partial": <func ref>, "args": [...], "keywords": {...}}`` -- this is the
+    shape the list-BC ``*_spec`` factories use (``partial(_build_named,
+    ModflowGwfchd)``), so CHD/GHB/DRN/RIV/WEL/RCH/EVT specs round-trip. Each bound
+    argument is itself a reference (callables/classes, e.g. the FloPy package
+    class) or a plain JSON value. Raises if any piece is not importable (e.g. a
+    local function or lambda), since such a reference could not be resolved later.
     """
 
+    if isinstance(builder, functools.partial):
+        return {
+            "partial": _callable_ref(builder.func),
+            "args": [_bound_arg_ref(arg) for arg in builder.args],
+            "keywords": {key: _bound_arg_ref(val) for key, val in builder.keywords.items()},
+        }
     module = getattr(builder, "__module__", None)
     qualname = getattr(builder, "__qualname__", None)
     if not module or not qualname or "<locals>" in qualname:
@@ -237,9 +251,30 @@ def _callable_ref(builder: Builder) -> str:
     return f"{module}:{qualname}"
 
 
-def _resolve_callable(reference: str) -> Builder:
-    """Import and return the callable named by a ``"module:qualname"`` reference."""
+def _bound_arg_ref(value: Any) -> Any:
+    """Serialize one ``functools.partial`` bound argument.
 
+    A callable/class becomes a tagged reference (``{"$callable": <ref>}``) so it
+    survives as an import path; anything else goes through :func:`_json_value`.
+    """
+
+    if callable(value):
+        return {"$callable": _callable_ref(value)}
+    return _json_value(value)
+
+
+def _resolve_callable(reference: Any) -> Builder:
+    """Import and return the callable named by a reference from :func:`_callable_ref`.
+
+    Accepts a ``"module:qualname"`` string, or a ``{"partial": ...}`` dict that
+    rebuilds a :func:`functools.partial`.
+    """
+
+    if isinstance(reference, dict):
+        func = _resolve_callable(reference["partial"])
+        args = tuple(_revive_bound_arg(arg) for arg in reference.get("args", ()))
+        keywords = {key: _revive_bound_arg(val) for key, val in reference.get("keywords", {}).items()}
+        return cast(Builder, functools.partial(func, *args, **keywords))
     module_name, _, qualname = reference.partition(":")
     if not module_name or not qualname:
         raise ValueError(f"Invalid builder reference: {reference!r}")
@@ -247,6 +282,14 @@ def _resolve_callable(reference: str) -> Builder:
     for part in qualname.split("."):
         value = getattr(value, part)
     return cast(Builder, value)
+
+
+def _revive_bound_arg(value: Any) -> Any:
+    """Inverse of :func:`_bound_arg_ref`."""
+
+    if isinstance(value, dict) and set(value) == {"$callable"}:
+        return _resolve_callable(value["$callable"])
+    return _spec_value(value)
 
 
 def _json_value(value: Any) -> Any:
@@ -2275,6 +2318,32 @@ class SimulationSpec:
             derived_from=data.get("derived_from"),
             lineage=tuple(_spec_value(list(data.get("lineage", ())))),
         )
+
+    def to_yaml(self, path: str | Path | None = None) -> str:
+        """Serialize this simulation to a YAML string (plan §5.6).
+
+        Round-trips through :meth:`to_dict`, so the same rules apply: builders
+        must be importable and every value JSON-representable (a computed numpy
+        array baked into a package's options is not -- that raises in
+        :meth:`to_dict`). If ``path`` is given the YAML is also written there.
+        See :mod:`myflopy.specs_io`. TOML is not supported yet (see that module).
+        """
+
+        text = simulation_to_yaml(self)
+        if path is not None:
+            Path(path).write_text(text)
+        return text
+
+    @classmethod
+    def from_yaml(cls, source: str | Path) -> SimulationSpec:
+        """Load a simulation from YAML text or a ``.yaml`` file path (plan §5.6).
+
+        A :class:`~pathlib.Path` (or a ``str`` naming an existing file) is read
+        from disk; any other ``str`` is parsed as YAML text. The inverse of
+        :meth:`to_yaml`.
+        """
+
+        return simulation_from_yaml(source)
 
     def __repr__(self) -> str:
         """Compact representation: name, model names, package names, and exchange names."""

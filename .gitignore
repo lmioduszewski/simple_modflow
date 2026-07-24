@@ -107,6 +107,7 @@ src/simple_modflow/modflow/mp3du/ssb_temp.*
 
 # Variant-workflow example run outputs
 examples/mf6/variant_workflow/runs/
+examples/mf6/yaml_spec/runs/
 
 # Layer-management notebook generated artifacts (rasters, sidecars, exports)
 examples/mf6/notebooks/artifacts/

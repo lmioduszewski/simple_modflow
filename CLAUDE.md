@@ -198,10 +198,13 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 > Re-verified against the code on 2026-06-20; PEST/serialization/sampling rows refreshed
 > 2026-07-03. **Most items previously listed here are already built** (see
 > `docs/myflopy_context.md`). Genuine remaining gaps only:
-- **YAML/TOML spec serialization** — thin file-format wrapper over
-  `SimulationSpec.to_dict()` / `from_dict()`. The round-trip is now **complete** in
-  `specs.py` (incl. inter-model exchanges + post-build hooks); only the YAML/TOML wrapper
-  is missing.
+- **YAML spec serialization — DONE 2026-07-23 (§5.6).** `SimulationSpec.to_yaml()`
+  /`from_yaml()` (+ `Project.add_simulation_from_yaml`) wrap `to_dict`/`from_dict`
+  in `specs_io.py` (PyYAML core dep, safe mode). §5.6A first taught `_callable_ref`
+  to serialize the list-BC `functools.partial(_build_named, cls)` builders, so
+  chd/ghb/drn/riv/wel/rch/evt now round-trip too. TOML is deferred (no null type;
+  `tomllib` is 3.11+ vs the `>=3.10` floor) — ledger 54. Example:
+  `examples/mf6/yaml_spec/`.
 - **NHDPlus direct SFR reader** — `SFRBuilder` already builds reaches from any stream
   centerline LineString table; only national NHDPlus ingestion is missing
 - **Reading existing MODFLOW array files** as source data — a raw array-file *source* is
@@ -221,4 +224,5 @@ recharge from GIS/PRISM (`RCHBuilder`).
 ## Comparison: myflopy vs modflow-setup
 - myflopy wins on: unstructured grids, transport/energy/PRT models, visualization, parallel
   runs, Python-first API, GIS-driven BCs, SFR-from-centerline, PEST on Voronoi grids
-- modflow-setup wins on: single-file YAML no-code setup, NHDPlus SFR, LGR
+- modflow-setup wins on: NHDPlus SFR, LGR (myflopy now also loads a full simulation
+  from a single YAML file via `SimulationSpec.from_yaml`, §5.6)

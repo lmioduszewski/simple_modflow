@@ -1018,12 +1018,29 @@ untouched. Tests: `test_dis_dispatch_builds_structured_class_per_kind` + `dis`/`
 added to the round-trip/PRT-rejection test; snapshot regenerated (+2 signatures);
 example 03 + `concerns.dis()` retrofitted to `mf.dis` (both run MF6 green).
 
-### 5.6 YAML/TOML spec serialization
+### 5.6 YAML/TOML spec serialization — DONE 2026-07-23 (YAML; TOML deferred)
 `SimulationSpec.to_yaml/from_yaml` (+ optional TOML via stdlib `tomllib` + `tomli-w`
 extra) in a small `specs_io.py`; PyYAML (`safe_load`/`safe_dump` only) as a core dep;
 `Project.add_simulation_from_yaml`. Normalize through `_json_value` first. Round-trip
 tests incl. exchanges/hooks/GridSpec/refs + a hand-written minimal YAML that builds +
 an example file in `examples/`.
+
+**Delivered:** `specs_io.py` (`simulation_to_yaml`/`simulation_from_yaml`, PyYAML
+safe mode, `yaml` imported lazily so `import myflopy` never pulls it in);
+`SimulationSpec.to_yaml(path=None)` / `from_yaml(str|Path)` +
+`Project.add_simulation_from_yaml`. PyYAML added as a core dep. Layer 0 (no
+module-level myflopy deps) so `specs.py` imports it downward with **no** deferred-
+import ratchet change. **Scoping found the round-trip was NOT actually complete for
+list BCs** — chd/ghb/drn/riv/wel/rch/evt build via a non-importable
+`functools.partial(_build_named, cls)`, so `to_dict` rejected them. **§5.6A** (done
+first, user-approved) generalized `_callable_ref`/`_resolve_callable` to serialize
+that partial (`{"partial": ref, "args": [{"$callable": class ref}], ...}`), so all 7
+list BCs now round-trip and a real BC-carrying flow model survives YAML. **TOML
+deferred** (no null type; `tomllib` is 3.11+ vs the `>=3.10` floor) — ledger 54; the
+partial-encoding trade is ledger 55. Tests: `tests/test_specs_io.py` (string/file/
+Project round-trip across BCs/refs/exchanges/hooks + a hand-written minimal YAML that
+builds MF6) and `test_list_bc_partial_builders_round_trip` in `test_project_spec.py`.
+Example: `examples/mf6/yaml_spec/` (`model.yaml` + `run.py`, runs MF6 green).
 
 ### 5.7 (Forward-looking, larger) grid-lazy GIS packages for deferred GridSpec
 `.gpkg` helpers first: when the grid is deferred, return a `PackageSpec` whose
@@ -1497,7 +1514,7 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
 - [ ] `mf.ic/oc/disv` dispatch on GWT/GWE; `mf.adv/dsp/mst/ssm/cnc/src/ist` +
       `mf.est/cnd/ctp/esl` exist; example 03 uses them (5.3)
 - [x] `mf.dis`/`mf.disu` passthroughs; fail-fast GridSpec tests untouched (5.5) — DONE 2026-07-23
-- [ ] `SimulationSpec.to_yaml/from_yaml` round-trips incl. exchanges/hooks (5.6)
+- [x] `SimulationSpec.to_yaml/from_yaml` round-trips incl. exchanges/hooks/list BCs (5.6) — DONE 2026-07-23 (YAML; TOML deferred, ledger 54)
 - [ ] ONE generic dependent-variable surface; `model.conc` + `model.temp` with full
       grammar (map/xs/plot/mosaic/animate), `conc_hover`/`temp_hover`, earth + RdBu-diff
       colors, GWT/GWE budget terms, `GroupConc`/`GroupTemp` + `diff()` maps,
