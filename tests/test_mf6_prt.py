@@ -201,16 +201,16 @@ def test_open_prt_run_reads_track_csv_and_terminal_points():
         result = open_prt_run(model, prt_workspace)
         assert isinstance(result, PRTRunResults)
         assert result.engine == "mf6-prt"
-        assert len(result.pathlines) == 3
-        first_load = result.pathlines
+        assert len(result.track_records) == 3
+        first_load = result.track_records
         assert len(result.terminal_points) == 2
         fig, ax = result.plot_map()
         assert fig is not None
         assert ax.get_title() == "Particle pathlines"
 
         pd.DataFrame({"ireason": [3], "x": [0.0], "y": [0.0]}).to_csv(track_path, index=False)
-        assert result.pathlines is first_load
-        assert len(result.refresh().pathlines) == 1
+        assert result.track_records is first_load
+        assert len(result.refresh().track_records) == 1
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -249,7 +249,7 @@ def test_real_gwf_to_prt_run_and_shared_scene():
 
         assert result.success
         assert result.track_csv_path.exists()
-        assert not result.pathlines.empty
+        assert not result.pathlines.get().empty
         scene = result.scene(off_screen=True)
         try:
             assert len(scene.meshes) >= 2
@@ -279,4 +279,4 @@ def test_canonical_prt_run_stops_at_flow_end_and_writes_pathlines(
 
     assert result.success
     assert result.track_csv_path.stat().st_size > 0
-    assert not result.pathlines.empty
+    assert not result.pathlines.get().empty

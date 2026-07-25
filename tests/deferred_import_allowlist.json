@@ -20,7 +20,7 @@
  "myflopy.modflow.mf6.pest.project": 2,
  "myflopy.modflow.mf6.pest.runs": 1,
  "myflopy.modflow.mf6.prt": 5,
- "myflopy.modflow.mf6.prt_maps": 1,
+ "myflopy.modflow.mf6.prt_maps": 2,
  "myflopy.modflow.mf6.sfr": 1,
  "myflopy.modflow.mf6.simulation.base": 8,
  "myflopy.modflow.utils.datatypes.choros": 1,

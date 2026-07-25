@@ -13,15 +13,22 @@ and capture zones -- and exposes each as a noun on
 The maps are **time-integrated**: they summarize a whole run rather than one
 stress period, so they carry no period footer and reject ``per=`` outright
 rather than accept a selector they would ignore.
+
+``results.pathlines`` is the fourth noun and the odd one out: it keeps the
+trajectories instead of collapsing them, drawing one map polyline per particle
+over an optional base map (:class:`PRTPathlineView`). Its ``get()`` is also the
+run's normalized record table.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 
 from myflopy import viz
 from myflopy.modflow.mf6.package_explorer_utils import _default_show_layer_elevs
@@ -31,7 +38,11 @@ from myflopy.modflow.mf6.package_plotting import (
     build_cell_input_map_payload,
 )
 from myflopy.modflow.mf6.package_tables import summarize_input_table
-from myflopy.modflow.utils.datatypes.hover import result_hover
+from myflopy.modflow.utils.datatypes.hover import (
+    HoverContext,
+    pathline_hover,
+    result_hover,
+)
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.prt import PRTRunResults
@@ -45,6 +56,11 @@ _TERMINATION_REASON = 3
 #: Sequential scale for the derived PRT maps (counts and elapsed times are both
 #: one-sided magnitudes -- never a signed difference, so never diverging).
 PRT_COLORSCALE = "earth"
+
+#: Choropleth options ``_blank_base`` sets itself (so ``base=None`` cannot take them).
+_BLANK_BASE_KWARGS = frozenset(
+    {"type", "custom_zs", "custom_hover", "hover_heads", "hover_ks", "showscale"}
+)
 
 #: Short unit labels for MF6's TDIS time units, for the travel-time hover.
 _TIME_UNIT_LABELS = {
@@ -85,7 +101,7 @@ def pathline_cell_table(pathlines: pd.DataFrame, *, ncpl: int) -> pd.DataFrame:
     Parameters
     ----------
     pathlines
-        Raw track records (``PRTRunResults.pathlines``).
+        Raw track records (``PRTRunResults.track_records``).
     ncpl
         Cells per layer in the flow model's grid.
 
@@ -191,11 +207,13 @@ def _join_groups(values) -> str:
 
 
 class _PRTDerivedView(SpatialView):
-    """Shared plumbing for the per-cell views derived from a PRT run.
+    """Shared plumbing for the views derived from a PRT run.
 
     Hosts a :class:`SpatialView` over a *derived* table (the
     ``SurfaceWaterExchangeResultsExplorer`` pattern): the view supplies the
     tabular ``get()`` and an atomic ``map()``, and inherits ``mosaic``/``animate``.
+    The three per-cell subclasses use that inheritance as-is;
+    :class:`PRTPathlineView` is not per-cell and overrides both.
     PRT runs have no stress-period axis, so ``per`` is fixed and the series verb
     is replaced by a purpose-built distribution figure on each subclass.
     """
@@ -218,7 +236,7 @@ class _PRTDerivedView(SpatialView):
     def _endpoints(self, layer: int | None = None) -> pd.DataFrame:
         """The run's particle endpoints, optionally restricted to one layer."""
 
-        frame = particle_endpoint_table(self.results.pathlines, ncpl=self._ncpl)
+        frame = particle_endpoint_table(self.results.track_records, ncpl=self._ncpl)
         if layer is not None and not frame.empty:
             frame = frame.loc[frame["layer"] == int(layer)]
         return frame
@@ -310,13 +328,20 @@ class _PRTDerivedView(SpatialView):
         )
         return _apply_backend(choro, backend)
 
-    def _distribution_figure(self, labels_values, *, title: str, x_title: str, y_title: str):
-        """A bar figure of ``[(label, value)]`` in the house template."""
+    def _distribution_figure(
+        self, labels_values, *, title: str, x_title: str, y_title: str, colors=None
+    ):
+        """A bar figure of ``[(label, value)]`` in the house template.
+
+        ``colors`` maps label -> color for bars that name a *category* (a release
+        group); cells and other ad-hoc labels stay on the default bar color.
+        """
 
         fig = viz.Fig()
         labels = [str(label) for label, _ in labels_values]
         values = [value for _, value in labels_values]
-        fig.add_bar(x=labels, y=values, name=y_title)
+        marker = {"color": [colors[label] for label in labels]} if colors else None
+        fig.add_bar(x=labels, y=values, name=y_title, marker=marker)
         fig.update_layout(title=title, xaxis_title=x_title, yaxis_title=y_title)
         return fig
 
@@ -419,11 +444,20 @@ class PRTTravelTimeView(_PRTDerivedView):
                 counts = np.arange(1, times.size + 1)
                 series.append((str(label) or "particles", times, counts))
 
+        # Shared policy colors, so a release group reads the same here as on the
+        # pathline map and the capture panels.
+        colors = viz.category_colors([label for label, _, _ in series])
         if self._normalize_backend(backend) == "plotly":
             fig = viz.Fig()
             for label, times, counts in series:
                 fig.add_scatter(
-                    x=times, y=counts, mode="lines+markers", line_shape="hv", name=label
+                    x=times,
+                    y=counts,
+                    mode="lines+markers",
+                    line_shape="hv",
+                    name=label,
+                    line_color=colors[label],
+                    marker_color=colors[label],
                 )
             fig.update_layout(
                 title=heading, xaxis_title="Travel time", yaxis_title="Particles arrived"
@@ -431,7 +465,9 @@ class PRTTravelTimeView(_PRTDerivedView):
             return fig
         fig, axis = viz.mpl_axes(figsize=(8, 4))
         for label, times, counts in series:
-            axis.step(times, counts, where="post", linewidth=2.0, label=label)
+            axis.step(
+                times, counts, where="post", linewidth=2.0, label=label, color=colors[label]
+            )
         axis.set_title(heading)
         axis.set_xlabel("Travel time")
         axis.set_ylabel("Particles arrived")
@@ -439,6 +475,479 @@ class PRTTravelTimeView(_PRTDerivedView):
             axis.legend()
         fig.tight_layout()
         return fig
+
+
+class PRTPathlineView(_PRTDerivedView):
+    """The trajectories themselves: particle tracks drawn over the model map.
+
+    The other PRT nouns collapse a run onto cells; this one keeps the paths. Each
+    particle becomes one map polyline, hovering a vertex reports where that
+    particle was and how long it had been travelling, and release groups share
+    one legend entry and one color with every other PRT figure.
+
+    ``get()`` returns the normalized track records -- every raw track-CSV column
+    plus ``cell``/``layer``/``travel_time``/``release_group``/``particle`` -- so
+    it is also the way to reach the run's raw table.
+    """
+
+    value_name = "travel_time"
+
+    #: Particles drawn before :meth:`map` starts sampling (see ``max_particles``).
+    DEFAULT_MAX_PARTICLES = 250
+
+    def get(self, *, group: str | None = None, layer: int | None = None) -> pd.DataFrame:
+        """Normalized track records, optionally limited to one release group or layer.
+
+        ``layer`` filters *records*, not particles: a particle that crosses layers
+        contributes only the vertices inside the requested layer.
+        """
+
+        frame = pathline_cell_table(self.results.track_records, ncpl=self._ncpl)
+        if group is not None and not frame.empty:
+            frame = frame.loc[frame["release_group"] == str(group)]
+        if layer is not None and not frame.empty:
+            frame = frame.loc[frame["layer"] == int(layer)]
+        return frame.reset_index(drop=True)
+
+    def summary(self) -> pd.DataFrame:
+        """One row per particle: where it started, where it stopped, how long it took."""
+
+        frame = self.get()
+        columns = [
+            "particle",
+            "release_group",
+            "records",
+            "start_cell",
+            "start_layer",
+            "end_cell",
+            "end_layer",
+            "travel_time",
+            "terminated",
+        ]
+        if frame.empty:
+            return pd.DataFrame(columns=columns)
+        ordered = frame.sort_values("t", kind="stable")
+        grouped = ordered.groupby("particle", sort=True)
+        first, last = grouped.first(), grouped.last()
+        digest = pd.DataFrame(
+            {
+                "release_group": last["release_group"],
+                "records": grouped.size().astype(int),
+                "start_cell": first["cell"],
+                "start_layer": first["layer"],
+                "end_cell": last["cell"],
+                "end_layer": last["layer"],
+                "travel_time": last["travel_time"],
+                "terminated": (
+                    grouped["ireason"].agg(lambda codes: bool((codes == _TERMINATION_REASON).any()))
+                    if "ireason" in frame.columns
+                    else False
+                ),
+            }
+        ).reset_index()
+        return digest[columns]
+
+    def groups(self) -> list[str]:
+        """The distinct release-group labels in the run (empty when it had none)."""
+
+        frame = self.get()
+        if frame.empty:
+            return []
+        return sorted({label for label in frame["release_group"].astype(str) if label})
+
+    # -- the map ------------------------------------------------------------
+    def _selected_particles(self, frame: pd.DataFrame, max_particles: int | None):
+        """Particle labels to draw, and how many were left out.
+
+        Sampling is **stratified by release group** and then evenly spaced inside
+        each group, rather than "the first N": a cap that silently dropped a whole
+        capture zone would change what the figure appears to say. A cap smaller
+        than the number of groups cannot keep them all -- the quota is round-robin,
+        so it keeps the first ``max_particles`` groups in sorted order.
+        """
+
+        labels = sorted(set(frame["particle"].tolist()))
+        if max_particles is None or len(labels) <= int(max_particles):
+            return labels, 0
+
+        by_group: dict[str, set] = {}
+        for particle, group in zip(frame["particle"], frame["release_group"], strict=False):
+            by_group.setdefault(str(group), set()).add(particle)
+        ordered = {group: sorted(members) for group, members in sorted(by_group.items())}
+
+        keep = int(max_particles)
+        quotas = dict.fromkeys(ordered, 0)
+        while sum(quotas.values()) < keep and any(
+            quotas[group] < len(members) for group, members in ordered.items()
+        ):
+            for group, members in ordered.items():
+                if sum(quotas.values()) >= keep:
+                    break
+                if quotas[group] < len(members):
+                    quotas[group] += 1
+
+        chosen: list[str] = []
+        for group, members in ordered.items():
+            quota = quotas[group]
+            if not quota:
+                continue
+            picks = np.linspace(0, len(members) - 1, quota).round().astype(int)
+            chosen.extend(members[index] for index in dict.fromkeys(picks.tolist()))
+        chosen.sort()
+        return chosen, len(labels) - len(chosen)
+
+    def _trace_color_key(self, color: str) -> str:
+        """Resolve ``color=`` to the frame column that decides trace colors."""
+
+        if color in ("release_group", "particle"):
+            return color
+        raise ValueError(
+            f"color={color!r} is not a pathline coloring; use 'release_group' "
+            "(default; falls back to per-particle when the run has no groups) or "
+            "'particle'."
+        )
+
+    def _pathline_traces(self, frame: pd.DataFrame, *, color: str, width: float):
+        """One :class:`plotly.graph_objects.Scattermap` polyline per particle."""
+
+        key = self._trace_color_key(color)
+        if key == "release_group" and not frame["release_group"].astype(bool).any():
+            key = "particle"  # no boundnames in this run: every particle its own color
+        unit = _time_unit(self.model)
+        hover_fields = [
+            name for name in ("layer", "z", "release_group") if name in frame.columns
+        ]
+        # Label first, THEN color: a run can mix named and un-named release points
+        # (MF6 writes an empty name), and those particles are labelled "particles".
+        labels = frame[key].astype(str).map(lambda value: value or "particles")
+        # Particle ids are not a category that recurs across figures, so they are
+        # colored per figure instead of filling the process-wide memo.
+        colors = viz.category_colors(labels.unique().tolist(), memoize=key != "particle")
+
+        traces, legended = [], set()
+        for label, records in frame.groupby("particle", sort=True):
+            records = records.sort_values("t", kind="stable")
+            lon, lat = self.model.vor.points_to_latlon(records["x"], records["y"])
+            legend_label = labels.loc[records.index[0]]
+            spec = pathline_hover(particle=str(label), unit=unit or None, fields=hover_fields)
+            context = HoverContext(
+                ncpl=len(records),
+                payload={name: records[name].tolist() for name in [*hover_fields, "travel_time"]},
+                cells=records["cell"].tolist(),
+            )
+            customdata, template, hoverlabel = spec.render(context)
+            traces.append(
+                go.Scattermap(
+                    mode="lines+markers",
+                    lon=lon.tolist(),
+                    lat=lat.tolist(),
+                    line={"color": colors[legend_label], "width": float(width)},
+                    marker={"size": 5, "color": colors[legend_label]},
+                    name=legend_label,
+                    legendgroup=legend_label,
+                    showlegend=legend_label not in legended,
+                    customdata=customdata,
+                    hovertemplate=template,
+                    hoverlabel=hoverlabel,
+                )
+            )
+            legended.add(legend_label)
+        return traces
+
+    def _blank_base(self, **kwargs):
+        """A map with the grid framed but no cell values -- context for ``base=None``."""
+
+        return self.model.cor(
+            type="custom",
+            custom_zs=[float("nan")] * self._ncpl,
+            custom_hover={},
+            hover_heads=False,
+            hover_ks=False,
+            showscale=False,
+            **kwargs,
+        )
+
+    def map(
+        self,
+        *,
+        base: str | None = "heads",
+        per: int | None = None,
+        layer: int | None = None,
+        group: str | None = None,
+        color: str = "release_group",
+        width: float = 2.0,
+        max_particles: int | None = DEFAULT_MAX_PARTICLES,
+        backend: str = "plotly",
+        title: str | None = None,
+        **base_kwargs,
+    ):
+        """Draw the particle tracks over a plan-view map of the flow model.
+
+        Parameters
+        ----------
+        base
+            What to draw beneath the paths: ``"heads"`` (the flow model's head
+            choropleth at ``per``/``layer``), ``None`` (the grid framed on the
+            basemap, no cell values), or an existing ``Choro`` -- so paths can
+            ride on any map you have already built, including
+            ``capture.map(group=...)`` or ``travel_time.map()``.
+        per, layer
+            Stress period and layer **of the base map**. The paths themselves are
+            never filtered by layer: a particle's plan-view track is the whole
+            three-dimensional trajectory, and hiding the parts that left one
+            layer would draw a broken line.
+        group
+            Restrict to one release group (raises naming the available groups if
+            it is not one of them).
+        color
+            ``"release_group"`` (default) or ``"particle"``. Colors come from
+            :func:`myflopy.viz.category_colors`, so a group matches its arrival
+            curve and capture bars.
+        width
+            Line width of each track, in pixels.
+        max_particles
+            Draw at most this many particles, sampled **stratified by release
+            group** (a round-robin quota, then evenly spaced inside each group) so
+            a cap at or above the group count cannot drop a whole capture zone;
+            ``None`` draws every one. The
+            cap is announced in the title and by a warning. One trace per particle
+            is what makes per-particle hover and legend toggling work, so a run
+            with thousands of them is capped rather than silently slow.
+        backend
+            ``"plotly"`` returns the ``Choro`` carrying the path overlays;
+            ``"mpl"`` returns the matplotlib ``(fig, ax)`` plan view. The mpl path
+            is the older FloPy plan view and honors only ``group``/``title``:
+            ``base``, ``per``, ``layer``, ``color``, ``width`` and
+            ``max_particles`` are plotly-side concerns and are ignored.
+        title
+            Figure title. On a caller-supplied ``base`` the existing title is left
+            alone unless this is given.
+        **base_kwargs
+            Forwarded to the base map (``model.cor(...)``) -- e.g. ``contours=``,
+            ``zmin=``/``zmax=``, ``locs=``.
+
+        Returns
+        -------
+        Choro or tuple
+            The ``Choro`` carrying one polyline overlay per particle (plotly), or
+            matplotlib's ``(fig, ax)``. Passing a ``Choro`` as ``base`` **adds the
+            overlays to that map** and returns it, so calling twice with the same
+            base draws the paths twice.
+        """
+
+        self._trace_color_key(color)  # validate up front, not only if rows survive
+        frame = self.get(group=group)
+        if group is not None and frame.empty:
+            available = self.groups()
+            raise KeyError(
+                f"No pathlines for release group {group!r}; this run has "
+                f"{available or 'no groups (release with group=... to name them)'}."
+            )
+        if self._normalize_backend(backend) == "mpl":
+            from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
+
+            if base_kwargs:
+                raise TypeError(
+                    f"backend='mpl' draws FloPy's plan view, which takes no base-map "
+                    f"options: {sorted(base_kwargs)}. Drop them, or use the default "
+                    "plotly backend."
+                )
+            return plot_particle_pathlines(
+                self.model,
+                frame,
+                title=title or "Particle pathlines",
+            )
+
+        kept, dropped = self._selected_particles(frame, max_particles)
+        if dropped:
+            drawn = frame.loc[frame["particle"].isin(kept)]
+            warnings.warn(
+                f"Drawing {len(kept)} of {len(kept) + dropped} particles; raise "
+                "max_particles= (or None) to draw them all.",
+                stacklevel=2,
+            )
+        else:
+            drawn = frame
+
+        borrowed = False
+        if base is not None and not isinstance(base, str) and hasattr(base, "add_overlay"):
+            # The map is already built; anything that would have shaped it is a
+            # selector this call cannot honor, so say so rather than drop it.
+            ignored = sorted(base_kwargs) + [
+                name for name, value in (("per", per), ("layer", layer)) if value is not None
+            ]
+            if ignored:
+                raise TypeError(
+                    f"base= is an already-built map, so {ignored} cannot apply to it. "
+                    "Set those when you build the base, or pass base='heads'/None."
+                )
+            choro, borrowed = base, True
+        elif base is None or base == "heads":
+            base_kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
+            layer_index = 0 if layer is None else int(layer)
+            if base is None:
+                clashes = sorted(base_kwargs.keys() & _BLANK_BASE_KWARGS)
+                if clashes:
+                    raise TypeError(
+                        f"base=None draws the grid with no cell values, so it sets "
+                        f"{clashes} itself. Pass base='heads' (or a Choro) to control them."
+                    )
+                choro = self._blank_base(per=per, layer=layer_index, **base_kwargs)
+            else:
+                choro = self.model.cor(per=per, layer=layer_index, **base_kwargs)
+        elif isinstance(base, str):
+            raise ValueError(
+                f"base={base!r} is not a pathline base map; use 'heads', None, "
+                "or a Choro you built yourself (e.g. capture.map(group=...))."
+            )
+        else:
+            raise TypeError(
+                f"Cannot draw pathlines over a base of type {type(base).__name__}; "
+                "pass 'heads', None, or a Choro."
+            )
+
+        if not drawn.empty:
+            choro.add_overlay(*self._pathline_traces(drawn, color=color, width=width))
+        # A caller-supplied base already says what it is; only name the figure when
+        # asked to, or when this call built the map itself.
+        heading = title if title is not None else (None if borrowed else "Particle pathlines")
+        if dropped and heading is not None:
+            heading = f"{heading} ({len(kept)} of {len(kept) + dropped} particles)"
+        if heading is not None:
+            choro.fig.update_layout(title=heading)
+        return _apply_backend(choro, backend)
+
+    def mosaic(
+        self,
+        *,
+        by: str = "release_group",
+        ncols: int = 2,
+        sync_views: bool = True,
+        backend: str = "plotly",
+        title: str | None = None,
+        **kwargs,
+    ):
+        """One map panel per release group, on a shared view.
+
+        Only ``by="release_group"`` is offered: layer panels would repeat the same
+        trajectories over different head layers, since a plan-view track is never
+        layer-specific.
+        """
+
+        if by != "release_group":
+            raise ValueError(
+                f"by={by!r} is not a pathline facet; particles are not per-layer, "
+                "so only by='release_group' faceting is meaningful."
+            )
+        if self._normalize_backend(backend) != "plotly":
+            raise ValueError(
+                "A pathline mosaic is a Plotly composition; pass group= to map() for "
+                "a single matplotlib panel, or backend='plotly'."
+            )
+        borrowed_base = kwargs.get("base")
+        if borrowed_base is not None and hasattr(borrowed_base, "add_overlay"):
+            raise ValueError(
+                "One already-built base cannot back several panels -- every group "
+                "would be drawn onto the same map. Pass base='heads' or None, or "
+                "build the panels yourself with map(group=..., base=...)."
+            )
+        labels = self.groups()
+        if not labels:
+            raise ValueError(
+                "This run has no release groups to facet by. Release with "
+                "PRTReleasePoints.from_cells(..., group=...) to name them, or call "
+                "map() for the single-panel figure."
+            )
+        panels = [
+            (label, self.map(group=label, backend=backend, title=label, **kwargs))
+            for label in labels
+        ]
+        return viz.mosaic(panels, ncols=ncols, title=title, sync_views=sync_views)
+
+    def plot(self, *, backend: str = "plotly", title: str | None = None):
+        """Elevation against travel time -- the vertical half of each trajectory.
+
+        The plan-view map says where particles went; this says how deep they got
+        and when, one line per particle colored by release group.
+        """
+
+        frame = self.get()
+        heading = title or "Particle elevation over travel time"
+        if not frame.empty and "z" not in frame.columns:
+            raise KeyError(
+                "Track records carry no 'z' column, so there is no elevation to "
+                "plot; use map() for the plan view."
+            )
+        series = []
+        if not frame.empty:
+            key = "release_group" if frame["release_group"].astype(bool).any() else "particle"
+            for _label, records in frame.groupby("particle", sort=True):
+                records = records.sort_values("t", kind="stable")
+                series.append(
+                    (
+                        str(records[key].iloc[0]) or "particles",
+                        records["travel_time"].to_numpy(dtype=float),
+                        records["z"].to_numpy(dtype=float),
+                    )
+                )
+        colors = viz.category_colors([label for label, _, _ in series])
+
+        if self._normalize_backend(backend) == "plotly":
+            fig = viz.Fig()
+            legended = set()
+            for label, times, elevations in series:
+                fig.add_scatter(
+                    x=times,
+                    y=elevations,
+                    mode="lines",
+                    name=label,
+                    legendgroup=label,
+                    showlegend=label not in legended,
+                    line_color=colors[label],
+                )
+                legended.add(label)
+            fig.update_layout(
+                title=heading, xaxis_title="Travel time", yaxis_title="Elevation"
+            )
+            return fig
+        fig, axis = viz.mpl_axes(figsize=(8, 4))
+        legended = set()
+        for label, times, elevations in series:
+            axis.plot(
+                times,
+                elevations,
+                linewidth=1.5,
+                color=colors[label],
+                label=label if label not in legended else None,
+            )
+            legended.add(label)
+        axis.set_title(heading)
+        axis.set_xlabel("Travel time")
+        axis.set_ylabel("Elevation")
+        if legended:
+            axis.legend()
+        fig.tight_layout()
+        return fig
+
+    def xs(self, *args, **kwargs):
+        """Trajectories are not a per-cell field, so there is no section to slice."""
+
+        raise NotImplementedError(
+            "Pathlines are trajectories, not a per-cell field, so they cannot be "
+            "sliced into a cross-section. plot() draws elevation against travel "
+            "time, which is the vertical view of the same tracks."
+        )
+
+    def animate(self, *args, **kwargs):
+        """One figure already holds the whole run, so there is no axis to animate."""
+
+        raise NotImplementedError(
+            "The pathline map already draws every particle's whole trajectory, so "
+            "there is no period (or model) axis to animate over. Use mosaic() to "
+            "compare release groups, or plot() for elevation against travel time. "
+            "(Animating particle *position* over time would need a time axis this "
+            "view does not build -- see the compromise ledger.)"
+        )
 
 
 class PRTEndpointsView(_PRTDerivedView):
@@ -695,12 +1204,21 @@ class PRTCaptureView(_PRTDerivedView):
         )
         pairs = [(str(label), int(value)) for label, value in counts.items()]
         heading = title or f"Particles by {by.replace('_', ' ')}"
+        colors = viz.category_colors([label for label, _ in pairs])
         if self._normalize_backend(backend) == "plotly":
             return self._distribution_figure(
-                pairs, title=heading, x_title="Release group", y_title="Particles"
+                pairs,
+                title=heading,
+                x_title="Release group",
+                y_title="Particles",
+                colors=colors,
             )
         fig, axis = viz.mpl_axes(figsize=(8, 4))
-        axis.bar([label for label, _ in pairs], [value for _, value in pairs])
+        axis.bar(
+            [label for label, _ in pairs],
+            [value for _, value in pairs],
+            color=[colors[label] for label, _ in pairs],
+        )
         axis.set_title(heading)
         axis.set_xlabel("Release group")
         axis.set_ylabel("Particles")

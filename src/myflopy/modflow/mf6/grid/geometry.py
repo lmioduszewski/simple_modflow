@@ -163,6 +163,26 @@ def get_latlon(vor):
     return vor._latlon
 
 
+def points_to_latlon(vor, x, y):
+    """Reproject model-coordinate points onto the map frame, as ``(lon, lat)`` arrays.
+
+    The bridge between model results carrying raw ``x``/``y`` -- PRT track
+    records, observation locations -- and the WGS84 space the choropleth lives
+    in. The grid's own vertices are reprojected the same way
+    (:func:`get_gdf_latlon`), so points land where the cells are.
+    """
+
+    crs = getattr(vor, "crs", None)
+    if crs is None:
+        raise ValueError(
+            "Cannot place points on the map: the grid has no CRS. Build the grid "
+            "with VoronoiGridPlus(..., crs='EPSG:XXXX') so model coordinates can "
+            "be reprojected to lat/lon."
+        )
+    points = gpd.GeoSeries(gpd.points_from_xy(x, y), crs=crs).to_crs(vor.crs_latlon)
+    return points.x.to_numpy(), points.y.to_numpy()
+
+
 def get_grid_centroid(vor):
     """
     Return the centroid of the Voronoi domain in lat/lon coordinates.

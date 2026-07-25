@@ -168,25 +168,41 @@ FMI + grid copying ARE needed); on that path the groups come from
 `PRTReleasePoints.merge(west, east)` combines grouped sets into the one PRP MF6
 wants, renumbering `irpt`.
 
-**Reading a finished PRT run (§6.3B, 2026-07-25).** Trajectories are not a
-per-cell field, so `PRTRunResults` rolls them up into three per-cell view nouns
-that answer the normal verbs (`get`/`summary`/`plot`/`map`/`mosaic`,
-`prt_maps.py`):
+**Reading a finished PRT run (§6.3B/§6.3C, 2026-07-25).** Trajectories are not a
+per-cell field, so `PRTRunResults` exposes four view nouns that answer the normal
+verbs (`get`/`summary`/`plot`/`map`/`mosaic`, `prt_maps.py`) — one keeping the
+paths, three rolling them onto cells:
 
 | noun | `get()` rows | `map()` draws |
 |---|---|---|
+| `results.pathlines` | the **normalized track records**: every raw track-CSV column plus `cell, layer, travel_time, release_group, particle` | one map polyline per particle over a base map (`base="heads"`/`None`/a `Choro`), colored per release group |
 | `results.travel_time` | one per `(layer, cell)`: `layer, cell, travel_time, particle_count, min_time, max_time, release_groups` | time-of-travel choropleth (`stat="median"`, `'earth'`, optional `logscale`) |
 | `results.endpoints` | the same columns (the count is the mapped one) | particle-termination counts per cell |
 | `results.capture` | those columns prefixed by `group` (one per `(group, layer, cell)`) | **mosaic**, one panel per release group on a shared scale; `group=` gives one `Choro` |
 
 ```python
 results = model.particle_tracking.prt(workspace=ws, release_points=rp).run()
+results.pathlines.map()                                  # tracks over the water table
 results.travel_time.map(stat="median", logscale=True)   # time-of-travel figure
 results.capture.map()                                    # capture zones, side by side
 results.travel_time.plot()                               # cumulative arrival curve
 ```
 
-These maps are **time-integrated** over the whole run: they reject `per=` (and
+`pathlines` is a **view, not a frame**: `results.pathlines.get()` is the record
+table and `results.track_records` the untouched CSV (what FloPy/PyVista consume).
+Its `map()` returns the `Choro` carrying one `Scattermap` line per particle —
+hovering a vertex reports that particle's cell, layer, elevation, release
+group, and elapsed time — `plot()` draws elevation against travel time, `mosaic()` gives one panel
+per release group, and `backend="mpl"` returns the existing FloPy plan view.
+`max_particles=` (default 250) caps a large run by sampling **stratified across
+release groups** (so a cap at or above the group count cannot drop a whole capture
+zone), and says so in the title and a warning. Selectors the call cannot honor
+raise rather than being dropped: base-map options on `backend="mpl"`, `per`/`layer`
+on an already-built `base`, and a `base` shared across `mosaic()` panels. Group colors come from
+`viz.category_colors` / `PALETTE.categorical`, so a group reads the same on the
+pathline map, the arrival curve, and the capture bars.
+
+The three per-cell maps are **time-integrated** over the whole run: they reject `per=` (and
 `animate()`) rather than accept an axis they would ignore, and carry no period
 footer (`result_hover(..., footer=())`). `layer=None` pools every layer into one
 plan-view panel, recomputing the statistic over the pooled particles rather than
@@ -301,6 +317,13 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `constant`, `lake_fluxes`, `auxiliary`, `types`.
 
 **UZF** (`model.packages.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
+
+**PRT** (a finished run's `PRTRunResults`, not `model.packages`): `results.pathlines`
+(trajectories — `map` draws polylines, not cells), `results.travel_time`,
+`results.endpoints`, `results.capture`. These are derived, time-integrated views, so
+they reject `per=`; `pathlines` also refuses `xs`/`animate` (a trajectory is not a
+per-cell field to slice) and `travel_time`/`endpoints`/`capture` refuse `animate`.
+The raw MF6 track table is `results.track_records`. Full detail in §A above.
 
 **Model-level reads:** `model.hds` (GWF heads explorer — `get`/`summary`/`array`/
 `map`/`xs`/`mosaic`/`animate`), and its transport twins **`model.conc`** (GWT

@@ -55,6 +55,42 @@ def test_prt_derived_maps_follow_the_same_non_signed_rule():
     assert PRT_COLORSCALE == "earth"
 
 
+def test_category_colors_are_policy_and_stable_across_figures(isolated_category_colors):
+    """Named categories get colors from one memoized helper, not per-call-site hexes.
+
+    A release group drawn on the pathline map, its arrival curve, and its capture
+    bars must be the same color, or a set of small multiples stops being readable
+    -- so the mapping is remembered rather than recomputed per figure.
+    """
+
+    from myflopy.viz import PALETTE, category_colors
+
+    first = category_colors(["west_wells", "east_wells"])
+    assert set(first.values()) <= set(PALETTE.categorical)
+    assert len(set(first.values())) == 2
+
+    # Same name -> same color later. "west_wells" sorted SECOND when it was first
+    # seen and sorts FIRST here, so an implementation that re-enumerates per call
+    # instead of remembering would hand it a different color.
+    later = category_colors(["west_wells", "zzz_wells"])
+    assert later["west_wells"] == first["west_wells"]
+    assert later["zzz_wells"] != later["west_wells"]
+
+    # A figure's own categories stay distinguishable even when one name is first
+    # seen long after its sibling -- the collision a plain global cycle counter
+    # produces once the palette wraps. Again the remembered name sorts second, so
+    # a forgetful implementation would move it.
+    for index in range(len(PALETTE.categorical) + 1):
+        category_colors([f"filler_{index}"])
+    pair = category_colors(["aaa_late_wells", "east_wells"])
+    assert pair["east_wells"] == first["east_wells"]
+    assert pair["aaa_late_wells"] != pair["east_wells"]
+
+    # more categories at once than colors: the palette repeats rather than running out
+    many = category_colors([f"zone_{index}" for index in range(len(PALETTE.categorical) + 3)])
+    assert set(many.values()) <= set(PALETTE.categorical)
+
+
 def test_diff_maps_use_rdbu_negative_red_positive_blue():
     # plotly RdBu runs red (low) -> blue (high); with zmid=0 that is
     # negative red / positive blue, the required diff-map orientation

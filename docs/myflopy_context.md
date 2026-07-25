@@ -88,10 +88,12 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | GWT/GWE **package helpers** (adv/dsp/mst/ist/ssm/cnc/src; est/cnd/ctp/esl) | ✅ | `package_api.py` factories build `ModflowGwt*`/`ModflowGwe*` (plan §5.3B); `mf.ic/oc/disv/dis/disu` dispatch the FloPy class on the model kind (§5.3A/§5.5) |
 | GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
 | GWT/GWE results — budget / group-diff / obs | ❌ | GWT/GWE budget views, `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
-| MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
+| MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking`; raw CSV on `results.track_records` |
 | PRT **spec-first declarability** (mip/prp/ems + exchange, no FMI) | ✅ | `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dis/disv/oc dispatch; `mf.simulation` solver default is kind-aware (IMS vs EMS) — §6.3A, 2026-07-24 |
 | PRT derived cell maps (travel-time / endpoints / capture choropleths) | ✅ | `prt_maps.py` — `results.travel_time` / `.endpoints` / `.capture` nouns (get/summary/plot/map/mosaic), release groups via PRP boundnames — §6.3B, 2026-07-25 |
-| PRT plotly pathline map + `pathline_hover` | ❌ | the pathline map is still matplotlib (`plot_particle_pathlines`); plan §6.3C |
+| PRT plotly pathline map + `pathline_hover` | ✅ | `results.pathlines` view (`prt_maps.PRTPathlineView`): one `Scattermap` polyline per particle over `base="heads"`/`None`/a `Choro`, per-vertex `pathline_hover`, `plot()` = elevation vs travel time, `mosaic()` per release group, `backend="mpl"` = the FloPy plan view — §6.3C, 2026-07-25 |
+| Map overlays composed into mosaics | ✅ | `Choro.add_overlay`/`overlay_traces` + `viz.mosaic` copying them (was silently dropping contours/locs) — §6.3C |
+| Category colors (release groups, zones) | ✅ | `viz.PALETTE.categorical` + memoized `viz.category_colors` — one color per name across every figure |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
 | Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |
 | Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
@@ -103,7 +105,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### Visualization front door, grammar, hover, colors
 | Capability | Status | Where |
 |---|---|---|
-| Plotting front door (`viz.Fig/subplots/mpl_axes/PALETTE`, figs backend) | ✅ | `viz.py` — import every figure from here, not raw plotly/matplotlib. figs is vendored (`myflopy/_vendor/figs`, synced via `scripts/sync_vendored_figs.py`): viz.py imports the live figs first and falls back to the snapshot, so pip installs work without the local figs project |
+| Plotting front door (`viz.Fig/subplots/mosaic/mpl_axes/PALETTE/category_colors`, figs backend) | ✅ | `viz.py` — import every figure from here, not raw plotly/matplotlib. figs is vendored (`myflopy/_vendor/figs`, synced via `scripts/sync_vendored_figs.py`): viz.py imports the live figs first and falls back to the snapshot, so pip installs work without the local figs project |
 | Unified view grammar: `map/plot/xs` + `mosaic/animate` on every leaf (model / group / diff), `backend="plotly"\|"mpl"` | ✅ | `package_plotting.py` (`SpatialView`, composers), `viz.mosaic` |
 | **Derived-table views** (`<pkg>.<inputs\|results>.<noun>.<verb>` for merged tables, not just mappable fields) | ✅ | **`docs/view_layer_conventions.md` is the normative rule.** Reference impl: `SfrProfileView` (`sfr.results.profile`). Before 2026-07-18 derived tables sat OUTSIDE the grammar as `foo()`/`plot_foo()` pairs — that gap is what let two notebooks hand-roll matplotlib over a built-in |
 | Map mosaics framed to data + **synced pan/zoom** (`sync_views=`) | ✅ | `viz.py` (`shared_map_view`, `_map_sync_post_script`), `Choro.map_view` |
@@ -161,9 +163,9 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    Results tier: reader + maps **DONE 2026-07-24** (§6.0/6.1/6.2: `model.conc`/
    `model.temp` grammar + hover + `'earth'` colorscale, kind-gated). Still deferred:
    GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
-3. **PRT**: derived cell maps **DONE 2026-07-25** (§6.3B: `results.travel_time`/
-   `.endpoints`/`.capture` nouns + release groups); the **plotly pathline map +
-   `pathline_hover`** remain (§6.3C). **PEST-IES viz upgrades** (field-map
+3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
+   `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
+   `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades** (field-map
    hover/colors, uncertainty maps, prior/posterior mosaics — §6.4) still open.
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
    + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC

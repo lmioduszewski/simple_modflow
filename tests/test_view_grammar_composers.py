@@ -402,3 +402,65 @@ def test_composers_render_on_canonical(canonical_run):
         ncols=2,
     )
     assert isinstance(mixed, go.Figure) and len(mixed.data) >= 2
+
+
+def test_viz_mosaic_carries_map_overlays_into_each_panel():
+    """A panel's overlays (contours, location markers, pathlines) ride into the mosaic.
+
+    Copying only the cell trace used to drop every overlay silently, so a mosaic
+    of contoured maps -- or of pathline maps -- showed half the figure.
+    """
+
+    class _OverlaidChoro(_FakeChoro):
+        def overlay_traces(self):
+            return [go.Scattermap(mode="lines", lon=[0.0, 1.0], lat=[0.0, 1.0], name="path")]
+
+    fig = viz.mosaic([_OverlaidChoro([1.0, 2.0]), _OverlaidChoro([3.0, 4.0])], ncols=2)
+
+    assert [trace.type for trace in fig.data] == [
+        "choroplethmap",
+        "scattermap",
+        "choroplethmap",
+        "scattermap",
+    ]
+    # only the cell traces join the shared color scale; the overlays keep their own
+    assert fig.layout.coloraxis.cmin == 1.0 and fig.layout.coloraxis.cmax == 4.0
+    assert [trace.subplot for trace in fig.data] == ["map", "map", "map2", "map2"]
+
+
+def test_real_choro_overlays_survive_composition(canonical_run):
+    """The bug ledger 62 records: a mosaic of contoured maps lost its contours.
+
+    Exercised on a real ``Choro`` rather than a fake, so it pins what
+    ``overlay_traces()`` actually collects -- contour polylines and location
+    markers, not just whatever a test double chooses to return.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import LineString, Point
+
+    vor = canonical_run.vor
+    centroid = vor.gdf_vorPolys.geometry.iloc[0].centroid
+    locs = gpd.GeoDataFrame(
+        {"ExploName": ["well A", "a transect"]},
+        geometry=[
+            Point(centroid.x, centroid.y),
+            # a geometry type the marker overlay does not draw: skipped, not fatal
+            LineString([(centroid.x, centroid.y), (centroid.x + 10.0, centroid.y)]),
+        ],
+        crs=vor.crs,
+    )
+    choro = canonical_run.cor(layer=0, contours=True, contour_levels=3, locs=locs)
+
+    overlays = choro.overlay_traces()
+    names = [trace.name for trace in overlays]
+    assert "well A" in names, names
+    assert "a transect" not in names  # LineString skipped
+    contours = [trace for trace in overlays if trace.mode == "lines"]
+    assert contours, names
+    assert all(trace.type == "scattermap" for trace in overlays)
+
+    # ...and every one of them reaches the composed panel
+    fig = viz.mosaic([("heads", choro)])
+    assert len(fig.data) == 1 + len(overlays)
+    assert sum(trace.type == "choroplethmap" for trace in fig.data) == 1

@@ -2,8 +2,9 @@
 
 PRT is a separate MF6 simulation that consumes a completed groundwater-flow
 model's head and budget outputs through FMI. The resulting track CSV is exposed
-as a pandas DataFrame and feeds the same plotting and 3D visualization layer as
-other particle-tracking engines.
+as view nouns on :class:`PRTRunResults` (``pathlines``/``travel_time``/
+``endpoints``/``capture``) and feeds the same plotting and 3D visualization layer
+as other particle-tracking engines.
 """
 
 from __future__ import annotations
@@ -315,16 +316,19 @@ class PRTRunResults:
     Created for you by :class:`PRTProject` after a run, or reopened from disk with
     :func:`open_prt_run` without rebuilding the simulation.
 
-    Trajectories also roll up into three per-cell view nouns -- :attr:`travel_time`,
-    :attr:`endpoints`, and :attr:`capture` -- each answering the usual
+    Results are read through view nouns, each answering the usual
     ``get``/``summary``/``plot``/``map``/``mosaic`` verbs
     (``myflopy.modflow.mf6.prt_maps``)::
 
+        results.pathlines.map()                  # the tracks over the head map
+        results.pathlines.get()                  # normalized track records
         results.travel_time.map(stat="median")   # time-of-travel choropleth
         results.endpoints.get()                  # counts per terminating cell
         results.capture.map()                    # one panel per release group
 
-    Those maps are time-integrated over the whole run, so they take no ``per``.
+    The three per-cell maps are time-integrated over the whole run, so they take
+    no ``per``. :attr:`pathlines` is a **view**, not a frame -- call ``.get()``
+    for the records (or :attr:`track_records` for the untouched CSV).
 
     Attributes
     ----------
@@ -353,8 +357,13 @@ class PRTRunResults:
         return "mf6-prt"
 
     @cached_property
-    def pathlines(self) -> pd.DataFrame:
-        """Load and cache the PRT track CSV."""
+    def track_records(self) -> pd.DataFrame:
+        """Load and cache the PRT track CSV exactly as MF6 wrote it.
+
+        The raw table: one-based ``icell``, no derived columns. FloPy and PyVista
+        consume it directly; for analysis prefer ``pathlines.get()``, which adds
+        zero-based ``cell``/``layer``, ``travel_time``, and the release group.
+        """
 
         if not self.track_csv_path.exists():
             raise FileNotFoundError(f"PRT track CSV not found: {self.track_csv_path}")
@@ -363,14 +372,14 @@ class PRTRunResults:
     def refresh(self) -> PRTRunResults:
         """Clear cached file-backed results so subsequent access rereads disk."""
 
-        self.__dict__.pop("pathlines", None)
+        self.__dict__.pop("track_records", None)
         return self
 
     @property
     def terminal_points(self) -> pd.DataFrame:
         """The terminating pathline records (``ireason == 3``), one per particle endpoint."""
 
-        data = self.pathlines
+        data = self.track_records
         if "ireason" not in data.columns:
             return data.iloc[0:0].copy()
         return data.loc[data["ireason"] == 3].copy()
@@ -382,6 +391,16 @@ class PRTRunResults:
         from myflopy.modflow.mf6 import prt_maps
 
         return prt_maps
+
+    @property
+    def pathlines(self):
+        """Pathline view: the tracks themselves (``get``/``summary``/``plot``/``map``/``mosaic``).
+
+        A **view**, not a DataFrame -- ``pathlines.get()`` returns the normalized
+        records and ``pathlines.map()`` draws them over the model map.
+        """
+
+        return self._maps().PRTPathlineView(self)
 
     @property
     def travel_time(self):
@@ -406,21 +425,21 @@ class PRTRunResults:
 
         from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
 
-        return build_particle_tracking_scene(self.flow_model, self.pathlines, **kwargs)
+        return build_particle_tracking_scene(self.flow_model, self.track_records, **kwargs)
 
     def plot_map(self, **kwargs):
         """Plot the particle pathlines on a plan-view map of the flow model."""
 
         from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
 
-        return plot_particle_pathlines(self.flow_model, self.pathlines, **kwargs)
+        return plot_particle_pathlines(self.flow_model, self.track_records, **kwargs)
 
     def export_3d_html(self, output_path: str | Path, **kwargs) -> Path:
         """Export a standalone 3D HTML particle-tracking scene to ``output_path``."""
 
         from myflopy.modflow.mf6.interactive_plotting import export_particle_tracking_html
 
-        return export_particle_tracking_html(self.flow_model, self.pathlines, output_path, **kwargs)
+        return export_particle_tracking_html(self.flow_model, self.track_records, output_path, **kwargs)
 
 
 class PRTProject:

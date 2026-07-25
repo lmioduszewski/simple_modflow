@@ -199,6 +199,7 @@ class Choro:
         self._custom_zs = custom_zs
         self._zmin = zmin
         self._locs = None
+        self._overlays = []
         self._zmax = zmax
         self.zoom = zoom
         self.fit_bounds = fit_bounds
@@ -829,11 +830,11 @@ class Choro:
         self.update_layout()
         self.fig.add_trace(self.get_choropleth())
 
-    def add_contours(self):
-        """Add optional contour lines to the choropleth map."""
+    def _contour_traces(self):
+        """Build -- without adding -- the contour polyline traces for this map."""
 
         if not self.contours and self.contour_values is None:
-            return
+            return []
         values = self._contour_vector()
         segments = contour_line_segments_latlon(
             self.vor,
@@ -845,18 +846,49 @@ class Choro:
             method=self.contour_method,
         )
         self._contour_segments = segments
+        traces = []
         for segment in segments:
             hover_text = f"{self.contour_name or 'Contour'}: {segment['level']:.6g}"
-            self.fig.add_scattermap(
-                mode="lines",
-                lon=segment["lon"].tolist(),
-                lat=segment["lat"].tolist(),
-                line={"color": self.contour_color, "width": self.contour_width},
-                name=self.contour_name or "Contour",
-                text=[hover_text] * len(segment["lon"]),
-                hovertemplate="%{text}<extra></extra>",
-                showlegend=False,
+            traces.append(
+                go.Scattermap(
+                    mode="lines",
+                    lon=segment["lon"].tolist(),
+                    lat=segment["lat"].tolist(),
+                    line={"color": self.contour_color, "width": self.contour_width},
+                    name=self.contour_name or "Contour",
+                    text=[hover_text] * len(segment["lon"]),
+                    hovertemplate="%{text}<extra></extra>",
+                    showlegend=False,
+                )
             )
+        return traces
+
+    def add_contours(self):
+        """Add optional contour lines to the choropleth map."""
+
+        for trace in self._contour_traces():
+            self.fig.add_trace(trace)
+
+    def add_overlay(self, *traces):
+        """Register extra map traces (pathlines, features, ...) drawn over the cells.
+
+        Overlays ride with the map wherever it goes: :attr:`choropleth` draws them
+        onto the figure, and :func:`myflopy.viz.mosaic` copies them into the panel
+        alongside the cell trace -- which is what keeps a composed small-multiple
+        from quietly showing only half the picture.
+        """
+
+        self._overlays.extend(traces)
+        return self
+
+    def overlay_traces(self):
+        """Every non-cell trace this map carries: contours, locations, overlays.
+
+        Built fresh and detached from :attr:`fig`, so a composer can place them in
+        its own subplot cell without disturbing this map.
+        """
+
+        return [*self._contour_traces(), *self._locs_traces(), *self._overlays]
 
     def _build_hover_context(self):
         """Assemble a :class:`HoverContext` from this map's data for ``hover_spec``."""
@@ -958,27 +990,34 @@ class Choro:
         )
         return choropleth
 
-    def add_locs(self, name_field='ExploName'):
-        """Overlay each location feature as a labeled point/line trace on ``self.fig``.
+    def _locs_traces(self, name_field='ExploName'):
+        """Build -- without adding -- the location-marker traces for this map.
 
         ``name_field`` names the attribute column used for the trace label (falling
         back to the row index); points become markers and polygons become outlines.
+        Geometry types that are neither (lines, collections) are skipped rather
+        than raising, so a composer can always ask a map for its overlays.
         """
 
-        if self.locs is not None:
-            for idx, row in self.locs.iterrows():
-                try:
-                    name = row[name_field]
-                except:
-                    name = idx
-                geom = row.geometry
-                if isinstance(geom, shp.Polygon):
-                    coords = geom.exterior.xy
-                    mode = 'lines'
-                elif isinstance(geom, shp.Point):
-                    coords = geom.xy
-                    mode = 'markers'
-                self.fig.add_scattermap(
+        if self.locs is None:
+            return []
+        traces = []
+        for idx, row in self.locs.iterrows():
+            try:
+                name = row[name_field]
+            except:
+                name = idx
+            geom = row.geometry
+            if isinstance(geom, shp.Polygon):
+                coords = geom.exterior.xy
+                mode = 'lines'
+            elif isinstance(geom, shp.Point):
+                coords = geom.xy
+                mode = 'markers'
+            else:
+                continue
+            traces.append(
+                go.Scattermap(
                     mode=mode,
                     lat=coords[1].tolist(),
                     lon=coords[0].tolist(),
@@ -986,15 +1025,25 @@ class Choro:
                     marker_color='black',
                     showlegend=False,
                 )
+            )
+        return traces
+
+    def add_locs(self, name_field='ExploName'):
+        """Overlay each location feature as a labeled point/line trace on ``self.fig``."""
+
+        for trace in self._locs_traces(name_field):
+            self.fig.add_trace(trace)
 
     @property
     def choropleth(self):
-        """The fully assembled figure: cells + contours + location markers + hillshade."""
+        """The fully assembled figure: cells + contours + location markers + overlays + hillshade."""
 
         self.add_choropleth()
         self.add_contours()
         if self.locs is not None:
             self.add_locs()
+        for trace in self._overlays:
+            self.fig.add_trace(trace)
         if self.hillshade_path is not None:
             self.add_hillshade(self.hillshade_path)
         return self.fig

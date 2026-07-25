@@ -18,9 +18,21 @@
   original names were `verb_noun` pairs the view-layer conventions forbid. An
   adversarial review of the change also found and fixed a real pre-existing bug:
   `logscale` was silently dropped on every `custom_zs` choropleth (ledger 60).
-- **Next:** 6.3C, then 6.4A→C.
-- Full serial suite after 6.3B: **855 passed / 1 skipped** (`pytest -n0`).
-- Task list: #53 6.3C, #54 6.4A, #55 6.4B, #56 6.4C.
+- **6.3C DONE 2026-07-25** — `results.pathlines` is now a **view** (the raw CSV
+  moved to `results.track_records`, clean break, ledger 61) whose `map()` draws one
+  `Scattermap` polyline per particle over `base="heads"`/`None`/an existing `Choro`,
+  with per-vertex `pathline_hover`, `plot()` = elevation vs travel time, `mosaic()`
+  per release group, `backend="mpl"` = the old FloPy plan view. Two shared-surface
+  changes came with it: `Choro.add_overlay`/`overlay_traces` + `viz.mosaic` copying
+  overlays (fixes a pre-existing silent drop of contours/locs, ledger 62) and
+  `PALETTE.categorical` + memoized `viz.category_colors` (ledger: policy colors for
+  named categories), retrofitted into `travel_time.plot()`/`capture.plot()`. New
+  grid helper `vor.points_to_latlon(x, y)` — **6.4B's residual points want it too**.
+  Canonical notebook 03 cell 5's hand-rolled matplotlib is now the library figure
+  (ledger 64). **§6.3 is complete**; the plan's acceptance checklist item is ticked.
+- **Next:** 6.4A→C.
+- Full serial suite after 6.3C: **891 passed / 1 skipped** (`pytest -n0`, 147 s).
+- Task list: #54 6.4A, #55 6.4B, #56 6.4C.
 
 ## Locked user decisions (AskUserQuestion, 2026-07-24)
 
@@ -35,7 +47,7 @@
 ## Verified scoping facts (from a 5-agent sweep + live probes; trust these)
 
 ### PRT data layer
-- Track CSV schema (`PRTRunResults.pathlines` = raw `pd.read_csv`, prt.py:270-282):
+- Track CSV schema (`PRTRunResults.track_records` = raw `pd.read_csv`):
   `kper, kstp, imdl, iprp, irpt, ilay, icell, izone, istatus, ireason, trelease,
   t, x, y, z, name`. Particle key = `(imdl, iprp, irpt, trelease)`.
 - **`icell` is a ONE-based whole-grid node number** (verified by live 2-layer
@@ -194,18 +206,23 @@ table. Recipe:
    ('period','date') for back-compat; capture-map error-not-fallback choice.
 8. `pytest -n0` full; commit "6.3B: PRT release groups + derived cell maps".
 
-### 6.3C — plotly pathline map (task #53)
-- `pathline_hover()` spec in hover.py (particle id, release group, time, layer;
-  style via `HoverStyle().to_hoverlabel()`).
-- New `PRTRunResults.pathline_map(...)` (implementation in prt_maps.py, lazy
-  from prt.py like the nouns): scatter line traces per particle
-  (groupby imdl/iprp/irpt/trelease) over an optional base map
-  (`base="heads"` → `flow_model.cor(...)` choropleth; `base=None` → grid
-  outline), colored per release group when names exist else per particle;
-  returns viz.Fig. Existing matplotlib `plot_map` stays untouched.
-- Tests in test_prt_maps.py (trace count == n particles, hovertemplate fields,
-  Fig type). Docs + plan banner for 6.3.1/6.3.2; delete the 6.3 checklist item
-  (plan ~line 1569) when B+C both land; commit.
+### 6.3C — plotly pathline map (task #53) — **DONE 2026-07-25**
+Built as a fourth **noun** (`results.pathlines`), not the `pathline_map()` method
+drafted here — same naming rule that renamed 6.3B's maps. It returns the `Choro`
+(not a bare `viz.Fig`) so `_apply_backend`, view syncing, and the mosaic composer
+all keep working. Corrections to what was drafted, worth carrying into 6.4:
+- Maps are `go.Choroplethmap` in **WGS84**, so any overlay of model x/y needs
+  reprojection: `vor.points_to_latlon(x, y)` (new, `grid/geometry.py`). 6.4B's
+  head-residual points and DRN zones need exactly this.
+- `viz.mosaic` copied only `panel.get_choropleth()` — overlays were silently
+  dropped. Now `Choro.add_overlay()`/`overlay_traces()` and mosaic copies both
+  (ledger 62). Any 6.4 figure that draws over a map should use `add_overlay`.
+- `PALETTE` had no qualitative sequence; `viz.category_colors` +
+  `PALETTE.categorical` now memoize name → color across figures. Use it for IES
+  realization groups/zones rather than new hex literals.
+- `HoverSpec` renders fine on a non-choropleth trace: build a
+  `HoverContext(ncpl=<points in the trace>)` — the assembler's `ncpl` is a row
+  count, not a grid property. `pathline_hover()` is the worked example.
 
 ### 6.4A — IES plumbing/policy/hover (task #54)
 1. `build_choropleth` (grid/plotting.py): add `**choro_kwargs` passthrough.

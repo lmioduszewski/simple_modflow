@@ -67,6 +67,22 @@ no `per=`, carry no period footer (`result_hover(..., footer=())`), and `plot()`
 draws a distribution across particles instead of a series by stress period (see
 the compromise ledger, entry 59).
 
+A noun does **not** have to be a per-cell field at all: `results.pathlines` keeps
+the trajectories, and its `map()` draws one polyline per particle over a base map
+instead of coloring cells. It still answers the same verbs (`get` = the
+normalized records, `plot` = elevation vs travel time, `mosaic` = one panel per
+release group) and refuses the ones that make no sense (`xs`, `animate`) with a
+message naming the alternative. Overlay traces reach a mosaic through
+`Choro.add_overlay` / `overlay_traces()`; a map panel that hand-adds traces to
+`choro.fig` will have them dropped when composed.
+
+**Categories are colored by policy too.** Named, unordered things — release
+groups, zones, scenarios — take `viz.category_colors(names)`
+(`PALETTE.categorical`, colorblind-safe), which *memoizes* name → color so a
+group keeps one color across every figure it appears in. Never index the palette
+at the call site, and never fall back to plotly's default colorway: that is what
+let one release group be blue on its map and orange on its curve.
+
 Rules that hold for all of them:
 
 - **Figures are always `viz.Fig`**, never a bare `go.Figure`. `Fig` carries

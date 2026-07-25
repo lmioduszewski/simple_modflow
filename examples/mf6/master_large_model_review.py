@@ -146,7 +146,7 @@ def main():
             stop_at_weak_sink=False,
         )
         result = timed(summary, "prt_run", lambda: project.run(silent=True))
-        summary["prt_rows"] = len(result.pathlines)
+        summary["prt_rows"] = len(result.track_records)
         summary["prt_terminal_rows"] = len(result.terminal_points)
         if args.export_pyvista:
             path = timed(

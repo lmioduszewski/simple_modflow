@@ -207,3 +207,23 @@ def pytest_collection_modifyitems(config, items):
         "test_pilot_point_k_parameterization_on_voronoi",
     }
     items.sort(key=lambda item: 0 if item.originalname in priority else 1)
+
+
+@pytest.fixture
+def isolated_category_colors():
+    """Run a test against an empty ``viz.category_colors`` memo, then restore it.
+
+    The memo is process-global by design (a category keeps its color across
+    figures), so any test asserting a *specific* color would otherwise depend on
+    what earlier tests registered -- and on xdist worker assignment.
+    """
+
+    from myflopy import viz
+
+    saved = dict(viz._CATEGORY_COLORS)
+    viz._CATEGORY_COLORS.clear()
+    try:
+        yield viz._CATEGORY_COLORS
+    finally:
+        viz._CATEGORY_COLORS.clear()
+        viz._CATEGORY_COLORS.update(saved)

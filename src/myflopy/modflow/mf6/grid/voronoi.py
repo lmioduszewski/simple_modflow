@@ -71,6 +71,9 @@ from myflopy.modflow.mf6.grid.geometry import (
     get_voronoi_polygons as geometry_get_voronoi_polygons,
 )
 from myflopy.modflow.mf6.grid.geometry import (
+    points_to_latlon as geometry_points_to_latlon,
+)
+from myflopy.modflow.mf6.grid.geometry import (
     reconcile_surfaces as geometry_reconcile_surfaces,
 )
 from myflopy.modflow.mf6.grid.geometry import (
@@ -654,6 +657,10 @@ class VoronoiGridPlus(VoronoiGrid):
     def latlon(self):
         """Return centroid coordinates in latitude/longitude."""
         return geometry_get_latlon(self)
+
+    def points_to_latlon(self, x, y):
+        """Reproject model-coordinate points to ``(lon, lat)`` for map overlays."""
+        return geometry_points_to_latlon(self, x, y)
 
     def get_grid_centroid(self):
         """Return the centroid of the overall grid extent."""

@@ -12,6 +12,7 @@ def test_choro_plot_returns_figure_without_calling_show():
     choro.add_choropleth = lambda: None
     choro.add_contours = lambda: None
     choro._locs = None
+    choro._overlays = []
     choro.hillshade_path = None
 
     assert choro.plot() is figure

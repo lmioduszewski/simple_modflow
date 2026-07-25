@@ -67,8 +67,10 @@ working on it.
   `*_spec` factories, exchange/IMS builders, and deferred `GridSpec` resolution.
 - [src/myflopy/viz.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/viz.py)
   The plotting **front door** (figs backend): `viz.Fig`, `viz.subplots`,
-  `viz.mosaic` (map view fitting + `sync_views` live pan/zoom linking),
-  `viz.mpl_axes`, `PALETTE`. Import every figure from here.
+  `viz.mosaic` (map view fitting + `sync_views` live pan/zoom linking; copies each
+  panel's `overlay_traces()` alongside its cells), `viz.mpl_axes`, `PALETTE`, and
+  `viz.category_colors` (stable name -> color for named categories). Import every
+  figure from here.
 
 ### `modflow`
 

@@ -33,6 +33,8 @@ border, x/y axis styling) does not belong on those, so they stay raw.
 
 from __future__ import annotations
 
+from collections import Counter
+
 # Re-export the figs primitives the project uses, so `myflopy.viz` is a superset
 # drop-in for `figs`: a module can `from myflopy import viz as f` (or
 # `from myflopy.viz import Fig, create_hover`) and never import figs directly.
@@ -59,6 +61,7 @@ __all__ = [
     "Theme",
     "REPORT",
     "PALETTE",
+    "category_colors",
     "plot_cross_section",
 ]
 
@@ -190,8 +193,10 @@ def mosaic(
     panels
         A list of panels, or of ``(label, panel)`` pairs. A panel is either a
         ``Choro`` (anything exposing ``get_choropleth()``) or a Plotly figure
-        whose traces are copied into its grid cell. Unlabeled panels take
-        their figure title, else ``Panel <n>``.
+        whose traces are copied into its grid cell. Map panels contribute their
+        cell trace **and** their overlays (contours, location markers,
+        pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
+        title, else ``Panel <n>``.
     ncols
         Grid width; rows grow as needed.
     title
@@ -238,7 +243,11 @@ def mosaic(
     for _label, panel in normalized:
         if hasattr(panel, "get_choropleth"):
             kinds.append("map")
-            cell_traces.append([panel.get_choropleth()])
+            # The cell trace plus everything drawn over it (contours, location
+            # markers, pathlines). Copying only the cells used to silently drop
+            # every overlay, so a mosaic of contoured maps lost its contours.
+            overlays = panel.overlay_traces() if hasattr(panel, "overlay_traces") else []
+            cell_traces.append([panel.get_choropleth(), *overlays])
         elif isinstance(panel, go.Figure):
             kinds.append("xy")
             cell_traces.append(list(panel.data))
@@ -268,7 +277,10 @@ def mosaic(
         row, col = index // ncols + 1, index % ncols + 1
         subplot_id = None
         for trace in traces:
-            if kind == "map":
+            # Only the cell trace carries the shared color scale; overlay traces
+            # (Scattermap lines/markers) have no `z` and no top-level coloraxis.
+            is_field = kind == "map" and getattr(trace, "z", None) is not None
+            if is_field:
                 trace.coloraxis = "coloraxis"
                 if map_colorscale is None:
                     map_colorscale = trace.colorscale
@@ -347,9 +359,66 @@ class PALETTE:
     truth = "rgb(214,39,40)"
     conflict = "darkorange"
 
+    # Qualitative sequence for *named categories* -- release groups, zones,
+    # scenarios: things with no order and no midpoint, where a colorscale would
+    # imply a ranking that is not there. Colorblind-safe: Okabe-Ito, minus the
+    # yellow that vanishes on a light basemap and with its black softened to
+    # #4D4D4D. Hex is backend-neutral, so matplotlib reads the same tuple; go
+    # through :func:`category_colors` rather than indexing it, so a category
+    # keeps its color across figures.
+    categorical = (
+        "#0072B2",  # blue
+        "#D55E00",  # vermillion
+        "#009E73",  # green
+        "#CC79A7",  # reddish purple
+        "#56B4E9",  # sky blue
+        "#E69F00",  # orange
+        "#4D4D4D",  # dark grey
+    )
+
     # Matplotlib equivalents
     mpl_prior = "0.6"
     mpl_posterior = "#1f77b4"
     mpl_measured = "crimson"
     mpl_truth = "crimson"
     mpl_conflict = "darkorange"
+    mpl_categorical = categorical
+
+
+_CATEGORY_COLORS: dict[str, str] = {}
+
+
+def category_colors(names, *, memoize: bool = True) -> dict[str, str]:
+    """Map category names to stable colors from :attr:`PALETTE.categorical`.
+
+    The assignment is **memoized for the life of the process**, so a release group
+    drawn blue on the pathline map is blue again on its arrival curve and its
+    capture bars -- the property that makes a set of small multiples readable, and
+    the reason call sites should not index the palette themselves.
+
+    A name new to this call takes the least-used color that none of the *other*
+    names in the same call already hold, so the categories of one figure stay
+    distinguishable even after many unrelated names have been registered. Two
+    names first seen in **separate** calls can still collide once more than
+    ``len(PALETTE.categorical)`` names exist -- a 7-color palette cannot promise
+    otherwise (compromise ledger 65).
+
+    ``memoize=False`` colors this call only, leaving the shared memo untouched.
+    Use it for labels that are *not* a recurring category -- per-particle ids,
+    row keys -- which would otherwise fill the memo and shift the colors every
+    later figure gets.
+    """
+
+    registry = _CATEGORY_COLORS if memoize else dict(_CATEGORY_COLORS)
+    requested = {str(name) for name in names}
+    taken = {registry[name] for name in requested & registry.keys()}
+    for name in sorted(requested - registry.keys()):
+        free = [color for color in PALETTE.categorical if color not in taken]
+        usage = Counter(registry.values())
+        color = min(
+            free or PALETTE.categorical,
+            key=lambda candidate: (usage[candidate], PALETTE.categorical.index(candidate)),
+        )
+        registry[name] = color
+        taken.add(color)
+    return {str(name): registry[str(name)] for name in names}

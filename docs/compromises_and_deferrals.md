@@ -994,3 +994,109 @@ same day, which is the useful part of the result.
       `logscale`, so the fix has no blast radius today.
     - Revisit: fold the non-custom branch onto the same `_logscaled` helper when a map
       there is actually seen misbehaving on zeros.
+
+61. **`PRTRunResults.pathlines` became a view; the raw frame moved to `track_records`
+    (plan §6.3C, 2026-07-25).**
+    - What: adding the pathline map meant `pathlines` had to be a noun answering
+      `get/summary/map/plot/mosaic`, but the name was already a `cached_property`
+      returning the raw track CSV (~20 call sites across 6 files, incl. canonical notebook 03's
+      `prt_results.pathlines.empty`). The raw frame is now `results.track_records`;
+      `pathlines.get()` returns the normalized **superset** (every raw column plus
+      `cell`/`layer`/`travel_time`/`release_group`/`particle`).
+    - Judgment call: a **clean break**, chosen over a DataFrame-proxy shim that would
+      have forwarded `.empty`/`len()`/`[...]` to `.get()`. The proxy would have kept
+      unmigrated notebooks running, but it blurs "a noun is an object" and would silently
+      absorb typos as frame lookups. `cached_property` also cannot carry a deprecation
+      shim the way a renamed method can (D12 is about `__getattr__` aliases).
+    - Trade: user notebooks outside the repo that treat `results.pathlines` as a frame
+      raise `AttributeError` until they add `.get()`. Every in-repo site (src, tests,
+      example script, notebook 03 cell 3) was migrated in the same commit.
+    - Revisit: not planned. If the break proves noisy in practice, a `__getattr__` on the
+      view that raises a *pointed* message (rather than forwarding) is the middle ground.
+
+62. **`viz.mosaic` now copies map overlays — a pre-existing silent drop (plan §6.3C,
+    2026-07-25).**
+    - What: the composer copied exactly one trace per map panel
+      (`cell_traces.append([panel.get_choropleth()])`), so contour lines and location
+      markers have been missing from **every** mosaic since they were added — the
+      figure looked complete, just without them. Rather than special-casing pathlines,
+      `Choro` gained `add_overlay()`/`overlay_traces()` and `add_contours`/`add_locs`
+      were refactored into non-mutating `_contour_traces()`/`_locs_traces()` builders,
+      so one accessor answers for all three sources (contours, locs, registered
+      overlays); mosaic copies `[get_choropleth(), *overlay_traces()]`.
+    - Trade: an existing mosaic of contoured maps now *renders its contours*, which
+      changes figures a user may already have. Taken deliberately (locked decision): it
+      is the same family of defect as ledger 60 — a documented feature silently doing
+      nothing — and the shared-color-scale logic is now guarded to the cell trace
+      (`z is not None`), since `Scattermap` has neither `z` nor a top-level `coloraxis`.
+    - Small fix folded in: `_locs_traces` skips geometry that is neither Polygon nor
+      Point. The old loop left `coords`/`mode` loop-local, so such a feature raised
+      `NameError` on the first row and — worse — on any later row silently redrew the
+      *previous* feature's geometry. Mosaic now asks every panel for its overlays, so
+      that path is reachable from more places.
+    - Revisit: three sibling paths still drop overlays and are now asymmetric with
+      mosaic — `SpatialView`'s **animation** and `Choro.ani` rebuild frames from the
+      cell trace alone, and the **matplotlib** mosaic reads only `choro.zs`.
+      `add_hillshade` is a layout image, not a trace, so it is not carried either;
+      left alone — layout images are per-subplot-anchored and need their own
+      coordinate handling. Also pre-existing and now inherited by overlays: calling
+      `.choropleth`/`.plot()` twice appends every trace again (it never clears
+      `self.fig.data`), so a re-plotted map doubles its traces.
+
+63. **The pathline map caps particles at 250 rather than drawing every trace (plan
+    §6.3C, 2026-07-25).**
+    - What: one `Scattermap` per particle is what makes per-particle hover and legend
+      toggling work, but a release of thousands would produce a figure that is unusable
+      to render. `map(max_particles=250)` draws a sample; `None` draws all.
+    - Judgment call: the sample is **stratified by release group** (round-robin quota,
+      then evenly spaced within each group), not "the first N" or a flat even sample
+      across sorted particles — either of those can drop an entire capture zone and
+      change what the figure appears to say. The cap is announced twice: in the figure
+      title (`"(2 of 4 particles)"`) and a `UserWarning`.
+    - Trade: a capped figure is not the whole run, and per-particle hover on a sampled
+      figure can mislead someone who does not read the title. The no-group-dropped
+      promise holds only while `max_particles` is at least the number of groups; below
+      that the round-robin keeps the first N groups in sorted order. The alternative — one
+      NaN-separated trace per group — renders far more particles but loses per-particle
+      legend toggling and complicates the hover, so it was not taken.
+    - Revisit: if real users routinely release thousands, add `render="grouped"` for the
+      NaN-separated fast path alongside the per-particle default.
+
+64. **Canonical notebook 03 lost its stream/lake outlines when it moved onto the library
+    figure (plan §6.3C, 2026-07-25).**
+    - What: cell 5 hand-rolled ~20 lines of matplotlib — a head choropleth, stream and
+      lake cell outlines, and pathlines — exactly the drift `docs/view_layer_conventions.md`
+      exists to prevent. It is now `prt_results.pathlines.map(...).plot()`. The head field
+      and the paths are the same or better (interactive, hover, house styling); the
+      colored region outlines are gone, because `outline_regions=` exists only on the
+      matplotlib branch (`plot_mpl`).
+    - Trade: the notebook's "what to look for" prose points at the stream corridor and
+      terminal lake, which are now read from the head field rather than outlined.
+    - Revisit: region outlines are a natural first user of `Choro.add_overlay` (62) —
+      a `regions=` argument on the plotly map would restore them everywhere, not just
+      in this notebook.
+
+65. **`viz.category_colors` remembers name → color in a process-global memo, and a
+    7-color palette can still collide (plan §6.3C, 2026-07-25).**
+    - What: the helper exists so a release group keeps one color across its map, its
+      arrival curve, and its capture bars. That requires memory outside any one figure,
+      so the mapping lives in a module-level dict for the life of the process.
+    - Judgment call: a name new to a call takes the least-used color that **none of the
+      other names in the same call** already hold. The first implementation indexed
+      `PALETTE.categorical` by the global counter, which an adversarial review showed
+      hands two groups the *same* color once the palette wraps (register a group, then
+      seven others, then its sibling). Per-call collision avoidance fixes the case that
+      matters — the categories of one figure.
+    - Residual, accepted: two names first seen in **separate** calls can still collide
+      once more than `len(PALETTE.categorical)` names exist. Seven colors cannot promise
+      otherwise, and re-assigning an old name to fix it would break the stability the
+      helper exists for. Colors are therefore also not reproducible across processes:
+      they depend on what was registered first.
+    - Mitigation: `memoize=False` (used by `pathlines.map(color="particle")`) colors one
+      figure without touching the memo — otherwise a single 250-particle map would
+      register 250 names and shift every later figure's group colors.
+    - Testing: the memo is global, so any test asserting a specific hex is order- and
+      worker-dependent. `tests/conftest.py::isolated_category_colors` saves, clears, and
+      restores it; use it rather than asserting colors against whatever ran first.
+    - Revisit: if collisions show up in practice, the options are a longer palette or
+      scoping the memo to a figure/session object rather than the process.

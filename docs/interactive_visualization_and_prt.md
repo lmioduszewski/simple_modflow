@@ -182,10 +182,10 @@ prt = model.particle_tracking.prt(
 
 result = prt.run()
 
-pathlines = result.pathlines
+tracks = result.pathlines.get()      # normalized records (raw CSV: result.track_records)
 terminal_points = result.terminal_points
 
-result.plot_map()
+result.pathlines.map()               # interactive: paths over the head map
 result.export_3d_html("prt_pathlines.html", vertical_exaggeration=5)
 ```
 
@@ -207,12 +207,29 @@ result = model.particle_tracking.prt(
     workspace=ws, release_points=release_points, porosity=0.25
 ).run()
 
+result.pathlines.map()                  # one polyline per particle over the water table
+result.pathlines.mosaic()               # one panel per release group
 result.travel_time.get(stat="median")   # per-cell rows: travel time, particle count, min/max
 result.travel_time.map(logscale=True)   # time-of-travel choropleth ('earth')
 result.travel_time.plot()               # cumulative arrival curve, one line per group
 result.endpoints.map()                  # termination counts per cell
 result.capture.map()                    # one panel per release group, shared scale
 ```
+
+`result.pathlines` is the trajectory view (§6.3C) and the odd one out: it keeps
+the paths instead of collapsing them onto cells. `map()` returns the `Choro`
+carrying one `Scattermap` line per particle, so it composes like any other map --
+`base="heads"` (default, at `per=`/`layer=`), `base=None` for the grid alone, or
+an existing `Choro` (`result.pathlines.map(base=result.capture.map(group=...))`)
+to draw the paths over a map you already built. Hovering a vertex reports that
+particle's cell, layer, elevation, release group, and elapsed time; `plot()` draws elevation
+against travel time; `backend="mpl"` returns the older FloPy plan view. Large
+runs are capped at `max_particles=250`, sampled evenly **within each release
+group** so a cap at or above the group count never hides a whole capture zone --
+the figure title and a warning say how many were drawn. Passing an existing
+`Choro` as `base` adds the paths *to that map* and returns it, so it keeps its own
+title and a second call draws them again. Release-group colors come from
+`viz.category_colors`, so a group matches its arrival curve and capture bars.
 
 The group label becomes a PRP boundname, which MF6 echoes **uppercased** into the
 track CSV's `name` column — that is the key `capture` groups by, so
@@ -242,6 +259,7 @@ PRT pathlines, MODPATH pathlines, and other FloPy-compatible pathline tables use
 the same viewers:
 
 ```python
+pathlines = result.track_records          # the raw MF6 track table these viewers expect
 mf.plot_particle_pathlines(model, pathlines)
 
 scene = mf.build_particle_tracking_scene(

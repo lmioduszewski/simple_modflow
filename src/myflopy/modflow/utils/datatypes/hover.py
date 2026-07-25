@@ -645,6 +645,36 @@ def result_hover(
     )
 
 
+def pathline_hover(
+    *,
+    particle: str | None = None,
+    unit: str | None = None,
+    fields: Sequence[str] = ("layer", "z", "release_group"),
+) -> HoverSpec:
+    """Hover for one particle's track on the pathline map.
+
+    Unlike every other spec here this renders **per vertex of a trajectory**, not
+    per grid cell -- the hover context is built over the points of one particle's
+    line, so ``cell`` is the cell that particle was in at that point and the
+    elapsed time is its own. ``particle`` names the trace in the header (the id
+    is fixed for the whole line); ``unit`` is the flow model's TDIS time unit.
+    """
+
+    return HoverSpec(
+        primary="travel_time",
+        title=f"Particle {particle}" if particle else "Particle",
+        blocks=(Fields(fields=tuple(fields)),) if fields else (),
+        footer=(),
+        units={"travel_time": unit} if unit else {},
+        labels={
+            "travel_time": "elapsed",
+            "release_group": "group",
+            "z": "elevation",
+            "t": "time",
+        },
+    )
+
+
 def compare_hover(
     value_column: str,
     diff_column: str,

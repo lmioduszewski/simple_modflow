@@ -1212,14 +1212,49 @@ style the rest, rather than forcing everything into choropleths:
      elapsed times (one-sided magnitudes, never signed) — `PRT_COLORSCALE`.
    - `capture.map()` returns the per-group **mosaic** (shared scale, synced views);
      `group=` returns one `Choro`, which is also what the facet composers use.
-2. **Pathline map hover (§6.3C — still open):** CORRECTION (rev. 4): the existing pathline map
-   (`plot_particle_pathlines`, interactive_plotting.py) is pure **matplotlib** (flopy
-   PlotMapView), not plotly scatter — so this step means building a NEW plotly
-   pathline map (scatter traces over the grid choropleth), not styling existing
-   traces. The hover engine is trace-agnostic (customdata + template), so add a
-   `pathline_hover()` spec rendering particle id, release point/group, current time,
-   layer; apply `HoverStyle.to_hoverlabel()` to the new scatter traces. Read
-   `prt.py:PRTRunResults.plot_map` + `interactive_plotting.py` scene builders first.
+2. **Pathline map — DONE 2026-07-25 (§6.3C):** CORRECTION (rev. 4) was right that the
+   existing pathline map (`plot_particle_pathlines`) is pure **matplotlib** (flopy
+   PlotMapView), so this was a NEW plotly map, not a restyling. Built as a **fourth
+   noun**, not a `pathline_map()` method (same naming rule as 6.3B):
+   `results.pathlines` — a view whose `get()` is the normalized record table.
+   Decided while building:
+   - **`pathlines` was already taken** by the raw cached track frame (12 call sites
+     incl. canonical notebook 03). Locked decision: **clean break** — the raw CSV moved
+     to `results.track_records` (what FloPy/PyVista consume) and every site migrated;
+     no proxy shim (ledger 61).
+   - Maps are `go.Choroplethmap` over `vor.latlon`, i.e. **WGS84** — track `x`/`y` are
+     model coordinates, so overlays need reprojection. New reusable grid helper
+     `vor.points_to_latlon(x, y)` (`grid/geometry.py`, next to `get_gdf_latlon`);
+     6.4B's residual points want the same one.
+   - `viz.mosaic` copied **only** `panel.get_choropleth()`, silently dropping every
+     overlay — contours and location markers have been missing from mosaics all along.
+     Locked decision: fix it wholesale. `Choro` gained `add_overlay`/`overlay_traces`
+     (one accessor now answers for contours, locs, and registered overlays alike) and
+     mosaic copies them,
+     guarding the coloraxis/`z` logic to the cell trace only (ledger 62).
+   - `PALETTE` had **no qualitative sequence**; group colors were plotly's default
+     colorway, so a group could change color between figures. Added
+     `PALETTE.categorical` (Okabe-Ito, colorblind-safe) + memoized
+     `viz.category_colors`, retrofitted into `travel_time.plot()`/`capture.plot()`.
+   - One trace per particle (what makes per-particle hover work) is capped by
+     `max_particles=250`, sampled **stratified by release group** so a cap cannot
+     drop a whole capture zone, and announced in the title + a warning (ledger 63).
+   - `pathline_hover()` renders **per trajectory vertex**, not per cell — the first
+     spec to do so; `HoverContext(ncpl=<vertices>)` (the assembler's `ncpl` is really
+     a row count). `xs()` raises (no per-cell field to slice); `plot()` is elevation
+     vs travel time.
+   - A 3-lens adversarial review (correctness / docs-grammar / mutation-tested tests)
+     found and fixed, before commit: a **`KeyError` on any run mixing named and
+     un-named release points** (MF6 writes a blank `name`; the label has to be
+     resolved before the palette is keyed); `category_colors` handing two visible
+     groups the **same color** once the 7-color palette wrapped (now per-call
+     collision avoidance, ledger 65); a `color="particle"` map registering one memo
+     entry per particle (`memoize=False`); `mosaic(base=<Choro>)` drawing every group
+     onto **one shared map**; and four selectors silently dropped rather than raising
+     (`**base_kwargs` on `backend="mpl"`, `per`/`layer` on a borrowed base, blank-base
+     option clashes, late `color=` validation). Mutation testing also showed the first
+     stratification and colour-memoization tests passed against broken code — both
+     were rebuilt around fixtures where the mutation actually changes the result.
 3. **Build-side parity — DONE 2026-07-24 (§6.3A):** `mf.mip`/`mf.prp` are plain
    5.3B-style factories, NOT 5.3A dispatch (correction: MIP/PRP exist only on PRT —
    no cross-kind ambiguity). Full declarability additionally required (scoping
@@ -1578,9 +1613,10 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       grammar (map/xs/plot/mosaic/animate), `conc_hover`/`temp_hover`, earth + RdBu-diff
       colors, GWT/GWE budget terms, `GroupConc`/`GroupTemp` + `diff()` maps,
       `ConcTargets` wired into PEST, GWT + GWE test fixtures (6.0–6.2)
-- [ ] PRT: `results.travel_time`/`.endpoints`/`.capture` choropleth nouns with hover +
-      policy colors — DONE 2026-07-25 (6.3B); `mf.mip`/`mf.prp`/`mf.ems` factories —
-      DONE 2026-07-24 (6.3A); plotly pathline map + `pathline_hover` still open (6.3C)
+- [x] PRT — DONE: `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dispatch (6.3A, 2026-07-24);
+      `results.travel_time`/`.endpoints`/`.capture` choropleth nouns with hover + policy
+      colors (6.3B, 2026-07-25); `results.pathlines` plotly map + `pathline_hover`,
+      `Choro` overlays carried through `viz.mosaic`, `PALETTE.categorical` (6.3C, 2026-07-25)
 - [ ] IES: `plot_field` hover + multiplier-diverging/absolute-earth colors;
       `field_uncertainty_map`; `field_mosaic` (synced prior/posterior); residual map;
       all IES figures on the viz front door (6.4)
