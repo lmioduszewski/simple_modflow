@@ -86,7 +86,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 |---|---|---|
 | GWF / GWT / GWE / PRT models + exchanges | ✅ | `package_api.py` `gwf/gwt/gwe/prt`; `builders.py` `build_gwf_{gwt,gwe,prt,gwf}_exchange` |
 | GWT/GWE **package helpers** (adv/dsp/mst/ist/ssm/cnc/src; est/cnd/ctp/esl) | ✅ | `package_api.py` factories build `ModflowGwt*`/`ModflowGwe*` (plan §5.3B); `mf.ic/oc/disv/dis/disu` dispatch the FloPy class on the model kind (§5.3A/§5.5) |
-| GWT/GWE **results tier** (conc/temp reader, maps, group/diff, obs) | ❌ | no concentration/temperature reader exists anywhere — plan §6.0–6.2 |
+| GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
+| GWT/GWE results — budget / group-diff / obs | ❌ | GWT/GWE budget views, `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
 | PRT derived cell maps (travel-time / endpoints choropleths) | ❌ | pathlines/scene/map exist; grammar-integrated cell maps are plan §6.3 |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
@@ -154,9 +155,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    PRT excluded, viz stays DISV-only).
 2. **GWT/GWE integration** — package helpers (§5.3 **DONE 2026-07-22**: `mf.adv/dsp/
    mst/ist/ssm/cnc/src` (GWT) + `mf.est/cnd/ctp/esl` (GWE); model-type dispatch for
-   `mf.ic/oc/disv/dis/disu` builds the gwf/gwt/gwe FloPy class off the model kind) AND the results tier
-   (§6.0–6.2: `model.conc`/`model.temp`, grammar + hover + colors, budget terms,
-   group/diff, `ConcTargets` → PEST).
+   `mf.ic/oc/disv/dis/disu` builds the gwf/gwt/gwe FloPy class off the model kind).
+   Results tier: reader + maps **DONE 2026-07-24** (§6.0/6.1/6.2: `model.conc`/
+   `model.temp` grammar + hover + `'earth'` colorscale, kind-gated). Still deferred:
+   GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
 3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**
    (field-map hover/colors, uncertainty maps, prior/posterior mosaics — §6.4).
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`

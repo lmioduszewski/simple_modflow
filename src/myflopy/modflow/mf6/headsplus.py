@@ -1,4 +1,14 @@
-"""Legacy head-output exploration helpers built on top of FloPy's HeadFile."""
+"""Dependent-variable output readers built on FloPy's ``HeadFile``.
+
+MODFLOW 6 writes heads (GWF), concentration (GWT), and temperature (GWE) as the
+*same* binary layout -- FloPy's ``HeadFile`` reads all three, differing only by
+its ``text=`` tag. So the file-agnostic machinery (tidy frames, the ``(kstpkper,
+layer, cell)`` table, the unified grammar verbs, choropleth maps) lives once in
+:class:`DependentVariableFile`; :class:`HeadsPlus`, :class:`ConcResults`, and
+:class:`TempResults` are thin subclasses that set the file suffix / ``text`` tag /
+value label and (for heads) add the head-only extras (observations, mounding,
+legacy choropleth helpers).
+"""
 
 from __future__ import annotations
 
@@ -39,13 +49,13 @@ from myflopy.modflow.mf6.heads_plotting import (
 )
 from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
-from myflopy.modflow.utils.datatypes.hover import head_hover
+from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
 
 def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
-    """Return head data as a consistent ``(nlay, ncpl)`` array."""
+    """Return dependent-variable data as a consistent ``(nlay, ncpl)`` array."""
 
     values = np.asarray(data)
     values = np.squeeze(values)
@@ -76,7 +86,7 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
         return values.reshape(nlay, ncpl)
 
     raise ValueError(
-        "Could not reshape heads to layer/cell form. "
+        "Could not reshape values to layer/cell form. "
         f"Got shape={values.shape}, expected nlay={nlay}, ncpl={ncpl}."
     )
 
@@ -87,49 +97,55 @@ def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | 
     return _multimodel_plot_heads(models, locs, **kwargs)
 
 
-
-
-class HeadsPlus(SpatialView, bf.HeadFile):
-    """Extended heads-file reader with spatial/model-aware convenience methods.
+class DependentVariableFile(SpatialView, bf.HeadFile):
+    """A per-cell dependent-variable output reader (heads / concentration / temperature).
 
     Also a full :class:`SpatialView` leaf in the unified grammar --
-    ``hds.get()/.summary()`` (tables), ``hds.map()/.plot()/.xs()`` (panels),
-    ``hds.mosaic()/.animate()`` (composers). ``SpatialView`` is first in the
-    MRO deliberately so the grammar's ``plot`` shadows flopy's legacy
-    ``LayerFile.plot``.
+    ``.get()/.summary()`` (tables), ``.map()/.plot()/.xs()`` (panels),
+    ``.mosaic()/.animate()`` (composers). ``SpatialView`` is first in the MRO
+    deliberately so the grammar's ``plot`` shadows flopy's legacy
+    ``LayerFile.plot``. Subclasses set the class attributes below.
     """
 
-    #: value label + tidy-frame column used by the unified grammar
-    value_name = "head"
+    #: public value label + tidy-frame column used by the unified grammar
+    value_name = "value"
+    #: internal column name in the ``(kstpkper, layer, cell)`` table
+    store_column = "value"
+    #: output-file suffix appended to ``<model name>`` when no path is given
+    _output_suffix = ".bin"
+    #: FloPy ``HeadFile`` binary ``text=`` selector for this field
+    _binary_text = "head"
+    #: label used by :meth:`summary`
+    _summary_label = "value"
+    #: ``Choro`` type key so the map reads this field from the model
+    _choro_type = "hds"
 
     def __init__(
             self,
-            hds_path: Path = None,
+            path: Path = None,
             model=None,
             vor: Vor = None,
-            obs_path: Path = None
     ):
         """Parameters
         ----------
-        hds_path
-            Path to a binary MF6 heads file. If omitted, ``model`` is used.
+        path
+            Path to a binary MF6 output file. If omitted, ``model`` is used with
+            this class's ``_output_suffix``.
         model
             Optional parent model used to infer file paths and geometry helpers.
         vor
             Optional Voronoi/grid helper, defaulting to ``model.vor``.
-        obs_path
-            Optional observation-point file used by observation helper methods.
         """
         from myflopy.modflow.mf6.simulation.base import SimulationBase
-        if hds_path is None:
+        if path is None:
             if model is None:
-                raise ValueError("Must provide heads file or model")
+                raise ValueError("Must provide an output file or model")
             assert isinstance(model, SimulationBase), 'no valid model provided'
-            self.hds_path = model.model_output_folder_path / f'{model.name}.hds'
+            self.output_path = model.model_output_folder_path / f'{model.name}{self._output_suffix}'
         else:
-            self.hds_path = hds_path
+            self.output_path = path
 
-        super().__init__(filename=self.hds_path)
+        super().__init__(filename=self.output_path, text=self._binary_text)
 
         if model is None:
             self.model = None
@@ -138,13 +154,9 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         else:
             raise ValueError("model must be an instance of SimulationBase")
 
-        # Preserve the historical ``.hds`` attribute without opening a second
-        # binary reader for the same file.
-        self.hds = self
         self.kstpkper = convert_nested_to_int(self.get_kstpkper())
         self.vor = self.model.vor if vor is None else vor
-        self.obs_heads_df = None
-        self._all_heads = None
+        self._value_table = None
         self.nper = pd.DataFrame(self.get_kstpkper()).iloc[:, 1].max() + 1
         self.numstp = pd.DataFrame(self.get_kstpkper()).iloc[:, 0].max() + 1
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -152,18 +164,26 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         self.area_list = [cell.area for cell in self.vor_list]
         self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
         self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
-        self._obs = {}
-        self._obs_heads = None
-        self.obs_path = obs_path
         self.crs = self.vor.crs
 
     @property
-    def all_heads(self):
-        """The full ``kstpkper/layer/cell`` head table, built and cached on first access."""
+    def all_values(self):
+        """The full ``kstpkper/layer/cell`` value table, built and cached on first access."""
 
-        if self._all_heads is None:
-            self._all_heads = self.get_all_heads()
-        return self._all_heads
+        if self._value_table is None:
+            self._value_table = self._build_value_table()
+        return self._value_table
+
+    def _default_hover(self, *, layers: str, surfaces: bool):
+        """The default hover spec for this field's :meth:`map` (overridden per kind)."""
+
+        return HoverSpec(
+            primary=self.value_name,
+            title=self.value_name,
+            layers=layers,
+            surfaces=surfaces,
+            footer=("period", "date"),
+        )
 
     # -- unified grammar: data verbs ---------------------------------------
     def get(
@@ -173,41 +193,43 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         layer: int | list[int] | None = None,
         cells: int | list[int] | None = None,
     ) -> pd.DataFrame:
-        """Return period-end heads as a tidy ``per``/``layer``/``cell``/``head`` frame.
+        """Return period-end values as a tidy ``per``/``layer``/``cell``/``<value>`` frame.
 
         Each stress period is reduced to its last saved timestep; flopy dry/no-data
-        sentinels (``|head| >= 1e29``) become ``NaN``. All selectors are zero-based.
+        sentinels (``|value| >= 1e29``) become ``NaN``. All selectors are zero-based.
         """
 
-        frame = self.all_heads.reset_index()
+        value = self.value_name
+        frame = self.all_values.reset_index()
         frame["kstp"] = [int(key[0]) for key in frame["kstpkper"]]
         frame["per"] = [int(key[1]) for key in frame["kstpkper"]]
         period_end = frame.groupby("per")["kstp"].transform("max")
         frame = frame[frame["kstp"] == period_end].copy()
-        frame = frame.rename(columns={"elev": "head"})
-        frame["head"] = pd.to_numeric(frame["head"], errors="coerce")
-        frame.loc[frame["head"].abs() >= 1e29, "head"] = np.nan
+        frame = frame.rename(columns={self.store_column: value})
+        frame[value] = pd.to_numeric(frame[value], errors="coerce")
+        frame.loc[frame[value].abs() >= 1e29, value] = np.nan
         for column, selector in (("per", per), ("layer", layer), ("cells", cells)):
             if selector is None:
                 continue
             values = (
                 [int(selector)]
                 if isinstance(selector, (int, np.integer))
-                else [int(value) for value in selector]
+                else [int(item) for item in selector]
             )
             frame = frame[frame["cell" if column == "cells" else column].isin(values)]
-        return frame[["per", "layer", "cell", "head"]].reset_index(drop=True)
+        return frame[["per", "layer", "cell", value]].reset_index(drop=True)
 
     def summary(self) -> pd.DataFrame:
-        """Return a one-row summary of the saved heads."""
+        """Return a one-row summary of the saved field."""
 
+        value = self.value_name
         frame = self.get()
-        heads = frame["head"].to_numpy(dtype=float)
-        finite = heads[np.isfinite(heads)]
+        data = frame[value].to_numpy(dtype=float)
+        finite = data[np.isfinite(data)]
         return pd.DataFrame(
             [
                 {
-                    "label": "hds",
+                    "label": self._summary_label,
                     "records": int(len(frame)),
                     "periods": int(frame["per"].nunique()),
                     "layers": int(frame["layer"].nunique()),
@@ -221,19 +243,19 @@ class HeadsPlus(SpatialView, bf.HeadFile):
 
     # -- unified grammar: dimension + series hooks --------------------------
     def _spatial_layers(self) -> list[int]:
-        """Every grid layer -- heads are saved for all layers."""
+        """Every grid layer -- the field is saved for all layers."""
 
         return list(range(int(self.nlay)))
 
     def _spatial_periods(self) -> list[int]:
-        """Stress periods present in the saved head output."""
+        """Stress periods present in the saved output."""
 
         return sorted({int(key[1]) for key in self.kstpkper})
 
     def _series_default_agg(self) -> str:
-        """Collapse cells within a plotted line by mean (averaging heads, not summing)."""
+        """Collapse cells within a plotted line by mean (averaging the field, not summing)."""
 
-        return "mean"  # heads average over cells; summing elevations is meaningless
+        return "mean"  # heads/conc/temp average over cells; summing them is meaningless
 
     def _sections(
         self,
@@ -249,7 +271,7 @@ class HeadsPlus(SpatialView, bf.HeadFile):
 
         del model  # single-model surface; SpatialView validates the selector
         if self.model is None:
-            raise ValueError("HeadsPlus.xs() requires a parent model.")
+            raise ValueError(f"{type(self).__name__}.xs() requires a parent model.")
         from myflopy.modflow.utils.datatypes.xsections import XSection
 
         return {
@@ -258,12 +280,13 @@ class HeadsPlus(SpatialView, bf.HeadFile):
             )
         }
 
-    def long(self, *, values: str = "elev") -> pd.Series:
-        """Return heads as a long series indexed by ``kstpkper/layer/cell``."""
+    def long(self, *, values: str | None = None) -> pd.Series:
+        """Return the field as a long series indexed by ``kstpkper/layer/cell``."""
 
-        if values not in self.all_heads.columns:
-            raise KeyError(f"Heads value column {values!r} was not found.")
-        series = pd.to_numeric(self.all_heads[values], errors="coerce")
+        values = values or self.store_column
+        if values not in self.all_values.columns:
+            raise KeyError(f"Value column {values!r} was not found.")
+        series = pd.to_numeric(self.all_values[values], errors="coerce")
         series.name = values
         return series
 
@@ -271,17 +294,18 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         self,
         *,
         index: list[str] | tuple[str, ...] = ("layer", "cell"),
-        values: str = "elev",
+        values: str | None = None,
         agg: str = "first",
     ) -> pd.DataFrame:
-        """Pivot heads to one row per layer/cell and one column per ``kstpkper``."""
+        """Pivot the field to one row per layer/cell and one column per ``kstpkper``."""
 
-        if values not in self.all_heads.columns:
-            raise KeyError(f"Heads value column {values!r} was not found.")
-        frame = self.all_heads.reset_index()
+        values = values or self.store_column
+        if values not in self.all_values.columns:
+            raise KeyError(f"Value column {values!r} was not found.")
+        frame = self.all_values.reset_index()
         missing_index = [column for column in index if column not in frame.columns]
         if missing_index:
-            raise KeyError(f"Heads wide index columns were not found: {missing_index}")
+            raise KeyError(f"Wide index columns were not found: {missing_index}")
         wide = frame.pivot_table(
             index=list(index),
             columns="kstpkper",
@@ -299,7 +323,7 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         kstpkper: tuple[int, int] | None = None,
         masked: bool = True,
     ) -> np.ndarray:
-        """Return one layer's head field at one time as a 1-D ``(ncpl,)`` array.
+        """Return one layer's field at one time as a 1-D ``(ncpl,)`` array.
 
         The quick spatial accessor behind the choropleth maps: it picks a saved
         time, picks a ``layer``, reshapes to one value per Voronoi cell, and (by
@@ -323,10 +347,10 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         Returns
         -------
         numpy.ndarray
-            A ``(ncpl,)`` float array, one head per Voronoi cell.
+            A ``(ncpl,)`` float array, one value per Voronoi cell.
         """
 
-        # Use the normalized kstpkper list the class trusts (get_all_heads reads
+        # Use the normalized kstpkper list the class trusts (the value table reads
         # with these); flopy's raw get_kstpkper() is offset for some files.
         keys = [tuple(int(v) for v in key) for key in self.kstpkper]
         if kstpkper is not None:
@@ -349,10 +373,10 @@ class HeadsPlus(SpatialView, bf.HeadFile):
             values[np.abs(values) > 1.0e29] = np.nan
         return values
 
-    def to_xugrid(self, *, layers=None, times=None, name: str = "head", masked: bool = True):
-        """Export simulated heads across layers and time as an xugrid object.
+    def to_xugrid(self, *, layers=None, times=None, name: str | None = None, masked: bool = True):
+        """Export the simulated field across layers and time as an xugrid object.
 
-        Stacks the saved head field into a single ``(time, layer, cell)``
+        Stacks the saved field into a single ``(time, layer, cell)``
         :class:`xugrid.UgridDataArray` on this model's Voronoi mesh -- the
         convenience behind ``model.to_xugrid()``. Unlike :meth:`array` (one
         layer at one time), this returns the whole history at once, ready for
@@ -370,7 +394,7 @@ class HeadsPlus(SpatialView, bf.HeadFile):
             ``(kstp, kper)`` keys to include (default: every saved time). Order is
             preserved; an unavailable key raises ``ValueError``.
         name
-            Variable name for the head field (default ``"head"``).
+            Variable name for the field (default: this reader's ``value_name``).
         masked
             Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN`` (default).
 
@@ -417,6 +441,7 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         xu = require("xugrid", feature="to_xugrid() unstructured-grid export")
         import xarray as xr  # guaranteed present: xarray is a xugrid dependency
 
+        name = name or self.value_name
         ncpl = int(self.vor.ncpl)
         available = [tuple(int(v) for v in key) for key in self.kstpkper]
         if times is None:
@@ -470,25 +495,24 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         hover_surfaces: bool = False,
         **kwargs,
     ):
-        """Return a choropleth map of heads, optionally with contour overlays.
+        """Return a choropleth map of the field, optionally with contour overlays.
 
         ``hover`` accepts a :class:`~myflopy.modflow.utils.datatypes.hover.HoverSpec`
-        for full control of the sectioned, styled hover; otherwise a default heads
-        spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
-        ``"all"``) sets how the vertical head profile shows, and
-        ``hover_surfaces=True`` adds the model-top/layer-bottom column (merged with
-        the layer table on ``"all"``).
+        for full control of the sectioned, styled hover; otherwise this field's
+        default spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
+        ``"all"``) sets how the vertical profile shows, and ``hover_surfaces=True``
+        adds the model-top/layer-bottom column (merged on ``"all"``).
         """
 
         if self.model is None:
-            raise ValueError("HeadsPlus.map() requires a parent model.")
+            raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
         if hover is None:
-            hover = head_hover(layers=hover_layers, surfaces=hover_surfaces)
+            hover = self._default_hover(layers=hover_layers, surfaces=hover_surfaces)
         choro = self.model.cor(
             per=per,
             kstpkper=kstpkper,
             layer=layer,
-            type="hds",
+            type=self._choro_type,
             contours=contours,
             contour_levels=contour_levels,
             contour_resolution=contour_resolution,
@@ -497,6 +521,104 @@ class HeadsPlus(SpatialView, bf.HeadFile):
             **kwargs,
         )
         return _apply_backend(choro, backend)
+
+    def _build_value_table(self):
+        """Build the full ``(kstpkper, layer, cell)`` value table for this model."""
+
+        vor_cell_list = list(self.vor.gdf_vorPolys.index)
+
+        """set generic MultiIndex for all stress periods and all cells"""
+        mdx = pd.MultiIndex.from_product(
+            iterables=[
+                self.kstpkper,
+                list(range(self.nlay)),
+                vor_cell_list
+            ],
+            names=['kstpkper', 'layer', 'cell']
+        )
+        """Set up a MultiIndex DataFrame to hold the values
+            for all cells and stress periods"""
+        df_values = pd.DataFrame(
+            index=mdx,
+            columns=[self.store_column]
+        )
+        """get data for each stress period"""
+        for kstpkper in self.kstpkper:
+            sp_values = _as_layer_cell_heads(
+                self.get_data(kstpkper=kstpkper),
+                nlay=self.nlay,
+                ncpl=len(vor_cell_list),
+            )
+            """copy and paste this stress period data to the MultiIndex DataFrame"""
+            for layer in range(self.nlay):
+                assert self.vor.ncpl == sp_values.shape[1], (
+                    'Are you using the wrong voronoi grid??? \n'
+                    f'The provided vor grid has {self.vor.ncpl} cells, but there are {sp_values.shape[1]} values '
+                    f'in the model'
+                )
+                df_values.loc[idxx[kstpkper, layer, :]] = sp_values[layer].reshape(-1, 1)
+        return df_values
+
+
+class HeadsPlus(DependentVariableFile):
+    """Extended heads-file reader (GWF) with head-only observation + choropleth extras.
+
+    ``model.hds``. Adds the head observation helpers, the legacy ``choropleth``
+    builders, and the head-below-bottom "dry" affordances on top of the shared
+    :class:`DependentVariableFile` grammar.
+    """
+
+    value_name = "head"
+    store_column = "elev"
+    _output_suffix = ".hds"
+    _binary_text = "head"
+    _summary_label = "hds"
+    _choro_type = "hds"
+
+    def __init__(
+            self,
+            hds_path: Path = None,
+            model=None,
+            vor: Vor = None,
+            obs_path: Path = None
+    ):
+        """Parameters
+        ----------
+        hds_path
+            Path to a binary MF6 heads file. If omitted, ``model`` is used.
+        model
+            Optional parent model used to infer file paths and geometry helpers.
+        vor
+            Optional Voronoi/grid helper, defaulting to ``model.vor``.
+        obs_path
+            Optional observation-point file used by observation helper methods.
+        """
+
+        super().__init__(path=hds_path, model=model, vor=vor)
+        # Historical aliases: ``.hds_path`` and a ``.hds`` self-reference (no
+        # second binary reader is opened for the same file).
+        self.hds_path = self.output_path
+        self.hds = self
+        self.obs_heads_df = None
+        self._obs = {}
+        self._obs_heads = None
+        self.obs_path = obs_path
+
+    def _default_hover(self, *, layers: str, surfaces: bool):
+        """The default heads hover spec."""
+
+        return head_hover(layers=layers, surfaces=surfaces)
+
+    @property
+    def all_heads(self):
+        """The full ``kstpkper/layer/cell`` head table (alias of ``all_values``)."""
+
+        return self.all_values
+
+    def get_all_heads(self):
+        """Build the full head table (alias of the generic value-table builder)."""
+
+        return self._build_value_table()
 
     @property
     def obs(self):
@@ -523,44 +645,6 @@ class HeadsPlus(SpatialView, bf.HeadFile):
         if self._obs_heads is None:
             self._obs_heads = self.get_obs_heads()
         return self._obs_heads
-
-    def get_all_heads(self):
-        """Method to get all heads for this model and store in
-            a dataframe"""
-
-        vor_cell_list = list(self.vor.gdf_vorPolys.index)
-
-        """set generic MultiIndex for all stress periods and all cells"""
-        hds_mdx = pd.MultiIndex.from_product(
-            iterables=[
-                self.kstpkper,
-                list(range(self.nlay)),
-                vor_cell_list
-            ],
-            names=['kstpkper', 'layer', 'cell']
-        )
-        """Set up a MultiIndex DataFrame to hold the heads
-            for all cells and stress periods"""
-        df_heads = pd.DataFrame(
-            index=hds_mdx,
-            columns=['elev']
-        )
-        """get data for each stress period"""
-        for kstpkper in self.kstpkper:
-            spHds = _as_layer_cell_heads(
-                self.get_data(kstpkper=kstpkper),
-                nlay=self.nlay,
-                ncpl=len(vor_cell_list),
-            )
-            """copy and paste this stress period data to the MultiIndex DataFrame"""
-            for layer in range(self.nlay):
-                assert self.vor.ncpl == spHds.shape[1], (
-                    'Are you using the wrong voronoi grid??? \n'
-                    f'The provided vor grid has {self.vor.ncpl} cells, but there are {spHds.shape[1]} heads '
-                    f'in the model'
-                )
-                df_heads.loc[idxx[kstpkper, layer, :]] = spHds[layer].reshape(-1, 1)
-        return df_heads
 
     @staticmethod
     def sort_dict_by_keys(
@@ -658,3 +742,67 @@ class HeadsPlus(SpatialView, bf.HeadFile):
             obs=obs,
             obs_name=obs_name,
         )
+
+
+class ConcResults(DependentVariableFile):
+    """GWT concentration output reader (``model.conc``).
+
+    The transport twin of :class:`HeadsPlus`: same grammar (``get/summary/map/
+    xs/plot/mosaic/animate``), reading the ``.ucn`` concentration binary. ``unit``
+    is model-dependent (mass/volume) -- the ``"mg/L"`` default is a convention,
+    thread the real unit through when known.
+    """
+
+    value_name = "conc"
+    store_column = "conc"
+    _output_suffix = ".ucn"
+    _binary_text = "concentration"
+    _summary_label = "conc"
+    _choro_type = "conc"
+    _default_unit = "mg/L"
+
+    def __init__(self, path: Path = None, model=None, vor: Vor = None, unit: str | None = None):
+        super().__init__(path=path, model=model, vor=vor)
+        self.unit = unit or self._default_unit
+
+    def _default_hover(self, *, layers: str, surfaces: bool):
+        """The default concentration hover spec (unit threaded from the reader)."""
+
+        return conc_hover(unit=self.unit, layers=layers, surfaces=surfaces)
+
+    @property
+    def all_conc(self):
+        """The full ``kstpkper/layer/cell`` concentration table (alias of ``all_values``)."""
+
+        return self.all_values
+
+
+class TempResults(DependentVariableFile):
+    """GWE temperature output reader (``model.temp``).
+
+    The energy-transport twin of :class:`HeadsPlus`: same grammar, reading the
+    temperature binary. ``unit`` defaults to ``"°C"`` by convention.
+    """
+
+    value_name = "temp"
+    store_column = "temp"
+    _output_suffix = ".ucn"
+    _binary_text = "temperature"
+    _summary_label = "temp"
+    _choro_type = "temp"
+    _default_unit = "°C"
+
+    def __init__(self, path: Path = None, model=None, vor: Vor = None, unit: str | None = None):
+        super().__init__(path=path, model=model, vor=vor)
+        self.unit = unit or self._default_unit
+
+    def _default_hover(self, *, layers: str, surfaces: bool):
+        """The default temperature hover spec (unit threaded from the reader)."""
+
+        return temp_hover(unit=self.unit, layers=layers, surfaces=surfaces)
+
+    @property
+    def all_temp(self):
+        """The full ``kstpkper/layer/cell`` temperature table (alias of ``all_values``)."""
+
+        return self.all_values

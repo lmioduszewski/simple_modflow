@@ -1079,7 +1079,31 @@ integration; PEST-IES has a rich review layer (`IesResults`: `plot_phi`, `plot_v
 `plot_prior_vs_obs`, `plot_conflict`, `field`/`plot_field`, `report`, backend switch)
 that predates the hover/colorscale systems.
 
-### 6.0 Design keystone: ONE generic dependent-variable surface
+### 6.0 Design keystone: ONE generic dependent-variable surface — DONE 2026-07-24
+
+**Delivered (keystone + readable conc/temp; user-scoped increment).** The
+`text=`/`.ucn` flopy claim verified true. Factored `HeadsPlus` into a
+file-agnostic `DependentVariableFile(SpatialView, bf.HeadFile)` base
+(`headsplus.py`) parameterized by `value_name`/`store_column`/`_output_suffix`/
+`_binary_text`/`_choro_type`/default-hover; `HeadsPlus` keeps the head-only extras
+(obs, mounding, legacy `choropleth`), and `ConcResults`/`TempResults` are ~15-line
+subclasses. Model view is now **kind-aware**: `_initialize_from_built_run` stores a
+kind-neutral flopy handle + `model_type`; `model.hds`/`.conc`/`.temp` are gated by
+kind (a clear `AttributeError` on the wrong kind); `get_kstpkper`/`field_reader`
+route the time axis to the right reader. The **full value-kind hook** (chosen over
+the bypass) generalized `Choro`'s `type=='hds'`/`'elev'`/`model.hds` triple to a
+`_depvar_reader`/`_value_column`/`_value_name` resolution (`_DEPVAR_READER_ATTR`),
+so conc/temp maps get the same per-layer hover table as heads; `hover.py`
+generalized the `LayerTable` header literal + `mark_dry` (head-only) and added
+`conc_hover`/`temp_hover`. `'earth'` colorscale is already the `Choro` default.
+Tests: `tests/test_gwt_gwe_results.py` (coupled GWF+GWT and GWF+GWE run MF6; read
+`get/summary/array/map` + hover + colorscale + kind guard). **Deferred to
+follow-ups** (per scope): GWT/GWE budget views (6.1.3), `GroupConc`/`GroupTemp`
+group/diff (6.1.4), `ConcTargets`/`TempTargets` + transport calibration (6.1.5),
+and the canonical `transport=True` fixture (6.1.6) — ledger 56.
+
+#### Original design notes
+
 
 Heads, concentration, and temperature are the same shape: a binary output file read per
 (kstpkper, layer, cell), explored through the same grammar. **Do not clone
@@ -1109,6 +1133,11 @@ Heads, concentration, and temperature are the same shape: a binary output file r
    `run.model("transport")` works. Read `workspace.py:Run.model` + `ModelView` first.
 
 ### 6.1 GWT results tier (concentration)
+
+> **Partially DONE 2026-07-24 (see §6.0 banner):** items 1 (hover) + 2 (colorscale)
+> shipped, and `model.conc` is readable through the full grammar. **Still open:**
+> 3 (budget view), 4 (`GroupConc`/diff), 5 (`ConcTargets`/PEST), 6 (canonical
+> transport fixture) — ledger 56.
 
 Building on 6.0:
 1. **Hover:** `conc_hover(unit="mg/L")` factory — primary `conc`, title
@@ -1141,6 +1170,10 @@ Building on 6.0:
    hover template asserts, budget table, group diff, obs round-trip).
 
 ### 6.2 GWE results tier (temperature)
+
+> **Partially DONE 2026-07-24 (see §6.0 banner):** `model.temp` reader + map +
+> `temp_hover` + `'earth'` colorscale shipped alongside 6.1 (the keystone made it
+> ~free). **Still open:** GWE budget view, `GroupTemp`/diff, `TempTargets` — ledger 56.
 
 A second instantiation of 6.0 — deliberately mechanical after 6.1:
 `model.temp` (`text="temperature"`), `temp_hover(unit=...)` (thread model units;

@@ -124,7 +124,10 @@ alongside the kind-aware `mf.ic`/`mf.oc`/`mf.disv`.
 
 The transport list BCs (`cnc`/`src`/`ctp`/`esl`) are `package_api` factories only —
 no `.gpkg` and no registry entry yet. Concentration/temperature **input maps +
-hover** and the **results tier** (`model.conc`/`model.temp`) are Phase 6.
+hover** are still Phase 6. The **results tier** (`model.conc`/`model.temp`) is
+**built** as of §6.0/6.1/6.2 (2026-07-24) — see the read-side model-level reads
+below; still deferred: GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff,
+and `ConcTargets`/`TempTargets` PEST observations (ledger 56).
 
 ### Geometry, layers, context
 
@@ -232,8 +235,12 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 
 **UZF** (`model.packages.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
 
-**Model-level reads:** `model.hds` (heads explorer — `get`/`array`/`map`/`xs`/
-`mosaic`/`animate`), `model.outputs.<pkg>.bud` (raw budget accessor),
+**Model-level reads:** `model.hds` (GWF heads explorer — `get`/`summary`/`array`/
+`map`/`xs`/`mosaic`/`animate`), and its transport twins **`model.conc`** (GWT
+concentration) and **`model.temp`** (GWE temperature) — the same dependent-variable
+grammar, reading the `.ucn` binary via the shared `DependentVariableFile` base. The
+readers are **kind-gated**: `.hds` on a transport model (or `.conc` on a flow model)
+raises a clear error. `model.outputs.<pkg>.bud` (raw budget accessor),
 `model.targets.<family>` (`compare`/`stats`/`calibration_plot`), `model.pest_runs`.
 
 ### Deprecated spellings (D12)

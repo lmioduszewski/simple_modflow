@@ -49,6 +49,15 @@ rule; it is what makes the API guessable without reading source.
 | `xs(...)` | cross-section | spatial nouns |
 | `mosaic(...)` / `animate(...)` | multi-panel / animated | spatial nouns |
 
+The model-level **dependent-variable readers** follow the same spatial-noun verb
+set: `model.hds` (GWF heads), `model.conc` (GWT concentration), `model.temp` (GWE
+temperature) all share `get/summary/array/map/xs/mosaic/animate`, built from one
+`DependentVariableFile` base (`headsplus.py`) — add a new dependent variable by
+subclassing it and setting `value_name`/`store_column`/`_binary_text`/`_choro_type`,
+not by cloning the reader. The choropleth reads whichever field the map's `type`
+selects (`_DEPVAR_READER_ATTR` in `choros.py`), so the per-layer hover table and
+value labels stay field-generic.
+
 Rules that hold for all of them:
 
 - **Figures are always `viz.Fig`**, never a bare `go.Figure`. `Fig` carries

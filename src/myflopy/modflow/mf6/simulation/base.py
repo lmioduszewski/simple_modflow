@@ -17,6 +17,7 @@ from myflopy.modflow.mf6.simulation.accessors import (
     get_budget,
     get_budget_cumulative,
     get_budget_incremental,
+    get_conc,
     get_hds,
     get_inputs,
     get_kstpkper,
@@ -25,6 +26,7 @@ from myflopy.modflow.mf6.simulation.accessors import (
     get_packages,
     get_sfr_output,
     get_surface,
+    get_temp,
     get_uzf_output,
 )
 from myflopy.modflow.mf6.simulation.indexing import (
@@ -79,7 +81,12 @@ class SimulationBase:
     its results.
     """
 
-    _OUTPUT_SUFFIXES = {".cbc", ".hds", ".lst", ".bud", ".obs.csv", ".grb"}
+    _OUTPUT_SUFFIXES = {".cbc", ".hds", ".ucn", ".lst", ".bud", ".obs.csv", ".grb"}
+
+    #: MF6 model kind ("gwf6"/"gwt6"/"gwe6"); the legacy builder path is GWF, and
+    #: ``_initialize_from_built_run`` overrides it from the built flopy model. It
+    #: gates the dependent-variable readers (``hds``/``conc``/``temp``).
+    model_type = "gwf6"
 
     def _initialize_model_state(
         self,
@@ -142,17 +149,21 @@ class SimulationBase:
             raise ValueError("A live model view requires a built run.")
 
         built_model = run.built.built_model(model_name)
-        gwf = built_model.as_gwf()
+        # Kind-neutral flopy model (GWF/GWT/GWE): ``.gwf`` stays the pervasive
+        # handle everyone reads (modelgrid/output/get_package are kind-agnostic),
+        # while ``.model_type`` gates the field readers (hds/conc/temp).
+        flopy_model = built_model.model
         context = built_model.context
 
         self.sim = run.built.simulation
-        self.gwf = gwf
+        self.gwf = flopy_model
+        self.model_type = getattr(flopy_model, "model_type", "gwf6")
         self.ims = None
         self._initialize_model_state(
             name=model_name,
             vor=context.grid,
             nper=self._simulation_nper(self.sim),
-            nlay=self._model_nlay(gwf),
+            nlay=self._model_nlay(flopy_model),
             model_output_folder_path=run.workspace,
             idomain=context.domain,
         )
@@ -485,11 +496,36 @@ class SimulationBase:
 
         return list(self.node_to_lni.keys())
 
+    def _require_model_kind(self, model_type: str, accessor: str, field: str) -> None:
+        """Raise a clear error if this view is not the model kind ``accessor`` needs."""
+
+        actual = getattr(self, "model_type", "gwf6")
+        if actual != model_type:
+            raise AttributeError(
+                f"model {self.name!r} is a {actual[:3].upper()} model; '.{accessor}' "
+                f"({field}) is only available on {model_type[:3].upper()} models."
+            )
+
     @property
     def hds(self):
-        """FloPy heads reader for the current model outputs."""
+        """FloPy heads reader for the current model outputs (GWF models)."""
 
+        self._require_model_kind("gwf6", "hds", "heads")
         return get_hds(self)
+
+    @property
+    def conc(self):
+        """FloPy concentration reader for the current model outputs (GWT models)."""
+
+        self._require_model_kind("gwt6", "conc", "concentration")
+        return get_conc(self)
+
+    @property
+    def temp(self):
+        """FloPy temperature reader for the current model outputs (GWE models)."""
+
+        self._require_model_kind("gwe6", "temp", "temperature")
+        return get_temp(self)
 
     @property
     def all_heads(self):

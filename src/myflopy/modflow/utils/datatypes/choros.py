@@ -97,6 +97,12 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
     return float(np.clip(min(lon_zoom, lat_zoom), 0.0, 20.0))
 
 
+# Choro ``type`` -> the model's dependent-variable reader attribute. These three
+# types share one code path: read the reader's ``(kstpkper, layer, cell)`` table,
+# mask MODFLOW's 1e30 sentinel, and label the layer-hover table by value name.
+_DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
+
+
 class Choro:
 
     def __init__(
@@ -177,8 +183,11 @@ class Choro:
         self._vor = None
         self.model = model
         self.vor = model.vor if model is not None else vor
+        # Resolve which dependent-variable reader (heads/conc/temp) this map reads;
+        # None for non-field types (ks/rch/...), which fall back to heads for timing.
+        self._depvar_attr = _DEPVAR_READER_ATTR.get(type)
         if model is not None:
-            self.kstpkper = self.model.hds.kstpkper[0] if kstpkper is None else kstpkper
+            self.kstpkper = (self._depvar_reader or self.model.hds).kstpkper[0] if kstpkper is None else kstpkper
         else:
             self.kstpkper = None
         self._per = None
@@ -286,11 +295,39 @@ class Choro:
         self._per = per
 
     @property
+    def _depvar_reader(self):
+        """The dependent-variable reader (heads/conc/temp) for this map's ``type``, or None."""
+
+        depvar_attr = getattr(self, "_depvar_attr", None)
+        if depvar_attr is None or self.model is None:
+            return None
+        return getattr(self.model, depvar_attr)
+
+    @property
+    def _value_column(self):
+        """Stored value column of the active reader (``'elev'`` for heads)."""
+
+        reader = self._depvar_reader
+        return reader.store_column if reader is not None else "elev"
+
+    @property
+    def _value_name(self):
+        """Public value name of the active reader (``head``/``conc``/``temp``)."""
+
+        reader = self._depvar_reader
+        return reader.value_name if reader is not None else "head"
+
+    @property
     def all_heads(self):
-        """All-layer, all-time head table for the model (loaded and cached on first use)."""
+        """All-layer, all-time value table for the map's field (loaded and cached).
+
+        Despite the name, this resolves the map's dependent-variable table --
+        heads, concentration, or temperature -- per :attr:`_depvar_reader`.
+        """
 
         if self._all_heads is None:
-            self._all_heads = self.model.hds.all_heads
+            reader = self._depvar_reader or self.model.hds
+            self._all_heads = reader.all_values
         return self._all_heads
 
     @property
@@ -330,8 +367,8 @@ class Choro:
             return self._bottom_vector(self.layer)
         if contour_key in {"heads", "head", "hds"}:
             return self._cell_vector(
-                self.all_heads.loc[idxx[self.kstpkper, self.layer], "elev"].reset_index(drop=True),
-                f"layer {self.layer + 1} heads",
+                self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True),
+                f"layer {self.layer + 1} {self._value_name}",
             )
         raise ValueError(
             "contours must be False, True, 'top', 'bottom', 'heads', or use contour_values."
@@ -433,7 +470,8 @@ class Choro:
 
         if kstpkper is not None:
             assert isinstance(kstpkper, tuple), 'kstpkper must be an instance of tuple'
-            assert kstpkper in self.model.hds.kstpkper, f'kstpkper {kstpkper} invalid, not listed in hds file'
+            reader = self._depvar_reader or self.model.hds
+            assert kstpkper in reader.kstpkper, f'kstpkper {kstpkper} invalid, not listed in output file'
         self._kstpkper = kstpkper
 
     @property
@@ -457,10 +495,11 @@ class Choro:
                 kstp, kper = self.kstpkper
                 self._hover_dict['Time Step'] = [kstp] * self.vor.ncpl
                 self._hover_dict['Stress Period'] = [kper] * self.vor.ncpl
-            if self.type == 'hds' or self.hover_heads is True:
+            if self._depvar_attr is not None or self.hover_heads is True:
+                label = self._value_name.capitalize()
                 for lyr in range(self.nlay):
-                    lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], 'elev'].to_list()
-                    self._hover_dict[f'Layer {lyr + 1} Heads'] = lyr_heads
+                    lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
+                    self._hover_dict[f'Layer {lyr + 1} {label}'] = lyr_heads
 
             if self.type == 'ks' or self.hover_ks is True:
                 for lyr in range(self.nlay):
@@ -498,7 +537,7 @@ class Choro:
                 layer_bottom = self._top_vector()
             else:
                 layer_bottom = self._bottom_vector(self.layer)
-            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
             zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
             # remove negative mounding values
             zs = zs.mask(zs < 0, 0)
@@ -521,7 +560,7 @@ class Choro:
                     }
                 )
         if self.bgs:
-            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
             zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
             self._hover_dict.update(
                 {
@@ -566,7 +605,7 @@ class Choro:
         if self.custom_zs is not None:
             return self.custom_zs
 
-        if self.type == 'hds' and self.model is not None:
+        if self._depvar_attr is not None and self.model is not None:
             if self.show_mounding is True:
                 # if layer is specified as -1, show mounding above ground
                 if self.layer == -1:
@@ -576,16 +615,16 @@ class Choro:
                     layer_bottom = self._top_vector()
                 else:
                     layer_bottom = self._bottom_vector(self.layer)
-                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
                 z_hd.loc[z_hd == 1e+30] = np.nan  # make modflow empty elevations NaN
                 zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
                 # remove negative mounding values
                 zs = zs.mask(zs < 0, 0)
             elif self.bgs is True:
-                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
                 zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
             else:
-                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], 'elev'].reset_index(drop=True)
+                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
                 zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
 
         elif self.type == 'ks' and self.model is not None:
@@ -821,12 +860,12 @@ class Choro:
         payload = dict(self._custom_hover) if self._custom_hover else {}
         layer_fields: dict[str, list] = {}
         top = botm = None
-        if self.model is not None and (self.type == "hds" or self.hover_heads):
+        if self.model is not None and (self._depvar_attr is not None or self.hover_heads):
             heads = []
             for lyr in range(self.nlay):
-                lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], "elev"].to_list()
+                lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
                 heads.append([np.nan if h == 1e30 else h for h in lyr_heads])
-            layer_fields["head"] = heads
+            layer_fields[self._value_name] = heads
             try:
                 topbtm = self.vor.gdf_topbtm
                 top = topbtm.iloc[:, 1].to_list()

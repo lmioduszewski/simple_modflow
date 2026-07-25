@@ -902,3 +902,32 @@ same day, which is the useful part of the result.
       (and the seven `*_spec` factories' public signatures) for no user-visible gain.
     - Revisit: if a second, differently-shaped partial builder ever appears, reconsider
       whether the general partial encoding or a module-level-function refactor is cleaner.
+
+56. **GWT/GWE results tier shipped reader+maps only (plan §6.0/6.1/6.2, 2026-07-24).**
+    - What: the user scoped this pass to the **keystone + readable `model.conc`/
+      `model.temp`** (grammar `get/summary/array/map/xs/mosaic/animate` + field hover +
+      `'earth'` colorscale, via the full value-kind `Choro` hook). Four 6.1/6.2
+      sub-items were **deliberately deferred**: (3) GWT/GWE **budget views** (`_get_budget_reader`
+      is generic but `ModelView` budget plumbing is GWF-shaped); (4) **`GroupConc`/
+      `GroupTemp`** member + Δ diff maps (near-mechanical `GroupHeads` clone with
+      `elev`→`conc`, blocked on an `all_conc`/`all_temp` group table); (5) **`ConcTargets`/
+      `TempTargets`** + end-to-end transport **calibration** (~8 PEST wiring points + a
+      new concentration forward-run post-processor + transport `parameterize` targets);
+      (6) the **canonical `transport=True` fixture** (large — the canonical runs on the
+      single-model `SimulationBase`, so a coupled GWT needs the multi-model spec path).
+    - Why: each is additive on top of a readable reader, and the canonical fixture is a
+      sub-project of its own; landing the reader first makes transport models *readable*
+      (the stated goal) in a bounded change and lets the rest follow incrementally.
+    - Two smaller judgment calls inside the shipped work:
+      - **`self.gwf` is now the kind-neutral flopy handle** on a transport `ModelView`
+        (a slight naming lie), NOT renamed to `flopy_model` everywhere — `model.gwf` is
+        read in ~20 pervasive sites (components, xsections, inputs, choros, ...) whose
+        calls (`modelgrid`/`output`/`get_package`) are kind-agnostic; a full rename was
+        judged higher-risk than the naming imprecision. `.model_type` is the honest kind.
+      - **`ConcResults`/`TempResults` keep the internal store column and `.ucn` default
+        suffix**; the reader reads `<model>.ucn` (or an explicit path). A GWE model that
+        names its temperature output something else must pass the path. Documented on the
+        reader; revisit if a different convention shows up.
+    - Revisit: build the four deferred sub-items when transport calibration or grouped
+      transport comparison is actually needed; the reader/hook/colorscale substrate is
+      in place for all of them.

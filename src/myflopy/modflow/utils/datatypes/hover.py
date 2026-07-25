@@ -243,7 +243,7 @@ class LayerTable(HoverBlock):
         if show_bot:
             asm.text(
                 f'<span style="color:{spec.style.muted};font-size:10px">'
-                f'{NBSP * 4}head{NBSP * 3}bot</span><br>'
+                f'{NBSP * 4}{primary}{NBSP * 3}bot</span><br>'
             )
             if top_col is not None:
                 asm.text(f'<span style="color:{spec.style.muted}">Top</span>{NBSP}{NBSP}')
@@ -335,7 +335,14 @@ class HoverSpec:
         want_surfaces = bool(self.surfaces)
         if primary in ctx.layer_fields and (self.layers == "all" or want_surfaces):
             blocks.append(
-                LayerTable(fields=(primary,), layers="all", surfaces=want_surfaces)
+                # the head-below-bottom dagger is head physics: on only for heads,
+                # meaningless for concentration/temperature.
+                LayerTable(
+                    fields=(primary,),
+                    layers="all",
+                    surfaces=want_surfaces,
+                    mark_dry=(primary == "head"),
+                )
             )
         elif want_surfaces and ctx.botm is not None:
             blocks.append(LayerTable(fields=("__surface__",), surfaces=True))
@@ -533,6 +540,43 @@ def head_hover(*, layers: str = "active+strip", surfaces: bool = False) -> Hover
         footer=("period", "date"),
         units={"head": "ft"},
         labels={"head": "Head"},
+    )
+
+
+def conc_hover(*, unit: str = "mg/L", layers: str = "active+strip", surfaces: bool = False) -> HoverSpec:
+    """Default GWT concentration hover (mirrors :func:`head_hover`).
+
+    ``unit`` is model-dependent (mass/volume); the default ``"mg/L"`` is a common
+    groundwater convention, not a physical law -- thread the model's real unit
+    through when known.
+    """
+
+    return HoverSpec(
+        primary="conc",
+        title="Concentration",
+        layers=layers,
+        surfaces=surfaces,
+        footer=("period", "date"),
+        units={"conc": unit},
+        labels={"conc": "Concentration"},
+    )
+
+
+def temp_hover(*, unit: str = "°C", layers: str = "active+strip", surfaces: bool = False) -> HoverSpec:
+    """Default GWE temperature hover (mirrors :func:`head_hover`).
+
+    ``unit`` defaults to ``"°C"`` by convention; thread the model's real unit
+    through when known.
+    """
+
+    return HoverSpec(
+        primary="temp",
+        title="Temperature",
+        layers=layers,
+        surfaces=surfaces,
+        footer=("period", "date"),
+        units={"temp": unit},
+        labels={"temp": "Temperature"},
     )
 
 

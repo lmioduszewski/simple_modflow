@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from myflopy.modflow.mf6.budget import Budget
+from myflopy.modflow.mf6.headsplus import ConcResults, TempResults
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.mf6.package_explorer import ModelPackages
 from myflopy.modflow.utils.datatypes.choros import Choro
@@ -53,6 +54,18 @@ def get_hds(model):
     """Build and cache the ``HeadsPlus`` helper for ``model``."""
     model._hds = Hp(model=model, vor=model.vor)
     return model._hds
+
+
+def get_conc(model, unit: str | None = None):
+    """Build and cache the ``ConcResults`` (GWT concentration) helper for ``model``."""
+    model._conc = ConcResults(model=model, vor=model.vor, unit=unit)
+    return model._conc
+
+
+def get_temp(model, unit: str | None = None):
+    """Build and cache the ``TempResults`` (GWE temperature) helper for ``model``."""
+    model._temp = TempResults(model=model, vor=model.vor, unit=unit)
+    return model._temp
 
 
 def get_all_heads(model):
@@ -230,8 +243,24 @@ def get_budget_incremental(model):
     return pd.DataFrame(model.gwf.output.list().get_incremental())
 
 
+def field_reader(model):
+    """The dependent-variable reader for this model's kind (heads/conc/temp).
+
+    Lets kind-agnostic machinery (``kstpkper``, choropleth time axis) read the
+    output field without hardcoding heads: GWT -> concentration, GWE ->
+    temperature, everything else -> heads.
+    """
+
+    model_type = getattr(model, "model_type", "gwf6")
+    if model_type == "gwt6":
+        return get_conc(model)
+    if model_type == "gwe6":
+        return get_temp(model)
+    return get_hds(model)
+
+
 def get_kstpkper(model):
     """Return and cache available ``(kstp, kper)`` combinations."""
     if model._kstpkper is None:
-        model._kstpkper = get_hds(model).kstpkper
+        model._kstpkper = field_reader(model).kstpkper
     return model._kstpkper
