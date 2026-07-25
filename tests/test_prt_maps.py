@@ -633,31 +633,42 @@ def test_pathline_mosaic_gives_one_panel_per_release_group(two_group_run):
         two_group_run.pathlines.mosaic(by="layer")
 
 
-def test_pathline_mosaic_without_groups_names_the_fix(prt_run, tmp_path):
+@pytest.fixture(scope="module")
+def ungrouped_run(tmp_path_factory):
+    """A REAL run whose release points carry no boundnames at all.
+
+    Confirms against MF6 what the ungrouped path actually sees: the track CSV
+    still has a ``name`` column, but every value is blank -- so there are no
+    groups to facet by and coloring falls back to per-particle.
+    """
+
+    workspace = tmp_path_factory.mktemp("prt_ungrouped")
+    model = _flow_model("ungrouped_flow", workspace)
+    assert model.run_simulation()
+
+    project = PRTProject(
+        model,
+        workspace=workspace / "prt",
+        release_points=PRTReleasePoints.from_cells(model, [0, 1]),
+        porosity=0.25,
+    )
+    return project.run(silent=True)
+
+
+def test_pathline_mosaic_without_groups_names_the_fix(ungrouped_run):
     """An ungrouped run says how to get groups instead of drawing one blank panel."""
 
-    pd.DataFrame(
-        {
-            "imdl": [1],
-            "iprp": [1],
-            "irpt": [1],
-            "ilay": [1],
-            "icell": [1],
-            "ireason": [3],
-            "trelease": [0.0],
-            "t": [4.0],
-            "x": [0.5],
-            "y": [0.5],
-            "z": [5.0],
-        }
-    ).to_csv(tmp_path / "plain.trk.csv", index=False)
-    ungrouped = open_prt_run(prt_run.flow_model, tmp_path)
+    view = ungrouped_run.pathlines
 
-    assert ungrouped.pathlines.groups() == []
+    assert view.get()["release_group"].eq("").all()
+    assert view.groups() == []
     with pytest.raises(ValueError, match="no release groups"):
-        ungrouped.pathlines.mosaic()
+        view.mosaic()
+
     # ...but the single-panel map still draws, colored per particle
-    assert len(ungrouped.pathlines.map().overlay_traces()) == 1
+    traces = view.map().overlay_traces()
+    assert len(traces) == view.get()["particle"].nunique() == 2
+    assert {trace.name for trace in traces} == set(view.get()["particle"])
 
 
 def test_pathline_plot_draws_elevation_against_travel_time(prt_run):
@@ -862,13 +873,50 @@ def test_pathline_views_survive_a_run_with_no_particles(prt_run, tmp_path):
     assert len(view.plot().data) == 0
 
 
-def test_pathline_map_colors_a_run_that_mixes_named_and_unnamed_releases(prt_run, tmp_path):
-    """MF6 writes an empty ``name`` for un-grouped points; they are not a group.
+@pytest.fixture(scope="module")
+def mixed_group_run(tmp_path_factory):
+    """A REAL run merging a named release set with an un-named one.
 
-    A run can carry one PRP with boundnames and one without, so the group column
-    holds both labels and blanks. The blank particles are drawn as "particles" --
-    the label has to be resolved *before* the palette is keyed, or the lookup
-    misses.
+    Verified against MF6 rather than assumed: merging makes the PRP carry
+    BOUNDNAMES, and MF6 then **synthesizes** a label for the points that had none
+    (``PRP000000002``) rather than leaving the name blank. So a mixed release
+    yields two groups, one of them auto-named -- which is what shows up in the
+    legend and in ``capture``.
+    """
+
+    workspace = tmp_path_factory.mktemp("prt_mixed")
+    model = _flow_model("mixed_flow", workspace)
+    assert model.run_simulation()
+
+    release = PRTReleasePoints.merge(
+        PRTReleasePoints.from_cells(model, [0], group="west_wells"),
+        PRTReleasePoints.from_cells(model, [1]),  # deliberately un-named
+    )
+    project = PRTProject(
+        model, workspace=workspace / "prt", release_points=release, porosity=0.25
+    )
+    return project.run(silent=True)
+
+
+def test_a_mixed_named_and_unnamed_release_gets_an_mf6_synthesized_group(mixed_group_run):
+    """The un-named half is not blank -- MF6 names it, and it colors like any group."""
+
+    groups = mixed_group_run.pathlines.groups()
+    assert groups == ["PRP000000002", "WEST_WELLS"]
+
+    traces = mixed_group_run.pathlines.map().overlay_traces()
+    assert {trace.name for trace in traces} == {"WEST_WELLS", "PRP000000002"}
+    assert len({trace.line.color for trace in traces}) == 2
+    # the same synthesized label reaches the capture zones
+    assert set(mixed_group_run.capture.groups()) == {"WEST_WELLS", "PRP000000002"}
+
+
+def test_blank_group_labels_from_an_external_track_csv_are_drawn_not_dropped(prt_run, tmp_path):
+    """Defensive: a track CSV myflopy did not write may mix labels with blanks.
+
+    MF6 itself does not produce this (it synthesizes a name -- see the test
+    above), but ``open_prt_run`` accepts any MODFLOW-6 track CSV, and a blank
+    label must not crash the color lookup.
     """
 
     pd.DataFrame(
@@ -886,13 +934,12 @@ def test_pathline_map_colors_a_run_that_mixes_named_and_unnamed_releases(prt_run
             "z": [5.0, 5.0],
             "name": ["WEST", None],
         }
-    ).to_csv(tmp_path / "mixed.trk.csv", index=False)
-    mixed = open_prt_run(prt_run.flow_model, tmp_path)
+    ).to_csv(tmp_path / "external.trk.csv", index=False)
+    external = open_prt_run(prt_run.flow_model, tmp_path)
 
-    traces = mixed.pathlines.map().overlay_traces()
+    traces = external.pathlines.map().overlay_traces()
 
     assert {trace.name for trace in traces} == {"WEST", "particles"}
-    assert all(trace.line.color for trace in traces)
     assert len({trace.line.color for trace in traces}) == 2
 
 

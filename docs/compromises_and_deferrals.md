@@ -1100,3 +1100,24 @@ same day, which is the useful part of the result.
       restores it; use it rather than asserting colors against whatever ran first.
     - Revisit: if collisions show up in practice, the options are a longer palette or
       scoping the memo to a figure/session object rather than the process.
+
+66. **PRT view tests split between one real MF6 run and hand-written track CSVs (plan
+    §6.3C, 2026-07-25).**
+    - What: `tests/test_prt_maps.py` runs real two-cell GWF+PRT simulations for the
+      fixtures whose *fidelity to MF6* is the point (grouped, un-grouped, and mixed
+      named/un-named releases), and feeds hand-written track CSVs through
+      `open_prt_run` for the cases MF6 cannot easily be made to produce on a two-cell
+      grid: multi-layer endpoints, a pooled-vs-per-layer statistic that differs, seven
+      particles arranged so a cap must stratify, rows out of time order, and an empty
+      run. Roughly a third of the file is synthetic.
+    - Why: a two-cell, one-layer model cannot exhibit multi-layer or many-particle
+      behavior, and forcing it would need a fixture heavy enough to slow the suite.
+    - Risk, and it has already bitten: a synthetic CSV encodes an *assumption* about
+      what MF6 writes. The first version of the mixed named/un-named test asserted that
+      MF6 leaves `name` blank for un-named points. Checking against a real run showed
+      it **synthesizes** `PRP000000002` instead; the test now runs MF6 and the blank
+      case is kept only as an explicitly-labelled external-CSV defense. `icell` basing
+      is pinned the same way (real run + a unit).
+    - Rule of thumb going forward: anything asserting *what MF6 produces* must run MF6;
+      synthetic CSVs are for exercising *our* transformations on shapes the tiny model
+      cannot reach, and their docstrings must not claim MF6 provenance.

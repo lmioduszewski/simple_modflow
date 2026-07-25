@@ -31,7 +31,7 @@
   Canonical notebook 03 cell 5's hand-rolled matplotlib is now the library figure
   (ledger 64). **§6.3 is complete**; the plan's acceptance checklist item is ticked.
 - **Next:** 6.4A→C.
-- Full serial suite after 6.3C: **891 passed / 1 skipped** (`pytest -n0`, 147 s).
+- Full serial suite after 6.3C: **892 passed / 1 skipped** (`pytest -n0`, ~165 s).
 - Task list: #54 6.4A, #55 6.4B, #56 6.4C.
 
 ## Locked user decisions (AskUserQuestion, 2026-07-24)

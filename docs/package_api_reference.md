@@ -166,7 +166,12 @@ column — the release-group key the capture map reads. The high-level
 FMI + grid copying ARE needed); on that path the groups come from
 `PRTReleasePoints.from_cells(..., group="west_wells")` (or `from_points`), and
 `PRTReleasePoints.merge(west, east)` combines grouped sets into the one PRP MF6
-wants, renumbering `irpt`.
+wants, renumbering `irpt`. Merging a **named** set with an **un-named** one is
+allowed and turns BOUNDNAMES on for the whole package, so MF6 synthesizes a label
+for the points that had none (`PRP000000002`) — it appears as an ordinary group in
+`capture` and on the pathline legend. Name every set if you do not want that.
+A release with no groups at all leaves `name` blank throughout, and the views fall
+back to per-particle coloring.
 
 **Reading a finished PRT run (§6.3B/§6.3C, 2026-07-25).** Trajectories are not a
 per-cell field, so `PRTRunResults` exposes four view nouns that answer the normal

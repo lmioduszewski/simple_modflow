@@ -232,7 +232,9 @@ title and a second call draws them again. Release-group colors come from
 `viz.category_colors`, so a group matches its arrival curve and capture bars.
 
 The group label becomes a PRP boundname, which MF6 echoes **uppercased** into the
-track CSV's `name` column — that is the key `capture` groups by, so
+track CSV's `name` column (merging a named set with an un-named one makes MF6
+synthesize a label such as `PRP000000002` for the un-named points, which then
+behaves like any other group) — that is the key `capture` groups by, so
 `result.capture` raises (naming the fix) on a run built without groups. These
 maps summarize the whole run, so they take no `per=` and carry no period footer;
 `layer=None` pools every layer into one plan-view panel. Cells no particle
