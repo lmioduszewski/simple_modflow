@@ -29,7 +29,15 @@ from myflopy.advanced import (
     uzf_spec,
     wel_spec,
 )
-from myflopy.builders import build_dis, build_disu, build_disv, build_ic, build_ims, build_oc
+from myflopy.builders import (
+    build_dis,
+    build_disu,
+    build_disv,
+    build_ems,
+    build_ic,
+    build_ims,
+    build_oc,
+)
 from myflopy.geopackage import GeoPackageSource, RowValue
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.lakes import (
@@ -402,20 +410,25 @@ def prt(
     """Return a typed PRT (particle tracking) model spec.
 
     The particle-tracking counterpart of :func:`gwf`: it wraps
-    ``flopy.mf6.ModflowPrt`` and takes the PRT packages (MIP/PRP/OC) through
-    ``packages``. Couple it to a flow model with a GWF-PRT exchange
-    (:func:`build_gwf_prt_exchange`) in the same :class:`SimulationSpec` so
-    particles advect through that model's flow field. Use it for advective
-    pathlines, capture zones, and travel-time analysis. ``context`` carries the
-    grid/geometry exactly as for a flow model; the higher-level
-    :class:`~myflopy.modflow.mf6.prt.PRTProject` wraps this for common setups.
+    ``flopy.mf6.ModflowPrt`` and takes the PRT packages through ``packages`` --
+    ``mf.disv``/``mf.dis`` (they dispatch on the PRT model kind), :func:`mip`,
+    :func:`prp`, and ``mf.oc``. Couple it to a flow model with a GWF-PRT exchange
+    (:func:`build_gwf_prt_exchange`) in the same :class:`SimulationSpec` -- flows
+    pass through the exchange, so no FMI package is needed -- and give the PRT
+    model an :func:`ems` solver (PRT is explicit; IMS is rejected). Use it for
+    advective pathlines, capture zones, and travel-time analysis. ``context``
+    carries the grid/geometry exactly as for a flow model; the higher-level
+    :class:`~myflopy.modflow.mf6.prt.PRTProject` wraps the *post-hoc* pattern
+    (tracking over an already-run flow model in a separate simulation, where FMI
+    and grid copying ARE needed) -- prefer it for that workflow.
 
     Parameters
     ----------
     name
         Model name (also the FloPy model name).
     packages
-        PRT package specs to attach (e.g. ``mf.disv`` plus MIP/PRP/OC).
+        PRT package specs to attach (``mf.disv(...)``, ``mf.mip(...)``,
+        ``mf.prp(...)``, ``mf.oc(...)``).
     context
         Geometry/dates :class:`ModelContext` shared with the paired flow model.
     grid
@@ -579,8 +592,9 @@ def ims(
 ) -> PackageSpec:
     """Return an IMS package spec and register it to one or more models.
 
-    ``models`` controls which GWF/GWT/GWE/PRT models use this solver. A single
-    IMS can be shared:
+    ``models`` controls which GWF/GWT/GWE models use this solver. PRT models are
+    *explicit* in MF6 and cannot sit in an IMS solution group ("Explicit models
+    require EMS6") -- give them :func:`ems` instead. A single IMS can be shared:
 
     ``mf.ims(models=("flow", "transport"))``
 
@@ -668,6 +682,47 @@ def ims(
     return PackageSpec(name, build_ims, values)
 
 
+def ems(
+    *,
+    models: Iterable[str],
+    name: str = "ems",
+    filename: str | None = None,
+    pname: str | None = None,
+    **kwargs: Any,
+) -> PackageSpec:
+    """Return an EMS (explicit solver) package spec registered to PRT models.
+
+    The explicit counterpart of :func:`ims`: PRT models are *explicit* in MF6 --
+    putting one in an IMS solution group aborts the run with "Explicit models
+    require EMS6", and an EMS that is merely constructed (not registered) is
+    silently dropped from ``mfsim.nam``. This spec registers properly via the
+    :func:`~myflopy.builders.build_ems` engine::
+
+        mf.ems(models=("particles",))
+
+    EMS has no solver settings (it just marks the solution group explicit);
+    ``filename``/``pname`` are the only FloPy options.
+
+    Parameters
+    ----------
+    models : Iterable[str]
+        Names of the (PRT) models this EMS solves (registered to each).
+    name : str, default "ems"
+        Solver package name (also its ``pname``).
+    **kwargs
+        Any other ``flopy.mf6.ModflowEms`` option.
+
+    Returns
+    -------
+    PackageSpec
+    """
+
+    values = {"models": tuple(models), "pname": name if pname is None else pname, **kwargs}
+    if filename is not None:
+        values["filename"] = filename
+    return PackageSpec(name, build_ems, values)
+
+
 def simulation(
     *models: ModelSpec,
     name: str = "sim",
@@ -686,9 +741,10 @@ def simulation(
         mf.simulation(flow)              # steady, one IMS solving `flow`
         mf.simulation(flow, transport)   # one IMS each (coupled-ready)
 
-    Defaults: a single steady stress period (``mf.tdis()``) and one ``IMS`` per
-    model, each solving only that model -- which is what both single-model and
-    coupled GWF/GWT/GWE/PRT runs require. Override any of it::
+    Defaults: a single steady stress period (``mf.tdis()``) and one solver per
+    model, each solving only that model -- an ``IMS`` for GWF/GWT/GWE models and
+    an ``EMS`` for PRT models (PRT is explicit in MF6 and is rejected under
+    IMS6). Override any of it::
 
         mf.simulation(flow, tdis=mf.tdis(nper=12, perioddata=spd))
         mf.simulation(flow, transport, solver=[flow_ims, transport_ims])
@@ -705,8 +761,8 @@ def simulation(
     tdis : PackageSpec, optional
         Timing package; defaults to a single steady period (``mf.tdis()``).
     solver : PackageSpec or Iterable[PackageSpec], optional
-        IMS solver(s); defaults to one ``mf.ims`` per model (each solving only
-        that model).
+        Solver spec(s); defaults to one per model, each solving only that model
+        (``mf.ims`` for GWF/GWT/GWE, ``mf.ems`` for PRT).
     complexity : str, optional, default "SIMPLE"
         Solver complexity preset used for the default per-model IMS.
     exchanges : Iterable, optional
@@ -737,8 +793,12 @@ def simulation(
 
     timing = _steady_tdis() if tdis is None else tdis
     if solver is None:
+        # PRT models are explicit -- MF6 rejects them under IMS6 ("Explicit
+        # models require EMS6"), so their default solver is an EMS.
         solvers: list[PackageSpec] = [
-            ims(models=[m.name], name=f"{m.name}_ims", complexity=complexity)
+            ems(models=[m.name], name=f"{m.name}_ems")
+            if m.model_type == "prt"
+            else ims(models=[m.name], name=f"{m.name}_ims", complexity=complexity)
             for m in models
         ]
     elif isinstance(solver, PackageSpec):
@@ -834,8 +894,7 @@ def dis(
     supplied structured models. A DIS model builds and runs, but the choropleth-map /
     cross-section / animation viz targets DISV/Voronoi meshes and is **not** wired for
     structured grids -- use FloPy's own plotting, or DISV, for those. Like ``mf.disv``
-    it dispatches the FloPy class off the model kind (GWF/GWT/GWE); PRT builds its own
-    dis via ``mf.prt``.
+    it dispatches the FloPy class off the model kind (GWF/GWT/GWE/PRT).
 
     Parameters
     ----------
@@ -1084,9 +1143,11 @@ def oc(
 ) -> PackageSpec:
     """Output-control (OC) package: what to save/print and when.
 
-    Dispatches on the model kind (GWF/GWT/GWE). To get the dependent variable and
-    a cell budget on disk you must name the output files **and** request them in
-    ``saverecord`` -- MF6 errors if you ask to save without an output file.
+    Dispatches on the model kind (GWF/GWT/GWE/PRT). To get the dependent variable
+    and a cell budget on disk you must name the output files **and** request them
+    in ``saverecord`` -- MF6 errors if you ask to save without an output file.
+    For PRT pass ``track_filerecord=``/``trackcsv_filerecord=`` via ``**options``
+    (the track CSV is what the results tier reads).
 
     Parameters
     ----------
@@ -1399,6 +1460,108 @@ def esl(*, stress_period_data: Any, name: str = "esl", **options: Any) -> Packag
     return PackageSpec(
         name, flopy.mf6.ModflowGweesl, {"stress_period_data": stress_period_data, **options}
     )
+
+
+def mip(
+    *,
+    porosity: Any,
+    retfactor: Any | None = None,
+    izone: Any | None = None,
+    name: str = "mip",
+    **options: Any,
+) -> PackageSpec:
+    """Model input (MIP) package for a PRT model: tracking porosity.
+
+    The one physical input particle tracking needs -- advective velocity is the
+    cell flow divided by ``porosity``. Attach it to a :func:`prt` model alongside
+    the grid (``mf.disv``/``mf.dis`` dispatch on the PRT kind), :func:`prp`, and
+    ``mf.oc``.
+
+    Parameters
+    ----------
+    porosity : float or array-like
+        Effective (transport) porosity -- a scalar or per-cell array.
+    retfactor : float or array-like, optional
+        Retardation factor (>= 1 slows particles; default no retardation).
+    izone : int or array-like, optional
+        Zone numbers reported in the track output's ``izone`` column.
+    name : str, default "mip"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowPrtmip`` options.
+
+    Returns
+    -------
+    PackageSpec
+    """
+
+    values = {"porosity": porosity, **options}
+    if retfactor is not None:
+        values["retfactor"] = retfactor
+    if izone is not None:
+        values["izone"] = izone
+    return PackageSpec(name, flopy.mf6.ModflowPrtmip, values)
+
+
+def prp(
+    *,
+    packagedata: Any,
+    nreleasepts: int | None = None,
+    perioddata: Any | None = None,
+    boundnames: bool | None = None,
+    name: str = "prp",
+    **options: Any,
+) -> PackageSpec:
+    """Particle release point (PRP) package for a PRT model.
+
+    Declares where and when particles are released. ``packagedata`` rows are
+    ``(irpt, (layer, cell), x, y, z)`` -- zero-based ``irpt`` and cellid -- with
+    an optional trailing ``boundname`` string to group release points (the name
+    is echoed into the track CSV's ``name`` column, which is what
+    ``capture_map(by="release_group")`` reads). ``nreleasepts`` defaults to
+    ``len(packagedata)``; ``perioddata`` defaults to ``{0: ["FIRST"]}`` (release
+    at the first step, matching :class:`~myflopy.modflow.mf6.prt.PRTProject`);
+    ``boundnames`` is auto-enabled when rows carry the sixth (name) field.
+
+    Parameters
+    ----------
+    packagedata : list
+        Release-point rows ``[(irpt, (layer, cell), x, y, z[, boundname]), ...]``.
+    nreleasepts : int, optional
+        Number of release points; defaults to ``len(packagedata)``.
+    perioddata : dict, optional
+        ``{kper: settings}`` release schedule (``ALL``/``FIRST``/``LAST``/
+        ``FREQUENCY <n>``/``STEPS <s...>``/``FRACTION <f>``); default
+        ``{0: ["FIRST"]}``.
+    boundnames : bool, optional
+        Enable named release points; auto-detected from the row width when
+        omitted.
+    name : str, default "prp"
+        Package name.
+    **options
+        Extra ``flopy.mf6.ModflowPrtprp`` options (``stoptime``, ``drape``,
+        ``local_z``, ``extend_tracking``, ``stop_at_weak_sink``, ...).
+
+    Returns
+    -------
+    PackageSpec
+    """
+
+    rows = list(packagedata)
+    if boundnames is None:
+        boundnames = any(len(tuple(row)) >= 6 for row in rows)
+    values = {
+        "packagedata": rows,
+        "nreleasepts": len(rows) if nreleasepts is None else nreleasepts,
+        "perioddata": {0: ["FIRST"]} if perioddata is None else perioddata,
+        # explicit pname: flopy otherwise numbers PRP instances ("prp_0"), which
+        # breaks get_package("prp") lookups.
+        "pname": name,
+        **options,
+    }
+    if boundnames:
+        values["boundnames"] = True
+    return PackageSpec(name, flopy.mf6.ModflowPrtprp, values)
 
 
 class _CHDPackage:
@@ -3489,6 +3652,7 @@ __all__ = [
     "disv",
     "drn",
     "dsp",
+    "ems",
     "esl",
     "est",
     "evt",
@@ -3500,10 +3664,12 @@ __all__ = [
     "ims",
     "ist",
     "lak",
+    "mip",
     "mst",
     "mvr",
     "npf",
     "oc",
+    "prp",
     "prt",
     "rch",
     "riv",

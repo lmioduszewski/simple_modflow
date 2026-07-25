@@ -1208,11 +1208,25 @@ style the rest, rather than forcing everything into choropleths:
    `pathline_hover()` spec rendering particle id, release point/group, current time,
    layer; apply `HoverStyle.to_hoverlabel()` to the new scatter traces. Read
    `prt.py:PRTRunResults.plot_map` + `interactive_plotting.py` scene builders first.
-3. **Build-side parity:** add `mf.mip(porosity=)` and `mf.prp(...)` thin factories
-   (5.3A dispatch pattern) so a PRT model is fully declarable in a `SimulationSpec`
-   without raw PackageSpecs; keep `model.particle_tracking.prt(...)`/`PRTProject` as the
-   sanctioned high-level runtime path (it manages FMI/grid copying correctly — do not
-   duplicate that logic in specs).
+3. **Build-side parity — DONE 2026-07-24 (§6.3A):** `mf.mip`/`mf.prp` are plain
+   5.3B-style factories, NOT 5.3A dispatch (correction: MIP/PRP exist only on PRT —
+   no cross-kind ambiguity). Full declarability additionally required (scoping
+   verified by a live spec-declared GWF+PRT MF6 run): **`mf.ems` + `build_ems`**
+   (EMS must be *registered* via `register_solution_package`; a bare EMS PackageSpec
+   is silently dropped and MF6 aborts "Explicit models require EMS6"), **prt6
+   entries** in the dis/disv/oc dispatch tables (`ModflowPrtdis/Prtdisv/Prtoc`;
+   ic/disu correctly stay rejected — no `ModflowPrtic`/`ModflowPrtdisu`), and a
+   **kind-aware `mf.simulation` solver default** (EMS for prt models — the old
+   one-IMS-per-model default was a runtime landmine). CORRECTION: the spec path
+   needs **no FMI at all** — the GWF-PRT exchange passes flows directly; FMI/grid
+   copying is exclusively `PRTProject`'s post-hoc separate-simulation concern, so
+   there was nothing to duplicate. `mf.prp` derives `nreleasepts`, defaults
+   `perioddata={0: ["FIRST"]}`, auto-enables `boundnames` from the row width, and
+   pins `pname` (flopy otherwise numbers instances "prp_0"). Misleading docstrings
+   fixed (mf.prt/mf.ims/mf.simulation + stale "PRT builds its own dis" comments).
+   Pinned by `test_prt_model_fully_declarable_and_runs` (runs MF6; boundnames echo
+   uppercased into the track CSV `name` column). `PRTProject` stays the sanctioned
+   post-hoc runtime path.
 4. **3-D scene** stays as-is — CORRECTION (rev. 4): it is **PyVista/trame** (not raw
    plotly); either way it remains a documented viz.py exception. MP3DU untouched
    except Phase 2.4.

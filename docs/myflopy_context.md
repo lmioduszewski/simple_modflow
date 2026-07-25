@@ -89,6 +89,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
 | GWT/GWE results — budget / group-diff / obs | ❌ | GWT/GWE budget views, `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
+| PRT **spec-first declarability** (mip/prp/ems + exchange, no FMI) | ✅ | `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dis/disv/oc dispatch; `mf.simulation` solver default is kind-aware (IMS vs EMS) — §6.3A, 2026-07-24 |
 | PRT derived cell maps (travel-time / endpoints choropleths) | ❌ | pathlines/scene/map exist; grammar-integrated cell maps are plan §6.3 |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
 | Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |

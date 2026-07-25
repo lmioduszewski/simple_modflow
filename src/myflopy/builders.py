@@ -53,17 +53,49 @@ def build_ims(simulation, *, models: Iterable[str], **options):
     return ims
 
 
-# Model-type dispatch for shared core packages (plan 5.3A). ``ic``/``oc``/``disv``
-# are the same package on GWF, GWT and GWE models but map to different FloPy
-# classes; these module-level builders resolve the class from the built model's
-# ``model_type`` (``"gwf6"``/``"gwt6"``/``"gwe6"``). They MUST stay module-level
-# functions: ``PackageSpec`` serializes its builder by importable reference
-# (``specs._callable_ref`` rejects lambdas/closures), and only the function is
-# persisted -- the class tables below are re-read at build time, never serialized.
-# PRT is intentionally absent from every table: MF6 has no ``ModflowPrtic`` and
-# ``mf.prt`` builds PRT's own dis/disv internally, so PRT never routes through
-# ``mf.dis``/``mf.disv`` (and MF6 has no ``ModflowPrtdisu`` at all). ``npf``/``sto``
-# are GWF-only in MF6 and are not dispatched.
+def build_ems(simulation, *, models: Iterable[str], **options):
+    """Build an EMS (explicit) solver package and register it with the named models.
+
+    PRT models are *explicit* in MF6 -- they must sit in an EMS6 solution group,
+    never IMS6 ("Model X is an explicit model and cannot be added to an IMS6
+    solution"). Registration is mandatory: an EMS merely *constructed* is dropped
+    from ``mfsim.nam`` at write time and flopy silently attaches the PRT model to
+    an existing IMS group, which MF6 then rejects. This is the engine under
+    ``mf.ems(...)``.
+
+    Parameters
+    ----------
+    simulation
+        The owning FloPy ``MFSimulation`` to attach the solver to.
+    models : Iterable[str]
+        Names of the (PRT) models this EMS solves (registered to each).
+    **options
+        ``flopy.mf6.ModflowEms`` options; ``filename`` defaults to ``"<pname>.ems"``.
+
+    Returns
+    -------
+    flopy.mf6.ModflowEms
+        The constructed and registered EMS package.
+    """
+
+    models = list(models)
+    base = options.get("pname") or (models[0] if models else "ems")
+    options.setdefault("filename", f"{base}.ems")
+    ems = flopy.mf6.ModflowEms(simulation, **options)
+    simulation.register_solution_package(ems, models)
+    return ems
+
+
+# Model-type dispatch for shared core packages (plan 5.3A, PRT rows 6.3A).
+# ``ic``/``oc``/``dis(v/u)`` are the same package across model kinds but map to
+# different FloPy classes; these module-level builders resolve the class from the
+# built model's ``model_type`` (``"gwf6"``/``"gwt6"``/``"gwe6"``/``"prt6"``). They
+# MUST stay module-level functions: ``PackageSpec`` serializes its builder by
+# importable reference (``specs._callable_ref`` rejects lambdas/closures), and only
+# the function is persisted -- the class tables below are re-read at build time,
+# never serialized. PRT is dispatched for ``dis``/``disv``/``oc`` only: MF6 has no
+# ``ModflowPrtic`` (PRT needs no initial condition) and no ``ModflowPrtdisu``.
+# ``npf``/``sto`` are GWF-only in MF6 and are not dispatched.
 _IC_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfic,
     "gwt6": flopy.mf6.ModflowGwtic,
@@ -73,16 +105,19 @@ _OC_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfoc,
     "gwt6": flopy.mf6.ModflowGwtoc,
     "gwe6": flopy.mf6.ModflowGweoc,
+    "prt6": flopy.mf6.ModflowPrtoc,
 }
 _DISV_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfdisv,
     "gwt6": flopy.mf6.ModflowGwtdisv,
     "gwe6": flopy.mf6.ModflowGwedisv,
+    "prt6": flopy.mf6.ModflowPrtdisv,
 }
 _DIS_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfdis,
     "gwt6": flopy.mf6.ModflowGwtdis,
     "gwe6": flopy.mf6.ModflowGwedis,
+    "prt6": flopy.mf6.ModflowPrtdis,
 }
 _DISU_CLASSES = {
     "gwf6": flopy.mf6.ModflowGwfdisu,
@@ -117,19 +152,19 @@ def build_ic(model, **options):
 
 
 def build_oc(model, **options):
-    """Build the OC package for the model's kind (GWF/GWT/GWE). Engine under ``mf.oc``."""
+    """Build the OC package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.oc``."""
 
     return _dispatch_core_class(_OC_CLASSES, model, "oc")(model, **options)
 
 
 def build_disv(model, **options):
-    """Build the DISV package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disv``."""
+    """Build the DISV package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.disv``."""
 
     return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **options)
 
 
 def build_dis(model, **options):
-    """Build the DIS package for the model's kind (GWF/GWT/GWE). Engine under ``mf.dis``."""
+    """Build the DIS package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.dis``."""
 
     return _dispatch_core_class(_DIS_CLASSES, model, "dis")(model, **options)
 

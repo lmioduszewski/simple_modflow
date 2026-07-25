@@ -136,14 +136,19 @@ def test_package_api_builds_typed_model_specs_for_all_mf6_model_types(tmp_path):
 
 
 def _disv_values() -> dict:
-    """Minimal two-cell DISV grid dict, model-kind-agnostic."""
+    """Minimal two-cell DISV grid dict, model-kind-agnostic.
+
+    Vertices are listed CLOCKWISE per cell -- MF6 rejects counter-clockwise
+    winding with "Calculated CELL2D area less than zero", so this grid both
+    builds AND runs.
+    """
 
     return dict(
         nlay=1,
         ncpl=2,
         nvert=6,
         vertices=[[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 1.0, 1.0], [3, 0.0, 1.0], [4, 2.0, 0.0], [5, 2.0, 1.0]],
-        cell2d=[[0, 0.5, 0.5, 4, 0, 1, 2, 3], [1, 1.5, 0.5, 4, 1, 4, 5, 2]],
+        cell2d=[[0, 0.5, 0.5, 4, 0, 3, 2, 1], [1, 1.5, 0.5, 4, 1, 2, 5, 4]],
         top=10.0,
         botm=0.0,
     )
@@ -185,11 +190,11 @@ def test_core_helpers_dispatch_on_model_type(tmp_path):
 
 
 def test_core_helper_dispatch_builders_round_trip_and_reject_prt():
-    """The dispatch builders serialize by importable ref, and raise clearly for PRT."""
+    """The dispatch builders serialize by importable ref, and gate PRT correctly."""
 
     from types import SimpleNamespace
 
-    from myflopy.builders import build_dis, build_disu, build_disv, build_ic, build_oc
+    from myflopy.builders import build_disu, build_ic
 
     assert mf.ic(strt=1.0).to_dict()["builder"] == "myflopy.builders:build_ic"
     assert mf.oc(budget_filerecord="m.cbc").to_dict()["builder"] == "myflopy.builders:build_oc"
@@ -203,11 +208,18 @@ def test_core_helper_dispatch_builders_round_trip_and_reject_prt():
     # round-trip resolves back to the same module-level function
     assert mf.PackageSpec.from_dict(mf.ic(strt=1.0).to_dict()).builder is build_ic
 
-    # PRT builds its own dis via mf.prt (and MF6 has no ModflowPrtdisu); the shared
-    # dispatch must fail loudly, not KeyError, for every core package.
-    for build in (build_ic, build_oc, build_disv, build_dis, build_disu):
+    # PRT is dispatched for dis/disv/oc (6.3A) but MF6 has no ModflowPrtic (PRT
+    # needs no initial condition) and no ModflowPrtdisu; those must fail loudly,
+    # not KeyError.
+    prt_like = SimpleNamespace(model_type="prt6")
+    for build in (build_ic, build_disu):
         with pytest.raises(ValueError, match="not available for model type 'prt6'"):
-            build(SimpleNamespace(model_type="prt6"))
+            build(prt_like)
+    from myflopy.builders import _DIS_CLASSES, _DISV_CLASSES, _OC_CLASSES
+
+    assert _OC_CLASSES["prt6"] is flopy.mf6.ModflowPrtoc
+    assert _DISV_CLASSES["prt6"] is flopy.mf6.ModflowPrtdisv
+    assert _DIS_CLASSES["prt6"] is flopy.mf6.ModflowPrtdis
 
 
 def test_dis_dispatch_builds_structured_class_per_kind(tmp_path):
@@ -276,6 +288,62 @@ def test_gwt_gwe_package_factories_build_real_models(tmp_path):
     # ssm references flow-model source packages by name; check the spec + its builder ref.
     ssm = mf.ssm(sources=[["chd", "AUX", "concentration"]])
     assert ssm.to_dict()["builder"] == "flopy.mf6.modflow.mfgwtssm:ModflowGwtssm"
+
+
+def test_prt_model_fully_declarable_and_runs(tmp_path):
+    """A coupled GWF+PRT simulation is declarable spec-first and runs MF6 (6.3A).
+
+    mf.mip/mf.prp + prt6-dispatched mf.disv/mf.oc + mf.ems, coupled through
+    build_gwf_prt_exchange with NO FMI package (flows pass through the exchange).
+    mf.simulation()'s solver default gives the PRT model an EMS -- MF6 rejects
+    explicit models under IMS6, so this is load-bearing, not cosmetic. Release
+    points carry boundnames, which MF6 echoes (uppercased) into the track CSV's
+    ``name`` column -- the group key the capture map reads.
+    """
+
+    import pandas as pd
+
+    disv = _disv_values()
+    flow = mf.gwf("flow", packages=[
+        mf.disv(**disv), mf.ic(strt=9.0), mf.npf(k=1.0, save_specific_discharge=True),
+        mf.chd(stress_period_data={0: [[(0, 0), 10.0], [(0, 1), 8.0]]}),
+        mf.oc(head_filerecord="flow.hds", budget_filerecord="flow.cbc",
+              saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
+    ])
+    particles = mf.prt("particles", packages=[
+        mf.disv(**disv),
+        mf.mip(porosity=0.25),
+        mf.prp(packagedata=[(0, (0, 0), 0.35, 0.5, 9.0, "west_wells"),
+                            (1, (0, 0), 0.45, 0.5, 9.0, "east_wells")]),
+        mf.oc(trackcsv_filerecord="particles.trk.csv",
+              budget_filerecord="particles.bud", saverecord=[("BUDGET", "ALL")]),
+    ])
+    sim = mf.simulation(
+        flow, particles,
+        exchanges=[mf.ExchangeSpec("gwfprt", mf.build_gwf_prt_exchange,
+                                   models=("flow", "particles"))],
+    )
+
+    # the solver default is kind-aware: IMS for the GWF model, EMS for PRT
+    solver_names = [p.name for p in sim.packages if p.name.endswith(("_ims", "_ems"))]
+    assert solver_names == ["flow_ims", "particles_ems"]
+
+    built = sim.build_flopy(tmp_path)
+    pm = built.simulation.get_model("particles")
+    assert isinstance(pm.get_package("mip"), flopy.mf6.ModflowPrtmip)
+    assert isinstance(pm.get_package("prp"), flopy.mf6.ModflowPrtprp)
+    assert isinstance(pm.get_package("disv"), flopy.mf6.ModflowPrtdisv)
+    assert isinstance(pm.get_package("oc"), flopy.mf6.ModflowPrtoc)
+
+    built.simulation.write_simulation()
+    success, report = built.simulation.run_simulation(silent=True)
+    assert success, "MF6 GWF+PRT did not converge:\n" + "\n".join(report[-20:])
+
+    (track_csv,) = tmp_path.rglob("*.trk.csv")
+    track = pd.read_csv(track_csv)
+    assert len(track) > 0
+    assert sorted(track["name"].dropna().unique()) == ["EAST_WELLS", "WEST_WELLS"]
+    assert (track["ireason"] == 3).any()  # every particle terminates
 
 
 def test_package_api_exposes_direct_and_geopackage_boundary_paths(tmp_path):

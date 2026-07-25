@@ -144,6 +144,15 @@
         "options:VAR_KEYWORD=<required>"
       ]
     },
+    "ems": {
+      "__call__": [
+        "models:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='ems'",
+        "filename:KEYWORD_ONLY=None",
+        "pname:KEYWORD_ONLY=None",
+        "kwargs:VAR_KEYWORD=<required>"
+      ]
+    },
     "esl": {
       "__call__": [
         "stress_period_data:KEYWORD_ONLY=<required>",
@@ -402,6 +411,15 @@
         "options:VAR_KEYWORD=<required>"
       ]
     },
+    "mip": {
+      "__call__": [
+        "porosity:KEYWORD_ONLY=<required>",
+        "retfactor:KEYWORD_ONLY=None",
+        "izone:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='mip'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
     "mst": {
       "__call__": [
         "porosity:KEYWORD_ONLY=<required>",
@@ -446,6 +464,16 @@
         "saverecord:KEYWORD_ONLY=None",
         "printrecord:KEYWORD_ONLY=None",
         "name:KEYWORD_ONLY='oc'",
+        "options:VAR_KEYWORD=<required>"
+      ]
+    },
+    "prp": {
+      "__call__": [
+        "packagedata:KEYWORD_ONLY=<required>",
+        "nreleasepts:KEYWORD_ONLY=None",
+        "perioddata:KEYWORD_ONLY=None",
+        "boundnames:KEYWORD_ONLY=None",
+        "name:KEYWORD_ONLY='prp'",
         "options:VAR_KEYWORD=<required>"
       ]
     },
@@ -1163,6 +1191,7 @@
       "disv",
       "drn",
       "dsp",
+      "ems",
       "esl",
       "est",
       "evt",
@@ -1184,6 +1213,7 @@
       "lak_connection",
       "load_mf6_run",
       "load_run",
+      "mip",
       "modflow",
       "modflow_surfaces",
       "mst",
@@ -1196,6 +1226,7 @@
       "plot_particle_pathlines",
       "prepare_particle_tracking",
       "project",
+      "prp",
       "prt",
       "rch",
       "read_gpkg",
@@ -1226,6 +1257,7 @@
       "disv",
       "drn",
       "dsp",
+      "ems",
       "esl",
       "est",
       "evt",
@@ -1237,10 +1269,12 @@
       "ims",
       "ist",
       "lak",
+      "mip",
       "mst",
       "mvr",
       "npf",
       "oc",
+      "prp",
       "prt",
       "rch",
       "riv",

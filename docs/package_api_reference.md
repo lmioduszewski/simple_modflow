@@ -35,14 +35,21 @@ Everything below is an attribute of the top-level `myflopy` module (imported as
 
 ### Discretization, core, solver
 
-`mf.disv`, `mf.dis`, `mf.disu`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`, `mf.ims`
-— each `mf.<name>(...)` returns a `PackageSpec`.
+`mf.disv`, `mf.dis`, `mf.disu`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`,
+`mf.ims`, `mf.ems` — each `mf.<name>(...)` returns a `PackageSpec`.
 
 `mf.ic` / `mf.oc` / `mf.disv` / `mf.dis` / `mf.disu` are **model-kind-aware**: they
-build the GWF/GWT/GWE FloPy class off the model's type, so the same helper serves a
-transport or energy model (for GWT/GWE `mf.oc`, pass
-`concentration_filerecord=`/`temperature_filerecord=` via `**options`). `mf.npf`
-and `mf.sto` are GWF-only (MF6 has no GWT/GWE variant).
+build the GWF/GWT/GWE (and, for `oc`/`disv`/`dis`, PRT) FloPy class off the model's
+type, so the same helper serves a transport, energy, or particle-tracking model
+(for GWT/GWE `mf.oc`, pass `concentration_filerecord=`/`temperature_filerecord=`
+via `**options`; for PRT, `trackcsv_filerecord=`). `mf.npf` and `mf.sto` are
+GWF-only (MF6 has no GWT/GWE variant); `mf.ic` and `mf.disu` reject PRT (MF6 has
+no `ModflowPrtic`/`ModflowPrtdisu`).
+
+**Solvers**: `mf.ims(models=…)` for GWF/GWT/GWE; **`mf.ems(models=…)`** for PRT —
+PRT models are *explicit* in MF6 and are rejected under IMS6 ("Explicit models
+require EMS6"). `mf.simulation(...)`'s solver default is kind-aware: one IMS per
+GWF/GWT/GWE model, one EMS per PRT model.
 
 **Grid helpers** (`mf.disv` is the default — myflopy is Voronoi/DISV-first):
 
@@ -58,8 +65,7 @@ and `mf.sto` are GWF-only (MF6 has no GWT/GWE variant).
 
 `mf.dis`/`mf.disu` build and run, but the choropleth-map / cross-section / animation
 viz targets **DISV/Voronoi** meshes and is not wired for structured or raw-DISU
-grids (use FloPy's own plotting, or DISV). PRT is not dispatched by any grid helper —
-`mf.prt` builds its own dis/disv internally (and MF6 has no `ModflowPrtdisu`).
+grids (use FloPy's own plotting, or DISV).
 
 ### List boundary conditions
 
@@ -128,6 +134,36 @@ hover** are still Phase 6. The **results tier** (`model.conc`/`model.temp`) is
 **built** as of §6.0/6.1/6.2 (2026-07-24) — see the read-side model-level reads
 below; still deferred: GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff,
 and `ConcTargets`/`TempTargets` PEST observations (ledger 56).
+
+### PRT particle-tracking packages
+
+A PRT model is fully declarable spec-first (§6.3A, 2026-07-24) — a coupled
+GWF+PRT simulation needs **no FMI package** (flows pass through the GWF-PRT
+exchange) and no raw PackageSpecs:
+
+| factory | package | notes |
+|---|---|---|
+| `mf.mip` | model input (PRT) | `porosity=` required; optional `retfactor=`/`izone=` |
+| `mf.prp` | particle release points (PRT) | `packagedata=` rows `(irpt, (layer, cell), x, y, z[, boundname])`; `nreleasepts`/`perioddata`/`boundnames` defaulted |
+| `mf.ems` | explicit solver | `models=` — required for PRT (IMS6 rejects explicit models) |
+
+```python
+particles = mf.prt("particles", packages=[
+    mf.disv(**grid), mf.mip(porosity=0.25),
+    mf.prp(packagedata=[(0, (0, 0), x, y, z, "west_wells")]),   # boundname → release group
+    mf.oc(trackcsv_filerecord="particles.trk.csv",
+          budget_filerecord="particles.bud", saverecord=[("BUDGET", "ALL")]),
+])
+sim = mf.simulation(flow, particles,        # solver default: IMS for flow, EMS for particles
+    exchanges=[mf.ExchangeSpec("gwfprt", mf.build_gwf_prt_exchange,
+                               models=("flow", "particles"))])
+```
+
+Release-point `boundname`s are echoed (uppercased) into the track CSV's `name`
+column — the release-group key the capture map reads. The high-level
+`model.particle_tracking` / `PRTProject` runtime remains the sanctioned path for
+*post-hoc* tracking over an already-run flow model (a separate simulation, where
+FMI + grid copying ARE needed).
 
 ### Geometry, layers, context
 

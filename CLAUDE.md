@@ -121,7 +121,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   (from GeoPackage), `.flopy(...)` (raw FloPy escape hatch); advanced `mf.uzf/sfr/lak` (`()` =
   high-level builder, `.flopy(...)` = raw); `mf.mvr` with `mf.Move(mf.MoverConnection("sfr",0),
   mf.MoverConnection("lak",0))`. **MVR is validated**: moved packages must be declared in the
-  model AND ordered before the mover (`test_advanced_specs`).
+  model AND ordered before the mover (`test_advanced_specs`). PRT is spec-first
+  declarable too (§6.3A): `mf.mip/prp` + `mf.ems` (PRT is explicit — EMS, never IMS;
+  `mf.simulation` defaults kind-aware) + prt6-dispatched `mf.disv/dis/oc`; coupled
+  GWF+PRT needs NO FMI (the exchange passes flows) — FMI/grid copying is only for
+  `PRTProject`'s post-hoc separate-simulation path.
 - **Layers** (same facade/engine pattern): use the facade **`mf.LayerStack`** (`layers.py`) —
   `LayerStack(vor, top=Raster("ground.tif")).add("sand", thickness=20, pinch="inactive")
   .add("clay", bottom=Contours(...)).build()` → disv-ready top/botm/idomain (plus `.qc()`,
