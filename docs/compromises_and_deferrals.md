@@ -931,3 +931,66 @@ same day, which is the useful part of the result.
     - Revisit: build the four deferred sub-items when transport calibration or grouped
       transport comparison is actually needed; the reader/hook/colorscale substrate is
       in place for all of them.
+
+57. **PRT derived maps leave unreached cells blank, not zero (plan §6.3B, 2026-07-25).**
+    - What: `travel_time.map()` / `endpoints.map()` / `capture.map()` fill cells no
+      particle reached with **NaN** (`fill_value=float("nan")`), so they are drawn as
+      gaps. The alternative — `fill_value=0` — is available through `map(fill_value=0)`.
+    - Why: on an `'earth'` scale a zero-filled grid renders every untouched cell as a
+      solid low-end color, which reads as "0 days travel time" / "0 particles measured
+      here" rather than "no particle went here". A capture-zone figure is about *where*
+      particles are, so absence should be absence. For counts the zero reading is at
+      least arguable, but one rule across the three maps beats a per-noun exception.
+    - Trade: a NaN cell has no hover, so there is no way to hover-confirm "nothing here";
+      the choropleth simply shows the grid outline. Accepted.
+    - Revisit: if a user wants an explicit zero-count background, `fill_value=0` already
+      does it — promote it to the default only if that turns out to be the common ask.
+
+58. **`capture` raises on an ungrouped run instead of falling back (plan §6.3B, 2026-07-25).**
+    - What: `results.capture.get()/map()` needs PRP boundnames. When the run has none,
+      it raises a `ValueError` naming both fixes (`PRTReleasePoints.from_cells(...,
+      group='west_wells')` and `by='release_point'`) rather than silently grouping by
+      `irpt`.
+    - Why: the silent fallback produces a *plausible* figure — one panel per particle —
+      that answers a different question than the one asked, and on a run with hundreds
+      of release points it would produce hundreds of mosaic panels. The user's locked
+      decision for §6.3 was "real release groups", not the irpt fallback; keeping the
+      fallback reachable but explicit honors both.
+    - Trade: an extra keyword for anyone who genuinely wants per-release-point capture.
+    - Revisit: not expected to change.
+
+59. **PRT views replace the series verb rather than implementing it (plan §6.3B, 2026-07-25).**
+    - What: `SpatialView.plot()` draws a value-by-stress-period series. PRT results have
+      no period axis, so the three PRT nouns override `plot()` with distribution figures
+      (cumulative arrival curve; particles-per-cell and particles-per-group bars) and
+      make `_series_table()` raise a message that says so. `mosaic(kind="plot")`
+      therefore raises too. For the same reason `animate()` raises rather than emitting
+      a one-frame animation labelled "Period 0", and `map()` rejects `per=` instead of
+      swallowing it into `cor()`'s `**kwargs` — the two ways an ignored period selector
+      could have quietly claimed a period the values do not belong to.
+    - Why: the grammar's promise is "every noun answers the same verbs", and `plot()`
+      returning a `viz.Fig` is kept — what changes is what the x-axis *means*, because a
+      stress-period axis does not exist for a time-integrated tracking run. A raise with
+      the reason beats a `KeyError: 'per'` from inside a groupby.
+    - Trade: `plot()` is not uniform in meaning across nouns (period series elsewhere,
+      distribution here). Documented on each method.
+    - Revisit: if transient PRT tracking (`track_times`) grows a per-period story, a real
+      series verb could be added alongside.
+
+60. **`logscale` now applies to custom-`zs` choropleths, blanking non-positive values
+    (plan §6.3B, 2026-07-25).**
+    - What: `Choro.zs` returned `custom_zs` verbatim *before* reaching its
+      `if self.logscale: zs = np.log10(zs)` branch, so `logscale=True` was silently a
+      no-op on every `type="custom"` map — including the PRT travel-time map, whose
+      docstring advertises it. Found by an adversarial review of this change (it was the
+      one finding of 32 that survived verification). Fixed at the root, in `Choro.zs`.
+    - Judgment call inside the fix: non-positive values become **NaN**, not `-inf`.
+      A travel time of 0 is ordinary (a particle terminating at release), and `-inf`
+      would drag the shared color range to negative infinity and blank the entire map.
+      NaN draws as a gap, matching ledger 57's "absence is absence".
+    - Trade: the pre-existing non-custom branch (heads/K/rch) still lets `log10(0)` through
+      as `-inf`. It was left alone deliberately — changing how existing head and K maps
+      render is not this change's business, and no in-repo caller pairs `custom_zs` with
+      `logscale`, so the fix has no blast radius today.
+    - Revisit: fold the non-custom branch onto the same `_logscaled` helper when a map
+      there is actually seen misbehaving on zeros.

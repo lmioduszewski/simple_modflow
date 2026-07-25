@@ -58,6 +58,15 @@ not by cloning the reader. The choropleth reads whichever field the map's `type`
 selects (`_DEPVAR_READER_ATTR` in `choros.py`), so the per-layer hover table and
 value labels stay field-generic.
 
+Results that are not per-cell fields to begin with join the grammar the same way,
+by *deriving* one: a finished PRT run exposes `results.travel_time`,
+`results.endpoints`, and `results.capture` (`prt_maps.py`) rather than
+`travel_time_map()` / `endpoints_map()` / `capture_map()`. Those maps are
+**time-integrated** over the run, which is the one documented departure: they take
+no `per=`, carry no period footer (`result_hover(..., footer=())`), and `plot()`
+draws a distribution across particles instead of a series by stress period (see
+the compromise ledger, entry 59).
+
 Rules that hold for all of them:
 
 - **Figures are always `viz.Fig`**, never a bare `go.Figure`. `Fig` carries

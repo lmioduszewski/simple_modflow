@@ -42,6 +42,19 @@ def test_uzf_results_are_earth_not_diverging():
     assert get_package_result_spec("uzf", "sat").colorscale == "earth"
 
 
+def test_prt_derived_maps_follow_the_same_non_signed_rule():
+    """PRT's derived maps are registry-free, so their scale is pinned at the source.
+
+    Travel times and particle counts are one-sided magnitudes -- never a signed
+    difference -- so they take the same ``'earth'`` scale as every other
+    non-signed field. The per-map assertions live in ``test_prt_maps.py``.
+    """
+
+    from myflopy.modflow.mf6.prt_maps import PRT_COLORSCALE
+
+    assert PRT_COLORSCALE == "earth"
+
+
 def test_diff_maps_use_rdbu_negative_red_positive_blue():
     # plotly RdBu runs red (low) -> blue (high); with zmid=0 that is
     # negative red / positive blue, the required diff-map orientation

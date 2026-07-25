@@ -193,6 +193,34 @@ result.export_3d_html("prt_pathlines.html", vertical_exaggeration=5)
 grid and TDIS timing, references the GWF head and budget outputs through FMI,
 and writes a PRT track CSV.
 
+### Release groups and derived cell maps
+
+Label the release points and the run's trajectories roll up into per-cell views
+that answer the same verbs as any other noun (`prt_maps.py`, §6.3B):
+
+```python
+release_points = mf.PRTReleasePoints.merge(
+    mf.PRTReleasePoints.from_cells(model, cells=[100, 120], group="west_wells"),
+    mf.PRTReleasePoints.from_cells(model, cells=[300, 320], group="east_wells"),
+)
+result = model.particle_tracking.prt(
+    workspace=ws, release_points=release_points, porosity=0.25
+).run()
+
+result.travel_time.get(stat="median")   # per-cell rows: travel time, particle count, min/max
+result.travel_time.map(logscale=True)   # time-of-travel choropleth ('earth')
+result.travel_time.plot()               # cumulative arrival curve, one line per group
+result.endpoints.map()                  # termination counts per cell
+result.capture.map()                    # one panel per release group, shared scale
+```
+
+The group label becomes a PRP boundname, which MF6 echoes **uppercased** into the
+track CSV's `name` column — that is the key `capture` groups by, so
+`result.capture` raises (naming the fix) on a run built without groups. These
+maps summarize the whole run, so they take no `per=` and carry no period footer;
+`layer=None` pools every layer into one plan-view panel. Cells no particle
+reached stay blank rather than reading as zero (compromise ledger 57).
+
 Completed PRT runs can be reopened:
 
 ```python

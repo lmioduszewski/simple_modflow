@@ -139,10 +139,69 @@ class PRTReleasePoints:
     Attributes
     ----------
     packagedata
-        Normalized PRP release records, one tuple per particle.
+        Normalized PRP release records, one tuple per particle. Records are
+        5-tuples ``(irpt, cellid, x, y, local_z)``, or 6-tuples ending in a
+        release-group boundname when ``group=`` was given.
     """
 
     packagedata: tuple[tuple[Any, ...], ...]
+
+    @property
+    def has_groups(self) -> bool:
+        """Whether any record carries a release-group boundname (a 6-tuple)."""
+
+        return any(len(row) >= 6 for row in self.packagedata)
+
+    @property
+    def groups(self) -> tuple[str, ...]:
+        """The distinct release-group labels, in first-seen order (empty when ungrouped).
+
+        These are the labels MF6 echoes -- **uppercased** -- into the track CSV's
+        ``name`` column, which is what ``results.capture`` groups by.
+        """
+
+        seen: list[str] = []
+        for row in self.packagedata:
+            if len(row) >= 6 and row[5] not in seen:
+                seen.append(str(row[5]))
+        return tuple(seen)
+
+    @staticmethod
+    def _resolve_groups(group, count: int) -> list[str] | None:
+        """Broadcast ``group`` to one label per release point (``None`` stays ungrouped)."""
+
+        if group is None:
+            return None
+        if isinstance(group, str):
+            return [group] * count
+        labels = [str(value) for value in group]
+        if len(labels) != count:
+            raise ValueError(
+                f"group must be one label or one per release point; got {len(labels)} "
+                f"labels for {count} points."
+            )
+        return labels
+
+    @classmethod
+    def merge(cls, *sets: PRTReleasePoints) -> PRTReleasePoints:
+        """Combine release-point sets into one PRP, renumbering ``irpt`` sequentially.
+
+        The practical way to build a multi-group release: make one grouped set per
+        capture zone with :meth:`from_cells`, then merge them into the single PRP
+        package MF6 wants. Group labels ride along untouched.
+
+        Examples
+        --------
+        >>> west = mf.PRTReleasePoints.from_cells(model, [10, 11], group="west_wells")
+        >>> east = mf.PRTReleasePoints.from_cells(model, [80, 81], group="east_wells")
+        >>> rp = mf.PRTReleasePoints.merge(west, east)
+        """
+
+        rows: list[tuple[Any, ...]] = []
+        for release_set in sets:
+            for row in release_set.packagedata:
+                rows.append((len(rows), *tuple(row)[1:]))
+        return cls(tuple(rows))
 
     @classmethod
     def from_cells(
@@ -152,6 +211,7 @@ class PRTReleasePoints:
         *,
         layer: int = 0,
         local_z: float = 0.5,
+        group: str | Sequence[str] | None = None,
     ) -> PRTReleasePoints:
         """Create particle release points at the centers of given model cells.
 
@@ -166,6 +226,10 @@ class PRTReleasePoints:
             Layer to place the particles in when ``cells`` are bare cell/``(row, col)``.
         local_z : float, default 0.5
             Vertical position within the cell (0 = bottom, 1 = top).
+        group : str or Sequence[str], optional
+            Release-group label(s) written as PRP boundnames -- one label for every
+            point, or one per cell. MF6 echoes them (uppercased) into the track CSV,
+            which is what ``results.capture.map()`` groups particles by.
 
         Returns
         -------
@@ -176,8 +240,12 @@ class PRTReleasePoints:
         --------
         >>> rp = mf.PRTReleasePoints.from_cells(model, cells=[100, 120, 140],
         ...                                     layer=0, local_z=0.5)
+        >>> west = mf.PRTReleasePoints.from_cells(model, cells=[100, 120],
+        ...                                       group="west_wells")
         """
 
+        cells = list(cells)
+        groups = cls._resolve_groups(group, len(cells))
         grid = model.gwf.modelgrid
         rows = []
         for irpt, cell in enumerate(cells):
@@ -196,15 +264,14 @@ class PRTReleasePoints:
                 cellid = (int(layer), cell)
                 x = grid.xcellcenters[cell]
                 y = grid.ycellcenters[cell]
-            rows.append(
-                (
-                    irpt,
-                    cellid,
-                    float(x),
-                    float(y),
-                    float(local_z),
-                )
+            record: tuple[Any, ...] = (
+                irpt,
+                cellid,
+                float(x),
+                float(y),
+                float(local_z),
             )
+            rows.append(record if groups is None else (*record, groups[irpt]))
         return cls(tuple(rows))
 
     @classmethod
@@ -215,10 +282,16 @@ class PRTReleasePoints:
         *,
         layer: int = 0,
         local_z: float = 0.5,
+        group: str | Sequence[str] | None = None,
     ) -> PRTReleasePoints:
-        """Create release points from point geometries or an iterable of ``(x, y)``."""
+        """Create release points from point geometries or an iterable of ``(x, y)``.
 
-        geometries = getattr(points, "geometry", points)
+        ``group`` labels the points as one release group (or one label per point) --
+        see :meth:`from_cells`.
+        """
+
+        geometries = list(getattr(points, "geometry", points))
+        groups = cls._resolve_groups(group, len(geometries))
         rows = []
         for irpt, point in enumerate(geometries):
             x, y = (point.x, point.y) if hasattr(point, "x") else point[:2]
@@ -227,7 +300,8 @@ class PRTReleasePoints:
                 cellid = (int(layer), *(int(value) for value in cell)) if len(cell) == 2 else tuple(int(value) for value in cell)
             else:
                 cellid = (int(layer), int(cell))
-            rows.append((irpt, cellid, float(x), float(y), float(local_z)))
+            record: tuple[Any, ...] = (irpt, cellid, float(x), float(y), float(local_z))
+            rows.append(record if groups is None else (*record, groups[irpt]))
         return cls(tuple(rows))
 
 
@@ -240,6 +314,17 @@ class PRTRunResults:
     for plotting and analysis, joined back to the originating ``flow_model``'s grid.
     Created for you by :class:`PRTProject` after a run, or reopened from disk with
     :func:`open_prt_run` without rebuilding the simulation.
+
+    Trajectories also roll up into three per-cell view nouns -- :attr:`travel_time`,
+    :attr:`endpoints`, and :attr:`capture` -- each answering the usual
+    ``get``/``summary``/``plot``/``map``/``mosaic`` verbs
+    (``myflopy.modflow.mf6.prt_maps``)::
+
+        results.travel_time.map(stat="median")   # time-of-travel choropleth
+        results.endpoints.get()                  # counts per terminating cell
+        results.capture.map()                    # one panel per release group
+
+    Those maps are time-integrated over the whole run, so they take no ``per``.
 
     Attributes
     ----------
@@ -289,6 +374,32 @@ class PRTRunResults:
         if "ireason" not in data.columns:
             return data.iloc[0:0].copy()
         return data.loc[data["ireason"] == 3].copy()
+
+    @staticmethod
+    def _maps():
+        """The derived-map views module (imported lazily -- it pulls in the plot layer)."""
+
+        from myflopy.modflow.mf6 import prt_maps
+
+        return prt_maps
+
+    @property
+    def travel_time(self):
+        """Travel-time view: ``get``/``summary``/``plot``/``map``/``mosaic`` (time of travel per cell)."""
+
+        return self._maps().PRTTravelTimeView(self)
+
+    @property
+    def endpoints(self):
+        """Endpoint view: particle-termination counts per cell, with the same verbs."""
+
+        return self._maps().PRTEndpointsView(self)
+
+    @property
+    def capture(self):
+        """Capture-zone view: endpoints split by release group (``map()`` gives one panel per group)."""
+
+        return self._maps().PRTCaptureView(self)
 
     def scene(self, **kwargs):
         """Build a 3D PyVista particle-tracking scene from the pathlines and flow grid."""
@@ -406,6 +517,9 @@ class PRTProject:
         self.prp = flopy.mf6.ModflowPrtprp(
             self.prt,
             pname="prp",
+            # Release-group labels are PRP boundnames; without BOUNDNAMES the sixth
+            # field is rejected, so the flag follows the record width.
+            boundnames=self.release_points.has_groups or None,
             nreleasepts=len(self.release_points.packagedata),
             packagedata=list(self.release_points.packagedata),
             perioddata={0: ["FIRST"]} if release_perioddata is None else release_perioddata,

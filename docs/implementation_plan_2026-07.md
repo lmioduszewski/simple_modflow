@@ -1187,20 +1187,32 @@ and fix the 6.0 abstraction instead of copy-pasting.
 
 PRT results are trajectories, not per-cell fields — integrate where the grammar fits and
 style the rest, rather than forcing everything into choropleths:
-1. **Cell-based derived maps (the real win, grammar-compatible):** from
-   `PRTRunResults.pathlines` / `terminal_points`, build per-cell summaries and render
-   them as first-class `Choro` maps with hover + policy colorscales:
-   - `results.travel_time_map(stat="median")` — travel time per terminating cell
-     (classic capture-zone / time-of-travel figure); `'earth'` scale (or reversed —
-     verify readability), `result_hover("travel_time", units={"travel_time": "d"})`
-     with extra fields (particle count, min/max time).
-   - `results.endpoints_map()` — particle-termination counts per cell.
-   - `results.capture_map(by="release_group")` — which release group's particles end
-     where (categorical → needs a small categorical-colorscale story; keep simple:
-     one map per group via `viz.mosaic`, synced views).
-   These are per-cell payloads → they inherit mosaic/animate/hover for free once built
-   through `build_cell_input_map_payload`-style tables.
-2. **Pathline map hover:** CORRECTION (rev. 4): the existing pathline map
+1. **Cell-based derived maps — DONE 2026-07-25 (§6.3B):** `prt_maps.py` turns track
+   records into three per-cell views exposed as **nouns** on `PRTRunResults` —
+   `results.travel_time` / `.endpoints` / `.capture`, each answering
+   `get/summary/plot/map/mosaic`. NAMING CORRECTION: the `*_map()` spellings drafted
+   here are exactly the `verb_noun` pairs `docs/view_layer_conventions.md` forbids, so
+   they became nouns (`travel_time.map(stat="median")`, `capture.map(by=…)`).
+   Verified/decided while building:
+   - **`icell` is a ONE-based whole-grid node number** — `cell=(icell-1)%ncpl`,
+     `layer=(icell-1)//ncpl` (`== ilay-1`). Nothing in the repo did this conversion;
+     `pathline_cell_table` is now its single home, pinned by a multi-layer unit.
+   - **Real release groups** (locked user decision): `PRTReleasePoints.from_cells/
+     from_points(group=…)` write PRP boundnames (+`merge()` renumbering `irpt`),
+     `PRTProject` sets `boundnames` from the row width, and MF6 echoes the labels
+     **uppercased** into the track CSV `name` column — the key `capture` groups by.
+     Without groups `capture` raises naming `group=` and the `by="release_point"`
+     fallback rather than silently degrading (ledger 58).
+   - Time-integrated, so **no period axis**: `result_hover` gained `footer=` (default
+     unchanged) and these maps pass `footer=()`; the series verb raises instead of
+     failing inside a groupby on a missing `per` (`plot()` is a distribution figure —
+     cumulative arrival curve / count bars). `layer=None` pools layers and
+     **recomputes** the statistic over the pooled particles (never a stat of stats).
+   - Unreached cells map to NaN, not 0 (ledger 57); `'earth'` for both counts and
+     elapsed times (one-sided magnitudes, never signed) — `PRT_COLORSCALE`.
+   - `capture.map()` returns the per-group **mosaic** (shared scale, synced views);
+     `group=` returns one `Choro`, which is also what the facet composers use.
+2. **Pathline map hover (§6.3C — still open):** CORRECTION (rev. 4): the existing pathline map
    (`plot_particle_pathlines`, interactive_plotting.py) is pure **matplotlib** (flopy
    PlotMapView), not plotly scatter — so this step means building a NEW plotly
    pathline map (scatter traces over the grid choropleth), not styling existing
@@ -1566,8 +1578,9 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       grammar (map/xs/plot/mosaic/animate), `conc_hover`/`temp_hover`, earth + RdBu-diff
       colors, GWT/GWE budget terms, `GroupConc`/`GroupTemp` + `diff()` maps,
       `ConcTargets` wired into PEST, GWT + GWE test fixtures (6.0–6.2)
-- [ ] PRT: `travel_time_map`/`endpoints_map` choropleths with hover + policy colors;
-      pathline scatter hover styled; `mf.mip`/`mf.prp` factories (6.3)
+- [ ] PRT: `results.travel_time`/`.endpoints`/`.capture` choropleth nouns with hover +
+      policy colors — DONE 2026-07-25 (6.3B); `mf.mip`/`mf.prp`/`mf.ems` factories —
+      DONE 2026-07-24 (6.3A); plotly pathline map + `pathline_hover` still open (6.3C)
 - [ ] IES: `plot_field` hover + multiplier-diverging/absolute-earth colors;
       `field_uncertainty_map`; `field_mosaic` (synced prior/posterior); residual map;
       all IES figures on the viz front door (6.4)

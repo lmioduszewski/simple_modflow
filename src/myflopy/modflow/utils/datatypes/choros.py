@@ -599,11 +599,29 @@ class Choro:
         assert len(custom_zs) == self.vor.ncpl, 'customs zs must be provided for every cell'
         self._custom_zs = custom_zs
 
+    @staticmethod
+    def _logscaled(values):
+        """``log10`` of ``values``, with non-positive entries blanked to NaN.
+
+        A zero or negative value has no logarithm; letting it through as -inf
+        would drag the shared color range to negative infinity and blank the
+        whole map. NaN draws as a gap, which is what "no log-scale value here"
+        looks like.
+        """
+
+        array = np.asarray(values, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scaled = np.log10(array)
+        return np.where(np.isfinite(scaled), scaled, np.nan).tolist()
+
     @property
     def zs(self):
         """Defines the z values of the choropleth plot, which will be represented by a varying colorscale"""
         if self.custom_zs is not None:
-            return self.custom_zs
+            # ``logscale`` used to be dropped on this branch, so every custom map
+            # that offered it silently drew a linear scale (found while adding the
+            # PRT travel-time map, plan 6.3B).
+            return self._logscaled(self.custom_zs) if self.logscale else self.custom_zs
 
         if self._depvar_attr is not None and self.model is not None:
             if self.show_mounding is True:

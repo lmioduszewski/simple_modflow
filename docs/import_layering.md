@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **56** function-level `myflopy` imports) counts those and
+currently **58** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -39,7 +39,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.native_parameters`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
-- `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
+- `myflopy.modflow.mf6.prt` *(deferred imports: 5)*
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.runtime`
@@ -110,6 +110,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
+- `myflopy.modflow.mf6.prt_maps` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.simulation.regions`
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
 - `myflopy.surfaces` *(deferred imports: 4)*

@@ -163,7 +163,38 @@ Release-point `boundname`s are echoed (uppercased) into the track CSV's `name`
 column — the release-group key the capture map reads. The high-level
 `model.particle_tracking` / `PRTProject` runtime remains the sanctioned path for
 *post-hoc* tracking over an already-run flow model (a separate simulation, where
-FMI + grid copying ARE needed).
+FMI + grid copying ARE needed); on that path the groups come from
+`PRTReleasePoints.from_cells(..., group="west_wells")` (or `from_points`), and
+`PRTReleasePoints.merge(west, east)` combines grouped sets into the one PRP MF6
+wants, renumbering `irpt`.
+
+**Reading a finished PRT run (§6.3B, 2026-07-25).** Trajectories are not a
+per-cell field, so `PRTRunResults` rolls them up into three per-cell view nouns
+that answer the normal verbs (`get`/`summary`/`plot`/`map`/`mosaic`,
+`prt_maps.py`):
+
+| noun | `get()` rows | `map()` draws |
+|---|---|---|
+| `results.travel_time` | one per `(layer, cell)`: `layer, cell, travel_time, particle_count, min_time, max_time, release_groups` | time-of-travel choropleth (`stat="median"`, `'earth'`, optional `logscale`) |
+| `results.endpoints` | the same columns (the count is the mapped one) | particle-termination counts per cell |
+| `results.capture` | those columns prefixed by `group` (one per `(group, layer, cell)`) | **mosaic**, one panel per release group on a shared scale; `group=` gives one `Choro` |
+
+```python
+results = model.particle_tracking.prt(workspace=ws, release_points=rp).run()
+results.travel_time.map(stat="median", logscale=True)   # time-of-travel figure
+results.capture.map()                                    # capture zones, side by side
+results.travel_time.plot()                               # cumulative arrival curve
+```
+
+These maps are **time-integrated** over the whole run: they reject `per=` (and
+`animate()`) rather than accept an axis they would ignore, and carry no period
+footer (`result_hover(..., footer=())`). `layer=None` pools every layer into one
+plan-view panel, recomputing the statistic over the pooled particles rather than
+averaging per-layer values. Cells no particle reached stay blank rather than
+reading as a zero travel time. `plot()` is a distribution across particles
+(cumulative arrivals / count bars), not a stress-period series. `capture` needs
+release-group boundnames; without them it names the fix and offers
+`by="release_point"`.
 
 ### Geometry, layers, context
 

@@ -83,6 +83,7 @@
  "myflopy.modflow.mf6.pest.specs": 4,
  "myflopy.modflow.mf6.pest.summary": 0,
  "myflopy.modflow.mf6.prt": 0,
+ "myflopy.modflow.mf6.prt_maps": 2,
  "myflopy.modflow.mf6.recharge": 3,
  "myflopy.modflow.mf6.sfr": 3,
  "myflopy.modflow.mf6.simplemodel": 3,

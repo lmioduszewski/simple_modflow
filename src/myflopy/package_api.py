@@ -1517,8 +1517,8 @@ def prp(
     Declares where and when particles are released. ``packagedata`` rows are
     ``(irpt, (layer, cell), x, y, z)`` -- zero-based ``irpt`` and cellid -- with
     an optional trailing ``boundname`` string to group release points (the name
-    is echoed into the track CSV's ``name`` column, which is what
-    ``capture_map(by="release_group")`` reads). ``nreleasepts`` defaults to
+    is echoed -- uppercased -- into the track CSV's ``name`` column, which is what
+    ``results.capture.map()`` groups by). ``nreleasepts`` defaults to
     ``len(packagedata)``; ``perioddata`` defaults to ``{0: ["FIRST"]}`` (release
     at the first step, matching :class:`~myflopy.modflow.mf6.prt.PRTProject`);
     ``boundnames`` is auto-enabled when rows carry the sixth (name) field.

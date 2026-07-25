@@ -625,14 +625,21 @@ def result_hover(
     extra_fields: Sequence[str] = (),
     units: Mapping[str, str] | None = None,
     labels: Mapping[str, str] | None = None,
+    footer: Sequence[str] = ("period", "date"),
 ) -> HoverSpec:
-    """Generic result-map hover (per-package cell budget ``q``, stage, UZF fields)."""
+    """Generic result-map hover (per-package cell budget ``q``, stage, UZF fields).
+
+    ``footer`` keeps the period/date line by default. Pass ``footer=()`` for maps
+    that are **time-integrated** rather than drawn at one stress period -- PRT
+    travel-time / endpoint maps summarize a whole run, so a "Period 0" footer
+    would assert a period the value does not belong to.
+    """
 
     return HoverSpec(
         primary=value_column,
         title=title or value_column,
         blocks=(Fields(fields=tuple(extra_fields)),) if extra_fields else (),
-        footer=("period", "date"),
+        footer=tuple(footer),
         units=dict(units or {}),
         labels=dict(labels or {}),
     )

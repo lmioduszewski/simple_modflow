@@ -10,20 +10,25 @@
 - **Committed:** `fb79d99` **6.3A DONE** (PRT build-side declarability:
   `mf.mip`/`mf.prp`/`mf.ems`, prt6 dis/disv/oc dispatch, kind-aware
   `mf.simulation` solver default, docstring fixes, e2e MF6 test, docs synced —
-  see the §6.3.3 banner in the implementation plan). **NOT yet pushed**
-  (origin is at `7322af9`).
-- **In progress:** 6.3B (release groups + derived cell maps) — design locked,
-  nothing written yet. Then 6.3C, then 6.4A→C.
-- Full serial suite at `fb79d99`: **843 passed / 1 skipped** (`pytest -n0`).
-- Task list: #52 6.3B (in progress), #53 6.3C, #54 6.4A, #55 6.4B, #56 6.4C.
+  see the §6.3.3 banner in the implementation plan). Pushed.
+- **6.3B DONE 2026-07-25** — release groups (`PRTReleasePoints.from_cells/
+  from_points(group=)`, `merge`, `PRTProject` boundnames) + `prt_maps.py` with the
+  `results.travel_time` / `.endpoints` / `.capture` nouns. NAMING: they are nouns,
+  not the `capture_map()`/`travel_time_map()` spellings drafted below — the plan's
+  original names were `verb_noun` pairs the view-layer conventions forbid. An
+  adversarial review of the change also found and fixed a real pre-existing bug:
+  `logscale` was silently dropped on every `custom_zs` choropleth (ledger 60).
+- **Next:** 6.3C, then 6.4A→C.
+- Full serial suite after 6.3B: **855 passed / 1 skipped** (`pytest -n0`).
+- Task list: #53 6.3C, #54 6.4A, #55 6.4B, #56 6.4C.
 
 ## Locked user decisions (AskUserQuestion, 2026-07-24)
 
 1. **Full §6.3** — all three pieces: derived per-cell maps + NEW plotly pathline
    map + build-side declarability (6.3A done).
 2. **Real release groups via boundnames** — `PRTReleasePoints`/`PRTProject` (and
-   `mf.prp`, already done) gain group labels; `capture_map(by="release_group")`
-   reads the track CSV `name` column. NOT the irpt fallback.
+   `mf.prp`, already done) gain group labels; `results.capture.map(by="release_group")`
+   reads the track CSV `name` column. NOT the irpt fallback. (DONE, 6.3B.)
 3. **Residual map scope: heads + DRN zones now**; lake/SFR residual mapping
    deferred (no coordinates without live-model resolution) — ledger it.
 
@@ -136,7 +141,7 @@ table. Recipe:
 
 ## Next steps, in order
 
-### 6.3B — release groups + derived cell maps (task #52, started)
+### 6.3B — release groups + derived cell maps — **DONE 2026-07-25** (kept for the design rationale; the `*_map()` names below became nouns)
 1. `result_hover` (hover.py:621): add `footer: tuple = ("period", "date")`
    param, pass through to HoverSpec. Non-breaking.
 2. `PRTReleasePoints` (prt.py:129-231): add `group: str | Sequence[str] | None =

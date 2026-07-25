@@ -90,7 +90,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | GWT/GWE results — budget / group-diff / obs | ❌ | GWT/GWE budget views, `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking` |
 | PRT **spec-first declarability** (mip/prp/ems + exchange, no FMI) | ✅ | `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dis/disv/oc dispatch; `mf.simulation` solver default is kind-aware (IMS vs EMS) — §6.3A, 2026-07-24 |
-| PRT derived cell maps (travel-time / endpoints choropleths) | ❌ | pathlines/scene/map exist; grammar-integrated cell maps are plan §6.3 |
+| PRT derived cell maps (travel-time / endpoints / capture choropleths) | ✅ | `prt_maps.py` — `results.travel_time` / `.endpoints` / `.capture` nouns (get/summary/plot/map/mosaic), release groups via PRP boundnames — §6.3B, 2026-07-25 |
+| PRT plotly pathline map + `pathline_hover` | ❌ | the pathline map is still matplotlib (`plot_particle_pathlines`); plan §6.3C |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
 | Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |
 | Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
@@ -160,8 +161,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    Results tier: reader + maps **DONE 2026-07-24** (§6.0/6.1/6.2: `model.conc`/
    `model.temp` grammar + hover + `'earth'` colorscale, kind-gated). Still deferred:
    GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
-3. **PRT derived cell maps + hover** (§6.3) and **PEST-IES viz upgrades**
-   (field-map hover/colors, uncertainty maps, prior/posterior mosaics — §6.4).
+3. **PRT**: derived cell maps **DONE 2026-07-25** (§6.3B: `results.travel_time`/
+   `.endpoints`/`.capture` nouns + release groups); the **plotly pathline map +
+   `pathline_hover`** remain (§6.3C). **PEST-IES viz upgrades** (field-map
+   hover/colors, uncertainty maps, prior/posterior mosaics — §6.4) still open.
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
    + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC
    `functools.partial` builders round-trip. **TOML still deferred** (no null type;
