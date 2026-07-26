@@ -1202,6 +1202,20 @@ same day, which is the useful part of the result.
     - No runtime impact in 6.4A: `plot_field` returns a `viz.Fig`, and mosaicking those
       raises (`choroplethmap` is not compatible with an `xy` subplot), so only a future
       helper passing `Choro` panels can reach this.
+    - **HALF-RETIRED 2026-07-26 (6.4B).** The colorbar half is fixed at the source:
+      `viz.mosaic` now takes `colorbar=`, a dict **or** a `(cmin, cmax) -> dict`
+      callable. The callable form is what the problem actually needs — the useful ticks
+      depend on the pooled limits, and those exist only inside `mosaic`. Purely
+      additive: the whole block is guarded on `colorbar is not None`, so omitting it
+      leaves every pre-existing mosaic untouched. (The pin,
+      `test_a_mosaic_without_a_colorbar_argument_is_untouched`, asserts the two
+      colorbar properties are unset — the byte-identity is by inspection of the guard,
+      not by the test.)
+      The centering half is **unreachable rather than fixed**: `plot_field_mosaic`
+      accepts only `mean`/`std`, since `change`/`reduction`/`base` have no separate
+      prior and posterior form to compose, so no `change` mosaic can be built through
+      the front door and the `diff=True` rule above never has to be remembered. A
+      hand-rolled `viz.mosaic` of `change` panels still needs it.
 
 72. **Run context (iterations, realization count) rides the figure title, not the hover
     footer — the plan asked for the footer.**
@@ -1243,3 +1257,115 @@ same day, which is the useful part of the result.
       `test_a_log_map_reads_in_real_units_on_both_backends`.
     - Consequence today: a hand-built log `Choro` (e.g. the truth-K map in
       `canonical_06` cell 18) still reads in log10. That notebook says so in prose.
+
+## 6.4B — IES uncertainty reduction, mosaics, residual maps (2026-07-26)
+
+75. **The uncertainty map became a `stat`, not the planned `field_uncertainty_map`
+    method.**
+    - What: the plan asked for `field_uncertainty_map(target, which="std"|"reduction")`.
+      Shipped instead as `plot_field(target, stat="reduction")`, plus a `reduction`
+      column on `field()`.
+    - Why: `plot_field(stat="std", which="prior"|"posterior")` **already shipped in
+      6.4A** and is exactly the posterior-sd map, so the planned method would have been
+      a second spelling of an existing figure — the `foo()`/`plot_foo()` duplication
+      `docs/view_layer_conventions.md` forbids. Worse, `which="std"` would have given
+      `which` a second meaning inside a class where it means prior-vs-posterior in
+      `plot_field`, `parameters_at_bounds` and `plot_parameters_at_bounds`. The only
+      genuinely new content was `1 - posterior_std / prior_std`, one derived column
+      (`field()` already returned `prior_std`).
+    - Cost: the plan's literal name does not exist. Anyone following the old plan text
+      finds `stat="reduction"` named in the same item and in the error message that
+      lists every valid stat.
+    - Judgment call inside it: the reduction scale is anchored to `[0, 1]` — an
+      absolute frame — rather than autoscaled like `std`, so two layers are comparable
+      and a field that only reduces 0.95–1.0 does not stretch into a dramatic-looking
+      map of a trivial range. It **falls back to the data range** when any cell is
+      negative, because a posterior spread that *grew* must not clip to the bottom
+      color, where it would read as "the data said nothing" instead of "worse than the
+      prior".
+
+76. **Lake and SFR observations cannot be placed on the residual map (deferred).**
+    - What: `plot_obs_residuals` covers head targets (points) and DRN zones (cells).
+      `LakeStageTargets`, `SfrStageTargets` and `SfrFlowTargets` are silently absent
+      from the map — but `obs_residuals()` is likewise silent, so the figure never
+      claims to be complete, and a run with *only* those targets raises a `ValueError`
+      naming the reason rather than drawing an empty grid that would read as zero
+      residuals everywhere.
+    - Why: they persist only a lake or reach **number** (`observations.py` snapshots
+      `["name", "lake"]` / `["name", "reach"]`) — no geometry, no cells. Heads and DRN
+      zones resolve from the snapshot files **alone**; lakes and reaches would have to
+      resolve id → cellid against the live model at review time. (The *map* already
+      needs `IesResults.model` for the grid, so that part is not new — what is new is
+      depending on the model's LAK/SFR package contents, and on lake/reach numbering
+      being unchanged since the build. The `obs_residuals()` table needs no model
+      today, and would start to.)
+    - Undeferring: give the lake/SFR `prepare_*` functions a cell snapshot at build
+      time, the way DRN zones already have one. That fixes it at the source and needs
+      no model at review time — but it only helps runs built *after* the change.
+
+77. **`plot_obs_residuals` has no `map=` flag, unlike the plan's `map=True`.**
+    - What: the plan named the method `plot_obs_residuals(map=True)`. Shipped as
+      `plot_obs_residuals()` — it *is* the map.
+    - Why: nothing was specified for `map=False`, and a boolean with one honest value
+      is a worse API than a named method. The natural `map=False` figure is a
+      simulated-vs-measured 1:1 scatter, which is a different figure with a different
+      argument list, and `plot_vs_obs` already covers most of that ground.
+    - If a 1:1 scatter is wanted later it should be its own `plot_*` method, not a flag
+      on this one.
+
+78. **The residual sign convention differs from PEST's own `.res` file.**
+    - What: `residual = simulated - measured`. PEST's `.res` reports
+      `measured - modelled`, i.e. the opposite sign.
+    - Why not matched: `phi_contributions` (shipped, ies.py) already computes
+      `weight * (simulated - obsval)`, so matching PEST would have made the two
+      surfaces of one class disagree. Per the standing q-sign rule, the frame is
+      **named** rather than signed into agreement: the column is documented, the hover
+      label reads `residual (sim − meas)`, and the figure title says
+      `residuals (simulated − measured)`.
+    - Consequence: a reader coming from a PEST `.res` file sees flipped colors. Every
+      label on the figure says which convention it is in.
+
+79. **`mpl_colormap_for` was extracted from `Choro.plot_mpl` rather than duplicated.**
+    - What: the static residual map scatters points over the cells and must use the
+      *same* colormap the cells were drawn with, or a point and the cell beneath it
+      render different colors for the same value. The colorscale→colormap conversion
+      moved out of `plot_mpl` into a module-level `mpl_colormap_for` in `choros.py`.
+    - Why recorded: this is a shared-surface change made for one caller. It is a pure
+      extraction (`plot_mpl`'s behavior is unchanged and its tests still pass), but it
+      widens `choros.py`'s public surface by one name.
+    - Note it inherits the `'rdbu'` → `'RdBu_r'` trap (ledger 69/70): passing a
+      diverging scale **by name** still mirrors between backends. Its docstring says so.
+
+80. **`obs_residuals` uses `weight > 0` as its "is this a forecast?" proxy.**
+    - What: `cal.forecast(...)` sets are persisted as ordinary observation sets — the
+      `is_forecast` flag lives on the prepared item, not on the metadata dict that gets
+      written (`project.py`) — so a completed run cannot tell a forecast target from a
+      calibration target. Zero weight is used instead.
+    - Why acceptable: a residual map answers "where was the model fitted badly", and a
+      zero-weight observation was not fitted at all. Excluding *deliberately silenced*
+      targets along with forecasts is the same answer to the same question, and it
+      matches `phi_contributions`, which already filters `weight > 0`.
+    - Cost: someone who zero-weights an observation but still wants to see its misfit
+      spatially cannot. `obs_residuals()` is the escape hatch only in the sense that it
+      applies the same filter — there is no `include_zero_weight=` today.
+    - Found by review, not by design: the first cut drew the canonical model's own
+      forecast point as a calibration residual, where its 0.799 was the second-largest
+      value on the map and could have set the color scale for everything else.
+
+81. **Unmeasured-time rows are excluded by joining to `*_target_values.csv`, and the
+    filter silently does not apply when that snapshot is missing.**
+    - What: pyEMU creates one observation per row of the simulated output. Rows with no
+      target keep pyEMU's defaults — weight 1.0 and an `obsval` equal to the base
+      model's own simulated value — so they read as perfect fits and drag a location's
+      mean residual toward zero (measured: with 4 phantom rows against 2 real ones, a
+      +0.40 residual became −0.10, i.e. the marker changes color).
+    - The fix joins back to the measured `(prefix, location, time)` triples in the
+      values snapshot. `_measured_observation_keys()` returns `None` when **no**
+      observation set recorded a `values_file`, and the caller then does not filter.
+    - Why that degradation: dropping every observation would be worse than the bias,
+      and a run old enough to lack the snapshot is exactly the run whose metadata we
+      cannot reason about. A run built by current myflopy always writes it.
+    - Note the underlying oddity is upstream and NOT fixed here: those phantom rows
+      carry weight 1.0, so PESTPP is history-matching the base model's own output at
+      times nobody measured. That is a build-side question (`observations.py`), with
+      its own tests, and is out of scope for a review-layer change.

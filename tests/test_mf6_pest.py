@@ -1475,6 +1475,31 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
     override = ies.plot_field("k", stat="change", colorscale="earth").data[0]
     assert override.colorscale[0][1] != change.colorscale[0][1]
 
+    # -- 6.4B: uncertainty reduction, mosaics, residuals on the same real run --
+    assert "reduction" in field.columns
+    reduction = ies.plot_field("k", stat="reduction").data[0]
+    # 1 - post_sd/prior_sd is derived from the SAME two columns the frame shows
+    assert reduction.customdata is not None
+    assert "realizations" in ies.plot_field("k", stat="reduction").layout.title.text
+
+    mosaic = ies.plot_field_mosaic("k", stat="mean")
+    # both panels pooled onto one color axis -- that shared scale is the whole
+    # point of a mosaic, and its ticks must still read in real units
+    assert len([trace for trace in mosaic.data if getattr(trace, "z", None) is not None]) == 2
+    assert all(trace.coloraxis == "coloraxis" for trace in mosaic.data
+               if getattr(trace, "z", None) is not None)
+    assert tuple(mosaic.layout.coloraxis.colorbar.ticktext)
+
+    # the head targets this run was built with are recoverable from disk alone
+    residuals = ies.obs_residuals()
+    assert not residuals.empty
+    assert {"OBS_A".lower(), "OBS_B".lower()} == set(residuals["location"])
+    assert residuals["x"].notna().all()  # joined back to the saved gpkg
+    residual_map = ies.plot_obs_residuals()
+    markers = [trace for trace in residual_map.data if trace.type == "scattermap"]
+    assert len(markers) == 1 and len(markers[0].lon) == len(residuals)
+    assert isinstance(ies.plot_obs_residuals(backend="matplotlib"), MplFigure)
+
 
 def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path):
     """The canonical calibration demo wires the canonical valley model into a
@@ -1621,3 +1646,512 @@ def test_build_forward_run_command_is_pestpp_compatible(tmp_path):
         assert 'exec "/opt/env/bin/python" forward_run.py' in content
         assert wrapper.stat().st_mode & 0o111, "wrapper must be executable"
         assert not command.startswith("/"), "absolute commands break POSIX PEST++"
+
+
+# --- observation residual maps (6.4B) ----------------------------------------
+#
+# These drive IesResults straight off a hand-built run directory: the residual
+# path reads the control file, ONE posterior ensemble, and the location
+# snapshots, so it does not need pestpp-ies to have run. That keeps the join
+# logic -- which is where the real risk is -- on the fast suite, with the slow
+# end-to-end test proving the same code against a genuine run.
+
+
+def _stub_ies_results(tmp_path, *, heads=True, zones=False, forecast=False,
+                      unmeasured_periods=0, zone_cells="0,1", zone_residual=-6.0,
+                      head_residuals=(2.0, -1.0)):
+    """A minimal completed-run stand-in for the residual-map surface.
+
+    Writes the same snapshot files a real build leaves beside the control file,
+    so the join logic under test is the real one. ``unmeasured_periods`` adds
+    the rows pyEMU creates for output times that were never measured — weight
+    1.0, ``obsval`` equal to the model's own simulated value — which is what a
+    real run looks like when targets cover only some stress periods.
+    """
+
+    from myflopy.modflow.mf6.pest.ies import IesResults
+
+    workspace = tmp_path / "master"
+    workspace.mkdir(parents=True, exist_ok=True)
+    vor = _two_cell_vor_clockwise()
+    observation_sets, names, values = [], [], {}
+
+    if heads:
+        frame = gpd.GeoDataFrame(
+            {"name": ["OBS_A", "OBS_B"], "layer": [0, 1],
+             "group": ["g", "g"], "weight": [1.0, 1.0]},
+            geometry=[Point(0.5, 0.5), Point(1.5, 0.5)],
+            crs="EPSG:2927",
+        )
+        frame.to_file(workspace / "hds_target_locations.gpkg", driver="GPKG")
+        pd.DataFrame({"name": ["OBS_A", "OBS_B"], "layer": [0, 1], "cell": [0, 1]}).to_csv(
+            workspace / "hds_head_target_map.csv", index=False
+        )
+        observation_sets.append({
+            "kind": "head_targets", "prefix": "hds",
+            "locations_file": "hds_target_locations.gpkg",
+            "values_file": "hds_target_values.csv",
+        })
+        measured_rows = []
+        # Two MEASURED periods each, so the mean-over-time aggregation runs.
+        for location, measured, offset in (
+            ("obs_a", 10.0, head_residuals[0]), ("obs_b", 20.0, head_residuals[1])
+        ):
+            for period in (0, 1):
+                name = f"oname:hds_otype:lst_usecol:{location}_per:{period}"
+                names.append((name, measured, 1.0))
+                values[name] = measured + offset
+                measured_rows.append({"time": period, "name": location, "head": measured})
+            for period in range(2, 2 + unmeasured_periods):
+                # pyEMU's phantom row: obsval IS the simulated value, weight 1.0,
+                # and it is absent from the target-values snapshot.
+                name = f"oname:hds_otype:lst_usecol:{location}_per:{period}"
+                names.append((name, 999.0, 1.0))
+                values[name] = 999.0
+        pd.DataFrame(measured_rows).to_csv(
+            workspace / "hds_target_values.csv", index=False
+        )
+
+    if forecast:
+        # cal.forecast() registers an ordinary observation set at weight 0.
+        frame = gpd.GeoDataFrame(
+            {"name": ["FORE_1"], "layer": [0], "group": ["f"], "weight": [0.0]},
+            geometry=[Point(1.5, 0.5)], crs="EPSG:2927",
+        )
+        frame.to_file(workspace / "fore1_target_locations.gpkg", driver="GPKG")
+        observation_sets.append({
+            "kind": "head_targets", "prefix": "fore1",
+            "locations_file": "fore1_target_locations.gpkg",
+            "values_file": "fore1_target_values.csv",
+        })
+        pd.DataFrame([{"time": 0, "name": "fore_1", "head": 5.0}]).to_csv(
+            workspace / "fore1_target_values.csv", index=False
+        )
+        name = "oname:fore1_otype:lst_usecol:fore_1_per:0"
+        names.append((name, 5.0, 0.0))
+        values[name] = 105.0  # a huge "residual" that must never reach the map
+
+    if zones:
+        frame = gpd.GeoDataFrame(
+            {"name": ["ZONE_1"], "group": ["z"], "weight": [1.0], "cells": [zone_cells]},
+            geometry=[Polygon([(0, 0), (2, 0), (2, 1), (0, 1)])],
+            crs="EPSG:2927",
+        )
+        frame.to_file(workspace / "drn_flow_target_locations.gpkg", driver="GPKG")
+        observation_sets.append({
+            "kind": "drn_flow", "prefix": "drn_flow",
+            "locations_file": "drn_flow_target_locations.gpkg",
+            "values_file": "drn_flow_target_values.csv",
+        })
+        pd.DataFrame([{"time": 1.0, "name": "zone_1", "flow_target": 100.0}]).to_csv(
+            workspace / "drn_flow_target_values.csv", index=False
+        )
+        name = "oname:drn_flow_otype:lst_usecol:zone_1_time:1.0"
+        names.append((name, 100.0, 1.0))
+        values[name] = 100.0 + zone_residual
+
+    observation_data = pd.DataFrame(
+        {"obsnme": [n for n, _, _ in names],
+         "obsval": [v for _, v, _ in names],
+         "weight": [w for _, _, w in names],
+         "obgnme": [n.rsplit("_", 1)[0] for n, _, _ in names]}
+    ).set_index("obsnme")
+    posterior = pd.DataFrame(
+        [values, {k: v + 0.5 for k, v in values.items()}], index=["base", "1"]
+    )
+
+    class _Stub(IesResults):
+        def __init__(self):
+            self.workspace = workspace
+            self.model = SimpleNamespace(vor=vor)
+            self.pst = SimpleNamespace(observation_data=observation_data)
+            self.__dict__["_metadata"] = {"observation_sets": observation_sets}
+
+        @property
+        def posterior(self):
+            return SimpleNamespace(_df=posterior)
+
+        @property
+        def posterior_iteration(self):
+            return 3
+
+    return _Stub()
+
+
+def test_obs_residuals_joins_pest_names_back_to_their_grid_locations(tmp_path):
+    """The whole point: a bare obs name recovers where on the grid it lives.
+
+    ``pst.try_parse_name_metadata()``'s own ``usecol`` column truncates at the
+    first underscore -- ``obs_a`` arrives as ``obs`` -- so a location name with
+    an underscore in it (i.e. nearly all of them) needs the name parsed whole.
+    """
+
+    frame = _stub_ies_results(tmp_path).obs_residuals()
+
+    assert list(frame["location"]) == ["obs_a", "obs_b"]
+    assert list(frame["cell"]) == [0, 1]
+    assert frame.loc[frame["location"] == "obs_a", "x"].item() == pytest.approx(0.5)
+    # simulated - measured, averaged over the two periods each was measured in.
+    assert list(frame["residual"]) == pytest.approx([2.0, -1.0])
+    assert list(frame["n"]) == [2, 2]
+
+
+def test_a_residual_is_simulated_minus_measured_not_the_other_way(tmp_path):
+    """The sign convention is named, never inferred.
+
+    PEST's own ``.res`` file reports ``measured - modelled``; myflopy reports
+    ``simulated - measured`` (what ``phi_contributions`` already uses). A model
+    simulating 12 where 10 was measured is over-simulating, so the residual is
+    POSITIVE -- flip this and every color on the map inverts.
+    """
+
+    frame = _stub_ies_results(tmp_path).obs_residuals()
+    over = frame.loc[frame["location"] == "obs_a"].iloc[0]
+
+    assert over["simulated"] == pytest.approx(12.0)
+    assert over["measured"] == pytest.approx(10.0)
+    assert over["residual"] == pytest.approx(2.0)
+
+
+def test_residuals_fall_back_to_the_ensemble_mean_when_base_is_absent(tmp_path):
+    """Mirrors phi_contributions: an unknown realization label is not an error."""
+
+    results = _stub_ies_results(tmp_path)
+    base = results.obs_residuals(realization="base")
+    mean = results.obs_residuals(realization="nope")
+
+    # The stub's second realization is +0.5 everywhere, so the mean sits halfway.
+    assert mean.loc[0, "residual"] == pytest.approx(base.loc[0, "residual"] + 0.25)
+
+
+def test_drn_zones_color_the_cells_they_cover(tmp_path):
+    """A zone target has no point; it paints its snapshotted cell list."""
+
+    frame = _stub_ies_results(tmp_path, heads=False, zones=True).obs_residuals()
+
+    assert list(frame["location"]) == ["zone_1"]
+    assert list(frame.loc[0, "cells"]) == [0, 1]
+    assert frame.loc[0, "residual"] == pytest.approx(-6.0)
+
+
+def test_points_and_zones_read_on_one_scale(tmp_path):
+    """A point and the cell under it must mean the same thing at the same color.
+
+    Both halves of the figure are built from one symmetric limit over ALL
+    residuals; separate autoscaling would let a +2 point and a +2 cell render
+    differently on the same map.
+    """
+
+    results = _stub_ies_results(tmp_path, heads=True, zones=True)
+    figure = results.plot_obs_residuals()
+    cells = next(trace for trace in figure.data if getattr(trace, "z", None) is not None)
+    markers = next(trace for trace in figure.data if trace.type == "scattermap")
+
+    assert cells.zmin == pytest.approx(markers.marker.cmin)
+    assert cells.zmax == pytest.approx(markers.marker.cmax)
+    assert cells.zmin == pytest.approx(-cells.zmax)
+    assert cells.colorscale == markers.marker.colorscale
+    # Exactly one scale bar: the cells carry it whenever there are zones.
+    assert markers.marker.showscale is False
+
+
+def test_a_heads_only_residual_map_still_shows_a_scale(tmp_path):
+    """With no zones every cell is NaN, so the markers must carry the legend.
+
+    Otherwise the figure has an empty colorbar over blank cells and no key at
+    all for the only data actually drawn.
+    """
+
+    figure = _stub_ies_results(tmp_path, heads=True, zones=False).plot_obs_residuals()
+    cells = next(trace for trace in figure.data if getattr(trace, "z", None) is not None)
+    markers = next(trace for trace in figure.data if trace.type == "scattermap")
+
+    assert cells.showscale is False
+    assert markers.marker.showscale is True
+    assert np.isnan(np.asarray(cells.z, dtype=float)).all()
+
+
+def test_the_static_residual_map_draws_its_points_in_model_coordinates(tmp_path):
+    """plot_mpl ignores Choro overlays entirely, so the points are drawn onto
+    its axes directly -- in MODEL coordinates, not the lon/lat the Plotly path
+    needs. Getting that frame wrong puts every observation off the map."""
+
+    figure = _stub_ies_results(tmp_path).plot_obs_residuals(backend="matplotlib")
+    scatter = figure.axes[0].collections[-1]
+    offsets = np.asarray(scatter.get_offsets())
+
+    assert offsets.tolist() == [[0.5, 0.5], [1.5, 0.5]]
+    assert scatter.get_clim() == pytest.approx((-2.0, 2.0))
+
+
+def test_a_run_with_no_locatable_observations_says_so(tmp_path):
+    """Lake and SFR targets record only a lake or reach number. Refusing with a
+    named reason beats drawing an empty grid that looks like zero residuals."""
+
+    results = _stub_ies_results(tmp_path, heads=False, zones=False)
+
+    assert results.obs_residuals().empty
+    with pytest.raises(ValueError, match="lake or reach number"):
+        results.plot_obs_residuals()
+
+
+def test_a_mosaic_refuses_the_stats_that_have_no_prior_and_posterior_form(tmp_path):
+    """``change``, ``reduction`` and ``base`` already summarize BOTH ensembles.
+
+    Composing one of them "prior vs posterior" would draw the same map twice.
+    The message names plot_field so the reader is not left guessing.
+    """
+
+    results = _stub_ies_results(tmp_path)
+    for stat in ("change", "reduction", "base"):
+        with pytest.raises(ValueError, match="plot_field"):
+            results.plot_field_mosaic("k", stat=stat)
+
+
+def test_a_mosaic_refuses_matplotlib_rather_than_silently_dropping_panels(tmp_path):
+    """viz.mosaic composes Plotly subplots only; the message names the way out."""
+
+    with pytest.raises(ValueError, match="backend='matplotlib'"):
+        _stub_ies_results(tmp_path).plot_field_mosaic("k", backend="matplotlib")
+
+
+def test_a_mosaic_of_one_panel_is_not_a_mosaic(tmp_path):
+    with pytest.raises(ValueError, match="at least two panels"):
+        _stub_ies_results(tmp_path).plot_field_mosaic("k", which=("posterior",))
+
+
+def _stub_ies_with_capture(tmp_path, prior_sds, posterior_sds, means=(1.0, 1.0)):
+    """A stub carrying a CAPTURED FIELD, for the `field()` statistics.
+
+    Two cells, two realizations per ensemble, with the per-cell spread chosen by
+    the caller so the derived columns have known values.
+    """
+
+    from myflopy.modflow.mf6.pest.ies import IesResults
+
+    workspace = tmp_path / "capture"
+    workspace.mkdir(exist_ok=True)
+    names = [f"oname:kfieldl0_otype:arr_i:{cell}_j:0" for cell in (0, 1)]
+
+    def _ensemble(sds):
+        # Two realizations symmetric about the mean -> ddof=1 std is exactly sd.
+        rows = {
+            name: [mean - sd / 2 ** 0.5, mean + sd / 2 ** 0.5]
+            for name, mean, sd in zip(names, means, sds, strict=True)
+        }
+        return pd.DataFrame(rows, index=["base", "1"])
+
+    prior, posterior = _ensemble(prior_sds), _ensemble(posterior_sds)
+    observation_data = pd.DataFrame({"obsnme": names, "obsval": [0.0, 0.0],
+                                     "weight": [0.0, 0.0]}).set_index("obsnme")
+
+    class _Stub(IesResults):
+        def __init__(self):
+            self.workspace = workspace
+            self.model = SimpleNamespace(vor=_two_cell_vor_clockwise())
+            self.pst = SimpleNamespace(observation_data=observation_data)
+            self.__dict__["_metadata"] = {"capture_fields": [
+                {"prefix": "kfield", "layer_prefixes": {"0": "kfieldl0"},
+                 "target": "k", "family": "array", "name": "k"}
+            ]}
+
+        @property
+        def prior(self):
+            return SimpleNamespace(_df=prior)
+
+        @property
+        def posterior(self):
+            return SimpleNamespace(_df=posterior)
+
+        @property
+        def prior_iteration(self):
+            return 0
+
+        @property
+        def posterior_iteration(self):
+            return 3
+
+    return _Stub()
+
+
+def test_uncertainty_reduction_is_the_share_of_the_prior_spread_removed(tmp_path):
+    """`1 - posterior_sd / prior_sd`, and nothing else.
+
+    Cell 0's spread was halved (reduction 0.5); cell 1's was untouched
+    (reduction 0). Inverting the ratio, or dropping the `1 -`, changes both
+    numbers -- which the color-policy tests cannot see, because they are handed
+    value lists rather than computing them.
+    """
+
+    frame = _stub_ies_with_capture(tmp_path, prior_sds=(2.0, 1.0),
+                                   posterior_sds=(1.0, 1.0)).field("k")
+
+    assert list(frame["prior_std"]) == pytest.approx([2.0, 1.0])
+    assert list(frame["posterior_std"]) == pytest.approx([1.0, 1.0])
+    assert list(frame["reduction"]) == pytest.approx([0.5, 0.0])
+
+
+def test_a_posterior_spread_that_grew_reads_as_a_negative_reduction(tmp_path):
+    """The case `_field_map_policy` has a dedicated fallback branch for, which
+    nothing else ever produces from real ensembles: more uncertain after
+    calibration than before."""
+
+    frame = _stub_ies_with_capture(
+        tmp_path, prior_sds=(1.0, 1.0), posterior_sds=(2.0, 0.5)
+    ).field("k")
+
+    assert frame.loc[0, "reduction"] == pytest.approx(-1.0)  # spread doubled
+    assert frame.loc[1, "reduction"] == pytest.approx(0.5)   # spread halved
+
+
+def test_phantom_observations_never_reach_a_residual(tmp_path):
+    """pyEMU makes one observation per simulated ROW, not per measured row.
+
+    Unmeasured times keep weight 1.0 and an obsval equal to the model's own
+    output, so averaging them in drags every residual toward zero -- and with
+    enough of them it flips the sign, painting the map the opposite color. They
+    are excluded by joining back to the target-values snapshot.
+    """
+
+    honest = _stub_ies_results(tmp_path / "a").obs_residuals()
+    padded = _stub_ies_results(tmp_path / "b", unmeasured_periods=4).obs_residuals()
+
+    assert list(padded["residual"]) == pytest.approx(list(honest["residual"]))
+    assert list(padded["n"]) == [2, 2]  # not 6: the four phantoms are not data
+
+
+def test_forecasts_are_not_drawn_as_calibration_misfit(tmp_path):
+    """`cal.forecast(...)` registers an ordinary observation set at weight 0.
+
+    Nothing in the persisted metadata marks it as a forecast, so it arrives
+    looking exactly like a head target. Drawing it on a figure captioned "where
+    is the model biased" would be wrong twice over: it was never fitted, and its
+    huge apparent residual would set the whole map's color scale.
+    """
+
+    results = _stub_ies_results(tmp_path, forecast=True)
+    frame = results.obs_residuals()
+
+    assert "fore_1" not in set(frame["location"])
+    assert set(frame["prefix"]) == {"hds"}
+    figure = results.plot_obs_residuals()
+    cells = next(t for t in figure.data if getattr(t, "z", None) is not None)
+    assert cells.zmax == pytest.approx(2.0)  # not 100, the forecast's "residual"
+
+
+def test_a_duplicated_location_snapshot_does_not_multiply_the_markers(tmp_path):
+    """Two rows for one name (duplicated source row, two screens) used to
+    cross-join into n**2 rows against a single pyEMU observation."""
+
+    results = _stub_ies_results(tmp_path)
+    mapping = pd.read_csv(results.workspace / "hds_head_target_map.csv")
+    pd.concat([mapping, mapping]).to_csv(
+        results.workspace / "hds_head_target_map.csv", index=False
+    )
+
+    assert len(results.obs_residuals()) == 2
+
+
+def test_one_degenerate_zone_does_not_take_down_the_whole_frame(tmp_path):
+    """A DRN zone that intersects no cells is snapshotted as an empty cell list,
+    which round-trips through CSV as NaN. Parsing that unguarded raised, killing
+    the residuals for every head target in the run too."""
+
+    frame = _stub_ies_results(tmp_path, zones=True, zone_cells="").obs_residuals()
+
+    assert list(frame.loc[frame["location"] == "zone_1", "cells"].item()) == []
+    assert "obs_a" in set(frame["location"])  # the heads survived
+
+
+def test_the_shared_limit_is_set_by_whichever_half_is_larger(tmp_path):
+    """Pins the UNION, not merely that the two traces agree with each other.
+
+    Here the largest residual is a head point, so a limit computed from the
+    zones alone would be too small and the point would clip.
+    """
+
+    results = _stub_ies_results(tmp_path, zones=True, head_residuals=(12.0, -1.0),
+                                zone_residual=-6.0)
+    figure = results.plot_obs_residuals()
+    cells = next(t for t in figure.data if getattr(t, "z", None) is not None)
+    markers = next(t for t in figure.data if t.type == "scattermap")
+
+    assert cells.zmax == pytest.approx(12.0)
+    assert markers.marker.cmax == pytest.approx(12.0)
+
+
+def test_the_static_map_draws_points_on_the_map_axes_not_the_colorbar(tmp_path):
+    """With zones present the figure has two axes, and only then can an
+    axes[-1] slip put every observation onto the colorbar instead of the map."""
+
+    figure = _stub_ies_results(tmp_path, zones=True).plot_obs_residuals(
+        backend="matplotlib"
+    )
+    map_axes = figure.axes[0]
+
+    assert len(figure.axes) == 2  # map + colorbar, so the two indices differ
+    # The cells' patches plus our points, both on the MAP axes. Scattering onto
+    # axes[-1] leaves this at 1 and the offsets below become the patches'.
+    assert len(map_axes.collections) == 2
+    offsets = np.asarray(map_axes.collections[-1].get_offsets())
+    assert offsets.tolist() == [[0.5, 0.5], [1.5, 0.5]]
+
+
+def test_a_heads_only_static_map_still_has_a_color_key(tmp_path):
+    """plot_mpl ignores Choro overlays, so the scattered points cannot carry a
+    legend the way the Plotly markers do -- the cells' bar is the only key this
+    backend has, and it must be drawn even over an all-NaN cell column."""
+
+    figure = _stub_ies_results(tmp_path).plot_obs_residuals(backend="matplotlib")
+
+    assert len(figure.axes) == 2
+    assert figure.axes[-1].get_ylim() == pytest.approx((-2.0, 2.0))
+
+
+def test_a_mixed_case_observation_name_still_joins(tmp_path):
+    """The snapshot side is force-lowercased, so if a control file ever carries
+    mixed-case `usecol` values the inner merge would drop EVERY row -- returning
+    an empty frame and blaming lake/SFR targets for it. Both sides lower."""
+
+    def _shout(name):
+        return name.replace("usecol:obs_a", "usecol:OBS_A")
+
+    results = _stub_ies_results(tmp_path)
+    # Both sides of the control file, exactly as a real run would carry them --
+    # renaming only the pst index would drop the rows before the join under test.
+    results.pst = SimpleNamespace(
+        observation_data=results.pst.observation_data.rename(index=_shout)
+    )
+    posterior = results.posterior._df.rename(columns=_shout)
+    type(results).posterior = property(lambda self: SimpleNamespace(_df=posterior))
+
+    assert "obs_a" in set(results.obs_residuals()["location"])
+
+
+def test_a_linear_field_mosaic_is_not_labelled_in_decades(tmp_path):
+    """The colorbar callback keys on the EFFECTIVE logscale, not on the stat.
+
+    `mean` is log by default, but an explicit `logscale=False` makes the pooled
+    data linear -- where decade ticks are not merely wrong, they can overflow
+    (`10 ** 314`) and take the whole figure down.
+    """
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(2.0, 1.0),
+                                     posterior_sds=(1.0, 1.0), means=(1e2, 3e2))
+    figure = results.plot_field_mosaic("k", stat="mean", logscale=False)
+
+    assert figure.layout.coloraxis.colorbar.ticktext is None
+    assert figure.layout.coloraxis.cmax == pytest.approx(300.0)  # real units, not log
+
+
+def test_a_linear_single_field_map_is_not_labelled_in_decades(tmp_path):
+    """Same override on the single map: the policy's decade colorbar carries
+    tickvals in LOG space, which over linear data crush every label into the
+    bottom of the bar."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(2.0, 1.0),
+                                     posterior_sds=(1.0, 1.0), means=(1.5, 4.5))
+    trace = results.plot_field("k", stat="mean", logscale=False).data[0]
+
+    assert trace.colorbar.ticktext is None
+    assert trace.colorbar.tickvals is None

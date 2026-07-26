@@ -202,11 +202,18 @@ ies.forecast("spring").plot()   # the payoff: posterior forecast distribution
 ies.plot_field("k", stat="mean")     # property patterns — plausible or laughable?
 ies.plot_field("k", stat="std")      # where is K still uncertain?
 ies.plot_field("k", stat="change")   # where did calibration move K? (posterior/prior)
+ies.plot_field("k", stat="reduction")  # did the data inform this region at all?
+ies.plot_field_mosaic("k", stat="mean")  # prior vs posterior, side by side, one scale
+ies.plot_obs_residuals()        # WHERE is the model biased, and by how much?
 ies.best()                      # the single realization to carry forward (the "base" / min-error-variance one)
-ies.report("review.html")       # all of the above bundled into one HTML
+ies.report("review.html")       # the headline plots bundled into one HTML
 ```
 
-Every plot takes `backend="matplotlib"` for static matplotlib/seaborn output instead of interactive Plotly.
+Every plot takes `backend="matplotlib"` for static matplotlib/seaborn output instead
+of interactive Plotly — except `plot_field_mosaic`, which composes Plotly subplots and
+raises rather than pretending. `report(...)` bundles the phi, obs, bounds, forecast and
+`plot_field` mean/change figures; the reduction map, the mosaic and the residual map are
+not in it yet.
 
 **Reading the field maps.** They are colored by policy, and the policy depends on
 the statistic, not the parameter:
@@ -225,10 +232,55 @@ the statistic, not the parameter:
   blue is increased, and a halving sits exactly as far from white as a doubling.
   The hover shows the raw ratio (`0.5x`), not the logarithm.
 
+- `stat="reduction"` — `1 - posterior_sd / prior_sd`, the share of the prior spread
+  the data removed. **This is the "did the data inform this region" map.** Its scale
+  is anchored to 0–1 (0 = the data said nothing here, 1 = the ensemble collapsed)
+  rather than autoscaled, so two layers are comparable and a field that only ever
+  reduces 0.95–1.0 does not stretch into a dramatic-looking map of a trivial range.
+  If any cell went *negative* — the posterior spread grew — the scale falls back to
+  the data range, so those cells stay visible instead of clipping to the bottom
+  color where they would read as "no reduction".
+
 Hovering a cell gives the plotted statistic plus prior mean, posterior mean, and
 posterior standard deviation; the title states which iterations and how many
 realizations the figure is summarizing. A cell whose prior mean is zero has an
 undefined ratio and says so, rather than silently reading as missing data.
+
+**Prior vs posterior, side by side.** `plot_field_mosaic("k", stat="mean")` draws one
+panel per ensemble on **one shared color scale** — which is the whole point, since two
+autoscaled panels would make any difference look identical. The panels also pan and
+zoom together — though only in a saved/shown HTML page, not in inline notebook output,
+which gets the shared *starting* view but no live linking. Only `stat="mean"` and
+`stat="std"` are accepted: they are the only stats with a separate prior and posterior
+form. `change` and `reduction` are already prior→posterior comparisons, and `base` is a
+single posterior realization with no prior counterpart, so composing any of them "prior
+vs posterior" would draw one map twice. Plotly only — for static output, call
+`plot_field(..., backend="matplotlib")` once per panel.
+
+**Where is the model actually wrong?** `plot_obs_residuals()` puts the misfit on the
+grid rather than in a histogram: head targets draw as points at their coordinates, DRN
+zones color the cells they cover, and **both read on one diverging scale centered on
+zero** — so a point and the cell under it mean the same thing at the same color. **Red
+is under-simulated**, blue is over-simulated, white is on the money. The residual is
+`simulated − measured` (the convention `phi_contributions` uses; note PEST's own `.res`
+file reports the opposite sign, and every label on this figure says which one it is
+in). Each location is summarized over time, so a target measured in six stress periods
+is one point showing its mean bias, with the count in the hover. `obs_residuals()`
+returns the same numbers as a DataFrame.
+
+Lake and SFR targets are *not* on this map: they record only a lake or reach number, with
+no geometry, so they cannot be placed from the run directory alone. They are absent from
+`obs_residuals()` too, so the figure never silently implies it covered them.
+
+Two other things are deliberately excluded, both of which would otherwise be drawn as
+misfit the model was never fitted to. **Forecasts**, because `cal.forecast(...)` registers
+an ordinary observation set at weight 0 and nothing in the saved metadata distinguishes it
+— a forecast's apparent "residual" is often the largest number in the run and would set
+the whole map's color scale. And **unmeasured times**: pyEMU creates one observation per
+row of the simulated output, so a target measured in one stress period out of six leaves
+five rows carrying the model's own output at weight 1.0. Averaging those in drags every
+residual toward zero and can flip its sign, so they are excluded by joining back to the
+`*_target_values.csv` snapshot of what was actually measured.
 
 What you're checking for:
 - **Phi**: should drop fast at first. If it collapses to near-zero, you're
@@ -303,7 +355,8 @@ ies = cal.run_ies(reals=50, iterations=3, bad_phi_sigma=1.5, workers=10)
 # 6: assess (the DBTL checklist)
 ies.plot_phi(); ies.plot_vs_obs()
 ies.forecasts(); ies.forecast("spring").plot()
-ies.plot_field("k", stat="change")
+ies.plot_field("k", stat="change"); ies.plot_field("k", stat="reduction")
+ies.plot_field_mosaic("k", stat="mean"); ies.plot_obs_residuals()
 ies.report("review.html")
 
 # 7: learn, revise, repeat

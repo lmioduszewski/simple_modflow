@@ -38,6 +38,29 @@ _PLOTLY_TO_MPL_CMAP = {
 }
 
 
+def mpl_colormap_for(colorscale):
+    """The matplotlib colormap equivalent to a Plotly ``colorscale``.
+
+    Shared so that anything drawn *over* a static choropleth -- residual
+    markers, category points -- colors on the same ramp as the cells beneath
+    it. Building a second colormap at the call site is how a point and the
+    cell under it end up different colors for the same value.
+
+    Explicit color stops become a ``LinearSegmentedColormap``; a name is looked
+    up in :data:`_PLOTLY_TO_MPL_CMAP`. Note that table maps ``'rdbu'`` to the
+    REVERSED matplotlib colormap, so a diverging scale passed by name renders
+    mirrored between backends -- pass stops (compromise ledger 69/70).
+    """
+
+    if isinstance(colorscale, (list, tuple)):
+        from matplotlib.colors import LinearSegmentedColormap
+
+        return LinearSegmentedColormap.from_list(
+            "choro_custom", [(float(pos), color) for pos, color in colorscale]
+        )
+    return _PLOTLY_TO_MPL_CMAP.get(str(colorscale).lower(), "gist_earth")
+
+
 def _content_aware_hover(name_dict: dict[str, list]):
     """Build hover metadata with readable significant digits for numeric values."""
 
@@ -1201,16 +1224,7 @@ class Choro:
             fig = ax.figure
 
         if cmap is None:
-            scale = self.colorscale
-            if isinstance(scale, (list, tuple)):
-                # explicit color stops -> equivalent matplotlib colormap
-                from matplotlib.colors import LinearSegmentedColormap
-
-                cmap = LinearSegmentedColormap.from_list(
-                    "choro_custom", [(float(pos), color) for pos, color in scale]
-                )
-            else:
-                cmap = _PLOTLY_TO_MPL_CMAP.get(str(scale).lower(), "gist_earth")
+            cmap = mpl_colormap_for(self.colorscale)
         vmin = self._zmin if vmin is None else vmin
         vmax = self._zmax if vmax is None else vmax
         gdf.plot(column="_choro", ax=ax, cmap=cmap, legend=colorbar,

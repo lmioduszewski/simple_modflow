@@ -113,6 +113,25 @@ Rules that hold for all of them:
   (`prt_maps.PRT_COLORSCALE`, `ies._field_map_policy`), pinned in
   `tests/test_colorscale_policy.py`. Do not add a second keyspace to the registry
   for one consumer.
+- **A mosaic pools its panels onto one color axis, which is the point — but it
+  discards each panel's limits AND its colorbar.** That pooling is what makes
+  small multiples comparable, so do not fight it per panel: pass
+  `viz.mosaic(..., colorbar=...)`, either a dict or a `(cmin, cmax) -> dict`
+  callable when the labels depend on the pooled range (a log mosaic's real-unit
+  decades can only be computed once the shared limits are known — see
+  `ies._log_decade_colorbar_for_mosaic`). For a *diverging* quantity also pass
+  `diff=True`, or the neutral point lands wherever the pooled data happens to put
+  it. Better still, refuse the combination that needs it: `plot_field_mosaic`
+  accepts only stats that *have* a prior and a posterior form, which makes the
+  trap unreachable rather than merely documented. Ledger 71.
+- **Anything drawn OVER a static map takes its colormap from the same place the
+  cells did** — `choros.mpl_colormap_for(colorscale)`. Building a second
+  colormap at the call site is how an overlaid point and the cell beneath it end
+  up different colors for the same value. Note the Plotly and matplotlib overlay
+  paths are genuinely different: `plot_mpl` ignores `Choro` overlays entirely and
+  draws in **model coordinates**, while the Plotly path needs
+  `vor.points_to_latlon`. Supporting both is ~10 lines; dropping the static one
+  leaves a figure that silently shows the base map and none of its data.
 - **Period selection is `per=`** on the verb, and a noun may also be *called*
   to bind a period once: `results.profile(per=3).plot()` ==
   `results.profile.plot(per=3)`. Calling a noun returns a new bound view; it

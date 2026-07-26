@@ -74,7 +74,7 @@
  "myflopy.modflow.mf6.pest.forward_run": 0,
  "myflopy.modflow.mf6.pest.geostats": 5,
  "myflopy.modflow.mf6.pest.gis": 5,
- "myflopy.modflow.mf6.pest.ies": 2,
+ "myflopy.modflow.mf6.pest.ies": 4,
  "myflopy.modflow.mf6.pest.native_parameters": 0,
  "myflopy.modflow.mf6.pest.observations": 5,
  "myflopy.modflow.mf6.pest.pilot_points": 1,

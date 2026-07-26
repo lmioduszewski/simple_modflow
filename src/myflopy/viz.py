@@ -180,6 +180,7 @@ def mosaic(
     title: str | None = None,
     diff: bool = False,
     sync_views: bool = True,
+    colorbar=None,
 ):
     """Compose arbitrary panel objects into one Plotly grid.
 
@@ -214,6 +215,15 @@ def mosaic(
         shared start view but not the live linking). Set ``False`` to let each
         map pan/zoom independently after the shared start. Panels without
         geometry (raw Plotly figures) are unaffected.
+    colorbar
+        Colorbar settings for the shared map color axis -- a dict of Plotly
+        ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
+        Panels are pooled onto one ``coloraxis``, which discards each panel's
+        own ``colorbar``; without this a log-scaled mosaic silently reads in
+        log10 units. The callable form exists because the useful labels depend
+        on the pooled limits, and those are only known here -- e.g.
+        ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
+        Ignored when no panel is a map.
 
     Examples
     --------
@@ -311,6 +321,15 @@ def mosaic(
                     cmax=float(np.nanmax(finite)),
                     cauto=False,
                 )
+        if colorbar is not None:
+            # Resolved AFTER the limits: a log mosaic's real-unit ticks depend on
+            # the pooled cmin/cmax, which nothing outside this function knows.
+            resolved = (
+                colorbar(coloraxis.get("cmin"), coloraxis.get("cmax"))
+                if callable(colorbar) else colorbar
+            )
+            if resolved:
+                coloraxis["colorbar"] = dict(resolved)
         fig.update_layout(coloraxis=coloraxis)
     fig.update_layout(title=title, uirevision="lock")
     return fig

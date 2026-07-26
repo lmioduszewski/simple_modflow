@@ -139,7 +139,9 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | PESTPP-IES + prior Monte Carlo + parallel workers | ✅ | `pest/project.py` `run_ies(workers=)`, `prior`, `draw_prior` |
 | Results / review / reopen a run | ✅ | `pest/ies.py` (`open_ies_run`, `IesResults`), `pest/runs.py` (`find_pest_runs`, `model.pest_runs`) |
 | Parameter-field maps with hover + per-stat policy colors | ✅ | `pest/ies.py` `plot_field` (`_field_map_policy`: `change` → log-centered diverging, red = reduced; `mean`/`base` → earth+log; `std` → earth linear) + `parameter_field_hover` (§6.4A) |
-| Field uncertainty map, prior/posterior mosaic, residual map | ❌ | §6.4B |
+| Uncertainty-reduction map (`did the data inform this region`) | ✅ | `pest/ies.py` `plot_field(stat="reduction")` — `1 - post_sd/prior_sd`, anchored 0–1, falls back to the data range when a posterior spread grew (§6.4B) |
+| Prior-vs-posterior field mosaic (one shared scale, synced views) | ✅ | `pest/ies.py` `plot_field_mosaic` over `viz.mosaic(colorbar=)`; `mean`/`std` only — the only stats with a separate prior and posterior form (§6.4B). Plotly only |
+| Observation residual map (heads as points, DRN zones as cells) | ✅ | `pest/ies.py` `obs_residuals` / `plot_obs_residuals`, joined to the saved `*_target_locations.gpkg`/`.csv` + `*_head_target_map.csv`; excludes forecasts and unmeasured times; both backends (§6.4B). Lake/SFR record only a lake/reach number — ledger 76 |
 | Geostats for grid / pilot-point priors | ✅ | `pest/geostats.py` (`ExpGeoStruct`, `build_geostruct`) |
 | Pilot points / zones from **raster** (vs pp-net / polygon) | 🟡 | pp-net + polygon zones exist; raster-driven zone arrays do not |
 | UZF parameters; Tikhonov/preferred-value **regularization**; identifiability | ❌ | not yet a `parameterize` target / not built |
@@ -168,8 +170,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
    `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades**: field-map
-   hover + per-stat policy colors **DONE 2026-07-25 (§6.4A)**; uncertainty maps,
-   prior/posterior mosaics and the residual map (§6.4B–C) still open.
+   hover + per-stat policy colors **DONE 2026-07-25 (§6.4A)**; uncertainty-reduction
+   map, prior/posterior mosaic and the residual map **DONE 2026-07-26 (§6.4B)**. Still
+   open (§6.4C): a canned synthetic IES fixture, the remaining `ies.py` color literals,
+   and the `settings`/`report()` crash on a forecast-less run (ledger 73).
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
    + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC
    `functools.partial` builders round-trip. **TOML still deferred** (no null type;

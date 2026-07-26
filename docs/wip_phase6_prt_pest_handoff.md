@@ -35,7 +35,7 @@
   the title, ies.py color literals retired. See the 6.4A block below for the
   four code-established corrections; ledger 67–73.
 - **Next:** 6.4B→C.
-- Full serial suite after 6.4A: **906 passed / 1 skipped** (`pytest -n0`, ~164 s).
+- Full serial suite after 6.4B: **940 passed / 1 skipped** (`pytest -n0`, ~162 s).
 - Task list: #54 6.4A, #55 6.4B, #56 6.4C.
 
 ## Locked user decisions (AskUserQuestion, 2026-07-24)
@@ -105,11 +105,11 @@ table. Recipe:
   regen `scripts/derive_import_layers.py`).
 
 ### PEST-IES layer (for 6.4)
-- ies.py viz audit **already passes**: all 9 plot methods + IesForecast.plot use
-  viz.Fig/viz.subplots/viz.mpl_axes. Remaining color nits ONLY:
-  `'darkorange'` at ies.py:927,949,989,996 (use `viz.PALETTE.conflict` /
-  `PALETTE.mpl_conflict`, viz.py:348,355), `'rgba(80,80,80,0.35)'` at :415,
-  `_POST_COLOR.replace('0.55','1.0')` alpha hack at :418.
+- ies.py viz audit **already passes**: every plot method + IesForecast.plot use
+  viz.Fig/viz.subplots/viz.mpl_axes. **STALE as of 6.4A** — the `'darkorange'`,
+  `'rgba(80,80,80,0.35)'` and `_POST_COLOR.replace('0.55','1.0')` nits listed here
+  were all retired to `viz.PALETTE` in 6.4A. Only two bare `color="0.6"` greys
+  remain (ies.py:689, :1139).
 - `field(target, layer=0)` (ies.py:1062-1097) already returns per-cell
   `cell, prior_mean, prior_std, posterior_mean, posterior_std, base?(when a
   'base' realization exists), change(=posterior_mean/prior_mean)`.
@@ -262,23 +262,49 @@ established against the code. Carry these into 6.4B/C:
   point moves off 1x (measured: fraction 0.231, not 0.5). Ledger 71.
 - `api_snapshot.json` unchanged (`build_choropleth` was never pinned); import
   layers regenerated, `pest.ies` 1→2 (deferred count unchanged).
-### 6.4B — new figures (task #55)
-- `field_uncertainty_map(target, which="std"|"reduction")`;
-- `field_mosaic(target, which=("prior","posterior"), stat="mean")` via
-  viz.mosaic;
-- `plot_obs_residuals(map=True)` for heads (+ DRN zones): expose
-  `observation_sets` from `_metadata`, join posterior-mean residuals
-  (obs ensemble vs measured from pst.observation_data) to the saved gpkg /
-  head_target_map.csv locations; heads → point scatter over the grid (or
-  nearest-cell choropleth), DRN zones → zone-cells choropleth. Lake/SFR
-  deferred → ledger entry.
+### 6.4B — new figures (task #55) — **DONE 2026-07-26**
+Three of the four planned names changed, each for a reason established against the
+code. Carry these into 6.4C:
+- **The uncertainty map is `plot_field(stat="reduction")`, not a new method.**
+  `plot_field(stat="std", which=...)` already WAS the posterior-sd map (6.4A), so
+  `field_uncertainty_map(which="std"|"reduction")` would have been a second spelling
+  of a shipped figure plus a second meaning for `which`. Only `1 - post_sd/prior_sd`
+  was new, and `field()` already had `prior_std`. Ledger 75.
+- **`plot_field_mosaic`, not `field_mosaic`** — every figure method on `IesResults` is
+  `plot_*`. It only accepts `mean`/`std`, which makes ledger 71's `diff=True` trap
+  **unreachable** instead of documented: `change` has no prior/posterior pair to
+  compose. Panels come from a new `_field_choro` seam (`viz.mosaic` needs the `Choro`,
+  `plot_field` returns a rendered figure).
+- **`viz.mosaic` gained `colorbar=`** (dict, or a `(cmin, cmax) -> dict` callable —
+  the pooled limits exist only inside `mosaic`). Additive: omit it and every existing
+  mosaic is byte-identical. Ledger 71 half-retired.
+- **`plot_obs_residuals()` has no `map=` flag** — nothing was specified for
+  `map=False`, and a boolean with one honest value is worse than a named method.
+  Ledger 77.
+- **`usecol` from `pst.try_parse_name_metadata()` is unusable as a join key** — it
+  truncates at the first underscore (`obs_00` → `obs`). Prefix and location are parsed
+  out of the whole obs name by `_OBS_NAME_RE` instead. This is the single fact the
+  residual map depends on.
+- **`plot_mpl` draws in MODEL coordinates**, so the static backend scatters raw x/y and
+  only the Plotly path needs `points_to_latlon`. That is why residuals are not
+  plotly-only. `plot_mpl` ignores `Choro` overlays entirely.
+- `mpl_colormap_for` extracted from `plot_mpl` into `choros.py` so overlaid points and
+  the cells beneath them share one colormap. Ledger 79.
+- Lake/SFR residuals deferred — they persist only a lake/reach number. Ledger 76.
+- Import layers regenerated: `pest.ies` deferred 1→**0** (hoisted, per the ratchet's
+  own advice) and layer 2→4. `api_snapshot.json` unchanged again.
 ### 6.4C — fixture/tests/docs (task #56)
-- Canned synthetic run-dir fixture (see scoping facts above); fast tests for
-  hover content (HoverContext-direct pattern of test_hover_spec.py), policy
-  colors both backends, uncertainty/mosaic/residual construction; extend
-  `test_ies_capture_field_and_spatial_maps_end_to_end` in place (no conftest
-  change needed); ledger + docs (plan 6.4 banner, myflopy_context PEST-IES
-  rows, package_api_reference read-side, CLAUDE.md if capability claims move);
+- **Most of the planned test work landed in 6.4B** — `_stub_ies_results` in
+  `test_mf6_pest.py` is a hand-built run directory (location snapshots + a fake
+  `pst`/posterior) that drives the whole residual path fast, and the e2e was extended
+  in place. What 6.4C still owes: a stub that also carries **capture fields**, so
+  `field`/`plot_field`/`plot_field_mosaic` get fast coverage too (today only the slow
+  e2e proves them); the last two `ies.py` color literals — bare `color="0.6"` greys at
+  **ies.py:689 and :1139** (use `viz.PALETTE.mpl_ensemble`). NOTE: the `'darkorange'`
+  literals and the `_POST_COLOR.replace('0.55','1.0')` alpha hack this file used to list
+  here were already retired in 6.4A — verified gone, do not go looking for them.
+  Also: ledger 73's `settings`/`report()`
+  `TypeError` on a forecast-less run; docs (plan §6.4 banner — it still has none;
   snapshot regen if any exported signature changed; full `-n0` suite; commit;
   **push everything** (origin is currently at 7322af9); delete this file in the
   final 6.4 commit.
@@ -291,6 +317,6 @@ established against the code. Carry these into 6.4B/C:
 - Docs in sync IN THE SAME COMMIT: package_api_reference.md, myflopy_context.md,
   implementation-plan banners, CLAUDE.md, view_layer_conventions.md as touched.
 - Every deliberate scope cut → docs/compromises_and_deferrals.md (same pass);
-  next ledger number is 57.
+  next ledger number is 80.
 - Figures always viz.Fig; colors from policy helpers, never hex at call sites.
 - Commit messages end with: Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

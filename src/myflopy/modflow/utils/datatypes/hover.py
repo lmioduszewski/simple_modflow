@@ -580,6 +580,46 @@ def temp_hover(*, unit: str = "°C", layers: str = "active+strip", surfaces: boo
     )
 
 
+_RESIDUAL_LABELS = {
+    # Named, not signed into agreement: PEST's own .res file reports
+    # measured - modelled, myflopy reports simulated - measured (the sign
+    # `phi_contributions` already uses). Spelling it out in the label is what
+    # keeps a reader from guessing which frame a red cell is in.
+    "residual": "residual (sim − meas)",
+    "measured": "measured",
+    "simulated": "simulated",
+    "weight": "weight",
+    "zone": "zone",
+    "location": "location",
+    "n": "observations",
+}
+
+
+def residual_hover(
+    *,
+    title: str | None = None,
+    fields: Sequence[str] = ("measured", "simulated", "weight"),
+    units: Mapping[str, str] | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> HoverSpec:
+    """Hover for an observation-residual map (PEST/IES ``plot_obs_residuals``).
+
+    ``footer=()`` for the same reason :func:`parameter_field_hover` documents:
+    a residual summarized over every time an observation was made does not
+    belong to one stress period, so a "Period 0" line would assert one.
+    """
+
+    body = tuple(name for name in fields if name != "residual")
+    return HoverSpec(
+        primary="residual",
+        title=title or "residual",
+        blocks=(Fields(fields=body),) if body else (),
+        footer=(),
+        units=dict(units or {}),
+        labels={**_RESIDUAL_LABELS, **(labels or {})},
+    )
+
+
 _PARAMETER_FIELD_LABELS = {
     "change": "posterior / prior",
     "prior_mean": "prior mean",

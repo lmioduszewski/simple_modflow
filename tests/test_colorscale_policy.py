@@ -495,3 +495,113 @@ def test_lak_budget_retired_spellings_warn(canonical_run):
         q.budget_summary(per=0)
     with pytest.warns(DeprecationWarning, match="plot_budget is deprecated"):
         q.plot_budget(per=0)
+
+
+# --- uncertainty reduction + pooled mosaic colorbars (6.4B) ------------------
+
+
+def test_uncertainty_reduction_is_anchored_to_its_absolute_frame():
+    """0 = the data told you nothing, 1 = the ensemble collapsed.
+
+    Unlike a spread in model units, variance reduction has a fixed meaning at
+    both ends, so it is pinned to [0, 1] rather than autoscaled: a field that
+    only ever reduces 0.95-1.0 must not stretch into a dramatic-looking map of
+    a trivial range, and two layers must be comparable at a glance.
+    """
+
+    policy = _field_map_policy("reduction", [0.1, 0.95])
+
+    assert policy["colorscale"] == "earth"
+    assert policy["logscale"] is False
+    assert (policy["zmin"], policy["zmax"]) == (0.0, 1.0)
+
+
+def test_a_posterior_that_got_worse_is_not_clipped_out_of_sight():
+    """A posterior spread CAN grow (negative reduction).
+
+    Holding zmin at 0 would floor those cells at the bottom color, where they
+    would read as "no reduction" -- the calibration merely learned nothing --
+    instead of "worse than the prior". Fall back to the data's own range.
+    """
+
+    policy = _field_map_policy("reduction", [-0.4, 0.9])
+
+    assert "zmin" not in policy and "zmax" not in policy
+    assert _field_map_policy("reduction", [0.0, 1.0])["zmin"] == 0.0
+
+
+def test_reduction_stays_linear_like_the_spread_it_is_derived_from():
+    """log10 of a reduction of exactly 0 or 1 blanks or explodes the cell."""
+
+    assert _field_map_policy("reduction", [0.0, 1.0])["logscale"] is False
+
+
+def test_the_unknown_stat_message_lists_every_stat_that_works():
+    """The error is the discovery path for the stat names; a stale list sends
+    the reader to the source."""
+
+    with pytest.raises(ValueError, match="reduction"):
+        _field_map_policy("bogus", [1.0])
+
+
+def test_a_pooled_mosaic_colorbar_reads_in_real_units_not_log10():
+    """viz.mosaic discards each panel's colorbar when it pools them onto one
+    color axis (ledger 71), so the decades have to be rebuilt from the limits
+    IT resolved -- which is why the callback takes them as arguments.
+    """
+
+    from myflopy import viz
+    from myflopy.modflow.mf6.pest.ies import _log_decade_colorbar_for_mosaic
+
+    vor = _two_cell_vor()
+    panels = [
+        ("prior", build_choropleth(vor, custom_zs=[0.001, 0.01], colorscale="earth",
+                                   logscale=True)),
+        ("posterior", build_choropleth(vor, custom_zs=[1.0, 100.0], colorscale="earth",
+                                       logscale=True)),
+    ]
+    figure = viz.mosaic(panels, ncols=2, colorbar=_log_decade_colorbar_for_mosaic)
+    coloraxis = figure.layout.coloraxis
+
+    # The ticks span the POOLED range of both panels, not either one's.
+    assert (coloraxis.cmin, coloraxis.cmax) == pytest.approx((-3.0, 2.0))
+    assert coloraxis.colorbar.ticktext == ("0.001", "0.01", "0.1", "1", "10", "100")
+    assert coloraxis.colorbar.tickvals == (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0)
+
+
+def test_a_mosaic_without_a_colorbar_argument_is_untouched():
+    """The passthrough is additive: every mosaic that predates it is unchanged."""
+
+    from myflopy import viz
+
+    vor = _two_cell_vor()
+    figure = viz.mosaic(
+        [build_choropleth(vor, custom_zs=[1.0, 10.0]),
+         build_choropleth(vor, custom_zs=[2.0, 20.0])],
+        ncols=2,
+    )
+
+    assert figure.layout.coloraxis.colorbar.ticktext is None
+    assert figure.layout.coloraxis.colorbar.tickvals is None
+
+
+def test_a_colorbar_callback_survives_a_mosaic_with_no_finite_data():
+    """``viz.mosaic`` leaves cmin/cmax unset when no panel has finite data, so
+    the callback is invoked with ``(None, None)`` -- ``float(None)`` would raise
+    and take the whole figure down. The guard is asserted directly because
+    Plotly drops an all-None ColorBar, leaving nothing observable on the figure.
+    """
+
+    from myflopy import viz
+    from myflopy.modflow.mf6.pest.ies import _log_decade_colorbar_for_mosaic
+
+    assert _log_decade_colorbar_for_mosaic(None, None) == {}
+
+    vor = _two_cell_vor()
+    figure = viz.mosaic(
+        [build_choropleth(vor, custom_zs=[float("nan"), float("nan")]),
+         build_choropleth(vor, custom_zs=[float("nan"), float("nan")])],
+        ncols=2, colorbar=_log_decade_colorbar_for_mosaic,
+    )
+
+    assert figure.layout.coloraxis.colorbar.ticktext is None

@@ -288,5 +288,10 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "capture=True",
         "plot_field",
         "build_choropleth",
+        # 6.4B: the "did the data inform this?" and "where is it biased?" figures
+        "stat='reduction'",
+        "plot_field_mosaic",
+        "plot_obs_residuals",
+        "obs_residuals()",
     ):
         assert required in ies_source

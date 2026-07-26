@@ -1303,14 +1303,40 @@ input-capture-as-observations is the driving workflow):
    > matplotlib backend too. Ledger 67–73.
    Pinned in `test_colorscale_policy.py` (including a call-site pin proving both
    backends put red on the same end) and `test_hover_spec.py`.
-2. **Uncertainty maps:** `field_uncertainty_map(target)` — posterior sd or
-   prior→posterior variance-reduction per cell (sequential `'earth'`), with hover.
-   This is the "did the data inform this region" figure.
-3. **Prior-vs-posterior mosaics:** `IesResults.field_mosaic(target, which=("prior",
-   "posterior"), stat="mean")` — sugar over `viz.mosaic` (shared color scale, synced
-   views come free now). One line of real code per panel; mostly tests + docstring.
-4. **Residual map:** posterior mean residual per observation location on the grid
-   (bubble scattermap or nearest-cell choropleth) — `plot_obs_residuals(map=True)`.
+2. **Uncertainty maps: `plot_field(target, stat="reduction")`. — DONE 2026-07-26 (6.4B).**
+   > This item originally asked for a `field_uncertainty_map(target, which="std"|
+   > "reduction")` method. Scoping found **half of it already shipped in 6.4A**:
+   > `plot_field(stat="std", which="prior"|"posterior")` is exactly the posterior-sd
+   > map, so a new method would have been a second spelling of an existing figure —
+   > the `foo()`/`plot_foo()` duplication `view_layer_conventions.md` forbids — and
+   > `which="std"` would have given `which` a second meaning in a class where it means
+   > prior-vs-posterior everywhere else. Only the variance reduction was new, and it is
+   > one derived column (`field()` already returned `prior_std`). So it landed as
+   > `stat="reduction"`, not a method. Ledger 75.
+   > The scale is **anchored to [0, 1]** — an absolute frame, unlike a spread in model
+   > units — but falls back to the data range when any cell is negative, so a posterior
+   > that *grew* is not clipped to the bottom color where it would read as "the data
+   > said nothing".
+3. **Prior-vs-posterior mosaics: `IesResults.plot_field_mosaic(...)`. — DONE 2026-07-26 (6.4B).**
+   Panels come from a new `_field_choro` seam (`viz.mosaic` needs the `Choro`; `plot_field`
+   returns a rendered figure). `stat` is restricted to `mean`/`std` — the only stats with
+   a separate prior and posterior form — which is also what makes ledger 71's `diff=True`
+   trap unreachable rather than merely documented. **`viz.mosaic` gained a `colorbar=`
+   passthrough** accepting a dict or a `(cmin, cmax) -> dict` callable, because the pooled
+   limits are known only inside `mosaic`; without it a log-scaled `mean` mosaic read
+   `−3 … 2`. Ledger 71 half-retired.
+4. **Residual map: `obs_residuals()` + `plot_obs_residuals()`. — DONE 2026-07-26 (6.4B).**
+   Heads draw as points, DRN zones color their cells, **both on one symmetric scale** so a
+   point and the cell under it mean the same thing at the same color. Shipped **without**
+   the planned `map=True` flag: there is no `map=False` form, and a flag with one honest
+   value is a worse API than a named method (ledger 77).
+   > Two things scoping settled. **(a)** `pst.try_parse_name_metadata()`'s `usecol`
+   > column truncates at the first underscore (`obs_00` → `obs`), so it is useless as a
+   > join key for real location names — the prefix and location are parsed out of the
+   > whole obs name instead. **(b)** `plot_mpl` draws in **model coordinates**, so the
+   > static backend scatters raw x/y and only the Plotly path needs `points_to_latlon`.
+   > That is why this is not plotly-only. Lake/SFR targets record only a lake or reach
+   > number and are deferred — ledger 76.
 5. **Ensure every IES plot uses the viz front door** (`viz.Fig`/`mpl_axes`) — audit
    `ies.py`'s figure construction; it already has `backend=` switches, so this is
    verification + spot fixes, not a rewrite.

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -34,11 +35,16 @@ import plotly.graph_objects as go
 
 from myflopy import viz
 from myflopy._optional import require
+from myflopy.modflow.mf6.grid.plotting import build_choropleth
 from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
 )
-from myflopy.modflow.utils.datatypes.hover import parameter_field_hover
+from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
+from myflopy.modflow.utils.datatypes.hover import (
+    parameter_field_hover,
+    residual_hover,
+)
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
 _PRIOR_COLOR = viz.PALETTE.prior
@@ -90,6 +96,30 @@ def _log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
         "tickvals": ticks,
         "ticktext": [f"{10.0 ** tick:.3g}{unit}" for tick in ticks],
     }
+
+
+def _log_decade_colorbar_for_mosaic(low, high) -> dict:
+    """``viz.mosaic`` colorbar callback: decades over the POOLED panel limits.
+
+    A mosaic pools its panels onto one shared color axis, so the real-unit ticks
+    have to be computed from the limits *it* resolved, not from any one panel's
+    (compromise ledger 71). ``viz.mosaic`` leaves the limits unset when no panel
+    has finite data, hence the guard.
+    """
+
+    if low is None or high is None:
+        return {}
+    return _log_decade_colorbar(float(low), float(high))
+
+
+# Display names for stats whose column name reads badly as a figure label.
+_STAT_LABELS = {"reduction": "uncertainty reduction"}
+
+# Which divisor was zero when a derived stat comes back non-finite.
+_UNDEFINED_REASONS = {
+    "change": "undefined (prior mean 0)",
+    "reduction": "undefined (prior sd 0)",
+}
 
 
 def _field_map_policy(stat: str, values) -> dict[str, object]:
@@ -149,9 +179,24 @@ def _field_map_policy(stat: str, values) -> dict[str, object]:
         # collapsed, and log10(0) blanks the cell -- which would erase exactly
         # the cells this map exists to show. Stay linear.
         return {"colorscale": "earth", "logscale": False}
+    if key == "reduction":
+        policy = {"colorscale": "earth", "logscale": False}
+        finite = np.asarray(values, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        # Unlike a spread in model units, variance reduction has an ABSOLUTE
+        # frame: 0 = the data told you nothing, 1 = the ensemble collapsed.
+        # Anchor to it so two layers (or two runs) are comparable, and so a
+        # field that only ever reduces 0.95-1.0 does not autoscale into a
+        # dramatic-looking map of a trivial range. A posterior spread CAN grow
+        # (negative reduction); when it does, fall back to the data's own range
+        # rather than clipping those cells to the bottom color, where they
+        # would read as "no reduction" instead of "worse than the prior".
+        if finite.size and float(finite.min()) >= 0.0 and float(finite.max()) <= 1.0:
+            policy.update({"zmin": 0.0, "zmax": 1.0})
+        return policy
     raise ValueError(
         f"No field-map color policy for stat {stat!r}; "
-        "expected 'mean', 'std', 'base', or 'change'."
+        "expected 'mean', 'std', 'base', 'change', or 'reduction'."
     )
 
 
@@ -177,19 +222,37 @@ def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
     axis.set_yticklabels([str(text) for text in ticktext])
 
 
-def _hover_column(values) -> list:
+def _parse_cell_list(value) -> list[int]:
+    """Parse a snapshotted ``"0,1,2"`` cell list, tolerating an empty zone.
+
+    `_resolve_drn_zone_cells` assigns ``[]`` to a zone that intersects nothing,
+    which the CSV snapshot round-trips as NaN (``str(nan) == "nan"``) while the
+    GeoPackage snapshot round-trips as ``""``. Both mean the same thing.
+    """
+
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return []
+    return [
+        int(cell) for cell in str(value).split(",")
+        if cell.strip() and cell.strip().lower() != "nan"
+    ]
+
+
+def _hover_column(values, *, reason: str = "undefined (prior mean 0)") -> list:
     """Raw per-cell hover values: NaN -> blank, +/-inf -> a named reason.
 
     ``change = posterior_mean / prior_mean`` is an unguarded divide, so a zero
     prior mean gives +/-inf and 0/0 gives NaN. Both draw as an identical gap on
     the map, and ``format_number`` renders both as ``""``, which would make an
     undefined ratio indistinguishable from a cell that was never captured. A
-    string payload entry passes through ``format_number`` verbatim.
+    string payload entry passes through ``format_number`` verbatim. ``reason``
+    names the divisor that was zero -- ``reduction`` divides by the prior sd,
+    not the prior mean.
     """
 
     return [
         None if np.isnan(value) else (
-            "undefined (prior mean 0)" if np.isinf(value) else float(value)
+            reason if np.isinf(value) else float(value)
         )
         for value in np.asarray(values, dtype=float)
     ]
@@ -394,6 +457,21 @@ class IesResults:
         """Captured parameter-field definitions available for spatial maps."""
 
         return list(self._metadata.get("capture_fields", []))
+
+    @property
+    def observation_sets(self) -> list[dict]:
+        """Observation-set definitions recorded at build time.
+
+        One entry per ``cal.observe(...)`` **and** ``cal.forecast(...)`` call —
+        a forecast is registered as an ordinary observation set carrying weight
+        0, and nothing in the persisted metadata distinguishes the two. Each
+        entry has its ``kind`` (``head_targets``, ``drn_flow``, ``lake_stage``,
+        ``sfr_stage``, ``sfr_flow``), observation-name ``prefix``, and the
+        snapshot files written beside the control file. This is what lets a
+        completed run be re-joined to where its observations are on the grid.
+        """
+
+        return list(self._metadata.get("observation_sets", []))
 
     # -- discovery --------------------------------------------------------
 
@@ -1209,9 +1287,11 @@ class IesResults:
             (the frame carries a fresh RangeIndex) -- with columns
             ``prior_mean``, ``prior_std``, ``posterior_mean``,
             ``posterior_std``, ``change`` (``posterior_mean / prior_mean``),
-            and ``base`` (the minimum-error-variance realization) when
-            available. Cells that were not captured are absent, so the frame is
-            generally shorter than ``ncpl``.
+            ``reduction`` (``1 - posterior_std / prior_std`` -- the share of the
+            prior spread the data removed), and ``base`` (the
+            minimum-error-variance realization) when available. Cells that were
+            not captured are absent, so the frame is generally shorter than
+            ``ncpl``.
         """
 
         info = self._capture_info(target)
@@ -1234,34 +1314,24 @@ class IesResults:
         if "base" in posterior.index:
             frame["base"] = posterior.loc["base"].to_numpy()
         frame["change"] = frame["posterior_mean"] / frame["prior_mean"]
+        # How much of the prior spread the data removed: 1 = the ensemble
+        # collapsed (fully informed), 0 = the data said nothing here. NEGATIVE
+        # where the posterior spread GREW, which is real and is not clipped away.
+        # An unguarded divide, like `change`: a zero prior sd leaves NaN/+-inf,
+        # which the map renders as a named reason rather than a silent gap.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            frame["reduction"] = 1.0 - frame["posterior_std"] / frame["prior_std"]
         return frame.sort_values("cell").reset_index(drop=True)
 
-    def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
-                   layer: int = 0, backend: str = "plotly", **choropleth_kwargs):
-        """Map a captured parameter field on the model grid (Voronoi choropleth).
+    def _field_choro(self, target: str, *, stat: str, which: str, layer: int,
+                     **choropleth_kwargs):
+        """Build one field map as a ``Choro``, with its heading and resolved kwargs.
 
-        This answers "property patterns -- plausible or laughable?": it shows the
-        spatial pattern of a calibrated property and how history matching changed
-        it. Requires ``cal.parameterize(..., capture=True)``.
-
-        Parameters
-        ----------
-        target
-            A captured target name, e.g. ``"k"``.
-        stat
-            ``"mean"`` (ensemble mean field), ``"std"`` (posterior spread --
-            where the property is still uncertain), ``"base"`` (the
-            minimum-error-variance realization), or ``"change"``
-            (posterior_mean / prior_mean -- where calibration moved the property).
-        which
-            ``"prior"`` or ``"posterior"`` for ``stat`` in {``"mean"``, ``"std"``}.
-        layer
-            Model layer to map (default 0).
-        backend
-            ``"plotly"`` (interactive map, default) or ``"matplotlib"`` (static
-            matplotlib choropleth of the Voronoi cells).
-        **choropleth_kwargs
-            Forwarded to the Plotly Voronoi choropleth builder (``backend="plotly"``).
+        The seam :meth:`plot_field` and :meth:`plot_field_mosaic` share: a mosaic
+        needs the ``Choro`` itself (``viz.mosaic`` reads ``get_choropleth()``),
+        while ``plot_field`` renders it to a figure. Returns
+        ``(choro, heading, kwargs)`` -- the kwargs so the caller can see which
+        policy keys actually took effect after ``setdefault``.
         """
 
         frame = self.field(target, layer=layer)
@@ -1270,10 +1340,12 @@ class IesResults:
             "std": f"{which}_std",
             "base": "base",
             "change": "change",
+            "reduction": "reduction",
         }.get(str(stat).lower())
         if column is None or column not in frame.columns:
             raise ValueError(
-                f"Unknown stat {stat!r} (or unavailable). Use 'mean', 'std', 'base', or 'change'."
+                f"Unknown stat {stat!r} (or unavailable). Use 'mean', 'std', "
+                "'base', 'change', or 'reduction'."
             )
 
         stat_key = str(stat).lower()
@@ -1290,11 +1362,17 @@ class IesResults:
             return spread
 
         values = _scatter(column)
-        label = f"{target} {stat}" + (f" ({which})" if stat_key in ("mean", "std") else "")
+        label = f"{target} {_STAT_LABELS.get(stat_key, stat_key)}" + (
+            f" ({which})" if stat_key in ("mean", "std") else ""
+        )
 
         # RAW values for the hover -- only custom_zs is log-transformed, so the
         # reader sees "2.5x", not "0.4".
-        payload = {column: _hover_column(values)}
+        payload = {
+            column: _hover_column(
+                values, reason=_UNDEFINED_REASONS.get(stat_key, "undefined")
+            )
+        }
         for name in ("prior_mean", "posterior_mean", "posterior_std"):
             if name in frame.columns and name != column:
                 payload[name] = _hover_column(_scatter(name))
@@ -1305,7 +1383,8 @@ class IesResults:
         # count and is None for a run myflopy did not launch.
         n_prior = int(self.prior._df.shape[0])
         n_post = int(self.posterior._df.shape[0])
-        if stat_key == "change":
+        if stat_key in ("change", "reduction"):
+            # Both compare the two ensembles, so both span the two iterations.
             reals = f"{n_prior}" if n_prior == n_post else f"{n_prior}→{n_post}"
             context = (
                 f"iterations {self.prior_iteration}→{self.posterior_iteration}, "
@@ -1326,17 +1405,65 @@ class IesResults:
         )
         choropleth_kwargs.setdefault("hover_heads", False)
         choropleth_kwargs.setdefault("hover_ks", False)
-        for key, value in _field_map_policy(stat_key, values).items():
+        policy = _field_map_policy(stat_key, values)
+        # An explicit `logscale=False` must not keep the policy's decade
+        # colorbar: its tickvals are positions in LOG space, so over linear data
+        # every label crushes into the bottom of the bar (and a large K can
+        # overflow `10 ** tick` outright).
+        if choropleth_kwargs.get("logscale", policy.get("logscale")) is False:
+            policy.pop("colorbar", None)
+        for key, value in policy.items():
             if value is not None:
                 choropleth_kwargs.setdefault(key, value)
-
-        from myflopy.modflow.mf6.grid.plotting import build_choropleth
 
         # `model` is deliberately not passed: Choro reads the model's head output
         # whenever model is not None, so a PEST model with missing or stale heads
         # would raise at construction -- and a parameter field is not a head map.
         choro = build_choropleth(
             self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
+        )
+        return choro, heading, choropleth_kwargs
+
+    def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
+                   layer: int = 0, backend: str = "plotly", **choropleth_kwargs):
+        """Map a captured parameter field on the model grid (Voronoi choropleth).
+
+        This answers "property patterns -- plausible or laughable?": it shows the
+        spatial pattern of a calibrated property and how history matching changed
+        it. Requires ``cal.parameterize(..., capture=True)``.
+
+        Parameters
+        ----------
+        target
+            A captured target name, e.g. ``"k"``.
+        stat
+            ``"mean"`` (ensemble mean field), ``"std"`` (spread -- where the
+            property is still uncertain), ``"base"`` (the minimum-error-variance
+            realization), ``"change"`` (posterior_mean / prior_mean -- where
+            calibration moved the property), or ``"reduction"``
+            (``1 - posterior_std / prior_std`` -- how much of the prior spread
+            the data removed, i.e. *did the data inform this region*).
+        which
+            ``"prior"`` or ``"posterior"`` for ``stat`` in {``"mean"``, ``"std"``}.
+            Ignored by the others: ``change`` and ``reduction`` are already
+            prior-to-posterior comparisons, and ``base`` is a single posterior
+            realization.
+        layer
+            Model layer to map (default 0).
+        backend
+            ``"plotly"`` (interactive map, default) or ``"matplotlib"`` (static
+            matplotlib choropleth of the Voronoi cells).
+        **choropleth_kwargs
+            Forwarded to the Voronoi choropleth builder; any of them overrides
+            the house color policy for this map.
+
+        See Also
+        --------
+        plot_field_mosaic : the same map for prior and posterior, side by side.
+        """
+
+        choro, heading, resolved = self._field_choro(
+            target, stat=stat, which=which, layer=layer, **choropleth_kwargs
         )
         if _normalize_backend(backend) == "matplotlib":
             # No cmap=: plot_mpl derives it from the policy colorscale (stops
@@ -1345,12 +1472,472 @@ class IesResults:
             # limits agree between backends. The tick LABELS do not come for
             # free -- plot_mpl has no colorbar hook, hence the relabel.
             figure = choro.plot_mpl(title=heading)
-            if choropleth_kwargs.get("logscale"):
-                _relabel_log_colorbar(figure, choropleth_kwargs.get("colorbar"))
+            if resolved.get("logscale"):
+                _relabel_log_colorbar(figure, resolved.get("colorbar"))
             return figure
         # `title` is matplotlib-only and is not a Choroplethmap property, so it
         # must never ride the trace kwargs. plot() sets a 20px top margin; bump it
         # or the title clips.
+        return choro.plot().update_layout(title=heading, margin={"t": 40})
+
+    def plot_field_mosaic(self, target: str, *,
+                          which: Sequence[str] = ("prior", "posterior"),
+                          stat: str = "mean", layer: int = 0, ncols: int = 2,
+                          title: str | None = None, sync_views: bool = True,
+                          backend: str = "plotly", **choropleth_kwargs):
+        """Compose one field map per ensemble, side by side on a shared color scale.
+
+        The prior-vs-posterior figure: the same property, the same colors, the
+        same limits, so the panels are actually comparable and the eye can only
+        be reading a real difference.
+
+        Parameters
+        ----------
+        target
+            A captured target name, e.g. ``"k"``.
+        which
+            The ensembles to compose, one panel each (default prior then
+            posterior).
+        stat
+            ``"mean"`` or ``"std"`` -- the only stats that HAVE a prior and a
+            posterior form. ``"change"`` and ``"reduction"`` are already
+            prior-to-posterior comparisons, and ``"base"`` is a single posterior
+            realization with no prior counterpart; all three are refused here.
+        layer, ncols, title, sync_views
+            Grid layer, mosaic width, overall title, and whether the panels pan
+            and zoom together (see :func:`myflopy.viz.mosaic`).
+        backend
+            ``"plotly"`` only -- ``viz.mosaic`` composes Plotly subplots. Use
+            :meth:`plot_field` per panel for static figures.
+
+        Notes
+        -----
+        A mosaic pools every panel onto ONE color axis, which discards each
+        panel's own limits and colorbar (compromise ledger 71). That pooling is
+        the point -- it is what makes the panels comparable -- but it means the
+        real-unit ticks for a log-scaled ``mean`` mosaic have to be rebuilt from
+        the pooled limits, which is what the ``colorbar`` callback does.
+        """
+
+        if _normalize_backend(backend) != "plotly":
+            raise ValueError(
+                "plot_field_mosaic composes Plotly subplots; there is no "
+                "matplotlib mosaic. Call plot_field(..., backend='matplotlib') "
+                "per panel instead."
+            )
+        stat_key = str(stat).lower()
+        if stat_key not in ("mean", "std"):
+            raise ValueError(
+                f"stat={stat!r} has no separate prior and posterior form to "
+                "compose: 'change' and 'reduction' are already prior-to-"
+                "posterior comparisons, and 'base' is one posterior "
+                f"realization. Use plot_field(..., stat={stat!r})."
+            )
+        sides = [str(side).lower() for side in which]
+        if len(sides) < 2:
+            raise ValueError(
+                "A mosaic needs at least two panels, e.g. "
+                "which=('prior', 'posterior')."
+            )
+
+        panels, resolved = [], {}
+        for side in sides:
+            choro, heading, resolved = self._field_choro(
+                target, stat=stat_key, which=side, layer=layer, **choropleth_kwargs
+            )
+            panels.append((heading, choro))
+
+        return viz.mosaic(
+            panels,
+            ncols=ncols,
+            title=title or f"{target} {stat_key} — {' vs '.join(sides)}",
+            sync_views=sync_views,
+            # Keyed on the EFFECTIVE logscale, not on the stat: `mean` is mapped
+            # in log space by default (without this the shared bar reads
+            # "-3 ... 2" for a field running 0.001 to 100), but a caller passing
+            # `logscale=False` gets linear data, where decade labels would be
+            # wrong and `10 ** cmax` can overflow.
+            colorbar=(
+                _log_decade_colorbar_for_mosaic if resolved.get("logscale") else None
+            ),
+        )
+
+    # Prefix, location name and time in a pyEMU list-style observation name:
+    # "oname:hds_otype:lst_usecol:obs_00_per:0" -> ("hds", "obs_00", "0").
+    # Parsed from the NAME rather than read off pst.try_parse_name_metadata()'s
+    # `usecol` column, which truncates at the first underscore -- "obs_00"
+    # arrives there as "obs", useless as a join key for any real location name.
+    _OBS_NAME_RE = re.compile(
+        r"oname:(?P<prefix>.+?)_otype:.*?usecol:(?P<location>.+)_(?:per|time):(?P<time>[^_]+)$"
+    )
+
+    _LOCATION_COLUMNS = (
+        "prefix", "kind", "location", "layer", "cell", "x", "y", "cells",
+    )
+
+    def _simulated_realization(self, realization: str) -> pd.Series:
+        """One realization's simulated values, falling back to the ensemble mean."""
+
+        ensemble = self.posterior._df
+        if realization in ensemble.index:
+            return ensemble.loc[realization]
+        return ensemble.mean()
+
+    def _observation_locations(self) -> pd.DataFrame:
+        """Grid locations for every observation set that recorded one.
+
+        Head targets snapshot a point GeoPackage (and a name -> cell map); DRN
+        zones snapshot the explicit cell list per zone. Lake stage and SFR
+        stage/flow record only a lake or reach NUMBER with no geometry, so they
+        cannot be placed on the grid from the run directory alone and are
+        skipped (compromise ledger 76).
+        """
+
+        import geopandas as gpd
+
+        frames = []
+        for entry in self.observation_sets:
+            kind = str(entry.get("kind", ""))
+            prefix = str(entry.get("prefix", ""))
+            if not prefix or kind not in ("head_targets", "drn_flow"):
+                continue
+            locations_file = entry.get("locations_file")
+            path = self.workspace / str(locations_file) if locations_file else None
+            if path is None or not path.exists():
+                continue
+            table = (
+                gpd.read_file(path) if path.suffix.lower() == ".gpkg"
+                else pd.read_csv(path)
+            )
+            if table.empty:
+                continue
+            frame = pd.DataFrame({
+                "prefix": prefix.lower(),
+                "kind": kind,
+                # The control file lowercases location names when it builds
+                # observation names; the snapshot keeps the original case.
+                "location": table["name"].astype(str).str.strip().str.lower(),
+            })
+            if kind == "head_targets":
+                if hasattr(table, "geometry"):
+                    frame["x"] = table.geometry.x.to_numpy()
+                    frame["y"] = table.geometry.y.to_numpy()
+                if "layer" in table.columns:
+                    frame["layer"] = table["layer"].to_numpy()
+                mapping_path = self.workspace / f"{prefix}_head_target_map.csv"
+                if mapping_path.exists():
+                    mapping = pd.read_csv(mapping_path)
+                    mapping["location"] = (
+                        mapping["name"].astype(str).str.strip().str.lower()
+                    )
+                    # One row per location before merging: a snapshot listing a
+                    # name twice (duplicated source row, two screens) would
+                    # otherwise cross-join into n**2 rows against a single pyEMU
+                    # observation, and the map would draw n identical markers.
+                    frame = frame.drop_duplicates(subset="location").merge(
+                        mapping.drop_duplicates(subset="location")
+                               .loc[:, ["location", "cell"]],
+                        on="location", how="left",
+                    )
+            else:
+                # Snapshotted as a comma-joined string, one zone per row -- but a
+                # zone that resolved to no cells round-trips through CSV as NaN,
+                # whose str() is "nan". Parsing that unguarded took out the whole
+                # frame, every head target included, over one degenerate zone.
+                frame["cells"] = [
+                    _parse_cell_list(value) for value in table["cells"]
+                ]
+            frames.append(frame)
+
+        if not frames:
+            return pd.DataFrame(columns=list(self._LOCATION_COLUMNS))
+        merged = pd.concat(frames, ignore_index=True)
+        return merged.reindex(columns=list(self._LOCATION_COLUMNS))
+
+    def _measured_observation_keys(self) -> set[tuple[str, str, str]] | None:
+        """``(prefix, location, time)`` for observations that carry a MEASUREMENT.
+
+        pyEMU creates one observation per row of the simulated output, not per
+        row of the target table, and ``_assign_target_values`` only overwrites
+        the ones it has a target for (`observations.py`, ``if obsnme not in
+        obs.index: continue``). Every other row keeps pyEMU's defaults —
+        **weight 1.0 and an ``obsval`` equal to the base model's own simulated
+        head**. Averaging those into a location's residual pulls it toward zero
+        and can flip its sign, so they are excluded here by joining back to the
+        `` <prefix>_target_values.csv`` snapshot of what was actually measured.
+
+        Returns ``None`` when no observation set recorded a values file, meaning
+        "cannot tell" — the caller then does not filter, because dropping
+        everything would be worse than the bias.
+        """
+
+        keys: set[tuple[str, str, str]] = set()
+        found = False
+        for entry in self.observation_sets:
+            values_file = entry.get("values_file")
+            prefix = str(entry.get("prefix", ""))
+            if not values_file or not prefix:
+                continue
+            path = self.workspace / str(values_file)
+            if not path.exists():
+                continue
+            table = pd.read_csv(path)
+            if not {"time", "name"}.issubset(table.columns):
+                continue
+            found = True
+            # The observation name's trailing token is str(time) verbatim --
+            # `_build_index_row_labels` formats it as f"{index}:{value}" -- so
+            # comparing the stringified time avoids having to know whether this
+            # family indexed on `per` (heads) or `time` (named series).
+            for name, time in zip(table["name"], table["time"], strict=True):
+                keys.add((
+                    prefix.lower(),
+                    str(name).strip().lower(),
+                    str(time).strip().lower(),
+                ))
+        return keys if found else None
+
+    def obs_residuals(self, *, realization: str = "base") -> pd.DataFrame:
+        """Return per-location residuals for observations that can be placed on the grid.
+
+        The residual is ``simulated - measured`` -- the sign
+        :meth:`phi_contributions` already uses. (PEST's own ``.res`` file reports
+        ``measured - modelled``; rather than sign one into the other, every frame
+        and label here names which convention it is in.)
+
+        Observations are summarized over TIME: a head target measured in six
+        stress periods becomes one row whose ``residual`` is the mean of the six,
+        with ``n`` recording how many went into it. A map needs one value per
+        place, and a mean residual is the bias there.
+
+        Only **measured, history-matched** observations count. pyEMU creates an
+        observation for every row of the simulated output, so a target measured
+        at one time out of six leaves five rows holding the base model's own
+        output at weight 1.0; those are excluded by joining back to the
+        ``*_target_values.csv`` snapshot. Zero-weight observations are excluded
+        too, which is what keeps ``cal.forecast(...)`` sets — registered as
+        ordinary observation sets — off a misfit figure.
+
+        Parameters
+        ----------
+        realization
+            Which posterior realization to score (default ``"base"``, the
+            minimum-error-variance one); falls back to the ensemble mean when
+            that label is absent, exactly as :meth:`phi_contributions` does.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per (``prefix``, ``location``) with ``kind``, ``measured``,
+            ``simulated``, ``residual``, ``weight``, ``n``, and whichever
+            location the run recorded: ``cell``/``x``/``y`` for head targets,
+            ``cells`` (the zone's cell list) for DRN zones. Empty when the run
+            recorded no locatable observation sets.
+        """
+
+        locations = self._observation_locations()
+        if locations.empty:
+            return pd.DataFrame(
+                columns=["prefix", "location", "kind", "measured", "simulated",
+                         "residual", "weight", "n", "cell", "x", "y", "cells"]
+            )
+
+        simulated = self._simulated_realization(realization)
+        obs = self._observation_metadata()
+        obs = obs.loc[[name for name in obs.index if name in simulated.index]].copy()
+        obs["simulated"] = simulated.reindex(obs.index).astype(float).to_numpy()
+        parsed = obs.index.to_series().str.extract(self._OBS_NAME_RE)
+        obs["prefix"] = parsed["prefix"].str.lower().to_numpy()
+        obs["location"] = parsed["location"].str.lower().to_numpy()
+        obs["time"] = parsed["time"].str.lower().to_numpy()
+        obs = obs.dropna(subset=["prefix", "location"])
+        obs["obsval"] = obs["obsval"].astype(float)
+        obs["weight"] = obs["weight"].astype(float)
+
+        measured = self._measured_observation_keys()
+        if measured is not None:
+            obs = obs.loc[[
+                key in measured for key in
+                zip(obs["prefix"], obs["location"], obs["time"], strict=True)
+            ]]
+        # Zero weight means PEST did not history-match it: forecasts (which
+        # `cal.forecast` registers as ordinary observation sets, so they arrive
+        # here looking like head targets) and deliberately silenced targets. A
+        # misfit map must not draw either as if the model had been fitted to it.
+        obs = obs.loc[obs["weight"] > 0]
+
+        summary = obs.groupby(["prefix", "location"], as_index=False).agg(
+            measured=("obsval", "mean"),
+            simulated=("simulated", "mean"),
+            weight=("weight", "mean"),
+            n=("obsval", "size"),
+        )
+        summary["residual"] = summary["simulated"] - summary["measured"]
+        merged = summary.merge(locations, on=["prefix", "location"], how="inner")
+        return merged.sort_values(["prefix", "location"]).reset_index(drop=True)
+
+    def plot_obs_residuals(self, *, realization: str = "base", layer: int = 0,
+                           backend: str = "plotly", title: str | None = None,
+                           **choropleth_kwargs):
+        """Map where the calibrated model is biased, and by how much.
+
+        Head targets draw as points at their coordinates; DRN zones color the
+        cells they cover. Both read on ONE diverging scale centered on zero, so
+        a point and the zone beneath it mean the same thing at the same color:
+        **red is under-simulated** (simulated below measured), blue is
+        over-simulated, white is on the money.
+
+        Parameters
+        ----------
+        realization
+            Posterior realization to score (default ``"base"``).
+        layer
+            Grid layer to draw the cells of (default 0). Head targets are drawn
+            at their map position whatever layer they were screened in --
+            filtering them would hide data on a plan-view figure -- so read the
+            layer off the hover rather than off the map.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        title
+            Overrides the default heading.
+        **choropleth_kwargs
+            Forwarded to the Voronoi choropleth builder.
+
+        See Also
+        --------
+        obs_residuals : the same numbers as a DataFrame.
+        """
+
+        frame = self.obs_residuals(realization=realization)
+        if frame.empty:
+            # Distinguish "nothing locatable was recorded" from "locations were
+            # found but nothing joined to them" -- the second is a bug or a
+            # weights-all-zero run, and blaming lake/SFR targets for it would
+            # send the reader to the wrong place entirely.
+            if self._observation_locations().empty:
+                raise ValueError(
+                    "No observation locations were recorded for this run. A "
+                    "residual map needs the *_target_locations.gpkg / "
+                    "*_head_target_map.csv snapshots written beside the control "
+                    "file, and only head targets and DRN zones record geometry "
+                    "-- lake and SFR targets record only a lake or reach number."
+                )
+            raise ValueError(
+                "Observation locations were found, but no measured, nonzero-"
+                "weight observation joined to them. Check that this run has "
+                "history-matched observations (forecasts carry weight 0) and "
+                "that the *_target_values.csv snapshots are present."
+            )
+
+        points = frame[frame["x"].notna()] if "x" in frame else frame.iloc[:0]
+        zones = frame[frame["cells"].notna()] if "cells" in frame else frame.iloc[:0]
+
+        # ONE limit over every residual, points and zones together: two scales
+        # on one figure would make a point and the cell under it different
+        # colors for the same number.
+        residuals = frame["residual"].to_numpy(dtype=float)
+        half = _symmetric_color_limit(residuals) or 1.0
+        colorscale = _red_white_blue_diverging_colorscale()
+
+        ncpl = int(self.model.vor.ncpl)
+        cell_row = np.full(ncpl, -1, dtype=int)
+        for position, row in enumerate(zones.itertuples()):
+            for cell in row.cells:
+                if 0 <= int(cell) < ncpl:
+                    cell_row[int(cell)] = position
+
+        def _zone_column(name: str) -> np.ndarray:
+            """One zone column spread over the cells it covers, elsewhere NaN."""
+
+            spread = np.full(ncpl, np.nan)
+            if not zones.empty:
+                mask = cell_row >= 0
+                spread[mask] = zones[name].to_numpy(dtype=float)[cell_row[mask]]
+            return spread
+
+        zone_values = _zone_column("residual")
+        payload = {
+            name: _hover_column(_zone_column(name))
+            for name in ("residual", "measured", "simulated", "weight")
+        }
+
+        used = (
+            realization if realization in self.posterior._df.index else "ensemble mean"
+        )
+        heading = title or (
+            f"residuals (simulated − measured) — iteration "
+            f"{self.posterior_iteration}, {used}, {len(frame)} locations"
+        )
+
+        choropleth_kwargs.setdefault("custom_hover", payload)
+        choropleth_kwargs.setdefault("hover_spec", residual_hover(title=heading))
+        choropleth_kwargs.setdefault("hover_heads", False)
+        choropleth_kwargs.setdefault("hover_ks", False)
+        choropleth_kwargs.setdefault("colorscale", colorscale)
+        choropleth_kwargs.setdefault("zmin", -half)
+        choropleth_kwargs.setdefault("zmax", half)
+        choropleth_kwargs.setdefault("zmid", 0.0)
+        # With no zones every cell is NaN, so the cells' own scale bar would be
+        # an empty legend that reads as a broken figure. Hide it and let the
+        # point markers carry the one scale instead -- `showscale`, not
+        # `colorbar`, which on the trace is a dict of tick properties.
+        if zones.empty:
+            choropleth_kwargs.setdefault("showscale", False)
+
+        choro = build_choropleth(
+            self.model.vor, custom_zs=list(zone_values), layer=layer,
+            **choropleth_kwargs
+        )
+
+        if _normalize_backend(backend) == "matplotlib":
+            # Always a colorbar here, even with no zones and an all-NaN cell
+            # column: geopandas draws a correct bar from the explicit
+            # vmin/vmax, and it is the ONLY color key this backend has --
+            # plot_mpl ignores overlays, so the scattered points cannot carry
+            # one the way the Plotly markers do.
+            figure = choro.plot_mpl(title=heading)
+            if not points.empty:
+                # axes[0] is the map (plot_mpl appends the colorbar after it),
+                # drawn in MODEL coordinates -- no reprojection, unlike the
+                # Plotly path. Same colormap as the cells, from the same stops.
+                figure.axes[0].scatter(
+                    points["x"].to_numpy(dtype=float),
+                    points["y"].to_numpy(dtype=float),
+                    c=points["residual"].to_numpy(dtype=float),
+                    cmap=mpl_colormap_for(colorscale), vmin=-half, vmax=half,
+                    s=45, edgecolor="black", linewidth=0.5, zorder=5,
+                )
+            return figure
+
+        if not points.empty:
+            lon, lat = self.model.vor.points_to_latlon(
+                points["x"].to_numpy(dtype=float), points["y"].to_numpy(dtype=float)
+            )
+            choro.add_overlay(go.Scattermap(
+                lon=lon, lat=lat, mode="markers", name="observations",
+                marker={
+                    "color": points["residual"].to_numpy(dtype=float),
+                    "colorscale": colorscale, "cmin": -half, "cmax": half,
+                    "size": 11, "opacity": 0.95,
+                    # Exactly one scale bar on the figure: the cells' when there
+                    # are zones, the markers' when there are not.
+                    "showscale": bool(zones.empty),
+                },
+                customdata=[
+                    [row.location, float(row.measured), float(row.simulated),
+                     float(row.residual), int(row.n),
+                     "" if pd.isna(row.layer) else int(row.layer)]
+                    for row in points.itertuples()
+                ],
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "residual (sim − meas): %{customdata[3]:.4g}<br>"
+                    "measured: %{customdata[1]:.4g}<br>"
+                    "simulated: %{customdata[2]:.4g}<br>"
+                    "observations: %{customdata[4]}<br>"
+                    "layer: %{customdata[5]}<extra></extra>"
+                ),
+            ))
         return choro.plot().update_layout(title=heading, margin={"t": 40})
 
     def best(self, *, criterion: str = "base") -> str:

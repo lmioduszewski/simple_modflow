@@ -21,6 +21,7 @@ from myflopy.modflow.utils.datatypes.hover import (
     head_hover,
     lak_hover,
     parameter_field_hover,
+    residual_hover,
     result_hover,
     sfr_hover,
     surface_water_hover,
@@ -415,3 +416,44 @@ def test_no_sugar_returns_base_spec_unchanged():
     base = head_hover(layers="active+strip")
     assert _bare_choro(hover_spec=base)._resolved_hover_spec() is base
     assert _bare_choro()._resolved_hover_spec() is None  # no spec at all
+
+
+# --- residual hover (PEST/IES plot_obs_residuals) --------------------------------
+def _residual_ctx(**overrides):
+    payload = {
+        "residual": [2.0, -1.0],
+        "measured": [10.0, 20.0],
+        "simulated": [12.0, 19.0],
+        "weight": [1.0, 1.0],
+    }
+    payload.update(overrides.pop("payload", {}))
+    return HoverContext(ncpl=2, payload=payload, cells=[0, 1], **overrides)
+
+
+def test_a_residual_hover_names_its_sign_convention():
+    """PEST's .res file reports measured - modelled and myflopy reports
+    simulated - measured. A label reading just "residual" leaves the reader to
+    guess which frame a positive number is in, so the label spells it out."""
+
+    _, template, _ = residual_hover().render(_residual_ctx())
+    assert "residual (sim − meas)" in template
+
+
+def test_a_residual_hover_shows_both_numbers_it_was_derived_from():
+    """A residual alone cannot be sanity-checked; measured and simulated can."""
+
+    _, template, _ = residual_hover().render(_residual_ctx())
+    assert "measured" in template and "simulated" in template
+
+
+def test_a_residual_hover_does_not_print_the_residual_twice():
+    _, template, _ = residual_hover().render(_residual_ctx())
+    assert template.count("residual (sim − meas)") == 1
+
+
+def test_a_residual_hover_has_no_period_footer():
+    """A residual averaged over every time an observation was made does not
+    belong to one stress period."""
+
+    _, template, _ = residual_hover().render(_residual_ctx(period=3))
+    assert "Period 3" not in template

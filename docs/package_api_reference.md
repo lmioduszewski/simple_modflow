@@ -256,6 +256,26 @@ start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(.
 `cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)`; discovery via
 `model.pest_runs`.
 
+**Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
+`model.pest_runs[i].review()`) — `IesResults` is a flat class, not the
+`noun.verb` grammar, so its figures are `plot_*` and its tables are bare nouns:
+
+| data | figure | what it answers |
+| --- | --- | --- |
+| `phi`, `phi_contributions()` | `plot_phi()`, `plot_phi_distribution()`, `plot_phi_contributions()` | did misfit drop, and which group owns it |
+| `conflict()` | `plot_conflict()`, `plot_prior_vs_obs()`, `plot_vs_obs()` | is the prior wide enough; does the posterior bracket the data |
+| `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight |
+| `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |
+| `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction` |
+| — | `plot_field_mosaic(target, stat=…)` | prior vs posterior on one shared scale (`mean`/`std` only) |
+| `obs_residuals()` | `plot_obs_residuals()` | *where* the model is biased (heads as points, DRN zones as cells) |
+| `capture_fields`, `observation_sets` | `report(path)` | what the run recorded; the headline plots bundled to HTML |
+
+Every figure takes `backend="matplotlib"` except `plot_field_mosaic`, which composes
+Plotly subplots and says so. Spatial methods need the model grid, which
+`run_ies`/`review()` attach automatically. `report(path)` covers phi, obs, bounds,
+forecasts and `plot_field` mean/change — not yet the reduction, mosaic or residual maps.
+
 ### Engine layer (`mf.__engine__`)
 
 The builders/factories under the facade — reach for them only with a specific reason:
