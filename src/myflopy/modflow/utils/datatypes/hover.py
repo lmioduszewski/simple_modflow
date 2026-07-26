@@ -580,6 +580,50 @@ def temp_hover(*, unit: str = "°C", layers: str = "active+strip", surfaces: boo
     )
 
 
+_PARAMETER_FIELD_LABELS = {
+    "change": "posterior / prior",
+    "prior_mean": "prior mean",
+    "prior_std": "prior sd",
+    "posterior_mean": "posterior mean",
+    "posterior_std": "posterior sd",
+    "base": "base realization",
+}
+
+
+def parameter_field_hover(
+    stat_column: str,
+    *,
+    title: str | None = None,
+    fields: Sequence[str] = ("prior_mean", "posterior_mean", "posterior_std"),
+    units: Mapping[str, str] | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> HoverSpec:
+    """Hover for a calibrated parameter-field map (PEST/IES ``plot_field``).
+
+    ``footer=()`` for the same reason :func:`result_hover` documents for PRT
+    maps: a parameter field summarizes a whole calibration rather than being
+    drawn at one stress period, so a "Period 0" line would assert a period the
+    value does not belong to. Run identity (which iterations, how many
+    realizations) does NOT go in the footer either -- :meth:`HoverSpec._render_footer`
+    recognizes only period/step/date/area/model and silently drops anything
+    else -- so ``plot_field`` puts it in the figure title, where the matplotlib
+    backend can show it too.
+
+    ``stat_column`` is dropped from ``fields`` so the plotted statistic is not
+    printed twice, once as the primary line and again in the block.
+    """
+
+    body = tuple(name for name in fields if name != stat_column)
+    return HoverSpec(
+        primary=stat_column,
+        title=title or stat_column,
+        blocks=(Fields(fields=body),) if body else (),
+        footer=(),
+        units=dict(units or {}),
+        labels={**_PARAMETER_FIELD_LABELS, **(labels or {})},
+    )
+
+
 def lak_hover() -> HoverSpec:
     """Default lake-exchange hover: q/area primary with a lake feature block."""
 

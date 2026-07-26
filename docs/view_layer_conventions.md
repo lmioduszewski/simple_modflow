@@ -98,6 +98,21 @@ Rules that hold for all of them:
   writing hex literals or hardcoding one orientation, so discrete and continuous
   renderings cannot drift apart — and so a package's colours cannot disagree
   with its declared sign.
+- **A diverging scale ships as STOPS, never as a name.** `Choro`'s
+  plotly→matplotlib table maps `'rdbu'` to `'RdBu_r'` — the *reversed* colormap —
+  so a map built with `colorscale='RdBu'` renders mirrored between `plot()` and
+  `plot_mpl()`: red means "less" in one and "more" in the other. Pass the stop
+  list from a helper (`_blue_white_red_diverging_colorscale`,
+  `_red_white_blue_diverging_colorscale`) and both backends agree. Also note that
+  `zmid` reaches only the Plotly trace; what centers a diverging map on *both*
+  backends is symmetric `zmin`/`zmax`.
+- **Derived maps that no registry describes pin their scale at the source.**
+  `package_registry` is keyed by package/field *name*, so a quantity it does not
+  name — a PRT travel time, a *statistic* of a calibrated parameter field — keeps
+  its policy as a constant or a small helper in the module that draws it
+  (`prt_maps.PRT_COLORSCALE`, `ies._field_map_policy`), pinned in
+  `tests/test_colorscale_policy.py`. Do not add a second keyspace to the registry
+  for one consumer.
 - **Period selection is `per=`** on the verb, and a noun may also be *called*
   to bind a period once: `results.profile(per=3).plot()` ==
   `results.profile.plot(per=3)`. Calling a noun returns a new bound view; it

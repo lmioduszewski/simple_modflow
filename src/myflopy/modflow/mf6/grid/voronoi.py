@@ -488,8 +488,17 @@ class VoronoiGridPlus(VoronoiGrid):
         hover_heads: bool = True,
         hover_ks: bool = False,
         locs: Path = None,
+        colorscale: str | list | tuple = None,
+        logscale: bool = False,
+        hover_spec=None,
+        **choro_kwargs,
     ):
-        """Build the standard Voronoi choropleth wrapper used by the package."""
+        """Build the standard Voronoi choropleth wrapper used by the package.
+
+        A thin restatement of :func:`~myflopy.modflow.mf6.grid.plotting.build_choropleth`'s
+        signature -- keep the two in step, or ``vor.choropleth(colorscale=...)``
+        raises ``TypeError`` for arguments the function itself accepts.
+        """
         return plotting_build_choropleth(
             self,
             model=model,
@@ -507,6 +516,10 @@ class VoronoiGridPlus(VoronoiGrid):
             hover_heads=hover_heads,
             hover_ks=hover_ks,
             locs=locs,
+            colorscale=colorscale,
+            logscale=logscale,
+            hover_spec=hover_spec,
+            **choro_kwargs,
         )
 
     @property

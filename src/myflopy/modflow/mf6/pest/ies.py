@@ -34,17 +34,26 @@ import plotly.graph_objects as go
 
 from myflopy import viz
 from myflopy._optional import require
+from myflopy.modflow.mf6.package_plotting import (
+    _red_white_blue_diverging_colorscale,
+    _symmetric_color_limit,
+)
+from myflopy.modflow.utils.datatypes.hover import parameter_field_hover
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
 _PRIOR_COLOR = viz.PALETTE.prior
 _POST_COLOR = viz.PALETTE.posterior
-_NOISE_COLOR = viz.PALETTE.noise
+_POST_SOLID = viz.PALETTE.posterior_solid
+_ENSEMBLE_COLOR = viz.PALETTE.ensemble
 _MEAS_COLOR = viz.PALETTE.measured
 _TRUTH_COLOR = viz.PALETTE.truth
+_CONFLICT_COLOR = viz.PALETTE.conflict
 _MPL_PRIOR = viz.PALETTE.mpl_prior
 _MPL_POST = viz.PALETTE.mpl_posterior
 _MPL_MEAS = viz.PALETTE.mpl_measured
 _MPL_TRUTH = viz.PALETTE.mpl_truth
+_MPL_ENSEMBLE = viz.PALETTE.mpl_ensemble
+_MPL_CONFLICT = viz.PALETTE.mpl_conflict
 
 
 def _normalize_backend(backend: str) -> str:
@@ -56,6 +65,134 @@ def _normalize_backend(backend: str) -> str:
     if value in ("matplotlib", "mpl", "seaborn", "sns"):
         return "matplotlib"
     raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
+
+
+def _log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
+    """Relabel a log10 colorbar in real units, with ticks at whole decades.
+
+    Nothing in ``Choro`` sets ``tickvals``/``ticktext``, so a ``logscale`` map is
+    otherwise read in log10 units -- a colorbar running -1 to 1 for a field that
+    actually runs 0.1 to 10. This rides ``Choro``'s trace kwargs. It does NOT
+    survive :func:`myflopy.viz.mosaic`, whose shared coloraxis carries no
+    colorbar key (compromise ledger 71).
+    """
+
+    decades = [
+        decade for decade in range(int(np.floor(low)), int(np.ceil(high)) + 1)
+        if low <= decade <= high
+    ]
+    # Fewer than three whole decades in range gives a colorbar with one or two
+    # ticks, which reads as broken; fall back to five evenly spaced labels.
+    ticks = [float(d) for d in decades] if len(decades) >= 3 else [
+        float(t) for t in np.linspace(low, high, 5)
+    ]
+    return {
+        "tickvals": ticks,
+        "ticktext": [f"{10.0 ** tick:.3g}{unit}" for tick in ticks],
+    }
+
+
+def _field_map_policy(stat: str, values) -> dict[str, object]:
+    """House color policy for one captured-parameter-field map, as ``Choro`` kwargs.
+
+    Registry-free by design: ``package_registry`` is keyed by package/field
+    NAME, and a *statistic* of a captured array is not a package field. This
+    mirrors ``prt_maps.PRT_COLORSCALE`` -- a derived map whose scale is pinned at
+    its single source. Pinned by ``tests/test_colorscale_policy.py``.
+
+    Returned as ``Choro`` kwargs rather than a bare colorscale name because for a
+    ratio the scale and its LIMITS are one indivisible decision: a diverging
+    scale whose ``zmin``/``zmax`` are not symmetric silently puts white somewhere
+    other than 1.
+    """
+
+    key = str(stat).lower()
+    if key == "change":
+        # posterior_mean / prior_mean is a RATIO whose neutral value is 1, not 0,
+        # so it is mapped as log10(ratio): a halving and a doubling then sit the
+        # same distance either side of the middle. errstate because a zero prior
+        # mean makes this warn -- Choro's own _logscaled is already guarded; this
+        # second log10 is ours.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            logged = np.log10(np.asarray(values, dtype=float))
+        # _symmetric_color_limit drops non-finite values and returns 0.0 for an
+        # empty or all-NaN input, so an inf cannot widen the range. `or 1.0` gives
+        # a defined +/- one decade for the degenerate cases: a prior Monte-Carlo
+        # run (prior == posterior, so change is identically 1.0) and an all-NaN
+        # layer.
+        half = _symmetric_color_limit(logged) or 1.0
+        return {
+            "colorscale": _red_white_blue_diverging_colorscale(),
+            "logscale": True,
+            # Symmetric zmin/zmax in LOG space is what actually centers this map:
+            # plot_mpl reads self._zmin/_zmax and never consults the trace kwargs,
+            # so zmid alone would center the plotly map and leave matplotlib
+            # autoscaled. zmid is belt, not braces.
+            "zmin": -half,
+            "zmax": half,
+            "zmid": 0.0,
+            "colorbar": _log_decade_colorbar(-half, half, unit="x"),
+        }
+    if key in ("mean", "base"):
+        # The only array-family targets field() can reach are k/k33 --
+        # conductivities, which span decades.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            logged = np.log10(np.asarray(values, dtype=float))
+        finite = logged[np.isfinite(logged)]
+        colorbar = (
+            _log_decade_colorbar(float(finite.min()), float(finite.max()))
+            if finite.size else None
+        )
+        return {"colorscale": "earth", "logscale": True, "colorbar": colorbar}
+    if key == "std":
+        # A spread in model units is legitimately ZERO where the ensemble
+        # collapsed, and log10(0) blanks the cell -- which would erase exactly
+        # the cells this map exists to show. Stay linear.
+        return {"colorscale": "earth", "logscale": False}
+    raise ValueError(
+        f"No field-map color policy for stat {stat!r}; "
+        "expected 'mean', 'std', 'base', or 'change'."
+    )
+
+
+def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
+    """Put a log map's real-unit ticks on the matplotlib colorbar.
+
+    ``Choro.plot_mpl`` builds its colorbar through geopandas and exposes no tick
+    hook, so a log-scaled static map would label its colorbar ``-3 … 2`` while
+    the interactive one reads ``0.001 … 100`` — the same field, two readings, and
+    the static one silently off by orders of magnitude. Applied only when the
+    effective ``logscale`` is on, so an explicit ``logscale=False`` override does
+    not get decade labels over linear values.
+    """
+
+    tickvals = (colorbar or {}).get("tickvals")
+    ticktext = (colorbar or {}).get("ticktext")
+    # axes[-1] is the colorbar geopandas appends; with colorbar=False there is
+    # only the map axes and nothing to relabel.
+    if not tickvals or not ticktext or len(figure.axes) < 2:
+        return
+    axis = figure.axes[-1]
+    axis.set_yticks(list(tickvals))
+    axis.set_yticklabels([str(text) for text in ticktext])
+
+
+def _hover_column(values) -> list:
+    """Raw per-cell hover values: NaN -> blank, +/-inf -> a named reason.
+
+    ``change = posterior_mean / prior_mean`` is an unguarded divide, so a zero
+    prior mean gives +/-inf and 0/0 gives NaN. Both draw as an identical gap on
+    the map, and ``format_number`` renders both as ``""``, which would make an
+    undefined ratio indistinguishable from a cell that was never captured. A
+    string payload entry passes through ``format_number`` verbatim.
+    """
+
+    return [
+        None if np.isnan(value) else (
+            "undefined (prior mean 0)" if np.isinf(value) else float(value)
+        )
+        for value in np.asarray(values, dtype=float)
+    ]
 
 
 # Trailing ``:<value>`` time token in a pyEMU long observation name.
@@ -399,7 +536,7 @@ class IesResults:
 
             fig, ax = viz.mpl_axes(figsize=(7, 4))
             for col in realization_cols:
-                ax.plot(x, frame[col], color="0.5", lw=0.8, alpha=0.4)
+                ax.plot(x, frame[col], color=_MPL_ENSEMBLE, lw=0.8, alpha=0.4)
             ax.plot(x, frame["mean"], color=_MPL_POST, lw=2.5, label="mean phi")
             if log:
                 ax.set_yscale("log")
@@ -412,10 +549,10 @@ class IesResults:
 
         fig = viz.Fig()
         for col in realization_cols:
-            fig.add_scatter(x=x, y=frame[col], mode="lines", line=dict(color="rgba(80,80,80,0.35)", width=1),
+            fig.add_scatter(x=x, y=frame[col], mode="lines", line=dict(color=_ENSEMBLE_COLOR, width=1),
                             name=str(col), showlegend=False, hoverinfo="skip")
         fig.add_scatter(x=x, y=frame["mean"], mode="lines+markers",
-                        line=dict(color=_POST_COLOR.replace("0.55", "1.0"), width=3), name="mean phi")
+                        line=dict(color=_POST_SOLID, width=3), name="mean phi")
         fig.update_layout(title=title, xaxis_title="iteration", yaxis_title="phi",
                           dragmode="pan")
         if log:
@@ -924,7 +1061,7 @@ class IesResults:
                     ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)
                 ax.plot(times[~flags], measured[~flags], "^", color=_MPL_MEAS, ms=7, label="measured")
                 if flags.any():
-                    ax.plot(times[flags], measured[flags], "X", color="darkorange", ms=10, label="prior-data conflict")
+                    ax.plot(times[flags], measured[flags], "X", color=_MPL_CONFLICT, ms=10, label="prior-data conflict")
                 ax.set_title(group, loc="left", fontsize=9)
                 ax.set_ylabel("value")
             axes[-1, 0].set_xlabel("time")
@@ -946,7 +1083,7 @@ class IesResults:
                             row=row, col=1, name="measured", legendgroup="measured", showlegend=row == 1)
             if flags.any():
                 fig.add_scatter(x=times[flags], y=measured[flags], mode="markers",
-                                marker=dict(color="darkorange", size=11, symbol="x"),
+                                marker=dict(color=_CONFLICT_COLOR, size=11, symbol="x"),
                                 row=row, col=1, name="prior-data conflict", legendgroup="conflict", showlegend=row == 1)
         fig.update_layout(title="Prior ensemble vs measured observations",
                           dragmode="pan", height=260 * len(chosen))
@@ -986,14 +1123,14 @@ class IesResults:
             import seaborn as sns
 
             fig, ax = viz.mpl_axes(figsize=(6.5, max(2.5, 0.4 * len(labels) + 1)))
-            ax.barh(labels, pct, color="darkorange")
+            ax.barh(labels, pct, color=_MPL_CONFLICT)
             ax.set_xlabel("% of observations in prior-data conflict")
             ax.set_title(title)
             ax.invert_yaxis()
             sns.despine(fig)
             return fig
 
-        fig = viz.Fig().add_trace(go.Bar(x=pct, y=labels, orientation="h", marker_color="darkorange"))
+        fig = viz.Fig().add_trace(go.Bar(x=pct, y=labels, orientation="h", marker_color=_CONFLICT_COLOR))
         fig.update_layout(title=title, dragmode="pan",
                           xaxis_title="% in prior-data conflict", yaxis_title="observation group")
         return fig
@@ -1068,10 +1205,13 @@ class IesResults:
         Returns
         -------
         pandas.DataFrame
-            Indexed by ``cell`` with columns ``prior_mean``, ``prior_std``,
-            ``posterior_mean``, ``posterior_std``, ``change``
-            (``posterior_mean / prior_mean``), and ``base`` (the
-            minimum-error-variance realization) when available.
+            One row per captured cell -- ``cell`` is a COLUMN, not the index
+            (the frame carries a fresh RangeIndex) -- with columns
+            ``prior_mean``, ``prior_std``, ``posterior_mean``,
+            ``posterior_std``, ``change`` (``posterior_mean / prior_mean``),
+            and ``base`` (the minimum-error-variance realization) when
+            available. Cells that were not captured are absent, so the frame is
+            generally shorter than ``ncpl``.
         """
 
         info = self._capture_info(target)
@@ -1136,20 +1276,82 @@ class IesResults:
                 f"Unknown stat {stat!r} (or unavailable). Use 'mean', 'std', 'base', or 'change'."
             )
 
+        stat_key = str(stat).lower()
         ncpl = int(self.model.vor.ncpl)
-        values = np.full(ncpl, np.nan)
-        values[frame["cell"].to_numpy(dtype=int)] = frame[column].to_numpy(dtype=float)
-        label = f"{target} {stat}" + (f" ({which})" if stat in ("mean", "std") else "")
+        cells = frame["cell"].to_numpy(dtype=int)
+
+        def _scatter(name: str) -> np.ndarray:
+            """One captured column spread onto the full grid, uncaptured cells NaN."""
+
+            # field() has one row per CAPTURED cell; every hover column must be
+            # exactly ncpl long or the hover assembler raises.
+            spread = np.full(ncpl, np.nan)
+            spread[cells] = frame[name].to_numpy(dtype=float)
+            return spread
+
+        values = _scatter(column)
+        label = f"{target} {stat}" + (f" ({which})" if stat_key in ("mean", "std") else "")
+
+        # RAW values for the hover -- only custom_zs is log-transformed, so the
+        # reader sees "2.5x", not "0.4".
+        payload = {column: _hover_column(values)}
+        for name in ("prior_mean", "posterior_mean", "posterior_std"):
+            if name in frame.columns and name != column:
+                payload[name] = _hover_column(_scatter(name))
+
+        # Ensemble row counts actually on disk. NOT self.settings, which raises
+        # TypeError on any run with no registered forecasts (pyEMU returns None
+        # for forecast_names), and not settings.num_reals, which is the REQUESTED
+        # count and is None for a run myflopy did not launch.
+        n_prior = int(self.prior._df.shape[0])
+        n_post = int(self.posterior._df.shape[0])
+        if stat_key == "change":
+            reals = f"{n_prior}" if n_prior == n_post else f"{n_prior}→{n_post}"
+            context = (
+                f"iterations {self.prior_iteration}→{self.posterior_iteration}, "
+                f"{reals} realizations"
+            )
+        else:
+            is_prior = stat_key in ("mean", "std") and which == "prior"
+            iteration = self.prior_iteration if is_prior else self.posterior_iteration
+            context = f"iteration {iteration}, {n_prior if is_prior else n_post} realizations"
+        heading = f"{label} — {context}"
+
+        # setdefault, never direct kwargs: these names now REACH Choro, so an
+        # explicit plot_field(..., colorscale=..., logscale=False) must override
+        # the policy rather than raise "multiple values for keyword".
+        choropleth_kwargs.setdefault("custom_hover", payload)
+        choropleth_kwargs.setdefault(
+            "hover_spec", parameter_field_hover(column, title=heading)
+        )
+        choropleth_kwargs.setdefault("hover_heads", False)
+        choropleth_kwargs.setdefault("hover_ks", False)
+        for key, value in _field_map_policy(stat_key, values).items():
+            if value is not None:
+                choropleth_kwargs.setdefault(key, value)
 
         from myflopy.modflow.mf6.grid.plotting import build_choropleth
 
+        # `model` is deliberately not passed: Choro reads the model's head output
+        # whenever model is not None, so a PEST model with missing or stale heads
+        # would raise at construction -- and a parameter field is not a head map.
         choro = build_choropleth(
             self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
         )
         if _normalize_backend(backend) == "matplotlib":
-            cmap = "RdBu_r" if str(stat).lower() == "change" else "viridis"
-            return choro.plot_mpl(cmap=cmap, title=label)
-        return choro.plot()
+            # No cmap=: plot_mpl derives it from the policy colorscale (stops
+            # become a LinearSegmentedColormap, "earth" becomes "gist_earth") and
+            # vmin/vmax default to the policy's zmin/zmax, so the colors and the
+            # limits agree between backends. The tick LABELS do not come for
+            # free -- plot_mpl has no colorbar hook, hence the relabel.
+            figure = choro.plot_mpl(title=heading)
+            if choropleth_kwargs.get("logscale"):
+                _relabel_log_colorbar(figure, choropleth_kwargs.get("colorbar"))
+            return figure
+        # `title` is matplotlib-only and is not a Choroplethmap property, so it
+        # must never ride the trace kwargs. plot() sets a 20px top margin; bump it
+        # or the title clips.
+        return choro.plot().update_layout(title=heading, margin={"t": 40})
 
     def best(self, *, criterion: str = "base") -> str:
         """Return the label of the single 'best' realization to carry forward.

@@ -354,10 +354,17 @@ class PALETTE:
     # Plotly
     prior = "rgba(150,150,150,0.45)"
     posterior = "rgba(31,119,180,0.55)"
+    # The opaque form of `posterior`, for the summary line drawn ON TOP of a
+    # translucent ensemble. Exactly `mpl_posterior` in rgb, so the two backends
+    # agree; callers must not reconstruct it by string-editing `posterior`'s alpha.
+    posterior_solid = "rgb(31,119,180)"
     noise = "rgba(214,39,40,0.45)"
     measured = "rgb(214,39,40)"
     truth = "rgb(214,39,40)"
     conflict = "darkorange"
+    # One faint line per realization, drawn many times over. Deliberately not
+    # `prior`: these are every realization of any iteration, not the prior series.
+    ensemble = "rgba(80,80,80,0.35)"
 
     # Qualitative sequence for *named categories* -- release groups, zones,
     # scenarios: things with no order and no midpoint, where a colorscale would
@@ -382,6 +389,7 @@ class PALETTE:
     mpl_measured = "crimson"
     mpl_truth = "crimson"
     mpl_conflict = "darkorange"
+    mpl_ensemble = "0.5"
     mpl_categorical = categorical
 
 

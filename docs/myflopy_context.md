@@ -138,6 +138,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Observations: head, lake stage, SFR stage/flow, DRN flow | ✅ | `pest/observations.py` (`cal.observe` / `cal.forecast`) |
 | PESTPP-IES + prior Monte Carlo + parallel workers | ✅ | `pest/project.py` `run_ies(workers=)`, `prior`, `draw_prior` |
 | Results / review / reopen a run | ✅ | `pest/ies.py` (`open_ies_run`, `IesResults`), `pest/runs.py` (`find_pest_runs`, `model.pest_runs`) |
+| Parameter-field maps with hover + per-stat policy colors | ✅ | `pest/ies.py` `plot_field` (`_field_map_policy`: `change` → log-centered diverging, red = reduced; `mean`/`base` → earth+log; `std` → earth linear) + `parameter_field_hover` (§6.4A) |
+| Field uncertainty map, prior/posterior mosaic, residual map | ❌ | §6.4B |
 | Geostats for grid / pilot-point priors | ✅ | `pest/geostats.py` (`ExpGeoStruct`, `build_geostruct`) |
 | Pilot points / zones from **raster** (vs pp-net / polygon) | 🟡 | pp-net + polygon zones exist; raster-driven zone arrays do not |
 | UZF parameters; Tikhonov/preferred-value **regularization**; identifiability | ❌ | not yet a `parameterize` target / not built |
@@ -165,8 +167,9 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
 3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
-   `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades** (field-map
-   hover/colors, uncertainty maps, prior/posterior mosaics — §6.4) still open.
+   `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades**: field-map
+   hover + per-stat policy colors **DONE 2026-07-25 (§6.4A)**; uncertainty maps,
+   prior/posterior mosaics and the residual map (§6.4B–C) still open.
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
    + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC
    `functools.partial` builders round-trip. **TOML still deferred** (no null type;

@@ -20,6 +20,7 @@ from myflopy.modflow.utils.datatypes.hover import (
     format_number,
     head_hover,
     lak_hover,
+    parameter_field_hover,
     result_hover,
     sfr_hover,
     surface_water_hover,
@@ -251,6 +252,61 @@ def test_result_hover_and_surface_water_hover_defaults():
     _, sw_template, _ = surface_water_hover().render(ctx)
     assert "Surface-water exchange" in sw_template
     assert "sfr" in sw_template and "lak" in sw_template  # breakdown labels
+
+
+# --- parameter-field hover (PEST/IES plot_field) ---------------------------------
+def _field_ctx(**overrides):
+    payload = {
+        "change": [0.5, 2.0],
+        "prior_mean": [1.0, 1.0],
+        "posterior_mean": [0.5, 2.0],
+        "posterior_std": [0.1, 0.2],
+    }
+    payload.update(overrides.pop("payload", {}))
+    return HoverContext(ncpl=2, payload=payload, cells=[0, 1], **overrides)
+
+
+def test_parameter_field_hover_does_not_print_the_plotted_stat_twice():
+    """The plotted statistic is the primary line, so it is dropped from the block."""
+
+    spec = parameter_field_hover("posterior_mean")
+    _, template, _ = spec.render(
+        _field_ctx(payload={"posterior_mean": [0.5, 2.0]})
+    )
+    assert template.count("posterior mean") == 1
+
+
+def test_parameter_field_hover_has_no_period_footer():
+    """A parameter field summarizes a whole calibration, not one stress period.
+
+    The context carries a period; the spec must ignore it rather than assert a
+    period the value does not belong to.
+    """
+
+    _, template, _ = parameter_field_hover("change").render(_field_ctx(period=3))
+    assert "Period 3" not in template
+
+
+def test_parameter_field_hover_labels_the_calibration_statistics():
+    _, template, _ = parameter_field_hover("change").render(_field_ctx())
+    assert "posterior / prior" in template  # the primary, relabeled
+    assert "prior mean" in template and "posterior sd" in template
+
+
+def test_an_undefined_ratio_reads_as_a_reason_not_a_blank():
+    """``format_number`` renders NaN and inf identically as ``""``.
+
+    ``plot_field`` therefore substitutes a string for an undefined ratio, so a
+    zero prior mean is distinguishable from a cell that was never captured. A
+    string payload entry must survive verbatim, with no unit suffix bolted on.
+    """
+
+    ctx = _field_ctx(payload={"change": ["undefined (prior mean 0)", None]})
+    customdata, _, _ = parameter_field_hover("change", units={"change": "x"}).render(ctx)
+    flat = [str(value) for row in customdata for value in row]
+    assert "undefined (prior mean 0)" in flat
+    assert "undefined (prior mean 0)x" not in flat
+    assert "" in flat  # the None cell renders blank
 
 
 # --- stage passthrough in LAK/SFR q payload builders ------------------------------

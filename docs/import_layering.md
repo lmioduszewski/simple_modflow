@@ -82,7 +82,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.package_tables`
 - `myflopy.modflow.mf6.parallel`
-- `myflopy.modflow.mf6.pest.ies` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.mf6.simulation.packages`
@@ -110,6 +109,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
+- `myflopy.modflow.mf6.pest.ies` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.regions`
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*

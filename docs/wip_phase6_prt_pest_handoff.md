@@ -30,8 +30,12 @@
   grid helper `vor.points_to_latlon(x, y)` — **6.4B's residual points want it too**.
   Canonical notebook 03 cell 5's hand-rolled matplotlib is now the library figure
   (ledger 64). **§6.3 is complete**; the plan's acceptance checklist item is ticked.
-- **Next:** 6.4A→C.
-- Full serial suite after 6.3C: **892 passed / 1 skipped** (`pytest -n0`, ~165 s).
+- **6.4A DONE 2026-07-25** — `build_choropleth` + `vor.choropleth` widened,
+  `_field_map_policy` per-stat colors, `parameter_field_hover`, run context on
+  the title, ies.py color literals retired. See the 6.4A block below for the
+  four code-established corrections; ledger 67–73.
+- **Next:** 6.4B→C.
+- Full serial suite after 6.4A: **906 passed / 1 skipped** (`pytest -n0`, ~164 s).
 - Task list: #54 6.4A, #55 6.4B, #56 6.4C.
 
 ## Locked user decisions (AskUserQuestion, 2026-07-24)
@@ -224,19 +228,40 @@ all keep working. Corrections to what was drafted, worth carrying into 6.4:
   `HoverContext(ncpl=<points in the trace>)` — the assembler's `ncpl` is a row
   count, not a grid property. `pathline_hover()` is the worked example.
 
-### 6.4A — IES plumbing/policy/hover (task #54)
-1. `build_choropleth` (grid/plotting.py): add `**choro_kwargs` passthrough.
-2. Per-stat colorscale helper (module-level in ies.py, pinned by tests):
-   `change` → 'RdBu' + log-centered at 1 (zs=log10(change), zmid=0, colorbar in
-   log units — put the RAW ratio in hover customdata), `mean/base` → 'earth' +
-   logscale=True for K-like fields, `std` → 'earth'. Reconcile the mpl branch
-   (change → RdBu_r centered at 1 via TwoSlopeNorm/log; mean/std →
-   'gist_earth', NOT viridis; choros.py:33 maps 'earth'→'gist_earth').
-3. `parameter_field_hover()` (hover.py, next to conc_hover): primary = plotted
-   stat, Fields block (prior_mean, posterior_mean, posterior_std), footer=()
-   with iteration/realization count as labeled fields (from .iterations /
-   .settings). Wire into plot_field's plotly branch via hover_spec.
-4. Fix the 3 color nits (PALETTE).
+### 6.4A — IES plumbing/policy/hover (task #54) — **DONE 2026-07-25**
+Delivered as scoped, with four corrections that a 12-agent scouting/design sweep
+established against the code. Carry these into 6.4B/C:
+- **Diverging scales ship as STOPS, never the name `'RdBu'`.** `_PLOTLY_TO_MPL_CMAP`
+  maps `'rdbu'` → `'RdBu_r'`, the reversed colormap, so a named diverging scale
+  renders **mirrored** between `plot()` and `plot_mpl()`. New helper
+  `_red_white_blue_diverging_colorscale()` (package_plotting.py), derived from its
+  sibling. NOTE the same trap still bites every signed-`q` map in the registry —
+  ledger 70, deliberately not fixed here.
+- **`zmid` does not center a matplotlib map.** `plot_mpl` reads `self._zmin`/`_zmax`
+  and never consults the trace kwargs. Symmetric `zmin`/`zmax` **in log space** is
+  what makes both backends agree. No `TwoSlopeNorm` is involved: deleting the
+  hardcoded `cmap=` was the whole mpl fix, since `plot_mpl` derives its colormap
+  from `self.colorscale`.
+- **The hover footer cannot carry run context.** `_render_footer` recognizes only
+  period/step/date/area/model with no `else`, so `footer=("iteration",)` renders
+  nothing silently. Iteration + realization count ride the figure TITLE instead.
+- **Never touch `IesResults.settings` for the realization count** — it does
+  `len(self.forecast_names)` → `list(None)` and raises `TypeError` on any
+  forecast-less run (ledger 73, still unfixed; fold into 6.4C). Use
+  `self.prior._df.shape[0]` / `self.posterior._df.shape[0]`.
+- Also widened `VoronoiGridPlus.choropleth` (voronoi.py), a hand-copied twin of
+  `build_choropleth`'s signature — widening only the function would have left
+  `vor.choropleth(colorscale=...)` raising `TypeError`.
+- **A log map's colorbar is labeled in log10 units unless you relabel it** — nothing
+  in `choros.py` sets `tickvals`/`ticktext`. 6.4A relabels inside `plot_field` for
+  BOTH backends (`_log_decade_colorbar` + `_relabel_log_colorbar`, since `plot_mpl`
+  has no tick hook). Ledger 74; a hand-built log `Choro` still reads in log10.
+- **`viz.mosaic` discards panel `zmin`/`zmax` AND the colorbar** — it recomputes the
+  shared range from the pooled data and only centers under `diff=True`. So 6.4B's
+  `field_mosaic` MUST pass `diff=True` for a `change` mosaic or the white "no change"
+  point moves off 1x (measured: fraction 0.231, not 0.5). Ledger 71.
+- `api_snapshot.json` unchanged (`build_choropleth` was never pinned); import
+  layers regenerated, `pest.ies` 1→2 (deferred count unchanged).
 ### 6.4B — new figures (task #55)
 - `field_uncertainty_map(target, which="std"|"reduction")`;
 - `field_mosaic(target, which=("prior","posterior"), stat="mean")` via

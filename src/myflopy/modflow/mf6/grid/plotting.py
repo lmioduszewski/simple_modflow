@@ -48,9 +48,25 @@ def build_choropleth(
     hover_heads: bool = True,
     hover_ks: bool = False,
     locs: Path = None,
-):
+    colorscale: str | list | tuple = None,
+    logscale: bool = False,
+    hover_spec=None,
+    **choro_kwargs,
+) -> Choro:
     """
     Create a Choro wrapper for Voronoi plotting.
+
+    ``show_layer_elevs`` defaults to ``False`` here and to ``True`` on
+    :class:`Choro` on purpose: this is the grid-only front door (``model=None``),
+    where a ``vor`` carrying no layer elevations makes Choro's own default raise
+    ``AttributeError`` as soon as the hover is built. Do not "simplify" this into
+    a bare passthrough.
+
+    ``colorscale``/``logscale``/``hover_spec`` are named because callers reach
+    for them constantly; anything else in ``**choro_kwargs`` rides through to the
+    ``go.Choroplethmap`` trace (``zmid``, ``colorbar``, ``reversescale``, ...).
+    Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
+    in particular is a matplotlib-only argument and raises there.
     """
     return Choro(
         vor=vor,
@@ -69,6 +85,10 @@ def build_choropleth(
         hover_heads=hover_heads,
         hover_ks=hover_ks,
         locs=locs,
+        colorscale=colorscale,
+        logscale=logscale,
+        hover_spec=hover_spec,
+        **choro_kwargs,
     )
 
 

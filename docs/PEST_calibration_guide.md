@@ -208,6 +208,28 @@ ies.report("review.html")       # all of the above bundled into one HTML
 
 Every plot takes `backend="matplotlib"` for static matplotlib/seaborn output instead of interactive Plotly.
 
+**Reading the field maps.** They are colored by policy, and the policy depends on
+the statistic, not the parameter:
+
+- `stat="mean"` / `"base"` — absolute conductivity, which spans decades, so it is
+  drawn on a **log** scale with the colorbar relabeled back into real units
+  (`0.001`, `0.01`, …) on *both* backends. A cell whose K is exactly 0 has no
+  logarithm and draws as a gap. (That relabel is `plot_field`'s own work — a log
+  `Choro` built by hand labels its colorbar in log10 units.)
+- `stat="std"` — a spread in model units, drawn **linear**: a posterior standard
+  deviation is legitimately zero wherever the ensemble collapsed, and those are
+  precisely the cells this map exists to show.
+- `stat="change"` — `posterior_mean / prior_mean`, a **ratio** whose neutral value
+  is 1, so it is mapped as `log10(ratio)` on a diverging red-white-blue scale with
+  symmetric limits: white is "calibration left this alone", **red is reduced**,
+  blue is increased, and a halving sits exactly as far from white as a doubling.
+  The hover shows the raw ratio (`0.5x`), not the logarithm.
+
+Hovering a cell gives the plotted statistic plus prior mean, posterior mean, and
+posterior standard deviation; the title states which iterations and how many
+realizations the figure is summarizing. A cell whose prior mean is zero has an
+undefined ratio and says so, rather than silently reading as missing data.
+
 What you're checking for:
 - **Phi**: should drop fast at first. If it collapses to near-zero, you're
   overfitting (see §7).

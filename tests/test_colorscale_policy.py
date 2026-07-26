@@ -5,6 +5,12 @@ brown-to-blue 'earth' scale (the mounding-figure default).
 
 from __future__ import annotations
 
+import numpy as np
+import pytest
+from matplotlib.colors import to_hex
+
+from myflopy.modflow.mf6.grid.plotting import build_choropleth
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.package_plotting import _blue_white_red_diverging_colorscale
 from myflopy.modflow.mf6.package_registry import (
     get_default_group_compare_colorscale,
@@ -12,6 +18,8 @@ from myflopy.modflow.mf6.package_registry import (
     get_package_explorer_spec,
     get_package_result_spec,
 )
+from myflopy.modflow.mf6.pest.ies import _field_map_policy, _relabel_log_colorbar
+from myflopy.modflow.utils.datatypes.hover import parameter_field_hover
 
 
 def test_non_signed_inputs_default_to_earth():
@@ -53,6 +61,212 @@ def test_prt_derived_maps_follow_the_same_non_signed_rule():
     from myflopy.modflow.mf6.prt_maps import PRT_COLORSCALE
 
     assert PRT_COLORSCALE == "earth"
+
+
+# ---------------------------------------------------------------------------
+# PEST/IES captured parameter fields -- registry-free like PRT's derived maps,
+# but keyed by STATISTIC rather than by field name: the same captured K array is
+# a magnitude as a mean and a ratio as a change.
+# ---------------------------------------------------------------------------
+
+
+def _two_cell_vor():
+    """The smallest grid a Choro will build on (mirrors test_mf6_pest.py)."""
+
+    verts = np.array(
+        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [2.0, 0.0], [2.0, 1.0]],
+        dtype=float,
+    )
+    return VoronoiGridPlus(
+        verts=verts,
+        iverts=[[0, 3, 2, 1], [1, 2, 5, 4]],
+        xcyc=np.array([[0.5, 0.5], [1.5, 0.5]], dtype=float),
+    )
+
+
+def test_field_map_magnitudes_use_the_same_earth_scale_as_everything_else():
+    """A parameter-field magnitude is not signed, so it takes the house scale.
+
+    Asserted equal to the other two "earth" answers rather than to the literal,
+    so the three cannot drift apart.
+    """
+
+    from myflopy.modflow.mf6.prt_maps import PRT_COLORSCALE
+
+    for stat in ("mean", "base", "std"):
+        assert _field_map_policy(stat, [1.0, 2.0])["colorscale"] == "earth"
+    assert _field_map_policy("mean", [1.0, 2.0])["colorscale"] == PRT_COLORSCALE
+    assert _field_map_policy("mean", [1.0, 2.0])["colorscale"] == get_default_package_colorscale("rch")
+
+
+def test_only_the_conductivity_stats_go_log_never_the_spread():
+    """K spans decades and goes log; a posterior spread must not.
+
+    A posterior standard deviation is legitimately ZERO wherever the ensemble
+    collapsed, and ``log10(0)`` blanks the cell -- which would erase exactly the
+    cells an uncertainty map exists to show.
+    """
+
+    assert _field_map_policy("mean", [1e-3, 1e2])["logscale"] is True
+    assert _field_map_policy("base", [1e-3, 1e2])["logscale"] is True
+    assert _field_map_policy("std", [0.0, 2.0])["logscale"] is False
+
+
+def test_change_maps_diverge_red_for_decrease_symmetrically_about_one():
+    """``change`` is a RATIO: neutral at 1, mapped in log space, red = reduced.
+
+    The endpoints are asserted against the sibling helper rather than against
+    hex literals, so the two diverging orientations cannot drift apart.
+    """
+
+    policy = _field_map_policy("change", [0.5, 10.0])
+    blue, white, red = (color for _, color in _blue_white_red_diverging_colorscale())
+
+    assert policy["logscale"] is True
+    assert policy["colorscale"] == [[0.0, red], [0.5, white], [1.0, blue]]
+    # symmetric in LOG space: a halving and a doubling sit equally either side.
+    assert policy["zmin"] == -policy["zmax"]
+    assert policy["zmid"] == 0.0
+    # a decade colorbar, so the reader sees ratios and not log10 units
+    assert policy["colorbar"]["ticktext"] == ["0.1x", "1x", "10x"]
+
+
+def test_degenerate_change_fields_still_get_a_defined_range():
+    """A prior Monte-Carlo run has change == 1 everywhere; an empty layer is NaN.
+
+    Both give a symmetric-limit of 0, which would collapse the color range onto a
+    single point, so the policy floors it at one decade.
+    """
+
+    for values in ([1.0, 1.0], [np.nan, np.nan]):
+        policy = _field_map_policy("change", values)
+        assert (policy["zmin"], policy["zmax"]) == (-1.0, 1.0)
+
+
+def test_an_undefined_ratio_cannot_widen_the_color_range_or_warn():
+    """A zero prior mean gives inf, which must not blow the scale out or warn."""
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        policy = _field_map_policy("change", [np.inf, -np.inf, np.nan, 2.0])
+
+    # the range comes from the one finite value (log10(2)), not from inf
+    assert policy["zmax"] == pytest.approx(np.log10(2.0))
+
+
+def test_an_unknown_field_stat_raises_instead_of_silently_defaulting():
+    """The deliberate inverse of ``Choro.colorscale``, which prints and falls back.
+
+    A typo'd stat is a caller bug; falling back to earth would draw a plausible
+    map of the wrong thing.
+    """
+
+    with pytest.raises(ValueError, match="No field-map color policy"):
+        _field_map_policy("meen", [1.0])
+
+
+def test_field_map_policy_survives_the_real_choropleth_front_door():
+    """The call-site pin: assert on what the front door actually renders.
+
+    The same lesson as ``test_every_exchange_map_puts_blue_on_gaining`` below --
+    a helper-only test proves arithmetic while the real map renders inverted.
+    This one specifically catches that ``Choro``'s plotly-to-matplotlib table maps
+    ``'rdbu'`` to the REVERSED colormap, so a diverging scale passed as a NAME
+    renders mirrored between the two backends. Stops survive both.
+    """
+
+    vor = _two_cell_vor()
+    values = [0.5, 10.0]
+    policy = _field_map_policy("change", values)
+    choro = build_choropleth(
+        vor,
+        custom_zs=values,
+        custom_hover={"change": values},
+        hover_spec=parameter_field_hover("change", title="k change"),
+        hover_heads=False,
+        hover_ks=False,
+        **policy,
+    )
+    trace = choro.get_choropleth()
+    red = _blue_white_red_diverging_colorscale()[-1][1]
+
+    # plotly: red at the low end, limits symmetric in log space
+    assert trace.colorscale[0][1] == red
+    assert trace.zmin == -trace.zmax
+    # the widening landed: these four names could not reach Choro before 6.4A
+    assert trace.zmid == 0.0
+    assert tuple(trace.colorbar.ticktext) == ("0.1x", "1x", "10x")
+    assert "k change" in trace.hovertemplate
+    assert trace.customdata is not None
+
+    # matplotlib: the SAME low-end color and the SAME limits
+    collection = choro.plot_mpl().axes[0].collections[0]
+    assert collection.get_clim() == (trace.zmin, trace.zmax)
+    assert to_hex(collection.get_cmap()(0.0)) == red
+
+
+def test_a_log_map_reads_in_real_units_on_both_backends():
+    """A log map's colorbar must not be labeled in log10 units on either backend.
+
+    ``plot_mpl`` builds its colorbar through geopandas with no tick hook, so
+    without an explicit relabel a static K map reads ``-3 … 2`` where the
+    interactive one reads ``0.001 … 100`` — the same field, off by orders of
+    magnitude, with nothing on the figure to say so.
+    """
+
+    values = [0.001, 100.0]
+    policy = _field_map_policy("mean", values)
+    choro = build_choropleth(
+        _two_cell_vor(), custom_zs=values, hover_heads=False, hover_ks=False, **policy
+    )
+    figure = choro.plot_mpl()
+    _relabel_log_colorbar(figure, policy["colorbar"])
+
+    expected = list(policy["colorbar"]["ticktext"])
+    assert expected[0] == "0.001"  # real units, not "-3"
+    assert [label.get_text() for label in figure.axes[-1].get_yticklabels()] == expected
+    # and the linear stat has no decade colorbar to misapply
+    assert _field_map_policy("std", [0.0, 2.0]).get("colorbar") is None
+
+
+def test_relabeling_a_colorbar_that_does_not_exist_leaves_the_map_axes_alone():
+    """``plot_mpl(colorbar=False)`` leaves ONE axes -- the map -- and it must be untouched.
+
+    Written this way because the obvious version (assert it does not raise) passes
+    against broken code: with no colorbar, ``axes[-1]`` *is* the map, and stamping
+    decade ticks onto its northing axis raises nothing. It just relabels the map's
+    y-axis in log10(K).
+    """
+
+    values = [0.001, 100.0]
+    policy = _field_map_policy("mean", values)
+    choro = build_choropleth(
+        _two_cell_vor(), custom_zs=values, hover_heads=False, hover_ks=False, **policy
+    )
+    figure = choro.plot_mpl(colorbar=False)
+    assert len(figure.axes) == 1
+    before = list(figure.axes[0].get_yticks())
+
+    _relabel_log_colorbar(figure, policy["colorbar"])
+
+    assert list(figure.axes[0].get_yticks()) == before
+    decades = set(policy["colorbar"]["ticktext"])
+    assert not decades & {label.get_text() for label in figure.axes[0].get_yticklabels()}
+
+
+def test_the_grid_accessor_accepts_what_the_function_accepts():
+    """``vor.choropleth`` restates ``build_choropleth``'s signature by hand.
+
+    Widening only the function would leave the accessor raising ``TypeError`` for
+    arguments the function itself takes.
+    """
+
+    choro = _two_cell_vor().choropleth(
+        custom_zs=[1.0, 2.0], colorscale="earth", logscale=True, zmid=0.0
+    )
+    assert choro.get_choropleth().zmid == 0.0
 
 
 def test_category_colors_are_policy_and_stable_across_figures(isolated_category_colors):

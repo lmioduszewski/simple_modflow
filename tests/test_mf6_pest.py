@@ -1454,6 +1454,27 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
     assert isinstance(ies.plot_field("k", stat="mean", backend="matplotlib"), MplFigure)
     assert isinstance(ies.plot_field("k", stat="change", backend="matplotlib"), MplFigure)
 
+    # -- the color policy and hover survive the real pyEMU/pestpp round trip ----
+    # (the arithmetic is pinned fast in test_colorscale_policy.py; what is only
+    # provable here is that a REAL captured field reaches the trace intact.)
+    change = ies.plot_field("k", stat="change").data[0]
+    # a diverging ratio ships as explicit stops, never the name 'RdBu', which
+    # renders mirrored between the two backends
+    assert not isinstance(change.colorscale, str)
+    assert change.zmin == -change.zmax
+    # the RAW ratio is in the hover even though log10 is what gets plotted
+    assert change.customdata is not None
+    assert "posterior / prior" in change.hovertemplate
+    # run context rides the title, because the hover footer cannot carry it
+    assert "realizations" in ies.plot_field("k", stat="change").layout.title.text
+
+    mean = ies.plot_field("k", stat="mean").data[0]
+    assert tuple(mean.colorbar.ticktext)  # decades relabeled out of log10 units
+
+    # an explicit kwarg overrides the policy rather than raising "multiple values"
+    override = ies.plot_field("k", stat="change", colorscale="earth").data[0]
+    assert override.colorscale[0][1] != change.colorscale[0][1]
+
 
 def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path):
     """The canonical calibration demo wires the canonical valley model into a

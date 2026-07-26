@@ -1286,15 +1286,23 @@ style the rest, rather than forcing everything into choropleths:
 The review layer exists and is good; bring it up to the house standards and close the
 workshop gaps (memory: spatial parameter-field maps were the biggest gap; DBTL framing +
 input-capture-as-observations is the driving workflow):
-1. **Parameter-field maps get hover + policy colors.** `IesResults.plot_field(target)`
-   renders per-cell parameter stats — read its implementation (it routes through
-   `build_choropleth` per the viz memory). Add `parameter_field_hover()`: primary = the
-   plotted stat (e.g. posterior mean multiplier or K), block: prior mean, posterior
-   mean, posterior sd (per cell, from the ensembles via `field()`), footer: iteration,
-   realization count. Colorscale policy: **multiplier fields are relative → diverging
-   `RdBu` centered at 1 (log-centered)** — negative/red = reduced, blue = increased —
-   matching the user's diff-map rule; **absolute-K fields → `'earth'` + logscale**.
-   Pin in `test_colorscale_policy.py`.
+1. **Parameter-field maps get hover + policy colors. — DONE 2026-07-25 (6.4A).**
+   `IesResults.plot_field(target)` now carries `parameter_field_hover()` (primary = the
+   plotted stat, block = prior mean / posterior mean / posterior sd) and a per-**stat**
+   colorscale policy `_field_map_policy`.
+   > Two corrections to what this item originally said, both established against the
+   > code rather than assumed. **(a)** The captured field is *always absolute resolved
+   > K*, never a multiplier — pyEMU rewrites `org_array × multipliers` before each run
+   > and we capture the rewritten array — so the policy keys on the STAT, not on
+   > "multiplier vs absolute": `change` → diverging red-white-blue, log-centered at 1
+   > with symmetric limits (red = reduced); `mean`/`base` → `'earth'` + logscale;
+   > `std` → `'earth'`, linear (a spread is legitimately 0 where the ensemble
+   > collapsed). **(b)** Iteration and realization count *cannot* go in the hover
+   > footer — `HoverSpec._render_footer` recognizes only period/step/date/area/model
+   > and silently drops anything else — so they ride the figure title, visible on the
+   > matplotlib backend too. Ledger 67–73.
+   Pinned in `test_colorscale_policy.py` (including a call-site pin proving both
+   backends put red on the same end) and `test_hover_spec.py`.
 2. **Uncertainty maps:** `field_uncertainty_map(target)` — posterior sd or
    prior→posterior variance-reduction per cell (sequential `'earth'`), with hover.
    This is the "did the data inform this region" figure.
@@ -1617,9 +1625,10 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       `results.travel_time`/`.endpoints`/`.capture` choropleth nouns with hover + policy
       colors (6.3B, 2026-07-25); `results.pathlines` plotly map + `pathline_hover`,
       `Choro` overlays carried through `viz.mosaic`, `PALETTE.categorical` (6.3C, 2026-07-25)
-- [ ] IES: `plot_field` hover + multiplier-diverging/absolute-earth colors;
-      `field_uncertainty_map`; `field_mosaic` (synced prior/posterior); residual map;
-      all IES figures on the viz front door (6.4)
+- [ ] IES: `plot_field` hover + per-stat diverging/earth colors **(6.4A DONE 2026-07-25:
+      `parameter_field_hover`, `_field_map_policy`, `build_choropleth` widened, color
+      literals retired)**; `field_uncertainty_map`; `field_mosaic` (synced
+      prior/posterior); residual map; all IES figures on the viz front door (6.4)
 - [ ] `_flopy_compat.py` is the only importer of flopy non-mf6 internals — including the
       6.0 readers (7.1)
 - [ ] `myflopy` logger wired; no stray prints; exception swallows narrowed (7.2, 7.3)

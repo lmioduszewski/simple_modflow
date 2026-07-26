@@ -63,6 +63,27 @@ def _blue_white_red_diverging_colorscale() -> list[list[object]]:
     ]
 
 
+def _red_white_blue_diverging_colorscale() -> list[list[object]]:
+    """Return the diff-map orientation as STOPS: red at ``zmin``, blue at ``zmax``.
+
+    The same endpoint colors as :func:`_blue_white_red_diverging_colorscale`,
+    reversed -- the "negative red, positive blue" rule that
+    ``get_default_group_compare_colorscale() == 'RdBu'`` declares for difference
+    maps. It exists as stops rather than as that NAME because
+    ``_PLOTLY_TO_MPL_CMAP['rdbu']`` is ``'RdBu_r'`` (choros.py:36), the REVERSED
+    colormap, so a named diverging scale renders mirrored between
+    ``Choro.plot()`` and ``Choro.plot_mpl()``. Stops survive both backends: the
+    colorscale setter passes lists through, and ``plot_mpl`` rebuilds them with
+    ``LinearSegmentedColormap.from_list``.
+
+    Derived from its sibling rather than restating the hexes, so the two
+    orientations cannot drift apart.
+    """
+
+    colors = [color for _, color in reversed(_blue_white_red_diverging_colorscale())]
+    return [[position, color] for position, color in zip((0.0, 0.5, 1.0), colors, strict=True)]
+
+
 def _exchange_colorscale(frame: str) -> list[list[object]]:
     """Return the exchange scale oriented for ``frame``: gaining blue, losing red.
 
@@ -1931,6 +1952,7 @@ class FieldMappable:
 __all__ = [
     "_symmetric_color_limit",
     "_blue_white_red_diverging_colorscale",
+    "_red_white_blue_diverging_colorscale",
     "_as_layer_cell_property",
     "build_sfr_q_map_payload",
     "build_lak_q_map_payload",

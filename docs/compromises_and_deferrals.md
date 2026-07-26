@@ -1121,3 +1121,125 @@ same day, which is the useful part of the result.
     - Rule of thumb going forward: anything asserting *what MF6 produces* must run MF6;
       synthetic CSVs are for exercising *our* transformations on shapes the tiny model
       cannot reach, and their docstrings must not claim MF6 provenance.
+
+## 6.4A — IES field-map policy, hover, and plumbing (2026-07-25)
+
+67. **The per-stat field-map color policy is module-private to `ies.py`, not a shared
+    helper (plan §6.4 item 1).**
+    - What: `_field_map_policy(stat, values)` lives in `src/myflopy/modflow/mf6/pest/ies.py`
+      and returns `Choro` kwargs, rather than becoming a public `viz` or
+      `package_registry` surface.
+    - Why: `package_registry` is keyed by package/field **name**, and a *statistic* of a
+      captured array is not a package field — the same captured K array is a magnitude
+      as a `mean` and a ratio as a `change`, so a stat axis would be a second keyspace
+      for one caller. `viz.py` holds no continuous-colorscale policy today. The house
+      precedent for a registry-free derived-map scale is a constant in the consumer
+      module (`prt_maps.PRT_COLORSCALE`).
+    - Cost, accepted: `pest.ies` moves import layer 1 → 2, because the policy
+      module-level-imports `package_plotting` for the two color helpers. Verified
+      acyclic (nothing imports `pest.ies`); `prt_maps` already sits at layer 2 for the
+      same reason.
+    - Revisit: when 6.4B/6.4C give it a caller outside `IesResults`, promote it to
+      `package_plotting` beside the color helpers. Promotion is mechanical; choosing a
+      public signature before a second caller exists is not.
+
+68. **`zmid` is emitted but is not what centers the `change` map.**
+    - What: the policy returns `zmid=0.0` *and* symmetric `zmin`/`zmax` in log space.
+      The symmetric limits are what actually center it.
+    - Why: `zmid` reaches only the Plotly trace; `Choro.plot_mpl` reads `self._zmin`/
+      `_zmax` and never consults the trace kwargs, so `zmid` alone would center the
+      interactive map and leave the static one autoscaled — the two backends
+      disagreeing about where "no change" sits.
+    - Accepted: a redundant key on the plotly side, in exchange for one code path that
+      is correct on both.
+
+69. **Diverging parameter-field scales ship as explicit STOPS, never as the name
+    `'RdBu'`.**
+    - What: `_red_white_blue_diverging_colorscale()` (new, `package_plotting.py`) is
+      derived by reversing its blue-white-red sibling.
+    - Why: `Choro`'s plotly→matplotlib table maps `'rdbu'` to `'RdBu_r'`, the REVERSED
+      colormap, so a diverging scale passed by name renders **mirrored** between
+      `plot()` and `plot_mpl()` — red meaning "reduced" in one and "increased" in the
+      other. Stops survive both backends. Pinned by
+      `test_field_map_policy_survives_the_real_choropleth_front_door`.
+    - Not fixed here: the `_PLOTLY_TO_MPL_CMAP['rdbu']` entry itself is left alone.
+      `'RdBu'` is the registry's declared scale for signed `q` on ten packages, so
+      flipping the table would silently re-color every one of those static maps. That
+      is its own change with its own review — see 70.
+
+70. **The signed-`q` maps still render mirrored between backends (pre-existing, NOT
+    fixed in 6.4A).**
+    - What: `package_registry` declares `colorscale="RdBu"` for `q` on rch/chd/drn/ghb/
+      riv/wel/evt/sfr/lak. Because of the table entry in 69, `results.q.map(backend='mpl')`
+      puts red where `plot()` puts blue.
+    - Why not fixed: out of 6.4A's scope, and the fix is a judgment call about which
+      orientation is *correct* for signed q (which is per-package — see the q-sign
+      convention section) rather than a mechanical flip. 6.4A avoids the trap for its
+      own maps by shipping stops.
+    - Cost: anyone reading a static signed-q map today reads it backwards relative to
+      the interactive one.
+
+71. **Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
+    - What: `_log_decade_colorbar` puts real-unit ticks (`0.1x`, `1x`, `10x`) on a log
+      map, and the `change` policy centers it with symmetric `zmin`/`zmax`.
+      `viz.mosaic` moves every panel onto a shared `coloraxis` and **discards both**:
+      it copies only `trace.colorscale` and then recomputes `cmin`/`cmax` from the
+      pooled `z` data, adding `cmid=0.0` only when the caller passes `diff=True`
+      (viz.py:301-313). The per-trace `zmin`/`zmax` are ignored once
+      `trace.coloraxis` is set, and the coloraxis has no `colorbar` key at all.
+    - Measured, two `change` panels spanning 0.5x–10x: `mosaic(diff=False)` gives
+      `cmin=-0.301, cmax=1.0, cmid=None`, putting the white "no change" point at
+      fraction **0.231** of the diverging scale instead of 0.5. Since stop 0 is red,
+      cells that *increased* by up to ~2.2x then render on the red half and read as
+      decreases. `mosaic(diff=True)` gives `cmin=-1.0, cmax=1.0, cmid=0.0` — centered.
+      Tick labels are lost in both modes.
+    - Why deferred: teaching `mosaic` to carry a colorbar, or to honor an
+      already-symmetric panel range, is a shared-surface change affecting every mosaic
+      in the project; 6.4B builds `field_mosaic` and is the right place to decide it.
+    - **Rule for 6.4B:** a `change` mosaic MUST pass `diff=True`, or its white point
+      silently moves off 1x. A `mean`/`std` mosaic is sequential, so centering is moot
+      there and only the tick labels are at stake.
+    - No runtime impact in 6.4A: `plot_field` returns a `viz.Fig`, and mosaicking those
+      raises (`choroplethmap` is not compatible with an `xy` subplot), so only a future
+      helper passing `Choro` panels can reach this.
+
+72. **Run context (iterations, realization count) rides the figure title, not the hover
+    footer — the plan asked for the footer.**
+    - What: plan §6.4 item 1 and the handoff both specify a hover footer carrying
+      iteration and realization count. `plot_field` puts them in the title instead.
+    - Why: `HoverSpec._render_footer` has `if/elif` branches for exactly
+      `period`/`step`/`date`/`area`/`model` and no `else`, so `footer=("iteration",)`
+      renders **nothing** and raises nothing. Extending that vocabulary for one caller
+      would add two customdata columns per cell for a value identical in every cell,
+      and would still be invisible on the matplotlib backend, which has no hover at all.
+      The title is free, visible on both backends, and survives `report()`'s HTML.
+    - Also: the counts come from `self.prior._df.shape[0]` / `posterior`, NOT from
+      `settings.num_reals` — that is the *requested* count, is `None` for a run myflopy
+      did not launch, and reaching `IesResults.settings` at all raises `TypeError` on
+      any run with no registered forecasts (pyEMU returns `None` from `forecast_names`).
+
+73. **`IesResults.settings` and `report()` still raise on a forecast-less run
+    (pre-existing, NOT fixed).**
+    - What: `settings` does `len(self.forecast_names)` → `list(None)` when no forecasts
+      are registered; `report()` iterates the same property.
+    - Why not fixed: found while scoping 6.4A, but it is a defect in a different
+      surface with its own tests to add. `plot_field` simply does not depend on it.
+    - Follow-up: fold into 6.4C, which is already touching this file's test coverage.
+
+74. **`logscale` maps read in log10 units unless the caller relabels the colorbar
+    (pre-existing, fixed only for `plot_field`).**
+    - What: nothing in `choros.py` sets `tickvals`/`ticktext`, so **every** `Choro`
+      built with `logscale=True` labels its colorbar `-3 … 2` for a field that runs
+      0.001 … 100 — on both backends. 6.4A adds `_log_decade_colorbar` (Plotly) plus
+      `_relabel_log_colorbar` (matplotlib, since `plot_mpl` has no tick hook) and wires
+      both into `plot_field` only.
+    - Why not fixed generally: the right home is `Choro` itself — it knows it is
+      log-scaled — but that changes every existing log map in the project, including
+      stored notebook output, and belongs with the `viz.mosaic` colorbar question
+      (ledger 71) rather than inside a PEST change.
+    - Caught by review, not by design: the first cut of 6.4A put the decades on the
+      Plotly branch only, which *introduced* a regression — the matplotlib K map had
+      been linear before, so its colorbar used to read real K. Pinned now by
+      `test_a_log_map_reads_in_real_units_on_both_backends`.
+    - Consequence today: a hand-built log `Choro` (e.g. the truth-K map in
+      `canonical_06` cell 18) still reads in log10. That notebook says so in prose.
