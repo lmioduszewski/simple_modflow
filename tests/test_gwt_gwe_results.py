@@ -48,7 +48,8 @@ def _coupled_run(tmp_path, kind: str):
         transport = mf.gwt("trans", context=ctx, packages=[
             disv(), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"), mf.mst(porosity=0.2),
             mf.ssm(sources=[["chd", "AUX", "concentration"]]),
-            mf.oc(concentration_filerecord="trans.ucn", saverecord=[("CONCENTRATION", "ALL")]),
+            mf.oc(concentration_filerecord="trans.ucn", budget_filerecord="trans.cbc",
+                  saverecord=[("CONCENTRATION", "ALL"), ("BUDGET", "ALL")]),
         ])
         exchange = mf.ExchangeSpec("gwfgwt", mf.build_gwf_gwt_exchange, models=("flow", "trans"))
     else:
@@ -58,7 +59,8 @@ def _coupled_run(tmp_path, kind: str):
                    heat_capacity_water=4184.0, density_water=1000.0),
             mf.cnd(ktw=0.6, kts=0.5, alh=1.0, ath1=0.1),
             mf.ssm(sources=[["chd", "AUX", "temperature"]]),
-            mf.oc(temperature_filerecord="trans.ucn", saverecord=[("TEMPERATURE", "ALL")]),
+            mf.oc(temperature_filerecord="trans.ucn", budget_filerecord="trans.cbc",
+                  saverecord=[("TEMPERATURE", "ALL"), ("BUDGET", "ALL")]),
         ])
         exchange = mf.ExchangeSpec("gwfgwe", mf.build_gwf_gwe_exchange, models=("flow", "trans"))
 
@@ -236,3 +238,25 @@ def test_the_lazy_loader_does_not_recurse_when_no_grid_type_is_discovered(tmp_pa
         # FloPy cannot load this stub workspace, which is fine and beside the
         # point: what matters is that it got as far as trying.
         pass
+
+
+@pytest.mark.slow
+def test_a_transport_model_actually_writes_its_budget(gwt_run, gwe_run):
+    """MF6 writes a ZERO-BYTE .cbc for a transport model unless SAVE_FLOWS is set
+    on the model itself -- and FloPy then raises "file is empty" rather than
+    saying what is missing. `mf.gwt`/`mf.gwe` default `save_flows=True` so that
+    asking OC for a budget actually yields one.
+
+    Asserted against real coupled runs of BOTH kinds, because the term names
+    differ between them and are not what the plan assumed: there is no term
+    called "SSM" (the SSM package's record is "SOURCE-SINK MIX"), and GWE's
+    storage term is STORAGE-CELLBLK, not STORAGE-AQUEOUS.
+    """
+
+    for run, storage in ((gwt_run, "STORAGE-AQUEOUS"), (gwe_run, "STORAGE-CELLBLK")):
+        model = run.model("trans")
+        reader = model._get_budget_reader()
+        assert reader is not None, "no budget file was written at all"
+
+        terms = {name.strip() for name in reader.get_unique_record_names(decode=True)}
+        assert terms == {storage, "FLOW-JA-FACE", "SOURCE-SINK MIX"}

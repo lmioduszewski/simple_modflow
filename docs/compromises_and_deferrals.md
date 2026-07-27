@@ -1543,3 +1543,26 @@ same day, which is the useful part of the result.
       direction, because it meant those features would work only on a live built run
       and appear broken to anyone returning to a run in a later session — the
       documented purpose of `load_run`.
+
+90. **`mf.gwt`/`mf.gwe` now default `save_flows=True` — a build-side behavior change
+    (2026-07-27).**
+    - What was wrong: MF6 writes a **zero-byte** `.cbc` for a transport model unless
+      `SAVE_FLOWS` is set on the model itself, even when OC asks for a budget. FloPy then
+      raises `ValueError: datafile error: file is empty`, which names neither the model
+      nor the missing option. Every myflopy transport model was in this state, because
+      `mf.gwt`/`mf.gwe` defaulted `save_flows=None` while `mf.npf`, `mf.sto` and every
+      list BC already default it `True`.
+    - The change: transport models now save flows by default, so asking OC for a budget
+      yields one. **Existing transport models start writing a `.cbc` they did not
+      before** — more disk, and a file appears where none used to.
+    - Scoped to `mf.gwt`/`mf.gwe` only. `mf.gwf` keeps `save_flows=None`: a flow model
+      already gets its budget from NPF and the list BCs, so flipping it there would be a
+      behavior change to every existing model for no gain.
+    - Measured, not assumed: model-level `SAVE_FLOWS` alone is sufficient — stripping it
+      from MST/SSM and re-running still wrote all three terms. So the transport package
+      helpers (`mf.mst`/`mf.ssm`/`mf.est`/...) were left alone.
+    - The terms are not what plan §6.1 item 3 guessed. Measured on real runs:
+      GWT = `STORAGE-AQUEOUS` / `FLOW-JA-FACE` / `SOURCE-SINK MIX`;
+      GWE = `STORAGE-CELLBLK` / `FLOW-JA-FACE` / `SOURCE-SINK MIX`. There is **no term
+      named `SSM`** (the SSM package's record is `SOURCE-SINK MIX`), and `DECAY` appears
+      only when MST declares decay or sorption.
