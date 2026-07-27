@@ -132,12 +132,12 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### PEST / pyemu (`modflow/mf6/pest/`)
 | Capability | Status | Where |
 |---|---|---|
-| `PestProject` orchestration (native PstFrom build + forward run) | ✅ | `pest/project.py`, `pest/forward_run.py` — construct via `model.pest(name, ...)` |
+| `PestProject` orchestration (native PstFrom build + forward run) | ✅ | `pest/project.py`, `pest/forward_run.py` — **front door is `model.pest(name, start_datetime=...)`**, which fills `start_datetime` from TDIS and defaults the workspace to `<model ws>/pest/<name>` (what makes the run discoverable later). Direct `PestProject(...)` construction is the **advanced** path: `start_datetime` is mandatory and you own where it lands |
 | **Unified** `cal.parameterize(target, style=...)` | ✅ | `pest/project.py` + `pest/native_parameters.py`; targets `k/k33/recharge/chd/ghb/drn/wel`, styles `constant/zone/grid/pilotpoints` |
 | Pilot points on Voronoi (IDW; pyEMU's own are unusable on DISU) | ✅ | `pest/pilot_points.py`; `pp_space` net or explicit `pp_points` |
 | Observations: head, lake stage, SFR stage/flow, DRN flow | ✅ | `pest/observations.py` (`cal.observe` / `cal.forecast`) |
 | PESTPP-IES + prior Monte Carlo + parallel workers | ✅ | `pest/project.py` `run_ies(workers=)`, `prior`, `draw_prior` |
-| Results / review / reopen a run | ✅ | `pest/ies.py` (`open_ies_run`, `IesResults`), `pest/runs.py` (`find_pest_runs`, `model.pest_runs`) |
+| Results / review / reopen a run | ✅ | `pest/ies.py` (`open_ies_run`, `IesResults`), `pest/runs.py` (`find_pest_runs`) — `model.pest_runs` / `run.pest_runs` → `PestRunHandle.review()`. Both attach the model so spatial maps work (`run.pest_runs` lazily, so listing does not load the simulation); a run with several models cannot pick one — pass `review(model=...)` |
 | Parameter-field maps with hover + per-stat policy colors | ✅ | `pest/ies.py` `plot_field` (`_field_map_policy`: `change` → log-centered diverging, red = reduced; `mean`/`base` → earth+log; `std` → earth linear) + `parameter_field_hover` (§6.4A) |
 | Uncertainty-reduction map (`did the data inform this region`) | ✅ | `pest/ies.py` `plot_field(stat="reduction")` — `1 - post_sd/prior_sd`, anchored 0–1, falls back to the data range when a posterior spread grew (§6.4B) |
 | Prior-vs-posterior field mosaic (one shared scale, synced views) | ✅ | `pest/ies.py` `plot_field_mosaic` over `viz.mosaic(colorbar=)`; `mean`/`std` only — the only stats with a separate prior and posterior form (§6.4B). Plotly only |
@@ -171,9 +171,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
    `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades**: field-map
    hover + per-stat policy colors **DONE 2026-07-25 (§6.4A)**; uncertainty-reduction
-   map, prior/posterior mosaic and the residual map **DONE 2026-07-26 (§6.4B)**. Still
-   open (§6.4C): a canned synthetic IES fixture, the remaining `ies.py` color literals,
-   and the `settings`/`report()` crash on a forecast-less run (ledger 73).
+   map, prior/posterior mosaic and the residual map **DONE 2026-07-26 (§6.4B)**;
+   forecast-less `settings`/`report()` fix (ledger 73), the last `ies.py` color
+   literals, the field-fixture buildout and the preferred-API docs
+   **DONE 2026-07-26 (§6.4C)** — **§6.4 is complete**.
 4. **YAML serialization DONE 2026-07-23 (§5.6)** — `SimulationSpec.to_yaml`/`from_yaml`
    + `Project.add_simulation_from_yaml` in `specs_io.py`; §5.6A first made the list-BC
    `functools.partial` builders round-trip. **TOML still deferred** (no null type;

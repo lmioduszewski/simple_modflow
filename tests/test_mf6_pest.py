@@ -28,6 +28,7 @@ except Exception:
         if dep_path.exists() and str(dep_path) not in sys.path:
             sys.path.insert(0, str(dep_path))
 
+from myflopy import viz  # noqa: E402
 from myflopy.modflow.calcs.calibration import CalibrationPlot  # noqa: E402
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig  # noqa: E402
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
@@ -1365,10 +1366,12 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     assert isinstance(ies.plot_phi_distribution(backend="matplotlib"), MplFigure)
     bounds_table = ies.parameters_at_bounds()
     assert "pct_at_bound" in bounds_table.columns and not bounds_table.empty
+    assert isinstance(ies.plot_parameters_at_bounds(), go.Figure)
     assert isinstance(ies.plot_parameters_at_bounds(backend="matplotlib"), MplFigure)
     contributions = ies.phi_contributions()
     assert not contributions.empty
     assert isinstance(ies.plot_phi_contributions(), go.Figure)
+    assert isinstance(ies.plot_phi_contributions(kind="pie"), go.Figure)
     assert isinstance(ies.plot_phi_contributions(kind="pie", backend="matplotlib"), MplFigure)
 
     # base realization is the recommended single parameter set
@@ -1453,6 +1456,8 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
 
     assert isinstance(ies.plot_field("k", stat="mean", backend="matplotlib"), MplFigure)
     assert isinstance(ies.plot_field("k", stat="change", backend="matplotlib"), MplFigure)
+    assert isinstance(ies.plot_field("k", stat="std", backend="matplotlib"), MplFigure)
+    assert isinstance(ies.plot_field("k", stat="reduction", backend="matplotlib"), MplFigure)
 
     # -- the color policy and hover survive the real pyEMU/pestpp round trip ----
     # (the arithmetic is pinned fast in test_colorscale_policy.py; what is only
@@ -1920,39 +1925,67 @@ def test_a_mosaic_of_one_panel_is_not_a_mosaic(tmp_path):
         _stub_ies_results(tmp_path).plot_field_mosaic("k", which=("posterior",))
 
 
-def _stub_ies_with_capture(tmp_path, prior_sds, posterior_sds, means=(1.0, 1.0)):
-    """A stub carrying a CAPTURED FIELD, for the `field()` statistics.
+_UNSET = object()
 
-    Two cells, two realizations per ensemble, with the per-cell spread chosen by
-    the caller so the derived columns have known values.
+
+def _four_cell_vor_clockwise():
+    """A 1x4 strip, for asserting on a field where only SOME cells were captured."""
+
+    verts = np.array(
+        [[float(x), y] for x in range(5) for y in (0.0, 1.0)], dtype=float
+    )
+    # vertex ids: cell i uses (2i, 2i+1, 2i+3, 2i+2) -> clockwise from bottom-left
+    iverts = [[2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2] for i in range(4)]
+    xcyc = np.array([[i + 0.5, 0.5] for i in range(4)], dtype=float)
+    return VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)
+
+
+def _stub_ies_with_capture(tmp_path, prior_sds, posterior_sds, means=(1.0, 1.0), *,
+                           prior_means=None, posterior_means=None, cells=(0, 1),
+                           vor=None, realizations=("base", "1"), family="array",
+                           model=_UNSET):
+    """A stub carrying a CAPTURED FIELD, for the `field()` statistics and maps.
+
+    Two realizations per ensemble, with the per-cell spread chosen by the caller
+    so the derived columns have known values.
+
+    `prior_means`/`posterior_means` both default to `means`; pass them
+    separately to make the two ensembles DIFFER, which is what `which=`,
+    `change` and a two-panel mosaic are about. `cells` shorter than the grid
+    leaves the rest uncaptured, exercising the NaN padding onto the full grid.
     """
 
     from myflopy.modflow.mf6.pest.ies import IesResults
 
     workspace = tmp_path / "capture"
-    workspace.mkdir(exist_ok=True)
-    names = [f"oname:kfieldl0_otype:arr_i:{cell}_j:0" for cell in (0, 1)]
+    workspace.mkdir(parents=True, exist_ok=True)
+    names = [f"oname:kfieldl0_otype:arr_i:{cell}_j:0" for cell in cells]
 
-    def _ensemble(sds):
+    def _ensemble(cell_means, sds):
         # Two realizations symmetric about the mean -> ddof=1 std is exactly sd.
         rows = {
             name: [mean - sd / 2 ** 0.5, mean + sd / 2 ** 0.5]
-            for name, mean, sd in zip(names, means, sds, strict=True)
+            for name, mean, sd in zip(names, cell_means, sds, strict=True)
         }
-        return pd.DataFrame(rows, index=["base", "1"])
+        return pd.DataFrame(rows, index=list(realizations))
 
-    prior, posterior = _ensemble(prior_sds), _ensemble(posterior_sds)
-    observation_data = pd.DataFrame({"obsnme": names, "obsval": [0.0, 0.0],
-                                     "weight": [0.0, 0.0]}).set_index("obsnme")
+    prior = _ensemble(prior_means or means, prior_sds)
+    posterior = _ensemble(posterior_means or means, posterior_sds)
+    observation_data = pd.DataFrame(
+        {"obsnme": names, "obsval": [0.0] * len(names), "weight": [0.0] * len(names)}
+    ).set_index("obsnme")
 
     class _Stub(IesResults):
         def __init__(self):
             self.workspace = workspace
-            self.model = SimpleNamespace(vor=_two_cell_vor_clockwise())
+            self.model = (
+                SimpleNamespace(vor=vor or _two_cell_vor_clockwise())
+                if model is _UNSET else model
+            )
             self.pst = SimpleNamespace(observation_data=observation_data)
             self.__dict__["_metadata"] = {"capture_fields": [
                 {"prefix": "kfield", "layer_prefixes": {"0": "kfieldl0"},
-                 "target": "k", "family": "array", "name": "k"}
+                 "target": "k", "family": family, "name": "k"}
             ]}
 
         @property
@@ -2155,3 +2188,376 @@ def test_a_linear_single_field_map_is_not_labelled_in_decades(tmp_path):
 
     assert trace.colorbar.ticktext is None
     assert trace.colorbar.tickvals is None
+
+
+# -- 6.4C: fast coverage for the field maps ---------------------------------
+# The capture stub above drives these without pyEMU, pestpp or MODFLOW; the slow
+# end-to-end test proves the same path against a real run.
+
+
+def test_a_prior_field_map_maps_the_prior_and_says_so(tmp_path):
+    """`which=` picks the ensemble, and nothing pinned it before.
+
+    Until the stub could give prior and posterior DIFFERENT means, both panels
+    carried identical values -- so swapping `which` (or ignoring it) passed the
+    whole suite. The title has to move too, or a reader cannot tell the two
+    figures apart.
+    """
+
+    results = _stub_ies_with_capture(
+        tmp_path, prior_sds=(4.0, 4.0), posterior_sds=(1.0, 1.0),
+        prior_means=(0.001, 100.0), posterior_means=(0.01, 10.0),
+    )
+
+    prior = results.plot_field("k", stat="mean", which="prior")
+    posterior = results.plot_field("k", stat="mean", which="posterior")
+
+    # mean is log-scaled by policy, so these are log10 of the real means
+    assert list(prior.data[0].z) == pytest.approx([-3.0, 2.0])
+    assert list(posterior.data[0].z) == pytest.approx([-2.0, 1.0])
+    # the label has to move with the data, iteration included -- a map showing
+    # the prior under the posterior's iteration number is worse than no label
+    assert "(prior)" in prior.layout.title.text
+    assert "iteration 0" in prior.layout.title.text
+    assert "(posterior)" in posterior.layout.title.text
+    assert "iteration 3" in posterior.layout.title.text
+
+    # `std` selects a column the same way, and is linear -- so a `which` that is
+    # honored only on the log-scaled `mean` path would slip through above
+    assert list(results.plot_field("k", stat="std", which="prior").data[0].z) \
+        == pytest.approx([4.0, 4.0])
+    assert list(results.plot_field("k", stat="std", which="posterior").data[0].z) \
+        == pytest.approx([1.0, 1.0])
+
+
+def test_uncaptured_cells_stay_blank_on_a_partly_captured_field(tmp_path):
+    """`field()` has one row per CAPTURED cell, but every trace column must be
+    exactly ncpl long -- so the values are scattered onto the full grid with NaN
+    left behind. Both the stub and the end-to-end test used to capture every
+    cell, so this padding ran in no test at all."""
+
+    results = _stub_ies_with_capture(
+        tmp_path, prior_sds=(1.5, 2.5), posterior_sds=(1.5, 2.5),
+        means=(2.0, 20.0), cells=(0, 3), vor=_four_cell_vor_clockwise(),
+    )
+
+    frame = results.field("k")
+    assert list(frame["cell"]) == [0, 3]
+    assert len(frame) == 2 < int(results.model.vor.ncpl)
+
+    trace = results.plot_field("k", stat="mean").data[0]
+    assert len(trace.z) == 4 and len(trace.customdata) == 4
+    assert trace.z[0] == pytest.approx(np.log10(2.0))
+    assert trace.z[3] == pytest.approx(np.log10(20.0))
+
+    # Asserted on a LINEAR stat: `mean` is log-scaled, and log10(0) is blanked
+    # anyway, so a zero-filled pad would read as NaN there and this would pass
+    # against a padding that quietly invents "0" for cells nobody captured.
+    spread = results.plot_field("k", stat="std").data[0]
+    assert list(spread.z)[0] == pytest.approx(1.5)
+    assert list(spread.z)[3] == pytest.approx(2.5)
+    assert np.isnan(spread.z[1]) and np.isnan(spread.z[2])
+
+
+def test_a_field_frame_carries_cell_as_a_column_not_an_index(tmp_path):
+    """The docstring promises this explicitly -- callers merge the frame on
+    `cell`, which silently produces nothing if it is the index instead."""
+
+    frame = _stub_ies_with_capture(
+        tmp_path, prior_sds=(1.0, 1.0), posterior_sds=(1.0, 1.0),
+        cells=(3, 0), vor=_four_cell_vor_clockwise(),
+    ).field("k")
+
+    assert "cell" in frame.columns
+    assert list(frame.index) == list(range(len(frame)))
+    assert list(frame["cell"]) == [0, 3]  # sorted, whatever order they arrived in
+
+
+def test_a_change_map_plots_the_log_ratio_but_hovers_the_raw_ratio(tmp_path):
+    """What is plotted is log10(post/prior) so the scale is symmetric about no
+    change; what the reader is shown on hover is the ratio itself. Conflating
+    the two turns "10x more conductive" into "1"."""
+
+    results = _stub_ies_with_capture(
+        tmp_path, prior_sds=(1.0, 1.0), posterior_sds=(1.0, 1.0),
+        prior_means=(1.0, 10.0), posterior_means=(10.0, 1.0),
+    )
+
+    frame = results.field("k")
+    assert list(frame["change"]) == pytest.approx([10.0, 0.1])
+
+    trace = results.plot_field("k", stat="change").data[0]
+    assert list(trace.z) == pytest.approx([1.0, -1.0])  # log10(10), log10(0.1)
+    # ...while the hover carries the ratio itself (customdata[1], per the template;
+    # [0] is the cell id). Pre-formatted strings, hence the float().
+    assert "posterior / prior" in trace.hovertemplate
+    assert [float(row[1]) for row in trace.customdata] == pytest.approx([10.0, 0.1])
+
+
+def test_a_mosaic_panel_shows_its_own_ensemble_on_the_pooled_scale(tmp_path):
+    """The point of a mosaic is that the two panels differ but are comparable:
+    each draws its own ensemble, both on one shared color axis spanning both."""
+
+    results = _stub_ies_with_capture(
+        tmp_path, prior_sds=(1.0, 1.0), posterior_sds=(1.0, 1.0),
+        prior_means=(0.001, 100.0), posterior_means=(0.01, 10.0),
+    )
+
+    figure = results.plot_field_mosaic("k", stat="mean")
+    panels = [trace for trace in figure.data if getattr(trace, "z", None) is not None]
+
+    assert len(panels) == 2
+    assert list(panels[0].z) == pytest.approx([-3.0, 2.0])   # prior
+    assert list(panels[1].z) == pytest.approx([-2.0, 1.0])   # posterior
+    # pooled across BOTH panels, not just the first
+    assert figure.layout.coloraxis.cmin == pytest.approx(-3.0)
+    assert figure.layout.coloraxis.cmax == pytest.approx(2.0)
+
+
+def test_a_static_field_map_reads_in_real_units_and_a_linear_one_does_not(tmp_path):
+    """`plot_field`'s own call of `_relabel_log_colorbar` -- the helper is tested
+    directly in test_colorscale_policy.py, but the wiring that decides WHEN to
+    apply it is only asserted here. A log map whose bar reads -2..1 is wrong."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(0.5, 2.0),
+                                     posterior_sds=(0.5, 2.0), means=(0.01, 10.0))
+
+    logged = results.plot_field("k", stat="mean", backend="matplotlib")
+    labels = [t.get_text() for t in logged.axes[-1].get_yticklabels() if t.get_text()]
+    # Which decades matplotlib places inside the limits is its business; that
+    # they are DECADES and not the log10 exponents (-2..1) is the contract.
+    assert labels and all(float(text) in (0.001, 0.01, 0.1, 1, 10, 100) for text in labels)
+    assert {"0.1", "10"} <= set(labels)
+
+    # std is linear by policy (a spread is legitimately 0), so it is not relabelled
+    linear = results.plot_field("k", stat="std", backend="matplotlib")
+    spread = [t.get_text() for t in linear.axes[-1].get_yticklabels() if t.get_text()]
+    assert any(float(text) not in (0.001, 0.01, 0.1, 1, 10, 100) for text in spread)
+
+
+def test_a_field_map_without_a_grid_names_the_way_to_attach_one(tmp_path):
+    """A run reopened without its model can still show tables; the map has to
+    say how to get the grid rather than failing on an attribute."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(1.0, 1.0),
+                                     posterior_sds=(1.0, 1.0), model=None)
+
+    with pytest.raises(ValueError, match="Spatial maps need the model grid"):
+        results.field("k")
+
+
+def test_an_unavailable_field_lists_what_is_available(tmp_path):
+    """Both lookups name the alternatives -- an empty message here means opening
+    a notebook and grepping the metadata by hand."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(1.0, 1.0),
+                                     posterior_sds=(1.0, 1.0))
+
+    with pytest.raises(ValueError, match=r"Captured layers: \[0\]"):
+        results.field("k", layer=1)
+    with pytest.raises(KeyError, match="Available"):
+        results.field("zzz")
+
+
+def test_a_list_field_is_refused_by_name_rather_than_mapped_wrong(tmp_path):
+    """Only array families (K, K33) have one value per cell. A list field would
+    otherwise be scattered onto cell ids it has no relationship to."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(1.0, 1.0),
+                                     posterior_sds=(1.0, 1.0), family="list")
+
+    with pytest.raises(NotImplementedError, match="list field"):
+        results.field("k")
+
+
+def test_a_run_without_a_base_realization_has_no_base_stat(tmp_path):
+    """`base` is the minimum-error-variance realization and is simply absent
+    from some runs -- the column is skipped and the stat refused by name."""
+
+    results = _stub_ies_with_capture(tmp_path, prior_sds=(1.0, 1.0),
+                                     posterior_sds=(1.0, 1.0),
+                                     realizations=("0", "1"))
+
+    assert "base" not in results.field("k").columns
+    with pytest.raises(ValueError, match="or unavailable"):
+        results.plot_field("k", stat="base")
+
+
+# -- 6.4C: a run with no registered forecasts (ledger 73) --------------------
+# `cal.forecast(...)` is optional, so `pestpp_options` carries no "forecasts"
+# key at all on an ordinary calibration -- and pyEMU answers None there.
+
+
+def _forecastless_ies(tmp_path, *, forecasts=None):
+    """An IesResults over a REAL pyemu Pst that registers no forecasts.
+
+    Deliberately not `_stub_ies_results`: its SimpleNamespace `pst` has no
+    `pestpp_options` at all, so it would raise AttributeError and never reach
+    the defect this pins.
+    """
+
+    pytest.importorskip("pyemu")
+    import pyemu
+
+    from myflopy.modflow.mf6.pest.ies import IesResults
+
+    pst = pyemu.Pst.from_par_obs_names(par_names=["p1", "p2"], obs_names=["o1", "o2"])
+    if forecasts is not None:
+        pst.pestpp_options["forecasts"] = forecasts
+
+    class _Stub(IesResults):
+        def __init__(self):
+            self.workspace = tmp_path
+            self.model = None
+            self.case = "noforecast"
+            self.pst = pst
+            self.__dict__["_metadata"] = {}
+
+        @property
+        def iterations(self):
+            return [0, 1]
+
+        @property
+        def noise(self):
+            return None
+
+    return _Stub()
+
+
+def test_forecast_names_is_empty_not_none_when_no_forecasts_registered(tmp_path):
+    """The regression anchor for ledger 73. pyEMU returns None (not []) when the
+    `forecasts` option was never written, and `list(None)` is a TypeError -- so
+    `settings`, `report()`, `forecasts()` and `forecast()` all died on the most
+    ordinary kind of run there is."""
+
+    assert _forecastless_ies(tmp_path).forecast_names == []
+
+
+def test_settings_renders_on_a_run_with_no_forecasts(tmp_path):
+    settings = _forecastless_ies(tmp_path).settings
+
+    assert settings.n_forecasts == 0
+    assert "forecasts: 0" in str(settings)
+
+
+def test_forecasts_table_is_empty_not_an_error_when_none_registered(tmp_path):
+    """`forecasts()` already carried an `if not rows` guard -- it was simply
+    unreachable, because the property raised before the loop could run."""
+
+    assert _forecastless_ies(tmp_path).forecasts().empty
+
+
+def test_forecast_lookup_reports_the_available_names_when_there_are_none(tmp_path):
+    """The authored KeyError names what you could have asked for; the TypeError
+    it used to raise instead named nothing."""
+
+    with pytest.raises(KeyError, match=r"Available: \[\]"):
+        _forecastless_ies(tmp_path).forecast("nope")
+
+
+def test_an_empty_forecasts_option_is_not_read_as_one_nameless_forecast(tmp_path):
+    """pyEMU splits an empty option string into `[""]`. Taken at face value that
+    reports one forecast and sends `report()` looking up an ensemble column
+    named "" -- so the falsy names are filtered, not merely None-guarded."""
+
+    assert _forecastless_ies(tmp_path, forecasts="").forecast_names == []
+
+
+def test_report_writes_html_on_a_run_with_no_forecasts(tmp_path):
+    """Covers BOTH of report()'s forecast sites: the loop, and the settings
+    block at the very end -- which is built after every figure, so fixing only
+    the loop would still blow up on the last line."""
+
+    results = _forecastless_ies(tmp_path)
+    # Stand in for the phi/obs figures, which need ensemble CSVs on disk; the
+    # forecast handling under test is independent of them.
+    blank = viz.Fig()
+    for name in ("plot_phi", "plot_phi_distribution", "plot_vs_obs",
+                 "plot_phi_contributions", "plot_parameters_at_bounds"):
+        setattr(results, name, lambda *a, **k: blank)
+
+    path = results.report(tmp_path / "review.html")
+
+    assert path.exists()
+    assert "forecasts: 0" in path.read_text(encoding="utf-8")
+
+
+def _run_with_a_pest_build(tmp_path, monkeypatch, model_result):
+    """A `Run` over a workspace holding one discovered PEST build.
+
+    `model_result` is called in place of `Run.model()` — return a stand-in model
+    or raise, to drive the two branches of `Run._pest_review_model`. `Run` is a
+    slots dataclass, so the patch goes on the CLASS.
+    """
+
+    from myflopy.modflow.mf6.pest import ies as ies_module
+    from myflopy.workspace import Run
+
+    template = tmp_path / "pest" / "demo"
+    template.mkdir(parents=True)
+    (template / "myflopy_pest_metadata.json").write_text(
+        '{"project_name": "demo", "model_name": "m", "pst_file": "demo.pst"}',
+        encoding="utf-8",
+    )
+
+    opened = {}
+    monkeypatch.setattr(ies_module, "open_ies_run",
+                        lambda target, **kwargs: opened.update(kwargs))
+    monkeypatch.setattr(Run, "model", lambda self, name=None: model_result())
+
+    return Run(name="r", workspace=tmp_path), opened
+
+
+def test_a_loaded_run_hands_its_model_to_review_without_resolving_it_to_list(
+    tmp_path, monkeypatch
+):
+    """`run.pest_runs` used to attach no model, so `review()` returned an
+    IesResults that refused every spatial map -- while both PEST notebooks said
+    it was interchangeable with `model.pest_runs`.
+
+    Goes through `Run.pest_runs` itself, not `find_pest_runs`: the wiring IS the
+    fix, and a test that calls `find_pest_runs(model_factory=...)` by hand passes
+    just as happily with the fix reverted.
+    """
+
+    resolved = []
+    sentinel = object()
+    run, opened = _run_with_a_pest_build(
+        tmp_path, monkeypatch, lambda: (resolved.append(1), sentinel)[1]
+    )
+
+    handles = run.pest_runs
+    assert len(handles) == 1
+    assert resolved == []  # listing must not resolve a model
+
+    handles[0].review()
+    assert resolved == [1] and opened["model"] is sentinel
+
+
+def test_a_run_that_cannot_name_one_model_reviews_without_a_grid(tmp_path, monkeypatch):
+    """A run holding several models cannot pick one, and guessing would be worse
+    than declining -- `review()` still opens, and the spatial maps raise their
+    own message naming the fix."""
+
+    def _ambiguous():
+        raise ValueError("Model name is required because this run has multiple models")
+
+    run, opened = _run_with_a_pest_build(tmp_path, monkeypatch, _ambiguous)
+    run.pest_runs[0].review()
+
+    assert opened["model"] is None
+
+
+def test_an_explicit_review_model_beats_the_run_default(tmp_path, monkeypatch):
+    """...and passing one explicitly must not resolve the run's model at all."""
+
+    resolved = []
+    chosen = object()
+    run, opened = _run_with_a_pest_build(
+        tmp_path, monkeypatch, lambda: resolved.append(1)
+    )
+
+    run.pest_runs[0].review(model=chosen)
+
+    assert opened["model"] is chosen
+    assert resolved == []

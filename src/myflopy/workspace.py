@@ -407,11 +407,29 @@ class Run:
         Returns a list of :class:`~myflopy.modflow.mf6.pest.runs.PestRunHandle`;
         call ``.review()`` to open one as :class:`IesResults`. Empty until a
         calibration has been built/run with its default workspace under this run.
+
+        The run's model is attached **lazily**, so ``review()`` can draw spatial
+        maps (which need the grid) while merely listing resolves nothing: a
+        listing property should not build a model view, cache it on the run, or
+        raise on a run whose model is ambiguous. A run holding several models
+        cannot pick one; there ``review(model=...)`` is the caller's job.
         """
 
         from myflopy.modflow.mf6.pest.runs import find_pest_runs
 
-        return find_pest_runs(self.workspace / "pest")
+        return find_pest_runs(self.workspace / "pest",
+                              model_factory=self._pest_review_model)
+
+    def _pest_review_model(self):
+        """This run's model for ``PestRunHandle.review()``, or None if ambiguous."""
+
+        try:
+            return self.model()
+        except (KeyError, ValueError):
+            # No discoverable model, or several and none nominated -- a
+            # model-less review still opens, it just refuses spatial maps
+            # with a message naming the fix.
+            return None
 
     def build(self) -> Run:
         """Build this run's FloPy simulation from its specification."""

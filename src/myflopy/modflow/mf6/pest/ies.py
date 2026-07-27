@@ -579,9 +579,17 @@ class IesResults:
 
     @property
     def forecast_names(self) -> list[str]:
-        """Observation names registered as forecasts (predictions of interest)."""
+        """Observation names registered as forecasts (predictions of interest).
 
-        return list(self.pst.forecast_names)
+        Empty when the run registered none -- which is the ordinary case, not an
+        exotic one, since ``cal.forecast(...)`` is optional and
+        ``PestProject._apply_forecasts`` writes no ``forecasts`` option without
+        it. pyEMU returns ``None`` there (and ``[""]`` for an empty option
+        string), so both are normalized away here rather than at the four call
+        sites downstream.
+        """
+
+        return [name for name in (self.pst.forecast_names or []) if name]
 
     # -- plots ------------------------------------------------------------
 
@@ -677,16 +685,13 @@ class IesResults:
         posterior = self.obs_ensemble(iteration if iteration is not None else self.posterior_iteration)._df
 
         if _normalize_backend(backend) == "matplotlib":
-            import seaborn as sns
-
-            with sns.axes_style("whitegrid"):
-                fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+            fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
             for ax, group in zip(axes[:, 0], chosen, strict=False):
                 group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
                 names = group_obs.index.tolist()
                 times = group_obs["_time"].to_numpy()
                 for real in prior.index:
-                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)
+                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 for real in posterior.index:
                     ax.plot(times, posterior.loc[real, names].to_numpy(dtype=float), color=_MPL_POST, lw=0.8, alpha=0.5)
                 ax.plot(times, group_obs["obsval"].to_numpy(dtype=float), "^", color=_MPL_MEAS, ms=7)
@@ -1129,14 +1134,11 @@ class IesResults:
             return names, times, measured, flags
 
         if _normalize_backend(backend) == "matplotlib":
-            import seaborn as sns
-
-            with sns.axes_style("whitegrid"):
-                fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
+            fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
             for ax, group in zip(axes[:, 0], chosen, strict=False):
                 names, times, measured, flags = _group_data(group)
                 for real in prior.index:
-                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color="0.6", lw=0.8, alpha=0.4)
+                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 ax.plot(times[~flags], measured[~flags], "^", color=_MPL_MEAS, ms=7, label="measured")
                 if flags.any():
                     ax.plot(times[flags], measured[flags], "X", color=_MPL_CONFLICT, ms=10, label="prior-data conflict")
@@ -1239,7 +1241,9 @@ class IesResults:
         if self.model is None:
             raise ValueError(
                 "Spatial maps need the model grid. Open the run via "
-                "cal.run_ies(...) (which passes the model), or pass model=... to IesResults."
+                "cal.run_ies(...) or model.pest_runs[i].review() (both pass the "
+                "model), or name one yourself with review(model=...) / "
+                "IesResults(..., model=...)."
             )
         ncpl = int(self.model.vor.ncpl)
         # JSON round-trips the int layer keys to strings.
@@ -1377,10 +1381,8 @@ class IesResults:
             if name in frame.columns and name != column:
                 payload[name] = _hover_column(_scatter(name))
 
-        # Ensemble row counts actually on disk. NOT self.settings, which raises
-        # TypeError on any run with no registered forecasts (pyEMU returns None
-        # for forecast_names), and not settings.num_reals, which is the REQUESTED
-        # count and is None for a run myflopy did not launch.
+        # Ensemble row counts actually on disk -- NOT settings.num_reals, which
+        # is the REQUESTED count and is None for a run myflopy did not launch.
         n_prior = int(self.prior._df.shape[0])
         n_post = int(self.posterior._df.shape[0])
         if stat_key in ("change", "reduction"):
@@ -1987,9 +1989,15 @@ class IesResults:
     def report(self, html_path, *, max_groups: int = 6) -> Path:
         """Write a single self-contained HTML report of the headline IES plots.
 
-        Bundles phi convergence, the ensemble-vs-observation comparison, and one
-        histogram per forecast into one file -- the ensemble analogue of the
-        deterministic ``PestRunResults.export_review``.
+        Bundles, in order: phi convergence, the phi distribution, the
+        ensemble-vs-observation comparison, phi contributions, parameters at
+        bounds, one histogram per forecast, and -- when the run carries a model
+        and captured fields -- the posterior mean and change maps of each.
+
+        The bundle is the headline set, not every figure on the class -- among
+        others it omits :meth:`plot_field` ``stat="reduction"``,
+        :meth:`plot_field_mosaic`, :meth:`plot_obs_residuals`,
+        :meth:`plot_prior_vs_obs` and :meth:`plot_conflict`. Call those directly.
 
         Returns
         -------
@@ -2033,7 +2041,8 @@ class IesResults:
 def open_ies_run(workspace, *, case_name: str | None = None, model=None) -> IesResults:
     """Open a completed PESTPP-IES run directory for assessment.
 
-    Convenience wrapper around :class:`IesResults` mirroring ``open_pest_run``.
+    Convenience wrapper around :class:`IesResults`. Usually reached through
+    ``model.pest_runs[i].review()`` rather than called directly.
     Pass ``model=`` (a myflopy model carrying the grid) to enable spatial
     parameter maps via :meth:`IesResults.plot_field`.
     """

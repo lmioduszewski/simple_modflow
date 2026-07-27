@@ -65,8 +65,8 @@ entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
 ## Test suite (fast by design)
-- Full suite (**940 passed / 1 skipped**, 2026-07-26): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ 2m30s; inner loop `pytest -m "not slow"` ≈ 21 s.
+- Full suite (**959 passed / 1 skipped**, 2026-07-26): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ 2m45s–3m40s; inner loop `pytest -m "not slow"` ≈ 32 s.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
 - Tests share ONE session-scoped canonical model on

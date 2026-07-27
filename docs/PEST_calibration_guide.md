@@ -211,9 +211,10 @@ ies.report("review.html")       # the headline plots bundled into one HTML
 
 Every plot takes `backend="matplotlib"` for static matplotlib/seaborn output instead
 of interactive Plotly — except `plot_field_mosaic`, which composes Plotly subplots and
-raises rather than pretending. `report(...)` bundles the phi, obs, bounds, forecast and
-`plot_field` mean/change figures; the reduction map, the mosaic and the residual map are
-not in it yet.
+raises rather than pretending. `report(...)` bundles the headline set — phi, obs,
+bounds, forecast and `plot_field` mean/change — not every figure on the class: the
+reduction map, the mosaic, the residual map, `plot_prior_vs_obs` and `plot_conflict`
+are called directly.
 
 **Reading the field maps.** They are colored by policy, and the policy depends on
 the statistic, not the parameter:
@@ -363,4 +364,5 @@ ies.report("review.html")
 ```
 
 Every plot above takes `backend="matplotlib"` if you prefer static
-matplotlib/seaborn output over interactive Plotly.
+matplotlib/seaborn output over interactive Plotly — except
+`plot_field_mosaic`, which composes Plotly subplots and refuses.

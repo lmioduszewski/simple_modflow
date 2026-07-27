@@ -45,6 +45,12 @@ class PestRunHandle:
     masters: dict[str, Path] = field(default_factory=dict)
     case: str = ""
     _model: object = field(default=None, repr=False)
+    # Deferred alternative to ``_model``: a zero-argument callable returning the
+    # model, or None. Discovering runs must stay side-effect free -- listing what
+    # was calibrated should not build a model view, cache it, or raise because a
+    # run holds several models -- so the model is resolved only when
+    # :meth:`review` actually needs the grid.
+    _model_factory: object = field(default=None, repr=False)
 
     @property
     def kinds(self) -> list[str]:
@@ -63,7 +69,9 @@ class PestRunHandle:
         model
             A myflopy model carrying the grid, enabling spatial parameter maps
             (:meth:`IesResults.plot_field`). Defaults to the model the handle was
-            discovered from (``model.pest_runs``).
+            discovered from -- ``model.pest_runs`` attaches it directly,
+            ``run.pest_runs`` resolves it here on first use. A run holding
+            several models cannot pick one, so pass ``model=`` yourself there.
         """
 
         from myflopy.modflow.mf6.pest.ies import open_ies_run
@@ -71,7 +79,11 @@ class PestRunHandle:
         target = self.masters.get(kind)
         if target is None:
             target = next(iter(self.masters.values()), self.template_dir)
-        return open_ies_run(target, case_name=self.case or None, model=model or self._model)
+        if model is None:
+            model = self._model
+        if model is None and self._model_factory is not None:
+            model = self._model_factory()
+        return open_ies_run(target, case_name=self.case or None, model=model)
 
     def __repr__(self) -> str:
         """Show the run name, model, and the execution kinds discovered on disk."""
@@ -92,7 +104,8 @@ def _master_kind(dirname: str) -> str:
     return "run"
 
 
-def find_pest_runs(root, *, model_name: str | None = None, model=None) -> list[PestRunHandle]:
+def find_pest_runs(root, *, model_name: str | None = None, model=None,
+                   model_factory=None) -> list[PestRunHandle]:
     """Discover the PEST runs under ``root``.
 
     Scans for ``myflopy_pest_metadata.json`` (one per ``PstFrom`` build) and pairs
@@ -109,6 +122,10 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None) -> list[P
     model
         Optional model attached to each handle so ``handle.review()`` enables
         spatial maps without re-passing it.
+    model_factory
+        Zero-argument callable resolving that model on demand, for callers whose
+        model cannot be resolved side-effect free while merely listing runs (see
+        ``Run.pest_runs``). Ignored when ``model`` is given.
 
     Returns
     -------
@@ -152,6 +169,7 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None) -> list[P
                 masters=masters,
                 case=case,
                 _model=model,
+                _model_factory=model_factory,
             )
         )
     return handles

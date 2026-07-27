@@ -114,11 +114,15 @@ def _pyemu_warning_class(pyemu_module):
 class PestProject:
     """Build a pyEMU/PEST++ calibration workspace from a ``myflopy`` model.
 
-    ``PestProject`` is the single front door for calibration. It compiles a few
-    readable declarations straight to native ``pyemu.utils.PstFrom`` and lets
-    pyEMU drive the forward run. Construct one with ``model.pest("calib")`` (which
-    seeds the model and a ``<workspace>/pest/<name>`` template directory for you)
-    or directly::
+    It compiles a few readable declarations straight to native
+    ``pyemu.utils.PstFrom`` and lets pyEMU drive the forward run.
+
+    **The front door is** ``model.pest("calib")``, which returns one of these
+    with ``start_datetime`` filled in from the model's TDIS. Constructing
+    ``PestProject(...)`` directly is the advanced path: everything else is the
+    same -- ``workspace`` still defaults to ``<model workspace>/pest/<name>``, so
+    the run is still discoverable through ``model.pest_runs`` -- but
+    ``start_datetime`` has no TDIS fallback and you must supply it::
 
         cal = model.pest("calib", start_datetime="2020-01-01")
         cal.parameterize("k",        style="pilotpoints", pp_space=8, physical=(1e-3, 100))
@@ -133,8 +137,9 @@ class PestProject:
     Use :meth:`parameterize` (styles ``constant`` / ``zone`` / ``grid`` /
     ``pilotpoints`` across every target), :meth:`observe`, :meth:`forecast`,
     :meth:`build`, :meth:`run_ies`/:meth:`prior` and :meth:`settings`. The runs
-    land beside the model and are reopened for review via ``model.pest_runs`` ->
-    :meth:`~...runs.PestRunHandle.review` (:class:`~...ies.IesResults`).
+    land beside the model and are reopened for review via ``model.pest_runs``
+    (or ``run.pest_runs``) -> :meth:`~...runs.PestRunHandle.review`
+    (:class:`~...ies.IesResults`).
 
     Parameters
     ----------

@@ -254,7 +254,9 @@ Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /
 `cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)`; discovery via
-`model.pest_runs`.
+`model.pest_runs` or `run.pest_runs`. **`model.pest(...)` is the front door** — it
+fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
+`mf.PestProject(...)` can be constructed directly, but that is the advanced path.
 
 **Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
 `model.pest_runs[i].review()`) — `IesResults` is a flat class, not the
@@ -272,9 +274,12 @@ start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(.
 | `capture_fields`, `observation_sets` | `report(path)` | what the run recorded; the headline plots bundled to HTML |
 
 Every figure takes `backend="matplotlib"` except `plot_field_mosaic`, which composes
-Plotly subplots and says so. Spatial methods need the model grid, which
-`run_ies`/`review()` attach automatically. `report(path)` covers phi, obs, bounds,
-forecasts and `plot_field` mean/change — not yet the reduction, mosaic or residual maps.
+Plotly subplots and says so. Spatial methods need the model grid, which `run_ies()` and
+`review()` attach automatically — including from `run.pest_runs`, which resolves the
+model on first `review()` so that listing runs stays cheap. (A run holding several
+models cannot pick one; pass `review(model=...)` there.) `report(path)` covers phi, obs,
+bounds, forecasts and `plot_field` mean/change — not the reduction, mosaic or residual
+maps, which are called directly.
 
 ### Engine layer (`mf.__engine__`)
 

@@ -1281,7 +1281,16 @@ style the rest, rather than forcing everything into choropleths:
    via the compare payload once 6.3.1 exists) — mark forward-looking, implement only the
    single-model maps + hover now.
 
-### 6.4 PEST-IES visualization & preferred-API integration
+### 6.4 PEST-IES visualization & preferred-API integration — DONE 2026-07-26
+
+> **All seven items landed across 6.4A (2026-07-25), 6.4B and 6.4C (2026-07-26).**
+> Three of the four planned figure names changed and one planned method was not built
+> at all, each for a reason established against the code rather than assumed — see the
+> per-item notes below and ledger 67–86. The recurring lesson: **the review layer was
+> further along than the plan assumed**, so every item here started with "verify what
+> already ships" and two of them shrank to nothing on contact. 6.4C's own scoping found
+> the same thing a third time (the capture-field fixture it was told to build already
+> existed), plus two wrong instructions in the handoff file it inherited.
 
 The review layer exists and is good; bring it up to the house standards and close the
 workshop gaps (memory: spatial parameter-field maps were the biggest gap; DBTL framing +
@@ -1337,17 +1346,47 @@ input-capture-as-observations is the driving workflow):
    > static backend scatters raw x/y and only the Plotly path needs `points_to_latlon`.
    > That is why this is not plotly-only. Lake/SFR targets record only a lake or reach
    > number and are deferred — ledger 76.
-5. **Ensure every IES plot uses the viz front door** (`viz.Fig`/`mpl_axes`) — audit
-   `ies.py`'s figure construction; it already has `backend=` switches, so this is
-   verification + spot fixes, not a rewrite.
-6. **Preferred-API surface check:** `model.pest(name, ...)` front door,
-   `model.pest_runs` / `run.pest_runs` → `.review()` — already the intended path;
-   document in the capability map that `PestProject` direct construction is advanced.
+5. **Ensure every IES plot uses the viz front door. — DONE 2026-07-26 (6.4C).**
+   The audit found it **already clean**: every figure-producing entry point on
+   `IesResults` (plus `IesForecast.plot` and the private `_field_choro` seam) routes
+   through `viz.Fig`/`viz.subplots`/`viz.mpl_axes`/`viz.mosaic` — or a `Choro`, which is
+   built on them — on both backends; `ies.py` constructs no raw `go.Figure`/
+   `plt.subplots`; and the other eleven `pest/` modules build no figures at all. Two
+   defects, both fixed:
+   the last bare `color="0.6"` greys became `_MPL_PRIOR` — they draw the **prior**
+   ensemble, whose Plotly twins already used `_PRIOR_COLOR`, so the handoff's instruction
+   to use `mpl_ensemble` ("0.5") would have changed the render and inverted the semantics
+   `viz.PALETTE` documents — and two `with sns.axes_style("whitegrid")` wrappers around
+   `viz.mpl_axes`, which already does exactly that, were removed. `edgecolor="black"`
+   stays a literal (ledger 85); the pie charts' default category colors are deferred
+   (ledger 84).
+6. **Preferred-API surface check. — DONE 2026-07-26 (6.4C).**
+   `model.pest(name, ...)` is now documented as the front door in the capability map,
+   the package API reference and the `PestProject` docstring, with direct construction
+   called out as advanced (its docstring previously called *itself* "the single front
+   door" and had an "or directly::" clause whose example was `model.pest(...)` again).
+   > Scoping turned up a real defect behind the docs: **`run.pest_runs` attached no
+   > model**, so `run.pest_runs[i].review()` refused every spatial map, while both PEST
+   > notebooks told the reader it was interchangeable with
+   > `model.pest_runs`. Fixed in the code rather than the docs — via a lazy
+   > `model_factory`, since listing calibrations must not load a MF6 simulation — which
+   > makes the notebooks' existing claim true without editing a canonical notebook.
+   > Ledger 82. Moving `mf.PestProject` out of the preferred export tier is deferred
+   > (ledger 86): that is a public-API change this item does not ask for.
    The parameterization backlog itself is Phase 5.8.
-7. **Tests:** fast tests with a synthetic ensemble fixture (small DataFrames standing in
-   for pyemu ensembles — `ies.py` methods are DataFrame-driven; check what
-   `test_mf6_pest.py` already fakes) + one slow end-to-end extension of the existing
-   IES canonical test asserting the new maps render with hover + policy colors.
+7. **Tests. — DONE 2026-07-26 (6.4B + 6.4C).**
+   > The synthetic fixture this item asks for was **already built in 6.4B**
+   > (`_stub_ies_with_capture`, plus `_stub_ies_results` for the residual path) — the
+   > handoff's claim that "only the slow e2e proves the field maps" was stale on
+   > arrival. The real deficit was that the stub was too *degenerate* to see the
+   > behavior: prior and posterior shared one `means` tuple, so `change` was identically
+   > 1.0, both mosaic panels were pixel-identical, and **a swapped `which=` would have
+   > passed the whole suite**. 6.4C parameterized it (separate prior/posterior means,
+   > a cell subset, the realization index, the capture family, the model) and added
+   > ten fast field tests — including the NaN padding onto uncaptured cells, which ran
+   > in no test at all because both the stub and the e2e captured every cell.
+   Also added: six forecast-less tests over a real `pyemu.Pst` (ledger 73), two for
+   `run.pest_runs` (ledger 82), and four backend assertions the audit found missing.
 
 ### 6.5 Capability-map + manual updates
 
@@ -1651,10 +1690,13 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       `results.travel_time`/`.endpoints`/`.capture` choropleth nouns with hover + policy
       colors (6.3B, 2026-07-25); `results.pathlines` plotly map + `pathline_hover`,
       `Choro` overlays carried through `viz.mosaic`, `PALETTE.categorical` (6.3C, 2026-07-25)
-- [ ] IES: `plot_field` hover + per-stat diverging/earth colors **(6.4A DONE 2026-07-25:
-      `parameter_field_hover`, `_field_map_policy`, `build_choropleth` widened, color
-      literals retired)**; `field_uncertainty_map`; `field_mosaic` (synced
-      prior/posterior); residual map; all IES figures on the viz front door (6.4)
+- [x] IES **(§6.4 COMPLETE 2026-07-26)**: `plot_field` hover + per-stat diverging/earth
+      colors (`parameter_field_hover`, `_field_map_policy`, `build_choropleth` widened —
+      6.4A); the uncertainty map as `plot_field(stat="reduction")`, NOT the originally
+      planned `field_uncertainty_map` (half of it already shipped in 6.4A — ledger 75);
+      `plot_field_mosaic`, not `field_mosaic`, over a new `viz.mosaic(colorbar=)`;
+      `obs_residuals`/`plot_obs_residuals` (6.4B); every IES figure verified on the viz
+      front door, the last color literals retired, and the preferred-API docs (6.4C)
 - [ ] `_flopy_compat.py` is the only importer of flopy non-mf6 internals — including the
       6.0 readers (7.1)
 - [ ] `myflopy` logger wired; no stray prints; exception swallows narrowed (7.2, 7.3)

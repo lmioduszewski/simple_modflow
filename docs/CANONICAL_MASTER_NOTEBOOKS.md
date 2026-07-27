@@ -30,7 +30,9 @@ next topic.
    `parameterize` / `observe` / `forecast` / `build` over the canonical model.
 7. `canonical_06_pest_ies_uncertainty.ipynb`: ensemble uncertainty + the per-cycle
    IES diagnostics (prior Monte Carlo, prior-data conflict, phi distribution &
-   contributions, parameters at bounds, forecast uncertainty).
+   contributions, parameters at bounds, forecast uncertainty) and the spatial
+   review layer — parameter-field maps, the uncertainty-reduction map, the
+   prior-vs-posterior mosaic and the observation residual map.
 
 Use `CanonicalModelConfig.validation()` for quick work and
 `CanonicalModelConfig()` for the full model with at least 10,000 horizontal cells.

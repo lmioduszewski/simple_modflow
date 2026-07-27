@@ -1228,17 +1228,27 @@ same day, which is the useful part of the result.
       and would still be invisible on the matplotlib backend, which has no hover at all.
       The title is free, visible on both backends, and survives `report()`'s HTML.
     - Also: the counts come from `self.prior._df.shape[0]` / `posterior`, NOT from
-      `settings.num_reals` — that is the *requested* count, is `None` for a run myflopy
-      did not launch, and reaching `IesResults.settings` at all raises `TypeError` on
-      any run with no registered forecasts (pyEMU returns `None` from `forecast_names`).
+      `settings.num_reals` — that is the *requested* count and is `None` for a run
+      myflopy did not launch. (This entry also used to cite the forecast-less
+      `TypeError` as a second reason; that was entry 73, **fixed in 6.4C**.)
 
-73. **`IesResults.settings` and `report()` still raise on a forecast-less run
-    (pre-existing, NOT fixed).**
-    - What: `settings` does `len(self.forecast_names)` → `list(None)` when no forecasts
-      are registered; `report()` iterates the same property.
-    - Why not fixed: found while scoping 6.4A, but it is a defect in a different
-      surface with its own tests to add. `plot_field` simply does not depend on it.
-    - Follow-up: fold into 6.4C, which is already touching this file's test coverage.
+73. **`IesResults.settings` and `report()` raised on a forecast-less run —
+    RESOLVED in 6.4C (2026-07-26).**
+    - What was wrong: pyEMU's `Pst.forecast_names` returns `None` when the `forecasts`
+      option was never written, so `list(None)` raised `TypeError` in `settings`,
+      `report()`, `forecasts()` and `forecast()`. A run with no `cal.forecast(...)` is
+      the ordinary case, not an exotic one — `PestProject._apply_forecasts` early-returns
+      without writing the option — so the whole review surface died on it.
+    - Fixed at the single source (`IesResults.forecast_names`) rather than the four
+      call sites: the declared return type was already `list[str]`, nothing anywhere
+      branched on the `None`, and `forecasts()` already carried an `if not rows` guard
+      that was simply unreachable. The build side already did the same thing
+      (`PestProject.settings` uses `.get("forecasts", "")` → 0).
+    - The fix filters falsy names rather than only guarding `None`: pyEMU splits an
+      empty option string into `[""]`, which would report one forecast and send
+      `report()` looking up an ensemble column named `""`.
+    - Pinned by six tests over a real `pyemu.Pst` (the existing `_stub_ies_results` has
+      no `pestpp_options`, so it raises `AttributeError` before reaching the defect).
 
 74. **`logscale` maps read in log10 units unless the caller relabels the colorbar
     (pre-existing, fixed only for `plot_field`).**
@@ -1369,3 +1379,88 @@ same day, which is the useful part of the result.
       carry weight 1.0, so PESTPP is history-matching the base model's own output at
       times nobody measured. That is a build-side question (`observations.py`), with
       its own tests, and is out of scope for a review-layer change.
+
+82. **`run.pest_runs` attaches its model lazily, and gives up silently on a
+    multi-model run.**
+    - What was wrong (found scoping 6.4C): `Run.pest_runs` called
+      `find_pest_runs(root)` with no `model=`, so every handle carried `_model=None`
+      and `run.pest_runs[i].review()` returned an `IesResults` that refused **every**
+      spatial map — while `canonical_04` and `canonical_06` both told the reader it
+      was interchangeable with `model.pest_runs`. (`package_api_reference.md` did not:
+      it never mentioned `run.pest_runs` at all until this pass added it.)
+    - Fixed by attaching a **`model_factory`** (a zero-argument callable) rather than a
+      model, so discovery stays side-effect free: resolving eagerly would build a model
+      view, cache it on the run, and raise on a run holding several models — all while
+      the caller may only want to list what was calibrated. Note the cost argument is
+      about side effects, **not** load time: `Run.model()` returns a lazy
+      `LoadedMf6Run` for a reopened run and does not read the MF6 files itself.
+    - The compromise: `Run._pest_review_model` swallows `KeyError`/`ValueError` from
+      `Run.model()` — a run with no discoverable model, or several and none nominated,
+      yields `model=None` and the "Spatial maps need the model grid" message (widened
+      in this pass to name `review(model=...)`, which it did not before). Guessing one
+      of several models would be worse than declining.
+    - Not done, and a real limitation: the factory takes no arguments, so it cannot use
+      the `model_name` the handle already carries from the build metadata. A
+      multi-model run therefore declines even when the run's own metadata names which
+      model was calibrated. Threading that through would remove the compromise above.
+    - Fixing the code rather than the docs was chosen deliberately: it makes the two
+      notebooks' existing claim TRUE without editing a canonical notebook.
+    - Also inherited, not introduced: a reopened run's grid gets `load_mf6_run`'s
+      default `crs="EPSG:2927"`, since `Run.model()` passes no CRS. `review()` on a
+      reopened run of a model in another CRS will therefore place its spatial maps
+      wrongly on the basemap. Pre-existing in `Run.model()`; this change is what makes
+      it reachable from the review layer.
+
+83. **`report()` still dies on a workspace with no phi output (deferred).**
+    - What: `report()` calls `plot_phi` and `plot_phi_distribution` unguarded, while
+      the diagnostics below them sit in `try/except`. `plot_phi` raises
+      `FileNotFoundError` when `<case>.phi.actual.csv` is absent; `plot_phi_distribution`
+      raises `ValueError` when every phi is non-finite (including all-zero phi, since
+      `log10(0)` is filtered out).
+    - Why not fixed in 6.4C: 6.4C's remit was the **forecast-less** `TypeError`, which
+      is a contract bug. Making `report()` skip its two headline figures is a behavior
+      change — a report that silently omits phi convergence looks like a report, and a
+      missing phi file usually means the run did not finish, which the caller should
+      hear about.
+    - Explicitly do **not** widen the `except ValueError` guarding `plot_vs_obs`: that
+      `ValueError` is the deliberate "no nonzero-weight groups" signal, and widening it
+      would also swallow the `FileNotFoundError` from a missing ensemble.
+
+84. **The phi-contribution pie charts still take the backend's default colors
+    (deferred).**
+    - What: `plot_phi_contributions(kind="pie")` passes no colors on either backend, so
+      the same observation group is one color in Plotly and another in matplotlib.
+      Observation groups are named categories and `viz.category_colors` /
+      `PALETTE.categorical` exists for exactly this.
+    - Why not fixed in 6.4C: it changes rendered output on both backends (not a
+      refactor), and `category_colors` memoizes for the **process lifetime**, so the
+      assignment depends on which figure a session drew first — acceptable for a
+      standalone map, but it needs thinking about inside a `report()` bundle.
+    - This is the last place in `ies.py` where a semantic color is left to a default;
+      the audit in 6.4C found every other figure on the viz front door.
+
+85. **`edgecolor="black"` in `plot_obs_residuals` stays a literal: PALETTE covers
+    semantic colors, not structural ones.**
+    - What: the residual scatter outlines its markers in black. The 6.4C color audit
+      asked whether that belongs in `viz.PALETTE`.
+    - Decision: no. The marker's *meaning* is carried by its fill (`c=residual` on the
+      shared diverging cmap); the edge only separates a marker from the cell beneath
+      it. `PALETTE` has no edge/outline member, and adding one for this call site would
+      mean reconciling the other structural literals scattered across three modules in
+      the same pass (`contour_plotting.py` `#222222`, `package_plotting.py` `#666666`
+      ×2, and in `choros.py` both the `edgecolor` parameter default and the `"black"`
+      region boundary).
+    - Known asymmetry, accepted: the Plotly twin draws no marker outline at all.
+
+86. **`mf.PestProject` is documented as the advanced path but still exported as
+    preferred (deferred).**
+    - What: 6.4C documents `model.pest(name, ...)` as the front door and direct
+      `PestProject(...)` construction as advanced, in the capability map, the package
+      API reference and the class docstring. But `PestProject` is still a first-tier
+      name in `mf.__all__`, not in `mf.__engine__` alongside the other builders.
+    - Why not moved: demoting it removes it from `__all__`/autocomplete and changes
+      `tests/api_snapshot.json` — a public-API change, which plan §6.4 item 6 does not
+      ask for and which should be an explicit decision rather than a side effect of a
+      documentation pass.
+    - Related asymmetry, also untouched: `find_pest_runs`/`PestRunHandle` are exported
+      at top level while `open_ies_run`/`IesResults` are not.
