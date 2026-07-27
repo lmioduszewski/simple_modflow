@@ -24,10 +24,31 @@ def _progress(verbosity_level: int, message: str):
         print(f"[LoadedMf6Run] {message}")
 
 
+def _model_dir(workspace: Path, model_name: str) -> Path:
+    """The directory holding ``model_name``'s package files.
+
+    A simulation with SEVERAL models gives each one its own subdirectory
+    (``model_rel_path``; see ``workspace._materialize_models``), so a coupled
+    GWF+GWT/GWE/PRT run keeps nothing but ``mfsim.nam`` at the top. Single-model
+    runs stay flat. Callers that glob for ``<model>.<suffix>`` must look here, not
+    in the workspace root, or they silently discover no packages at all.
+    """
+
+    candidate = workspace / model_name
+    return candidate if candidate.is_dir() else workspace
+
+
 def _infer_model_name(workspace: Path) -> str:
     """Infer the groundwater model name file stem for an MF6 workspace."""
 
     name_files = sorted(path for path in workspace.glob("*.nam") if path.name.lower() != "mfsim.nam")
+    if not name_files:
+        # Multi-model run: the name files live one level down, one per model.
+        name_files = sorted(
+            path
+            for path in workspace.glob("*/*.nam")
+            if path.name.lower() != "mfsim.nam"
+        )
     if not name_files:
         raise FileNotFoundError(f"No model name file found in workspace: {workspace}")
     return name_files[0].stem
@@ -72,12 +93,49 @@ def _discover_package_types(workspace: Path, model_name: str) -> list[str]:
     """Return recognized MF6 package types from files in ``workspace``."""
 
     package_types: list[str] = []
-    for path in sorted(workspace.glob(f"{model_name}.*")):
+    for path in sorted(_model_dir(workspace, model_name).glob(f"{model_name}.*")):
         suffix = path.suffix.lower().lstrip(".")
         package_type = _PACKAGE_SUFFIX_TO_TYPE.get(suffix)
         if package_type is not None and package_type not in package_types:
             package_types.append(package_type)
     return package_types
+
+
+def _discover_model_type(workspace: Path, model_name: str) -> str:
+    """The MF6 model kind (``gwf6``/``gwt6``/``gwe6``/``prt6``) from ``mfsim.nam``.
+
+    Without this a reopened GWT model reports the class default ``'gwf6'`` and so
+    offers ``.hds`` instead of ``.conc`` -- silently the wrong physics, and the
+    kind guard cannot help because it believes the lie. ``mfsim.nam``'s ``models``
+    block is the authority: ``<type>  <namefile>  <name>``.
+    """
+
+    namefile = Path(workspace) / "mfsim.nam"
+    if not namefile.exists():
+        return "gwf6"
+    try:
+        lines = namefile.read_text(encoding="utf-8").splitlines()
+    except OSError:  # pragma: no cover - unreadable workspace
+        return "gwf6"
+    in_models = False
+    for line in lines:
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered.startswith("begin") and "models" in lowered:
+            in_models = True
+            continue
+        if lowered.startswith("end") and "models" in lowered:
+            break
+        if not in_models or not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        # <type> <namefile> <name>; the name is optional in MF6, defaulting to
+        # the namefile stem.
+        if len(fields) >= 3 and fields[2].lower() == str(model_name).lower():
+            return fields[0].lower()
+        if len(fields) == 2 and Path(fields[1]).stem.lower() == str(model_name).lower():
+            return fields[0].lower()
+    return "gwf6"
 
 
 def _discover_grid_type(package_types: list[str]) -> str:
@@ -97,7 +155,7 @@ def _grid_package_path(workspace: Path, model_name: str, grid_type: str) -> Path
 
     if grid_type not in {"dis", "disu", "disv"}:
         return None
-    path = workspace / f"{model_name}.{grid_type}"
+    path = _model_dir(workspace, model_name) / f"{model_name}.{grid_type}"
     return path if path.exists() else None
 
 
@@ -322,6 +380,7 @@ class LoadedMf6Run(SimulationBase):
         grid_type = _discover_grid_type(available_package_types)
 
         self.name = model_name
+        self.model_type = _discover_model_type(workspace, model_name)
         self._sim = None
         self._gwf = None
         self.ims = None
@@ -363,8 +422,14 @@ class LoadedMf6Run(SimulationBase):
         _progress(
             verbosity_level,
             (
+                # The DISCOVERED grid type, not the `grid_type` property: the
+                # property falls back to inspecting `self.gwf`, so building this
+                # message loaded the entire FloPy simulation -- in a constructor
+                # whose whole promise is that it does not, and whose f-string is
+                # evaluated even at verbosity 0 where nothing is printed.
                 f"Prepared lazy file-backed model '{self.name}' "
-                f"(grid_type={self.grid_type}, packages={list(self.package_names)}). "
+                f"(grid_type={self._grid_type_override or 'unknown'}, "
+                f"packages={list(self.package_names)}). "
                 "Grid, outputs, and package definitions will load only when needed."
             ),
         )
@@ -502,8 +567,15 @@ class LoadedMf6Run(SimulationBase):
         if self._core_loaded and self._gwf is not None:
             return
         available = [name.lower() for name in self.package_names if name in _CORE_PACKAGE_TYPES]
-        if self.grid_type in {"dis", "disu", "disv"} and self.grid_type not in available:
-            available.insert(0, self.grid_type)
+        # The grid type DISCOVERED from filenames, never the `grid_type`
+        # property: that property falls back to inspecting `self.gwf`, and
+        # `self.gwf` calls this method -- an infinite recursion the moment
+        # discovery comes up empty. Keeping the loader on the cheap, file-derived
+        # answer makes the cycle structurally impossible rather than merely
+        # unreached.
+        discovered = getattr(self, "_grid_type_override", None)
+        if discovered in {"dis", "disu", "disv"} and discovered not in available:
+            available.insert(0, discovered)
         if "oc" not in available and "OC" in self.package_names:
             available.append("oc")
         self._load_simulation(load_only=available or None, mark_full=False, reason="core access")

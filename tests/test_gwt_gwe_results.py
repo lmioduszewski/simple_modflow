@@ -154,3 +154,85 @@ def test_gwe_temp_reader_and_map(gwe_run):
 
     with pytest.raises(AttributeError, match="is a GWE model.*heads"):
         model.hds
+
+
+def test_a_multi_model_workspace_is_discoverable_without_loading_flopy(tmp_path):
+    """Reopening ANY model of a coupled run used to raise RecursionError.
+
+    A simulation with several models gives each its own subdirectory, so nothing
+    but `mfsim.nam` sits at the top. Package discovery globbed the workspace
+    ROOT, found nothing, left the grid type "unknown", and the `grid_type`
+    property then fell back to inspecting `self.gwf` -- whose loader consults
+    `grid_type`. Every reopened coupled model, transport or flow, recursed to
+    death.
+
+    Deliberately a file-tree fixture, not a real run: the failure was in cheap
+    filename discovery, long before FloPy was asked for anything, and pinning it
+    that way keeps it fast and independent of MF6.
+    """
+
+    from myflopy.project.run_model import load_mf6_run
+
+    (tmp_path / "mfsim.nam").write_text(
+        "BEGIN models\n"
+        "  gwf6  flow/flow.nam  flow\n"
+        "  gwt6  trans/trans.nam  trans\n"
+        "END models\n",
+        encoding="utf-8",
+    )
+    for name, suffix in (("flow", "disv"), ("trans", "disv")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / f"{name}.nam").touch()
+        (tmp_path / name / f"{name}.{suffix}").touch()
+
+    flow = load_mf6_run(tmp_path, model_name="flow")
+    trans = load_mf6_run(tmp_path, model_name="trans")
+
+    assert flow.grid_type == "disv" and trans.grid_type == "disv"
+    assert "DISV" in flow.package_names
+
+    # ...and the reopened transport model must know it is transport, or it
+    # advertises `.hds` and hands back the wrong physics under a familiar name.
+    assert trans.model_type == "gwt6"
+    assert flow.model_type == "gwf6"
+
+    # a single-model workspace stays flat and must keep working
+    flat = tmp_path / "solo"
+    flat.mkdir()
+    (flat / "mfsim.nam").write_text(
+        "BEGIN models\n  gwf6  solo.nam  solo\nEND models\n", encoding="utf-8"
+    )
+    (flat / "solo.nam").touch()
+    (flat / "solo.disv").touch()
+    assert load_mf6_run(flat).name == "solo"
+    assert load_mf6_run(flat).grid_type == "disv"
+
+
+def test_the_lazy_loader_does_not_recurse_when_no_grid_type_is_discovered(tmp_path):
+    """The recursion guard, pinned independently of the discovery fix.
+
+    Fixing discovery hides this: with a grid type discovered from filenames,
+    `grid_type` answers from the override and never reaches `self.gwf`. But the
+    cycle is still there for any workspace whose grid package is not
+    recognizable -- `grid_type` -> `gwf` -> `_ensure_core_loaded` -> `grid_type`.
+    So assert the loader uses the cheap file-derived answer, not the property.
+    """
+
+    from myflopy.project.run_model import load_mf6_run
+
+    (tmp_path / "mfsim.nam").write_text(
+        "BEGIN models\n  gwf6  solo.nam  solo\nEND models\n", encoding="utf-8"
+    )
+    (tmp_path / "solo.nam").touch()
+
+    model = load_mf6_run(tmp_path, model_name="solo")
+    assert model._grid_type_override is None, "no grid package -> nothing discovered"
+
+    try:
+        model._ensure_core_loaded()
+    except RecursionError:
+        pytest.fail("the loader re-entered itself through the grid_type property")
+    except Exception:
+        # FloPy cannot load this stub workspace, which is fine and beside the
+        # point: what matters is that it got as far as trying.
+        pass

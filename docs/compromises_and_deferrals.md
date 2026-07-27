@@ -1514,3 +1514,32 @@ same day, which is the useful part of the result.
       needs *a* field without asserting which physics it is.
     - Kept the `getattr(self.model, "_field_reader", None) or self.model.hds` form so
       duck-typed stand-ins that are not a `SimulationBase` keep working.
+
+89. **Reopening any multi-model run raised `RecursionError` (pre-existing, FIXED
+    2026-07-27).**
+    - What: a simulation with several models gives each one its own subdirectory
+      (`workspace._materialize_models`), so a coupled GWF+GWT/GWE/PRT run keeps nothing
+      but `mfsim.nam` at the top. `LoadedMf6Run` discovered packages by globbing the
+      workspace ROOT, found none, left the grid type `"unknown"`, and the `grid_type`
+      property then fell back to inspecting `self.gwf` — whose loader consults
+      `grid_type`. `load_run(ws).model(name)` recursed to death for **every** model of
+      a coupled run, flow or transport.
+    - Four distinct defects, all fixed: (a) package/grid discovery now looks in
+      `<workspace>/<model>/` via `_model_dir`; (b) `_infer_model_name` falls back to
+      one level of subdirectories; (c) `_ensure_core_loaded` uses the DISCOVERED
+      `_grid_type_override` instead of the `grid_type` property, which makes the cycle
+      structurally impossible rather than merely unreached; (d) the constructor's
+      progress message interpolated `self.grid_type` — so a "lazy, file-backed" loader
+      loaded the entire FloPy simulation just to build a string, **even at verbosity 0
+      where the string is discarded**.
+    - (c) needs its own test: once (a) works, `grid_type` answers from the override and
+      never reaches `self.gwf`, so the guard is unexercised by the multi-model case.
+      Pinned separately against a workspace with no recognizable grid package.
+    - Also fixed alongside: `LoadedMf6Run` never set `model_type`, so a reopened GWT/GWE
+      model reported the class default `'gwf6'` and offered `.hds` — silently the wrong
+      physics under a familiar name, with the kind guard unable to help because it
+      believed the lie. Now read from `mfsim.nam`'s `models` block.
+    - Scope note: found while scoping §6.1 items 3–4, and fixed FIRST at the user's
+      direction, because it meant those features would work only on a live built run
+      and appear broken to anyone returning to a run in a later session — the
+      documented purpose of `load_run`.
