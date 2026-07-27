@@ -210,7 +210,7 @@ class Choro:
         # None for non-field types (ks/rch/...), which fall back to heads for timing.
         self._depvar_attr = _DEPVAR_READER_ATTR.get(type)
         if model is not None:
-            self.kstpkper = (self._depvar_reader or self.model.hds).kstpkper[0] if kstpkper is None else kstpkper
+            self.kstpkper = self._timing_reader.kstpkper[0] if kstpkper is None else kstpkper
         else:
             self.kstpkper = None
         self._per = None
@@ -328,6 +328,25 @@ class Choro:
         return getattr(self.model, depvar_attr)
 
     @property
+    def _timing_reader(self):
+        """The reader this map borrows its time axis and layer table from.
+
+        Non-field maps -- ``type='custom'`` (every package-grammar map), ``ks``,
+        ``rch``, ... -- have no dependent variable of their own but still need a
+        ``kstpkper``. They used to borrow ``model.hds`` unconditionally, which
+        the kind guard makes RAISE on a GWT/GWE model: that one fallback is why
+        no package map, group diff, or budget map worked on a transport model at
+        all. Borrow the model's OWN dependent variable instead.
+        """
+
+        reader = self._depvar_reader
+        if reader is not None or self.model is None:
+            return reader
+        # getattr for the benefit of duck-typed stand-ins that are not a
+        # SimulationBase; a real model always has it.
+        return getattr(self.model, "_field_reader", None) or self.model.hds
+
+    @property
     def _value_column(self):
         """Stored value column of the active reader (``'elev'`` for heads)."""
 
@@ -350,7 +369,7 @@ class Choro:
         """
 
         if self._all_heads is None:
-            reader = self._depvar_reader or self.model.hds
+            reader = self._timing_reader
             self._all_heads = reader.all_values
         return self._all_heads
 
@@ -494,7 +513,7 @@ class Choro:
 
         if kstpkper is not None:
             assert isinstance(kstpkper, tuple), 'kstpkper must be an instance of tuple'
-            reader = self._depvar_reader or self.model.hds
+            reader = self._timing_reader
             assert kstpkper in reader.kstpkper, f'kstpkper {kstpkper} invalid, not listed in output file'
         self._kstpkper = kstpkper
 

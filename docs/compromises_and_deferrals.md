@@ -1178,6 +1178,13 @@ same day, which is the useful part of the result.
       own maps by shipping stops.
     - Cost: anyone reading a static signed-q map today reads it backwards relative to
       the interactive one.
+    - **Correction (2026-07-27):** this entry understated the blast radius. The
+      mirroring was NOT confined to the registry's per-package `q` scales — the
+      **grouped difference maps** were affected too, via
+      `get_default_group_compare_colorscale()` returning the same bare name to six
+      call sites (`group/spatial.py`, `inputs.py`, `results.py`, `sfr.py`, `uzf.py`,
+      `lak.py`). That half is **fixed** (ledger 87); the per-package `q` scales listed
+      above are still open.
 
 71. **Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
     - What: `_log_decade_colorbar` puts real-unit ticks (`0.1x`, `1x`, `10x`) on a log
@@ -1464,3 +1471,46 @@ same day, which is the useful part of the result.
       documentation pass.
     - Related asymmetry, also untouched: `find_pest_runs`/`PestRunHandle` are exported
       at top level while `open_ies_run`/`IesResults` are not.
+
+87. **Every grouped difference map rendered mirrored on the static backend
+    (pre-existing, FIXED 2026-07-27).**
+    - What: `get_default_group_compare_colorscale()` returned the NAME `"RdBu"`, and
+      `choros.py`'s `_PLOTLY_TO_MPL_CMAP` maps `"rdbu"` to matplotlib's **reversed**
+      `"RdBu_r"`. So all six diff-map families — `group/spatial.py`, `inputs.py`,
+      `results.py`, `sfr.py`, `uzf.py`, `lak.py` — put red where `plot()` put blue.
+      One figure said "lower here" interactively and "higher here" statically.
+    - Found while scoping §6.1 items 3–4 (Δconc/Δtemp need the same scale); the user
+      chose to fix all six at once rather than ship stops only for the new maps and
+      leave the transport diffs disagreeing with `diff().hds`.
+    - **This is a visible change** to the static rendering of existing diff figures.
+      It is a correction, not a restyle — but a report generated before today and
+      regenerated after will not match.
+    - The old test asserted `== "RdBu"`, i.e. it pinned the *name* and so passed the
+      entire time the maps were wrong. Replaced with an assertion on the rendered ends
+      of BOTH backends, per the front-door pattern established in 6.4A.
+    - Judgment call inside the fix: the stops are **stated twice** — in
+      `package_registry._GROUP_COMPARE_DEFAULT_COLORSCALE` and in
+      `package_plotting._red_white_blue_diverging_colorscale()`. Importing the latter
+      into the registry was tried and reverted: the registry is the low-level source of
+      per-package truth, and depending on a drawing module inverted the import layering
+      (measured: it pushed ~18 modules up a layer). `test_the_two_diverging_orientations
+      _do_not_drift` asserts the two are equal, so the duplication cannot rot.
+
+88. **Non-field maps borrowed `model.hds` for their time axis, which broke every
+    package map on transport models (pre-existing, FIXED 2026-07-27).**
+    - What: `Choro` resolves a dependent-variable reader from its `type`, and
+      `_DEPVAR_READER_ATTR` knows only `hds`/`conc`/`temp`. Every other type — including
+      `type='custom'`, which is what the whole package-explorer grammar uses — fell
+      back to `self.model.hds` for `kstpkper` and the layer table. On a GWT/GWE model
+      §6.0's kind guard turns that into `AttributeError: model 'x' is a GWT model;
+      '.hds' (heads) is only available on GWF models`.
+    - Effect: no package input/result map, no group diff map, and no budget map worked
+      on a transport model at all — the failure was in the *timing* lookup, before
+      anything was drawn, which is why it looked unrelated to color or data.
+    - Fixed by borrowing the model's OWN dependent variable (`Choro._timing_reader` →
+      `SimulationBase._field_reader` → the existing `accessors.field_reader`, which was
+      written for exactly this and had one caller). `_field_reader` is deliberately
+      private and **ungated**, unlike `.hds`/`.conc`/`.temp`: kind-agnostic machinery
+      needs *a* field without asserting which physics it is.
+    - Kept the `getattr(self.model, "_field_reader", None) or self.model.hds` form so
+      duck-typed stand-ins that are not a `SimulationBase` keep working.

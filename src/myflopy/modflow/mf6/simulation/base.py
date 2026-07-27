@@ -13,6 +13,7 @@ import pandas as pd
 from myflopy.modflow.mf6.simulation.accessors import (
     build_choro,
     build_xsection,
+    field_reader,
     get_all_heads,
     get_budget,
     get_budget_cumulative,
@@ -532,6 +533,17 @@ class SimulationBase:
         """Tabular heads view across available results."""
 
         return get_all_heads(self)
+
+    @property
+    def _field_reader(self):
+        """This model's own dependent-variable reader, whatever kind it is.
+
+        Private and deliberately UNGATED, unlike ``.hds``/``.conc``/``.temp``:
+        it exists for kind-agnostic machinery that needs *a* time axis or field
+        without knowing (or caring) which physics it is looking at.
+        """
+
+        return field_reader(self)
 
     def to_xugrid(self, *, layers=None, times=None, name: str = "head", masked: bool = True):
         """Export simulated heads as an xugrid ``(time, layer, cell)`` object.

@@ -19,6 +19,7 @@ from myflopy.modflow.mf6.package_registry import (
     get_package_result_spec,
 )
 from myflopy.modflow.mf6.pest.ies import _field_map_policy, _relabel_log_colorbar
+from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import parameter_field_hover
 
 
@@ -306,9 +307,23 @@ def test_category_colors_are_policy_and_stable_across_figures(isolated_category_
 
 
 def test_diff_maps_use_rdbu_negative_red_positive_blue():
-    # plotly RdBu runs red (low) -> blue (high); with zmid=0 that is
-    # negative red / positive blue, the required diff-map orientation
-    assert get_default_group_compare_colorscale() == "RdBu"
+    """Negative red / positive blue -- and the SAME way round on both backends.
+
+    This used to assert the literal name ``"RdBu"``, which passed while the maps
+    were wrong: ``_PLOTLY_TO_MPL_CMAP["rdbu"]`` is ``"RdBu_r"``, so every diff
+    map in the project rendered with the colors swapped under ``plot_mpl`` --
+    "lower" and "higher" reading opposite between the interactive and static
+    versions of one figure. Asserting the rendered ends is what catches that;
+    asserting the name is what let it survive. Ledger 69/70.
+    """
+
+    scale = get_default_group_compare_colorscale()
+    assert not isinstance(scale, str), "a NAME renders mirrored on matplotlib; ship stops"
+    assert scale[0][1] == "#d62728" and scale[-1][1] == "#1f77b4"
+
+    colormap = mpl_colormap_for(scale)
+    assert colormap(0.0)[0] > colormap(0.0)[2]   # low end reddest
+    assert colormap(1.0)[2] > colormap(1.0)[0]   # high end bluest
 
 
 def test_gaining_losing_scale_is_blue_negative_red_positive():
@@ -605,3 +620,50 @@ def test_a_colorbar_callback_survives_a_mosaic_with_no_finite_data():
     )
 
     assert figure.layout.coloraxis.colorbar.ticktext is None
+
+
+def test_the_two_diverging_orientations_do_not_drift():
+    """`package_registry` states the diff-map stops itself instead of importing
+    them from `package_plotting`, because the registry is the low-level source of
+    per-package truth and must not depend on a drawing module. That duplication
+    is only safe if something compares them."""
+
+    from myflopy.modflow.mf6.package_plotting import (
+        _red_white_blue_diverging_colorscale,
+    )
+
+    assert get_default_group_compare_colorscale() == _red_white_blue_diverging_colorscale()
+
+
+def test_a_non_field_map_borrows_its_own_models_dependent_variable():
+    """A `type='custom'` map -- i.e. every package-grammar map -- has no reader of
+    its own and must borrow one for its time axis. Borrowing `model.hds`
+    unconditionally is what made every package map, group diff and budget map
+    raise on a GWT/GWE model, since the kind guard refuses `.hds` there.
+
+    The GWF half matters too: a transport-only fix that stopped flow models
+    reading heads would be a silent regression nothing else asserts.
+    """
+
+    from myflopy.modflow.utils.datatypes.choros import Choro
+
+    class _Reader:
+        kstpkper = [(0, 0)]
+
+    class _Transport:
+        model_type = "gwt6"
+        _field_reader = _Reader()
+
+        @property
+        def hds(self):
+            raise AssertionError("a GWT map must never reach for heads")
+
+    class _Flow:
+        model_type = "gwf6"
+        _field_reader = _Reader()
+        hds = _Reader()
+
+    for model in (_Transport(), _Flow()):
+        choro = Choro.__new__(Choro)
+        choro.model, choro._depvar_attr = model, None
+        assert choro._timing_reader.kstpkper == [(0, 0)]

@@ -496,7 +496,22 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
     ),
 }
 
-_GROUP_COMPARE_DEFAULT_COLORSCALE = "RdBu"
+# The policy for grouped difference maps: diverging, negative red / positive
+# blue. Explicit STOPS, not the name "RdBu" this used to be -- that name maps to
+# matplotlib's REVERSED "RdBu_r" (choros.py `_PLOTLY_TO_MPL_CMAP`), so every diff
+# map built from it drew red and blue swapped between `Choro.plot()` and
+# `Choro.plot_mpl()`. Ledger 69/70.
+#
+# Stated here rather than imported from `package_plotting`: this registry is the
+# low-level source of per-package truth and must not depend on a drawing module
+# (that import inverts the layering and pushes half the package up a layer).
+# `test_the_two_diverging_orientations_do_not_drift` pins these against
+# `_red_white_blue_diverging_colorscale()` so the duplication cannot rot.
+_GROUP_COMPARE_DEFAULT_COLORSCALE = [
+    [0.0, "#d62728"],
+    [0.5, "#ffffff"],
+    [1.0, "#1f77b4"],
+]
 
 
 def get_default_package_value_column(package_name: str) -> str | None:
@@ -565,10 +580,17 @@ def get_package_result_spec(package_name: str, result_name: str) -> ResultSpec |
     return spec.results.get(str(result_name).lower())
 
 
-def get_default_group_compare_colorscale() -> str:
-    """Return the default diverging colorscale for grouped difference maps."""
+def get_default_group_compare_colorscale() -> list[list[object]]:
+    """Return the default diverging colorscale for grouped difference maps.
 
-    return _GROUP_COMPARE_DEFAULT_COLORSCALE
+    Explicit STOPS, not the name ``'RdBu'`` this used to return. The name maps to
+    matplotlib's ``'RdBu_r'`` (``choros.py`` ``_PLOTLY_TO_MPL_CMAP``), so every
+    difference map built from it rendered with red and blue SWAPPED between
+    ``Choro.plot()`` and ``Choro.plot_mpl()`` -- a diff map that says "lower" on
+    one backend and "higher" on the other. Compromise ledger 69/70.
+    """
+
+    return [list(stop) for stop in _GROUP_COMPARE_DEFAULT_COLORSCALE]
 
 
 __all__ = [
