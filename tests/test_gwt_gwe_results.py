@@ -19,8 +19,12 @@ from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.specs import ModelContext
 
 
-def _coupled_run(tmp_path, kind: str):
-    """Build + run a small coupled GWF+(GWT|GWE) model; return the built ``Run``."""
+def _coupled_run(tmp_path, kind: str, *, porosity: float = 0.2):
+    """Build + run a small coupled GWF+(GWT|GWE) model; return the built ``Run``.
+
+    ``porosity`` is a knob so callers can build two models that differ in one
+    physical parameter -- what a grouped comparison needs to be meaningful.
+    """
 
     vor = irregular_voronoi_grid(nrow=8, ncol=8, cell_size=100.0)
     gp = vor.get_disv_gridprops()
@@ -46,7 +50,7 @@ def _coupled_run(tmp_path, kind: str):
 
     if kind == "gwt":
         transport = mf.gwt("trans", context=ctx, packages=[
-            disv(), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"), mf.mst(porosity=0.2),
+            disv(), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"), mf.mst(porosity=porosity),
             mf.ssm(sources=[["chd", "AUX", "concentration"]]),
             mf.oc(concentration_filerecord="trans.ucn", budget_filerecord="trans.cbc",
                   saverecord=[("CONCENTRATION", "ALL"), ("BUDGET", "ALL")]),
@@ -55,7 +59,7 @@ def _coupled_run(tmp_path, kind: str):
     else:
         transport = mf.gwe("trans", context=ctx, packages=[
             disv(), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"),
-            mf.est(porosity=0.2, heat_capacity_solid=800.0, density_solid=2650.0,
+            mf.est(porosity=porosity, heat_capacity_solid=800.0, density_solid=2650.0,
                    heat_capacity_water=4184.0, density_water=1000.0),
             mf.cnd(ktw=0.6, kts=0.5, alh=1.0, ath1=0.1),
             mf.ssm(sources=[["chd", "AUX", "temperature"]]),
@@ -375,6 +379,30 @@ def test_the_ssm_budget_is_reachable_by_its_package_name(gwt_run):
     # a genuinely absent package must still fail, and now says what IS available
     with pytest.raises(ValueError, match="Available records"):
         model.bud("drn")
+
+
+@pytest.mark.slow
+def test_the_xs_verb_works_on_the_transport_readers(gwt_run, gwe_run):
+    """``model.conc.xs()`` / ``.temp.xs()`` raised from the day they shipped.
+
+    ``XSection`` cached its value table from ``model.hds``, which the §6.0 kind
+    guard refuses on a transport model -- so ``xs`` raised "is a GWT model;
+    '.hds' is only available on GWF models" while the docs advertised the full
+    grammar. It now reads the model's OWN dependent variable. The column name
+    differs per kind (elev/conc/temp) but never mattered: the one consumer reads
+    values positionally (ledger 99).
+    """
+
+    from myflopy.viz import Fig
+
+    for run, reader_name in ((gwt_run, "conc"), (gwe_run, "temp")):
+        model = run.model("trans")
+        reader = getattr(model, reader_name)
+        assert isinstance(reader.xs(cells=[0, 5, 10]), Fig)
+
+        # the section really carries THIS model's field, not heads
+        section = reader._sections(cells=[0, 5, 10])[model.name]
+        assert reader_name in section.all_heads.columns
 
 
 @pytest.mark.slow

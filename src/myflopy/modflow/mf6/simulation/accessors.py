@@ -74,6 +74,16 @@ def get_all_heads(model):
     return get_hds(model).all_heads
 
 
+def get_all_conc(model):
+    """Return the full concentration table from the cached ``ConcResults`` helper."""
+    return get_conc(model).all_conc
+
+
+def get_all_temp(model):
+    """Return the full temperature table from the cached ``TempResults`` helper."""
+    return get_temp(model).all_temp
+
+
 def get_surface(model):
     """Return a ``ModelSurface`` helper for the model."""
     return ModelSurface(model=model)

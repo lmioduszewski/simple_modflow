@@ -14,7 +14,9 @@ from myflopy.modflow.mf6.simulation.accessors import (
     build_choro,
     build_xsection,
     field_reader,
+    get_all_conc,
     get_all_heads,
+    get_all_temp,
     get_budget,
     get_budget_cumulative,
     get_budget_incremental,
@@ -534,6 +536,30 @@ class SimulationBase:
         """Tabular heads view across available results."""
 
         return get_all_heads(self)
+
+    @property
+    def all_conc(self):
+        """Tabular concentration view across available results (GWT models).
+
+        Kind-GATED, unlike :attr:`all_heads`. The ungated spelling is a legacy
+        the heads table carries because it predates the kind guard; a new
+        transport table should not inherit it, or ``group.conc`` over a group
+        that accidentally holds a flow model reads a missing ``.ucn`` and fails
+        somewhere far from the cause.
+        """
+
+        self._require_model_kind("gwt6", "all_conc", "concentration")
+        return get_all_conc(self)
+
+    @property
+    def all_temp(self):
+        """Tabular temperature view across available results (GWE models).
+
+        Kind-gated for the same reason as :attr:`all_conc`.
+        """
+
+        self._require_model_kind("gwe6", "all_temp", "temperature")
+        return get_all_temp(self)
 
     @property
     def _field_reader(self):

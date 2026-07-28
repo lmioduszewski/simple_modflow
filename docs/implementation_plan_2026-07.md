@@ -1165,6 +1165,17 @@ Heads, concentration, and temperature are the same shape: a binary output file r
 > **every** model kind rather than gated to transport, since the plumbing is
 > kind-neutral and `sto_ss`/`data_spdis` have no package accessor. See ledger 97
 > for the four judgment calls and 98 for two package-tier defects left alone.
+>
+> **Item 4 DONE 2026-07-27 — and NOT as the clone this plan predicted.**
+> `group.conc`/`group.temp` + `group.diff().conc`/`.temp` ship, but §6.2's own
+> instruction ("if it is not mostly mechanical, stop and fix the 6.0 abstraction
+> instead of copy-pasting") was taken literally: `GroupHeads` moved onto a new
+> `_GroupFieldView` base and all three kinds are now ONE implementation configured
+> by five class attributes, rather than three copies of `get`/`compare`/
+> `compare_map`. Item 4's stated blocker (`all_conc`/`all_temp`) was real and was
+> built — kind-gated, unlike `all_heads`. What the estimate MISSED: `xs` did not
+> work on `model.conc`/`model.temp` at all (ledger 99), so "full grammar" in the
+> capability map had been wrong since §6.1/6.2 shipped. See ledger 100.
 
 Building on 6.0:
 1. **Hover:** `conc_hover(unit="mg/L")` factory — primary `conc`, title

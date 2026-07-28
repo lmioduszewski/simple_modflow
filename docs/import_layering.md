@@ -168,9 +168,11 @@ review the diff, commit the regenerated files together.
 ## Layer 8
 
 - `myflopy.modflow.mf6.simulation.base` *(deferred imports: 8)*
+- `myflopy.project.group.conc`
 - `myflopy.project.group.inputs`
 - `myflopy.project.group.results`
 - `myflopy.project.group.surface_water`
+- `myflopy.project.group.temp`
 
 ## Layer 9
 

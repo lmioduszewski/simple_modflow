@@ -97,6 +97,7 @@ biggest difference is.
 
 ```python
 # heads -- a surface-root leaf, exactly like model.hds / group.hds
+# (diff.conc / diff.temp are the transport twins, same verbs)
 diff.hds.summary()                # max/mean|Δ|, RMSE, argmax cell/layer/kstpkper, within_tolerance
 diff.hds.get(per=8, layer=1)      # aligned elev / reference_elev / diff per cell
 diff.hds.map("F9b", per=8, layer=1)   # Δhead choropleth (model - reference)

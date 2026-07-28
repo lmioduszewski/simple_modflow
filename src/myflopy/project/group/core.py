@@ -7,9 +7,11 @@ import pandas as pd
 from myflopy._deprecation import deprecated_instance_getattr
 from myflopy.project.group._shared import _coerce_models, _grid_signature_for_model
 from myflopy.project.group.budget import GroupBudget
+from myflopy.project.group.conc import GroupConc
 from myflopy.project.group.inputs import GroupPackageInputs
 from myflopy.project.group.packages import GroupOutputs, GroupPackages
 from myflopy.project.group.spatial import GroupHeads
+from myflopy.project.group.temp import GroupTemp
 from myflopy.project.group.uzf import GroupUzfInputs
 
 
@@ -66,6 +68,12 @@ class ModelGroup:
             self._configure_shared_grid()
 
         self.hds = GroupHeads(self)
+        # Constructed eagerly like every other accessor, and deliberately NOT
+        # kind-gated here: the gate lives on the member models' readers, so a
+        # group of flow models still builds and only errors if someone asks it
+        # for concentration.
+        self.conc = GroupConc(self)
+        self.temp = GroupTemp(self)
         self.outputs = GroupOutputs(self)
         self._rch = GroupPackageInputs(self, "rch")
         self._chd = GroupPackageInputs(self, "chd")

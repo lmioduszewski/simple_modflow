@@ -257,6 +257,9 @@ lifecycle itself is top-level `workspace.py`, above).
   entry to `group.diff()`. Split from the former single-module
   `model_group.py` (plan 4.2): `spatial/budget/inputs/results` + per-package
   `sfr/lak/uzf/surface_water` + `packages` namespaces + `_shared` helpers.
+  `spatial.py` also holds `_GroupFieldView`, the kind-neutral base the three
+  dependent-variable accessors configure — `GroupHeads` there, `GroupConc` in
+  `conc.py`, `GroupTemp` in `temp.py`.
   `project/model_group.py` remains as a full facade over this package.
 - [src/myflopy/project/model_diff.py](C:/Users/lukem/Python/Projects/simple_modflow/src/myflopy/project/model_diff.py)
   The `ModelDiff` setup tiers behind the ONE `diff()` verb: package structural +

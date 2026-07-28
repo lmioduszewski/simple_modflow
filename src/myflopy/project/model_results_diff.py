@@ -70,12 +70,36 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
 
     ``map`` / ``mosaic`` / ``animate`` render Δhead (model - reference) --
     ``diff.hds.map("F9b", per=8, layer=1)``, ``diff.hds.mosaic(by="model")``.
+
+    Configured by the three class attributes below, so the transport twins
+    (:class:`ConcResultDiff`, :class:`TempResultDiff`) are the same class with a
+    different field rather than a copy. Mirrors ``_GroupFieldView`` on the group
+    side, which they all delegate to.
     """
 
-    def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
-        """Return aligned head differences: ``elev`` / ``reference_elev`` / ``diff``."""
+    #: the ``ModelGroup`` accessor this leaf diffs (``group.hds``/``conc``/``temp``)
+    group_attribute = "hds"
+    #: the value column in that accessor's compare table
+    value_column = "elev"
+    #: short label for the differenced quantity
+    value_label = "head"
 
-        frame = self.group.hds.compare(per=per, layer=layer, cells=cells)
+    @property
+    def _field(self):
+        """The grouped field accessor backing this diff leaf."""
+
+        return getattr(self.group, self.group_attribute)
+
+    @property
+    def _reference_column(self) -> str:
+        """The compare table's reference column for this field."""
+
+        return f"reference_{self.value_column}"
+
+    def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
+        """Return aligned differences: value / reference value / ``diff``."""
+
+        frame = self._field.compare(per=per, layer=layer, cells=cells)
         if model_name is not None:
             targets = self._targets(model_name)
             frame = frame[frame["model"].isin(targets)]
@@ -85,7 +109,7 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
     def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
         """Δhead choropleth (compared model - reference) for one model."""
 
-        return self.group.hds.compare_map(model_name=model, per=per, layer=layer, **kwargs)
+        return self._field.compare_map(model_name=model, per=per, layer=layer, **kwargs)
 
     def _spatial_models(self):
         """The non-reference model names -- one Δhead panel each."""
@@ -98,9 +122,9 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
         return self.group.models[self.group.reference]
 
     def _spatial_value_label(self):
-        """The mapped quantity's label -- head difference."""
+        """The mapped quantity's label."""
 
-        return "head"
+        return self.value_label
 
     # -- series hooks: plot() draws mean Δhead by period, one line per model --
     def _series_value_column(self, frame) -> str:
@@ -167,7 +191,7 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
         rows = []
         for name, sub in data.groupby("model"):
             diff = sub["diff"].to_numpy(dtype=float)
-            reference = sub["reference_elev"].to_numpy(dtype=float)
+            reference = sub[self._reference_column].to_numpy(dtype=float)
             abs_diff = np.abs(diff)
             imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
             rows.append(
@@ -186,6 +210,27 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
                 }
             )
         return pd.DataFrame(rows, columns=columns)
+
+
+class ConcResultDiff(HeadsResultDiff):
+    """Δconcentration results vs the reference model (``diff.conc``).
+
+    Same class as :class:`HeadsResultDiff`, pointed at the group's GWT
+    concentration accessor. ``diff.conc.map("variant", per=8)`` is the public
+    route to a Δconc choropleth.
+    """
+
+    group_attribute = "conc"
+    value_column = "conc"
+    value_label = "conc"
+
+
+class TempResultDiff(HeadsResultDiff):
+    """Δtemperature results vs the reference model (``diff.temp``)."""
+
+    group_attribute = "temp"
+    value_column = "temp"
+    value_label = "temp"
 
 
 class BudgetResultDiff(_ResultDiffBase):

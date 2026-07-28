@@ -46,10 +46,12 @@ from myflopy.project.model_group import GroupPackageInputs
 from myflopy.project.model_results_diff import (
     BudgetResultDiff,
     CellResultsDiffNamespace,
+    ConcResultDiff,
     HeadsResultDiff,
     LakResultsDiffNamespace,
     MvrResultDiff,
     SfrResultsDiffNamespace,
+    TempResultDiff,
     UzfResultsDiffNamespace,
 )
 
@@ -910,6 +912,24 @@ class ModelDiff:
         """
 
         return HeadsResultDiff(self)
+
+    @property
+    def conc(self) -> ConcResultDiff:
+        """Concentration-difference leaf (Δconc maps/plots vs the reference).
+
+        Mirrors ``model.conc`` / ``group.conc``; every member must be a GWT model.
+        """
+
+        return ConcResultDiff(self)
+
+    @property
+    def temp(self) -> TempResultDiff:
+        """Temperature-difference leaf (Δtemp maps/plots vs the reference).
+
+        Mirrors ``model.temp`` / ``group.temp``; every member must be a GWE model.
+        """
+
+        return TempResultDiff(self)
 
     @property
     def bud(self) -> BudgetResultDiff:

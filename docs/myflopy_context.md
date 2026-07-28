@@ -89,7 +89,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
 | GWT/GWE results — budget **tables** | ✅ | Transport budget terms read correctly through `build_budget_result_table` and `model.bud(...)` as of 2026-07-27: transport models save flows by default, imeth=1 full-array terms (`STORAGE-AQUEOUS`/`STORAGE-CELLBLK`) build a real per-cell table, both paths agree on zero-based nodes, hover units follow the model kind (`M/T`/`E/T`), and `model.bud("ssm")` resolves (ledger 90–92, 95) |
 | GWT/GWE results — budget **noun** | ✅ | `model.budget.<term>` (`package_results.py` `ModelBudgetNamespace` → `CellBudgetResultsExplorer`): every term in the model's own budget file as a spatial noun with the full verb set. Terms **discovered** from the file, so they follow kind + packages (`storage_aqueous` on GWT, `storage_cellblk` on GWE). Available on all kinds, incl. GWF terms with no package accessor (`sto_ss`, `data_spdis`) — §6.1/6.2 item 3, 2026-07-27 |
-| GWT/GWE results — group-diff / obs | ❌ | `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
+| GWT/GWE results — **group + diff** | ✅ | `group.conc`/`group.temp` + `group.diff().conc`/`.temp` (`project/group/conc.py`, `temp.py`). NOT clones: `GroupHeads` was refactored onto a shared `_GroupFieldView`, so all three kinds are one implementation with five class attributes each (§6.1/6.2 item 4, 2026-07-27). Needed `SimulationBase.all_conc`/`.all_temp` (kind-gated, unlike `all_heads`) |
+| GWT/GWE results — PEST obs | ❌ | `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking`; raw CSV on `results.track_records` |
 | PRT **spec-first declarability** (mip/prp/ems + exchange, no FMI) | ✅ | `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dis/disv/oc dispatch; `mf.simulation` solver default is kind-aware (IMS vs EMS) — §6.3A, 2026-07-24 |
 | PRT derived cell maps (travel-time / endpoints / capture choropleths) | ✅ | `prt_maps.py` — `results.travel_time` / `.endpoints` / `.capture` nouns (get/summary/plot/map/mosaic), release groups via PRP boundnames — §6.3B, 2026-07-25 |
@@ -121,7 +122,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Package explorers (`model.packages.<pkg>.inputs/.results`, normalized tables + maps) | ✅ | `package_explorer.py` facade over the `package_*` family; registry in `package_registry.py` |
 | Single-model config inspector (`model.config.settings/ims/tdis/section`) | ✅ | `project/model_config.py`, `simulation/base.py` |
 | **ONE `diff()` verb** — `model.diff(other)` / `group.diff()`, reference-star N-way | ✅ | `project/model_diff.py` (setup: packages + config + LAK/SFR connections), `project/model_results_diff.py` (heads, budget, per-package q, UZF, stage, MVR) |
-| Grouped multi-model access (`group.hds/bud/packages`, member + Δ maps) | ✅ | `project/group/` (`ModelGroup`; facade `model_group.py`) — full single↔group symmetry |
+| Grouped multi-model access (`group.hds/conc/temp/bud/packages`, member + Δ maps) | ✅ | `project/group/` (`ModelGroup`; facade `model_group.py`) — full single↔group symmetry, transport fields included as of 2026-07-27 |
 | Diff usage guide | ✅ | `docs/model_diff_cheatsheet.md` |
 
 ### Serialization
@@ -172,7 +173,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    defects, from a zero-byte `.cbc` to silently empty tables), and the
    **`model.budget.<term>` noun** shipped the same day (§6.1/6.2 item 3:
    runtime-discovered terms, full spatial verb set, every model kind).
-   Still deferred: `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
+   `GroupConc`/`GroupTemp` + `diff().conc`/`.temp` shipped 2026-07-27 (§6.1/6.2
+   item 4), on a shared `_GroupFieldView` rather than as clones — which also
+   fixed `xs` on the transport readers (ledger 99). Still deferred:
+   `ConcTargets`/`TempTargets` → PEST.
 3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
    `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades**: field-map

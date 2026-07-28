@@ -216,10 +216,27 @@ class XSection:
 
     @property
     def all_heads(self):
-        """The model's full head table (loaded and cached on first access)."""
+        """The model's full dependent-variable table (cached on first access).
+
+        Named ``all_heads`` for history, but it is whatever field the model
+        actually has: heads on GWF, concentration on GWT, temperature on GWE.
+        Reading ``model.hds`` here made ``model.conc.xs()`` and
+        ``model.temp.xs()`` raise "is a GWT model; '.hds' is only available on
+        GWF models" -- so the ``xs`` verb was broken on the transport readers
+        from the day §6.1/6.2 shipped them, while the docs advertised the full
+        grammar (fixed 2026-07-27, ledger 99).
+
+        The column NAME differs per kind (``elev``/``conc``/``temp``) but never
+        matters: the one consumer reads values positionally.
+        """
 
         if self._all_heads is None:
-            self._all_heads = self.model.hds.all_heads
+            # `_field_reader` is the ungated kind-neutral reader; fall back to
+            # `.hds` for duck-typed stand-ins that are not a SimulationBase.
+            reader = getattr(self.model, "_field_reader", None)
+            self._all_heads = (
+                reader.all_values if reader is not None else self.model.hds.all_heads
+            )
         return self._all_heads
 
     @property

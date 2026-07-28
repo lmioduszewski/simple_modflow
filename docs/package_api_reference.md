@@ -136,9 +136,11 @@ below. Transport budget **tables** read correctly as of 2026-07-27 — `model.bu
 and the package result tables handle both MF6 record shapes, agree on zero-based
 node ids, and label hovers `M/T` (GWT) / `E/T` (GWE) rather than `ft³/d`
 (ledger 90–92, 95). The `model.budget.<term>` noun shipped 2026-07-27 (§6.1/6.2
-item 3) — see "Model-level reads" below. Still deferred:
-`GroupConc`/`GroupTemp` group/diff, and `ConcTargets`/`TempTargets` PEST
-observations (ledger 56).
+item 3) — see "Model-level reads" below. The grouped transport fields
+(`group.conc`/`group.temp`, `group.diff().conc`/`.temp`) shipped the same day
+(§6.1/6.2 item 4), which also fixed `xs` on `model.conc`/`model.temp` — it had
+raised since those readers shipped (ledger 99). Still deferred:
+`ConcTargets`/`TempTargets` PEST observations (ledger 56).
 
 ### PRT particle-tracking packages
 
@@ -398,6 +400,22 @@ Distinguish it from its three neighbours, which are genuinely different things:
 The column is MF6's raw `q`, unlike `model.packages.<pkg>.results.q`, which renames it
 `q_gwf`/`q_lake` to carry the reference frame. The values are identical; only the name
 differs (ledger 97).
+
+**Grouped reads:** `group.hds` / `group.conc` / `group.temp` are the multi-model twins
+of the model-level readers, with the same verbs plus `compare()`:
+
+```python
+group.conc.get()                     # aligned concentration, one block per member
+group.conc.compare()                 # vs the reference: conc / reference_conc / diff
+group.conc.map(); group.conc.plot(); group.conc.xs(line=line)
+group.diff().conc.map("variant")     # Δconc choropleth -- the ONE public diff route
+group.diff().temp.summary()          # max/mean |Δtemp|, RMSE, argmax cell/layer
+```
+
+All three are the same class configured by five attributes (`_GroupFieldView`), so a
+verb added to one is available to all. `diff` is always **model − reference**. Every
+member of a `group.conc` must be a GWT model; the kind-gated reader supplies the error
+otherwise (ledger 100).
 
 ### Deprecated spellings (D12)
 

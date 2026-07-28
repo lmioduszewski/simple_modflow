@@ -10,6 +10,9 @@ from __future__ import annotations
 from myflopy.project.group.budget import (
     GroupBudget,
 )
+from myflopy.project.group.conc import (
+    GroupConc,
+)
 from myflopy.project.group.core import (
     ModelGroup,
 )
@@ -47,6 +50,9 @@ from myflopy.project.group.surface_water import (
     GroupSurfaceWaterExchangeResults,
     GroupSurfaceWaterResultsNamespace,
 )
+from myflopy.project.group.temp import (
+    GroupTemp,
+)
 from myflopy.project.group.uzf import (
     GroupUzfFieldAccessor,
     GroupUzfInputs,
@@ -58,6 +64,7 @@ __all__ = [
     "GroupBudget",
     "GroupCellPackageResults",
     "GroupCellPackageResultsNamespace",
+    "GroupConc",
     "GroupHeads",
     "GroupLakBudgetResults",
     "GroupLakConnections",
@@ -76,6 +83,7 @@ __all__ = [
     "GroupSfrStageResults",
     "GroupSurfaceWaterExchangeResults",
     "GroupSurfaceWaterResultsNamespace",
+    "GroupTemp",
     "GroupUzfFieldAccessor",
     "GroupUzfInputs",
     "GroupUzfPackageAccessor",

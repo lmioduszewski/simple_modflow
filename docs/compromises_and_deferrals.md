@@ -915,7 +915,13 @@ same day, which is the useful part of the result.
       correctness bugs in the shared budget-reading path (ledger 91–96), which had to be
       fixed before any view could be built on it; (4) **`GroupConc`/
       `GroupTemp`** member + Δ diff maps (near-mechanical `GroupHeads` clone with
-      `elev`→`conc`, blocked on an `all_conc`/`all_temp` group table); (5) **`ConcTargets`/
+      `elev`→`conc`, blocked on an `all_conc`/`all_temp` group table)
+      — **item 4 CLOSED 2026-07-27** (ledger 100). The blocker was real and was
+      built. "Near-mechanical clone" was NOT taken: §6.2 says to fix the
+      abstraction rather than copy-paste, so `GroupHeads` moved onto a shared
+      `_GroupFieldView` and all three kinds are now one implementation. The
+      estimate also missed that `xs` was broken on the transport readers
+      entirely (ledger 99); (5) **`ConcTargets`/
       `TempTargets`** + end-to-end transport **calibration** (~8 PEST wiring points + a
       new concentration forward-run post-processor + transport `parameterize` targets);
       (6) the **canonical `transport=True` fixture** (large — the canonical runs on the
@@ -1753,3 +1759,63 @@ same day, which is the useful part of the result.
       missing verb. Also relevant: **no test anywhere covers `<pkg>.budget.<term>`** — its
       only consumer is `canonical.py:255` — so that tier would need test coverage built
       before it is safe to change.
+
+99. **`xs` was broken on the transport readers from the day they shipped — FIXED
+    2026-07-27.**
+    - `model.conc.xs()` and `model.temp.xs()` raised `AttributeError: model 'trans' is
+      a GWT model; '.hds' (heads) is only available on GWF models`, because
+      `XSection.all_heads` cached its value table from `self.model.hds` — the very
+      accessor the §6.0 kind guard refuses on a transport model. Meanwhile
+      `myflopy_context.md` advertised the transport readers as shipping the "full
+      grammar (`get/summary/array/map/xs/mosaic/animate`)". The docs were wrong.
+    - Found while scoping §6.1/6.2 item 4, by testing the claim rather than reading it;
+      the scoping agent had reported `XSection` as "heads-hardwired" and therefore a
+      deep blocker for `GroupConc.xs`.
+    - It was not deep. `XSection` reads its values POSITIONALLY (`y[0] for y in
+      y_lyr.values`, xsections.py), so the per-kind column name (`elev`/`conc`/`temp`)
+      never surfaces. The fix points the cache at `model._field_reader` — the ungated
+      kind-neutral reader added 2026-07-26 (ledger 88) — with a `.hds` fallback for
+      duck-typed stand-ins. One line of behavior change.
+    - **The property is still named `all_heads`.** It now returns whatever field the
+      model has. Renaming it would touch every `XSection` consumer for a cosmetic gain;
+      the docstring states the mismatch instead. Deferred.
+    - Fixing it here rather than separately was a user decision: it unblocked
+      `group.conc.xs()` in the same pass, so the group tier did not ship with a hole.
+
+100. **`GroupConc`/`GroupTemp` — the "near-mechanical clone" was refused (2026-07-27).**
+    Closes plan §6.1/6.2 item 4 (ledger 56 sub-item 4).
+    - Ledger 56 predicted a "near-mechanical `GroupHeads` clone with `elev`→`conc`".
+      §6.2 says the opposite: *"if it is not mostly mechanical, stop and fix the 6.0
+      abstraction instead of copy-pasting."* Cloning would have made three copies of
+      `get`/`compare`/`compare_map` (~120 lines each) differing only in literals.
+    - What shipped instead: `GroupHeads` moved onto a new `_GroupFieldView` base — the
+      group-side counterpart of `DependentVariableFile` — and all three kinds are now
+      **one implementation configured by five class attributes**
+      (`reader_attribute`/`table_attribute`/`value_column`/`value_label`/`value_unit`).
+      A test asserts none of the three re-implements the shared methods, so a future
+      copy-paste fails rather than quietly accumulating.
+    - **Cost of that choice, stated plainly:** it rewrites working GWF code that the
+      group tier depends on. Mitigated by mutation testing (reversing the diff
+      subtraction, repointing the reader/table attributes, and repointing the diff leaf
+      are all caught), and the existing heads tests were left untouched as the
+      regression net.
+    - **`all_conc`/`all_temp` are kind-GATED; `all_heads` is not.** The asymmetry is
+      deliberate: `all_heads` predates the §6.0 kind guard and un-gating is not worth a
+      behavior change to every existing caller, but a new transport table should not
+      inherit the looseness — an ungated `all_conc` on a flow model reads a missing
+      `.ucn` and fails far from the cause. Recorded rather than unified.
+    - **`GroupConc`/`GroupTemp` live in their own modules, not in `spatial.py`.** Beyond
+      the plan's own recommendation, `spatial.py` sits at exactly 1 on the deferred-import
+      ratchet (its lazy `XSection` import); adding a second field class there would have
+      taken it to 2 and failed `test_deferred_import_ratchet`. Separate modules take a
+      fresh allowlist entry instead.
+    - **Diff orientation now has a test, for all three kinds.** Nothing pinned that
+      `diff` is `model - reference`: the shared colorscale helper is tested in isolation,
+      so reversing the subtraction would invert every difference map while
+      `test_diff_maps_use_rdbu_negative_red_positive_blue` still passed. The new test
+      recomputes the expected difference from `get()` and compares element-wise.
+    - **Test fixtures build two models that DIFFER** (porosity 0.2 vs 0.05). A grouped
+      comparison over identical models proves the plumbing runs and nothing else; the
+      earlier scoping assumed no transport fixture was possible, but
+      `irregular_voronoi_grid` is deterministic, so two coupled runs share a grid and
+      group cleanly. `_coupled_run` gained a `porosity=` keyword for this.

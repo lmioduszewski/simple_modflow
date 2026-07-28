@@ -13,6 +13,8 @@ import myflopy.project.model_group as facade
 
 EXPECTED_HOMES = {
     "GroupHeads": "spatial",
+    "GroupConc": "conc",
+    "GroupTemp": "temp",
     "GroupBudget": "budget",
     "GroupPackageInputField": "inputs",
     "GroupPackageInputs": "inputs",
