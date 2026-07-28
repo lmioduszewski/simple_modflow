@@ -81,9 +81,11 @@ from myflopy.modflow.mf6.package_registry import (
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
     CellPackageResultsNamespace,
+    ModelBudgetNamespace,
     PackageBudgetTermExplorer,
     StageResultsExplorer,
     UzfResultsNamespace,
+    budget_term_attribute,
 )
 from myflopy.modflow.mf6.package_surface_water import (
     LakBudgetNamespace,
@@ -189,6 +191,8 @@ __all__ = [
     "CellPackageResultsNamespace",
     "UzfResultsNamespace",
     "PackageBudgetTermExplorer",
+    "ModelBudgetNamespace",
+    "budget_term_attribute",
     "SfrBudgetResultsExplorer",
     "LakBudgetResultsExplorer",
     "LakStageResultsExplorer",

@@ -186,6 +186,19 @@ where the same noun means the same thing scoped to one field:
 
 Namespace-level nouns merge fields; field-level nouns cover a single field.
 
+### `budget` is spelled at two tiers, over two different files
+
+- `model.budget.<term>` — the **model** budget file (`.cbc`), one noun per MF6 record,
+  terms **discovered from the file** so they follow the model's kind and packages.
+  Each term is a spatial noun with the full verb set.
+- `model.packages.<pkg>.budget.<term>` — the **package-output** budget file, a
+  genuinely different file whose node layout is feature-first. Its terms are
+  hand-declared, and they answer a reduced verb set (`get`/`summary`/`wide`, no
+  `plot`) — a known inconsistency, ledger 98.
+
+Treating these two files as interchangeable is what produced the node off-by-one in
+ledger 92. When adding anything here, name which file you are reading.
+
 The loose field-level spellings `q.plot_profile` / `stage.plot_profile` /
 `q.plot_budget` / `q.budget_summary` were retired onto these nouns in plan §4.8
 (D12 warned aliases preserve their old returns exactly). One deliberate

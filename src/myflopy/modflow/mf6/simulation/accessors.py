@@ -10,6 +10,7 @@ from myflopy.modflow.mf6.budget import Budget
 from myflopy.modflow.mf6.headsplus import ConcResults, TempResults
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.mf6.package_explorer import ModelPackages
+from myflopy.modflow.mf6.package_results import ModelBudgetNamespace
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.surface_data import ModelSurface
 from myflopy.modflow.utils.datatypes.xsections import XSection
@@ -231,6 +232,11 @@ def get_budget(model, package: str = None):
     if package is None:
         return Budget(model)
     return Budget(model, package)
+
+
+def get_model_budget(model):
+    """Return the model-budget term namespace behind ``model.budget.<term>``."""
+    return ModelBudgetNamespace(model)
 
 
 def get_budget_cumulative(model):

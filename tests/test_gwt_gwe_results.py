@@ -378,6 +378,44 @@ def test_the_ssm_budget_is_reachable_by_its_package_name(gwt_run):
 
 
 @pytest.mark.slow
+def test_model_budget_terms_follow_the_model_kind(gwt_run, gwe_run):
+    """``model.budget.<term>`` is discovered, so it names each kind's real terms.
+
+    This is why the namespace cannot be hand-declared the way the package-level
+    ``<pkg>.budget.<term>`` namespaces are: GWT's storage term is
+    ``STORAGE-AQUEOUS`` and GWE's is ``STORAGE-CELLBLK``, so a single declared
+    list would be wrong for one of them. Closes plan §6.1/6.2 item 3.
+    """
+
+    from myflopy.viz import Fig
+
+    for run, storage_attr in (
+        (gwt_run, "storage_aqueous"),
+        (gwe_run, "storage_cellblk"),
+    ):
+        model = run.model("trans")
+        exposed = {name for name in dir(model.budget) if not name.startswith("_")}
+        assert {storage_attr, "source_sink_mix", "flow_ja_face"} <= exposed
+        # the OTHER kind's storage term must not be there
+        assert "storage_cellblk" in exposed or "storage_aqueous" in exposed
+        assert not {"storage_aqueous", "storage_cellblk"} <= exposed
+
+        source = model.budget.source_sink_mix
+        assert source.summary().loc[0, "label"] == "budget.source_sink_mix"
+        assert isinstance(source.map(), object) and source.map().colorscale == "RdBu"
+        cells = sorted(source.get()["cell"].unique())[:2]
+        assert isinstance(source.plot(cells=cells), Fig)
+
+        # the budget still balances when read through the new noun, which pins
+        # the VALUES rather than only the plumbing
+        storage_total = float(getattr(model.budget, storage_attr).get()["q"].sum())
+        source_total = float(source.get()["q"].sum())
+        scale = max(abs(storage_total), abs(source_total))
+        assert scale > 0
+        assert abs(storage_total + source_total) / scale < 1e-6
+
+
+@pytest.mark.slow
 def test_budget_hover_units_follow_the_model_kind(gwt_run, gwe_run, canonical_run):
     """A transport budget is not measured in cubic feet.
 

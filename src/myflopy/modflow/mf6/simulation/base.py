@@ -23,6 +23,7 @@ from myflopy.modflow.mf6.simulation.accessors import (
     get_inputs,
     get_kstpkper,
     get_lak_output,
+    get_model_budget,
     get_outputs,
     get_packages,
     get_sfr_output,
@@ -855,6 +856,21 @@ class SimulationBase:
         """Return budget information, optionally filtered to one package."""
 
         return get_budget(self, package)
+
+    @property
+    def budget(self):
+        """Every term in this model's own budget file, as a noun.
+
+        ``model.budget.<term>.get()/summary()/plot()/map()`` -- the terms are
+        discovered from the file, so they follow the model's kind and packages
+        (``model.budget.source_sink_mix`` on a transport model,
+        ``model.budget.drn`` or ``model.budget.sto_ss`` on a flow model). See
+        :class:`~myflopy.modflow.mf6.package_results.ModelBudgetNamespace` for
+        how this differs from ``bud()``, ``budget_cumulative``, and the
+        package-output ``model.packages.<pkg>.budget``.
+        """
+
+        return get_model_budget(self)
 
     @property
     def budget_cumulative(self):

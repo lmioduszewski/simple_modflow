@@ -1153,8 +1153,18 @@ Heads, concentration, and temperature are the same shape: a binary output file r
 > **Correction to item 3's premise below:** term discovery being "text-generic" was
 > true but not sufficient — `build_budget_result_table` handled only ONE of MF6's
 > two record shapes. Reader acquisition was also already fine (§6.0 made
-> `_get_budget_reader` kind-neutral). What remains for item 3 is genuinely just the
-> `model.budget.<term>` noun on the transport ModelView.
+> `_get_budget_reader` kind-neutral).
+>
+> **Item 3 DONE 2026-07-27 — `model.budget.<term>` ships.** A namespace on
+> `SimulationBase` (so it lands on live *and* reopened views) whose terms are
+> **discovered from the budget file**, each returning a `CellBudgetResultsExplorer`
+> — the full spatial verb set, not the reduced one the package-level
+> `<pkg>.budget.<term>` offers. Two scoping corrections worth keeping: the package
+> namespaces hand-write every term as a literal (there is no normalizer to reuse),
+> and ledger 52 is about `lak.results.q.budget`, a different object. Exposed on
+> **every** model kind rather than gated to transport, since the plumbing is
+> kind-neutral and `sto_ss`/`data_spdis` have no package accessor. See ledger 97
+> for the four judgment calls and 98 for two package-tier defects left alone.
 
 Building on 6.0:
 1. **Hover:** `conc_hover(unit="mg/L")` factory — primary `conc`, title

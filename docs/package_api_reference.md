@@ -135,7 +135,8 @@ hover** are still Phase 6. The **results tier** (`model.conc`/`model.temp`) is
 below. Transport budget **tables** read correctly as of 2026-07-27 — `model.bud()`
 and the package result tables handle both MF6 record shapes, agree on zero-based
 node ids, and label hovers `M/T` (GWT) / `E/T` (GWE) rather than `ft³/d`
-(ledger 90–92, 95). Still deferred: the `model.budget.<term>` noun,
+(ledger 90–92, 95). The `model.budget.<term>` noun shipped 2026-07-27 (§6.1/6.2
+item 3) — see "Model-level reads" below. Still deferred:
 `GroupConc`/`GroupTemp` group/diff, and `ConcTargets`/`TempTargets` PEST
 observations (ledger 56).
 
@@ -366,6 +367,37 @@ grammar, reading the `.ucn` binary via the shared `DependentVariableFile` base. 
 readers are **kind-gated**: `.hds` on a transport model (or `.conc` on a flow model)
 raises a clear error. `model.outputs.<pkg>.bud` (raw budget accessor),
 `model.targets.<family>` (`compare`/`stats`/`calibration_plot`), `model.pest_runs`.
+
+**`model.budget.<term>`** — every term in the model's *own* budget file, as a spatial
+noun (`get`/`summary`/`plot`/`map`/`xs`/`mosaic`/`animate`). Terms are **discovered
+from the file**, not declared, so they follow the model's kind and packages:
+
+```python
+model.budget.types                     # the MF6 record names actually present
+model.budget.source_sink_mix.get()     # GWT/GWE: the SSM term, per cell
+model.budget.storage_aqueous.map()     # GWT storage (GWE spells it storage_cellblk)
+model.budget.drn.summary()             # GWF: any boundary package
+model.budget.sto_ss.get(per=0)         # ...and terms with no package accessor
+model.budget["SOURCE-SINK MIX"]        # indexing takes either spelling
+```
+
+Available on **every** model kind, not just transport: the plumbing is kind-neutral,
+and `STO-SS`/`STO-SY`/`DATA-SPDIS`/`DATA-SAT` have no package accessor at all.
+`FLOW-JA-FACE` appears in the namespace but *refuses* `get()` — it is indexed by cell
+connection, not by cell (ledger 91/96).
+
+Distinguish it from its three neighbours, which are genuinely different things:
+
+| spelling | what it reads |
+|---|---|
+| `model.budget.<term>` | the model budget file, per cell, one noun per term |
+| `model.bud(pkg)` | the same file, legacy compatibility wrapper, raw frames |
+| `model.budget_cumulative` / `_incremental` | the **listing** file: whole-model totals |
+| `model.packages.<pkg>.budget.<term>` | the **package-output** file — a different file, feature-first node layout |
+
+The column is MF6's raw `q`, unlike `model.packages.<pkg>.results.q`, which renames it
+`q_gwf`/`q_lake` to carry the reference frame. The values are identical; only the name
+differs (ledger 97).
 
 ### Deprecated spellings (D12)
 

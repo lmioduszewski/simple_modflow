@@ -88,7 +88,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | GWT/GWE **package helpers** (adv/dsp/mst/ist/ssm/cnc/src; est/cnd/ctp/esl) | ✅ | `package_api.py` factories build `ModflowGwt*`/`ModflowGwe*` (plan §5.3B); `mf.ic/oc/disv/dis/disu` dispatch the FloPy class on the model kind (§5.3A/§5.5) |
 | GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
 | GWT/GWE results — budget **tables** | ✅ | Transport budget terms read correctly through `build_budget_result_table` and `model.bud(...)` as of 2026-07-27: transport models save flows by default, imeth=1 full-array terms (`STORAGE-AQUEOUS`/`STORAGE-CELLBLK`) build a real per-cell table, both paths agree on zero-based nodes, hover units follow the model kind (`M/T`/`E/T`), and `model.bud("ssm")` resolves (ledger 90–92, 95) |
-| GWT/GWE results — budget **noun** / group-diff / obs | ❌ | The `model.budget.<term>` view, `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
+| GWT/GWE results — budget **noun** | ✅ | `model.budget.<term>` (`package_results.py` `ModelBudgetNamespace` → `CellBudgetResultsExplorer`): every term in the model's own budget file as a spatial noun with the full verb set. Terms **discovered** from the file, so they follow kind + packages (`storage_aqueous` on GWT, `storage_cellblk` on GWE). Available on all kinds, incl. GWF terms with no package accessor (`sto_ss`, `data_spdis`) — §6.1/6.2 item 3, 2026-07-27 |
+| GWT/GWE results — group-diff / obs | ❌ | `GroupConc`/`GroupTemp`, `ConcTargets`/`TempTargets` PEST obs still deferred (ledger 56) |
 | MF6 PRT (release points, run, pathlines, 3-D scenes) | ✅ | `prt.py` (`PRTProject`, `PRTRunResults`, `open_prt_run`), `model.particle_tracking`; raw CSV on `results.track_records` |
 | PRT **spec-first declarability** (mip/prp/ems + exchange, no FMI) | ✅ | `mf.mip`/`mf.prp`/`mf.ems` factories + prt6 dis/disv/oc dispatch; `mf.simulation` solver default is kind-aware (IMS vs EMS) — §6.3A, 2026-07-24 |
 | PRT derived cell maps (travel-time / endpoints / capture choropleths) | ✅ | `prt_maps.py` — `results.travel_time` / `.endpoints` / `.capture` nouns (get/summary/plot/map/mosaic), release groups via PRP boundnames — §6.3B, 2026-07-25 |
@@ -168,9 +169,10 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    Results tier: reader + maps **DONE 2026-07-24** (§6.0/6.1/6.2: `model.conc`/
    `model.temp` grammar + hover + `'earth'` colorscale, kind-gated). Transport
    budget **tables** read correctly as of 2026-07-27 (ledger 90–92, 95 — five
-   defects, from a zero-byte `.cbc` to silently empty tables). Still deferred:
-   the `model.budget.<term>` noun, `GroupConc`/`GroupTemp` group/diff,
-   `ConcTargets` → PEST.
+   defects, from a zero-byte `.cbc` to silently empty tables), and the
+   **`model.budget.<term>` noun** shipped the same day (§6.1/6.2 item 3:
+   runtime-discovered terms, full spatial verb set, every model kind).
+   Still deferred: `GroupConc`/`GroupTemp` group/diff, `ConcTargets` → PEST.
 3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +
    `pathline_hover` (§6.3C: `results.pathlines`). **PEST-IES viz upgrades**: field-map

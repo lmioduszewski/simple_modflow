@@ -908,7 +908,12 @@ same day, which is the useful part of the result.
       `model.temp`** (grammar `get/summary/array/map/xs/mosaic/animate` + field hover +
       `'earth'` colorscale, via the full value-kind `Choro` hook). Four 6.1/6.2
       sub-items were **deliberately deferred**: (3) GWT/GWE **budget views** (`_get_budget_reader`
-      is generic but `ModelView` budget plumbing is GWF-shaped); (4) **`GroupConc`/
+      is generic but `ModelView` budget plumbing is GWF-shaped)
+      — **item 3 CLOSED 2026-07-27**: `model.budget.<term>` ships (ledger 97), and the
+      stated blocker turned out to be wrong twice over. `_get_budget_reader` was generic
+      *and* the `ModelView` plumbing was not the obstacle; the real obstacle was six
+      correctness bugs in the shared budget-reading path (ledger 91–96), which had to be
+      fixed before any view could be built on it; (4) **`GroupConc`/
       `GroupTemp`** member + Δ diff maps (near-mechanical `GroupHeads` clone with
       `elev`→`conc`, blocked on an `all_conc`/`all_temp` group table); (5) **`ConcTargets`/
       `TempTargets`** + end-to-end transport **calibration** (~8 PEST wiring points + a
@@ -1698,3 +1703,53 @@ same day, which is the useful part of the result.
       test builds and runs the degenerate 4-cell model, and **asserts the collision
       still holds** before asserting the refusal — otherwise a future grid change would
       silently turn it into a test of nothing.
+
+97. **`model.budget.<term>` — four judgment calls behind the new noun (2026-07-27).**
+    Closes plan §6.1/6.2 item 3 (ledger 56 sub-item 3).
+    - **Terms are DISCOVERED, not declared — diverging from the package namespaces.**
+      `lak.budget.<term>` / `sfr.budget.<term>` hand-write one `@property` per term with
+      the MF6 record name as a literal. That is untenable here: the model budget's term
+      set varies with kind and configuration (GWT storage is `STORAGE-AQUEOUS`, GWE's is
+      `STORAGE-CELLBLK`, `DECAY` appears only when MST declares it, and a flow model's
+      terms are whichever packages it carries). So this namespace resolves through
+      `__getattr__`/`__dir__` against the live file. The inconsistency with the package
+      namespaces is accepted deliberately; the alternative was a declared list that is
+      wrong for most models.
+    - **Available on every model kind, not gated to transport** (user decision). The
+      plumbing underneath is kind-neutral, so gating would have been extra work to
+      *remove* capability — and `STO-SS`/`STO-SY`/`DATA-SPDIS`/`DATA-SAT` have no package
+      accessor at all, so this is their only route that is not the legacy `model.bud()`
+      wrapper. Accepted cost: for the boundary packages it is a third spelling alongside
+      `model.packages.<pkg>.results.q` and `model.bud(pkg)`. They are pinned to agree
+      numerically by `test_a_term_agrees_with_the_package_results_path`.
+    - **The column stays MF6's raw `q`, not `q_gwf`.** `model.packages.drn.results.q`
+      renames it `q_gwf` so the column carries its reference frame. This namespace is
+      explicitly the raw model-budget view, and the frame-naming convention does not
+      generalize: `q_gwf` is meaningless for `STORAGE-AQUEOUS`, which is a mass rate, not
+      a gwf-referenced exchange. Values are identical either way — verified — and the
+      hover unit label already states the dimension (`M/T`, `E/T`, `L³/T`).
+    - **`FLOW-JA-FACE` is listed but refuses `get()`** (user decision). Omitting it would
+      put `dir()` and `types` back in disagreement, which is exactly what makes the
+      package namespaces confusing — a term present in the file but not declared there is
+      silently unreachable by attribute. The error explains the reason (ledger 96).
+
+98. **Two pre-existing defects in the PACKAGE-level `budget.<term>` namespaces, found
+    while scoping 97 and NOT fixed (2026-07-27).**
+    - **`budget.get(term="ext_inflow")` silently returns an empty frame.** The only term
+      normalizer on that path (`_normalize_term_filter`) upcases but does not convert `_`
+      back to `-`, so `"ext_inflow"` becomes `"EXT_INFLOW"` and never matches
+      `"EXT-INFLOW"`. Only the attribute route (`budget.ext_inflow`) is safe. The new
+      `budget_term_attribute` normalizer added in 97 is the missing piece, but wiring it
+      into the package path changes behavior for `lak`/`sfr` term filters, which is a
+      separate change with its own blast radius.
+    - **`PackageBudgetTermExplorer` has no `plot()`.** It answers `types`/`get`/`summary`/
+      `wide` only, so it violates `view_layer_conventions.md`'s "every noun answers the
+      same verbs" rule (already noted at ledger entry 62). The new model-level noun does
+      NOT inherit this — it returns `CellBudgetResultsExplorer`, a `SpatialView` with the
+      full verb set — so the two tiers now differ in what verbs a budget term answers.
+    - Why deferred: both are in the package-output subsystem, which reads a different
+      file with different node semantics, and #57 was scoped to the model-level noun.
+      Neither is a wrong-data bug; the first is a silent empty result and the second a
+      missing verb. Also relevant: **no test anywhere covers `<pkg>.budget.<term>`** — its
+      only consumer is `canonical.py:255` — so that tier would need test coverage built
+      before it is safe to change.

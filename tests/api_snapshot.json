@@ -955,6 +955,7 @@
     ],
     "SimulationBase.package_properties": [
       "all_heads",
+      "budget",
       "budget_cumulative",
       "budget_incremental",
       "cellids",

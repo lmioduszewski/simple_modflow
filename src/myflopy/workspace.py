@@ -543,14 +543,17 @@ class Run:
         )
 
     def model(self, name: str | None = None) -> SimulationBase:
-        """Return the preferred myflopy GWF model view for this run.
+        """Return the preferred myflopy model view for this run.
 
-        Built GWF models return a live :class:`ModelView` with myflopy helper
-        methods (``.hds``, ``.packages``, ``.cor(...)``, ``.diff(...)``, ...).
-        Reopened/file-backed GWF models return a ``LoadedMf6Run``.
+        Built models return a live :class:`ModelView` with myflopy helper methods
+        (``.packages``, ``.budget``, ``.cor(...)``, ``.diff(...)``, plus the
+        kind-appropriate dependent variable: ``.hds`` on GWF, ``.conc`` on GWT,
+        ``.temp`` on GWE). Reopened/file-backed models return a ``LoadedMf6Run``,
+        which answers the same grammar over the written files.
 
-        Use :meth:`flopy_model` when you need a raw FloPy model object or are
-        working with a non-GWF model type.
+        Not GWF-only: §6.0 made the view kind-aware, so this returns a usable view
+        for GWT/GWE/PRT models too. Use :meth:`flopy_model` when you need the raw
+        FloPy model object.
 
         Parameters
         ----------
