@@ -643,6 +643,10 @@ replaced and each retiring its own now-circular scaffold test:
 2. `_DIFF_PACKAGES` + `_CONNECTION_PACKAGES` ← `tiers.diffable`,
    `tiers.connection_diffable`
 3. budget node basing ← `zero_base_budget_nodes` (was inferring from `kind`)
+   — **narrowed 2026-07-27 to `node2` only.** The flag's `False` values for
+   sfr/lak/uzf were measured wrong: in the *model* budget every record's `node`
+   is a 1-based model cell, so `node` is now zero-based once, universally, in the
+   shared record converter. Rename deferred (ledger 93).
 4. `_PACKAGE_SUFFIX_TO_TYPE` ← `file_suffix` ∪ structural suffixes
 5. artifact sets ← `tiers.artifact_serializable` / `artifact_apply_order` ∪
    `{ic, npf, mvr}`
@@ -1138,6 +1142,19 @@ Heads, concentration, and temperature are the same shape: a binary output file r
 > shipped, and `model.conc` is readable through the full grammar. **Still open:**
 > 3 (budget view), 4 (`GroupConc`/diff), 5 (`ConcTargets`/PEST), 6 (canonical
 > transport fixture) — ledger 56.
+>
+> **Item 3 prerequisites DONE 2026-07-27 — the budget path was BROKEN, not merely
+> unplumbed.** Scoping item 3 against real coupled GWT and GWE runs found five
+> defects, all now fixed (ledger 90–92, 95): transport models wrote a zero-byte
+> `.cbc`; imeth=1 full-array terms returned an EMPTY table with no error; the two
+> budget paths disagreed about node basing; units were hardcoded `ft³/d`; and
+> `model.bud("ssm")` was unreachable. A fifth, `model.bud("sfr"|"lak"|"uzf")`
+> returning node ids one cell high on GWF, was found and fixed with them.
+> **Correction to item 3's premise below:** term discovery being "text-generic" was
+> true but not sufficient — `build_budget_result_table` handled only ONE of MF6's
+> two record shapes. Reader acquisition was also already fine (§6.0 made
+> `_get_budget_reader` kind-neutral). What remains for item 3 is genuinely just the
+> `model.budget.<term>` noun on the transport ModelView.
 
 Building on 6.0:
 1. **Hover:** `conc_hover(unit="mg/L")` factory — primary `conc`, title
@@ -1174,6 +1191,11 @@ Building on 6.0:
 > **Partially DONE 2026-07-24 (see §6.0 banner):** `model.temp` reader + map +
 > `temp_hover` + `'earth'` colorscale shipped alongside 6.1 (the keystone made it
 > ~free). **Still open:** GWE budget view, `GroupTemp`/diff, `TempTargets` — ledger 56.
+>
+> **Budget prerequisites DONE 2026-07-27 alongside 6.1's** — every fix was verified
+> against a real GWF+GWE run as well as GWF+GWT, because the two kinds do NOT share
+> term names (GWE's storage term is `STORAGE-CELLBLK`, GWT's is `STORAGE-AQUEOUS`)
+> and the hover unit differs (`E/T` vs `M/T`). See the §6.1 banner and ledger 90–92, 95.
 
 A second instantiation of 6.0 — deliberately mechanical after 6.1:
 `model.temp` (`text="temperature"`), `temp_hover(unit=...)` (thread model units;

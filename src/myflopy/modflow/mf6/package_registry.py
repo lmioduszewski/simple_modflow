@@ -184,10 +184,22 @@ class PackageExplorerSpec:
     tiers: PackageTiers = field(default_factory=PackageTiers)
     #: the MF6 input-file suffix (``model.<suffix>``)
     file_suffix: str | None = None
-    #: MF6 reports this package's budget node numbers 1-based, so readers must
-    #: subtract one. True for the cell-stress list BCs; the advanced packages
-    #: report feature numbers instead. Got this wrong for years -- see the
-    #: budget off-by-one fixed in 4.7.1.
+    #: Whether this package's budget ``node2`` is zero-based by myflopy. MISNAMED
+    #: as of 2026-07-27 -- it no longer governs ``node`` at all (rename deferred,
+    #: ledger 93).
+    #:
+    #: It used to, on the belief that "the advanced packages report feature
+    #: numbers instead" of cells. **That belief was measured FALSE.** In the
+    #: *model* budget file EVERY record's ``node`` is a 1-based model cell,
+    #: ``SFR``/``LAK``/``UZF-GWRCH`` included -- there it is ``node2`` that holds
+    #: the feature id. (The feature-first layout the belief described is real but
+    #: belongs to the separate *package-output* budget file; the two were
+    #: conflated.) So ``node`` is now zero-based once, universally, in
+    #: ``package_explorer_utils._model_budget_record_frame``, and this flag is
+    #: left governing only the package-specific ``node2``.
+    #:
+    #: Got the ``node`` half wrong for years -- see the budget off-by-one fixed
+    #: in 4.7.1, and its SFR/LAK/UZF tail in ledger 92.
     zero_base_budget_nodes: bool = False
     #: one hand-written sentence naming what the package IS, hydrologically.
     #: Not generated: prose stays human-written (see the deprecation policy's

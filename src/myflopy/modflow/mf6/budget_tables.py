@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from myflopy.modflow.mf6.boundaries import Boundaries
+from myflopy.modflow.mf6.package_explorer_utils import _model_budget_record_frame
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
@@ -51,19 +52,26 @@ def raw_budget(model: SimulationBase, gwf_package: str | None = None):
 
 
 def _cell_based_budget_packages() -> frozenset[str]:
-    """Packages whose budget ``node`` is a model cell, from the package registry.
+    """Packages whose budget ``node2`` is zero-based, from the package registry.
 
     Derived rather than hardcoded: a hardcoded ``{"drn", "ghb", "rch"}`` silently
     left ``chd``/``riv``/``wel``/``evt`` on MF6's raw 1-based node ids for as long
     as those packages have existed (see ``tests/test_budget_node_basing.py``).
-    Advanced packages (SFR/LAK/UZF) are deliberately excluded -- their records
-    carry feature ids, not model cells, and are normalized on their own paths.
 
-    Reads the descriptor's explicit ``zero_base_budget_nodes`` flag as of 4.7.3.
-    It previously inferred the answer from ``kind == "cell_stress"``, which was
-    right but indirect: node basing is a property of how MF6 *writes the budget
-    file*, and tying it to a display-oriented ``kind`` would have quietly broken
-    the day a cell-stress package reported feature ids (or vice versa).
+    Scope narrowed 2026-07-27. This used to govern the ``node`` column too, on
+    the belief -- stated in the registry and in this docstring -- that the
+    advanced packages "carry feature ids, not model cells". **That was measured
+    false.** In the *model* budget file every record's ``node`` is a 1-based
+    model cell, including ``SFR``/``LAK``/``UZF-GWRCH`` (it is ``node2`` that
+    holds the feature id there; the feature-first layout belongs to the separate
+    *package-output* budget file). Excluding those three therefore handed back
+    node ids exactly one cell high. ``node`` is now zero-based once, universally,
+    in :func:`~myflopy.modflow.mf6.package_budget._model_budget_record_frame`,
+    and this set governs only the package-specific ``node2``.
+
+    That leaves the descriptor field ``zero_base_budget_nodes`` misnamed -- it
+    now answers a ``node2`` question. Renaming it moves ``api_snapshot.json`` and
+    the descriptor payoff count, so it is deferred (ledger 93).
     """
 
     return frozenset(
@@ -74,28 +82,24 @@ def _cell_based_budget_packages() -> frozenset[str]:
 
 
 def _zero_base_budget_frame(frame: pd.DataFrame, gwf_package: str) -> pd.DataFrame:
-    """Normalize package budget node columns to zero-based indexing when needed.
+    """Normalize a package budget's ``node2`` column to zero-based indexing.
 
-    MF6 writes 1-based node ids; myflopy is zero-based throughout, so every
-    cell-based boundary package is shifted here exactly once. Callers must NOT
-    re-normalize the result -- doing so is what made ``group.bud('drn')`` come
-    back a cell low (fixed 2026-07-18).
+    The ``node`` index arrives already zero-based from
+    :func:`~myflopy.modflow.mf6.package_budget._model_budget_record_frame`, which
+    is the single place MF6's 1-based cell ids are shifted. Callers must NOT
+    re-normalize -- doing so is what made ``group.bud('drn')`` come back a cell
+    low (fixed 2026-07-18).
 
     Notes
     -----
-    Only groundwater budget packages whose node ids map directly to model cells
-    are normalized here. The level names are preserved so downstream code sees
-    stable ``node`` / ``kstpkper`` columns after ``reset_index()``.
+    Only the packages listed by :func:`_cell_based_budget_packages` have a
+    ``node2`` that myflopy zero-bases; for SFR/LAK/UZF it is a feature id and is
+    left exactly as MF6 wrote it.
     """
 
     normalized = frame.copy()
-    if gwf_package in _cell_based_budget_packages():
-        index_names = normalized.index.names
-        new_index = pd.MultiIndex.from_tuples([(int(node) - 1, kstpkper) for node, kstpkper in normalized.index])
-        new_index = new_index.set_names(index_names)
-        normalized.index = new_index
-        if "node2" in normalized.columns:
-            normalized["node2"] = pd.to_numeric(normalized["node2"], errors="coerce") - 1
+    if gwf_package in _cell_based_budget_packages() and "node2" in normalized.columns:
+        normalized["node2"] = pd.to_numeric(normalized["node2"], errors="coerce") - 1
     return normalized
 
 
@@ -123,14 +127,16 @@ def budget_df(model: SimulationBase, gwf_package: str) -> pd.DataFrame:
     kstpkper_all = model._get_budget_kstpkper()
     frames = []
     for per, record in enumerate(records):
-        frame = pd.DataFrame(record)
+        # Shared with the modern explorer path so the two cannot disagree about
+        # node basing again, and so imeth=1 full-array records (STO-SS,
+        # STORAGE-AQUEOUS, ...) build a real per-cell table instead of raising
+        # pandas' opaque "Must pass 2-d input".
+        frame = _model_budget_record_frame(model, record, budget_text=gwf_package)
         frame["kstpkper"] = [kstpkper_all[per] for _ in range(len(frame))]
         frames.append(frame)
 
     combined = pd.concat(frames)
-    node_column = str(combined.columns[0])
-    combined = combined.set_index([combined.columns[0], "kstpkper"])
-    combined.index = combined.index.set_names([node_column, "kstpkper"])
+    combined = combined.set_index(["node", "kstpkper"])
     return _zero_base_budget_frame(combined, gwf_package.lower())
 
 

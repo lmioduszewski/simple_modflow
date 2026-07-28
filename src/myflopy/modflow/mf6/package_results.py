@@ -10,6 +10,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.package_budget import (
+    budget_value_units,
     build_budget_result_table,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
@@ -207,7 +208,11 @@ class CellBudgetResultsExplorer(SpatialView):
             result_hover(
                 self.value_name,
                 title=f"{self.package_name.upper()} {self.value_name}",
-                units={self.value_name: "ft³/d"} if self.result_name == "q" else None,
+                units=(
+                    {self.value_name: budget_value_units(self.model)}
+                    if self.result_name == "q"
+                    else None
+                ),
             ),
         )
         choro = self.model.cor(

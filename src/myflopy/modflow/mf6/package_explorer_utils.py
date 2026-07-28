@@ -212,6 +212,154 @@ def _default_show_layer_elevs(model) -> bool:
     return getattr(model.vor, "gdf_topbtm", None) is not None
 
 
+def _normalize_budget_nodes(
+    frame: pd.DataFrame, *, columns: tuple[str, ...] = ("node", "node2")
+) -> pd.DataFrame:
+    """Normalize budget node columns to zero-based indexing.
+
+    ``columns`` selects which id columns to shift; the default covers both and
+    is what every package-output caller wants. The model-budget path splits the
+    two -- :func:`_model_budget_record_frame` owns ``node`` (which is always a
+    model cell) and re-enters here with ``columns=("node2",)`` for the second
+    id, whose meaning is package-specific.
+    """
+
+    normalized = frame.copy()
+    for column in columns:
+        if column not in normalized.columns:
+            continue
+        numeric = pd.to_numeric(normalized[column], errors="coerce")
+        mask = numeric.notna()
+        if not mask.any():
+            continue
+        ints = numeric.loc[mask].astype(int)
+        normalized[column] = numeric
+        if int(ints.min()) >= 1:
+            normalized.loc[mask, column] = (ints - 1).astype(float)
+        else:
+            normalized.loc[mask, column] = ints.astype(float)
+    return normalized
+
+
+#: MF6 model-budget records written as imeth=1 full arrays that are indexed by
+#: cell CONNECTION rather than by cell. This is an MF6 *file-format* fact, not a
+#: per-package one, which is why it is a literal here rather than a registry
+#: field. If MF6 ever adds a second connection-indexed full-array record, it
+#: belongs in this set -- see ledger 96 for why size cannot be used instead.
+_CONNECTION_INDEXED_BUDGET_RECORDS = frozenset({"FLOW-JA-FACE"})
+
+
+def _resolve_budget_record_names(model, budget_text: str) -> list[str]:
+    """Return the real record name(s) a caller's ``budget_text`` selects.
+
+    Callers may pass a substring -- ``model.bud("flow")`` reaches
+    ``FLOW-JA-FACE`` -- so a guard that tests the caller's string directly would
+    miss exactly the alias that needs catching. The budget reader is cached on
+    the model (``_bud``), so this costs one lookup, not a file reopen.
+    """
+
+    try:
+        reader = model._get_budget_reader()
+        names = [
+            str(name).strip()
+            for name in reader.get_unique_record_names(decode=True)
+        ]
+    except Exception:  # noqa: BLE001 - fall back to the caller's own string
+        return [str(budget_text).strip()]
+
+    wanted = str(budget_text).strip().upper()
+    exact = [name for name in names if name.upper() == wanted]
+    if exact:
+        return exact
+    return [name for name in names if wanted in name.upper()] or [wanted]
+
+
+def _model_budget_record_frame(
+    model: SimulationBase,
+    record,
+    *,
+    budget_text: str,
+) -> pd.DataFrame:
+    """Return one MF6 *model*-budget record as a frame with a zero-based ``node``.
+
+    MF6 writes model-budget records in two shapes, and only one of them is the
+    ``(node, node2, q)`` recarray this layer used to assume:
+
+    * **imeth 2/5 -- a recarray** (``DRN``, ``CHD``, ``SOURCE-SINK MIX``, ...):
+      one row per boundary, whose ``node`` is a 1-based model cell.
+    * **imeth 1 -- a plain full array** (``STO-SS``, ``STORAGE-AQUEOUS``,
+      ``STORAGE-CELLBLK``, ``FLOW-JA-FACE``): one value per *position*, with no
+      ``node`` column at all.
+
+    The full-array shape used to be dropped on the floor. ``from_records`` turns
+    a ``(nlay, 1, ncpl)`` float array into a nonsense ``(1, 1)`` frame with an
+    integer column name, which the caller's ``"node" not in frame.columns``
+    guard then skipped -- so **two of a transport model's three budget terms
+    came back as an empty table with no error at all** (measured 2026-07-27 on
+    real GWT and GWE runs).
+
+    A full array is only cell-mappable when it is indexed by cell. Records that
+    are not -- ``FLOW-JA-FACE``, indexed by cell *connection* -- raise here
+    rather than inventing a mapping. Raising is the point: the bug being fixed
+    was silence, and a term that cannot be a cell table must say so.
+
+    That test is made on the record's NAME, not on its length, because **length
+    cannot tell the two apart**. Under an idomain reduction MF6 expands cell
+    arrays back to ``nodesuser`` while ``FLOW-JA-FACE`` stays at the reduced
+    ``nja``, so the two counts are independent and do collide -- measured
+    2026-07-27 on a 1-layer DISV with ``ncpl=4`` and two active adjacent cells,
+    where ``nja == nodesuser == 4`` and *both* records arrive with the identical
+    shape ``(1, 1, 4)``. A size-only guard accepted that FLOW-JA-FACE as four
+    cells and reported flow through two ``idomain=0`` cells, with no error.
+
+    ``node2`` is deliberately left as MF6 wrote it; its meaning is
+    package-specific (a boundary index for list packages, a feature id for
+    SFR/LAK/UZF), so each caller applies its own rule.
+    """
+
+    array = np.asarray(record)
+    if array.dtype.names:
+        frame = pd.DataFrame.from_records(record).copy()
+        if "node" not in frame.columns:
+            raise ValueError(
+                f"Budget record {budget_text!r} has no 'node' column "
+                f"(columns: {list(frame.columns)}), so its rows cannot be "
+                "mapped to model cells."
+            )
+        return _normalize_budget_nodes(frame, columns=("node",))
+
+    values = array.ravel()
+    node_count = len(model.node_to_lni)
+    connection_indexed = [
+        name
+        for name in _resolve_budget_record_names(model, budget_text)
+        if name.strip().upper() in _CONNECTION_INDEXED_BUDGET_RECORDS
+    ]
+    if connection_indexed:
+        raise ValueError(
+            f"Budget record {budget_text!r} resolves to "
+            f"{connection_indexed[0]!r}, which is indexed by cell CONNECTION "
+            f"rather than by cell, so it cannot be mapped to cells. (Its "
+            f"length, {values.size}, can coincidentally equal the model's node "
+            f"count on an idomain-reduced model, so size alone cannot tell "
+            f"them apart.)"
+        )
+    if values.size != node_count:
+        raise ValueError(
+            f"Budget record {budget_text!r} is a full array of {values.size} "
+            f"values, which is not one per model node ({node_count}), so it "
+            "cannot be mapped to cells."
+        )
+    # Full arrays are POSITIONAL: index 0 is node 0. There is no 1-based shift
+    # to undo here, unlike the recarray branch above.
+    return pd.DataFrame(
+        {
+            "node": np.arange(node_count, dtype=float),
+            "q": values.astype(float),
+        }
+    )
+
+
 __all__ = [
     "_get_package_explorer_cache",
     "_extract_structured_column",
@@ -225,4 +373,6 @@ __all__ = [
     "_filter_normalized_table",
     "_aggregate_hover_strings",
     "_default_show_layer_elevs",
+    "_normalize_budget_nodes",
+    "_model_budget_record_frame",
 ]

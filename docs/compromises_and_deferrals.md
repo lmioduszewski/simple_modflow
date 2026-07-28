@@ -1566,3 +1566,135 @@ same day, which is the useful part of the result.
       GWE = `STORAGE-CELLBLK` / `FLOW-JA-FACE` / `SOURCE-SINK MIX`. There is **no term
       named `SSM`** (the SSM package's record is `SOURCE-SINK MIX`), and `DECAY` appears
       only when MST declares decay or sorption.
+
+91. **Transport budgets were unreadable four different ways — all FIXED, with two
+    deliberate limits (2026-07-27).**
+    Found while scoping §6.1 item 3 (`model.budget.<term>`), reproduced against real
+    coupled GWF+GWT and GWF+GWE runs, and fixed under the user's "fix everything
+    found" decision. What was wrong:
+    - **(a) Two of a transport model's three terms returned an EMPTY table, silently.**
+      MF6 writes storage and `FLOW-JA-FACE` as imeth=1 *full arrays* with no `node`
+      column. `pd.DataFrame.from_records` turns a `(nlay, 1, ncpl)` float array into a
+      nonsense `(1, 1)` frame with an integer column name, which the builder's
+      `"node" not in frame.columns` guard then skipped — `table=(0, 7)`, no error. A
+      caller could not tell "no flow" from "not read".
+    - **(b) The two budget paths disagreed about node basing.** The modern explorer
+      zero-based with its own rule; `model.bud()` looked the package up in the
+      registry, which no transport record matches — so the legacy path handed back
+      MF6's raw 1-based ids. Measured against the CHD source cells: `0,6,7,8,14…`
+      (right) vs `1,7,8,9,15…` (wrong).
+    - **(c) Units were hardcoded `ft³/d`** at both hover sites — the wrong *dimension*
+      for GWT (mass/time) and GWE (energy/time), and the wrong *units* for any GWF
+      model not declared in feet and days.
+    - **(d) `model.bud("ssm")` was unreachable on every transport model.** MF6 names
+      the record for the process (`SOURCE-SINK MIX`), not the package, and the lookup
+      substring-matched package names — so the obvious call raised while the
+      non-obvious literal worked.
+    - **The fix is one shared converter.** `_model_budget_record_frame` handles both
+      record shapes and zero-bases `node` exactly once, and BOTH paths now call it, so
+      they cannot drift apart again. Cross-checked physically, not just structurally:
+      the storage and source-sink terms cancel to 1e-6 relative on both kinds
+      (GWT ∓27.26, GWE ∓1.141e8), which pins the table's *values*, not only its shape.
+    - **Deliberate limit 1 — `FLOW-JA-FACE` raises instead of returning a table.** It
+      is indexed by cell *connection* (388 values on a 64-cell grid), so there is no
+      honest mapping onto cells. Exposing it would need a connection-indexed noun,
+      which is a different feature; the bug being fixed here was *silence*, so refusing
+      loudly is the correct end state for this pass. **How that refusal is decided is
+      itself load-bearing — see 96.**
+    - **Deliberate limit 2 — the helper lives in `package_explorer_utils` (layer 0),
+      not in `package_budget` (layer 2).** Importing `package_budget` from
+      `budget_tables` worked but pushed `budget_tables`/`budget_plotting`/`budget`/
+      `outputs` each up one layer. Moving the two shared functions down instead keeps
+      the code shared with zero layering movement.
+
+92. **A fifth off-by-one, found while fixing 91 and fixed with it: `model.bud("sfr"
+    |"lak"|"uzf").df` returned node ids one cell high (2026-07-27).**
+    - The registry marked these three `zero_base_budget_nodes=False`, and both it and
+      `_cell_based_budget_packages`' docstring justified that by saying their records
+      "carry feature ids, not model cells". **Measured false.** In the *model* budget
+      file every record's `node` is a 1-based model cell, `SFR`/`LAK`/`UZF-GWRCH`
+      included; it is `node2` that holds the feature id there. The feature-first layout
+      the belief described is real but belongs to the separate *package-output* budget
+      file that `model.outputs.<pkg>.bud` reads — the two were conflated.
+    - This is exactly the off-by-one class `tests/test_budget_node_basing.py` exists to
+      prevent; it escaped only because that module parametrizes `cell_stress` packages
+      alone. It now covers the advanced three as well, against ground truth taken from
+      `packagedata`/`connectiondata`.
+    - Nothing in `src/`, `tests/`, or `examples/` consumed those ids, so no caller
+      shifts under the fix.
+
+93. **`zero_base_budget_nodes` is now misnamed — rename DEFERRED (2026-07-27).**
+    - After 91/92, `node` is zero-based once and universally, in the shared record
+      converter. The descriptor field and `_cell_based_budget_packages()` survive but
+      now govern only `node2`, whose meaning genuinely is per-package (a boundary index
+      for the list BCs, a feature id for SFR/LAK/UZF).
+    - Why not renamed now: the field is pinned by `tests/api_snapshot.json` and counted
+      by `tests/test_package_descriptor_payoff.py`, so a rename is a separate,
+      mechanical pass that would otherwise be buried inside a correctness fix. Both
+      docstrings state the narrowed scope in the meantime.
+    - The registry keeps its 9 automatic surfaces: this narrows what one of them
+      *means*, it does not remove it.
+
+94. **`node2` basing is left asymmetric — across packages AND across the two paths —
+    deliberately (2026-07-27).**
+    - The asymmetry is real and larger than "one rule with exceptions". Measured on the
+      canonical model, `model.packages.<pkg>.results.q.get()` vs `model.bud(<pkg>).df`:
+      - `drn` (and the other cell BCs): **0..11 both paths — they agree.**
+      - `sfr`: **modern 0..54, legacy 1..55 — the two paths differ by one.** The modern
+        builder zero-bases `node2` with a min>=1 heuristic for every package; the legacy
+        one consults the registry, which excludes SFR.
+      - `lak`: **modern 162..292, legacy 1..1 — not even the same quantity.**
+        `lak.results.q` reads the separate *package-output* budget file, where `node2`
+        is a GWF cell, while `model.bud("lak")` reads the model budget, where it is the
+        lake id.
+    - All of it predates this pass and is preserved bit-for-bit rather than unified;
+      this change touched only `node`.
+    - Why: nothing reads `node2` as a meaningful id on the model-budget path — the only
+      consumer is `group/_shared.py`, which uses it as an opaque diff *alignment key*,
+      where both sides shift together and absolute basing is irrelevant. Zero-basing it
+      for LAK would silently redefine `model.bud("lak").df.node2` from a 1-based lake id
+      to a 0-based one for no benefit, and the honest fix is the rename in 93, not a
+      second basing change smuggled in here.
+
+95. **Budget hover units fall back to dimensional placeholders, and two package-output
+    hovers still hardcode feet (2026-07-27).**
+    - `budget_value_units` reads `dis.length_units`/`tdis.time_units` and returns
+      `ft³/d` for the canonical model, which declares feet and days. A model that
+      declares neither now reads `L³/T` (GWF), `M/T` (GWT), `E/T` (GWE) rather than
+      guessing feet and days as before. **This changes the hover on any undeclared GWF
+      model** from a confident wrong label to an honest dimensional one.
+    - Not converted in this pass: the SFR and LAK *package-output* hovers
+      (`hover.py:675,688`), which hardcode `ft`/`ft²`/`ft³/d` across several fields.
+      Most of those are geometry (`rlen`, `stage`, `flow_area`), not budget values, so
+      they need a length-unit helper rather than this one, and both packages are
+      GWF-only — no transport model reaches them. Separable; left for the pass that
+      needs it.
+
+96. **The connection-indexed guard keys on a hardcoded record NAME, because size
+    cannot decide it (2026-07-27).**
+    - Caught by adversarial review of the 91 fix, before commit. The first version of
+      the guard discriminated a connection-indexed full array from a cell-indexed one
+      by **length alone** (`values.size != len(model.node_to_lni)`). That is unsound:
+      under an idomain reduction MF6 expands cell arrays back to `nodesuser` while
+      `FLOW-JA-FACE` stays at the reduced `nja`, so the two counts are independent.
+    - **Reproduced, not theorised.** A 1-layer DISV with `ncpl=4` and two active
+      adjacent cells gives `nja == nodesuser == 4`, and *both* records arrive with the
+      identical shape `(1, 1, 4)` — so neither size nor shape can separate them.
+      `model.bud("FLOW-JA-FACE").df` returned a four-row "cell" table reporting
+      `q=+16.85` through a cell whose `idomain` is 0. Pre-fix, that same call raised
+      loudly, so the size-only guard was **strictly worse than what it replaced**, on
+      the exact failure mode the fix existed to remove.
+    - Why a literal set and not a registry field: this is an MF6 **file-format** fact
+      (which records are written imeth=1 over connections), not a per-package one, so
+      it does not belong on a package descriptor. If MF6 adds a second such record it
+      must be added to `_CONNECTION_INDEXED_BUDGET_RECORDS` — that is the known cost of
+      this approach, accepted because the alternatives are worse: the header's shape is
+      ambiguous on 1-layer models, and length is provably wrong.
+    - The guard resolves the caller's string to the real record name first, so the
+      substring route (`model.bud("flow")` → `FLOW-JA-FACE`) is caught too; a guard
+      that tested the caller's own string would have missed exactly that alias.
+    - Test-fidelity note: every other budget test uses an all-ones idomain, where
+      `nja > nodesuser` is guaranteed, so none of them could see this. The regression
+      test builds and runs the degenerate 4-cell model, and **asserts the collision
+      still holds** before asserting the refusal — otherwise a future grid change would
+      silently turn it into a test of nothing.

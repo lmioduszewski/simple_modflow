@@ -53,6 +53,12 @@ from myflopy.modflow.mf6.budget_tables import (
     raw_budget as _raw_budget,
 )
 
+#: Model-budget records MF6 names for the process rather than for the package
+#: that wrote them, so a package-name lookup can never find them.
+_BUDGET_RECORD_ALIASES = {
+    "ssm": "SOURCE-SINK MIX",
+}
+
 
 class Budget:
     """Access groundwater-model budget records through a model-aware wrapper.
@@ -89,11 +95,30 @@ class Budget:
 
     @gwf_package.setter
     def gwf_package(self, pkg: str):
-        """Validate and store the optional groundwater package filter."""
+        """Resolve and store the optional groundwater/transport package filter."""
 
-        if pkg is not None:
-            assert any([pkg.upper() in pack for pack in self.types]), f'package: [{pkg}] not included in budget file'
-        self._gwf_package = pkg
+        if pkg is None:
+            self._gwf_package = None
+            return
+
+        available = [str(record).strip() for record in self.types]
+        wanted = str(pkg).strip()
+        if not any(wanted.upper() in record.upper() for record in available):
+            # MF6 names a few model-budget records for the PROCESS rather than
+            # the package that wrote them, so the package's own name never
+            # appears in the file. SSM is the one users reach for: its record is
+            # "SOURCE-SINK MIX", which left model.bud("ssm") unreachable on
+            # EVERY transport model (measured 2026-07-27).
+            alias = _BUDGET_RECORD_ALIASES.get(wanted.lower())
+            if alias is None or not any(
+                alias.upper() in record.upper() for record in available
+            ):
+                raise ValueError(
+                    f"package: [{pkg}] not included in budget file. "
+                    f"Available records: {available}"
+                )
+            wanted = alias
+        self._gwf_package = wanted
 
     @property
     def types(self):

@@ -14,6 +14,11 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
     _coerce_numeric_like_columns,
     _filter_normalized_table,
+    # Re-exported: both live one layer down so the LEGACY budget path
+    # (``budget_tables``) can share them without dragging four modules up a
+    # layer. They are still part of this module's public surface.
+    _model_budget_record_frame,
+    _normalize_budget_nodes,
     _normalize_connection_type_filter,
     _normalize_surface_water_include,
     _normalize_term_filter,
@@ -23,25 +28,79 @@ from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
 )
 
+#: MF6 spells declared units out in full; hover labels want the abbreviation.
+_LENGTH_UNIT_ABBREVIATIONS = {
+    "feet": "ft",
+    "meters": "m",
+    "centimeters": "cm",
+}
+_TIME_UNIT_ABBREVIATIONS = {
+    "seconds": "s",
+    "minutes": "min",
+    "hours": "h",
+    "days": "d",
+    "years": "yr",
+}
 
-def _normalize_budget_nodes(frame: pd.DataFrame) -> pd.DataFrame:
-    """Normalize budget node columns to zero-based indexing."""
 
-    normalized = frame.copy()
-    for column in ("node", "node2"):
-        if column not in normalized.columns:
-            continue
-        numeric = pd.to_numeric(normalized[column], errors="coerce")
-        mask = numeric.notna()
-        if not mask.any():
-            continue
-        ints = numeric.loc[mask].astype(int)
-        normalized[column] = numeric
-        if int(ints.min()) >= 1:
-            normalized.loc[mask, column] = (ints - 1).astype(float)
-        else:
-            normalized.loc[mask, column] = ints.astype(float)
-    return normalized
+def _declared_length_unit(model: SimulationBase) -> str | None:
+    """Return the model's declared length unit, or ``None`` if it declares none."""
+
+    try:
+        handle = getattr(model, "gwf", None)
+        for name in ("dis", "disv", "disu"):
+            package = getattr(handle, name, None)
+            if package is None:
+                continue
+            data = getattr(getattr(package, "length_units", None), "data", None)
+            if data:
+                return str(data).strip().lower()
+    except Exception:  # noqa: BLE001 - a hover label must never break a map
+        return None
+    return None
+
+
+def _declared_time_unit(model: SimulationBase) -> str | None:
+    """Return the simulation's declared time unit, or ``None`` if it declares none."""
+
+    try:
+        for attribute in ("sim", "simulation"):
+            sim = getattr(model, attribute, None)
+            if sim is None:
+                continue
+            tdis = getattr(sim, "tdis", None)
+            data = getattr(getattr(tdis, "time_units", None), "data", None)
+            if data:
+                return str(data).strip().lower()
+    except Exception:  # noqa: BLE001 - a hover label must never break a map
+        return None
+    return None
+
+
+def budget_value_units(model: SimulationBase) -> str:
+    """Return the unit label for a model-budget flow value, by model kind.
+
+    A GWF budget is VOLUMETRIC (L3/T); a GWT budget carries MASS per time and a
+    GWE budget ENERGY per time. Every call site used to hardcode ``"ft3/d"``,
+    which was wrong twice over: the wrong *dimension* on any transport model,
+    and the wrong *units* on any GWF model not declared in feet and days.
+
+    Both halves are read from where MF6 records them (``dis.length_units`` and
+    ``tdis.time_units``) and fall back to the dimensional placeholders ``L``
+    and ``T`` when a model declares neither -- which transport models built by
+    ``mf.gwt``/``mf.gwe`` typically do not. The canonical model declares feet
+    and days, so it still reads ``ft3/d``.
+    """
+
+    time_label = _TIME_UNIT_ABBREVIATIONS.get(_declared_time_unit(model) or "", "T")
+    kind = str(getattr(model, "model_type", "") or "").lower()
+    if kind.startswith("gwt"):
+        return f"M/{time_label}"
+    if kind.startswith("gwe"):
+        return f"E/{time_label}"
+    length_label = _LENGTH_UNIT_ABBREVIATIONS.get(_declared_length_unit(model) or "")
+    volume_label = f"{length_label}³" if length_label else "L³"
+    return f"{volume_label}/{time_label}"
 
 
 def build_budget_result_table(
@@ -77,10 +136,14 @@ def build_budget_result_table(
         records = reader.get_data(text=budget_text, kstpkper=kstpkper)
         if not records:
             continue
-        frame = pd.DataFrame.from_records(records[0]).copy()
-        if frame.empty or "node" not in frame.columns:
+        frame = _model_budget_record_frame(
+            model, records[0], budget_text=budget_text
+        )
+        if frame.empty:
             continue
-        frame = _normalize_budget_nodes(frame)
+        # ``node`` is already zero-based; only the package-specific second id is
+        # left to normalize.
+        frame = _normalize_budget_nodes(frame, columns=("node2",))
         nodes = frame["node"].astype(int).tolist()
         layers: list[int] = []
         cells: list[int] = []
@@ -982,7 +1045,9 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
 
 
 __all__ = [
+    "_model_budget_record_frame",
     "_normalize_budget_nodes",
+    "budget_value_units",
     "build_budget_result_table",
     "build_sfr_stage_result_table",
     "build_sfr_long_profile_table",

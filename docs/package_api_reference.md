@@ -132,8 +132,12 @@ The transport list BCs (`cnc`/`src`/`ctp`/`esl`) are `package_api` factories onl
 no `.gpkg` and no registry entry yet. Concentration/temperature **input maps +
 hover** are still Phase 6. The **results tier** (`model.conc`/`model.temp`) is
 **built** as of §6.0/6.1/6.2 (2026-07-24) — see the read-side model-level reads
-below; still deferred: GWT/GWE budget views, `GroupConc`/`GroupTemp` group/diff,
-and `ConcTargets`/`TempTargets` PEST observations (ledger 56).
+below. Transport budget **tables** read correctly as of 2026-07-27 — `model.bud()`
+and the package result tables handle both MF6 record shapes, agree on zero-based
+node ids, and label hovers `M/T` (GWT) / `E/T` (GWE) rather than `ft³/d`
+(ledger 90–92, 95). Still deferred: the `model.budget.<term>` noun,
+`GroupConc`/`GroupTemp` group/diff, and `ConcTargets`/`TempTargets` PEST
+observations (ledger 56).
 
 ### PRT particle-tracking packages
 

@@ -31,7 +31,7 @@ hand-written site, or closing one without recording it.
 
 **As of 4.7.2 (2026-07-18) `package_registry.py` is the single source of per-package
 truth** — FloPy class, record fields, `.gpkg` defaults, capabilities, tier flags,
-file suffix, budget node basing, prose blurb, for all 10 packages. Adding a package
+file suffix, budget `node2` basing, prose blurb, for all 10 packages. Adding a package
 means adding ONE descriptor entry there. The ~92 hardcoded sites still exist and are
 still authoritative until 4.7.3 deletes them one at a time; until then
 `tests/test_package_descriptor.py` proves the descriptor equals them, asserting

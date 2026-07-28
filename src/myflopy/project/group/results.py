@@ -10,6 +10,7 @@ import pandas as pd
 from myflopy.modflow.mf6.package_explorer import (
     FieldMappable,
     _symmetric_color_limit,
+    budget_value_units,
     build_budget_result_table,
     build_cell_input_map_payload,
     build_group_input_compare_map_payload,
@@ -163,7 +164,11 @@ class GroupCellPackageResults(_GroupSpatialView):
             result_hover(
                 self.value_name,
                 title=f"{self.package_name.upper()} {self.value_name}",
-                units={self.value_name: "ft³/d"} if is_exchange else None,
+                units=(
+                    {self.value_name: budget_value_units(target_model)}
+                    if is_exchange
+                    else None
+                ),
             ),
         )
         return target_model.cor(

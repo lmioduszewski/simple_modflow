@@ -260,3 +260,139 @@ def test_a_transport_model_actually_writes_its_budget(gwt_run, gwe_run):
 
         terms = {name.strip() for name in reader.get_unique_record_names(decode=True)}
         assert terms == {storage, "FLOW-JA-FACE", "SOURCE-SINK MIX"}
+
+
+@pytest.mark.slow
+def test_a_transport_storage_term_builds_a_real_table_not_an_empty_one(gwt_run, gwe_run):
+    """Two of a transport model's three budget terms silently returned NOTHING.
+
+    MF6 writes storage (imeth=1) as a plain ``(nlay, 1, ncpl)`` float array with
+    no ``node`` column. ``pd.DataFrame.from_records`` turns that into a nonsense
+    ``(1, 1)`` frame with an integer column name, which the table builder's
+    ``"node" not in frame.columns`` guard then skipped -- so
+    ``STORAGE-AQUEOUS``/``STORAGE-CELLBLK`` came back as a ``(0, 7)`` table with
+    no error at all, and a caller could not tell "no flow" from "not read".
+
+    The strong assertion here is not the shape but the MASS BALANCE: over one
+    steady period the storage term and the source-sink term must cancel. A frame
+    of the right shape carrying the wrong values would fail that, so it pins the
+    values and not merely the plumbing.
+    """
+
+    from myflopy.modflow.mf6.package_budget import build_budget_result_table
+
+    for run, storage in ((gwt_run, "STORAGE-AQUEOUS"), (gwe_run, "STORAGE-CELLBLK")):
+        model = run.model("trans")
+        ncpl = int(model.vor.ncpl)
+
+        storage_table = build_budget_result_table(
+            model, budget_text=storage, package_name="sto", value_name="q"
+        )
+        assert len(storage_table) == ncpl, f"{storage}: one row per cell"
+        assert sorted(storage_table["cell"].unique()) == list(range(ncpl))
+
+        ssm_table = build_budget_result_table(
+            model, budget_text="SOURCE-SINK MIX", package_name="ssm", value_name="q"
+        )
+        assert not ssm_table.empty
+
+        storage_total = float(storage_table["q"].sum())
+        ssm_total = float(ssm_table["q"].sum())
+        scale = max(abs(storage_total), abs(ssm_total))
+        assert scale > 0, f"{storage}: the run moved no mass, so this proves nothing"
+        assert abs(storage_total + ssm_total) / scale < 1e-6, (
+            f"{storage}: budget does not balance against SOURCE-SINK MIX "
+            f"({storage_total} vs {ssm_total}) -- the table's VALUES are wrong"
+        )
+
+
+@pytest.mark.slow
+def test_a_connection_indexed_transport_term_refuses_instead_of_going_quiet(gwt_run):
+    """FLOW-JA-FACE is indexed by cell CONNECTION, so it is not a cell table.
+
+    On this 64-cell grid it is a full array of 388 values. There is no honest
+    mapping onto cells, and the bug being fixed was *silence* -- so the
+    replacement has to be an error naming the mismatch, not an empty frame.
+    """
+
+    from myflopy.modflow.mf6.package_budget import build_budget_result_table
+
+    with pytest.raises(ValueError, match="indexed by cell CONNECTION"):
+        build_budget_result_table(
+            gwt_run.model("trans"),
+            budget_text="FLOW-JA-FACE",
+            package_name="npf",
+            value_name="q",
+        )
+
+
+@pytest.mark.slow
+def test_transport_budget_nodes_agree_with_the_boundary_that_made_them(gwt_run, gwe_run):
+    """Both budget paths must land on the same zero-based cells as the CHD source.
+
+    ``package_budget`` zero-bases with its own rule while ``model.bud()`` used a
+    registry lookup keyed on package name -- which no transport record matches,
+    so the legacy path handed back MF6's raw 1-based ids while the modern path
+    handed back zero-based ones. Ground truth is the CHD package that injects
+    the mass: the SSM record's cells are exactly the cells CHD occupies.
+    """
+
+    from myflopy.modflow.mf6.package_budget import build_budget_result_table
+
+    for run in (gwt_run, gwe_run):
+        model = run.model("trans")
+        chd = run.model("flow").gwf.get_package("chd").stress_period_data.get_data(key=0)
+        truth = {int(row[0][1]) for row in chd}
+
+        modern = build_budget_result_table(
+            model, budget_text="SOURCE-SINK MIX", package_name="ssm", value_name="q"
+        )
+        modern_cells = {int(value) for value in modern["cell"].unique()}
+
+        legacy = model.bud("SOURCE-SINK MIX").df.reset_index()
+        legacy_cells = {int(value) for value in legacy["node"].dropna().unique()}
+
+        assert modern_cells == truth, "the modern explorer path drifted off the CHD cells"
+        assert legacy_cells == truth, "model.bud() returned raw 1-based node ids"
+
+
+@pytest.mark.slow
+def test_the_ssm_budget_is_reachable_by_its_package_name(gwt_run):
+    """``model.bud("ssm")`` was unreachable on every transport model.
+
+    MF6 names the record for the PROCESS ("SOURCE-SINK MIX"), not for the
+    package that wrote it, and the lookup substring-matched the package name
+    against record names -- so the obvious call raised "not included in budget
+    file" while the non-obvious literal worked.
+    """
+
+    model = gwt_run.model("trans")
+
+    by_alias = model.bud("ssm").df
+    by_record = model.bud("SOURCE-SINK MIX").df
+    assert by_alias.equals(by_record)
+
+    # a genuinely absent package must still fail, and now says what IS available
+    with pytest.raises(ValueError, match="Available records"):
+        model.bud("drn")
+
+
+@pytest.mark.slow
+def test_budget_hover_units_follow_the_model_kind(gwt_run, gwe_run, canonical_run):
+    """A transport budget is not measured in cubic feet.
+
+    Every hover hardcoded ``"ft³/d"``, which was wrong twice over: the wrong
+    DIMENSION on a transport model (GWT carries mass per time, GWE energy per
+    time) and the wrong UNITS on any GWF model not declared in feet and days.
+    The canonical model does declare feet and days, so it must still read
+    ``ft³/d`` -- the fix derives that label rather than hardcoding it.
+    """
+
+    from myflopy.modflow.mf6.package_budget import budget_value_units
+
+    assert budget_value_units(gwt_run.model("trans")) == "M/T"
+    assert budget_value_units(gwe_run.model("trans")) == "E/T"
+    assert budget_value_units(canonical_run) == "ft³/d"
+    # ...and a model that declares no units says so dimensionally instead of
+    # inventing feet and days.
+    assert budget_value_units(gwt_run.model("flow")) == "L³/T"

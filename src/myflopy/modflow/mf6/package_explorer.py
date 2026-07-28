@@ -8,7 +8,9 @@ path used by existing callers.
 from __future__ import annotations
 
 from myflopy.modflow.mf6.package_budget import (
+    _model_budget_record_frame,
     _normalize_budget_nodes,
+    budget_value_units,
     build_budget_result_table,
     build_lak_budget_result_table,
     build_lak_budget_term_table,
@@ -150,7 +152,9 @@ __all__ = [
     "build_lak_input_table",
     "summarize_input_table",
     "_numeric_period_settings",
+    "_model_budget_record_frame",
     "_normalize_budget_nodes",
+    "budget_value_units",
     "build_budget_result_table",
     "build_sfr_stage_result_table",
     "build_sfr_long_profile_table",
