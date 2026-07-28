@@ -139,8 +139,12 @@ node ids, and label hovers `M/T` (GWT) / `E/T` (GWE) rather than `ft³/d`
 item 3) — see "Model-level reads" below. The grouped transport fields
 (`group.conc`/`group.temp`, `group.diff().conc`/`.temp`) shipped the same day
 (§6.1/6.2 item 4), which also fixed `xs` on `model.conc`/`model.temp` — it had
-raised since those readers shipped (ledger 99). Still deferred:
-`ConcTargets`/`TempTargets` PEST observations (ledger 56).
+raised since those readers shipped (ledger 99). **Transport calibration** ships as of
+2026-07-28: `ConcTargets` observations go straight into `cal.observe(...)`, and the
+canonical model has a GWT sibling (`build_canonical_transport_calibration_demo`) whose
+worked example is `examples/mf6/notebooks/canonical_07_transport_and_prt.ipynb`.
+Still deferred: `TempTargets` (GWE observations) and transport `parameterize` targets
+such as porosity (ledger 103).
 
 ### PRT particle-tracking packages
 

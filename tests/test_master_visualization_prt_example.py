@@ -295,3 +295,57 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "obs_residuals()",
     ):
         assert required in ies_source
+
+
+def test_transport_notebook_teaches_the_transport_calibration_surface():
+    """``canonical_07`` is checked here because it falls outside both other globs.
+
+    ``test_canonical_master_notebook_set_uses_one_builder`` globs
+    ``canonical_0[0-3]`` and asserts exactly 4; the PEST test globs
+    ``canonical_0[4-6]`` and asserts exactly 3. A ``canonical_07`` matches neither,
+    so without this it would ship with NO static checking at all -- and nothing in
+    this repo executes notebooks, so static checking is all there is.
+    """
+
+    import json
+    from pathlib import Path
+
+    notebooks = sorted(
+        (Path(__file__).resolve().parents[1] / "examples/mf6/notebooks").glob(
+            "canonical_07*.ipynb"
+        )
+    )
+    assert len(notebooks) == 1, f"expected one transport notebook, found {notebooks}"
+    notebook = json.loads(notebooks[0].read_text(encoding="utf-8"))
+    source = "\n".join(
+        "".join(cell["source"]) for cell in notebook["cells"]
+    )
+
+    # the house scaffolding every canonical notebook shares
+    assert "notebook_header" in source
+    assert sum(cell["cell_type"] == "markdown" for cell in notebook["cells"]) >= 2
+    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) >= 2
+
+    # the surface this notebook exists to teach -- each name is a feature that
+    # would otherwise have no worked example anywhere
+    for required in (
+        "build_canonical_transport_calibration_demo",  # the transport fixture
+        "transport_view",                              # reading the GWT sibling
+        "view.conc.map",                               # the concentration reader
+        "view.budget",                                 # model.budget.<term>
+        "particle_tracking.prt",                       # PRT on the coupled model
+        "pathlines.map",
+        "travel_time.map",
+        "cal.observe(demo.conc_targets)",              # calibration ON CONCENTRATION
+        "cal.parameterize('k'",
+        "forward_run.py",
+    ):
+        assert required in source, f"canonical_07 no longer teaches {required!r}"
+
+    # heavy cells stay gated, like every other canonical notebook
+    assert "RUN_IES = False" in source
+
+    # tracked notebooks carry no outputs, and never an error output
+    assert not any(
+        cell.get("outputs") for cell in notebook["cells"]
+    ), "canonical_07 carries committed outputs; run scripts/strip_notebooks.py"

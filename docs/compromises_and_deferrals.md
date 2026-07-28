@@ -1921,3 +1921,25 @@ same day, which is the useful part of the result.
        name/layer/cell), so it is wiring, not new machinery.
      - Everything else in the review layer works unchanged: phi, ensemble-vs-observed,
        and forecasts all read the observation frame generically.
+
+106. **`canonical_07` is verified by hand, because nothing in this repo executes a
+     notebook (2026-07-28).**
+     - There is no nbval/nbmake/papermill/nbclient anywhere, and CI runs only
+       `pytest -m "not slow"`. The canonical notebooks are checked by *grepping their
+       JSON source* for required substrings. That catches a missing API name and
+       nothing else — not a typo'd kwarg, not a stale signature, not a cell that
+       raises.
+     - So this notebook was executed end to end by hand on the full `validation()`
+       (50x50) profile before commit: all 11 code cells ran clean. `nbconvert` is not
+       installed either, so the run extracted the code cells and executed them in
+       order in one namespace, which validates the code but not the notebook
+       machinery around it.
+     - `canonical_07` also falls outside BOTH existing notebook globs
+       (`canonical_0[0-3]` asserts exactly 4, `canonical_0[4-6]` exactly 3), so it
+       would have shipped with zero static checking. It has its own test now, which
+       pins the ten API names the notebook exists to teach plus the no-committed-
+       outputs rule.
+     - Deferred: adding notebook execution to CI. It would need a jupyter dependency
+       and would move the slow lane's runtime substantially (this notebook alone runs
+       two coupled models and a PRT simulation), so it is a CI-policy change rather
+       than part of this feature.
