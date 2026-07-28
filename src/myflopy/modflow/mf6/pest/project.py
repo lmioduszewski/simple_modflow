@@ -454,9 +454,65 @@ class PestProject:
         self.original_workspace.mkdir(parents=True, exist_ok=True)
         self.model.sim.write_simulation(silent=True)
 
+    def _clear_stale_template(self):
+        """Make sure the PEST template directory is not copied into itself.
+
+        ``PstFrom`` copies ``original_workspace`` wholesale into
+        ``template_workspace``, and by default the template lives INSIDE the
+        workspace being copied (``<model workspace>/pest/<name>``). Whenever a
+        ``pest/`` directory is present when the copy starts, ``shutil.copytree``
+        descends into it and copies the destination it is currently filling --
+        ``pest/<name>/pest/<name>/pest/...`` -- until it dies of recursion.
+
+        Measured 2026-07-28: re-running a calibration cell left a 17 GB tree 40
+        levels deep. ``PstFrom``'s own ``remove_existing=True`` does not help --
+        it clears the destination, which is not what recurses. Nor is deleting
+        just this run's template enough: an EMPTY ``pest/`` still gets walked.
+
+        So this removes this run's template and, if that leaves ``pest/`` empty,
+        removes ``pest/`` too -- restoring exactly the state a first-ever build
+        sees. Other calibrations are never deleted: their IES master directories
+        hold finished results. If any exist, the copy genuinely cannot be made
+        safe at this location, so this raises rather than exploding later.
+        """
+
+        import shutil
+
+        template = self.template_workspace
+        if template.exists():
+            shutil.rmtree(template, ignore_errors=True)
+
+        pest_root = template.parent
+        try:
+            inside = pest_root.resolve().is_relative_to(
+                self.original_workspace.resolve()
+            )
+        except (OSError, ValueError):  # pragma: no cover - defensive
+            inside = False
+        if not inside or not pest_root.is_dir():
+            return
+
+        siblings = sorted(entry.name for entry in pest_root.iterdir())
+        if not siblings:
+            # Empty now -- remove it so the copy sees no `pest/` at all.
+            shutil.rmtree(pest_root, ignore_errors=True)
+            return
+
+        raise RuntimeError(
+            f"Cannot build this calibration at {template}: it sits inside the "
+            f"model workspace that PstFrom copies, and {pest_root} still holds "
+            f"{len(siblings)} other PEST run(s) ({', '.join(siblings[:5])}"
+            f"{' ...' if len(siblings) > 5 else ''}). Copying would nest the "
+            "workspace inside itself until it exhausts the disk.\n\n"
+            "Give this calibration a workspace OUTSIDE the model directory:\n"
+            f"    model.pest({self.name!r}, workspace=<dir outside the model>, ...)\n"
+            "or delete the other run(s) first if you no longer need their results."
+        )
+
     def _build_pstfrom(self):
         """Instantiate the underlying ``pyemu.utils.PstFrom`` object."""
 
+        self._clear_stale_template()
         self.pyemu = _import_pyemu()
         from pyemu.utils.pst_from import PstFrom
 

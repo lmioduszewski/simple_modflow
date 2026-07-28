@@ -1944,3 +1944,49 @@ same day, which is the useful part of the result.
        and would move the slow lane's runtime substantially (this notebook alone runs
        two coupled models and a PRT simulation), so it is a CI-policy change rather
        than part of this feature.
+
+107. **PstFrom copied the PEST template into itself; guarded, with a real capability
+     limit (2026-07-28).**
+     - `PestProject` defaults its template to `<model workspace>/pest/<name>` — INSIDE
+       the workspace `PstFrom` copies wholesale. Whenever a `pest/` directory exists
+       when the copy starts, `shutil.copytree` descends into the destination it is
+       currently filling: `pest/<name>/pest/<name>/pest/...`. A user re-running a
+       calibration cell produced a **17 GB tree nested 40 levels deep** before it died
+       of recursion.
+     - Only a notebook comment documented this (`canonical_04`: "a stale pest/ template
+       inside the model dir makes PstFrom recurse"), and the workaround was to
+       `rmtree` the whole artifact root — which only works if the cleanup and the build
+       are in the same cell. `canonical_07` split them across sections and reproduced
+       the bug immediately.
+     - **My first guard was wrong and testing caught it.** I assumed a *stale template*
+       was required and deleted just that; it still recursed. The mechanism is that the
+       destination is inside the source, so an EMPTY `pest/` is enough.
+       `PstFrom`'s own `remove_existing=True` does not help — it clears the
+       destination, which is not what recurses.
+     - What ships: `_clear_stale_template` removes this run's template and, if that
+       leaves `pest/` empty, removes `pest/` too — restoring exactly the state a
+       first-ever build sees. Measured: three consecutive rebuilds stay at nesting 1
+       and 15 MB.
+     - **The limit, stated plainly.** A second, differently-named calibration at the
+       DEFAULT location cannot be made safe this way: `pest/` is non-empty and the copy
+       would nest again, and deleting the other run is not acceptable (its IES master
+       holds finished results). So it now raises with an actionable message pointing at
+       `workspace=` outside the model directory, which is verified to work. That means
+       **`model.pest_runs` with several runs requires explicit workspaces today** — a
+       real capability regression traded for not filling the disk.
+     - Proper fix (deferred): exclude the `pest/` subtree from the PstFrom copy, or
+       default the template outside the model workspace. Both change where runs live
+       and how they are discovered, so neither belongs in a bug fix.
+
+108. **Two of my own `canonical_07` test assertions fought the way notebooks are
+     actually used (2026-07-28).**
+     - `assert "RUN_IES = False" in source` fails the moment someone flips the gate to
+       True to run the calibration — which is the entire point of the gate. No other
+       test in the repo asserts a gate VALUE; I invented it. Now asserts the flag
+       exists.
+     - `assert not any(cell.get("outputs"))` fails the moment someone runs the notebook
+       locally, since outputs land in the working tree. The existing convention asserts
+       no ERROR outputs, which tolerates a local run and still catches a committed
+       failure. Now matches.
+     - Recorded because both were written from "what should the committed file look
+       like" without asking "what does this do to someone working in the file".
