@@ -17,6 +17,7 @@
  "myflopy.modflow.mf6.package_surface_water": 1,
  "myflopy.modflow.mf6.pest.forward_run": 1,
  "myflopy.modflow.mf6.pest.geostats": 1,
+ "myflopy.modflow.mf6.pest.observations": 1,
  "myflopy.modflow.mf6.pest.project": 2,
  "myflopy.modflow.mf6.pest.runs": 1,
  "myflopy.modflow.mf6.prt": 5,

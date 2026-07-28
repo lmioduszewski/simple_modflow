@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from myflopy.modflow.mf6.observations import (
+    ConcTargets,
     DrnFlowTargets,
     HeadTargets,
     LakeStageTargets,
@@ -95,6 +96,39 @@ class HeadTargetObservationSpec:
     targets: HeadTargets
     simulated_values: str | Path | pd.DataFrame | None = None
     prefix: str = "hds"
+
+
+@dataclass
+class ConcObservationSpec:
+    """Pre-built CONCENTRATION observations, wrapping :class:`ConcTargets`.
+
+    The transport twin of :class:`HeadTargetObservationSpec`. ``cal.observe(...)``
+    accepts a bare ``ConcTargets`` and wraps it for you.
+
+    Parameters
+    ----------
+    targets
+        Concentration observation locations + measured concentrations.
+    simulated_values
+        Optional pre-computed simulated-concentration table. Normally left
+        ``None`` so the forward run regenerates it every iteration.
+    prefix
+        pyEMU observation-name prefix (default ``"conc"``).
+    transport_model_name
+        Name of the GWT model whose ``.ucn`` holds the simulated field. Left
+        ``None`` it is discovered from the simulation -- the calibration hangs
+        off the FLOW model (that is where ``k``/``recharge`` live), so the
+        transport sibling has to be found rather than assumed.
+
+    See Also
+    --------
+    myflopy.modflow.mf6.observations.ConcTargets
+    """
+
+    targets: ConcTargets
+    simulated_values: str | Path | pd.DataFrame | None = None
+    prefix: str = "conc"
+    transport_model_name: str | None = None
 
 
 @dataclass

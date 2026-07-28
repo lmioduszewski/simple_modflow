@@ -13,6 +13,7 @@ from pathlib import Path
 
 from myflopy._optional import require
 from myflopy.modflow.mf6.observations import (
+    ConcTargets,
     DrnFlowTargets,
     HeadTargets,
     LakeStageTargets,
@@ -24,6 +25,7 @@ from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec, add_
 from myflopy.modflow.mf6.pest.observations import (
     _observation_name,
     finalize_observations,
+    prepare_conc_observations,
     prepare_drn_flow_observations,
     prepare_head_target_observations,
     prepare_lake_stage_observations,
@@ -35,6 +37,7 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     register_pilot_point_parameters,
 )
 from myflopy.modflow.mf6.pest.specs import (
+    ConcObservationSpec,
     DrnFlowObservationSpec,
     ExpGeoStruct,
     HeadTargetObservationSpec,
@@ -49,6 +52,7 @@ METADATA_FILENAME = "myflopy_pest_metadata.json"
 # Pre-built observation specs accepted by observe()/forecast() as-is.
 _OBSERVATION_SPEC_TYPES = (
     HeadTargetObservationSpec,
+    ConcObservationSpec,
     LakeStageObservationSpec,
     SfrStageObservationSpec,
     SfrFlowObservationSpec,
@@ -59,6 +63,9 @@ _OBSERVATION_SPEC_TYPES = (
 # observe()/forecast() accept head, lake-stage, SFR stage/flow and DRN seepage
 # targets uniformly (each spec carries its own default prefix).
 _TARGET_SPEC_TYPES = (
+    # ConcTargets subclasses HeadTargets, so it MUST come first -- an isinstance
+    # ladder would otherwise wrap every concentration target as a head spec.
+    (ConcTargets, ConcObservationSpec),
     (HeadTargets, HeadTargetObservationSpec),
     (LakeStageTargets, LakeStageObservationSpec),
     (SfrStageTargets, SfrStageObservationSpec),
@@ -500,6 +507,8 @@ class PestProject:
     def _prepare_one_observation_spec(self, spec):
         """Create simulated files and register one observation spec with pyEMU."""
 
+        if isinstance(spec, ConcObservationSpec):
+            return prepare_conc_observations(self, spec)
         if isinstance(spec, HeadTargetObservationSpec):
             return prepare_head_target_observations(self, spec)
         if isinstance(spec, LakeStageObservationSpec):
@@ -635,6 +644,17 @@ class PestProject:
                     f"model_name='{self.model.name}', "
                     f"mapping_csv='{head_config['mapping_csv']}', "
                     f"output_csv='{head_config['output_csv']}')",
+                    is_pre_cmd=False,
+                )
+                continue
+            conc_config = item.get("conc_forward_run_config")
+            if conc_config is not None:
+                self.pf.add_py_function(
+                    str(helper_path),
+                    "_write_conc_target_csv("
+                    f"model_name='{conc_config['model_name']}', "
+                    f"mapping_csv='{conc_config['mapping_csv']}', "
+                    f"output_csv='{conc_config['output_csv']}')",
                     is_pre_cmd=False,
                 )
                 continue

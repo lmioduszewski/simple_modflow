@@ -10,6 +10,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.observations import _normalize_row_labels
 from myflopy.modflow.mf6.pest.specs import (
+    ConcObservationSpec,
     DrnFlowObservationSpec,
     HeadTargetObservationSpec,
     LakeStageObservationSpec,
@@ -231,6 +232,105 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
             "time_column": "time",
             "value_column": "head",
             "n_locations": int(locations_snapshot["name"].nunique()),
+            "n_rows": int(len(values_snapshot)),
+        },
+    }
+
+
+def resolve_transport_model_name(project) -> str:
+    """Find the GWT sibling of the model this calibration hangs off.
+
+    A transport calibration estimates FLOW parameters (``k``/``recharge`` live on
+    the GWF model) from CONCENTRATION data (which lives on the GWT model), so the
+    project is built on the flow model and the transport sibling has to be found.
+    """
+
+    simulation = project.model.sim
+    transport = [
+        name
+        for name in simulation.model_names
+        if str(getattr(simulation.get_model(name), "model_type", "")).lower().startswith("gwt")
+    ]
+    if not transport:
+        raise ValueError(
+            "No GWT model found in this simulation, so concentration observations "
+            "have nothing to read. Attach one with "
+            "`myflopy.modflow.mf6.canonical_transport.attach_transport_model`, or "
+            "name it explicitly via ConcObservationSpec(transport_model_name=...)."
+        )
+    if len(transport) > 1:
+        raise ValueError(
+            f"Simulation has several GWT models ({sorted(transport)}); name the one "
+            "to observe via ConcObservationSpec(transport_model_name=...)."
+        )
+    return str(transport[0])
+
+
+def prepare_conc_observations(project, spec: ConcObservationSpec):
+    """Create simulated-concentration CSVs and register pyEMU observations."""
+
+    transport_name = spec.transport_model_name or resolve_transport_model_name(project)
+
+    if spec.simulated_values is None:
+        from myflopy.project.run_model import load_mf6_run
+
+        # The concentrations live on the GWT sibling; `project.model` is the flow
+        # model, whose `all_conc` is kind-gated and would refuse.
+        view = load_mf6_run(
+            Path(project.model.workspace), model_name=transport_name, verbosity_level=0
+        )
+        simulated = spec.targets.simulated_heads(view)
+    elif isinstance(spec.simulated_values, pd.DataFrame):
+        simulated = spec.simulated_values.copy()
+    else:
+        simulated = pd.read_csv(spec.simulated_values)
+
+    simulated_path = project.template_workspace / f"{spec.prefix}_simulated_conc.csv"
+    _write_frame(simulated, simulated_path)
+    use_cols = [column for column in simulated.columns if column != simulated.columns[0]]
+    project.pf.add_observations(
+        simulated_path.name,
+        insfile=f"{simulated_path.name}.ins",
+        index_cols=simulated.columns[0],
+        use_cols=use_cols,
+        prefix=spec.prefix,
+    )
+
+    mapping = spec.targets.match_to_model(project.model).loc[:, ["name", "layer", "cell"]]
+    mapping_path = project.template_workspace / f"{spec.prefix}_conc_target_map.csv"
+    mapping.to_csv(mapping_path, index=False)
+
+    values_snapshot = spec.targets.to_long().loc[:, ["time", "name", "head_target"]].rename(
+        columns={"head_target": "conc"}
+    )
+    values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
+    _write_frame(values_snapshot, values_path)
+
+    target_frame = spec.targets.get().copy()
+    target_frame["col_label"] = target_frame["name"].astype(str).str.strip().str.lower()
+    target_frame["row_label"] = _build_index_row_labels(
+        target_frame["time"], simulated.columns[0]
+    )
+    return {
+        "prefix": spec.prefix,
+        "target_frame": target_frame,
+        "conc_forward_run_config": {
+            "model_name": transport_name,
+            "mapping_csv": mapping_path.name,
+            "output_csv": simulated_path.name,
+        },
+        "metadata": {
+            "kind": "conc_targets",
+            "prefix": spec.prefix,
+            "transport_model": transport_name,
+            "values_file": values_path.name,
+            "name_column": "name",
+            "layer_column": "layer",
+            "group_column": "group",
+            "weight_column": "weight",
+            "time_column": "time",
+            "value_column": "conc",
+            "n_locations": int(mapping["name"].nunique()),
             "n_rows": int(len(values_snapshot)),
         },
     }

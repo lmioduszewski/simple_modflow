@@ -5,6 +5,7 @@ from .native_parameters import NativeParameterSpec
 from .project import PestProject
 from .runs import PestRunHandle, find_pest_runs
 from .specs import (
+    ConcObservationSpec,
     DrnFlowObservationSpec,
     ExpGeoStruct,
     HeadTargetObservationSpec,
@@ -18,6 +19,7 @@ from .summary import PestSettings
 __all__ = [
     "DrnFlowObservationSpec",
     "ExpGeoStruct",
+    "ConcObservationSpec",
     "HeadTargetObservationSpec",
     "IesForecast",
     "IesResults",

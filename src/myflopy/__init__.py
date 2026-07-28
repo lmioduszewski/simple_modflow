@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     )
     from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
     from myflopy.modflow.mf6.observations import (
+        ConcTargets,
         DrnFlowTargets,
         HeadTargets,
         LakeStageTargets,
@@ -371,6 +372,7 @@ _EXPORTS = {
     "load_mf6_run": ("myflopy.project", "load_mf6_run"),
     "MeshBuildProfile": ("myflopy.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
+    "ConcTargets": ("myflopy.modflow.mf6.observations", "ConcTargets"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
     "FrameExportProgress": (
@@ -396,6 +398,7 @@ _EXPORTS = {
     "patch_simulation_plot": ("myflopy.project", "patch_simulation_plot"),
     "DrnFlowObservationSpec": ("myflopy.modflow.mf6.pest", "DrnFlowObservationSpec"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
+    "ConcObservationSpec": ("myflopy.modflow.mf6.pest", "ConcObservationSpec"),
     "HeadTargetObservationSpec": (
         "myflopy.modflow.mf6.pest",
         "HeadTargetObservationSpec",

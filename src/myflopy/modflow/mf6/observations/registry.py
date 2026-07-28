@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from myflopy.modflow.mf6.observations.conc import ConcTargets
 from myflopy.modflow.mf6.observations.drn import BoundDrnFlowTargets, DrnFlowTargets
 from myflopy.modflow.mf6.observations.heads import BoundHeadTargets, HeadTargets
 from myflopy.modflow.mf6.observations.lake import BoundLakeStageTargets, LakeStageTargets
@@ -55,10 +56,10 @@ class TargetRegistry:
             ),
         ):
             return value.targets
-        if isinstance(value, (HeadTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets)):
+        if isinstance(value, (HeadTargets, ConcTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets)):
             return value
         raise TypeError(
-            "Model targets currently support HeadTargets, LakeStageTargets, "
+            "Model targets currently support HeadTargets, ConcTargets, LakeStageTargets, "
             "SfrStageTargets, SfrFlowTargets, and DrnFlowTargets."
         )
 

@@ -1894,3 +1894,30 @@ same day, which is the useful part of the result.
        it is the obvious next addition -- and ledger 101's flat layout means it is a
        `_RECIPES` entry plus per-model file resolution, not the rework the scoping
        feared. Deferred, not blocked.
+
+104. **`prepare_conc_observations` keeps a DEFERRED import of `load_mf6_run`, against
+     the ratchet's default advice (2026-07-28).**
+     - The deferred-import ratchet's failure message says to hoist an import to module
+       level rather than raise the allowlist. Here hoisting is not available:
+       `pest/observations.py` sits at import layer 6 and `project/run_model.py` at 9, so
+       a module-level import would push `pest.observations` to 10 -- ABOVE
+       `pest/project.py` (7), which imports it. That inverts the graph and fails
+       `test_runtime_imports_never_point_upward`.
+     - The import is needed because concentrations live on the GWT sibling while the
+       calibration hangs off the FLOW model: `project.model.all_conc` is kind-gated and
+       would refuse, so the transport view has to be reopened by name.
+     - Same shape as the `package_registry` hoist reverted earlier this session
+       (ledger 91): the ratchet's advice is right by default and wrong when the target
+       module is higher in the graph. Recorded so the next reader does not "fix" it.
+
+105. **Concentration observations are not yet drawn on IES residual maps (2026-07-28).**
+     - `ies.py` gates spatial residual plotting on
+       `kind not in ("head_targets", "drn_flow")`, so a `conc_targets` observation set
+       builds, calibrates and reports phi correctly but is invisible to
+       `plot_obs_residuals()`.
+     - Not fixed here because the gate wants grid locations per observation kind and
+       this pass was scoped to getting a concentration calibration to BUILD and RUN
+       end to end. The mapping data exists (`{prefix}_conc_target_map.csv` carries
+       name/layer/cell), so it is wiring, not new machinery.
+     - Everything else in the review layer works unchanged: phi, ensemble-vs-observed,
+       and forecasts all read the observation frame generically.

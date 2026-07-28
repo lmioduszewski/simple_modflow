@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **60** function-level `myflopy` imports) counts those and
+currently **61** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -107,7 +107,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.interactive_plotting`
 - `myflopy.modflow.mf6.kflow`
 - `myflopy.modflow.mf6.observations.conc`
-- `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
@@ -124,7 +123,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.lakes` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.mvr`
-- `myflopy.modflow.mf6.observations`
+- `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_results`
 - `myflopy.modflow.mf6.recharge`
 - `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
@@ -138,9 +137,9 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.evapotranspiration`
 - `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.mfsimbase`
+- `myflopy.modflow.mf6.observations`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.ies`
-- `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.utils.datatypes.surface_data`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
 
@@ -149,9 +148,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.grid_spec_resolver`
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.package_model`
-- `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.pest.gis`
-- `myflopy.modflow.mf6.pest.observations`
+- `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.modflow.utils.outputs`
 - `myflopy.package_api`
@@ -159,10 +156,13 @@ review the diff, commit the regenerated files together.
 ## Layer 6
 
 - `myflopy.modflow.mf6.package_explorer`
-- `myflopy.modflow.mf6.pest.project` *(deferred imports: 2)*
+- `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.pest.gis`
+- `myflopy.modflow.mf6.pest.observations` *(deferred imports: 1)*
 
 ## Layer 7
 
+- `myflopy.modflow.mf6.pest.project` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.accessors`
 - `myflopy.project.group.spatial` *(deferred imports: 1)*
 

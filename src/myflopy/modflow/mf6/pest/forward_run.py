@@ -80,6 +80,40 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv):
         hds.close()
 
 
+def _write_conc_target_csv(model_name, mapping_csv, output_csv):
+    """Write simulated concentrations by stress period for named target locations.
+
+    The concentration twin of ``_write_head_target_csv``, and deliberately the
+    same shape: open the binary directly and index it. The named-series helper
+    would instead reload the whole simulation on every forward run, and its
+    ``all_conc`` read is kind-gated, so it would have to resolve to the GWT model
+    rather than the flow model it loads by default.
+
+    ``model_name`` is the TRANSPORT model's name -- the ``.ucn`` sits beside the
+    flow model's ``.hds`` at the workspace root because the simulation is flat.
+    """
+
+    import flopy
+
+    mapping = pd.read_csv(mapping_csv)
+    ucn = flopy.utils.HeadFile(f"{model_name}.ucn", text="concentration")
+    try:
+        by_period = {}
+        for kstp, kper in ucn.get_kstpkper():
+            by_period[int(kper)] = (int(kstp), int(kper))
+        rows = []
+        for per in sorted(by_period):
+            data = np.asarray(ucn.get_data(kstpkper=by_period[per]), dtype=float)
+            row = {"per": int(per)}
+            for target in mapping.itertuples(index=False):
+                layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
+                row[str(target.name)] = float(layer_values[int(target.cell)])
+            rows.append(row)
+        pd.DataFrame(rows).to_csv(output_csv, index=False)
+    finally:
+        ucn.close()
+
+
 def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     """Regenerate one lake/SFR/DRN simulated-target CSV in the native forward run.
 
