@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +20,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _load_locations,
     _normalize_identifier_series,
     _normalize_values_frame,
-    _simulated_heads_by_period,
+    _simulated_field_by_period,
 )
 from myflopy.viz import mpl_axes
 
@@ -50,6 +51,13 @@ class HeadTargets:
     value_column
         Value column name used when ``values`` is supplied in long form.
     """
+
+    #: model attribute holding the full value table for this field
+    _TABLE_ATTRIBUTE: ClassVar[str] = "all_heads"
+    #: the value column inside that table
+    _STORE_COLUMN: ClassVar[str] = "elev"
+    #: human-readable field name, used in errors and plot labels
+    _FIELD_LABEL: ClassVar[str] = "head"
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple
@@ -310,7 +318,11 @@ class HeadTargets:
         """
 
         matches = self.match_to_model(model)
-        sim = _simulated_heads_by_period(model)
+        sim = _simulated_field_by_period(
+            model,
+            table_attribute=self._TABLE_ATTRIBUTE,
+            store_column=self._STORE_COLUMN,
+        )
         merged = matches.merge(sim, on=["layer", "cell"], how="left")
         wide = merged.pivot_table(
             index="per",
@@ -338,7 +350,11 @@ class HeadTargets:
                 "contain zero-based stress period integers."
             )
         targets["per"] = per.astype(int)
-        sim = _simulated_heads_by_period(model)
+        sim = _simulated_field_by_period(
+            model,
+            table_attribute=self._TABLE_ATTRIBUTE,
+            store_column=self._STORE_COLUMN,
+        )
         if "cell" in targets.columns and targets["cell"].notna().all():
             merged = targets.merge(sim, on=["per", "layer", "cell"], how="left")
             if (targets["x"].isna().any() or targets["y"].isna().any()) and hasattr(model, "vor"):

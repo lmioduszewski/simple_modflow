@@ -53,6 +53,7 @@
  "myflopy.modflow.mf6.mvr": 3,
  "myflopy.modflow.mf6.observations": 3,
  "myflopy.modflow.mf6.observations._shared": 0,
+ "myflopy.modflow.mf6.observations.conc": 2,
  "myflopy.modflow.mf6.observations.drn": 1,
  "myflopy.modflow.mf6.observations.heads": 1,
  "myflopy.modflow.mf6.observations.lake": 1,

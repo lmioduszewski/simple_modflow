@@ -23,6 +23,9 @@ from __future__ import annotations
 from myflopy.modflow.mf6.observations._shared import (
     _normalize_row_labels as _normalize_row_labels,
 )
+from myflopy.modflow.mf6.observations.conc import (
+    ConcTargets,
+)
 from myflopy.modflow.mf6.observations.drn import BoundDrnFlowTargets, DrnFlowTargets
 from myflopy.modflow.mf6.observations.heads import (
     BoundHeadTargetPlots,
@@ -47,6 +50,7 @@ __all__ = [
     "BoundNamedSeriesTargetPlots",
     "BoundSfrFlowTargets",
     "BoundSfrStageTargets",
+    "ConcTargets",
     "DrnFlowTargets",
     "HeadTargets",
     "LakeStageTargets",

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import flopy
 import numpy as np
+import pandas as pd
 
 from myflopy.modflow.mf6.canonical_example import (
     CanonicalModelConfig,
@@ -80,6 +81,7 @@ class CanonicalTransportModel:
     transport_name: str
     source_cells: tuple[int, ...]
     source_concentration: float
+    _view: object = None
 
     @property
     def workspace(self) -> Path:
@@ -97,9 +99,19 @@ class CanonicalTransportModel:
 
         from myflopy.project.run_model import load_mf6_run
 
-        return load_mf6_run(
-            self.workspace, model_name=self.transport_name, verbosity_level=0
-        )
+        # Cached: each call otherwise reloads the simulation AND rebuilds the
+        # Voronoi grid, which dominates the cost of sampling a few wells.
+        if self._view is None:
+            self._view = load_mf6_run(
+                self.workspace, model_name=self.transport_name, verbosity_level=0
+            )
+        return self._view
+
+    def refresh(self):
+        """Drop the cached view so the next read reopens the written files."""
+
+        self._view = None
+        return self
 
 
 def _disv_gridprops_from(model: SimulationBase) -> dict:
@@ -324,10 +336,161 @@ def build_canonical_transport_model(
 
 
 __all__ = [
+    "CanonicalTransportCalibrationDemo",
     "CanonicalTransportModel",
     "MAX_MF6_MODEL_NAME",
     "TRANSPORT_NAME_SUFFIX",
     "attach_transport_model",
+    "build_canonical_transport_calibration_demo",
     "build_canonical_transport_model",
+    "monitoring_well_cells",
     "transport_model_name",
 ]
+
+
+def monitoring_well_cells(
+    built: CanonicalTransportModel, *, count: int = 12, layer: int = 0
+) -> list[int]:
+    """Pick downgradient cells whose concentration is worth observing.
+
+    A monitoring well is only useful for calibration where concentration
+    actually RESPONDS to the parameters being estimated. Source cells are held
+    at the source value by CNC and never move; cells the plume never reaches sit
+    at zero. So this keeps layer-``layer`` cells with intermediate final
+    concentration and drops the source itself.
+
+    Measured on the testing profile: with wells chosen this way, tripling K moves
+    concentration at 9 of 12 by more than 1% (max 0.175 against well values of
+    0.02-0.25). Picking the source cells instead gives a constant 1.0 at every
+    well and a calibration with nothing to fit.
+    """
+
+    frame = built.transport_view().conc.get()
+    final = frame[(frame["per"] == frame["per"].max()) & (frame["layer"] == int(layer))]
+    interior = final[
+        (final["conc"] > 0.02)
+        & (final["conc"] < 0.9)
+        & (~final["cell"].isin(built.source_cells))
+    ]
+    cells = sorted(int(c) for c in interior["cell"].unique())
+    if not cells:  # pragma: no cover - defensive
+        raise RuntimeError("No cell carries an intermediate concentration to observe.")
+    step = max(1, len(cells) // max(int(count), 1))
+    return cells[::step][: int(count)]
+
+
+@dataclass
+class CanonicalTransportCalibrationDemo:
+    """A transport model to calibrate, with truth-derived concentration targets.
+
+    Attributes
+    ----------
+    transport
+        The canonical flow+transport model, with K perturbed to the wrong start.
+    conc_targets
+        Truth-sampled concentrations at downgradient monitoring wells.
+    forecast_targets
+        One far-downgradient concentration prediction, registered at zero weight.
+    start_k_factor
+        Factor the truth K field was multiplied by to make the wrong start.
+    """
+
+    transport: CanonicalTransportModel
+    conc_targets: object
+    forecast_targets: object
+    start_k_factor: float
+    well_cells: tuple[int, ...]
+    forecast_cell: int
+
+    @property
+    def model(self) -> SimulationBase:
+        """The flow model PEST calibrates (``.pest(...)`` hangs off this)."""
+
+        return self.transport.model
+
+
+def _truth_conc_targets(view, cells, prefix: str, *, nper: int, layer: int = 0):
+    """Sample simulated concentration at ``cells`` and return it as measured data."""
+
+    from myflopy.modflow.mf6.observations import ConcTargets
+
+    cells = [int(c) for c in cells]
+    names = (
+        [f"{prefix}_{i:02d}" for i in range(len(cells))] if len(cells) > 1 else [prefix]
+    )
+    locations = [
+        {"name": name, "layer": layer, "cell": cell}
+        for name, cell in zip(names, cells, strict=False)
+    ]
+    # nper comes from the FLOW model: a reopened transport view loads only DISV
+    # and OC, so its own `nper` is None.
+    placeholder = pd.DataFrame(
+        {"per": list(range(int(nper))), **{n: [np.nan] * int(nper) for n in names}}
+    )
+    sampler = ConcTargets(locations=locations, values=placeholder, time_column="per")
+    return ConcTargets(
+        locations=locations, values=sampler.simulated_heads(view), time_column="per"
+    )
+
+
+def build_canonical_transport_calibration_demo(
+    workspace: str | Path,
+    *,
+    config: CanonicalModelConfig | None = None,
+    n_wells: int = 12,
+    start_k_factor: float = 3.0,
+    **transport_kwargs,
+) -> CanonicalTransportCalibrationDemo:
+    """Build the transport model as truth, sample concentrations, spoil K.
+
+    The transport twin of
+    :func:`~myflopy.modflow.mf6.canonical_calibration.build_canonical_calibration_demo`,
+    and the same synthetic-truth mechanism: run the model, sample its own output
+    as "measured" data, then perturb the parameter the calibration must recover.
+
+    What differs is what the data constrain. These observations are
+    CONCENTRATIONS, so the calibration recovers hydraulic conductivity from the
+    shape and timing of a plume rather than from heads. That is the scientifically
+    interesting case -- concentration constrains flow paths in a way heads alone
+    cannot -- and it needs no new parameter type: ``k`` and ``recharge`` are
+    already ``parameterize`` targets, and the flat simulation layout keeps their
+    external arrays where PEST looks for them.
+    """
+
+    built = build_canonical_transport_model(
+        Path(workspace), config=config, run=True, **transport_kwargs
+    )
+    view = built.transport_view()
+
+    wells = monitoring_well_cells(built, count=n_wells)
+    # the forecast is the farthest-downgradient observed cell: a prediction the
+    # calibration data do not directly pin down
+    centers = np.asarray(built.model.vor.points, dtype=float)
+    forecast_cell = int(max(wells, key=lambda c: centers[c, 0]))
+    wells = [c for c in wells if c != forecast_cell]
+
+    nper = int(built.model.nper)
+    conc_targets = _truth_conc_targets(view, wells, "cw", nper=nper)
+    forecast_targets = _truth_conc_targets(
+        view, [forecast_cell], "fore_conc", nper=nper
+    )
+
+    # Spoil K -- this is the model PEST is handed.
+    truth_k = np.asarray(built.model.gwf.npf.k.get_data(), dtype=float)
+    built.model.gwf.npf.k.set_data(truth_k * float(start_k_factor))
+    success, report = built.model.run_simulation()
+    if not success:
+        raise RuntimeError(
+            "Perturbed transport model failed to run:\n" + "\n".join(report[-25:])
+        )
+
+    built.refresh()  # the cached view predates the re-run with spoiled K
+
+    return CanonicalTransportCalibrationDemo(
+        transport=built,
+        conc_targets=conc_targets,
+        forecast_targets=forecast_targets,
+        start_k_factor=float(start_k_factor),
+        well_cells=tuple(wells),
+        forecast_cell=forecast_cell,
+    )

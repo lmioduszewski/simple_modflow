@@ -2,7 +2,7 @@
  "myflopy.layers": 2,
  "myflopy.modflow.mf6.budget": 1,
  "myflopy.modflow.mf6.canonical": 1,
- "myflopy.modflow.mf6.canonical_transport": 1,
+ "myflopy.modflow.mf6.canonical_transport": 2,
  "myflopy.modflow.mf6.cross_section_plotting": 1,
  "myflopy.modflow.mf6.grid.mesh_quality": 1,
  "myflopy.modflow.mf6.grid.plotting": 1,

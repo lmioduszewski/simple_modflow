@@ -1853,3 +1853,44 @@ same day, which is the useful part of the result.
        left untouched, so `CANONICAL_MODEL_CONTRACT.validate()` — which is entirely
        `model.gwf`-scoped — keeps passing verbatim, and every existing canonical test
        sees the model it always saw. A test asserts that rather than assuming it.
+
+102. **`ConcTargets` keeps `head_target`/`sim_head` as its internal column names
+     (2026-07-28).**
+     - The normalized target frames name their value columns `head_target` and
+       `sim_head` for EVERY field kind, concentration included. Read literally that
+       is wrong for a conc target, and a caller doing `targets.to_long()` sees a
+       `head_target` column holding concentrations.
+     - Why it is kept: those names are woven through `calcs/calibration.py` (the
+       `CalibrationPlot` machinery, ~8 sites) and through the PEST observation
+       builder, whose value assignment reads
+       `getattr(row, "value", getattr(row, "head_target", np.nan))`. Renaming
+       per-kind would either fork that machinery or -- if the rename were done
+       without also renaming in the PEST builder -- assign **`obsval = NaN` to every
+       observation with no error at all**, producing a control file that runs and
+       calibrates to nothing.
+     - Sharing them buys something real: concentration targets get the existing
+       calibration plots, residual statistics and PEST wiring unchanged.
+     - Proper fix (deferred): rename to a neutral `target_value`/`simulated_value`
+       across `observations/` and `calcs/calibration.py` in one pass, with the PEST
+       builder updated in the same commit. Separable, and not safe to do halfway.
+
+103. **The transport calibration demo estimates FLOW parameters from concentration
+     data (2026-07-28).** Plan §6.1/6.2 item 5, observation half.
+     - `build_canonical_transport_calibration_demo` perturbs K and asks the
+       calibration to recover it from *concentrations*, not from heads. That needs no
+       new `parameterize` target: `k`/`recharge` already exist, and the flat
+       simulation layout (ledger 101) keeps their external arrays where PEST globs.
+     - Measured first, not assumed: on the canonical testing profile a 3x K change
+       moves concentration at 9 of 12 monitoring wells by more than 1% (max 0.175
+       against well values of 0.02-0.25), and the spoiled model misfits all 66
+       truth-derived targets (max 0.175, RMSE 0.057).
+     - **Well placement is load-bearing.** CNC pins the source cells at the source
+       concentration for the whole run, so a well there reads 1.0 regardless of K and
+       constrains nothing. `monitoring_well_cells` keeps intermediate-concentration
+       cells downgradient of the source; a test asserts no well sits on a source cell
+       and that no target sits at the source value.
+     - **Transport parameters (`mst.porosity`, `dsp.alh`) are still not
+       `parameterize` targets.** Porosity is the strongest signal measured (54%), so
+       it is the obvious next addition -- and ledger 101's flat layout means it is a
+       `_RECIPES` entry plus per-model file resolution, not the rework the scoping
+       feared. Deferred, not blocked.

@@ -334,23 +334,41 @@ def _normalize_values_frame(
     return _copy_frame(long)
 
 
-def _simulated_heads_by_period(model: Any) -> pd.DataFrame:
-    """Build one simulated-head record per period/layer/cell.
+def _simulated_field_by_period(
+    model: Any,
+    *,
+    table_attribute: str = "all_heads",
+    store_column: str = "elev",
+) -> pd.DataFrame:
+    """Build one simulated record per period/layer/cell for a dependent variable.
 
-    The current implementation keeps the last available time step within each
-    stress period because that is typically the most useful calibration target
-    when the target data are defined per stress period.
+    Keeps the last available time step within each stress period, because that is
+    typically the most useful calibration target when the target data are defined
+    per stress period.
+
+    ``table_attribute``/``store_column`` select the field: heads
+    (``all_heads``/``elev``) or concentration (``all_conc``/``conc``). The output
+    column is ``sim_head`` for BOTH -- it is a frame-internal name meaning "the
+    simulated value", and keeping it shared is what lets the calibration-plot and
+    PEST machinery in ``calcs/calibration.py`` serve concentration unchanged
+    (ledger 102).
     """
 
-    frame = model.all_heads.reset_index().copy()
+    frame = getattr(model, table_attribute).reset_index().copy()
     frame["kstp"] = frame["kstpkper"].apply(lambda item: int(item[0]))
     frame["per"] = frame["kstpkper"].apply(lambda item: int(item[1]))
     frame = frame.sort_values(["per", "kstp"]).drop_duplicates(
         subset=["per", "layer", "cell"],
         keep="last",
     )
-    frame = frame.rename(columns={"elev": "sim_head"})
+    frame = frame.rename(columns={store_column: "sim_head"})
     return frame.loc[:, ["per", "layer", "cell", "sim_head"]].reset_index(drop=True)
+
+
+def _simulated_heads_by_period(model: Any) -> pd.DataFrame:
+    """Simulated heads per period/layer/cell (the heads instance of the above)."""
+
+    return _simulated_field_by_period(model)
 
 
 def _default_obs_csv_name(filename: str | Path, default_name: str) -> str:
