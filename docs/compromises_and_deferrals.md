@@ -1885,6 +1885,12 @@ same day, which is the useful part of the result.
        moves concentration at 9 of 12 monitoring wells by more than 1% (max 0.175
        against well values of 0.02-0.25), and the spoiled model misfits all 66
        truth-derived targets (max 0.175, RMSE 0.057).
+     - **Closed 2026-07-28: PESTPP-IES was run on this demo and converged** (reported
+       by the user from a live notebook run; the build, the misfit and the forward run
+       were measured here, the convergence was not). Until then the demo was only known
+       to BUILD and misfit -- worth distinguishing, because a well-posed-looking
+       calibration that cannot actually close its residuals is a common way for a
+       synthetic demo to be quietly useless.
      - **Well placement is load-bearing.** CNC pins the source cells at the source
        concentration for the whole run, so a well there reads 1.0 regardless of K and
        constrains nothing. `monitoring_well_cells` keeps intermediate-concentration
