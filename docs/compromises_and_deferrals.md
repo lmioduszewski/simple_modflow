@@ -1822,7 +1822,8 @@ same day, which is the useful part of the result.
 
 101. **The canonical transport fixture: the recorded blocker was wrong, and the real
      obstacles were different (2026-07-28).** Closes plan §6.1/6.2 item 6 (ledger 56
-     sub-item 6) for the MODEL; calibration on top of it is item 5, still in progress.
+     sub-item 6) for the MODEL; the calibration built on it is item 5, closed the same
+     day (ledger 103, and the PEST wiring in ledger 104/105).
      - Ledger 56 deferred this as "large — the canonical runs on the single-model
        `SimulationBase`, so a coupled GWT needs the multi-model spec path." Measured:
        **`SimulationBase` already owns a real `MFSimulation`**, and a GWT model, a
