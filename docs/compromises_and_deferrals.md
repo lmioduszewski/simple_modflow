@@ -1819,3 +1819,37 @@ same day, which is the useful part of the result.
       earlier scoping assumed no transport fixture was possible, but
       `irregular_voronoi_grid` is deterministic, so two coupled runs share a grid and
       group cleanly. `_coupled_run` gained a `porosity=` keyword for this.
+
+101. **The canonical transport fixture: the recorded blocker was wrong, and the real
+     obstacles were different (2026-07-28).** Closes plan §6.1/6.2 item 6 (ledger 56
+     sub-item 6) for the MODEL; calibration on top of it is item 5, still in progress.
+     - Ledger 56 deferred this as "large — the canonical runs on the single-model
+       `SimulationBase`, so a coupled GWT needs the multi-model spec path." Measured:
+       **`SimulationBase` already owns a real `MFSimulation`**, and a GWT model, a
+       second IMS and a `GWF6-GWT6` exchange attach to it with no library change.
+     - Worse, the spec path would have **broken** what it was supposed to enable.
+       `Project.prepare_run` gives each model its own subdirectory, so external arrays
+       land at `<ws>/flow/flow.npf_k.txt` — and PEST's parameter-file resolution globs
+       the workspace ROOT. The flat sibling keeps `viz_prt_master.npf_k_layer1.txt`
+       *and* `viz_prt_master_t.mst_porosity.txt` at the root, so calibration works and
+       a future transport `parameterize` target is a recipe entry rather than a rework.
+       (Binary outputs stay at the root either way — observations alone would have
+       survived the spec path, which is what made the wrong choice look viable.)
+     - **What actually blocked it, none of it predicted.** Three MF6 refusals, each
+       found only by running: (a) `MODELNAME` is capped at 16 characters and the
+       canonical name is already 14, so `viz_prt_master_trans` was rejected before
+       anything solved; (b) a flow model with boundary packages *requires* an SSM
+       package on the transport model; (c) every advanced flow package needs its
+       transport counterpart — the canonical's LAK/SFR/UZF/MVR mean LKT/SFT/UZT/MVT or
+       MF6 will not run.
+     - **The subtlest one: the second solver needs an EXPLICIT `filename`.** Without it
+       FloPy auto-names it `<sim>_0.ims`, which lands it BEFORE the flow solver in
+       `mfsim.nam` — and MF6 rejects exactly that ("the IMS specified for GWF must be
+       listed in mfsim.nam before the IMS for GWT"). Registration ORDER does not fix
+       it, in either direction; only the filename does. Worth recording because the
+       error names an ordering problem whose cause is a naming one.
+     - **The source is a CNC package on the transport model**, not auxiliary
+       concentrations threaded through the flow model's boundaries. The flow model is
+       left untouched, so `CANONICAL_MODEL_CONTRACT.validate()` — which is entirely
+       `model.gwf`-scoped — keeps passing verbatim, and every existing canonical test
+       sees the model it always saw. A test asserts that rather than assuming it.
