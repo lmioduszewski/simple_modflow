@@ -1970,16 +1970,27 @@ same day, which is the useful part of the result.
        leaves `pest/` empty, removes `pest/` too — restoring exactly the state a
        first-ever build sees. Measured: three consecutive rebuilds stay at nesting 1
        and 15 MB.
-     - **The limit, stated plainly.** A second, differently-named calibration at the
-       DEFAULT location cannot be made safe this way: `pest/` is non-empty and the copy
-       would nest again, and deleting the other run is not acceptable (its IES master
-       holds finished results). So it now raises with an actionable message pointing at
-       `workspace=` outside the model directory, which is verified to work. That means
-       **`model.pest_runs` with several runs requires explicit workspaces today** — a
-       real capability regression traded for not filling the disk.
-     - Proper fix (deferred): exclude the `pest/` subtree from the PstFrom copy, or
-       default the template outside the model workspace. Both change where runs live
-       and how they are discovered, so neither belongs in a bug fix.
+     - ~~**The limit:** a second, differently-named calibration at the DEFAULT
+       location could not be made safe this way, so `model.pest_runs` with several
+       runs required explicit workspaces.~~ **CLOSED 2026-07-29** by the proper fix
+       below; several named calibrations coexist again.
+     - **The proper fix, 2026-07-29: the default moved OUT of the copied tree** to
+       `<model workspace>.pest/<name>`, a sibling of the model directory. Excluding
+       the subtree instead is impossible through supported API: pyEMU 1.4.0 copies
+       with a bare `shutil.copytree(o_d, n_d, symlinks=True)` in the private
+       `_try_copy_dir` (`pyemu/utils/os_utils.py`), called from `PstFrom.__init__`
+       itself — no `ignore=`, no kwarg, no hook. Only monkeypatching a private
+       function would work, which would break silently on any pyEMU upgrade and bring
+       the recursion back.
+     - Moving cost less than this entry assumed. `find_pest_runs` is
+       location-agnostic (it `rglob`s whatever root it is handed), the forward run
+       uses only basenames, and `original_workspace` in the metadata has no reader.
+       Only two call sites hardcoded a root. The one hard constraint is that IES
+       masters must stay SIBLINGS of the template (`runs.py` globs
+       `template_dir.parent`); break that and a finished run silently lists as
+       "built (not run)".
+     - `_clear_stale_template` is kept for an explicit `workspace=` inside the model
+       directory, and finally has a test — it had none.
 
 108. **Two of my own `canonical_07` test assertions fought the way notebooks are
      actually used (2026-07-28).**
@@ -2070,3 +2081,42 @@ same day, which is the useful part of the result.
        are unchanged (sampled from the truth run before either perturbation), so
        existing conc-only calibrations still behave as before, but the model handed to
        PEST now starts with the wrong porosity as well as the wrong K.
+
+113. **The relayering of ledger 110 broke the second build on one model, and the
+     fix reads a private FloPy attribute (2026-07-29).**
+     - Found by the ledger-107 coexistence test, not by inspection.
+       `_ensure_external_model` calls `set_all_data_external()` on every build,
+       so on build #2 the arrays are EXTERNAL and FloPy refuses `make_layered()`
+       (`Converting external file data into layered data currently not
+       support`). Relayering unconditionally therefore broke exactly the
+       capability ledger 107 was restoring. My "idempotent" claim in 110 was
+       tested only on a fresh, never-externalized model.
+     - Now skipped when the array is already stored per layer, and when the model
+       has a single layer (a whole-grid file there already has `ncpl` values, so
+       pyEMU indexes it fine). **FloPy exposes no public flag for "is this stored
+       per layer"**, so this reads `array._get_storage_obj().layered` through a
+       `getattr` fallback: if that private accessor moves, the fallback attempts
+       the relayer, which is the safe direction.
+     - `store_internal()` runs first so a model LOADED from a previous run — its
+       griddata already external and unlayered — can still be calibrated. That
+       leaves the old whole-grid file on disk, unreferenced by the package. So
+       `_resolve_files` now matches per-layer files BEFORE the exact name;
+       resolving the stale file instead would point every parameter at values
+       MODFLOW no longer reads, and the calibration would run happily against
+       them. The stale file is left in place rather than deleted — this code
+       should not remove files from a user's model directory.
+
+114. **`Run.pest_runs` now scans the whole run directory (2026-07-29).**
+     - It scanned `<run workspace>/pest`. With the default at
+       `<model workspace>.pest/<name>` and `prepare_run` giving each model its own
+       folder, there is no single subdirectory that holds every model's runs.
+     - Scanning the run root is a strict superset of what it found before, and
+       `find_pest_runs` already skips `*_master` copies, so a run is still listed
+       once. The cost is walking a larger tree for one filename.
+     - A third copy problem, found while verifying 114: a template is a COPY of
+       the model workspace, so a calibration that lived INSIDE it (the old
+       default) is copied into every template built afterwards, and discovery
+       listed it twice — `review()` on the copy would open a directory nothing
+       ever ran in. `find_pest_runs` now skips any build whose metadata is nested
+       inside another build's directory, the same reasoning as the existing
+       `*_master` skip.

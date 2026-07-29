@@ -173,7 +173,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 - `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; native `build()` + `run_ies`/
   `prior` (`workers=` runs parallel PESTPP-IES agents). **Construct it with
   `model.pest(name, start_datetime=...)`** (the front door — defaults the workspace to
-  `<model workspace>/pest/<name>`), not by importing `PestProject` directly.
+  `<model workspace>.pest/<name>` — a SIBLING of the model dir, ledger 107), not by
+  importing `PestProject` directly.
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
   `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
   pre-built `*ObservationSpec`). All are wired into the native build + forward run.

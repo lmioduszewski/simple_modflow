@@ -402,7 +402,7 @@ class Run:
 
     @property
     def pest_runs(self) -> list:
-        """The PEST runs done on this run's model (``<workspace>/pest``).
+        """The PEST runs done on this run's models (anywhere under the run).
 
         Returns a list of :class:`~myflopy.modflow.mf6.pest.runs.PestRunHandle`;
         call ``.review()`` to open one as :class:`IesResults`. Empty until a
@@ -413,11 +413,16 @@ class Run:
         listing property should not build a model view, cache it on the run, or
         raise on a run whose model is ambiguous. A run holding several models
         cannot pick one; there ``review(model=...)`` is the caller's job.
+
+        Scans the whole run directory rather than one ``pest/`` subdirectory: a
+        run gives each model its own folder, and a calibration now defaults to
+        ``<model folder>.pest/<name>`` (ledger 107), so there is no single root
+        that would hold every model's runs.
         """
 
         from myflopy.modflow.mf6.pest.runs import find_pest_runs
 
-        return find_pest_runs(self.workspace / "pest",
+        return find_pest_runs(self.workspace,
                               model_factory=self._pest_review_model)
 
     def _pest_review_model(self):

@@ -81,6 +81,85 @@ def test_layers_that_match_no_file_names_the_ones_that_exist():
         _select_layer_files(files, [9], recipe)
 
 
+def _relayer_stub(*, layered, nlay, values):
+    """A project whose one array reports the given storage state."""
+
+    from types import SimpleNamespace
+
+    calls = []
+
+    array = SimpleNamespace(
+        supports_layered=lambda: True,
+        _get_storage_obj=lambda: SimpleNamespace(layered=layered),
+        get_data=lambda: values,
+        store_internal=lambda: calls.append("store_internal"),
+        make_layered=lambda: calls.append("make_layered"),
+        set_data=lambda data: calls.append(("set_data", len(data))),
+    )
+    transport = SimpleNamespace(
+        get_package=lambda name: SimpleNamespace(porosity=array),
+        modelgrid=SimpleNamespace(nlay=nlay),
+        model_type="gwt6",
+    )
+    simulation = SimpleNamespace(
+        model_names=["flow", "flow_t"],
+        get_model=lambda name: transport if name == "flow_t" else SimpleNamespace(
+            model_type="gwf6"
+        ),
+    )
+    return SimpleNamespace(model=SimpleNamespace(sim=simulation)), calls
+
+
+def test_relayering_is_skipped_when_it_would_be_wrong_or_pointless():
+    """Found by the two-calibration test, not by inspection: on the SECOND
+    build the arrays are already external, and FloPy refuses to make external
+    data layered (``Converting external file data into layered data currently
+    not support``). Relayering unconditionally therefore broke every
+    second-build-on-one-model, which is exactly the capability ledger 107 was
+    restoring.
+
+    Also skipped for a single-layer model: a whole-grid file there already holds
+    exactly ``ncpl`` values, so pyEMU indexes it fine.
+    """
+
+    from myflopy.modflow.mf6.pest.native_parameters import relayer_array_target
+
+    recipe = resolve_target("porosity")
+    values = np.full((4, 9), 0.25)
+
+    project, calls = _relayer_stub(layered=True, nlay=4, values=values)
+    assert relayer_array_target(project, recipe) is False
+    assert calls == [], "an already-layered array must be left alone"
+
+    project, calls = _relayer_stub(layered=False, nlay=1, values=np.full((1, 9), 0.25))
+    assert relayer_array_target(project, recipe) is False
+    assert calls == []
+
+    project, calls = _relayer_stub(layered=False, nlay=4, values=values)
+    assert relayer_array_target(project, recipe) is True
+    # store_internal FIRST: FloPy refuses make_layered on external data.
+    assert calls == ["store_internal", "make_layered", ("set_data", 4)]
+
+
+def test_a_stale_whole_grid_file_never_wins_over_the_per_layer_files(tmp_path):
+    """Relayering an array that was ALREADY external leaves the old whole-grid
+    file on disk -- unreferenced by the package, but still there. Resolving the
+    exact name first would point every parameter at values MODFLOW no longer
+    reads, and the calibration would run happily against them."""
+
+    from myflopy.modflow.mf6.pest.native_parameters import _resolve_files
+
+    recipe = resolve_target("porosity")
+    (tmp_path / "m_t.mst_porosity.txt").write_text("0.25\n", encoding="utf-8")
+    assert _resolve_files(tmp_path, "m_t", recipe) == ["m_t.mst_porosity.txt"]
+
+    for layer in (1, 2):
+        (tmp_path / f"m_t.mst_porosity_layer{layer}.txt").write_text("0.25\n", encoding="utf-8")
+    assert _resolve_files(tmp_path, "m_t", recipe) == [
+        "m_t.mst_porosity_layer1.txt", "m_t.mst_porosity_layer2.txt"
+    ]
+
+
 def test_a_whole_grid_capture_file_does_not_claim_to_be_layer_zero():
     """``layer_prefixes`` names which file holds which layer, and
     ``IesResults._cell_map`` switches on it: populated means "the array index IS

@@ -7,8 +7,11 @@ its own master directory). :func:`find_pest_runs` discovers them under a root;
 :class:`PestRunHandle` opens one for review via the native :class:`IesResults`.
 
 This is the workflow glue behind ``model.pest_runs`` and ``run.pest_runs``: by
-default :class:`~...project.PestProject` writes under ``<model workspace>/pest/``,
-so the runs sit beside the model and are found automatically.
+default :class:`~...project.PestProject` writes under ``<model workspace>.pest/``
+-- a SIBLING of the model directory -- so the runs sit next to the model and are
+found automatically. Calibrations built before 2026-07-29 live in
+``<model workspace>/pest/`` and are still discovered; see
+:func:`pest_run_roots`.
 """
 
 from __future__ import annotations
@@ -18,6 +21,47 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 METADATA_FILENAME = "myflopy_pest_metadata.json"
+
+#: Appended to the model directory's NAME (not joined as a child) to give the
+#: default calibration root. A sibling, because ``PstFrom`` copies the model
+#: workspace wholesale and cannot be told to skip a subdirectory -- see
+#: compromise ledger 107.
+PEST_ROOT_SUFFIX = ".pest"
+
+#: Where calibrations used to live: a child of the model workspace, and
+#: therefore inside the tree ``PstFrom`` copies. Still searched so runs already
+#: on disk keep reviewing.
+LEGACY_PEST_DIRNAME = "pest"
+
+
+def default_pest_root(model_workspace) -> Path:
+    """The directory ``model.pest(name)`` builds into by default."""
+
+    workspace = Path(model_workspace)
+    return workspace.parent / f"{workspace.name}{PEST_ROOT_SUFFIX}"
+
+
+def pest_run_roots(model_workspace) -> tuple[Path, ...]:
+    """Every directory a calibration of this model may live in, newest first."""
+
+    workspace = Path(model_workspace)
+    return (default_pest_root(workspace), workspace / LEGACY_PEST_DIRNAME)
+
+
+def find_model_pest_runs(model_workspace, **kwargs) -> list[PestRunHandle]:
+    """Discover a model's PEST runs across the current and legacy roots."""
+
+    handles: list[PestRunHandle] = []
+    seen: set[Path] = set()
+    for root in pest_run_roots(model_workspace):
+        for handle in find_pest_runs(root, **kwargs):
+            # A template and its legacy copy would otherwise both be listed.
+            key = handle.template_dir.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            handles.append(handle)
+    return sorted(handles, key=lambda handle: handle.name)
 
 
 @dataclass
@@ -104,6 +148,17 @@ def _master_kind(dirname: str) -> str:
     return "run"
 
 
+def _is_inside_another_template(meta_path: Path, root: Path) -> bool:
+    """Is this build's metadata nested inside another build's directory?"""
+
+    for ancestor in meta_path.parent.parents:
+        if (ancestor / METADATA_FILENAME).exists():
+            return True
+        if ancestor == root or ancestor == ancestor.parent:
+            return False
+    return False
+
+
 def find_pest_runs(root, *, model_name: str | None = None, model=None,
                    model_factory=None) -> list[PestRunHandle]:
     """Discover the PEST runs under ``root``.
@@ -115,8 +170,9 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
     Parameters
     ----------
     root
-        Directory to scan (recursively). For ``model.pest_runs`` this is
-        ``<model workspace>/pest``.
+        Directory to scan (recursively). ``model.pest_runs`` calls
+        :func:`find_model_pest_runs` instead, which scans every root in
+        :func:`pest_run_roots`.
     model_name
         When given, keep only runs whose build metadata calibrates this model.
     model
@@ -144,6 +200,12 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
         # of its metadata. The run is represented by its template dir, so skip the
         # master copies to avoid listing the same run several times.
         if meta_path.parent.name.endswith("_master"):
+            continue
+        # Same reason, one level up: a template is a COPY of the model workspace,
+        # so a calibration that lived inside that workspace (the pre-2026-07-29
+        # default) is copied into every template built afterwards. A run nested
+        # inside another run's template is that copy, never a run of its own.
+        if _is_inside_another_template(meta_path, root):
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))

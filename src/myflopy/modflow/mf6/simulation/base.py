@@ -270,18 +270,19 @@ class SimulationBase:
 
     @property
     def pest_runs(self) -> list:
-        """The PEST runs done on this model (``<workspace>/pest``), ready to review.
+        """The PEST runs done on this model (``<workspace>.pest``), ready to review.
 
         Returns a list of :class:`~myflopy.modflow.mf6.pest.runs.PestRunHandle`;
         call ``.review()`` on one to open it as :class:`IesResults` (phi, ensemble
         vs. observations, forecasts, parameter-field maps). Empty until a
         :class:`~myflopy.modflow.mf6.pest.PestProject` has been built/run with its
-        default workspace beside this model.
+        default workspace beside this model. Calibrations built before
+        2026-07-29, which lived in ``<workspace>/pest``, are found too.
         """
 
-        from myflopy.modflow.mf6.pest.runs import find_pest_runs
+        from myflopy.modflow.mf6.pest.runs import find_model_pest_runs
 
-        return find_pest_runs(self.workspace / "pest", model_name=self.name, model=self)
+        return find_model_pest_runs(self.workspace, model_name=self.name, model=self)
 
     def pest(self, name: str, *, start_datetime: str | None = None, **kwargs):
         """Start a PEST/PEST++ calibration of this model.
@@ -290,7 +291,7 @@ class SimulationBase:
         :attr:`pest_runs` discovers calibrations already done on the model, while
         ``pest()`` creates a new one. It returns a fresh
         :class:`~myflopy.modflow.mf6.pest.PestProject` already bound to this model,
-        with its template workspace defaulting to ``<workspace>/pest/<name>`` so the
+        with its template workspace defaulting to ``<workspace>.pest/<name>`` so the
         run is auto-discoverable afterwards. The whole loop then lives on the model::
 
             cal = model.pest("calib", start_datetime="2020-01-01")
@@ -303,7 +304,7 @@ class SimulationBase:
         ----------
         name
             Calibration name; used as the ``.pst`` stem and the default
-            ``<workspace>/pest/<name>`` template directory.
+            ``<workspace>.pest/<name>`` template directory.
         start_datetime
             Simulation start date (e.g. ``"2020-01-01"``) that pyEMU uses to place
             time-varying parameters/observations on the time axis. When omitted it

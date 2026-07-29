@@ -46,7 +46,7 @@ In myflopy you *declare* what to adjust; it compiles to native pyEMU:
 
 ```python
 cal = model.pest("calib", start_datetime="2020-01-01")   # the front door; workspace
-                                                          # defaults to <model ws>/pest/calib
+                                                          # defaults to <model ws>.pest/calib
 
 # bounds = how far the multiplier can move; physical = hard limits on the final value
 cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
@@ -366,7 +366,7 @@ on the roadmap.
 
 ```python
 # model.pest(...) is the front door (returns a PestProject); the workspace
-# defaults to <model workspace>/pest/<name>
+# defaults to <model workspace>.pest/<name>
 cal = model.pest("calib", start_datetime="2020-01-01")
 
 # 1-2-3: prior, likelihood, forecasts

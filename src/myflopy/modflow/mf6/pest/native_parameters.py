@@ -271,8 +271,14 @@ def relayer_array_target(project, recipe: _Recipe) -> bool:
 
     ``make_layered()`` + a per-layer ``set_data`` writes the same numbers in the
     shape ``npf_k`` already has (``<model>.mst_porosity_layer1.txt`` ...), which
-    MF6 reads identically. It is idempotent on an already-layered array, so it
-    runs for every declared array target rather than being guessed at.
+    MF6 reads identically.
+
+    Skipped when the array is **already** stored one per layer (which every
+    build after the first sees, and which ``npf_k`` starts out as) and when the
+    model has a single layer -- there a whole-grid file already has exactly
+    ``ncpl`` values, so pyEMU is happy and splitting it would be busywork.
+    ``store_internal()`` first because FloPy refuses to make EXTERNAL data
+    layered, which is the state a model loaded from a previous run is in.
     """
 
     if recipe.family != "array" or not recipe.package or not recipe.variable:
@@ -282,10 +288,19 @@ def relayer_array_target(project, recipe: _Recipe) -> bool:
     array = getattr(package, recipe.variable, None) if package is not None else None
     if array is None or not array.supports_layered():
         return False
-    values = np.asarray(array.get_data(), dtype=float)
+    # FloPy exposes no public "is this stored per layer" flag; falling back to
+    # False when the private accessor moves means attempting the relayer, which
+    # is the safe direction.
+    storage = getattr(array, "_get_storage_obj", lambda: None)()
+    if getattr(storage, "layered", False):
+        return False
     nlay = int(model.modelgrid.nlay)
+    if nlay <= 1:
+        return False
+    values = np.asarray(array.get_data(), dtype=float)
     if values.ndim < 2 or values.shape[0] != nlay:
         values = values.reshape(nlay, -1)
+    array.store_internal()
     array.make_layered()
     array.set_data([values[layer] for layer in range(nlay)])
     return True
@@ -336,16 +351,19 @@ def _resolve_files(template_workspace: Path, model_name: str, recipe: _Recipe) -
     if "*" in stub:
         matches = sorted(p.name for p in workspace.glob(stub))
     else:
-        candidate = workspace / stub
-        if candidate.exists():
-            matches = [candidate.name]
-        else:
-            # Multi-layer DISV/DIS arrays are externalized one file per layer,
-            # e.g. ``<model>.npf_k_layer1.txt``. Match those precisely so that
-            # resolving ``k`` never picks up ``k33`` (``npf_k_layer*`` requires
-            # ``_layer`` immediately after ``npf_k``).
-            base = stub[:-4] if stub.endswith(".txt") else stub
-            matches = sorted(p.name for p in workspace.glob(f"{base}_layer*.txt"))
+        # Multi-layer DISV/DIS arrays are externalized one file per layer, e.g.
+        # ``<model>.npf_k_layer1.txt``. Match those precisely so that resolving
+        # ``k`` never picks up ``k33`` (``npf_k_layer*`` requires ``_layer``
+        # immediately after ``npf_k``).
+        #
+        # Per-layer FIRST: relayering an array that was already external leaves
+        # the old whole-grid file behind, unreferenced by the package but still
+        # on disk. Matching the exact name first would resolve to that stale
+        # file -- pointing every parameter at values MODFLOW no longer reads.
+        base = stub[:-4] if stub.endswith(".txt") else stub
+        matches = sorted(p.name for p in workspace.glob(f"{base}_layer*.txt"))
+        if not matches and (workspace / stub).exists():
+            matches = [stub]
     if not matches:
         raise FileNotFoundError(
             f"No external input file found for target {recipe.canonical!r} "

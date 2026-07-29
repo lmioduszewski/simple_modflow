@@ -929,8 +929,11 @@ def test_model_pest_factory_binds_model_and_default_workspace(tmp_path):
     assert isinstance(cal, PestProject)
     assert cal.model is model
     assert cal.start_datetime == "2021-03-01"
-    # Default workspace lands beside the model so model.pest_runs finds it.
-    assert cal.template_workspace == model.workspace / "pest" / "calib"
+    # Default workspace lands BESIDE the model -- a sibling directory, not a
+    # child -- so PstFrom's copy of the model workspace cannot swallow it
+    # (ledger 107), while model.pest_runs still finds it.
+    assert cal.template_workspace == model.workspace.parent / f"{model.workspace.name}.pest" / "calib"
+    assert model.workspace not in cal.template_workspace.parents
 
     # Extra kwargs thread through to PestProject (e.g. an explicit workspace).
     custom = tmp_path / "elsewhere"
@@ -1067,6 +1070,169 @@ def test_find_pest_runs_dedupes_parallel_master_copies(tmp_path):
     runs = find_pest_runs(pest)
     assert [r.name for r in runs] == ["calib"]  # one run, not three
     assert runs[0].kinds == ["ies", "prior"]    # masters become its execution kinds
+
+
+# --- where calibrations live (ledger 107) ------------------------------------
+
+
+def _write_stub_run(directory, name, model_name="m"):
+    """The two files find_pest_runs keys on, for one build."""
+
+    import json
+
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "myflopy_pest_metadata.json").write_text(
+        json.dumps({"project_name": name, "model_name": model_name,
+                    "pst_file": f"{name}.pst"}),
+        encoding="utf-8",
+    )
+    (directory / f"{name}.pst").write_text("", encoding="utf-8")
+    return directory
+
+
+def test_discovery_finds_runs_in_both_the_current_and_legacy_roots(tmp_path):
+    """The default moved from `<ws>/pest` (inside the tree PstFrom copies) to
+    `<ws>.pest` (a sibling). Calibrations already on disk are in the old place
+    and must keep reviewing -- silently dropping them would look like the runs
+    were never done."""
+
+    from myflopy.modflow.mf6.pest.runs import find_model_pest_runs, pest_run_roots
+
+    workspace = tmp_path / "model"
+    workspace.mkdir()
+    current, legacy = pest_run_roots(workspace)
+    assert current == tmp_path / "model.pest"
+    assert legacy == workspace / "pest"
+
+    _write_stub_run(current / "new_run", "new_run")
+    _write_stub_run(legacy / "old_run", "old_run")
+
+    assert [run.name for run in find_model_pest_runs(workspace)] == [
+        "new_run", "old_run"
+    ]
+    assert [run.name for run in find_model_pest_runs(workspace, model_name="other")] == []
+
+
+def test_a_legacy_run_copied_into_a_template_is_not_listed_twice(tmp_path):
+    """A template is a COPY of the model workspace, so a calibration that lived
+    inside it (the pre-2026-07-29 default) rides along into every template built
+    afterwards. Listing that copy as a run of its own shows the same
+    calibration twice, and ``review()`` on the copy opens a directory nothing
+    ever ran in."""
+
+    import shutil
+
+    from myflopy.modflow.mf6.pest.runs import find_model_pest_runs
+
+    workspace = tmp_path / "model"
+    workspace.mkdir()
+    _write_stub_run(workspace / "pest" / "old_run", "old_run")
+
+    template = tmp_path / "model.pest" / "new_run"
+    shutil.copytree(workspace, template)          # what PstFrom does
+    _write_stub_run(template, "new_run")
+    assert (template / "pest" / "old_run").exists(), "fixture must carry the copy"
+
+    assert [run.name for run in find_model_pest_runs(workspace)] == [
+        "new_run", "old_run"
+    ]
+
+
+def test_a_template_inside_the_copied_workspace_still_refuses_to_nest(tmp_path):
+    """`_clear_stale_template` had no test at all, and it is what stands between
+    a rebuild and the 17 GB recursion of ledger 107.
+
+    The default no longer lands inside the copied tree, so this drives the case
+    that remains: an explicit `workspace=` under the model directory, with
+    another calibration already there. Deleting that one is not an option -- its
+    IES master holds finished results -- so the build must refuse.
+    """
+
+    from myflopy.modflow.mf6.pest.project import PestProject
+
+    model_workspace = tmp_path / "model"
+    model_workspace.mkdir()
+    pest_root = model_workspace / "pest"
+
+    project = object.__new__(PestProject)
+    project.name = "second"
+    project.original_workspace = model_workspace
+    project.template_workspace = pest_root / "second"
+
+    # Alone in the directory: the stale template AND the now-empty parent go, so
+    # the copy sees no `pest/` at all -- an EMPTY one is enough to recurse.
+    project.template_workspace.mkdir(parents=True)
+    (project.template_workspace / "leftover.txt").write_text("x", encoding="utf-8")
+    project._clear_stale_template()
+    assert not pest_root.exists()
+
+    # With somebody else's finished run there, refuse rather than delete it.
+    _write_stub_run(pest_root / "first", "first")
+    project.template_workspace.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="still holds 1 other PEST run"):
+        project._clear_stale_template()
+    assert (pest_root / "first").exists(), "another run's results were deleted"
+
+    # The default location is outside the copied tree, so it never gets here.
+    project.template_workspace = tmp_path / "model.pest" / "second"
+    project.template_workspace.mkdir(parents=True)
+    project._clear_stale_template()
+    assert (pest_root / "first").exists()
+
+
+def test_two_named_calibrations_on_one_model_coexist_at_the_default_location():
+    """The capability ledger 107 gave up to stop the disk filling: with the
+    template inside the copied tree, a second differently-named run at the
+    default location could not be built at all, so `model.pest_runs` with
+    several runs required explicit workspaces.
+
+    Also pins the constraint that makes discovery work: the template must stay
+    OUTSIDE the model workspace (or the copy recurses), and any IES master must
+    stay a SIBLING of the template (or `find_pest_runs` reports a finished run
+    as "built (not run)").
+    """
+
+    pytest.importorskip("pyemu")
+    pytest.importorskip("flopy")
+
+    workspace = _project_temp_dir("two_calibrations")
+    model, vor = _build_two_cell_pest_forward_model("two_cal", workspace / "model")
+    Recharge(model=model, vor=vor, rch_dict={0: [[(0, 0), 0.001], [(0, 1), 0.001]]})
+    assert model.run_simulation()[0] is True
+
+    obs_path = _write_gpkg(
+        workspace / "two_cal_obs.gpkg",
+        gpd.GeoDataFrame(
+            {"name": ["OBS_A"], "layer": [0], "weight": [1.0]},
+            geometry=[Point(0.5, 0.5)],
+            crs=model.vor.crs,
+        ),
+    )
+    targets = HeadTargets(
+        locations=obs_path,
+        values=pd.DataFrame({"per": [0], "OBS_A": [10.0]}),
+        time_column="per",
+    )
+
+    for name in ("first_calib", "second_calib"):
+        cal = model.pest(name, start_datetime="2024-01-01")
+        cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
+        cal.observe(targets)
+        cal.build(f"{name}.pst", noptmax=0)
+        assert model.workspace not in cal.template_workspace.parents, (
+            "the template is inside the tree PstFrom copies; it will recurse"
+        )
+        # Where run_ies puts its master, spelled the way project.py spells it.
+        assert (cal.template_workspace.parent / f"{name}_ies_master").parent == (
+            cal.template_workspace.parent
+        )
+
+    # Nothing was copied into the model workspace, at any depth.
+    assert not list(Path(model.workspace).rglob("myflopy_pest_metadata.json"))
+
+    discovered = model.pest_runs
+    assert [run.name for run in discovered] == ["first_calib", "second_calib"]
+    assert all(run.model_name == model.name for run in discovered)
 
 
 def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
@@ -1315,10 +1481,12 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
         time_column="per",
     )
 
-    # No explicit workspace: it defaults to <model workspace>/pest/<name>, so the
+    # No explicit workspace: it defaults to <model workspace>.pest/<name>, so the
     # run is auto-discoverable via model.pest_runs (the workflow integration).
     cal = model.pest("run_ies_demo", start_datetime="2024-01-01")
-    assert cal.template_workspace == model.workspace / "pest" / "run_ies_demo"
+    assert cal.template_workspace == (
+        model.workspace.parent / f"{model.workspace.name}.pest" / "run_ies_demo"
+    )
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
     cal.parameterize("recharge", style="grid", bounds=(0.5, 1.5), physical=(0.0, 1e-2))
     cal.observe(targets)

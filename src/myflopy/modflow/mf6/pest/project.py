@@ -40,6 +40,7 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     add_pilot_point_parameter,
     register_pilot_point_parameters,
 )
+from myflopy.modflow.mf6.pest.runs import default_pest_root
 from myflopy.modflow.mf6.pest.specs import (
     ConcObservationSpec,
     DrnFlowObservationSpec,
@@ -131,7 +132,7 @@ class PestProject:
     **The front door is** ``model.pest("calib")``, which returns one of these
     with ``start_datetime`` filled in from the model's TDIS. Constructing
     ``PestProject(...)`` directly is the advanced path: everything else is the
-    same -- ``workspace`` still defaults to ``<model workspace>/pest/<name>``, so
+    same -- ``workspace`` still defaults to ``<model workspace>.pest/<name>``, so
     the run is still discoverable through ``model.pest_runs`` -- but
     ``start_datetime`` has no TDIS fallback and you must supply it::
 
@@ -189,16 +190,22 @@ class PestProject:
         """Create a calibration project around an existing model workspace.
 
         ``workspace`` is the PEST template directory. When omitted it defaults to
-        ``<model workspace>/pest/<name>`` so the calibration lives beside the
-        model it calibrates and is auto-discoverable via ``model.pest_runs`` /
-        ``run.pest_runs``. See the class docstring for the full reference.
+        ``<model workspace>.pest/<name>`` -- a SIBLING of the model directory, so
+        the calibration lives beside the model it calibrates, is
+        auto-discoverable via ``model.pest_runs`` / ``run.pest_runs``, and is
+        not inside the tree ``PstFrom`` copies (ledger 107). See the class
+        docstring for the full reference.
         """
 
         self.model = model
         self.name = str(name)
         self.original_workspace = Path(model.workspace)
         if workspace is None:
-            workspace = self.original_workspace / "pest" / _pest_run_slug(name)
+            # A SIBLING of the model directory, not a child: `PstFrom` copies the
+            # model workspace wholesale via a bare `shutil.copytree` in a private
+            # function, with no way to exclude a subtree, so a template inside it
+            # gets copied into itself (ledger 107).
+            workspace = default_pest_root(self.original_workspace) / _pest_run_slug(name)
         self.template_workspace = Path(workspace)
         self.start_datetime = start_datetime
         self.spatial_reference = spatial_reference
@@ -472,22 +479,24 @@ class PestProject:
         """Make sure the PEST template directory is not copied into itself.
 
         ``PstFrom`` copies ``original_workspace`` wholesale into
-        ``template_workspace``, and by default the template lives INSIDE the
-        workspace being copied (``<model workspace>/pest/<name>``). Whenever a
-        ``pest/`` directory is present when the copy starts, ``shutil.copytree``
-        descends into it and copies the destination it is currently filling --
-        ``pest/<name>/pest/<name>/pest/...`` -- until it dies of recursion.
+        ``template_workspace``. If the template lives INSIDE the workspace being
+        copied, ``shutil.copytree`` descends into the destination it is
+        currently filling -- ``pest/<name>/pest/<name>/pest/...`` -- until it
+        dies of recursion. Measured 2026-07-28: re-running a calibration cell
+        left a 17 GB tree 40 levels deep. ``PstFrom``'s own
+        ``remove_existing=True`` does not help -- it clears the destination,
+        which is not what recurses. Nor is deleting just this run's template
+        enough: an EMPTY subdirectory still gets walked.
 
-        Measured 2026-07-28: re-running a calibration cell left a 17 GB tree 40
-        levels deep. ``PstFrom``'s own ``remove_existing=True`` does not help --
-        it clears the destination, which is not what recurses. Nor is deleting
-        just this run's template enough: an EMPTY ``pest/`` still gets walked.
-
-        So this removes this run's template and, if that leaves ``pest/`` empty,
-        removes ``pest/`` too -- restoring exactly the state a first-ever build
-        sees. Other calibrations are never deleted: their IES master directories
-        hold finished results. If any exist, the copy genuinely cannot be made
-        safe at this location, so this raises rather than exploding later.
+        **The default no longer lands there** (ledger 107): it is now
+        ``<model workspace>.pest/<name>``, a sibling of the copied tree, so this
+        returns early and several named calibrations coexist freely. What
+        remains is the guard for an explicit ``workspace=`` that the caller put
+        inside the model directory. There it removes this run's template and, if
+        that leaves the parent empty, removes the parent too. Other calibrations
+        are never deleted -- their IES master directories hold finished results
+        -- so if any exist the copy cannot be made safe here and this raises
+        rather than exploding later.
         """
 
         import shutil
@@ -518,9 +527,11 @@ class PestProject:
             f"{len(siblings)} other PEST run(s) ({', '.join(siblings[:5])}"
             f"{' ...' if len(siblings) > 5 else ''}). Copying would nest the "
             "workspace inside itself until it exhausts the disk.\n\n"
-            "Give this calibration a workspace OUTSIDE the model directory:\n"
-            f"    model.pest({self.name!r}, workspace=<dir outside the model>, ...)\n"
-            "or delete the other run(s) first if you no longer need their results."
+            "Drop the explicit workspace= to use the default, which sits beside "
+            f"the model rather than inside it:\n"
+            f"    model.pest({self.name!r}, ...)   # -> "
+            f"{default_pest_root(self.original_workspace) / _pest_run_slug(self.name)}\n"
+            "or point workspace= anywhere outside the model directory."
         )
 
     def _build_pstfrom(self):
