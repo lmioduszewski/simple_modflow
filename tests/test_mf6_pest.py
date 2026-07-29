@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1663,8 +1664,9 @@ def test_build_forward_run_command_is_pestpp_compatible(tmp_path):
 
 
 def _stub_ies_results(tmp_path, *, heads=True, zones=False, forecast=False,
-                      unmeasured_periods=0, zone_cells="0,1", zone_residual=-6.0,
-                      head_residuals=(2.0, -1.0)):
+                      conc=False, unmeasured_periods=0, zone_cells="0,1",
+                      zone_residual=-6.0, head_residuals=(2.0, -1.0),
+                      conc_residual=0.02):
     """A minimal completed-run stand-in for the residual-map surface.
 
     Writes the same snapshot files a real build leaves beside the control file,
@@ -1735,6 +1737,37 @@ def _stub_ies_results(tmp_path, *, heads=True, zones=False, forecast=False,
         name = "oname:fore1_otype:lst_usecol:fore_1_per:0"
         names.append((name, 5.0, 0.0))
         values[name] = 105.0  # a huge "residual" that must never reach the map
+
+    if conc:
+        # Written in the CURRENT metadata shape -- `geometry`, `mapping_file`
+        # and `value_column` all declared -- while the head block above stays
+        # in the older shape, so one fixture covers both the declared path and
+        # the kind-keyed fallback that keeps on-disk runs reviewable.
+        frame = gpd.GeoDataFrame(
+            {"name": ["MW_1"], "layer": [0], "group": ["c"], "weight": [1.0]},
+            geometry=[Point(1.5, 0.5)],
+            crs="EPSG:2927",
+        )
+        frame.to_file(workspace / "conc_target_locations.gpkg", driver="GPKG")
+        # Deliberately NOT the `_head_target_map.csv` name the old code
+        # hardcoded: finding this file proves the mapping name is read from
+        # metadata rather than assumed.
+        pd.DataFrame({"name": ["MW_1"], "layer": [0], "cell": [1]}).to_csv(
+            workspace / "conc_conc_target_map.csv", index=False
+        )
+        observation_sets.append({
+            "kind": "conc_targets", "prefix": "conc", "geometry": "points",
+            "locations_file": "conc_target_locations.gpkg",
+            "mapping_file": "conc_conc_target_map.csv",
+            "values_file": "conc_target_values.csv",
+            "value_column": "conc",
+        })
+        pd.DataFrame([{"time": 0, "name": "mw_1", "conc": 1.0}]).to_csv(
+            workspace / "conc_target_values.csv", index=False
+        )
+        name = "oname:conc_otype:lst_usecol:mw_1_per:0"
+        names.append((name, 1.0, 1.0))
+        values[name] = 1.0 + conc_residual
 
     if zones:
         frame = gpd.GeoDataFrame(
@@ -1898,6 +1931,77 @@ def test_a_run_with_no_locatable_observations_says_so(tmp_path):
     assert results.obs_residuals().empty
     with pytest.raises(ValueError, match="lake or reach number"):
         results.plot_obs_residuals()
+
+
+# --- concentration on the residual map (ledger 105) --------------------------
+
+
+def test_concentration_targets_reach_the_residual_map(tmp_path):
+    """Concentration is sampled at a point exactly as head is, so it belongs on
+    the misfit map. Before ledger 105 the coordinates were computed by
+    ``match_to_model`` and then dropped, and the map silently omitted every
+    transport observation -- a calibration whose only data was concentration
+    drew a blank grid."""
+
+    results = _stub_ies_results(tmp_path, heads=False, conc=True)
+    frame = results.obs_residuals()
+
+    assert list(frame["location"]) == ["mw_1"]
+    assert list(frame["kind"]) == ["conc_targets"]
+    assert frame["x"].item() == pytest.approx(1.5)
+    # Read from `mapping_file`, not the head suffix the old code hardcoded.
+    assert frame["cell"].item() == 1
+    assert frame["residual"].item() == pytest.approx(0.02)
+
+    figure = results.plot_obs_residuals()
+    markers = next(trace for trace in figure.data if trace.type == "scattermap")
+    assert len(markers.lon) == 1
+
+
+def test_a_family_that_declares_no_geometry_is_still_skipped(tmp_path):
+    """Dispatch moved from kind to ``geometry``, and it must stay just as
+    closed: lake and SFR sets snapshot a lake or reach NUMBER, and placing one
+    on the grid would put a residual somewhere it was never measured."""
+
+    results = _stub_ies_results(tmp_path, heads=True)
+    results.__dict__["_metadata"]["observation_sets"].append({
+        "kind": "lake_stage", "prefix": "lak",
+        "locations_file": "hds_target_locations.gpkg",
+        "values_file": "hds_target_values.csv",
+    })
+
+    assert set(results.obs_residuals()["prefix"]) == {"hds"}
+
+
+def test_mixing_observation_kinds_on_one_color_scale_warns(tmp_path):
+    """Heads are a length and concentration a mass per volume. On one shared
+    diverging scale the bigger family sets the limit and the other renders
+    uniformly white -- which reads as a perfect fit, not as an unreadable
+    figure. Warn and name the way out."""
+
+    results = _stub_ies_results(tmp_path, heads=True, conc=True)
+
+    with pytest.warns(UserWarning, match="prefix="):
+        results.plot_obs_residuals()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        figure = results.plot_obs_residuals(prefix="conc")
+
+    markers = next(trace for trace in figure.data if trace.type == "scattermap")
+    assert len(markers.lon) == 1, "prefix= must draw only the selected family"
+    assert markers.marker.cmax == pytest.approx(0.02), (
+        "the color limit must come from the selected family alone"
+    )
+
+
+def test_selecting_a_prefix_that_was_never_recorded_names_the_options(tmp_path):
+    """A silent empty map would look like a converged model with no misfit."""
+
+    results = _stub_ies_results(tmp_path, heads=True, conc=True)
+
+    with pytest.raises(ValueError, match=r"\['conc', 'hds'\]"):
+        results.obs_residuals(prefix="nope")
 
 
 def test_a_mosaic_refuses_the_stats_that_have_no_prior_and_posterior_form(tmp_path):

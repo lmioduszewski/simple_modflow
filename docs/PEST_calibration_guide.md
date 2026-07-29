@@ -259,7 +259,8 @@ vs posterior" would draw one map twice. Plotly only — for static output, call
 `plot_field(..., backend="matplotlib")` once per panel.
 
 **Where is the model actually wrong?** `plot_obs_residuals()` puts the misfit on the
-grid rather than in a histogram: head targets draw as points at their coordinates, DRN
+grid rather than in a histogram: point targets — head *and concentration* — draw as
+markers at their coordinates, DRN
 zones color the cells they cover, and **both read on one diverging scale centered on
 zero** — so a point and the cell under it mean the same thing at the same color. **Red
 is under-simulated**, blue is over-simulated, white is on the money. The residual is
@@ -271,7 +272,18 @@ returns the same numbers as a DataFrame.
 
 Lake and SFR targets are *not* on this map: they record only a lake or reach number, with
 no geometry, so they cannot be placed from the run directory alone. They are absent from
-`obs_residuals()` too, so the figure never silently implies it covered them.
+`obs_residuals()` too, so the figure never silently implies it covered them. What decides
+this is the observation set's declared **geometry** (`"points"` / `"zones"`), not its
+kind — a family that records no geometry is skipped.
+
+**One scale, so mind the units.** A run history-matched against more than one *kind* of
+measurement — heads in length, concentration in mass/volume, DRN seepage in
+volume/time — has residuals in different units, and one shared color limit hands the
+scale to whichever family has the bigger numbers. The others then render uniformly
+white, which reads as a perfect fit rather than as an unreadable figure. Pass
+`prefix=` to draw one family at a time (`plot_obs_residuals(prefix="conc")`); drawing
+them together still works and warns. `obs_residuals()` takes the same `prefix=`, and
+its `value_kind` column names which measurement each row is.
 
 Two other things are deliberately excluded, both of which would otherwise be drawn as
 misfit the model was never fitted to. **Forecasts**, because `cal.forecast(...)` registers

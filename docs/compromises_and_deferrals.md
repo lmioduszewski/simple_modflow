@@ -1917,17 +1917,13 @@ same day, which is the useful part of the result.
        (ledger 91): the ratchet's advice is right by default and wrong when the target
        module is higher in the graph. Recorded so the next reader does not "fix" it.
 
-105. **Concentration observations are not yet drawn on IES residual maps (2026-07-28).**
-     - `ies.py` gates spatial residual plotting on
-       `kind not in ("head_targets", "drn_flow")`, so a `conc_targets` observation set
-       builds, calibrates and reports phi correctly but is invisible to
-       `plot_obs_residuals()`.
-     - Not fixed here because the gate wants grid locations per observation kind and
-       this pass was scoped to getting a concentration calibration to BUILD and RUN
-       end to end. The mapping data exists (`{prefix}_conc_target_map.csv` carries
-       name/layer/cell), so it is wiring, not new machinery.
-     - Everything else in the review layer works unchanged: phi, ensemble-vs-observed,
-       and forecasts all read the observation frame generically.
+105. ~~**Concentration observations are not yet drawn on IES residual maps
+     (2026-07-28).**~~ **CLOSED 2026-07-29.** `prepare_conc_observations` now
+     snapshots the point locations `match_to_model` was already computing (and
+     discarding), and `_observation_locations` dispatches on a declared
+     `geometry` (`"points"`/`"zones"`) instead of a hardcoded kind tuple, reading
+     each family's own `mapping_file` rather than assuming the head suffix. Runs
+     already on disk keep reviewing via `_LEGACY_GEOMETRY_BY_KIND`.
 
 106. **`canonical_07` is verified by hand, because nothing in this repo executes a
      notebook (2026-07-28).**
@@ -1996,3 +1992,22 @@ same day, which is the useful part of the result.
        failure. Now matches.
      - Recorded because both were written from "what should the committed file look
        like" without asking "what does this do to someone working in the file".
+
+109. **`plot_obs_residuals` warns about mixed units rather than refusing them
+     (2026-07-29).**
+     - One diverging color scale spans every family on the figure, so a run
+       history-matched against heads (length) *and* concentration (mass/volume)
+       hands the limit to whichever has the bigger numbers. The other family then
+       renders uniformly white — which reads as **a perfect fit**, not as a broken
+       figure. That is the dangerous failure mode, and it is what closing ledger 105
+       makes reachable in practice, since the transport demo now carries both.
+     - `prefix=` (on `obs_residuals` and `plot_obs_residuals`) is the fix; the
+       default still draws everything and emits a `UserWarning` naming the kinds and
+       the way out.
+     - **Why warn, not refuse.** The mixing predates this change: head targets (ft)
+       and DRN seepage (ft³/d) have always shared the scale, so refusing would break
+       reviewing runs already on disk. A warning is visible, keeps old runs working,
+       and points at the parameter.
+     - Not fixed: a genuinely correct multi-unit figure needs either one colorbar per
+       family or normalized residuals, and normalizing changes what the number means.
+       Deferred as a real design question, not an oversight.

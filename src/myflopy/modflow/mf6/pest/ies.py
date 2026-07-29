@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -1574,8 +1575,26 @@ class IesResults:
     )
 
     _LOCATION_COLUMNS = (
-        "prefix", "kind", "location", "layer", "cell", "x", "y", "cells",
+        "prefix", "kind", "value_kind", "location", "layer", "cell", "x", "y",
+        "cells",
     )
+
+    #: Geometry for observation families built before the metadata carried a
+    #: ``geometry`` key, so runs already on disk keep reviewing. New families
+    #: declare it in their metadata instead of being added here.
+    _LEGACY_GEOMETRY_BY_KIND = {
+        "head_targets": "points",
+        "conc_targets": "points",
+        "drn_flow": "zones",
+    }
+
+    #: Same, for the value each family measures -- it names the residual's UNIT,
+    #: which is what makes mixing families on one color scale detectable.
+    _LEGACY_VALUE_BY_KIND = {
+        "head_targets": "head",
+        "conc_targets": "conc",
+        "drn_flow": "flow_target",
+    }
 
     def _simulated_realization(self, realization: str) -> pd.Series:
         """One realization's simulated values, falling back to the ensemble mean."""
@@ -1588,11 +1607,15 @@ class IesResults:
     def _observation_locations(self) -> pd.DataFrame:
         """Grid locations for every observation set that recorded one.
 
-        Head targets snapshot a point GeoPackage (and a name -> cell map); DRN
-        zones snapshot the explicit cell list per zone. Lake stage and SFR
-        stage/flow record only a lake or reach NUMBER with no geometry, so they
-        cannot be placed on the grid from the run directory alone and are
-        skipped (compromise ledger 76).
+        Dispatch is on the set's ``geometry``, not on its kind: **point**
+        families (head, concentration) snapshot a point GeoPackage and a
+        name -> cell map; **zone** families (DRN) snapshot the explicit cell
+        list per zone. Anything that declares neither is skipped -- lake stage
+        and SFR stage/flow record only a lake or reach NUMBER, which is not a
+        place on the grid (compromise ledger 76).
+
+        Runs written before the metadata carried ``geometry`` fall back to
+        ``_LEGACY_GEOMETRY_BY_KIND`` so they keep reviewing.
         """
 
         import geopandas as gpd
@@ -1601,7 +1624,10 @@ class IesResults:
         for entry in self.observation_sets:
             kind = str(entry.get("kind", ""))
             prefix = str(entry.get("prefix", ""))
-            if not prefix or kind not in ("head_targets", "drn_flow"):
+            geometry = str(
+                entry.get("geometry") or self._LEGACY_GEOMETRY_BY_KIND.get(kind, "")
+            )
+            if not prefix or geometry not in ("points", "zones"):
                 continue
             locations_file = entry.get("locations_file")
             path = self.workspace / str(locations_file) if locations_file else None
@@ -1616,17 +1642,26 @@ class IesResults:
             frame = pd.DataFrame({
                 "prefix": prefix.lower(),
                 "kind": kind,
+                "value_kind": str(
+                    entry.get("value_column")
+                    or self._LEGACY_VALUE_BY_KIND.get(kind, kind)
+                ),
                 # The control file lowercases location names when it builds
                 # observation names; the snapshot keeps the original case.
                 "location": table["name"].astype(str).str.strip().str.lower(),
             })
-            if kind == "head_targets":
+            if geometry == "points":
                 if hasattr(table, "geometry"):
                     frame["x"] = table.geometry.x.to_numpy()
                     frame["y"] = table.geometry.y.to_numpy()
                 if "layer" in table.columns:
                     frame["layer"] = table["layer"].to_numpy()
-                mapping_path = self.workspace / f"{prefix}_head_target_map.csv"
+                # Each family names its own map file (heads and concentration
+                # do not share one); the default is the pre-`mapping_file`
+                # layout, which only heads ever wrote.
+                mapping_path = self.workspace / str(
+                    entry.get("mapping_file") or f"{prefix}_head_target_map.csv"
+                )
                 if mapping_path.exists():
                     mapping = pd.read_csv(mapping_path)
                     mapping["location"] = (
@@ -1699,7 +1734,25 @@ class IesResults:
                 ))
         return keys if found else None
 
-    def obs_residuals(self, *, realization: str = "base") -> pd.DataFrame:
+    def _select_prefixes(self, locations: pd.DataFrame, prefix) -> pd.DataFrame:
+        """Filter located observations to the requested set prefix(es)."""
+
+        if prefix is None:
+            return locations
+        wanted = (
+            {str(prefix).lower()} if isinstance(prefix, str)
+            else {str(value).lower() for value in prefix}
+        )
+        selected = locations[locations["prefix"].isin(wanted)]
+        if selected.empty:
+            available = sorted(locations["prefix"].unique())
+            raise ValueError(
+                f"No locatable observation set matches prefix={prefix!r}. "
+                f"This run recorded: {available}."
+            )
+        return selected
+
+    def obs_residuals(self, *, realization: str = "base", prefix=None) -> pd.DataFrame:
         """Return per-location residuals for observations that can be placed on the grid.
 
         The residual is ``simulated - measured`` -- the sign
@@ -1726,13 +1779,19 @@ class IesResults:
             Which posterior realization to score (default ``"base"``, the
             minimum-error-variance one); falls back to the ensemble mean when
             that label is absent, exactly as :meth:`phi_contributions` does.
+        prefix
+            One observation-set prefix, or several, to restrict the frame to.
+            Default ``None`` keeps every locatable set — which mixes UNITS when
+            a run history-matched more than one kind of measurement (heads in
+            length, concentration in mass/volume, DRN seepage in volume/time).
 
         Returns
         -------
         pandas.DataFrame
-            One row per (``prefix``, ``location``) with ``kind``, ``measured``,
-            ``simulated``, ``residual``, ``weight``, ``n``, and whichever
-            location the run recorded: ``cell``/``x``/``y`` for head targets,
+            One row per (``prefix``, ``location``) with ``kind``,
+            ``value_kind``, ``measured``, ``simulated``, ``residual``,
+            ``weight``, ``n``, and whichever location the run recorded:
+            ``cell``/``x``/``y`` for point targets (heads, concentration),
             ``cells`` (the zone's cell list) for DRN zones. Empty when the run
             recorded no locatable observation sets.
         """
@@ -1740,9 +1799,11 @@ class IesResults:
         locations = self._observation_locations()
         if locations.empty:
             return pd.DataFrame(
-                columns=["prefix", "location", "kind", "measured", "simulated",
-                         "residual", "weight", "n", "cell", "x", "y", "cells"]
+                columns=["prefix", "location", "kind", "value_kind", "measured",
+                         "simulated", "residual", "weight", "n", "cell", "x",
+                         "y", "cells"]
             )
+        locations = self._select_prefixes(locations, prefix)
 
         simulated = self._simulated_realization(realization)
         obs = self._observation_metadata()
@@ -1780,19 +1841,30 @@ class IesResults:
 
     def plot_obs_residuals(self, *, realization: str = "base", layer: int = 0,
                            backend: str = "plotly", title: str | None = None,
-                           **choropleth_kwargs):
+                           prefix=None, **choropleth_kwargs):
         """Map where the calibrated model is biased, and by how much.
 
-        Head targets draw as points at their coordinates; DRN zones color the
-        cells they cover. Both read on ONE diverging scale centered on zero, so
-        a point and the zone beneath it mean the same thing at the same color:
-        **red is under-simulated** (simulated below measured), blue is
-        over-simulated, white is on the money.
+        Point targets (heads, concentration) draw as markers at their
+        coordinates; DRN zones color the cells they cover. Both read on ONE
+        diverging scale centered on zero, so a point and the zone beneath it
+        mean the same thing at the same color: **red is under-simulated**
+        (simulated below measured), blue is over-simulated, white is on the
+        money.
+
+        That one shared scale is why ``prefix`` matters. A run that
+        history-matched heads AND concentration produces residuals in different
+        UNITS, and drawing them together puts the larger-magnitude family in
+        charge of the color limit — the other one renders uniformly white and
+        reads as a perfect fit. Passing ``prefix`` restricts the figure to one
+        family; leaving it out draws them all and warns.
 
         Parameters
         ----------
         realization
             Posterior realization to score (default ``"base"``).
+        prefix
+            One observation-set prefix, or several, to draw. Default ``None``
+            draws every locatable set.
         layer
             Grid layer to draw the cells of (default 0). Head targets are drawn
             at their map position whatever layer they were screened in --
@@ -1810,7 +1882,7 @@ class IesResults:
         obs_residuals : the same numbers as a DataFrame.
         """
 
-        frame = self.obs_residuals(realization=realization)
+        frame = self.obs_residuals(realization=realization, prefix=prefix)
         if frame.empty:
             # Distinguish "nothing locatable was recorded" from "locations were
             # found but nothing joined to them" -- the second is a bug or a
@@ -1821,14 +1893,31 @@ class IesResults:
                     "No observation locations were recorded for this run. A "
                     "residual map needs the *_target_locations.gpkg / "
                     "*_head_target_map.csv snapshots written beside the control "
-                    "file, and only head targets and DRN zones record geometry "
-                    "-- lake and SFR targets record only a lake or reach number."
+                    "file, and only point targets (heads, concentration) and "
+                    "DRN zones record geometry -- lake and SFR targets record "
+                    "only a lake or reach number."
                 )
             raise ValueError(
                 "Observation locations were found, but no measured, nonzero-"
                 "weight observation joined to them. Check that this run has "
                 "history-matched observations (forecasts carry weight 0) and "
                 "that the *_target_values.csv snapshots are present."
+            )
+
+        # One color limit over families measured in different units hands the
+        # scale to whichever has the larger numbers, and silently renders the
+        # other as "no misfit anywhere". Warn rather than refuse: runs built
+        # before `prefix` existed already draw heads and DRN seepage together,
+        # and refusing would break reviewing them.
+        drawn_kinds = sorted(frame["value_kind"].dropna().unique()) if "value_kind" in frame else []
+        if len(drawn_kinds) > 1:
+            warnings.warn(
+                f"Drawing residuals of different kinds ({drawn_kinds}) on one "
+                "color scale; they are in different units, so the "
+                "larger-magnitude family sets the limit and the others read as "
+                "near-zero misfit. Pass prefix=... to map one family at a time.",
+                UserWarning,
+                stacklevel=2,
             )
 
         points = frame[frame["x"].notna()] if "x" in frame else frame.iloc[:0]

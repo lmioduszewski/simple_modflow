@@ -99,6 +99,33 @@ def _write_locations_snapshot(gdf, path: Path):
     return path
 
 
+def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
+    """One target set's locations as a point GeoDataFrame, for the residual map.
+
+    Shared by every POINT-geometry observation family (heads, concentration) so
+    the two cannot drift: a family that snapshots its points differently would
+    still map, just wrong. Targets built from coordinates already carry a
+    geometry; targets built from cell ids do not, so their coordinates come from
+    ``match_to_model``, which resolves cell centroids.
+    """
+
+    locations_frame = targets.locations_gdf.copy()
+    if isinstance(locations_frame, gpd.GeoDataFrame):
+        return locations_frame.loc[
+            :,
+            ["name", "layer", "group", "weight", locations_frame.geometry.name],
+        ].copy()
+    snapshot = targets.match_to_model(project.model).loc[
+        :, ["name", "layer", "group", "weight", "x", "y"]
+    ].copy()
+    crs = getattr(project.model.vor, "crs", None)
+    return gpd.GeoDataFrame(
+        snapshot.drop(columns=["x", "y"]),
+        geometry=gpd.points_from_xy(snapshot["x"], snapshot["y"], crs=crs),
+        crs=crs,
+    )
+
+
 def _prepare_named_series_observations(
     project,
     *,
@@ -108,6 +135,7 @@ def _prepare_named_series_observations(
     simulated_wide: pd.DataFrame,
     metadata_kind: str,
     locations_snapshot: pd.DataFrame | gpd.GeoDataFrame | None = None,
+    geometry: str | None = None,
 ):
     """Create one pyEMU list-style observation source from a named-series target set."""
 
@@ -150,6 +178,11 @@ def _prepare_named_series_observations(
             locations_path = project.template_workspace / f"{prefix}_target_locations.csv"
             _write_frame(pd.DataFrame(locations_snapshot), locations_path)
         metadata["locations_file"] = locations_path.name
+        # Absent for lake/SFR: they snapshot a lake or reach NUMBER, which is
+        # not a place on the grid (ledger 76). Only a family that declares its
+        # geometry reaches the residual map.
+        if geometry is not None:
+            metadata["geometry"] = geometry
 
     return {
         "prefix": prefix,
@@ -186,20 +219,7 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
     mapping = spec.targets.match_to_model(project.model).loc[:, ["name", "layer", "cell"]]
     mapping_path = project.template_workspace / f"{spec.prefix}_head_target_map.csv"
     mapping.to_csv(mapping_path, index=False)
-    locations_frame = spec.targets.locations_gdf.copy()
-    if isinstance(locations_frame, gpd.GeoDataFrame):
-        locations_snapshot = locations_frame.loc[
-            :,
-            ["name", "layer", "group", "weight", locations_frame.geometry.name],
-        ].copy()
-    else:
-        snapshot = spec.targets.match_to_model(project.model).loc[:, ["name", "layer", "group", "weight", "x", "y"]].copy()
-        geometry = gpd.points_from_xy(snapshot["x"], snapshot["y"], crs=getattr(project.model.vor, "crs", None))
-        locations_snapshot = gpd.GeoDataFrame(
-            snapshot.drop(columns=["x", "y"]),
-            geometry=geometry,
-            crs=getattr(project.model.vor, "crs", None),
-        )
+    locations_snapshot = _point_locations_snapshot(project, spec.targets)
     locations_path = project.template_workspace / f"{spec.prefix}_target_locations.gpkg"
     _write_locations_snapshot(locations_snapshot, locations_path)
     values_snapshot = spec.targets.to_long().loc[:, ["time", "name", "head_target"]].rename(
@@ -223,7 +243,9 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
         "metadata": {
             "kind": "head_targets",
             "prefix": spec.prefix,
+            "geometry": "points",
             "locations_file": locations_path.name,
+            "mapping_file": mapping_path.name,
             "values_file": values_path.name,
             "name_column": "name",
             "layer_column": "layer",
@@ -300,6 +322,14 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
     mapping_path = project.template_workspace / f"{spec.prefix}_conc_target_map.csv"
     mapping.to_csv(mapping_path, index=False)
 
+    # Concentration is sampled at a point, exactly like head, so it snapshots
+    # the same point geometry and reaches the residual map the same way
+    # (ledger 105). The coordinates come out of `match_to_model` above; before
+    # this they were computed and then dropped on the floor.
+    locations_snapshot = _point_locations_snapshot(project, spec.targets)
+    locations_path = project.template_workspace / f"{spec.prefix}_target_locations.gpkg"
+    _write_locations_snapshot(locations_snapshot, locations_path)
+
     values_snapshot = spec.targets.to_long().loc[:, ["time", "name", "head_target"]].rename(
         columns={"head_target": "conc"}
     )
@@ -322,7 +352,10 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
         "metadata": {
             "kind": "conc_targets",
             "prefix": spec.prefix,
+            "geometry": "points",
             "transport_model": transport_name,
+            "locations_file": locations_path.name,
+            "mapping_file": mapping_path.name,
             "values_file": values_path.name,
             "name_column": "name",
             "layer_column": "layer",
@@ -416,6 +449,7 @@ def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
         simulated_wide=pivot,
         metadata_kind="drn_flow",
         locations_snapshot=snapshot,
+        geometry="zones",
     )
 
 

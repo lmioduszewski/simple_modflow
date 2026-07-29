@@ -7,9 +7,11 @@ simulated file pyEMU's instruction file expects.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
+import geopandas as gpd
 import pandas as pd
 import pytest
 
@@ -22,6 +24,7 @@ from myflopy.modflow.mf6.observations import ConcTargets, HeadTargets
 from myflopy.modflow.mf6.pest.project import (
     _OBSERVATION_SPEC_TYPES,
     _TARGET_SPEC_TYPES,
+    METADATA_FILENAME,
 )
 from myflopy.modflow.mf6.pest.specs import ConcObservationSpec
 
@@ -72,6 +75,10 @@ def test_a_concentration_calibration_builds_and_its_forward_run_works(tmp_path):
       the TRANSPORT model's ``.ucn`` rather than the flow model's ``.hds``.
     * the regenerated values are not all zero, which is what reading the wrong
       binary (or the wrong layer) would produce.
+    * the location snapshot and its metadata are written, which is what puts
+      concentration on ``plot_obs_residuals`` (ledger 105). ``match_to_model``
+      already computed the coordinates; before this they were discarded and a
+      concentration-only calibration reviewed as a blank map.
     """
 
     demo = build_canonical_transport_calibration_demo(
@@ -114,6 +121,23 @@ def test_a_concentration_calibration_builds_and_its_forward_run_works(tmp_path):
     assert (frame.drop(columns=["per"]).abs().to_numpy() > 1e-9).any(), (
         "every regenerated concentration is zero -- the wrong binary was read"
     )
+
+    # --- the residual map's inputs (ledger 105) ---
+    metadata = json.loads((template / METADATA_FILENAME).read_text())
+    conc_set = next(
+        entry for entry in metadata["observation_sets"]
+        if entry["kind"] == "conc_targets"
+    )
+    assert conc_set["geometry"] == "points"
+
+    locations = gpd.read_file(template / conc_set["locations_file"])
+    assert not locations.empty
+    assert locations.geometry.x.notna().all(), (
+        "no coordinates snapshotted -- every concentration target would be "
+        "dropped from the residual map"
+    )
+    mapping = pd.read_csv(template / conc_set["mapping_file"])
+    assert set(mapping["name"]) == set(locations["name"])
 
 
 @pytest.mark.slow

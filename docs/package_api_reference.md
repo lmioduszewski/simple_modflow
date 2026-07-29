@@ -281,7 +281,7 @@ fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it
 | `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |
 | `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction` |
 | — | `plot_field_mosaic(target, stat=…)` | prior vs posterior on one shared scale (`mean`/`std` only) |
-| `obs_residuals()` | `plot_obs_residuals()` | *where* the model is biased (heads as points, DRN zones as cells) |
+| `obs_residuals(prefix=…)` | `plot_obs_residuals(prefix=…)` | *where* the model is biased (heads/conc as points, DRN zones as cells; `prefix=` picks one family so mixed units do not share a color scale) |
 | `capture_fields`, `observation_sets` | `report(path)` | what the run recorded; the headline plots bundled to HTML |
 
 Every figure takes `backend="matplotlib"` except `plot_field_mosaic`, which composes
