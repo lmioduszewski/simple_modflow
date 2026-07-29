@@ -1896,11 +1896,12 @@ same day, which is the useful part of the result.
        constrains nothing. `monitoring_well_cells` keeps intermediate-concentration
        cells downgradient of the source; a test asserts no well sits on a source cell
        and that no target sits at the source value.
-     - **Transport parameters (`mst.porosity`, `dsp.alh`) are still not
-       `parameterize` targets.** Porosity is the strongest signal measured (54%), so
-       it is the obvious next addition -- and ledger 101's flat layout means it is a
-       `_RECIPES` entry plus per-model file resolution, not the rework the scoping
-       feared. Deferred, not blocked.
+     - ~~**Transport parameters (`mst.porosity`, `dsp.alh`) are still not
+       `parameterize` targets.**~~ **`porosity` CLOSED 2026-07-29** (see 110);
+       `dsp.alh` deliberately NOT added: `ath1` is derived from `alh` at build time
+       only, so a multiplier on `alh` alone silently breaks the 10:1 transverse ratio
+       the model was built with. That needs a linked-parameter concept, not a recipe
+       entry.
 
 104. **`prepare_conc_observations` keeps a DEFERRED import of `load_mf6_run`, against
      the ratchet's default advice (2026-07-28).**
@@ -2011,3 +2012,61 @@ same day, which is the useful part of the result.
      - Not fixed: a genuinely correct multi-unit figure needs either one colorbar per
        family or normalized residuals, and normalizing changes what the number means.
        Deferred as a real design question, not an oversight.
+
+110. **`parameterize("porosity")` re-stores the model's griddata one array per
+     layer, mutating the FloPy model (2026-07-29).** Closes the porosity half of
+     ledger 103.
+     - MST porosity is supplied as a scalar (`ModflowGwtmst(gwt, porosity=0.25)`),
+       so `set_all_data_external()` writes ONE file of `nlay * ncpl` values with no
+       LAYERED keyword. pyEMU cannot parameterize that on a Voronoi grid:
+       `write_array_tpl` calls `get_xy([i, j])` for **every** array row against a
+       spatial reference holding `ncpl` entries, so it raises
+       `IndexError: index 441 is out of bounds` from inside `add_parameters` --
+       naming neither the target nor the cause. Measured, not assumed.
+     - What ships: `relayer_array_target` calls `make_layered()` + a per-layer
+       `set_data` on every declared ARRAY target before externalizing, giving
+       porosity the shape `npf_k` already had (`..._layer1.txt` ...). Same numbers,
+       and MF6 reads it identically; a test asserts the values survive.
+     - **The compromise: this mutates the user's model object.** `_ensure_external_model`
+       already calls `set_all_data_external()` on it, so the model was never left
+       untouched by `build()` -- but this changes the STORAGE SHAPE of a package the
+       user configured, which the previous call did not. Applied unconditionally to
+       declared array targets rather than guessed at, because `make_layered()` is
+       idempotent (verified on the already-layered `npf_k`) and detecting
+       "needs relayering" from FloPy's API is not reliable.
+     - Latent bug fixed in passing: a flow model built with a scalar `k` hit the same
+       pyEMU `IndexError`. Not just a transport concern.
+     - Not done: `style="pilotpoints"` on transport (refused -- `add_pilot_point_parameter`
+       hardwires `project.model.gwf.npf.k` as the array to interpolate against, so it
+       would build, run, and calibrate porosity against the K field), and `dsp.alh`
+       (see 103).
+
+111. **`layers=` was silently ignored, and is now an error (2026-07-29).**
+     - `add_native_parameter` filtered per-layer files and then fell through with
+       `if selected:` (and `... or files` in `pilot_points.py`) -- so `layers=[0]` on a
+       target with no per-layer files, or `layers=[9]` on a 4-layer model, parameterized
+       EVERY layer while the control file looked exactly as the caller intended.
+     - Now `_select_layer_files` refuses, naming which case it is: a whole-grid array has
+       no per-layer file to pick, and a bad layer index lists the ones that exist.
+     - **This is a behavior change**, not purely additive: a call that used to "work"
+       now raises. Every existing use in the repo passes valid layers, so nothing
+       broke -- but a user script relying on the fallthrough would have been relying
+       on a bug.
+
+112. **The transport demo now perturbs porosity too, and ships head targets
+     (2026-07-29).**
+     - `build_canonical_transport_calibration_demo` gained `head_targets` and
+       `start_porosity_factor`. Not decoration: measured on the canonical testing
+       profile, the concentration responses to `K x3` and `porosity /3` have cosine
+       similarity **0.98** (transport velocity is `v = Ki/n`), while heads respond to
+       `K x3` by 1.098 ft and to porosity by exactly 0.000000 ft. Estimating both from
+       concentration alone is ill-posed; heads break the tie.
+     - `start_porosity_factor` is **1.6, not 2.0**: 0.25 -> 0.40 is a substantial error
+       that is still a plausible porosity, whereas 0.50 sits at the practical maximum
+       for unconsolidated sediment -- a starting value no `physical=` upper bound could
+       sit above, so every multiplier above 1.0 would clamp. Found by a test that failed
+       for exactly that reason.
+     - This CHANGES the demo other tests and notebooks build. The concentration targets
+       are unchanged (sampled from the truth run before either perturbation), so
+       existing conc-only calibrations still behave as before, but the model handed to
+       PEST now starts with the wrong porosity as well as the wrong K.

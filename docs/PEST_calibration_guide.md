@@ -52,7 +52,24 @@ cal = model.pest("calib", start_datetime="2020-01-01")   # the front door; works
 cal.parameterize("k",        style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
 cal.parameterize("recharge", style="grid",     bounds=(0.5, 1.5), physical=(0, 1e-2))
 cal.parameterize("ghb.cond", bounds=(0.1, 10))
+
+# transport properties live on the GWT sibling; the target finds it for you
+cal.parameterize("porosity", style="constant", bounds=(0.5, 2), physical=(0.05, 0.5))
 ```
+
+**Porosity needs concentration data — and heads.** It does not appear in the flow
+equation at all, so heads alone cannot constrain it (measured on the canonical model:
+a 3x porosity change moves heads by *exactly* 0.000000 ft). But transport velocity is
+`v = Ki/n`, so raising K and lowering porosity move a plume almost identically —
+the concentration responses to `K x3` and `porosity /3` have cosine similarity **0.98**.
+Estimating both from concentration alone is therefore ill-posed. Observe **heads and
+concentration together**: heads pin K, and concentration then pins porosity.
+`build_canonical_transport_calibration_demo` ships both target families for this reason.
+
+Two refusals you may meet, both of which used to be silent:
+`style="pilotpoints"` is flow-only (the interpolation is hardwired to NPF K, so on
+porosity it would interpolate against the wrong field), and `layers=` is rejected on a
+target MODFLOW writes as one whole-grid array rather than being quietly ignored.
 
 `physical=` is the safety rail: no matter what calibration does, the *final* K
 stays inside those bounds. Always set it for multipliers.

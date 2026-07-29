@@ -1267,7 +1267,9 @@ class IesResults:
                 if match:
                     mapping[name] = int(match.group(1))
         else:
-            # Legacy single flattened array: flat = layer * ncpl + cell.
+            # A single whole-grid array covering every layer at once, which is
+            # how MF6 writes griddata with no LAYERED keyword (MST porosity):
+            # flat = layer * ncpl + cell.
             token = f"oname:{info['prefix'].lower()}_"
             for name in self.pst.observation_data.index:
                 if token not in name:

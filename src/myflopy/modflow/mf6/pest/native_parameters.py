@@ -26,6 +26,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
+
 # --- recipe registry -------------------------------------------------------
 #
 # Each recipe knows how to find the external MODFLOW input file(s) a target maps
@@ -45,14 +47,24 @@ class _Recipe:
     use_col: int | None = None  # list family only
     default_style: str = "constant"
     additive: bool = False  # default to additive offsets (e.g. drain elevation)
+    # Which model in the simulation owns the file. A PestProject hangs off the
+    # FLOW model, so "transport" targets resolve the GWT sibling by name --
+    # everything downstream (pyEMU's own apply_list_and_array_pars) is purely
+    # filename-driven and needs no other change.
+    model: str = "flow"
+    # Array family only: where the griddata lives on the FloPy model, so it can
+    # be re-stored one array per layer before externalization (see
+    # `relayer_array_target`).
+    package: str | None = None
+    variable: str | None = None
 
 
 # DISV list files are written as ``layer cell <values...>`` -> index_cols=[0, 1].
 _LIST_INDEX_COLS = [0, 1]
 
 _RECIPES: dict[str, _Recipe] = {
-    "k": _Recipe("k", "array", "{model}.npf_k.txt"),
-    "k33": _Recipe("k33", "array", "{model}.npf_k33.txt"),
+    "k": _Recipe("k", "array", "{model}.npf_k.txt", package="npf", variable="k"),
+    "k33": _Recipe("k33", "array", "{model}.npf_k33.txt", package="npf", variable="k33"),
     "recharge": _Recipe("recharge", "list", "{model}.rch_stress_period_data_*.txt", use_col=2),
     "chd": _Recipe("chd", "list", "{model}.chd_stress_period_data_*.txt", use_col=2),
     "ghb.cond": _Recipe("ghb.cond", "list", "{model}.ghb_stress_period_data_*.txt", use_col=3),
@@ -62,6 +74,13 @@ _RECIPES: dict[str, _Recipe] = {
         "drn.elev", "list", "{model}.drn_stress_period_data_*.txt", use_col=2, additive=True
     ),
     "wel": _Recipe("wel", "list", "{model}.wel_stress_period_data_*.txt", use_col=2),
+    # Transport. MST writes porosity as ONE whole-grid array (no LAYERED
+    # keyword), so unlike npf_k there is no per-layer file to select from --
+    # see the `layers=` guard in `add_native_parameter`.
+    "porosity": _Recipe(
+        "porosity", "array", "{model}.mst_porosity.txt", model="transport",
+        package="mst", variable="porosity",
+    ),
 }
 
 # Friendly aliases -> canonical key.
@@ -79,6 +98,9 @@ _ALIASES: dict[str, str] = {
     "wel.q": "wel",
     "well": "wel",
     "pumping": "wel",
+    "mst.porosity": "porosity",
+    "mst_porosity": "porosity",
+    "n": "porosity",
 }
 
 # pyEMU ``par_type`` values that need a cell spatial reference (Phase 2 work for
@@ -178,6 +200,20 @@ class NativeParameterSpec:
             self.additive = self.recipe.additive
         if self.name is None:
             self.name = self.recipe.canonical.replace(".", "")
+        if self.style == "pilotpoints" and self.recipe.model != "flow":
+            # `add_pilot_point_parameter` reads `project.model.gwf.npf.k` as the
+            # base array to interpolate against, and the forward run calls it
+            # `base_k`. Pointed at a transport property that silently
+            # interpolates POROSITY multipliers against the K field -- it would
+            # build, run and calibrate to the wrong thing.
+            raise NotImplementedError(
+                f"style='pilotpoints' is not supported for target "
+                f"{self.recipe.canonical!r}: the pilot-point interpolation is "
+                "hardwired to the flow model's NPF K array, so it would "
+                "interpolate against the wrong field. Use style='grid' (one "
+                "geostatistically correlated multiplier per cell), 'zone', or "
+                "'constant'."
+            )
 
     @property
     def resolved_transform(self) -> str:
@@ -198,6 +234,98 @@ def _flatten_array_file(path: Path) -> None:
 
     values = np.array(Path(path).read_text().split(), dtype=float)
     np.savetxt(path, values.reshape(-1, 1), fmt="%.10E")
+
+
+def model_name_for(project, recipe: _Recipe) -> str:
+    """Name of the model whose external input files this recipe reads.
+
+    The project hangs off the FLOW model, so a transport target has to find its
+    GWT sibling. Nothing else in the pipeline cares: pyEMU's
+    ``apply_list_and_array_pars`` matches on FILENAME and never parses a model
+    name or package type, so the forward run needs no transport-specific code.
+    """
+
+    if recipe.model == "transport":
+        return resolve_transport_model_name(project)
+    return project.model.name
+
+
+def flopy_model_for(project, recipe: _Recipe):
+    """The FloPy model object whose packages this recipe reads."""
+
+    if recipe.model == "transport":
+        return project.model.sim.get_model(resolve_transport_model_name(project))
+    return project.model.gwf
+
+
+def relayer_array_target(project, recipe: _Recipe) -> bool:
+    """Re-store an array target one array per layer. Returns whether it applied.
+
+    MF6 griddata supplied as a scalar (``ModflowGwtmst(gwt, porosity=0.25)``)
+    externalizes to ONE file holding ``nlay * ncpl`` values, with no LAYERED
+    keyword. pyEMU cannot parameterize that on a DISV grid: ``write_array_tpl``
+    looks up ``get_xy([i, j])`` for **every** array row against a spatial
+    reference with ``ncpl`` entries, so the file raises ``IndexError: index 441
+    is out of bounds`` from inside ``add_parameters`` -- an error naming neither
+    the target nor the cause.
+
+    ``make_layered()`` + a per-layer ``set_data`` writes the same numbers in the
+    shape ``npf_k`` already has (``<model>.mst_porosity_layer1.txt`` ...), which
+    MF6 reads identically. It is idempotent on an already-layered array, so it
+    runs for every declared array target rather than being guessed at.
+    """
+
+    if recipe.family != "array" or not recipe.package or not recipe.variable:
+        return False
+    model = flopy_model_for(project, recipe)
+    package = model.get_package(recipe.package)
+    array = getattr(package, recipe.variable, None) if package is not None else None
+    if array is None or not array.supports_layered():
+        return False
+    values = np.asarray(array.get_data(), dtype=float)
+    nlay = int(model.modelgrid.nlay)
+    if values.ndim < 2 or values.shape[0] != nlay:
+        values = values.reshape(nlay, -1)
+    array.make_layered()
+    array.set_data([values[layer] for layer in range(nlay)])
+    return True
+
+
+def _select_layer_files(files: list[str], layers, recipe: _Recipe) -> list[str]:
+    """Narrow per-layer array files to the requested zero-based layers.
+
+    Refuses rather than falling through when nothing matches. MF6 externalizes
+    some griddata as ONE whole-grid array (MST porosity) and some one file per
+    layer (NPF K); on the former there is no per-layer file to pick, and the
+    previous ``if selected:`` fallthrough silently parameterized every layer
+    while the caller believed ``layers=`` had restricted it.
+    """
+
+    wanted = {int(layer) for layer in layers}
+    selected = [
+        name
+        for name in files
+        if (match := re.search(r"_layer(\d+)\.txt$", name))
+        and (int(match.group(1)) - 1) in wanted
+    ]
+    if selected:
+        return selected
+    layered = [name for name in files if re.search(r"_layer(\d+)\.txt$", name)]
+    if not layered:
+        raise ValueError(
+            f"layers={sorted(wanted)} cannot be applied to target "
+            f"{recipe.canonical!r}: MODFLOW writes it as a single whole-grid "
+            f"array ({files[0]}), not one file per layer, so there is no "
+            "per-layer file to select. Drop `layers=` (the parameter covers "
+            "the whole grid), or use `zones=` to restrict it spatially."
+        )
+    available = sorted(
+        int(re.search(r"_layer(\d+)\.txt$", name).group(1)) - 1 for name in layered
+    )
+    raise ValueError(
+        f"layers={sorted(wanted)} matched no external input file for target "
+        f"{recipe.canonical!r}. Available layers: {available}."
+    )
 
 
 def _resolve_files(template_workspace: Path, model_name: str, recipe: _Recipe) -> list[str]:
@@ -236,17 +364,11 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     """
 
     recipe = spec.recipe
-    files = _resolve_files(project.template_workspace, project.model.name, recipe)
+    files = _resolve_files(
+        project.template_workspace, model_name_for(project, recipe), recipe
+    )
     if spec.layers is not None and recipe.family == "array":
-        wanted = {int(layer) for layer in spec.layers}
-        selected = [
-            name
-            for name in files
-            if (match := re.search(r"_layer(\d+)\.txt$", name))
-            and (int(match.group(1)) - 1) in wanted
-        ]
-        if selected:
-            files = selected
+        files = _select_layer_files(files, spec.layers, recipe)
     spec.resolved_files = list(files)
 
     if recipe.family == "array":

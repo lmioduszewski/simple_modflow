@@ -143,8 +143,11 @@ raised since those readers shipped (ledger 99). **Transport calibration** ships 
 2026-07-28: `ConcTargets` observations go straight into `cal.observe(...)`, and the
 canonical model has a GWT sibling (`build_canonical_transport_calibration_demo`) whose
 worked example is `examples/mf6/notebooks/canonical_07_transport_and_prt.ipynb`.
-Still deferred: `TempTargets` (GWE observations) and transport `parameterize` targets
-such as porosity (ledger 103).
+Transport properties are `parameterize` targets too: `cal.parameterize("porosity")`
+(aliases `mst.porosity`, `n`) resolves the GWT sibling automatically. Calibrate it
+alongside heads — porosity is absent from the flow equation, and `v = Ki/n` makes it
+near-collinear with K from concentration alone. Still deferred: `TempTargets` (GWE
+observations) and `dsp.alh` (ledger 103).
 
 ### PRT particle-tracking packages
 

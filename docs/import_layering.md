@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **61** function-level `myflopy` imports) counts those and
+currently **60** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -36,7 +36,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.paths`
 - `myflopy.modflow.mf6.pest`
 - `myflopy.modflow.mf6.pest.forward_run` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.pest.native_parameters`
+- `myflopy.modflow.mf6.pest.model_lookup`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.prt` *(deferred imports: 5)*
@@ -82,7 +82,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.package_tables`
 - `myflopy.modflow.mf6.parallel`
-- `myflopy.modflow.mf6.pest.pilot_points`
+- `myflopy.modflow.mf6.pest.native_parameters`
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.mf6.simulation.packages`
 - `myflopy.modflow.mp3du.legacy_prt`
@@ -109,6 +109,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.conc`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
+- `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.regions`
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
@@ -187,7 +188,7 @@ review the diff, commit the regenerated files together.
 ## Layer 10
 
 - `myflopy.modflow.mf6.canonical_calibration`
-- `myflopy.modflow.mf6.canonical_transport` *(deferred imports: 2)*
+- `myflopy.modflow.mf6.canonical_transport` *(deferred imports: 1)*
 - `myflopy.project.group.packages`
 - `myflopy.project.model_results_diff`
 - `myflopy.workspace` *(deferred imports: 1)*

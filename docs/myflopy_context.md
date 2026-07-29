@@ -137,7 +137,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | `PestProject` orchestration (native PstFrom build + forward run) | ✅ | `pest/project.py`, `pest/forward_run.py` — **front door is `model.pest(name, start_datetime=...)`**, which fills `start_datetime` from TDIS and defaults the workspace to `<model ws>/pest/<name>` (what makes the run discoverable later). Direct `PestProject(...)` construction is the **advanced** path: `start_datetime` is mandatory and you own where it lands |
-| **Unified** `cal.parameterize(target, style=...)` | ✅ | `pest/project.py` + `pest/native_parameters.py`; targets `k/k33/recharge/chd/ghb/drn/wel`, styles `constant/zone/grid/pilotpoints` |
+| **Unified** `cal.parameterize(target, style=...)` | ✅ | `pest/project.py` + `pest/native_parameters.py`; targets `k/k33/recharge/chd/ghb/drn/wel` plus transport `porosity` (resolves the GWT sibling via `pest/model_lookup.py`), styles `constant/zone/grid/pilotpoints` (`pilotpoints` is flow-only — it interpolates against NPF K) |
 | Pilot points on Voronoi (IDW; pyEMU's own are unusable on DISU) | ✅ | `pest/pilot_points.py`; `pp_space` net or explicit `pp_points` |
 | Observations: head, lake stage, SFR stage/flow, DRN flow | ✅ | `pest/observations.py` (`cal.observe` / `cal.forecast`) |
 | PESTPP-IES + prior Monte Carlo + parallel workers | ✅ | `pest/project.py` `run_ies(workers=)`, `prior`, `draw_prior` |

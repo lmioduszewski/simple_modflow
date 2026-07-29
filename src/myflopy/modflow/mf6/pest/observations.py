@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.observations import _normalize_row_labels
+from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
 from myflopy.modflow.mf6.pest.specs import (
     ConcObservationSpec,
     DrnFlowObservationSpec,
@@ -257,35 +258,6 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
             "n_rows": int(len(values_snapshot)),
         },
     }
-
-
-def resolve_transport_model_name(project) -> str:
-    """Find the GWT sibling of the model this calibration hangs off.
-
-    A transport calibration estimates FLOW parameters (``k``/``recharge`` live on
-    the GWF model) from CONCENTRATION data (which lives on the GWT model), so the
-    project is built on the flow model and the transport sibling has to be found.
-    """
-
-    simulation = project.model.sim
-    transport = [
-        name
-        for name in simulation.model_names
-        if str(getattr(simulation.get_model(name), "model_type", "")).lower().startswith("gwt")
-    ]
-    if not transport:
-        raise ValueError(
-            "No GWT model found in this simulation, so concentration observations "
-            "have nothing to read. Attach one with "
-            "`myflopy.modflow.mf6.canonical_transport.attach_transport_model`, or "
-            "name it explicitly via ConcObservationSpec(transport_model_name=...)."
-        )
-    if len(transport) > 1:
-        raise ValueError(
-            f"Simulation has several GWT models ({sorted(transport)}); name the one "
-            "to observe via ConcObservationSpec(transport_model_name=...)."
-        )
-    return str(transport[0])
 
 
 def prepare_conc_observations(project, spec: ConcObservationSpec):

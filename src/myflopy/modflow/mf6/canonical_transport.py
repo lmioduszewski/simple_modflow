@@ -37,6 +37,7 @@ from myflopy.modflow.mf6.canonical_example import (
     CanonicalModelConfig,
     build_canonical_model,
 )
+from myflopy.modflow.mf6.observations import ConcTargets, HeadTargets
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 #: Suffix appended to the flow model's name to name its transport sibling.
@@ -386,19 +387,28 @@ class CanonicalTransportCalibrationDemo:
     Attributes
     ----------
     transport
-        The canonical flow+transport model, with K perturbed to the wrong start.
+        The canonical flow+transport model, with K and porosity perturbed to the
+        wrong start.
     conc_targets
         Truth-sampled concentrations at downgradient monitoring wells.
+    head_targets
+        Truth-sampled HEADS at the same wells. Not decoration: porosity is
+        absent from the flow equation, so heads are the only data that pin K
+        independently -- see :func:`build_canonical_transport_calibration_demo`.
     forecast_targets
         One far-downgradient concentration prediction, registered at zero weight.
     start_k_factor
         Factor the truth K field was multiplied by to make the wrong start.
+    start_porosity_factor
+        Factor the truth porosity was multiplied by to make the wrong start.
     """
 
     transport: CanonicalTransportModel
     conc_targets: object
+    head_targets: object
     forecast_targets: object
     start_k_factor: float
+    start_porosity_factor: float
     well_cells: tuple[int, ...]
     forecast_cell: int
 
@@ -409,10 +419,32 @@ class CanonicalTransportCalibrationDemo:
         return self.transport.model
 
 
+def _truth_head_targets(model, cells, prefix: str, *, layer: int = 0):
+    """Sample simulated HEAD at ``cells`` and return it as measured data.
+
+    The flow-side twin of :func:`_truth_conc_targets`. Reads the flow model
+    directly -- unlike concentration, no reopened view is needed.
+    """
+
+    cells = [int(c) for c in cells]
+    names = (
+        [f"{prefix}_{i:02d}" for i in range(len(cells))] if len(cells) > 1 else [prefix]
+    )
+    locations = [
+        {"name": name, "layer": layer, "cell": cell}
+        for name, cell in zip(names, cells, strict=False)
+    ]
+    placeholder = pd.DataFrame(
+        {"per": list(range(model.nper)), **{n: [np.nan] * model.nper for n in names}}
+    )
+    sampler = HeadTargets(locations=locations, values=placeholder, time_column="per")
+    return HeadTargets(
+        locations=locations, values=sampler.simulated_heads(model), time_column="per"
+    )
+
+
 def _truth_conc_targets(view, cells, prefix: str, *, nper: int, layer: int = 0):
     """Sample simulated concentration at ``cells`` and return it as measured data."""
-
-    from myflopy.modflow.mf6.observations import ConcTargets
 
     cells = [int(c) for c in cells]
     names = (
@@ -439,22 +471,36 @@ def build_canonical_transport_calibration_demo(
     config: CanonicalModelConfig | None = None,
     n_wells: int = 12,
     start_k_factor: float = 3.0,
+    # 1.6, not 2.0: 0.25 -> 0.40 is a substantial error that is still a
+    # physically plausible porosity, whereas 0.50 sits at the practical maximum
+    # for unconsolidated sediment -- a starting value no `physical=` upper bound
+    # could sit above, so every multiplier above 1.0 would clamp.
+    start_porosity_factor: float = 1.6,
     **transport_kwargs,
 ) -> CanonicalTransportCalibrationDemo:
-    """Build the transport model as truth, sample concentrations, spoil K.
+    """Build the transport model as truth, sample it, then spoil K and porosity.
 
     The transport twin of
     :func:`~myflopy.modflow.mf6.canonical_calibration.build_canonical_calibration_demo`,
     and the same synthetic-truth mechanism: run the model, sample its own output
-    as "measured" data, then perturb the parameter the calibration must recover.
+    as "measured" data, then perturb the parameters the calibration must recover.
 
-    What differs is what the data constrain. These observations are
-    CONCENTRATIONS, so the calibration recovers hydraulic conductivity from the
-    shape and timing of a plume rather than from heads. That is the scientifically
-    interesting case -- concentration constrains flow paths in a way heads alone
-    cannot -- and it needs no new parameter type: ``k`` and ``recharge`` are
-    already ``parameterize`` targets, and the flat simulation layout keeps their
-    external arrays where PEST looks for them.
+    What differs is what the data constrain. Concentration responds to flow
+    paths and travel time in a way heads alone cannot, which is what makes
+    transport data worth collecting. It also reaches a parameter heads cannot
+    touch at all: **porosity is absent from the flow equation**, so no amount of
+    head data constrains it.
+
+    That cuts both ways, which is why this demo samples BOTH heads and
+    concentration. Transport velocity is ``v = Ki/n``, so tripling K and
+    dividing porosity by three move a plume almost identically: measured on this
+    model, the concentration responses to ``K x3`` and ``porosity /3`` have
+    cosine similarity **0.98** at the monitoring wells. Estimating K and
+    porosity jointly from concentration ALONE is therefore ill-posed -- the
+    calibration can trade one against the other with no penalty. Heads break the
+    tie because they respond to K (measured 1.098 ft for ``K x3``) and to
+    porosity not at all (measured exactly 0.000000 ft). So: heads pin K, and
+    concentration then pins porosity.
     """
 
     built = build_canonical_transport_model(
@@ -474,10 +520,16 @@ def build_canonical_transport_calibration_demo(
     forecast_targets = _truth_conc_targets(
         view, [forecast_cell], "fore_conc", nper=nper
     )
+    # Heads at the same wells, off the FLOW model -- the data that pin K while
+    # concentration pins porosity.
+    head_targets = _truth_head_targets(built.model, wells, "hw")
 
-    # Spoil K -- this is the model PEST is handed.
+    # Spoil K and porosity -- this is the model PEST is handed.
     truth_k = np.asarray(built.model.gwf.npf.k.get_data(), dtype=float)
     built.model.gwf.npf.k.set_data(truth_k * float(start_k_factor))
+    mst = built.model.sim.get_model(built.transport_name).get_package("mst")
+    truth_porosity = np.asarray(mst.porosity.get_data(), dtype=float)
+    mst.porosity.set_data(truth_porosity * float(start_porosity_factor))
     success, report = built.model.run_simulation()
     if not success:
         raise RuntimeError(
@@ -489,8 +541,10 @@ def build_canonical_transport_calibration_demo(
     return CanonicalTransportCalibrationDemo(
         transport=built,
         conc_targets=conc_targets,
+        head_targets=head_targets,
         forecast_targets=forecast_targets,
         start_k_factor=float(start_k_factor),
+        start_porosity_factor=float(start_porosity_factor),
         well_cells=tuple(wells),
         forecast_cell=forecast_cell,
     )

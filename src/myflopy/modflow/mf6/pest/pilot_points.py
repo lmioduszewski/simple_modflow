@@ -24,7 +24,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.pest.native_parameters import _flatten_array_file, _resolve_files
+from myflopy.modflow.mf6.pest.native_parameters import (
+    _flatten_array_file,
+    _resolve_files,
+    _select_layer_files,
+    model_name_for,
+)
 
 
 def _cell_centers(model) -> tuple[np.ndarray, np.ndarray]:
@@ -93,13 +98,11 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     parameters after ``build_pst``.
     """
 
-    files = _resolve_files(project.template_workspace, project.model.name, spec.recipe)
+    files = _resolve_files(
+        project.template_workspace, model_name_for(project, spec.recipe), spec.recipe
+    )
     if spec.layers is not None:
-        wanted = {int(layer) for layer in spec.layers}
-        files = [
-            name for name in files
-            if (m := re.search(r"_layer(\d+)\.txt$", name)) and (int(m.group(1)) - 1) in wanted
-        ] or files
+        files = _select_layer_files(files, spec.layers, spec.recipe)
     spec.resolved_files = list(files)
     for name in files:
         _flatten_array_file(Path(project.template_workspace) / name)

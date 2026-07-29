@@ -21,7 +21,11 @@ from myflopy.modflow.mf6.observations import (
     SfrStageTargets,
 )
 from myflopy.modflow.mf6.pest.geostats import build_geostruct
-from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec, add_native_parameter
+from myflopy.modflow.mf6.pest.native_parameters import (
+    NativeParameterSpec,
+    add_native_parameter,
+    relayer_array_target,
+)
 from myflopy.modflow.mf6.pest.observations import (
     _observation_name,
     finalize_observations,
@@ -259,7 +263,17 @@ class PestProject:
             (with aliases): ``"k"`` (``"npf.k"``/``"hk"``/``"kh"``),
             ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
             ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
-            ``"drn.cond"``/``"drn.elev"`` (``"drn"``), and ``"wel"`` (``"pumping"``).
+            ``"drn.cond"``/``"drn.elev"`` (``"drn"``), ``"wel"`` (``"pumping"``),
+            and ``"porosity"`` (``"mst.porosity"``/``"n"``), which lives on the
+            GWT sibling of a coupled transport simulation and is resolved there
+            automatically.
+
+            Porosity is absent from the flow equation, so it is identifiable
+            only from CONCENTRATION data — and since transport velocity is
+            ``v = Ki/n``, K and porosity are near-collinear from concentration
+            alone (measured cosine 0.98 on the canonical model). Estimate both
+            only with heads in the mix: heads pin K, and concentration then pins
+            porosity.
         style
             Spatial parameterization style:
 
@@ -651,6 +665,11 @@ class PestProject:
         """Write MF6 inputs as external array/list files for native PstFrom."""
 
         self.original_workspace.mkdir(parents=True, exist_ok=True)
+        # Before externalizing, not after: a griddata array supplied as a scalar
+        # writes one whole-grid file that pyEMU cannot index against a DISV
+        # spatial reference. See `relayer_array_target`.
+        for spec in self._native_parameter_specs:
+            relayer_array_target(self, spec.recipe)
         self.model.sim.set_all_data_external()
         self.model.sim.write_simulation(silent=True)
 
@@ -769,13 +788,19 @@ class PestProject:
         # multi-layer DISV K (one file per layer, each indexed 0..ncpl-1) does
         # not collide -- a single shared prefix would make layer 1 and layer 2
         # produce identical observation names.
+        #
+        # `layer_prefixes` stays EMPTY for a whole-grid array (MST porosity is
+        # one file of nlay*ncpl values, with no LAYERED keyword). That is what
+        # selects the flat `layer * ncpl + cell` reader in `IesResults._cell_map`
+        # -- recording it as `{0: base}` instead would label every layer's
+        # values "layer 0" and hand `plot_field` nlay*ncpl values for ncpl cells.
         layer_prefixes: dict[int, str] = {}
         for filename in spec.resolved_files:
             if recipe.family == "array":
                 match = re.search(r"_layer(\d+)\.txt$", str(filename))
-                layer = int(match.group(1)) - 1 if match else 0
-                prefix = f"{base}l{layer}" if match else base
-                layer_prefixes[layer] = prefix
+                prefix = f"{base}l{int(match.group(1)) - 1}" if match else base
+                if match:
+                    layer_prefixes[int(match.group(1)) - 1] = prefix
                 self.pf.add_observations(filename, prefix=prefix)
             else:
                 self.pf.add_observations(
