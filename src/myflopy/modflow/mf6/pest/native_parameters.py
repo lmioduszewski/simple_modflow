@@ -57,10 +57,18 @@ class _Recipe:
     # `relayer_array_target`).
     package: str | None = None
     variable: str | None = None
+    # List family only: which columns hold the CELL IDENTITY. Most MF6 list
+    # packages write ``layer cell <values...>``, so (0, 1) is the default -- but
+    # UZF numbers its own cells first and writes ``iuzno layer cell ...``. pyEMU
+    # geolocates a list parameter from these columns, and getting them wrong is
+    # silent: every parameter lands on one cell's coordinates and only the
+    # geostatistics are wrong (see the `uzf.vks` entry below).
+    index_cols: tuple[int, ...] = (0, 1)
 
 
-# DISV list files are written as ``layer cell <values...>`` -> index_cols=[0, 1].
-_LIST_INDEX_COLS = [0, 1]
+# DISV list files are usually written as ``layer cell <values...>``; see
+# `_Recipe.index_cols` for the exceptions.
+_LIST_INDEX_COLS = (0, 1)
 
 _RECIPES: dict[str, _Recipe] = {
     "k": _Recipe("k", "array", "{model}.npf_k.txt", package="npf", variable="k"),
@@ -74,6 +82,27 @@ _RECIPES: dict[str, _Recipe] = {
         "drn.elev", "list", "{model}.drn_stress_period_data_*.txt", use_col=2, additive=True
     ),
     "wel": _Recipe("wel", "list", "{model}.wel_stress_period_data_*.txt", use_col=2),
+    # UZF saturated vertical K, from PACKAGEDATA. Two things differ from every
+    # recipe above and both are load-bearing:
+    #
+    # * UZF numbers its own cells, so the row is ``iuzno layer icell2d landflag
+    #   ivertcon surfdep vks ...`` -- the cell identity is at columns (1, 2), not
+    #   (0, 1). With the default, pyEMU reads the LAYER as the cell number and
+    #   every UZF parameter is placed at cell 0's coordinates: the .pst builds,
+    #   the forward run is correct, and only the geostatistics are garbage,
+    #   surfacing much later as `error inverting cov` in the prior draw.
+    # * `boundname` is declared LAST in the MF6 dfn, so enabling it appends a
+    #   column and leaves `vks` at 6 (measured both ways, 2026-07-30).
+    #
+    # Only vks: it is the UZF quantity heads actually respond to (`vks x3` moves
+    # heads 1.026 ft on the canonical testing profile, against 0.011 ft for
+    # `finf x2`), and thts/eps are 0.995-collinear with each other -- shipping
+    # them as a set would build the same ill-posed problem as K/porosity
+    # (ledger 112).
+    "uzf.vks": _Recipe(
+        "uzf.vks", "list", "{model}.uzf_packagedata.txt", use_col=6,
+        index_cols=(1, 2),
+    ),
     # Transport. MST writes porosity as ONE whole-grid array (no LAYERED
     # keyword), so unlike npf_k there is no per-layer file to select from --
     # see the `layers=` guard in `add_native_parameter`.
@@ -101,6 +130,9 @@ _ALIASES: dict[str, str] = {
     "mst.porosity": "porosity",
     "mst_porosity": "porosity",
     "n": "porosity",
+    "uzf": "uzf.vks",
+    "vks": "uzf.vks",
+    "uzf_vks": "uzf.vks",
 }
 
 # pyEMU ``par_type`` values that need a cell spatial reference (Phase 2 work for
@@ -420,7 +452,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     if spec.zones is not None:
         kwargs["zone_array"] = spec.zones
     if recipe.family == "list":
-        kwargs["index_cols"] = list(_LIST_INDEX_COLS)
+        kwargs["index_cols"] = list(recipe.index_cols)
         kwargs["use_cols"] = [recipe.use_col]
     if spec.correlation is not None and spec.style in _SPATIAL_STYLES:
         kwargs["geostruct"] = project._geostruct_for(spec)

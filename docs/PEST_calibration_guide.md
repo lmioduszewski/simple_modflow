@@ -55,7 +55,19 @@ cal.parameterize("ghb.cond", bounds=(0.1, 10))
 
 # transport properties live on the GWT sibling; the target finds it for you
 cal.parameterize("porosity", style="constant", bounds=(0.5, 2), physical=(0.05, 0.5))
+cal.parameterize("uzf.vks", style="grid", correlation=400, bounds=(0.2, 5))
 ```
+
+**`uzf.vks`** is UZF's saturated vertical K, and the only UZF quantity worth
+calibrating on its own: measured on the canonical model, `vks x3` moves heads by
+1.026 ft while `finf x2` moves them 0.011 ft and `surfdep x5` moves them 0.0001 ft.
+`thts` and `eps` are left out deliberately — they are 0.995-collinear with each other,
+so a set containing both is ill-posed in the same way K and porosity are.
+
+UZF is also the one list package whose external file does not open with the cell
+identity (it numbers its own cells: `iuzno layer icell2d ...`), which the recipe
+declares via `index_cols`. You never pass that, but it is why a UZF parameter lands on
+its own cell rather than all 189 of them sharing one set of coordinates.
 
 **Porosity needs concentration data — and heads.** It does not appear in the flow
 equation at all, so heads alone cannot constrain it (measured on the canonical model:

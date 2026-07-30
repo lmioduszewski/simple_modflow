@@ -137,7 +137,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | `PestProject` orchestration (native PstFrom build + forward run) | ✅ | `pest/project.py`, `pest/forward_run.py` — **front door is `model.pest(name, start_datetime=...)`**, which fills `start_datetime` from TDIS and defaults the workspace to `<model ws>.pest/<name>` — a SIBLING of the model directory, outside the tree `PstFrom` copies (ledger 107); the legacy `<model ws>/pest` root is still discovered. Direct `PestProject(...)` construction is the **advanced** path: `start_datetime` is mandatory and you own where it lands |
-| **Unified** `cal.parameterize(target, style=...)` | ✅ | `pest/project.py` + `pest/native_parameters.py`; targets `k/k33/recharge/chd/ghb/drn/wel` plus transport `porosity` (resolves the GWT sibling via `pest/model_lookup.py`), styles `constant/zone/grid/pilotpoints` (`pilotpoints` is flow-only — it interpolates against NPF K) |
+| **Unified** `cal.parameterize(target, style=...)` | ✅ | `pest/project.py` + `pest/native_parameters.py`; targets `k/k33/recharge/chd/ghb/drn/wel/uzf.vks` plus transport `porosity` (resolves the GWT sibling via `pest/model_lookup.py`), styles `constant/zone/grid/pilotpoints` (`pilotpoints` is flow-only — it interpolates against NPF K) |
 | Pilot points on Voronoi (IDW; pyEMU's own are unusable on DISU) | ✅ | `pest/pilot_points.py`; `pp_space` net or explicit `pp_points` |
 | Observations: head, lake stage, SFR stage/flow, DRN flow | ✅ | `pest/observations.py` (`cal.observe` / `cal.forecast`) |
 | PESTPP-IES + prior Monte Carlo + parallel workers | ✅ | `pest/project.py` `run_ies(workers=)`, `prior`, `draw_prior` |
@@ -148,7 +148,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Observation residual map (heads + conc as points, DRN zones as cells) | ✅ | `pest/ies.py` `obs_residuals` / `plot_obs_residuals`, joined to the saved `*_target_locations.gpkg`/`.csv` + the set's own `mapping_file`; dispatch is on the set's declared `geometry` (`points`/`zones`), not its kind; `prefix=` selects one family so mixed units do not share a color scale (warns otherwise); excludes forecasts and unmeasured times; both backends (§6.4B). Lake/SFR record only a lake/reach number — ledger 76 |
 | Geostats for grid / pilot-point priors | ✅ | `pest/geostats.py` (`ExpGeoStruct`, `build_geostruct`) |
 | Pilot points / zones from **raster** (vs pp-net / polygon) | 🟡 | pp-net + polygon zones exist; raster-driven zone arrays do not |
-| UZF parameters; Tikhonov/preferred-value **regularization**; identifiability | ❌ | not yet a `parameterize` target / not built |
+| Tikhonov/preferred-value **regularization**; identifiability | ❌ | regularization is a PESTPP-GLM concept and myflopy ships no GLM runner — PESTPP-IES ignores prior-information equations and rejects a version=2 regularized pst outright (ledger 117); identifiability needs a jacobian IES does not produce |
 
 ---
 

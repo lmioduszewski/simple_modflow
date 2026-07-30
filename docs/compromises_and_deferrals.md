@@ -2164,3 +2164,31 @@ same day, which is the useful part of the result.
        `apply_list_and_array_pars`; if pyEMU renames that helper the filter silently
        stops matching and the bug returns. A test covers the behaviour, not the
        mechanism, so it would catch the regression.
+
+117. **`uzf.vks` ships alone, and UZF needed a new recipe field to be placeable
+     (2026-07-30).** Closes §5.8 item 1.
+     - UZF is the first list package whose external file does not open with the cell
+       identity: it numbers its own cells, so a packagedata row is
+       `iuzno layer icell2d landflag ivertcon surfdep vks ...`. Every recipe until now
+       assumed `(layer, cell)` at columns (0, 1), hardcoded.
+     - **Measured consequence of getting it wrong** (run both ways): with the default,
+       pyEMU reads the LAYER as the cell number and all 189 UZF parameters receive cell
+       0's coordinates. The `.pst` builds, the multipliers reach the correct rows, and
+       MODFLOW terminates normally — only the geostatistics are meaningless, surfacing
+       later as `Exception: error inverting cov` from the prior draw, an error naming
+       parameters but not the cause. With `index_cols=(1, 2)`: 189 distinct coordinates
+       matching the true UZF cell centroids, and a clean prior.
+     - **Only vks.** `vks x3` moves heads 1.026 ft on the canonical testing profile;
+       `finf x2` moves them 0.011 ft and `surfdep x5` 0.00012 ft. `thts`/`eps` are
+       0.995-collinear with each other and ~0.78-0.80 with vks from heads alone, so
+       shipping the set would hand users the K/porosity trap of ledger 112 with no
+       second data type available to break it.
+     - **Not done: UZF PERIODDATA** (`finf`, `pet`, `extdp`). Those rows carry only
+       `ifno` — no cellid at all — so pyEMU returns `x`/`y` as `None`, `correlation=`
+       dies with a `TypeError` deep in a geostats helper, and `zones=` can never work.
+       Adding them needs an explicit refusal for the spatial styles, which is worth
+       doing when someone actually wants a recharge-like UZF flux parameter.
+     - `use_col=6` is a positional promise about a file MODFLOW writes. Verified that
+       enabling `boundnames` appends column 11 and leaves vks at 6 — the caveat an
+       adversarial reviewer raised, closed by measurement rather than by reading the
+       dfn ordering. A test pins it.

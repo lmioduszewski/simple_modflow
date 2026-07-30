@@ -161,7 +161,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 ### What's already built (`src/myflopy/modflow/mf6/pest/`)
 - **One unified parameterization API**: `cal.parameterize(target, style=...)` compiling
   to native `pyemu.utils.PstFrom`. Targets: `k`, `k33`, `recharge`, `chd`, `ghb.cond`/
-  `ghb.bhead`, `drn.cond`/`drn.elev`, `wel`, and transport `porosity` (`mst.porosity`/
+  `ghb.bhead`, `drn.cond`/`drn.elev`, `wel`, `uzf.vks` (`vks`), and transport `porosity` (`mst.porosity`/
   `n`), whose GWT sibling is resolved via `pest/model_lookup.py` — calibrate it with
   heads in the mix, since `v = Ki/n` makes K and porosity near-collinear from
   concentration alone. Styles: `constant`, `zone`, `grid` (one
