@@ -1054,11 +1054,29 @@ with 5.6: a full GIS model from one YAML). Then UZF (hardest — `UZFBuilder.bui
 bakes arrays), then SFR/LAK. Clear error when a lazy GIS package has no grid.
 
 ### 5.8 PEST parameterization backlog (build-side; the viz side is 6.4)
-In priority order: UZF as a `parameterize` target; raster-driven zone arrays for
-`style="zone"`; Tikhonov/preferred-value regularization helpers; sensitivity/
-identifiability helpers. Facade COMPILES to native pyEMU PstFrom — never a parallel
-engine. (All four items re-verified still open 2026-07-14. Schedule: anytime after
-5.3; its visualization counterpart is 6.4.)
+Facade COMPILES to native pyEMU PstFrom — never a parallel engine.
+
+- **UZF as a `parameterize` target — DONE 2026-07-30.** `uzf.vks` only; needed a new
+  `_Recipe.index_cols` because UZF numbers its own cells. Ledger 117.
+- **Zones for `style="zone"` — DONE 2026-07-30.** Scoping found the premise wrong:
+  `style="zone"` was never a working feature, so this built the whole front door
+  (`pest/zones.py` `ZoneSpec`: raster/polygon/array + per-family shape resolution),
+  not just the raster half. Ledger 118.
+- ~~**Tikhonov/preferred-value regularization helpers.**~~ **RETIRED 2026-07-30 —
+  do not build.** Measured against the runner this repo ships: PESTPP-IES prints
+  `prior information equations not supported in ensemble methods, ignoring`, and a
+  version-2 control file in `regularization` mode **fails to parse** (`pestpp-ies`
+  exits 1, `control file parsing error`) before a single model run. A
+  `cal.regularize()` would therefore have broken `run_ies`. Regularization is a
+  PESTPP-GLM concept and there is no GLM runner. Replaced by the real gap it was
+  hiding — a **correlated prior for pilot points** (DONE, ledger 119) — plus a guard
+  that refuses a regularization-mode pst with a message naming `ies_reg_factor`.
+- **Sensitivity / identifiability helpers** — still open, and it splits by whether a
+  jacobian exists. Tier A (ensemble-based, reads ensembles `IesResults` already
+  holds, no new run mode) is the tractable half. Tier B (pyEMU `Schur`/`ErrVar`:
+  CSS, identifiability, FOSM) needs a **PESTPP-GLM run mode** — verified that a
+  completed IES run produces no jacobian, while `pestpp-glm` with `NOPTMAX=-2`
+  produces one in `npar_adj + 1` runs.
 
 ### 5.9 Explicit non-goal: CSUB
 

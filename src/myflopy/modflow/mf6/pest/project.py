@@ -1179,6 +1179,41 @@ class PestProject:
         )
         return IesResults(results_dir, case_name=self.name, model=self.model)
 
+    def _refuse_regularization_mode(self) -> None:
+        """Refuse a control file PESTPP-IES cannot parse, before launching it.
+
+        Tikhonov regularization is a PESTPP-GLM concept. Applying pyEMU's
+        ``zero_order_tikhonov``/``first_order_pearson_tikhonov`` to ``cal.pst``
+        flips ``pestmode`` to ``regularization`` and adds prior-information
+        equations, and PESTPP-IES does two things with that: it prints
+        ``prior information equations not supported in ensemble methods,
+        ignoring``, and -- because myflopy writes version-2 control files -- the
+        ``* regularization`` keywords land in the control-data keyword block and
+        the run dies with ``control file parsing error`` before a single model
+        run. Measured 2026-07-30 on PEST++ 5.2.16.
+
+        So the failure is not "regularization is ignored", it is "the run does
+        not start", from an error naming a keyword the caller never typed. IES
+        has its own knob for this -- ``run_ies(ies_reg_factor=...)`` -- which
+        needs none of the above.
+        """
+
+        mode = str(getattr(self.pst.control_data, "pestmode", "")).strip().lower()
+        if not mode.startswith("regul"):
+            return
+        raise ValueError(
+            "This control file is in 'regularization' mode, which PESTPP-IES "
+            "cannot parse in the version-2 format myflopy writes -- the run "
+            "would fail with a control-file parsing error before any model run. "
+            "Tikhonov regularization is a PESTPP-GLM concept; ensemble methods "
+            "ignore prior-information equations entirely.\n\n"
+            "For IES, the equivalent knob is a regularization FACTOR on the "
+            "ensemble update:\n"
+            "    cal.run_ies(reals=..., ies_reg_factor=0.1)\n"
+            "and spatial structure belongs in the prior itself -- pass "
+            "`correlation=` to a grid or pilot-point parameter."
+        )
+
     def _inject_geostatistical_prior(self, reals: int) -> None:
         """Draw a geostatistically-correlated prior parameter ensemble.
 
@@ -1191,22 +1226,85 @@ class PestProject:
         laughable. No-op when there are no geostatistical parameters.
         """
 
-        # Grid parameters live in pyEMU's PstFrom (pf.draw covers them). Pilot
-        # points are PEST template parameters interpolated by IDW, so they are
-        # not in pf -- their prior is drawn from bounds by PESTPP-IES, and the
-        # IDW interpolation itself provides spatial smoothness.
-        spatial = [
+        # Grid parameters live in pyEMU's PstFrom, so `pf.draw` covers them.
+        # Pilot points do NOT: they are PEST template parameters registered after
+        # `build_pst`, so they need their own draw (see
+        # `_draw_pilot_point_prior`).
+        grid_specs = [
             spec
             for spec in self._native_parameter_specs
             if spec.style == "grid" and spec.correlation is not None
         ]
-        if not spatial or self.pf is None:
+        pilot_specs = [
+            spec
+            for spec in self._native_parameter_specs
+            if spec.style == "pilotpoints" and spec.correlation is not None
+        ]
+        if self.pf is None or not (grid_specs or pilot_specs):
             return
-        with self._quiet_pyemu_context():
-            ensemble = self.draw_prior(int(reals), use_specsim=False)
+
+        ensemble = None
+        if grid_specs:
+            with self._quiet_pyemu_context():
+                ensemble = self.draw_prior(int(reals), use_specsim=False)
+            ensemble = ensemble._df if hasattr(ensemble, "_df") else ensemble
+        for spec in pilot_specs:
+            drawn = self._draw_pilot_point_prior(spec, int(reals))
+            if drawn is None:
+                continue
+            ensemble = drawn if ensemble is None else ensemble.join(drawn, how="inner")
+        if ensemble is None or ensemble.empty:
+            return
+
         ensemble_path = self.template_workspace / f"{self.name}.prior_par.csv"
         ensemble.to_csv(ensemble_path)
         self.pst.pestpp_options["ies_par_en"] = ensemble_path.name
+
+    def _draw_pilot_point_prior(self, spec, reals: int):
+        """A geostatistically correlated prior for one pilot-point spec.
+
+        ``correlation=`` was documented for ``style="pilotpoints"`` since the
+        module was written (``pilot_points.py:14``) and read nowhere in it: the
+        pilot VALUES were drawn independently from their bounds by PESTPP-IES,
+        and the code's stated reasoning was that IDW interpolation supplies the
+        spatial structure. It supplies smoothness, but not the CORRELATION LENGTH
+        the caller asked for -- the field's structure came from pilot spacing
+        instead, so a 200 m and a 2000 m variogram produced the same prior.
+
+        Drawing the pilot values from the variogram's covariance fixes that. It
+        matters most where the data are thin: with a correlated prior, IES moves
+        neighbouring points together and unobserved areas keep a plausible field,
+        rather than each point wandering on its own.
+        """
+
+        frames = self._pilot_point_frames.get(spec.name)
+        if not frames:
+            return None
+        import pandas as pd
+
+        pyemu = self.pyemu or _import_pyemu()
+        geostruct = self._geostruct_for(spec)
+        columns = []
+        for frame, _ in frames:
+            # One covariance per LAYER's point set: the layers are separate
+            # parameter groups here, and correlating across them would assert a
+            # vertical structure the variogram never described.
+            names = [str(name) for name in frame["parnme"]]
+            with self._quiet_pyemu_context():
+                cov = geostruct.covariance_matrix(
+                    frame["x"].to_numpy(dtype=float),
+                    frame["y"].to_numpy(dtype=float),
+                    names=names,
+                )
+                drawn = pyemu.ParameterEnsemble.from_gaussian_draw(
+                    pst=self.pst, cov=cov, num_reals=int(reals), by_groups=False,
+                    fill=False,
+                )
+            values = drawn._df if hasattr(drawn, "_df") else drawn
+            columns.append(values.loc[:, [name for name in names if name in values.columns]])
+        if not columns:
+            return None
+        return pd.concat(columns, axis=1)
 
     def _launch_pestpp_ies(
         self,
@@ -1233,6 +1331,7 @@ class PestProject:
             self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
         for key, value in (pestpp_options or {}).items():
             self.pst.pestpp_options[key] = value
+        self._refuse_regularization_mode()
         self._inject_geostatistical_prior(int(reals))
         self.pst.control_data.noptmax = int(noptmax)
         with self._quiet_pyemu_context():

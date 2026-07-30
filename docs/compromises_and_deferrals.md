@@ -2228,3 +2228,36 @@ same day, which is the useful part of the result.
      - Not done: overlapping zone polygons take the first match rather than being
        refused — that is a modelling mistake to catch upstream, and guessing an
        ordering here would hide it.
+
+119. **The regularization item was retired and replaced by the gap it was hiding
+     (2026-07-30).** Closes §5.8 item 3, not by building what it asked for.
+     - **What was asked for would have broken the shipped runner.** Measured on
+       PEST++ 5.2.16: `pyemu.helpers.zero_order_tikhonov` flips `pestmode` to
+       `regularization` and adds prior-information equations; PESTPP-IES prints
+       `prior information equations not supported in ensemble methods, ignoring`;
+       and because myflopy writes version-2 control files, the `* regularization`
+       keywords land in the control-data keyword block and `pestpp-ies` exits 1
+       with `control file parsing error` before a single model run. A
+       `cal.regularize()` would have been a loaded gun.
+     - `_refuse_regularization_mode` therefore refuses such a control file at
+       launch, naming `ies_reg_factor` — IES's own equivalent knob, which already
+       works through `run_ies(**pestpp_options)` with no new code.
+     - **The real gap: `correlation=` did nothing for pilot points.** It was
+       documented at `pilot_points.py:14` from the start and read nowhere in that
+       module. `_inject_geostatistical_prior` filtered on `style == "grid"`, with
+       the stated reasoning that IDW interpolation supplies spatial smoothness.
+       That reasoning is half right — IDW output IS smooth — but the pilot VALUES
+       were independent draws, so the field's correlation length came from point
+       spacing rather than from the variogram. A 200 m and a 2000 m range gave the
+       same prior.
+     - Measured after the fix (nearest pilot pair ~372 m on the canonical testing
+       profile): range 150 m -> mean prior correlation +0.010 near / +0.006 far;
+       range 3000 m -> +0.845 near / +0.495 far. A test pins both directions.
+     - **Judgment call: one covariance per LAYER**, not one across all layers.
+       Each layer's points are a separate parameter group, and correlating across
+       layers would assert a vertical structure the variogram never described --
+       `correlation=` is a map-plane range.
+     - Not done: a PESTPP-GLM runner. It is the only way regularization proper
+       becomes reachable, and it would need its own results-review layer
+       (`IesResults` reads IES-specific files). Recorded as Tier B in §5.8's
+       remaining item.

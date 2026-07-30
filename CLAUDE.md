@@ -196,11 +196,16 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 > Verify against the code before building — most of the old list is now done
 > (recharge/wel/ghb/chd are `parameterize` targets; IES + parallel workers ship via
 > `run_ies(workers=)`; named-series obs are wired).
-1. **Pilot points / zones from raster** — pilot nets + polygon zones exist; raster-driven
-   zone arrays do not.
-2. **UZF parameters** — not yet a `parameterize` target (GHB/CHD/WEL/DRN already are).
-3. **Regularization helpers** — no Tikhonov or preferred-value regularization setup.
-4. **Sensitivity / identifiability analysis** helpers.
+1. ~~Zones from raster~~ **DONE 2026-07-30** — `mf.ZoneSpec` (raster majority-vote /
+   polygon / array), normalized per target family (`pest/zones.py`, ledger 118).
+2. ~~UZF parameters~~ **DONE 2026-07-30** — `uzf.vks` (ledger 117).
+3. ~~Regularization helpers~~ **RETIRED, do not build** — PESTPP-IES ignores prior
+   information equations and a version-2 regularized pst fails to PARSE, so it would
+   break `run_ies` (measured). Replaced by the correlated **pilot-point prior**
+   (ledger 119); for IES the knob is `run_ies(ies_reg_factor=…)`.
+4. **Sensitivity / identifiability analysis** — the one item still open. Splits by
+   jacobian: ensemble-based needs no new run; `Schur`/`ErrVar` need a PESTPP-GLM run
+   mode (IES produces no jacobian).
 
 ### Broader things myflopy could learn from modflow-setup (DOI-USGS)
 > Re-verified against the code on 2026-06-20; PEST/serialization/sampling rows refreshed

@@ -106,6 +106,25 @@ every array target (`k`, `k33`, `porosity`) supports them. See ledger 115.
 `physical=` is the safety rail: no matter what calibration does, the *final* K
 stays inside those bounds. Always set it for multipliers.
 
+**`correlation=` on pilot points is read as of 2026-07-30.** It was documented from
+the start and had no effect: pilot VALUES were drawn independently from their bounds,
+and the reasoning in the code was that IDW interpolation supplies the spatial
+structure. It supplies smoothness, but not the correlation LENGTH you asked for — the
+field's structure came from pilot spacing instead, so a 200 m and a 2000 m variogram
+gave the same prior. Measured after the fix on the canonical model (nearest pilot pair
+~372 m): a 150 m range leaves neighbours independent (+0.01), a 3000 m range correlates
+them (+0.85) and decays with distance. It matters most where data are thin — IES then
+moves neighbouring points together instead of letting each wander alone.
+
+**On Tikhonov regularization: myflopy does not offer it, deliberately.** It is a
+PESTPP-GLM concept, and the runner here is PESTPP-IES, which prints
+`prior information equations not supported in ensemble methods, ignoring`. Worse, a
+version-2 control file in `regularization` mode does not parse at all — `pestpp-ies`
+exits with a control-file error before any model run — so `cal.run_ies()` refuses such
+a control file up front rather than letting it fail obscurely. For IES, use
+`cal.run_ies(ies_reg_factor=0.1)`, and put spatial structure in the prior via
+`correlation=`.
+
 > **Tip from the workshop:** build and inspect the prior *before* history
 > matching ("prior Monte Carlo, early and often") — see §5.
 
