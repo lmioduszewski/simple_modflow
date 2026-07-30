@@ -42,17 +42,47 @@ def test_porosity_is_declared_as_a_transport_target():
     assert resolve_target("k").model == "flow"
 
 
-def test_pilot_points_on_a_transport_target_are_refused():
-    """``add_pilot_point_parameter`` reads ``project.model.gwf.npf.k`` as the
-    array to interpolate against, whatever the target is. Pointed at porosity it
-    would build, run and calibrate -- against the K field. Refuse at declaration
-    time, when the user is looking at the call, not at build time."""
+@pytest.mark.slow
+def test_pilot_points_on_porosity_interpolate_the_porosity_array(tmp_path):
+    """This target was REFUSED for one day (ledger 110) on the grounds that the
+    pilot-point interpolation was hardwired to the flow model's NPF K.
 
-    with pytest.raises(NotImplementedError, match="NPF K"):
-        NativeParameterSpec(target="porosity", style="pilotpoints")
+    That was a true description of a bug, not a real limitation: the same
+    hardwiring silently overwrote K33 with horizontal K for a FLOW target too
+    (ledger 115). With the base array resolved from the recipe, transport pilot
+    points are simply correct, so this asserts the capability rather than the
+    refusal -- specifically that unit multipliers reproduce the MST porosity
+    array and not the K field, which is what a regression would break.
+    """
 
-    # the same style on the target it WAS written for stays available
-    assert NativeParameterSpec(target="k", style="pilotpoints").style == "pilotpoints"
+    demo = build_canonical_transport_calibration_demo(
+        tmp_path / "model", config=CanonicalModelConfig.testing()
+    )
+    cal = demo.model.pest("pp_poros", start_datetime="2024-01-01")
+    cal.parameterize("porosity", style="pilotpoints", pp_space=6,
+                     bounds=(0.5, 2.0), physical=(0.01, 0.9))
+    cal.observe(demo.conc_targets)
+    cal.build("pp_poros.pst", noptmax=0)
+
+    result = subprocess.run(
+        [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout[-1500:] + result.stderr[-1500:]
+
+    transport = demo.model.sim.get_model(demo.transport.transport_name)
+    truth = np.asarray(transport.get_package("mst").porosity.get_data(), dtype=float)
+    written = np.loadtxt(
+        cal.template_workspace
+        / f"{demo.transport.transport_name}.mst_porosity_layer1.txt"
+    )
+    assert np.allclose(written, truth[0], rtol=1e-6), (
+        "pilot points did not interpolate the porosity array"
+    )
+    k = np.asarray(demo.model.gwf.npf.k.get_data(), dtype=float)
+    assert not np.allclose(written, k[0], rtol=1e-3), (
+        "porosity was overwritten with the hydraulic conductivity field"
+    )
 
 
 def test_layers_on_a_whole_grid_array_is_refused_not_ignored():

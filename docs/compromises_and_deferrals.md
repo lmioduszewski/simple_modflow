@@ -2047,10 +2047,11 @@ same day, which is the useful part of the result.
        "needs relayering" from FloPy's API is not reliable.
      - Latent bug fixed in passing: a flow model built with a scalar `k` hit the same
        pyEMU `IndexError`. Not just a transport concern.
-     - Not done: `style="pilotpoints"` on transport (refused -- `add_pilot_point_parameter`
-       hardwires `project.model.gwf.npf.k` as the array to interpolate against, so it
-       would build, run, and calibrate porosity against the K field), and `dsp.alh`
-       (see 103).
+     - ~~Not done: `style="pilotpoints"` on transport (refused).~~ **That refusal was
+       retired 2026-07-30 (ledger 115):** the hardwired `gwf.npf.k` base array was a
+       BUG, not a transport limitation -- it also overwrote K33 with horizontal K on a
+       flow target. With the base array resolved from the recipe, porosity pilot points
+       are correct and supported. Still not done: `dsp.alh` (see 103).
 
 111. **`layers=` was silently ignored, and is now an error (2026-07-29).**
      - `add_native_parameter` filtered per-layer files and then fell through with
@@ -2120,3 +2121,46 @@ same day, which is the useful part of the result.
        ever ran in. `find_pest_runs` now skips any build whose metadata is nested
        inside another build's directory, the same reasoning as the existing
        `*_master` skip.
+
+115. **Pilot points scaled the K field whatever target they were pointed at
+     (2026-07-30).** Found while scoping §5.8; verified independently before acting.
+     - `add_pilot_point_parameter` read `project.model.gwf.npf.k.get_data()` as the
+       base array for EVERY target and wrote the interpolated result to the target's
+       own file. Measured on the canonical model: `parameterize("k33",
+       style="pilotpoints")` moved K33 from 2.863637 to 85.909123 — **30x wrong**,
+       vertical anisotropy destroyed — with forward run exit 0 and MODFLOW reporting
+       `Normal termination`. Nothing warned.
+     - **The ledger-110 guard was too narrow and this is the cost.** It refused
+       `recipe.model != "flow"`, which describes the symptom I happened to notice
+       (transport) rather than the precondition (does the recipe name its base
+       array?). `k33` is a flow target, so it sailed through, and every future flow
+       array target would have inherited the bug. The replacement guard states the
+       real precondition.
+     - Fixing it made the old refusal's stated reason false, so transport pilot
+       points are now SUPPORTED, not refused: verified that porosity pilot points
+       interpolate against the MST array (0.40, the spoiled truth) and not NPF K.
+       A capability gain arriving inside a bug fix, recorded here because the guide
+       said the opposite for one day.
+     - The forward-run parameters were renamed `k_file`/`base_k` -> `array_file`/
+       `base_value`. The names were how the K assumption survived review; they are
+       generated into each template at build time, so old templates keep their own
+       frozen copy and nothing on disk breaks.
+
+116. **A pilot-points-only calibration could not run (2026-07-30).**
+     - `PstFrom.__init__` inserts `apply_list_and_array_pars` into `pre_py_cmds`
+       unconditionally (pst_from.py:296-302) but only writes the
+       `mult2model_info.csv` manifest it reads when `par_dfs` is non-empty
+       (:757-762). Pilot points register through template files after `build_pst`
+       and never call `pf.add_parameters`, so every forward run died with
+       `FileNotFoundError: mult2model_info.csv` raised from inside pyEMU, naming
+       nothing the user had written.
+     - Hidden because every example and test pairs pilot points with a second
+       parameter. "Calibrate K with pilot points" alone is an ordinary request.
+     - An empty manifest is not a fix: `apply_list_and_array_pars` asserts
+       `ddf.shape[0] > 0` and has no zero-parameter path. So the command is dropped
+       instead, keyed on the same `par_dfs` signal pyEMU itself branches on.
+     - **Compromise:** this reaches into `pf.pre_py_cmds`, a public list but one
+       whose CONTENTS are pyEMU's. The match is on the substring
+       `apply_list_and_array_pars`; if pyEMU renames that helper the filter silently
+       stops matching and the bug returns. A test covers the behaviour, not the
+       mechanism, so it would catch the regression.

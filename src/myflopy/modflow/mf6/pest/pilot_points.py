@@ -28,6 +28,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     _flatten_array_file,
     _resolve_files,
     _select_layer_files,
+    flopy_model_for,
     model_name_for,
 )
 
@@ -89,6 +90,33 @@ def _write_template(frame: pd.DataFrame, csv_path: Path) -> Path:
     return tpl_path
 
 
+def _base_array_for(project, spec) -> np.ndarray:
+    """The model array a pilot-point spec's multipliers scale, shape ``(nlay, ncpl)``.
+
+    Read from the package/variable the recipe declares, so pilot points work on
+    any array target rather than silently interpolating against NPF K.
+    """
+
+    recipe = spec.recipe
+    if not recipe.package or not recipe.variable:
+        raise NotImplementedError(
+            f"style='pilotpoints' needs to know which model array {recipe.canonical!r} "
+            "scales, and its recipe declares no package/variable. Add them to the "
+            "`_RECIPES` entry, or use style='grid'/'zone'/'constant'."
+        )
+    model = flopy_model_for(project, recipe)
+    package = model.get_package(recipe.package)
+    array = getattr(package, recipe.variable, None) if package is not None else None
+    if array is None:
+        raise ValueError(
+            f"Target {recipe.canonical!r} expects package {recipe.package!r} with "
+            f"array {recipe.variable!r} on model {model.name!r}, which is not there."
+        )
+    values = np.asarray(array.get_data(), dtype=float)
+    nlay = int(model.modelgrid.nlay)
+    return values.reshape(nlay, -1) if values.ndim < 2 else values
+
+
 def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     """Compile a ``style='pilotpoints'`` K spec onto the native PEST workspace.
 
@@ -109,7 +137,13 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
 
     pp = place_pilot_points(project.model, pp_space=spec.pp_space, pp_points=spec.pp_points)
     xc, yc = _cell_centers(project.model)
-    kdata = np.asarray(project.model.gwf.npf.k.get_data(), dtype=float)
+    # The array the multipliers scale, resolved FROM THE RECIPE. This used to be
+    # a hardcoded `project.model.gwf.npf.k`, which meant every target other than
+    # `k` was interpolated against the horizontal-K field and then written to its
+    # own file: `parameterize("k33", style="pilotpoints")` replaced K33 with K,
+    # measured 30x wrong on the canonical model, forward run exit 0 and MODFLOW
+    # reporting normal termination. Nothing about pilot points is K-specific.
+    base_values = _base_array_for(project, spec)
     helper = str(Path(__file__).with_name("forward_run.py"))
     lo, hi = (spec.physical if spec.physical is not None else (-1.0e30, 1.0e30))
     frames = []
@@ -135,14 +169,14 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
         cells_csv = project.template_workspace / f"{base}_pp.cells.csv"
         frame.loc[:, ["parnme", "x", "y", "layer"]].to_csv(points_csv, index=False)
         pd.DataFrame({
-            "cell": np.arange(kdata.shape[1]),
-            "x": xc, "y": yc, "base_k": kdata[layer], "layer": layer,
+            "cell": np.arange(base_values.shape[1]),
+            "x": xc, "y": yc, "base_value": base_values[layer], "layer": layer,
         }).to_csv(cells_csv, index=False)
         project.pf.add_py_function(
             helper,
             "apply_pilotpoints_to_array("
             f"parameter_csv='{pp_csv.name}', points_meta_csv='{points_csv.name}', "
-            f"cells_meta_csv='{cells_csv.name}', k_file='{name}', "
+            f"cells_meta_csv='{cells_csv.name}', array_file='{name}', "
             f"lower_limit={lo!r}, upper_limit={hi!r})",
             is_pre_cmd=True,
         )

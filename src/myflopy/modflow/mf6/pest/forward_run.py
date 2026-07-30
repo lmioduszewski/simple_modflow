@@ -6,14 +6,20 @@ import numpy as np
 import pandas as pd
 
 
-def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, k_file,
+def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, array_file,
                                lower_limit=-1.0e30, upper_limit=1.0e30):
-    """Interpolate pilot-point multipliers onto a flattened K layer file (IDW).
+    """Interpolate pilot-point multipliers onto a flattened array layer file (IDW).
 
     Runs as a pre-model command in the native forward run: reads the
     template-populated pilot-point values, inverse-distance-weights them onto
-    each cell, multiplies the captured base K, clamps to the physical limits,
-    and rewrites the external K layer file (one value per line) that MF6 reads.
+    each cell, multiplies the captured base values, clamps to the physical
+    limits, and rewrites the external layer file (one value per line) that MF6
+    reads.
+
+    Nothing here is K-specific -- the base values are whichever array the target
+    names (``base_value`` in the cells CSV). The parameters were called ``k_file``
+    and ``base_k`` until 2026-07-30, which is how the build side came to hardwire
+    NPF K for every target and write it into K33.
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so it must not depend on other module-level helpers.
@@ -37,11 +43,11 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, k
     pv = points["pv"].to_numpy(dtype=float)
     cx = cells["x"].to_numpy(dtype=float)
     cy = cells["y"].to_numpy(dtype=float)
-    base = cells["base_k"].to_numpy(dtype=float)
+    base = cells["base_value"].to_numpy(dtype=float)
     cell_ids = cells["cell"].to_numpy(dtype=int)
-    # The captured K file is treated as a model *output* by pyEMU, so the input
-    # .txt no longer exists -- rebuild the whole layer array from the captured
-    # base K and write the file MF6 reads.
+    # The captured array file is treated as a model *output* by pyEMU, so the
+    # input .txt no longer exists -- rebuild the whole layer array from the
+    # captured base values and write the file MF6 reads.
     arr = np.zeros(int(cell_ids.max()) + 1, dtype=float)
     for index in range(len(cell_ids)):
         d2 = (px - cx[index]) ** 2 + (py - cy[index]) ** 2
@@ -53,7 +59,7 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, k
             factor = float(np.sum(weights * pv) / np.sum(weights))
         value = base[index] * factor
         arr[cell_ids[index]] = min(max(value, float(lower_limit)), float(upper_limit))
-    np.savetxt(k_file, arr.reshape(-1, 1), fmt="%.10E")
+    np.savetxt(array_file, arr.reshape(-1, 1), fmt="%.10E")
 
 
 def _write_head_target_csv(model_name, mapping_csv, output_csv):

@@ -672,6 +672,31 @@ class PestProject:
 
     # -- native build path ------------------------------------------------
 
+    def _drop_unused_multiplier_apply(self):
+        """Remove pyEMU's multiplier-apply command when there are no multipliers.
+
+        ``PstFrom.__init__`` inserts ``apply_list_and_array_pars`` into
+        ``pre_py_cmds`` unconditionally (pst_from.py:296-302), but only WRITES
+        the ``mult2model_info.csv`` manifest it reads when ``par_dfs`` is
+        non-empty (pst_from.py:757-762). A calibration whose only parameter is
+        pilot points never calls ``pf.add_parameters`` -- pilot points register
+        through template files after ``build_pst`` -- so the manifest is absent
+        and every forward run dies with ``FileNotFoundError:
+        mult2model_info.csv`` from inside pyEMU, naming nothing the user wrote.
+
+        An empty manifest is not an option: ``apply_list_and_array_pars`` asserts
+        ``ddf.shape[0] > 0`` (helpers.py:1953) and has no zero-parameter path. So
+        the command is dropped instead, keyed on the same ``par_dfs`` signal
+        pyEMU itself branches on.
+        """
+
+        if getattr(self.pf, "par_dfs", None):
+            return
+        self.pf.pre_py_cmds = [
+            command for command in self.pf.pre_py_cmds
+            if "apply_list_and_array_pars" not in str(command)
+        ]
+
     def _ensure_external_model(self):
         """Write MF6 inputs as external array/list files for native PstFrom."""
 
@@ -885,6 +910,7 @@ class PestProject:
                 if spec.capture:
                     self._add_capture_field_observations(spec)
         self.pf.mod_sys_cmds.append(self._resolve_exe())
+        self._drop_unused_multiplier_apply()
         self._attach_native_observation_postprocessors()
         self._write_project_metadata(filename=target_name)
         with self._quiet_pyemu_context():

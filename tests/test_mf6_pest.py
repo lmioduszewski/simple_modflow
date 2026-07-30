@@ -1799,6 +1799,132 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
     assert (cal.template_workspace / "hds_simulated_heads.csv").exists()
 
 
+# --- pilot points scale the array they NAME (2026-07-30) ---------------------
+
+
+@pytest.mark.slow
+def test_pilot_points_scale_their_own_target_not_the_k_field(tmp_path):
+    """`add_pilot_point_parameter` read `gwf.npf.k` as the interpolation base for
+    EVERY target, then wrote the result to the target's own file. So
+    `parameterize("k33", style="pilotpoints")` replaced K33 with horizontal K --
+    measured 30x on the canonical model (2.86 -> 85.9), destroying vertical
+    anisotropy while the forward run exited 0 and MODFLOW reported normal
+    termination.
+
+    The earlier guard (ledger 110) only refused `recipe.model != "flow"`, so it
+    caught transport targets and missed k33 entirely -- and every future flow
+    array target would have inherited the same bug.
+    """
+
+    pytest.importorskip("pyemu")
+    from myflopy.modflow.mf6.canonical_calibration import (
+        build_canonical_calibration_demo,
+    )
+
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=4
+    )
+    model = demo.model
+    k = np.asarray(model.gwf.npf.k.get_data(), dtype=float)
+    k33 = np.asarray(model.gwf.npf.k33.get_data(), dtype=float)
+    assert not np.allclose(k[0], k33[0]), (
+        "fixture is useless unless K and K33 differ"
+    )
+
+    cal = model.pest("k33pp", start_datetime="2024-01-01")
+    cal.parameterize("k33", style="pilotpoints", pp_space=6,
+                     bounds=(0.5, 2.0), physical=(1e-6, 1e3))
+    cal.parameterize("recharge", style="constant", bounds=(0.5, 1.5),
+                     physical=(0.0, 1e-2))
+    cal.observe(demo.head_targets)
+    cal.build("k33pp.pst", noptmax=0)
+
+    result = subprocess.run(
+        [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout[-1500:] + result.stderr[-1500:]
+
+    written = np.loadtxt(cal.template_workspace / f"{model.name}.npf_k33_layer1.txt")
+    assert np.allclose(written, k33[0], rtol=1e-6), (
+        "unit multipliers must reproduce the target's OWN array"
+    )
+    assert not np.allclose(written, k[0], rtol=1e-3), (
+        "K33 was overwritten with the horizontal K field"
+    )
+
+
+def test_pilot_points_refuse_an_array_target_with_no_declared_base_array():
+    """The replacement guard: pilot points multiply a base array read off the
+    model, so an ARRAY recipe that does not name one must refuse rather than
+    fall back to whatever package the code happened to hardcode.
+
+    Driven through a synthetic recipe because all three shipped array targets
+    declare package/variable -- which is the point: the guard now describes the
+    real precondition instead of naming one model kind.
+    """
+
+    from myflopy.modflow.mf6.pest import native_parameters as np_mod
+
+    incomplete = np_mod._Recipe("mystery", "array", "{model}.mystery.txt")
+    original = dict(np_mod._RECIPES)
+    np_mod._RECIPES["mystery"] = incomplete
+    try:
+        with pytest.raises(NotImplementedError, match="which model array"):
+            np_mod.NativeParameterSpec(target="mystery", style="pilotpoints")
+        # ...but the same recipe is fine on the styles that need no base array.
+        assert np_mod.NativeParameterSpec(target="mystery", style="constant").style == "constant"
+    finally:
+        np_mod._RECIPES.clear()
+        np_mod._RECIPES.update(original)
+
+    # The array targets that DO declare one are accepted -- including the
+    # transport target the previous guard refused for a reason that the
+    # recipe-resolved base array has now removed.
+    for target in ("k", "k33", "porosity"):
+        assert np_mod.NativeParameterSpec(target=target, style="pilotpoints").style == "pilotpoints"
+
+
+@pytest.mark.slow
+def test_a_pilot_points_only_calibration_runs(tmp_path):
+    """pyEMU inserts `apply_list_and_array_pars` into every forward run but only
+    writes the `mult2model_info.csv` it reads when `pf.add_parameters` was
+    called. Pilot points register through template files instead, so a
+    calibration whose ONLY parameter is pilot points died with
+    `FileNotFoundError: mult2model_info.csv` from inside pyEMU.
+
+    It stayed hidden because every example pairs pilot points with a second
+    parameter -- but "calibrate K with pilot points" is a perfectly ordinary
+    thing to ask for.
+    """
+
+    pytest.importorskip("pyemu")
+    from myflopy.modflow.mf6.canonical_calibration import (
+        build_canonical_calibration_demo,
+    )
+
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=4
+    )
+    model = demo.model
+    k = np.asarray(model.gwf.npf.k.get_data(), dtype=float)
+
+    cal = model.pest("pponly", start_datetime="2024-01-01")
+    cal.parameterize("k", style="pilotpoints", pp_space=6,
+                     bounds=(0.5, 2.0), physical=(1e-3, 300.0))
+    cal.observe(demo.head_targets)
+    pst = cal.build("pponly.pst", noptmax=0)
+
+    assert pst.npar_adj > 0
+    result = subprocess.run(
+        [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout[-1500:] + result.stderr[-1500:]
+    written = np.loadtxt(cal.template_workspace / f"{model.name}.npf_k_layer1.txt")
+    assert np.allclose(written, k[0], rtol=1e-6)
+
+
 def test_build_forward_run_command_is_pestpp_compatible(tmp_path):
     """The PST model command must survive PEST++'s run manager on both OSes.
 

@@ -204,7 +204,7 @@ Throughout, two example models recur so the code stays concrete:
 **17. PEST / pyEMU Integration** — *[17_pest.md](17_pest.md)*
 - 17.1 The big picture: a declarative facade that compiles to native pyEMU `PstFrom`
 - 17.2 The front door: `cal = model.pest(name, start_datetime=…)`
-- 17.3 Parameterization: `cal.parameterize(target, style=…, bounds=…)` — targets (`k`, `k33`, `recharge`, `chd`, `ghb.*`, `drn.*`, `wel`) and styles (`constant` / `zone` / `grid` / `pilotpoints`)
+- 17.3 Parameterization: `cal.parameterize(target, style=…, bounds=…)` — targets (`k`, `k33`, `recharge`, `chd`, `ghb.*`, `drn.*`, `wel`, `porosity`) and styles (`constant` / `zone` / `grid` / `pilotpoints`)
 - 17.4 Geostatistics: `ExpGeoStruct`, anisotropy/bearing/nugget, the grid and pilot-point styles on Voronoi
 - 17.5 Observations & forecasts: `cal.observe(...)` / `cal.forecast(...)` with the target classes
 - 17.6 Building: `cal.build(pst_name, noptmax=…)`; the injected forward run

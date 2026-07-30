@@ -200,19 +200,21 @@ class NativeParameterSpec:
             self.additive = self.recipe.additive
         if self.name is None:
             self.name = self.recipe.canonical.replace(".", "")
-        if self.style == "pilotpoints" and self.recipe.model != "flow":
-            # `add_pilot_point_parameter` reads `project.model.gwf.npf.k` as the
-            # base array to interpolate against, and the forward run calls it
-            # `base_k`. Pointed at a transport property that silently
-            # interpolates POROSITY multipliers against the K field -- it would
-            # build, run and calibrate to the wrong thing.
+        if self.style == "pilotpoints" and self.recipe.family == "array" and not (
+            self.recipe.package and self.recipe.variable
+        ):
+            # Pilot points multiply a BASE ARRAY read off the model, so the
+            # recipe has to say which one. (Until 2026-07-30 that array was a
+            # hardcoded `gwf.npf.k` for every target, which is how `k33` came to
+            # be overwritten with horizontal K -- 30x wrong, forward run exit 0.
+            # This guard replaces a narrower one that only refused TRANSPORT
+            # targets and therefore missed k33 entirely.)
             raise NotImplementedError(
-                f"style='pilotpoints' is not supported for target "
-                f"{self.recipe.canonical!r}: the pilot-point interpolation is "
-                "hardwired to the flow model's NPF K array, so it would "
-                "interpolate against the wrong field. Use style='grid' (one "
-                "geostatistically correlated multiplier per cell), 'zone', or "
-                "'constant'."
+                f"style='pilotpoints' needs to know which model array "
+                f"{self.recipe.canonical!r} scales, and its recipe declares no "
+                "package/variable. Add them to the `_RECIPES` entry, or use "
+                "style='grid' (one geostatistically correlated multiplier per "
+                "cell), 'zone', or 'constant'."
             )
 
     @property

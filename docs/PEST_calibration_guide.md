@@ -66,10 +66,15 @@ Estimating both from concentration alone is therefore ill-posed. Observe **heads
 concentration together**: heads pin K, and concentration then pins porosity.
 `build_canonical_transport_calibration_demo` ships both target families for this reason.
 
-Two refusals you may meet, both of which used to be silent:
-`style="pilotpoints"` is flow-only (the interpolation is hardwired to NPF K, so on
-porosity it would interpolate against the wrong field), and `layers=` is rejected on a
-target MODFLOW writes as one whole-grid array rather than being quietly ignored.
+`layers=` is rejected on a target MODFLOW writes as one whole-grid array, rather than
+being quietly ignored the way it used to be.
+
+**`style="pilotpoints"` works on porosity too**, as of 2026-07-30. It was briefly
+documented here as flow-only, because the pilot-point interpolation read a hardcoded
+`gwf.npf.k` as its base array — which was not a transport limitation at all but a bug
+that also made `parameterize("k33", style="pilotpoints")` overwrite K33 with horizontal
+K, 30x wrong and silent. Pilot points now multiply the array their own target names, so
+every array target (`k`, `k33`, `porosity`) supports them. See ledger 115.
 
 `physical=` is the safety rail: no matter what calibration does, the *final* K
 stays inside those bounds. Always set it for multipliers.
