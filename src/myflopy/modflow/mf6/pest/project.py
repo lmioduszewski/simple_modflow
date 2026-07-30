@@ -271,9 +271,10 @@ class PestProject:
             ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
             ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
             ``"drn.cond"``/``"drn.elev"`` (``"drn"``), ``"wel"`` (``"pumping"``),
-            and ``"porosity"`` (``"mst.porosity"``/``"n"``), which lives on the
-            GWT sibling of a coupled transport simulation and is resolved there
-            automatically.
+            ``"uzf.vks"`` (``"vks"``) — UZF saturated vertical K, the one UZF
+            quantity heads respond to — and ``"porosity"``
+            (``"mst.porosity"``/``"n"``), which lives on the GWT sibling of a
+            coupled transport simulation and is resolved there automatically.
 
             Porosity is absent from the flow equation, so it is identifiable
             only from CONCENTRATION data — and since transport velocity is

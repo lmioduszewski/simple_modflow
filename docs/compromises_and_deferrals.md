@@ -2295,3 +2295,33 @@ same day, which is the useful part of the result.
        addition, but at typical IES ensemble sizes the cross-covariance is
        rank-deficient, and shipping a number that looks like data worth without
        being able to say when it is trustworthy is worse than not shipping it.
+
+121. **The parameterize surface had no completeness test; it does now, and it
+     caught a third stale doc while being written (2026-07-30).**
+     - Adding a `parameterize` target reaches ~12 code behaviours from one
+       `_Recipe` entry but needs prose in four places, and NOTHING failed if you
+       missed one. Measured cost in a single day: the `porosity` commit left
+       `docs/manual/README.md` on the pre-porosity target set, the `uzf.vks`
+       commit left the target out of `parameterize`'s own docstring, and both
+       were found by hand rather than by CI.
+     - `tests/test_parameterize_payoff.py` is the parameterize twin of
+       `test_package_descriptor_payoff.py` and keeps its contract: AUTOMATIC
+       sites may grow but never shrink; MANUAL sites must be EXACTLY as
+       recorded, so closing one also fails and the win gets written down.
+     - **A doc test that could not fail.** The first version searched whole
+       files for each target name; deleting `porosity` from the manual's target
+       list still passed, because the word appears elsewhere in that file. Found
+       by mutating the test rather than by review. It now anchors on the
+       enumeration itself (a bullet or a table row) and searches only that.
+       Recorded because "the test is green" was, for one draft, worse than no
+       test at all.
+     - **Compromise: the doc check is per-target TOKENS, not exact names.**
+       Short capability tables abbreviate `ghb.cond`/`ghb.bhead` to `ghb`, and
+       forcing the long spellings everywhere would make the tables unreadable.
+       So `DOC_TOKENS` maps each target to how it is spelled in prose, and is
+       asserted to cover the registry exactly — adding a target without a token
+       fails, which is the moment the author is meant to go and write the prose.
+     - Not covered: that the enumeration is CORRECT, only that every target is
+       mentioned in it. A doc could still describe a target wrongly. Catching
+       that needs generated prose, which costs the per-target explanation these
+       lists exist to carry.
