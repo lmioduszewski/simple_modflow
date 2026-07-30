@@ -143,6 +143,8 @@ raised since those readers shipped (ledger 99). **Transport calibration** ships 
 2026-07-28: `ConcTargets` observations go straight into `cal.observe(...)`, and the
 canonical model has a GWT sibling (`build_canonical_transport_calibration_demo`) whose
 worked example is `examples/mf6/notebooks/canonical_07_transport_and_prt.ipynb`.
+Zones for `style="zone"` come from `mf.ZoneSpec` (`from_raster` — majority vote, not mean — `from_polygons`, `from_array`); the shape each target family needs is resolved for you.
+
 Transport properties are `parameterize` targets too: `cal.parameterize("porosity")`
 (aliases `mst.porosity`, `n`) resolves the GWT sibling automatically. Calibrate it
 alongside heads — porosity is absent from the flow equation, and `v = Ki/n` makes it

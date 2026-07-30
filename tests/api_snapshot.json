@@ -1180,6 +1180,7 @@
       "TriangleGrid",
       "VectorParameterSource",
       "VoronoiGridPlus",
+      "ZoneSpec",
       "adv",
       "build_canonical_model",
       "build_particle_tracking_scene",

@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
+from myflopy.modflow.mf6.pest.zones import resolve_zone_array
 
 # --- recipe registry -------------------------------------------------------
 #
@@ -450,7 +451,12 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     if spec.additive:
         kwargs["par_style"] = "a"
     if spec.zones is not None:
-        kwargs["zone_array"] = spec.zones
+        # Normalized per family: pyEMU wants per-cell for array targets and
+        # (layer, cell) for list targets, and rejects the other with an error
+        # that names neither the target nor the shape. See `pest/zones.py`.
+        kwargs["zone_array"] = resolve_zone_array(
+            spec.zones, family=recipe.family, model=project.model
+        )
     if recipe.family == "list":
         kwargs["index_cols"] = list(recipe.index_cols)
         kwargs["use_cols"] = [recipe.use_col]

@@ -2192,3 +2192,39 @@ same day, which is the useful part of the result.
        enabling `boundnames` appends column 11 and leaves vks at 6 — the caveat an
        adversarial reviewer raised, closed by measurement rather than by reading the
        dfn ordering. A test pins it.
+
+118. **`style="zone"` was never a working feature, so §5.8 item 2 built the whole
+     front door, not just its raster half (2026-07-30).**
+     - `zones=` was stored verbatim on the spec and handed to pyEMU as
+       `zone_array` unchanged. `zone_array` had exactly ONE occurrence in all of
+       `src/`. There was no resolver, no validation, no test and no doc.
+     - **The contract is asymmetric between families**, measured on this stack:
+       ARRAY targets accept `(ncpl,)`/`(ncpl,1)`/`(1,ncpl)` and reject
+       `(nlay,ncpl)`; LIST targets accept only `(nlay,ncpl)` and reject the
+       per-cell forms with `IndexError: index 1 is out of bounds for axis 1`,
+       raised from inside pyEMU naming neither target nor shape. One zonation
+       therefore could not serve both packages — but a zonation is a property of
+       the MAP, not of the package, so `resolve_zone_array` normalizes per family
+       and the caller never sees the difference.
+     - **`docs/myflopy_context.md:150` claimed polygon zones already existed.**
+       They did not, for `parameterize`. Corrected in the same pass.
+     - **A single-layer list target could not be zoned by pyEMU at all.** The
+       correct `(1, ncpl)` shape hits `checker2` (`pst_from.py:2121-2134`), which
+       assumes a `(1, n)` array on a vertex grid is an idomain array and reshapes
+       it to `(n, 1)`; every lookup then fails exactly like a wrong shape.
+       **Compromise:** the resolver pads to `(2, ncpl)`. The padding row addresses
+       no real cell so nothing indexes it, but it is a workaround for a pyEMU
+       heuristic, not a fix — if pyEMU stops reshaping, the pad becomes harmless
+       dead weight rather than breaking.
+     - Raster sampling is by **majority vote**, deliberately not the
+       area-weighted mean `grid/surfaces.py` uses for surfaces: zone ids are
+       labels, and a cell straddling zones 1 and 3 would average to zone 2 — one
+       it does not touch and which may not exist. A test asserts the id set is
+       `{1, 3}`.
+     - **Zone id 0 is left inconsistent, and warns.** pyEMU skips ids below 1 for
+       array targets but makes a real adjustable parameter for zone 0 on list
+       targets. Normalizing shape cannot normalize that, and silently remapping
+       the caller's ids would be worse, so it is called out at resolve time.
+     - Not done: overlapping zone polygons take the first match rather than being
+       refused — that is a modelling mistake to catch upstream, and guessing an
+       ordering here would hide it.

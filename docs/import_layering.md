@@ -39,6 +39,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.model_lookup`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
+- `myflopy.modflow.mf6.pest.zones`
 - `myflopy.modflow.mf6.prt` *(deferred imports: 5)*
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.discretization`

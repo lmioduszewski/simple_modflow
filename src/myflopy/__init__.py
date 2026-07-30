@@ -373,6 +373,7 @@ _EXPORTS = {
     "MeshBuildProfile": ("myflopy.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
     "ConcTargets": ("myflopy.modflow.mf6.observations", "ConcTargets"),
+    "ZoneSpec": ("myflopy.modflow.mf6.pest.zones", "ZoneSpec"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
     "FrameExportProgress": (

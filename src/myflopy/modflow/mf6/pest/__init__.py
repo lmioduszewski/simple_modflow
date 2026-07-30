@@ -15,6 +15,7 @@ from .specs import (
     VectorParameterSource,
 )
 from .summary import PestSettings
+from .zones import ZoneSpec
 
 __all__ = [
     "DrnFlowObservationSpec",
@@ -34,4 +35,5 @@ __all__ = [
     "SfrFlowObservationSpec",
     "SfrStageObservationSpec",
     "VectorParameterSource",
+    "ZoneSpec",
 ]

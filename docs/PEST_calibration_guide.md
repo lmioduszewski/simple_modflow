@@ -56,7 +56,22 @@ cal.parameterize("ghb.cond", bounds=(0.1, 10))
 # transport properties live on the GWT sibling; the target finds it for you
 cal.parameterize("porosity", style="constant", bounds=(0.5, 2), physical=(0.05, 0.5))
 cal.parameterize("uzf.vks", style="grid", correlation=400, bounds=(0.2, 5))
+
+# zones: one multiplier per label, from a raster, a polygon layer, or an array
+cal.parameterize("k", style="zone", zones=mf.ZoneSpec.from_raster("hsu.tif", model))
 ```
+
+**Zones** are per-cell integer labels; `style="zone"` gives one adjustable multiplier
+per distinct label. `ZoneSpec.from_raster` samples a categorical raster by **majority
+vote**, not by the area-weighted mean this library uses for surfaces — averaging zone
+ids is meaningless, and a cell straddling zones 1 and 3 would come out as zone 2, which
+it does not touch and may not exist. `from_polygons(gdf, column="hsu")` labels cells by
+the polygon they fall in; a plain array still works.
+
+You never have to think about SHAPE. pyEMU wants a per-cell array for array targets
+(`k`, `k33`, `porosity`) and a `(layer, cell)` array for list targets (`recharge`,
+`chd`, `ghb.*`, `drn.*`, `wel`, `uzf.vks`), and rejects the wrong one with an error
+naming neither the target nor the shape. One `ZoneSpec` serves both.
 
 **`uzf.vks`** is UZF's saturated vertical K, and the only UZF quantity worth
 calibrating on its own: measured on the canonical model, `vks x3` moves heads by
