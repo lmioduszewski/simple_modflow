@@ -2261,3 +2261,37 @@ same day, which is the useful part of the result.
        becomes reachable, and it would need its own results-review layer
        (`IesResults` reads IES-specific files). Recorded as Tier B in §5.8's
        remaining item.
+
+120. **Sensitivity ships ensemble-based only; the jacobian half is deferred with
+     its cost measured (2026-07-30).** Closes §5.8 item 4 Tier A.
+     - pyEMU's `Schur`/`ErrVar` take `jco` as a REQUIRED positional and give the
+       textbook answers (CSS, identifiability, parameter contribution, FOSM). They
+       are thin to wrap — but a completed PESTPP-IES run produces no jacobian, so
+       none of it is reachable from `run_ies`. `pestpp-glm` with `NOPTMAX=-2`
+       produces one in `npar_adj + 1` model runs. Tier B is therefore a NEW RUN
+       MODE plus a second results-review layer (`IesResults` reads IES-specific
+       files), not a wrapper. Deferred, with that cost recorded rather than
+       rediscovered.
+     - What ships instead reads the ensembles the run already wrote:
+       `sensitivity()` / `plot_sensitivity()`, giving `learned`
+       (`1 - post_sd/prior_sd` per group, in the parameter's transform space) and,
+       with `forecast=`, the ensemble correlation driving that prediction.
+     - **The main way this could ship silently wrong is by being read as CSS.**
+       It is a global, prior-conditioned measure, not a local derivative; the two
+       genuinely disagree when the prior never moved a locally-sensitive
+       parameter. Said plainly in the method docstring, the guide, and the
+       capability map rather than left for the reader to infer.
+     - **Sampling noise is drawn, not just documented.** At `n` realizations a
+       correlation near `1/sqrt(n)` is indistinguishable from zero (~0.14 at the
+       common `reals=50`). `plot_sensitivity` draws that floor as a line on the
+       chart, because the reader is looking at bars, and `n_reals` is returned in
+       the frame.
+     - **Judgment call: group correlations are means of ABSOLUTE values.** A group
+       whose members push a forecast in opposite directions is still influential,
+       and a signed mean cancels it to zero -- hiding exactly the group that
+       matters. Caught by a mutation test that the first version of the test could
+       not see, because that fixture had one parameter per group.
+     - Not done: `pyemu.EnDS` data worth. It is the natural next ensemble-based
+       addition, but at typical IES ensemble sizes the cross-covariance is
+       rank-deficient, and shipping a number that looks like data worth without
+       being able to say when it is trustworthy is worse than not shipping it.

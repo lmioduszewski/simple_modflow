@@ -273,6 +273,8 @@ ies.plot_field("k", stat="change")   # where did calibration move K? (posterior/
 ies.plot_field("k", stat="reduction")  # did the data inform this region at all?
 ies.plot_field_mosaic("k", stat="mean")  # prior vs posterior, side by side, one scale
 ies.plot_obs_residuals()        # WHERE is the model biased, and by how much?
+ies.plot_sensitivity()          # which parameter groups did the data inform?
+ies.plot_sensitivity(forecast="pred_1")   # ...and which ones drive this prediction?
 ies.best()                      # the single realization to carry forward (the "base" / min-error-variance one)
 ies.report("review.html")       # the headline plots bundled into one HTML
 ```
@@ -314,6 +316,29 @@ Hovering a cell gives the plotted statistic plus prior mean, posterior mean, and
 posterior standard deviation; the title states which iterations and how many
 realizations the figure is summarizing. A cell whose prior mean is zero has an
 undefined ratio and says so, rather than silently reading as missing data.
+
+**What did the data actually inform, and what drives the forecast?**
+`sensitivity()` answers both from the ensembles the run already wrote — no jacobian,
+so no extra model runs. `learned` is `1 - posterior_sd / prior_sd` per parameter group
+(measured in the parameter's transform space): a group near zero was not constrained by
+the observations you have. Passing `forecast=` adds the ensemble correlation between
+each group and that prediction.
+
+The pairing is what to read. A group with **high forecast correlation and low
+learning** is where your forecast uncertainty comes from: it matters, and the data did
+not pin it down. That is the argument for collecting a different kind of measurement.
+
+Two honest caveats, both worth taking seriously:
+
+- **This is not CSS.** Composite scaled sensitivity is a local derivative at one
+  parameter set; this is a global measure conditioned on your prior. A parameter can be
+  locally sensitive yet score near zero here because the prior never moved it far. The
+  jacobian-based answers (`Schur`/`ErrVar` identifiability, FOSM) need a PESTPP-GLM run,
+  which myflopy does not launch — an IES run produces no jacobian.
+- **Small values are noise.** With `n` realizations, a correlation around `1/sqrt(n)` is
+  indistinguishable from zero — at `reals=50` that is ~0.14. `plot_sensitivity` draws
+  that floor on the chart, and `n_reals` is in the returned frame; do not rank bars
+  below it against each other.
 
 **Prior vs posterior, side by side.** `plot_field_mosaic("k", stat="mean")` draws one
 panel per ensemble on **one shared color scale** — which is the whole point, since two

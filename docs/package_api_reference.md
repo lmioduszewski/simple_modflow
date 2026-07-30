@@ -283,6 +283,7 @@ fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it
 | `phi`, `phi_contributions()` | `plot_phi()`, `plot_phi_distribution()`, `plot_phi_contributions()` | did misfit drop, and which group owns it |
 | `conflict()` | `plot_conflict()`, `plot_prior_vs_obs()`, `plot_vs_obs()` | is the prior wide enough; does the posterior bracket the data |
 | `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight |
+| `sensitivity(forecast=…)` | `plot_sensitivity(forecast=…)` | what the data informed, and what drives a forecast — ensemble-based, **not** CSS |
 | `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |
 | `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction` |
 | — | `plot_field_mosaic(target, stat=…)` | prior vs posterior on one shared scale (`mean`/`std` only) |

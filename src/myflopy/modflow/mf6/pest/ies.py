@@ -890,6 +890,202 @@ class IesResults:
         grouped["pct_at_bound"] = 100.0 * (grouped["n_at_lower"] + grouped["n_at_upper"]) / grouped["n_parameters"]
         return grouped.sort_values("pct_at_bound", ascending=False)
 
+    def sensitivity(self, *, forecast: str | None = None,
+                    by_group: bool = True) -> pd.DataFrame:
+        """Which parameters the data informed, and which drive a forecast.
+
+        **Ensemble-based, so it needs no jacobian** — everything here is computed
+        from the prior and posterior ensembles this run already wrote. That is
+        also its limitation, and the limitation is the point:
+
+        * ``learned`` is ``1 - posterior_sd / prior_sd`` per parameter, in the
+          parameter's transform space. It answers *"did the data constrain
+          this?"* — the per-parameter analogue of
+          ``plot_field(stat="reduction")``.
+        * ``forecast_corr`` (when ``forecast=`` is given) is the empirical
+          correlation across realizations between the parameter and that
+          forecast. It answers *"does this parameter drive that prediction?"*
+
+        **This is not CSS, and the two can disagree.** Composite scaled
+        sensitivity is a local derivative at one parameter set; these are global
+        measures conditioned on the prior. A parameter can be highly sensitive
+        locally and score near zero here because the prior never moved it far,
+        or vice versa. Where a jacobian-based answer is wanted, that needs a
+        PESTPP-GLM run, which myflopy does not currently launch (§5.8).
+
+        **Sampling noise is real.** With ``n`` realizations a correlation of
+        roughly ``1/sqrt(n)`` is indistinguishable from zero — at the common
+        ``reals=50`` that is about 0.14, so small values should not be ranked
+        against each other. ``n_reals`` is returned so the reader can judge.
+
+        Parameters
+        ----------
+        forecast
+            Forecast name to correlate parameters against. ``None`` (default)
+            returns the ``learned`` column only.
+        by_group
+            Aggregate to parameter groups (default). ``False`` returns one row
+            per parameter, which for a grid or pilot-point run is large.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Sorted by the strongest signal available, most informative first.
+        """
+
+        prior = self.prior_parameters._df
+        posterior = self.posterior_parameters._df
+        shared = [name for name in posterior.columns if name in prior.columns]
+        par = self.pst.parameter_data
+        adjustable = [
+            name for name in shared
+            if name in par.index
+            and str(par.loc[name, "partrans"]).lower() not in ("fixed", "tied")
+        ]
+        if not adjustable:
+            return pd.DataFrame(
+                columns=["n_parameters", "learned", "forecast_corr", "n_reals"]
+            )
+
+        prior_values = prior[adjustable].astype(float)
+        posterior_values = posterior[adjustable].astype(float)
+        # Compare spreads in the space the parameter is estimated in, or a log
+        # multiplier's ratio spread would be read as a linear one.
+        is_log = par.loc[adjustable, "partrans"].astype(str).str.lower().eq("log")
+        for name in [n for n in adjustable if is_log[n]]:
+            if (prior_values[name] > 0).all() and (posterior_values[name] > 0).all():
+                prior_values[name] = np.log10(prior_values[name])
+                posterior_values[name] = np.log10(posterior_values[name])
+
+        prior_sd = prior_values.std()
+        learned = 1.0 - (posterior_values.std() / prior_sd.replace(0.0, np.nan))
+
+        table = pd.DataFrame({
+            "pargp": par.loc[adjustable, "pargp"].astype(str).to_numpy(),
+            "learned": learned.reindex(adjustable).to_numpy(dtype=float),
+        }, index=adjustable)
+        table["n_reals"] = int(len(posterior_values))
+
+        if forecast is not None:
+            values = self._forecast_realizations(forecast, posterior_values.index)
+            # Correlate in the SAME space the spreads were measured in, so a log
+            # parameter's relationship with the forecast is not distorted.
+            table["forecast_corr"] = [
+                float(posterior_values[name].corr(values)) for name in adjustable
+            ]
+
+        if not by_group:
+            return table.sort_values(
+                "forecast_corr" if forecast is not None else "learned",
+                key=abs if forecast is not None else None,
+                ascending=False,
+            )
+
+        aggregations = {"n_parameters": ("learned", "size"),
+                        "learned": ("learned", "mean"),
+                        "n_reals": ("n_reals", "max")}
+        if forecast is not None:
+            # Mean of the ABSOLUTE correlation: a group whose members push a
+            # forecast in opposite directions is still influential, and averaging
+            # signed values would cancel it to zero.
+            table["abs_corr"] = table["forecast_corr"].abs()
+            aggregations["forecast_corr"] = ("abs_corr", "mean")
+        grouped = table.groupby("pargp").agg(**aggregations)
+        return grouped.sort_values(
+            "forecast_corr" if forecast is not None else "learned", ascending=False
+        )
+
+    def _forecast_realizations(self, forecast: str, index) -> pd.Series:
+        """One forecast's posterior realizations, aligned to a parameter index."""
+
+        ensemble = self.posterior._df
+        if forecast not in ensemble.columns:
+            available = sorted(self.forecast_names)
+            raise ValueError(
+                f"No forecast named {forecast!r} in this run. Available: {available}."
+            )
+        values = ensemble[forecast].astype(float)
+        # Parameter and observation ensembles share realization labels, but a
+        # realization that failed appears in one and not the other; aligning on
+        # the index rather than on position keeps them paired.
+        return values.reindex(index)
+
+    def plot_sensitivity(self, *, forecast: str | None = None, top: int = 15,
+                         backend: str = "plotly"):
+        """Bar chart of what the data informed, or of what drives a forecast.
+
+        Purpose
+        -------
+        Two questions with one figure. Without ``forecast``, it shows how much
+        each parameter group's uncertainty the data removed — groups near zero
+        were not constrained by the observations you have. With ``forecast``, it
+        shows how strongly each group co-varies with that prediction across the
+        ensemble, which is the "what would I need to measure better?" view.
+
+        What to look for
+        ----------------
+        A group with **high forecast correlation and low learning** is the
+        uncomfortable one: it matters for the prediction and the data did not
+        pin it down. That combination is where forecast uncertainty comes from.
+
+        Read small bars with care — see :meth:`sensitivity` on sampling noise
+        (roughly ``1/sqrt(n_reals)``), and on why this is not CSS.
+
+        Parameters
+        ----------
+        forecast
+            Forecast name; ``None`` (default) plots uncertainty reduction.
+        top
+            Keep the strongest ``top`` groups.
+        backend
+            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        """
+
+        table = self.sensitivity(forecast=forecast)
+        if table.empty:
+            raise ValueError(
+                "This run has no adjustable parameters in both ensembles, so "
+                "there is nothing to score."
+            )
+        column = "forecast_corr" if forecast is not None else "learned"
+        table = table.head(int(top))
+        groups = table.index.tolist()
+        values = table[column].to_numpy(dtype=float)
+        noise = 1.0 / np.sqrt(max(int(table["n_reals"].max()), 1))
+        label = (
+            f"|correlation| with {forecast}" if forecast is not None
+            else "uncertainty reduction (1 - post sd / prior sd)"
+        )
+        title = (
+            f"Parameter influence on {forecast}" if forecast is not None
+            else "What the data informed"
+        )
+
+        if _normalize_backend(backend) == "matplotlib":
+            import seaborn as sns
+
+            fig, ax = viz.mpl_axes(figsize=(6.5, max(2.5, 0.5 * len(groups) + 1)))
+            ax.barh(groups, values, color=_MPL_POST)
+            ax.axvline(noise, color="grey", linestyle="--", linewidth=1)
+            ax.set_xlabel(label)
+            ax.set_title(title)
+            ax.invert_yaxis()
+            sns.despine(fig)
+            return fig
+
+        fig = viz.Fig().add_trace(
+            go.Bar(x=values, y=groups, orientation="h", marker_color=_POST_COLOR)
+        )
+        # The noise floor drawn on the figure, so a bar below it is visibly
+        # indistinguishable from zero rather than merely documented as such.
+        fig.add_vline(
+            x=noise, line_dash="dash", line_color="grey",
+            annotation_text=f"noise floor ~1/sqrt({int(table['n_reals'].max())})",
+        )
+        fig.update_layout(title=title, dragmode="pan",
+                          xaxis_title=label, yaxis_title="parameter group")
+        return fig
+
     def plot_parameters_at_bounds(self, *, which: str = "posterior", tol: float = 0.01,
                                   backend: str = "plotly"):
         """Bar chart of the percentage of parameters at their bounds, by group.
