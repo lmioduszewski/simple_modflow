@@ -1138,10 +1138,16 @@ Heads, concentration, and temperature are the same shape: a binary output file r
 
 ### 6.1 GWT results tier (concentration)
 
-> **Partially DONE 2026-07-24 (see §6.0 banner):** items 1 (hover) + 2 (colorscale)
-> shipped, and `model.conc` is readable through the full grammar. **Still open:**
-> 3 (budget view), 4 (`GroupConc`/diff), 5 (`ConcTargets`/PEST), 6 (canonical
-> transport fixture) — ledger 56.
+> **DONE 2026-07-28 — all six items shipped.** 1 (hover) + 2 (colorscale) on
+> 2026-07-24 with `model.conc` readable through the full grammar; then 3 (budget
+> view, `model.budget.<term>`), 4 (`GroupConc`/diff), 5 (`ConcTargets` wired
+> through the PEST build) and 6 (the canonical transport fixture,
+> `canonical_transport.py`). Ledger 56 is closed. The per-item banners below are
+> kept as the build record.
+>
+> Follow-on work after the six: concentration reaches the IES residual map
+> (ledger 105, 2026-07-29) and `porosity` became a `parameterize` target
+> (ledger 103, 2026-07-29) — both are §5.8/§6.4 territory, not §6.1.
 >
 > **Item 3 prerequisites DONE 2026-07-27 — the budget path was BROKEN, not merely
 > unplumbed.** Scoping item 3 against real coupled GWT and GWE runs found five
@@ -1209,9 +1215,15 @@ Building on 6.0:
 
 ### 6.2 GWE results tier (temperature)
 
-> **Partially DONE 2026-07-24 (see §6.0 banner):** `model.temp` reader + map +
-> `temp_hover` + `'earth'` colorscale shipped alongside 6.1 (the keystone made it
-> ~free). **Still open:** GWE budget view, `GroupTemp`/diff, `TempTargets` — ledger 56.
+> **Partially DONE — `TempTargets` is the ONLY item left (verified 2026-07-30).**
+> `model.temp` reader + map + `temp_hover` + `'earth'` colorscale shipped
+> 2026-07-24 alongside 6.1 (the keystone made it ~free); the GWE budget view
+> shipped 2026-07-27 and `GroupTemp`/diff 2026-07-28. `grep "class TempTargets"`
+> over `src/` and `tests/` finds nothing, so that one is genuinely open — and it
+> is the smaller half of the work, since `ConcTargets` proved the pattern
+> (a *configuration* of `HeadTargets`: `_TABLE_ATTRIBUTE`, `_STORE_COLUMN`,
+> `_FIELD_LABEL`) and the PEST observation ladder already dispatches on target
+> type. Ledger 56's other items are closed.
 >
 > **Budget prerequisites DONE 2026-07-27 alongside 6.1's** — every fix was verified
 > against a real GWF+GWE run as well as GWF+GWT, because the two kinds do NOT share
