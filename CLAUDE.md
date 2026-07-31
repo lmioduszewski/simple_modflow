@@ -64,8 +64,24 @@ delivered work. Any change that makes such a call MUST add/update its ledger
 entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
+## Catching exceptions? Name them (plan 7.3, 2026-07-31)
+**No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; ten
+survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
+`pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
+`tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
+fails, and so does closing one without recording it.
+
+Every narrowed handler logs the swallow at DEBUG via `myflopy._logging.get_logger`; the
+message convention (name the DEGRADATION, not just the error) is in that module's
+docstring. Two lessons worth carrying: these `try` blocks usually wrap a **pipeline**,
+so the honest tuple is wider than it first looks (a lazy `MFSimulation.load` reaches
+flopy's `MFDataException`/`FlopyException`, which subclass `Exception` directly); and a
+broad handler around a block that **validates its own arguments** will eat the
+validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
+
 ## Test suite (fast by design)
-- Full suite (**959 passed / 1 skipped**, 2026-07-26): `pytest -n 10` ≈ **45–80 s** (worksteal dist is in
+- Full suite (**1245 passed / 1 skipped**, 2026-07-31): `pytest -n 10` ≈ **80–90 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ 2m45s–3m40s; inner loop `pytest -m "not slow"` ≈ 32 s.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).

@@ -2325,3 +2325,99 @@ same day, which is the useful part of the result.
        mentioned in it. A doc could still describe a target wrongly. Catching
        that needs generated prose, which costs the per-target explanation these
        lists exist to carry.
+
+122. **7.3: the 60 exception swallows, what narrowing them cost, and the five
+     defects they were hiding (2026-07-31).**
+     - **The plan's site list was stale in both directions.** It named six
+       files; the real count was **60 handlers across 27 files** -- 49
+       `except Exception` and **11 bare `except:`** the plan never mentioned.
+       `utils/gdal.py` no longer exists (atticked in Phase 1, as the plan
+       predicted it would be).
+     - **`_logging.py` was pulled forward from 7.2.** 7.3 asks for a
+       `logger.debug` on every narrowed handler, and 7.2 owns the logger. Doing
+       7.3 first without it would have meant a second pass over all 60 sites.
+       7.2 shrinks to the `print()` replacement, which is what it was really
+       about. `_logging` is graph-EXTERNAL in the import-layer derivation, like
+       `_vendor`: it is a stdlib-only leaf that modules at every depth import,
+       so counting it would push every current L0 leaf to L1 and say nothing
+       about the architecture.
+     - **Ten handlers stay `except Exception` ON PURPOSE**, each with the
+       measurement that justifies it, and `tests/test_exception_narrowness.py`
+       pins the list exactly in both directions. The recurring reason is that
+       the raisable set is genuinely open: flopy's `utils/voronoi.py` contains a
+       literal `raise Exception(...)`; `pickle.dump(model)` walks an unbounded
+       third-party graph; `grid_spec_resolver` does a `setattr` on an object a
+       USER'S builder script returned (pydantic raises a plain `ValueError`
+       there); `__dir__`/`__repr__` must never raise. This is the honest number:
+       "narrow all 60" was not achievable, and pretending otherwise would have
+       traded working fallbacks for crashes.
+     - **Several tuples came out WIDER than a first pass would write**, and the
+       reason generalizes: most of these `try` blocks wrap a PIPELINE, not a
+       call. On a file-backed model `model.gwf`/`model.sim`/`model.vor` are LAZY
+       properties, so the first access performs a whole `MFSimulation.load` --
+       dragging in flopy's `MFDataException`/`FlopyException` (which subclass
+       `Exception` directly, so no builtin tuple reaches them), a
+       `UnicodeDecodeError` on a binary `mfsim.nam`, and myflopy's own
+       post-load arithmetic. Three MRO facts were measured rather than assumed:
+       `rasterio.errors.RasterioError` is NOT an `OSError` (only
+       `RasterioIOError` is, by multiple inheritance), pyproj's `CRSError` is a
+       `RuntimeError`, and `numpy.ma.MaskError` subclasses `Exception` directly.
+     - **Five defects the broad handlers were hiding**, each now pinned by a
+       test in `tests/test_narrowed_swallows.py` or `tests/test_model_diff.py`:
+       1. **A group member without the package hid every other member's
+          differences.** `GroupPackageInputs.get()` builds the WHOLE group
+          before `compare()` filters to one model, unguarded -- so in a
+          three-model group where one member has no GHB, the builder raised,
+          `_value_cells_changed` caught it and returned 0, and `report()`
+          printed "identical to reference" for a model whose conductances
+          really did differ. `model.diff(a, b)` is a documented door, so a 3+
+          model group is ordinary usage. HIGHEST severity of the five.
+       2. **`_model_nlay` reported a cell count as a layer count** --
+          `np.asarray(botm).reshape(-1).size` is the total number of botm
+          ENTRIES. On a 3-layer, 4-cell grid it answered 12.
+       3. **`read_gpkg` caught its own raise.** The bare `except:` swallowed the
+          `TypeError: Unexpected geometry type` raised four lines above it,
+          silently returning a PARTIAL feature set. Its comment described
+          terminating a `while` loop that no longer existed.
+       4. **`contour_line_segments` caught its own raise too** -- the same shape,
+          found independently: a misspelled `method=` drew no contours and said
+          nothing. Validation now runs before the `return []` early exits, so
+          the error does not depend on whether the data would have contoured.
+       5. **`_resample_timeseries_df` did `return print(...)`** -- printed a
+          message and handed the caller None, so the real symptom arrived later
+          as an `AttributeError` on None, far from the bad argument.
+     - **`drn.py` now RAISES where it used to guess.** A failed `gdf_topbtm`
+       lookup fell back to `drain_elevation = bottom_addition` -- a drain at the
+       bare offset (often 0) instead of at the layer bottom, which drains the
+       aquifer. There is no defensible default: the cell not being in the
+       layer-surface frame means the grid and the drain footprint disagree, and
+       MODFLOW would have run happily on the wrong answer. This is a **behaviour
+       change**: a build that silently produced bad drains now fails with a
+       message naming the cell and pointing at `bottoms=`.
+     - **Compromise: one diff asymmetry is documented, not fixed.**
+       `_package_present` matches by PREFIX, so an array-form RCHA/EVTA on an
+       externally loaded model reports as present while the cell tier -- which
+       cannot read array-form packages at all -- yields no keys; two such models
+       compare as identical. Telling that apart needs a third state ("present,
+       unreadable by this tier") threaded through the summary, not a wider
+       `except`. Recorded in a comment at the site and deferred.
+     - **Compromise: the mover-flow probe gets no log line.** It tries 7
+       packages x 2 directions and most are EXPECTED to fail, so one debug line
+       per absent term would be 14 lines of noise per call. Skipping is the
+       documented behaviour there, not a degradation.
+     - **A debug line introduced its own bug**, worth recording because it is
+       the standing risk of this whole exercise: the new `logger.debug` in
+       `_value_cells_changed` referenced `self._package_name`, which that class
+       does not have. It only executes when the handler fires, so the whole
+       suite stayed green -- it surfaced only when the fix was MUTATED to
+       confirm the new test could fail. Log lines added to rarely-taken branches
+       are untested code by construction.
+     - **The ratchet keys on `path:function`, not line number.** Two broad
+       handlers in one function collapse to one key, so a second one there would
+       not fail. Deliberate: keying by line would turn every unrelated edit into
+       a test failure, which is how ratchets end up deleted.
+     - **`docs/myflopy_context.md` deliberately NOT updated.** It is the
+       code-derived map of the model-building *capability* surface;
+       `myflopy._logging` is private and narrowing an exception handler adds no
+       capability. The convention lives in `CLAUDE.md` and the module docstring
+       instead. Recorded so the omission reads as a decision rather than a miss.

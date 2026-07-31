@@ -1488,22 +1488,48 @@ BEFORE Phase 8** so plotting files move exactly once with clean imports. (Relati
 Phase 6: either order works — 6.0's readers route through the compat module if 7.1
 landed first, else get repointed during 7.1; the sequencing block is authoritative.)
 
-### 7.2 Logging
+### 7.2 Logging — PARTLY DONE 2026-07-31 (`_logging.py` shipped with 7.3a)
 
 `src/myflopy/_logging.py` (`get_logger`, NullHandler on the `myflopy` root — libraries
-never configure handlers). Replace `print(...)` in live modules (grid `selection.py`,
-`triangle.py`, `pest/project.py`, `simulation/runtime.py`, `choros.py` — incl. the
-colorscale-fallback print, `readers.py`, `grid/surfaces.py`). Exemptions: deliberate
-console **reports** (`ModelDiff.report()` and friends — keep printing, keep ASCII) and
-`_vendor`. Test: `import myflopy` emits nothing to stdout.
+never configure handlers) **is built**: 7.3 needs a logger for every narrowed handler,
+so building it twice made no sense. It is graph-EXTERNAL in the import-layer derivation,
+like `_vendor` (a stdlib-only leaf imported at every depth; counting it would push every
+current L0 leaf to L1 and say nothing about the architecture). `tests/test_logging.py`
+pins the contract, and the swallow-message convention lives in its module docstring.
 
-### 7.3 Narrow the silent exception swallows
+**Still open:** replace `print(...)` in live modules (grid `selection.py`, `triangle.py`,
+`pest/project.py`, `simulation/runtime.py`, `choros.py` — incl. the colorscale-fallback
+print, `readers.py`, `grid/surfaces.py`). Exemptions: deliberate console **reports**
+(`ModelDiff.report()` and friends — keep printing, keep ASCII) and `_vendor`. Test:
+`import myflopy` emits nothing to stdout. Measured 2026-07-31: 61 `print()` across 24
+files.
 
-Sites: `grid_spec_resolver.py`, `workspace.py` (`model_names` fallback),
-`utils/gdal.py`, `surface_water_validation.py`, `simulation/base.py`, plus the two added
-knowingly in the hover work (`Choro._build_hover_context`'s per-dates and topbtm
-guards — narrow to the concrete exceptions). Narrow each; `logger.debug` the swallow;
-keep load-bearing fallbacks visible in debug logs.
+### 7.3 Narrow the silent exception swallows — DONE 2026-07-31 (7 commits)
+
+> **The site list this section carried was stale in both directions.** The real count
+> was **60 handlers across 27 files** — 49 `except Exception` and **11 bare `except:`**
+> the plan never mentioned. `utils/gdal.py` no longer exists (atticked in Phase 1,
+> exactly as predicted at line 292). All 60 are addressed.
+> `tests/test_exception_narrowness.py` is the ratchet: no bare `except:` anywhere,
+> every `except Exception` carries a `# noqa: BLE001`, and the allowlist is exact in
+> both directions so closing one also fails.
+>
+> **Ten handlers stay broad on purpose**, each with the measurement behind it — flopy's
+> `utils/voronoi.py` contains a literal `raise Exception(...)`, `pickle.dump` walks an
+> unbounded third-party object graph, `grid_spec_resolver` sets an attribute on an
+> object a USER'S builder script returned, `__dir__`/`__repr__` must never raise.
+> Several other tuples came out WIDER than a first pass would write, because these
+> `try` blocks wrap pipelines whose first step is a lazy `MFSimulation.load`.
+>
+> **Five defects the swallows were hiding**, all now pinned by tests: a group member
+> without the package masked every other member's differences in `ModelDiff` (a model
+> that genuinely differed was reported "identical to reference"); `_model_nlay`
+> returned a cell count as a layer count; and `read_gpkg`, `contour_line_segments` and
+> `_resample_timeseries_df` each swallowed or discarded their own error signal.
+> `drn.py` now RAISES where it used to fall back to a drain elevation that would drain
+> the aquifer — a deliberate behaviour change. Ledger 122 has the full account,
+> including the one asymmetry documented rather than fixed (array-form RCHA/EVTA read
+> by the cell diff tier).
 
 ### 7.4 Docs debt sweep
 
@@ -1772,7 +1798,8 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       front door, the last color literals retired, and the preferred-API docs (6.4C)
 - [ ] `_flopy_compat.py` is the only importer of flopy non-mf6 internals — including the
       6.0 readers (7.1)
-- [ ] `myflopy` logger wired; no stray prints; exception swallows narrowed (7.2, 7.3)
+- [x] exception swallows narrowed; `myflopy` logger built and wired into every
+      narrowed handler (7.3, 2026-07-31) — **stray prints still open** (7.2)
 - [ ] `myflopy/plot/` holds all standalone plotting; old paths warn-and-work;
       `_EXPORTS` repointed; `mf2Dplots` folded; existing plotting tests unedited (8)
 - [ ] Final full suite recorded; capability docs match reality (9)
