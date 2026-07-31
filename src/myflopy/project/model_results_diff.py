@@ -661,7 +661,15 @@ class MvrResultDiff(_ResultDiffBase):
                     part = self._cell_diff(package, term).summary(
                         model_name=model_name, atol=atol, rtol=rtol
                     )
-                except Exception:
+                except (ValueError, AttributeError, OSError, KeyError):
+                    # This loop PROBES 7 mover-capable packages x 2 directions,
+                    # so most iterations are expected to fail: flopy's
+                    # CellBudgetFile raises ValueError ("text string is not in
+                    # the budget file") for a package with no mover term, and
+                    # AttributeError when the model has no budget reader at all
+                    # because it was never run. Skipping is the documented
+                    # behaviour, not a degradation -- hence no log line here;
+                    # one per absent term would be 14 lines of noise per call.
                     continue
                 if part.empty:
                     continue

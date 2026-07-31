@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_explorer import (
     LeafFieldSugar,
     build_cell_input_map_payload,
@@ -17,6 +18,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_input_field_names,
 )
+from myflopy.modflow.mf6.package_tables import PACKAGE_TABLE_UNAVAILABLE
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover
 from myflopy.project.group._shared import (
     _default_show_layer_elevs,
@@ -28,6 +30,8 @@ from myflopy.project.group.spatial import _GroupSpatialView
 
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
+
+logger = get_logger(__name__)
 
 
 class GroupPackageInputField(_GroupSpatialView):
@@ -115,7 +119,20 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
 
         frames = []
         for current_model_name, model in self.group.models.items():
-            frame = build_cell_package_input_table(model, self.package_name)
+            # A group member that does not carry this package is skipped, NOT an
+            # error. It used to raise, and because `compare()` (and so
+            # `ModelDiff._value_cells_changed`) builds the whole group before
+            # filtering to one model, ONE member without the package discarded
+            # the comparison for every other member -- reporting models with
+            # genuinely different values as identical to the reference.
+            try:
+                frame = build_cell_package_input_table(model, self.package_name)
+            except PACKAGE_TABLE_UNAVAILABLE:
+                logger.debug(
+                    "%s carries no readable %s; leaving it out of the group table",
+                    current_model_name, self.package_name, exc_info=True,
+                )
+                continue
             frame["model"] = current_model_name
             frames.append(frame)
 

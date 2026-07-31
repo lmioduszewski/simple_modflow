@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import MFDataException
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -16,6 +17,28 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _get_package_explorer_cache,
     _normalize_iterable_filter,
     split_cellid_columns,
+)
+
+#: What "build a normalized table for this package on this model" can raise
+#: when the package is absent, empty, or in a form this tier cannot read.
+#:
+#: Callers that tolerate a missing package -- the diff tiers, the group
+#: accessors -- catch this rather than `Exception`, so a genuine bug in the
+#: builders still surfaces. Each member is a measured path:
+#:
+#: * ``AttributeError`` -- ``model.package(name)`` raises it for a package that
+#:   is not attached, and an ARRAY-form package (``ModflowGwfrcha``) has no
+#:   ``stress_period_data`` attribute at all.
+#: * ``KeyError`` -- flopy's ``get_data()`` returns None for empty storage, and
+#:   ``pd.DataFrame(None)`` is a zero-COLUMN frame, so the next column access
+#:   raises rather than yielding an empty table.
+#: * ``TypeError`` -- on DISU flopy returns ``cellid`` as a 1-TUPLE, which
+#:   ``split_cellid_columns`` passes to ``int()``.
+#: * ``ValueError`` -- pandas integer casting on a column carrying NaN.
+#: * ``OSError`` / ``MFDataException`` -- a file-backed model resolving its
+#:   packages performs a lazy ``MFSimulation.load``.
+PACKAGE_TABLE_UNAVAILABLE = (
+    AttributeError, KeyError, TypeError, ValueError, OSError, MFDataException,
 )
 
 

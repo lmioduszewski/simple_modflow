@@ -36,8 +36,10 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_input_field_names,
 )
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.package_tables import (
+    PACKAGE_TABLE_UNAVAILABLE,
     build_cell_package_input_table,
     build_lak_connection_table,
     build_sfr_reach_table,
@@ -78,6 +80,18 @@ _LAK_IDENTITY = (
 )
 _SFR_IDENTITY = ("reach", "layer", "cell", "rlen")
 
+logger = get_logger(__name__)
+
+#: What "read a finished model's outputs" can raise when the run never finished.
+#:
+#: FileNotFoundError is the obvious one, but the case this fallback is really
+#: written for -- a run MF6 opened and then aborted -- leaves a ZERO-BYTE or
+#: truncated .hds/.cbc, and flopy raises ValueError for those ("file is empty",
+#: "min() iterable argument is empty"), not a file error.
+_RESULTS_UNAVAILABLE = (
+    OSError, AttributeError, ValueError, IndexError, KeyError,
+)
+
 _SUMMARY_COLUMNS = [
     "package",
     "model",
@@ -96,7 +110,10 @@ def _package_present(model, package_name: str) -> bool:
 
     try:
         names = [str(name).lower() for name in model.package_names]
-    except Exception:  # pragma: no cover - defensive
+    except (AttributeError, TypeError):  # pragma: no cover - defensive
+        # The group accepts duck-typed model objects, so `package_names` may be
+        # absent (AttributeError) or not iterable (TypeError).
+        logger.debug("cannot list packages on %r", model)
         return False
     pkg = package_name.lower()
     return any(name == pkg or name.startswith(pkg) for name in names)
@@ -113,7 +130,18 @@ def _package_keys(model, package_name: str, *, per=None, layer=None):
 
     try:
         table = build_cell_package_input_table(model, package_name, per=per, layer=layer)
-    except Exception:
+    except PACKAGE_TABLE_UNAVAILABLE:
+        # NOTE the asymmetry this leaves, which narrowing made visible:
+        # `_package_present` matches by PREFIX, so an array-form package
+        # (RCHA/EVTA on an externally loaded model) reports as present while its
+        # cell keys come back empty -- two such models compare as identical. The
+        # cell tier cannot read array-form packages at all; telling those apart
+        # needs a third state ("present, unreadable by this tier") rather than a
+        # wider except. Recorded in the ledger rather than fixed here.
+        logger.debug(
+            "no readable %s cells on %s", package_name,
+            getattr(model, "name", model), exc_info=True,
+        )
         return _package_present(model, package_name), set()
     if table is None or table.empty:
         return _package_present(model, package_name), set()
@@ -307,7 +335,16 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
 
         try:
             comparison = self._inputs.compare(model_name=model_name)
-        except Exception:
+        except PACKAGE_TABLE_UNAVAILABLE:
+            # Returning 0 here reads as "no values changed", so this handler
+            # firing at all is a degradation worth seeing in a debug log: it is
+            # what made a group with one package-less member report every other
+            # member as identical to the reference (now fixed in
+            # `GroupPackageInputs.get`, which skips such members).
+            logger.debug(
+                "cannot compare %s values for %s; reporting no value changes",
+                self.package_name, model_name, exc_info=True,
+            )
             return 0
         if comparison.empty:
             return 0
@@ -364,7 +401,11 @@ class ConnectionDiff:
         model = self.group.models[model_name]
         try:
             table = type(self)._build_table(model)
-        except Exception:
+        except PACKAGE_TABLE_UNAVAILABLE:
+            logger.debug(
+                "no readable %s geometry on %s; comparing it as having none",
+                self._package_name, model_name, exc_info=True,
+            )
             return _package_present(model, self._package_name), Counter(), ()
         if table is None or table.empty:
             return _package_present(model, self._package_name), Counter(), ()
@@ -763,7 +804,11 @@ def _config_values_equal(left, right) -> bool:
         return True
     try:
         return bool(left == right)
-    except Exception:  # pragma: no cover - defensive
+    except (ValueError, TypeError):  # pragma: no cover - defensive
+        # A numpy array compares elementwise, so `bool(...)` on the result
+        # raises ValueError ("truth value of an array is ambiguous"); TypeError
+        # covers types whose __eq__ refuses the comparison outright. Comparing
+        # the reprs is the documented fallback.
         return repr(left) == repr(right)
 
 
@@ -1081,7 +1126,10 @@ class ModelDiff:
         try:
             heads = self.hds.summary(model_name=model_name)
             budget = self.bud.summary(model_name=model_name)
-        except Exception:
+        except _RESULTS_UNAVAILABLE:
+            logger.debug(
+                "no comparable outputs for %s", model_name, exc_info=True,
+            )
             return {"identical": True, "lines": ["_Results differences: outputs unavailable (models not run)._"]}
 
         heads_ok = heads.empty or bool(heads["within_tolerance"].all())

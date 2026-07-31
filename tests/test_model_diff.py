@@ -364,3 +364,47 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
 
     # The list form of the door works too.
     assert not reference.diff([variant]).summary().empty
+
+
+# --- one package-less member used to hide every other model's differences ------
+def test_a_member_without_the_package_does_not_mask_the_others(tables):
+    """`GroupPackageInputs.get()` builds the WHOLE group before `compare()`
+    filters to one model, so a single member lacking the package used to raise
+    and take the comparison down with it. `_value_cells_changed` caught that,
+    returned 0, and `summary()` called a model with genuinely different
+    conductances identical to the reference -- so `report()` printed
+    "identical to reference" for a model that was not.
+
+    `model.diff(a, b)` is a documented first-class door, so a three-model group
+    is an ordinary thing to ask for, not a corner case.
+    """
+
+    tables[("ref", "ghb")] = _ghb("ref", [(0, 0, 10, 5.0, 100.0), (0, 0, 11, 5.0, 100.0)])
+    tables[("variant", "ghb")] = _ghb("variant", [(0, 0, 10, 5.0, 999.0), (0, 0, 11, 5.0, 100.0)])
+    # `third` is in the group and reports GHB attached, but no table is
+    # registered for it -- the stub raises, exactly as the real builder does.
+
+    diff = _group(tables, ["ref", "variant", "third"], reference="ref").diff()
+    summary = diff.summary()
+
+    variant_row = summary[summary["model"] == "variant"].iloc[0]
+    assert variant_row["value_cells_changed"] == 1, (
+        "the differing conductance was masked by a third model that has no GHB"
+    )
+    assert not variant_row["identical"]
+    assert "identical to reference" not in diff.report().split("`variant`")[1].split("##")[0]
+
+    # And the package-less member is still reported -- skipped, not vanished.
+    assert "third" in set(summary["model"])
+
+
+def test_the_two_model_result_is_unchanged_by_the_skip(tables):
+    """The fix must not move the two-model answer it was measured against."""
+
+    tables[("ref", "ghb")] = _ghb("ref", [(0, 0, 10, 5.0, 100.0), (0, 0, 11, 5.0, 100.0)])
+    tables[("variant", "ghb")] = _ghb("variant", [(0, 0, 10, 5.0, 999.0), (0, 0, 11, 5.0, 100.0)])
+
+    row = _group(tables, ["ref", "variant"], reference="ref").diff().summary().iloc[0]
+    assert row["cells_shared"] == 2
+    assert row["value_cells_changed"] == 1
+    assert not row["identical"]
