@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from myflopy._deprecation import deprecated_module_getattr
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
     build_cell_id,
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 
 idxx = pd.IndexSlice
 inches_to_feet = 1 / 12
+
+
+logger = get_logger(__name__)
 
 
 class GHBFromVector(Boundaries):
@@ -250,7 +254,21 @@ class GHBFromVector(Boundaries):
                         if name in elev_reference.keys():
                             try:
                                 e = elev_reference[name][per]
-                            except:
+                            except (IndexError, KeyError, TypeError) as error:
+                                # Same shape as CHD's head reference: too short
+                                # (IndexError -- and a NUMPY scalar raises
+                                # IndexError too, not TypeError), keyed
+                                # differently (KeyError), or a plain float that
+                                # is not subscriptable (TypeError). Note this
+                                # sits in the innermost cell loop, so the bare
+                                # `except:` it replaces was swallowing
+                                # KeyboardInterrupt on every cell of every
+                                # period.
+                                logger.debug(
+                                    "no elevation reference for %s at period %s "
+                                    "(%s); using the feature's own elevation",
+                                    name, per, error,
+                                )
                                 boundary_elev = elev + reference_offset
                                 e = None
                             if isinstance(e, float | int):

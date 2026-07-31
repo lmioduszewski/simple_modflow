@@ -35,6 +35,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from myflopy import viz
+from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.modflow.mf6.grid.plotting import build_choropleth
 from myflopy.modflow.mf6.package_plotting import (
@@ -61,6 +62,9 @@ _MPL_MEAS = viz.PALETTE.mpl_measured
 _MPL_TRUTH = viz.PALETTE.mpl_truth
 _MPL_ENSEMBLE = viz.PALETTE.mpl_ensemble
 _MPL_CONFLICT = viz.PALETTE.mpl_conflict
+
+
+logger = get_logger(__name__)
 
 
 def _normalize_backend(backend: str) -> str:
@@ -436,10 +440,10 @@ class IesResults:
         self.case = case_name or self._discover_case()
         self.pst = self.pyemu.Pst(str(self.workspace / f"{self.case}.pst"))
         self.model = model
-        try:
-            self.pst.try_parse_name_metadata()
-        except Exception:  # pragma: no cover - metadata parsing is best-effort
-            pass
+        # No `try_parse_name_metadata()` call here: `pyemu.Pst(filename)` loads
+        # via `Pst.load`, which calls it already (verified against the installed
+        # pyemu). The explicit re-call was redundant, and its `except Exception`
+        # was guarding work that had already happened.
 
     @cached_property
     def _metadata(self) -> dict:
@@ -2301,8 +2305,15 @@ class IesResults:
         for diagnostic in (self.plot_phi_contributions, self.plot_parameters_at_bounds):
             try:
                 figures.append(diagnostic())
-            except Exception:  # pragma: no cover - diagnostics are best-effort in the bundle
-                pass
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                # pragma: no cover - diagnostics are best-effort in the bundle
+                # A run killed between writing its obs and par ensembles leaves
+                # the .par.csv missing (OSError); an object-dtype column makes
+                # the mean a TypeError, not a ValueError.
+                logger.debug(
+                    "leaving %s out of the report bundle: %s",
+                    getattr(diagnostic, "__name__", diagnostic), error,
+                )
         for name in self.forecast_names:
             figures.append(self.forecast(name).plot())
         if self.model is not None:
@@ -2312,8 +2323,16 @@ class IesResults:
                 try:
                     figures.append(self.plot_field(info["target"], stat="mean", which="posterior"))
                     figures.append(self.plot_field(info["target"], stat="change"))
-                except Exception:  # pragma: no cover - field maps are best-effort in the bundle
-                    pass
+                except (OSError, ValueError, TypeError, KeyError, AttributeError,
+                        IndexError, NotImplementedError) as error:
+                    # pragma: no cover - field maps are best-effort in the bundle
+                    # NotImplementedError is reachable even though the loop
+                    # skips non-array families: `plot_field` is handed
+                    # `info["target"]` as a STRING and re-resolves it, so the
+                    # family it lands on need not be the one filtered above.
+                    logger.debug(
+                        "no field map for %s: %s", info.get("target"), error,
+                    )
 
         parts = ["<html><head><meta charset='utf-8'><title>IES review: "
                  f"{self.case}</title></head><body>", f"<h1>PESTPP-IES review: {self.case}</h1>",

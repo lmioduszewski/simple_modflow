@@ -106,8 +106,21 @@ class DRNFromVector(Boundaries):
             elif self.vor.gdf_topbtm is not None:
                 try:
                     drain_elevation = self.vor.gdf_topbtm.loc[cell, layer_idx + 1] + bottom_addition
-                except Exception:
-                    drain_elevation = bottom_addition
+                except KeyError as error:
+                    # This used to fall back to `bottom_addition` alone -- a
+                    # drain at the bare offset (often 0) rather than at the
+                    # layer bottom, which drains the aquifer. There is no
+                    # defensible default here: a cell the layer-surface frame
+                    # does not cover means the grid and the drain footprint
+                    # disagree, and MODFLOW would run happily on the wrong
+                    # answer.
+                    raise KeyError(
+                        f"no layer-{layer_idx} bottom elevation for cell {cell}, "
+                        f"so its drain elevation cannot be computed. The grid's "
+                        f"layer surfaces do not cover every cell this DRN "
+                        f"applies to -- pass explicit `bottoms=` if that is "
+                        f"intended."
+                    ) from error
             else:
                 drain_elevation = bottom_addition
             drn_values.append([cell_id, drain_elevation, conductance_by_cell[cell]])

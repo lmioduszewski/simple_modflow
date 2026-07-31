@@ -7,12 +7,16 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import build_cell_id, normalize_grid_type
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+
+logger = get_logger(__name__)
 
 
 class CHDFromVector(Boundaries):
@@ -115,7 +119,18 @@ class CHDFromVector(Boundaries):
                     else:
                         try:
                             head = override[per] + reference_offset
-                        except Exception:
+                        except (IndexError, KeyError, TypeError) as error:
+                            # A per-period head reference that does not run to
+                            # `per`: too short (IndexError), keyed by something
+                            # else (KeyError), or not subscriptable at all
+                            # (TypeError -- note a NUMPY scalar raises
+                            # IndexError here, not TypeError). The polygon's own
+                            # elevation is the documented fallback.
+                            logger.debug(
+                                "no head reference for %s at period %s (%s); "
+                                "using the feature's own elevation",
+                                name, per, error,
+                            )
                             head = head + reference_offset
                 region_layers_by_name[name] = layer_idx
                 region_geometries_by_name[name] = row["geometry"]

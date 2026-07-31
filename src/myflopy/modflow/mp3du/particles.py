@@ -13,12 +13,16 @@ from typing import TYPE_CHECKING, Any
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy._deprecation import deprecated_module_getattr, warn_deprecated
+from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+logger = get_logger(__name__)
 
 
 __all__ = [
@@ -585,7 +589,16 @@ class ParticleTrackingInput:
 
         try:
             inactive = getattr(self.model, "inactive_cells", None)
-        except Exception:
+        except (TypeError, KeyError, ValueError, AssertionError, OSError,
+                RuntimeError):
+            # `getattr` with a default absorbs AttributeError, so anything that
+            # arrives here came from `inactive_cells` being a PROPERTY that does
+            # work: reading a GeoPackage (pyogrio's DataSourceError is a
+            # RuntimeError), asserting its inputs are Paths (AssertionError), or
+            # coercing them. Falling through to the idomain array below is the
+            # documented second source.
+            logger.debug("no inactive_cells on the model; reading idomain instead",
+                         exc_info=True)
             inactive = None
         if inactive is not None:
             return {int(cell) for cell in inactive}
@@ -725,7 +738,15 @@ class ParticleTrackingInput:
 
         try:
             boundary_packages = set(self.collect_boundary_cell_sets())
-        except Exception:
+        except (MFDataException, FlopyException, AttributeError, TypeError,
+                ValueError, KeyError, IndexError):
+            # Walking every boundary package on the model reaches flopy's own
+            # two exception classes (neither subclasses a builtin) as well as
+            # the usual shape errors. With no packages resolved, ALL configured
+            # iface overrides are returned unfiltered -- which is what the
+            # caller below does when the set is empty.
+            logger.debug("could not resolve boundary packages; returning every "
+                         "iface override", exc_info=True)
             boundary_packages = set()
         if not boundary_packages:
             return dict(sorted(self._iface_overrides.items()))
