@@ -24,11 +24,15 @@ from rasterio.io import MemoryFile
 from rasterio.mask import mask
 from rasterio.transform import from_origin
 from scipy.interpolate import RBFInterpolator, griddata
+from scipy.spatial import QhullError
 from shapely.geometry import Polygon, mapping
 
 from myflopy import viz as f
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
+logger = get_logger(__name__)
 
 
 class InterpolatedSurface:
@@ -70,7 +74,17 @@ class InterpolatedSurface:
         self.model = model
         try:
             self.vor = self.model.vor if vor is None else vor
-        except:
+        except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+            # Deliberately broad. `model.vor` is a plain attribute on a live
+            # SimulationBase, but a LAZY PROPERTY on the file-backed
+            # LoadedMf6Run that loads the flopy simulation and rebuilds the
+            # Voronoi grid -- so it reaches flopy (MFDataException),
+            # geopandas/pyproj (CRSError, a RuntimeError), shapely (ValueError),
+            # and the filesystem, and the caller-supplied `crs=` means a bad
+            # projection string is a user input, not a bug. A surface plotted
+            # without a CRS is the documented fallback; refusing to build the
+            # object is not.
+            logger.debug("could not resolve a grid from the model", exc_info=True)
             self.vor = None
         self._interpolators = ['griddata', 'rbf', 'linearND', 'cloughTocher2D']
         self._interpolator = None
@@ -329,7 +343,9 @@ class InterpolatedSurface:
         grid_z = self.surface
         try:
             crs = self.vor.crs
-        except:
+        except AttributeError:
+            # `vor` is None (see __init__) or is a grid object that carries no
+            # crs; fall back to the one the caller passed.
             crs = self.crs
 
         memfile = MemoryFile()
@@ -377,8 +393,16 @@ class InterpolatedSurface:
         if self.use_rbf is False:
             try:
                 return self.griddata_interp
-            except:
-                print('error with griddata interpolation, using rbf')
+            except (QhullError, ValueError):
+                # QhullError (a RuntimeError) is what scipy raises for a
+                # degenerate point set -- collinear points, or too few of them
+                # to triangulate. ValueError covers NaN/inf in the inputs. Both
+                # mean "griddata cannot triangulate this", which is exactly when
+                # the radial-basis interpolator is the right second choice.
+                logger.debug(
+                    "griddata interpolation failed; falling back to rbf",
+                    exc_info=True,
+                )
                 return self.rbf_interp
         elif self.use_rbf is True:
             return self.rbf_interp

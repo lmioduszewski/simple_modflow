@@ -12,6 +12,7 @@ import geopandas as gpd
 import pandas as pd
 import shapely as shp
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.sources import (
@@ -21,6 +22,8 @@ from myflopy.sources import (
     TableSource,
 )
 from myflopy.specs import GridSpec
+
+logger = get_logger(__name__)
 
 _BUILD_OPTION_KEYS = {
     "cleanup",
@@ -581,8 +584,19 @@ def _resolve_python(
         raise ValueError(f"Grid builder {spec.function!r} in {script} returned None.")
     try:
         grid.myflopy_grid_spec = spec
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - see below; `grid` came from user code
+        # Deliberately broad, and the asymmetry is the whole argument. `grid` is
+        # whatever a USER'S builder script returned, so the set of types a
+        # `setattr` on it can raise is genuinely open: AttributeError for
+        # __slots__ / a read-only property / a frozen dataclass, TypeError for a
+        # class rather than an instance, and -- measured against the pydantic
+        # installed here -- a plain ValueError for an undeclared field. All that
+        # is lost is a provenance tag; narrowing would trade that for failing
+        # the user's whole grid resolution.
+        logger.debug(
+            "could not tag the grid from %r with its GridSpec", spec.name,
+            exc_info=True,
+        )
     return grid
 
 

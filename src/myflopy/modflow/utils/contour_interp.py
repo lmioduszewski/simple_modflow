@@ -15,6 +15,10 @@ import os
 import subprocess
 from pathlib import Path
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def _grass_modules():
     """Import GRASS Python modules lazily, with a clear error if unavailable."""
@@ -24,7 +28,13 @@ def _grass_modules():
         from grass.pygrass.modules.shortcuts import general as g
         from grass.pygrass.modules.shortcuts import raster as r
         from grass.pygrass.modules.shortcuts import vector as v
-    except Exception as error:  # pragma: no cover - exercised only with GRASS
+    except Exception as error:  # noqa: BLE001 - see below  # pragma: no cover
+        # Broad on purpose, and it does not swallow: every failure to load the
+        # optional GRASS SYSTEM dependency is re-raised as one actionable
+        # ImportError with the cause attached. GRASS's own import chain runs
+        # ctypes bindings and shells out to the launcher, so it raises far more
+        # than ImportError -- OSError, RuntimeError, CalledProcessError -- and
+        # the caller needs the same message for all of them.
         raise ImportError(
             "GRASS GIS Python modules are required for contour interpolation. "
             "Install GRASS GIS and run from a GRASS-enabled environment."
@@ -157,7 +167,18 @@ class ContourSurfaceInterpolator:
 
         try:
             self.session = gsetup.init(self.grassdata, self.location)
-        except Exception:
+        except (ValueError, subprocess.CalledProcessError):
+            # ValueError is the NORMAL first-run path, not an error: GRASS 8.4's
+            # `init` raises it for "Path <grassdata> does not exist" and for a
+            # location that has not been created yet -- and `grassdata` defaults
+            # to ~/grassdata, which most users will not have. CalledProcessError
+            # comes from `get_install_path` querying the GRASS binary as a
+            # subprocess, which fires on a half-configured install. Creating the
+            # location and retrying is the answer to both.
+            logger.debug(
+                "no GRASS session at %s; creating the location first",
+                self.location_path, exc_info=True,
+            )
             self._create_location()
             self.session = gsetup.init(self.grassdata, self.location)
 

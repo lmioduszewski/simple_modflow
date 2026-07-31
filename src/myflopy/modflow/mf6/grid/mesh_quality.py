@@ -175,7 +175,12 @@ def triangle_quality_report(
 
         try:
             vor = VoronoiGridPlus(triangle)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - flopy raises a BARE Exception
+            # This try is a deliberate PROBE -- "can a Voronoi grid be built
+            # from this triangulation?" -- and its answer goes into the report
+            # either way. flopy's voronoi module raises a literal
+            # `Exception(...)` for a degenerate mesh (verified against 3.10), so
+            # there is no narrower clause that still answers the question.
             report["voronoi_status"] = "error"
             report["voronoi_error"] = str(exc)
         else:

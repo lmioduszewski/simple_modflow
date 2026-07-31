@@ -1550,7 +1550,13 @@ class TriangleGrid(Triangle):
         domain_polygon = max(self._iter_polygons(self.domain_geometry), key=lambda polygon: polygon.area)
         try:
             current_vor = self._build_voronoi_for_mesh(self)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - flopy raises a BARE Exception
+            # Not narrowable. `flopy.utils.voronoi` contains a literal
+            # `raise Exception(...)` for a degenerate triangulation (verified
+            # against flopy 3.10), so the only clause that catches the case this
+            # guard exists for is `Exception` itself. The failure is REPORTED,
+            # not swallowed: it becomes a `voronoi_build_failed` reason the
+            # caller acts on.
             regression_reasons = [f"voronoi_build_failed:{exc}"]
             self._last_optimization_report = {
                 "method": "constrained_cvt_lloyd",
@@ -1620,7 +1626,13 @@ class TriangleGrid(Triangle):
 
             try:
                 candidate_vor = self._build_voronoi_for_mesh(self)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - flopy raises a BARE Exception
+                # Not narrowable. `flopy.utils.voronoi` contains a literal
+                # `raise Exception(...)` for a degenerate triangulation (verified
+                # against flopy 3.10), so the only clause that catches the case this
+                # guard exists for is `Exception` itself. The failure is REPORTED,
+                # not swallowed: it becomes a `voronoi_build_failed` reason the
+                # caller acts on.
                 regression_reasons = [f"voronoi_build_failed:{exc}"]
                 self._optimization_points = accepted_points
                 self._build_triangle_mesh(verbose=verbose)
