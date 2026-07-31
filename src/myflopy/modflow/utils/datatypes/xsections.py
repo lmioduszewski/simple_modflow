@@ -16,9 +16,12 @@ from shapely import line_locate_point
 from shapely.geometry import LineString
 
 from myflopy import viz as f
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.utils.animations import Animation
 from myflopy.viz import Fig
+
+logger = get_logger(__name__)
 
 
 def _normalize_section_line(line) -> LineString:
@@ -677,10 +680,17 @@ class XSection:
 
             print(f'reading kstpkper {per}', end='\r')
             try:
-                # print(f'reading kstpkper {per}', end='\r')
                 self.kstpkper = per
                 points, elevations = self.xsect
-            except:
+            except (KeyError, IndexError, ValueError, RuntimeError, TypeError,
+                    OSError) as error:
+                # One period that cannot be read should not lose the others, so
+                # the frame is skipped -- but silently skipping EVERY period
+                # produced an empty animation with an inverted y-axis, which is
+                # the bug report this log line answers. AssertionError is
+                # deliberately NOT caught: that is an invalid `kstpkper` the
+                # caller asked for, not a data gap.
+                logger.debug("skipping cross-section frame %s: %s", per, error)
                 continue
 
             # if minimum and max y-values for this period are greater than the previous max and min,

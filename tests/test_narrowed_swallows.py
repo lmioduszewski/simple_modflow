@@ -113,3 +113,79 @@ def test_a_geopackage_with_no_usable_geometry_says_which_file(tmp_path):
 
     with pytest.raises(ValueError, match="no usable geometries"):
         read_gpkg(path)
+
+
+# --- a misspelled contour method drew nothing ---------------------------------
+def _square_grid():
+    """A stand-in grid exposing only the centroids the contour code reads."""
+
+    return SimpleNamespace(
+        centroids_x=np.array([0.0, 1.0, 0.0, 1.0, 0.5]),
+        centroids_y=np.array([0.0, 0.0, 1.0, 1.0, 0.5]),
+    )
+
+
+def test_an_unknown_contour_method_is_named_not_silently_empty():
+    """`contour_line_segments` raises `ValueError: contour method must be...`
+    for an unrecognized `method=` -- and the `except Exception` that wrapped the
+    whole body caught its own raise and returned `[]`. A typo produced a map
+    with no contours and no explanation.
+    """
+
+    from myflopy.modflow.mf6.contour_plotting import contour_line_segments
+
+    with pytest.raises(ValueError, match="must be 'linear' or 'cubic'"):
+        contour_line_segments(_square_grid(), [0.0, 1.0, 1.0, 2.0, 1.0], method="lienar")
+
+
+def test_the_method_is_checked_before_the_data_is_given_up_on():
+    """The validation sits above the `return []` early exits, so a typo is
+    reported even for values too flat to contour -- otherwise the message
+    depends on the data, which is the least helpful possible behaviour."""
+
+    from myflopy.modflow.mf6.contour_plotting import contour_line_segments
+
+    with pytest.raises(ValueError, match="must be 'linear' or 'cubic'"):
+        contour_line_segments(_square_grid(), [1.0] * 5, method="lienar")
+
+
+def test_a_valid_contour_method_still_draws():
+    """The guard must not have cost the working path."""
+
+    from myflopy.modflow.mf6.contour_plotting import contour_line_segments
+
+    segments = contour_line_segments(
+        _square_grid(), [0.0, 1.0, 1.0, 2.0, 1.0], levels=[0.5, 1.5], method="linear"
+    )
+    assert segments and {"level", "x", "y"} <= set(segments[0])
+
+
+# --- resample handed the caller None ------------------------------------------
+def test_a_bad_resample_rule_raises_instead_of_returning_none():
+    """`_resample_timeseries_df` did `return print(...)` on failure: it printed
+    a message and returned None, so the real symptom arrived later as an
+    AttributeError on None, far from the bad argument."""
+
+    import pandas as pd
+
+    from myflopy.modflow.mf6.mf2Dplots import WaterLevelPlot
+
+    frame = pd.DataFrame(
+        {"when": pd.date_range("2024-01-01", periods=3, freq="D"), "wl": [1.0, 2.0, 3.0]}
+    )
+    with pytest.raises(ValueError, match="valid pandas resample rule"):
+        WaterLevelPlot._resample_timeseries_df(frame, time_step="nonsense", time_col_name="when")
+
+
+# --- a masked value is "not int-able", not a crash -----------------------------
+def test_nested_int_conversion_leaves_masked_values_alone():
+    """`convert_nested_to_int`'s contract is "return obj unchanged if it is not
+    int-able", and `np.ma.MaskError` subclasses Exception DIRECTLY -- so a
+    narrowing to the obvious (TypeError, ValueError) would have let it escape.
+    Masked values are the normal shape of flopy head output at nodata cells."""
+
+    from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
+
+    result = convert_nested_to_int([1, "2", None, np.ma.masked])
+    assert result[:3] == [1, 2, None]
+    assert result[3] is np.ma.masked

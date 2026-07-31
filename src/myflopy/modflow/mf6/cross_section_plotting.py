@@ -58,7 +58,9 @@ def _theme_context(style: ModelCrossSectionStyle):
         return nullcontext()
     try:
         from myflopy.viz import REPORT
-    except Exception:
+    except ImportError:
+        # The house theme is optional styling; a model cross-section must still
+        # draw without it.
         return nullcontext()
     return REPORT.context()
 

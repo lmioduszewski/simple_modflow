@@ -21,11 +21,26 @@ import rasterio
 import shapely as shp
 from pandas import IndexSlice as idxx
 from PIL import Image
+from rasterio.errors import RasterioError
 from rasterio.warp import transform_bounds
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.utils.animations import Animation
 from myflopy.viz import Fig
+
+logger = get_logger(__name__)
+
+#: What "ask the grid for its layer surfaces" can raise.
+#:
+#: `gdf_topbtm` is frequently LAZY: building it samples rasters, so the call
+#: reaches rasterio, pyproj and geopandas. Two MRO facts drive the membership --
+#: `RasterioError` does NOT subclass OSError (only `RasterioIOError` does, by
+#: multiple inheritance), and pyproj's `CRSError` is a RuntimeError.
+_SURFACES_UNAVAILABLE = (
+    AttributeError, IndexError, KeyError, TypeError, ValueError, RuntimeError,
+    OSError, RasterioError,
+)
 
 # Map the Plotly colorscale names this class understands to the nearest
 # matplotlib colormap, so plot_mpl() honors a Choro's configured colorscale.
@@ -946,7 +961,12 @@ class Choro:
                 dates = self.model.per_dates
                 if period is not None and period < len(dates):
                     date = dates[period].strftime("%b %Y")
-            except Exception:
+            except (AttributeError, ValueError):
+                # AttributeError: `per_dates` holds something without
+                # `.strftime` (a plain int period label). ValueError: a date
+                # that pandas cannot format. The hover loses its date footer,
+                # which is strictly better than losing the map.
+                logger.debug("no date label for period %s", period)
                 date = None
 
         payload = dict(self._custom_hover) if self._custom_hover else {}
@@ -962,7 +982,14 @@ class Choro:
                 topbtm = self.vor.gdf_topbtm
                 top = topbtm.iloc[:, 1].to_list()
                 botm = [topbtm.iloc[:, 2 + i].to_list() for i in range(self.nlay)]
-            except Exception:
+            except _SURFACES_UNAVAILABLE:
+                # `gdf_topbtm` is often LAZY -- building it samples rasters
+                # through rasterio/pyproj/geopandas, so the reachable set runs
+                # well past IndexError: RasterioError (which is NOT an OSError
+                # subclass -- only RasterioIOError is), and pyproj's CRSError,
+                # which is a RuntimeError. Without top/botm the hover simply
+                # omits the layer elevations.
+                logger.debug("no layer surfaces for the hover", exc_info=True)
                 top = botm = None
 
         return HoverContext(
@@ -1047,7 +1074,12 @@ class Choro:
         for idx, row in self.locs.iterrows():
             try:
                 name = row[name_field]
-            except:
+            except LookupError:
+                # LookupError, not KeyError: `name_field` is caller-supplied
+                # (`add_locs(name_field=...)`), and on a pandas row an INTEGER
+                # key that misses raises IndexError via the positional
+                # fallback, not KeyError. Falling back to the row index is the
+                # documented behaviour for both.
                 name = idx
             geom = row.geometry
             if isinstance(geom, shp.Polygon):

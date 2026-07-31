@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -39,7 +40,11 @@ class WaterLevelPlot(Fig):
             if filename.suffix == '.xlsx':
                 try:  # try reading file
                     thisdf = pd.read_excel(filename)  # import excel data
-                except:  # if error
+                except (OSError, ValueError, zipfile.BadZipFile):
+                    # A .xlsx that is unreadable (OSError), not actually a zip
+                    # container (BadZipFile -- which subclasses Exception, not
+                    # OSError), or malformed inside (ValueError). This loop
+                    # scans a whole directory, so skipping is the job.
                     print(f'{filename.stem} is not a valid .xlsx file! Skipping...')
                     continue  # skip to next file in for loop
                 """create a dictionary of Pandas dataframes. Each item in the
@@ -56,9 +61,17 @@ class WaterLevelPlot(Fig):
         dframe = dframe.set_index(time_col_name)
         try:
             resampled_df = dframe.resample(time_step)
-        except:
-            return print('Error: Check that a valid resample rule (time_step) is set, and a valid datetime-like'
-                         'time_col_name is set.')
+        except (ValueError, TypeError) as error:
+            # ValueError: `time_step` is not a pandas offset alias. TypeError:
+            # the index is not datetime-like. This used to `return print(...)`,
+            # which printed the message and handed the caller None -- so the
+            # failure surfaced later as an AttributeError on None, far from the
+            # bad argument that caused it.
+            raise ValueError(
+                f"cannot resample by {time_step!r}: check that it is a valid "
+                f"pandas resample rule and that {time_col_name!r} is a "
+                f"datetime-like column."
+            ) from error
         valid_bys = ['mean', 'sum', 'max', 'min']
         if by in valid_bys:
             return getattr(resampled_df, by)()
@@ -246,7 +259,9 @@ if __name__ == "__main__":
         for well, qvt_contact in top_Qvt_dict.items():
             try:
                 actual_df.loc[actual_df[well] <= qvt_contact, well] = qvt_contact
-            except:
+            except KeyError:
+                # The well survey lists wells this water-level table has no
+                # column for; they simply have no contact elevation to clamp to.
                 continue
         df[list(df.keys())[0]] = actual_df
         plt.plot_from_excel_dict(resample_time_step='D', by='mean', group_legend=True, vary_dash_by_df=True)

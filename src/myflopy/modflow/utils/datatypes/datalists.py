@@ -22,7 +22,14 @@ def convert_nested_to_int(obj):
     else:
         try:
             return int(obj)
-        except:
+        except (TypeError, ValueError, OverflowError, np.ma.MaskError):
+            # The documented contract is "return obj unchanged if it is not
+            # int-able". TypeError covers None/dict/datetime, ValueError a
+            # non-numeric string or NaN, OverflowError an infinity -- and
+            # MaskError a masked array element, which subclasses Exception
+            # DIRECTLY and so escapes every builtin. Masked values are the
+            # normal shape of flopy head output at nodata cells, which is
+            # exactly the kind of nested structure this helper walks.
             return obj
 
 

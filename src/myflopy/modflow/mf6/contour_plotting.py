@@ -10,9 +10,14 @@ import matplotlib.tri as mtri
 import numpy as np
 from matplotlib.figure import Figure
 from scipy.interpolate import CloughTocher2DInterpolator
+from scipy.spatial import QhullError
+from shapely.errors import GEOSException
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, Point
 
+from myflopy._logging import get_logger
 from myflopy.viz import mpl_axes
+
+logger = get_logger(__name__)
 
 
 def _matplotlib_cmap(name):
@@ -208,6 +213,21 @@ def contour_line_segments(
     ``method="cubic"`` contours a Clough-Tocher interpolated surface.
     """
 
+    # Validated FIRST, ahead of every `return []` below. This check used to sit
+    # inside the try at the end of the function, so the `except Exception`
+    # caught the ValueError it raises itself and a misspelled `method=` drew NO
+    # contours instead of saying why. Placing it before the early returns means
+    # a typo is reported even when the data would not have contoured anyway.
+    normalized_method = str(method).lower()
+    if normalized_method in {"linear", "tri", "tricontour"}:
+        contour = _linear_contour_segments
+    elif normalized_method in {"cubic", "clough", "clough_tocher", "cloughtocher"}:
+        contour = _cubic_contour_segments
+    else:
+        raise ValueError(
+            f"contour method must be 'linear' or 'cubic', not {method!r}."
+        )
+
     x, y = _cell_center_xy(vor)
     z = _as_cell_values(values, ncpl=len(x), label=label)
     finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
@@ -223,15 +243,17 @@ def contour_line_segments(
         resolved_levels = _resolve_contour_levels(levels, z)
         if resolved_levels.size == 0:
             return []
-        normalized_method = str(method).lower()
-        if normalized_method in {"linear", "tri", "tricontour"}:
-            segments = _linear_contour_segments(x, y, z, levels=resolved_levels)
-        elif normalized_method in {"cubic", "clough", "clough_tocher", "cloughtocher"}:
-            segments = _cubic_contour_segments(x, y, z, levels=resolved_levels, resolution=int(resolution))
+        if contour is _cubic_contour_segments:
+            segments = contour(x, y, z, levels=resolved_levels, resolution=int(resolution))
         else:
-            raise ValueError("contour method must be 'linear' or 'cubic'.")
+            segments = contour(x, y, z, levels=resolved_levels)
         return _clip_contour_segments(segments, clip_geometry)
-    except Exception:
+    except (QhullError, ValueError, TypeError, GEOSException):
+        # A degenerate point set scipy cannot triangulate (QhullError, a
+        # RuntimeError), NaN/inf in the values (ValueError), or an invalid clip
+        # geometry (shapely's GEOSException). Contours are an OVERLAY -- no
+        # lines is a reasonable answer where a traceback is not.
+        logger.debug("no contour segments could be built", exc_info=True)
         return []
 
 
