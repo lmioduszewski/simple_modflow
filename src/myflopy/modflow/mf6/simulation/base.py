@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any
 import flopy
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import MFDataException
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.simulation.accessors import (
     build_choro,
     build_xsection,
@@ -66,6 +68,8 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.prt import ParticleTracking
     from myflopy.modflow.mf6.sfr import SFRBuilder
     from myflopy.modflow.mf6.simulation.accessors import ModelOutputs
+
+logger = get_logger(__name__)
 
 
 class SimulationBase:
@@ -179,7 +183,11 @@ class SimulationBase:
 
         try:
             return int(simulation.tdis.nper.data)
-        except Exception:
+        except (AttributeError, TypeError, MFDataException):
+            # AttributeError: no TDIS attached yet. TypeError: `nper.data` is
+            # None on a TDIS declared but not populated. MFDataException: flopy
+            # cannot read the block.
+            logger.debug("no TDIS nper available", exc_info=True)
             return None
 
     @staticmethod
@@ -188,11 +196,25 @@ class SimulationBase:
 
         try:
             return int(model.modelgrid.nlay)
-        except Exception:
-            try:
-                return int(np.asarray(model.modelgrid.botm).reshape(-1).size)
-            except Exception:
-                return None
+        except (AttributeError, TypeError, NotImplementedError, MFDataException):
+            # NotImplementedError is the interesting one: flopy's BASE Grid
+            # raises it from `nlay` when a model has no dis/disv/disu attached,
+            # which is exactly the case this fallback is here for.
+            logger.debug("modelgrid has no nlay; deriving it from botm")
+
+        # `botm` is (nlay, ncpl) on DISV and (nlay, nrow, ncol) on DIS, so the
+        # LAYER COUNT is its first axis. This used to read `.reshape(-1).size`,
+        # which is the total number of botm ENTRIES -- on a 3-layer, 100-cell
+        # grid it reported nlay as 300.
+        try:
+            botm = np.asarray(model.modelgrid.botm)
+        except (AttributeError, ValueError, MFDataException):
+            logger.debug("no botm to derive nlay from", exc_info=True)
+            return None
+        if botm.ndim == 0 or botm.size == 0:
+            return None
+        # A 1-D botm is DISU, which is a single-layer grid by construction.
+        return int(botm.shape[0]) if botm.ndim > 1 else 1
 
     def __init__(
         self,
@@ -1300,8 +1322,15 @@ class SimulationBase:
                 times = hds.get_times()
                 if times:
                     final_time = float(times[-1])
-            except Exception:
-                pass
+            except (OSError, ValueError, EOFError):
+                # The file EXISTS (checked above), so this is a heads file that
+                # cannot be read: zero-byte or truncated by a killed run
+                # (ValueError/EOFError from flopy's HeadFile), or unreadable
+                # (OSError). The summary row still lists the file; it just
+                # cannot say how many time steps are in it.
+                logger.debug(
+                    "could not read time steps from %s", heads_path, exc_info=True,
+                )
 
         return pd.DataFrame(
             [

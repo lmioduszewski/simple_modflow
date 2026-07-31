@@ -25,28 +25,34 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     layers = []
     gpkg = gpd.read_file(gpkg_path)
     crs = gpkg.crs
-    try:
-        for idx, row in gpkg.iterrows():
-            if row.geometry is None:
-                print(f'skipping row {idx} because the geometry is None')
-                continue
-            if isinstance(row.geometry, shp.Polygon | shp.Point | shp.MultiLineString | shp.LineString):
-                layers.append(row)
+    # No try/except here on purpose. This loop used to sit inside a bare
+    # `except:` that CAUGHT THE TypeError THE LOOP ITSELF RAISES four lines
+    # below -- so an unsupported geometry ended the read and returned the
+    # features collected so far, and the caller had no way to know the layer was
+    # incomplete. (The handler's comment described terminating a `while` loop
+    # that no longer exists, and set a `layer` local nothing reads.) A file this
+    # reader cannot fully represent is now an error, not a short answer.
+    for idx, row in gpkg.iterrows():
+        if row.geometry is None:
+            print(f'skipping row {idx} because the geometry is None')
+            continue
+        if isinstance(row.geometry, shp.Polygon | shp.Point | shp.MultiLineString | shp.LineString):
+            layers.append(row)
+            num_features += 1
+        elif isinstance(row.geometry, shp.MultiPolygon):
+            for geom in row.geometry.geoms:
+                new_row = row.copy()
+                new_row.geometry = geom
+                layers.append(new_row)
                 num_features += 1
-            elif isinstance(row.geometry, shp.MultiPolygon):
-                for geom in row.geometry.geoms:
-                    new_row = row.copy()
-                    new_row.geometry = geom
-                    layers.append(new_row)
-                    num_features += 1
-            else:
-                raise TypeError(f'Unexpected geometry type: {type(row.geometry)}')
-            layer_num += 1
-    # if layer number is not valid, end the while loop by setting layer to False
-    except:
-        layer = False
-        if layer_num == 0:
-            raise ValueError('Could not read gpkg file') from None
+        else:
+            raise TypeError(f'Unexpected geometry type: {type(row.geometry)}')
+        layer_num += 1
+
+    if not layers:
+        # Previously this only fired when an exception happened to be raised; an
+        # empty layer fell through to an obscure failure in `set_geometry`.
+        raise ValueError(f'no usable geometries in {gpkg_path}')
 
     print(f'Imported {num_features} features from {gpkg_path}')
     gdf = gpd.GeoDataFrame.from_records(data=layers)

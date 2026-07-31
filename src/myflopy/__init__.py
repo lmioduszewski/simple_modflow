@@ -223,10 +223,12 @@ if TYPE_CHECKING:
     from myflopy.workspace import ModelView, Project, ProjectLayout, Run, load_run
 
 try:
-    from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
     __version__ = version("myflopy")
-except Exception:
+except PackageNotFoundError:
+    # Running from a source checkout that was never pip-installed -- which is
+    # how the notebooks in examples/ are used.
     __version__ = "0.1.0"
 
 

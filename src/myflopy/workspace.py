@@ -14,6 +14,7 @@ from typing import Any
 
 import flopy
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
@@ -27,6 +28,8 @@ from myflopy.specs import (
     _grid_entry,
     _package_entry_label,
 )
+
+logger = get_logger(__name__)
 
 RUN_MANIFEST_NAME = "run.json"
 PROJECT_MANIFEST_NAME = "project.json"
@@ -145,7 +148,9 @@ def _artifact_versions() -> dict[str, str]:
     for name in ("flopy", "geopandas", "shapely", "numpy", "pandas"):
         try:
             module = import_module(name)
-        except Exception:
+        except ImportError:
+            # An optional stack member is not installed; it simply does not
+            # appear in the recorded versions.
             continue
         versions[name] = getattr(module, "__version__", "unknown")
     return versions
@@ -526,8 +531,14 @@ class Run:
         if self.simulation is not None:
             try:
                 return tuple(self.simulation.model_names)
-            except Exception:
-                pass
+            except (AttributeError, TypeError):
+                # A duck-typed simulation with no `model_names`, or one whose
+                # `model_names` is None. Fall through to reading the names off
+                # the .nam files on disk.
+                logger.debug(
+                    "simulation exposes no model_names; reading them from the "
+                    "workspace instead",
+                )
         return tuple(
             path.stem
             for path in sorted(self.workspace.glob("*.nam"))

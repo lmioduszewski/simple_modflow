@@ -22,6 +22,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import FlopyException, MFDataException
+
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
 
 _SETTINGS_COLUMNS = ["section", "setting", "value"]
 
@@ -58,7 +63,14 @@ def _options_rows(section: str, pkg, blocks) -> list[tuple]:
                 continue
             try:
                 value = dataset.get_data()
-            except Exception:
+            except (MFDataException, FlopyException):
+                # flopy raises these for a dataset that is declared in the dfn
+                # but carries no data in this model. Nothing to compare, so the
+                # row is simply absent from the config.
+                logger.debug(
+                    "no data for %s/%s; leaving it out of the config",
+                    block_name, name,
+                )
                 continue
             if value is None:
                 continue
@@ -71,7 +83,11 @@ def _tdis_period_rows(tdis) -> list[tuple]:
 
     try:
         data = tdis.perioddata.get_data()
-    except Exception:
+    except (AttributeError, MFDataException):
+        # AttributeError: a duck-typed or partially built TDIS with no
+        # perioddata at all. MFDataException: flopy has the attribute but no
+        # stored data behind it.
+        logger.debug("no TDIS perioddata; the config carries no period rows")
         return []
     if data is None:
         return []
