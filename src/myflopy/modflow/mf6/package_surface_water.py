@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy import viz as figs
 from myflopy._deprecation import deprecated_instance_getattr
+from myflopy._logging import get_logger
 from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
@@ -64,6 +66,24 @@ from myflopy.modflow.utils.datatypes.hover import (
     surface_water_hover,
 )
 
+logger = get_logger(__name__)
+
+#: Everything that can come back from "ask the model for a stage result".
+#:
+#: The stage lookups below wrap a whole pipeline -- resolve the package, open
+#: its binary output, normalize the frame -- not a single call, so the tuple is
+#: correspondingly wide. Each member was measured against flopy 3.10:
+#: ``AttributeError`` when the package is not attached (or its ``output.stage()``
+#: is None because it declares no stage fileout), ``EOFError`` on a TRUNCATED
+#: stage file, ``ValueError`` on an empty or all-zero one, ``OSError`` on an
+#: unreadable path, and flopy's own two exception classes -- which subclass
+#: ``Exception`` directly, so no builtin covers them -- from the lazy simulation
+#: load a file-backed model performs on first access.
+_STAGE_UNAVAILABLE = (
+    AttributeError, TypeError, ValueError, EOFError, OSError,
+    MFDataException, FlopyException,
+)
+
 
 def _join_feature_stage(frame, stage_table, *, per=None):
     """Join per-cell feature stage onto an exchange frame for the hover.
@@ -95,7 +115,11 @@ def join_sfr_stage(model, frame, *, per=None):
 
     try:
         stage_table = build_sfr_stage_result_table(model)
-    except Exception:
+    except _STAGE_UNAVAILABLE:
+        logger.debug(
+            "no SFR stage for %s; the exchange hover will omit it",
+            getattr(model, "name", model), exc_info=True,
+        )
         return frame
     return _join_feature_stage(frame, stage_table, per=per)
 
@@ -105,7 +129,11 @@ def join_lak_stage(model, frame, *, per=None):
 
     try:
         stage_table = build_lak_stage_result_table(model)
-    except Exception:
+    except _STAGE_UNAVAILABLE:
+        logger.debug(
+            "no lake stage for %s; the exchange hover will omit it",
+            getattr(model, "name", model), exc_info=True,
+        )
         return frame
     return _join_feature_stage(frame, stage_table, per=per)
 

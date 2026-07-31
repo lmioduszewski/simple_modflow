@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._logging import get_logger
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.package_budget import (
@@ -36,6 +38,8 @@ from myflopy.modflow.mf6.package_tables import (
     summarize_input_table,
 )
 from myflopy.modflow.utils.datatypes.hover import result_hover
+
+logger = get_logger(__name__)
 
 
 class CellBudgetResultsExplorer(SpatialView):
@@ -684,6 +688,13 @@ class ModelBudgetNamespace:
         try:
             terms = self._terms()
         except Exception:  # noqa: BLE001 - dir() must never raise
+            # 7.3 left this broad on purpose. `_terms` opens the budget file,
+            # and that chain was measured to raise types no builtin tuple
+            # covers -- flopy's MFDataException, and NotImplementedError out of
+            # the base Grid.shape that CellBudgetFile touches unconditionally
+            # when a model has no discretization. An autocomplete that raises
+            # is worse than one that comes back short.
+            logger.debug("no budget terms for __dir__", exc_info=True)
             terms = {}
         return sorted({*super().__dir__(), *terms})
 
@@ -732,6 +743,10 @@ class ModelBudgetNamespace:
         try:
             terms = ", ".join(sorted(self._terms())) or "no terms"
         except Exception:  # noqa: BLE001 - repr must never raise
+            # Broad on purpose, same reasoning as __dir__ above. A __repr__ that
+            # raises breaks the debugger and the traceback you were reading when
+            # you needed it -- so this one reports the failure in its own text.
+            logger.debug("no budget terms for __repr__", exc_info=True)
             terms = "budget file unavailable"
         return f"<{type(self).__name__} {getattr(self.model, 'name', '?')!r}: {terms}>"
 

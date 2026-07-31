@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import FlopyException, MFDataException
+
+from myflopy._logging import get_logger
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -42,6 +45,24 @@ _TIME_UNIT_ABBREVIATIONS = {
     "years": "yr",
 }
 
+logger = get_logger(__name__)
+
+#: What "ask a model for its declared units" can raise.
+#:
+#: The expensive part is not the attribute walk below -- it is that on a
+#: file-backed model (``LoadedMf6Run``) both ``model.gwf`` and ``model.sim`` are
+#: LAZY properties, so the first of these helpers to run pays for the whole
+#: ``MFSimulation.load``. Measured failure modes of that load: flopy's own
+#: ``MFDataException``/``FlopyException`` (neither subclasses a builtin), a
+#: ``UnicodeDecodeError`` (a ``ValueError``) on a binary/truncated ``mfsim.nam``,
+#: ``OSError`` on an unreadable workspace, and ``TypeError``/``ZeroDivisionError``
+#: from myflopy's own post-load ``int(sim.tdis.nper.data)`` and cell-count
+#: division when the loaded simulation is incomplete.
+_UNITS_UNAVAILABLE = (
+    AttributeError, TypeError, ValueError, ZeroDivisionError, OSError,
+    MFDataException, FlopyException,
+)
+
 
 def _declared_length_unit(model: SimulationBase) -> str | None:
     """Return the model's declared length unit, or ``None`` if it declares none."""
@@ -55,7 +76,11 @@ def _declared_length_unit(model: SimulationBase) -> str | None:
             data = getattr(getattr(package, "length_units", None), "data", None)
             if data:
                 return str(data).strip().lower()
-    except Exception:  # noqa: BLE001 - a hover label must never break a map
+    except _UNITS_UNAVAILABLE:
+        # A hover label must never break a map, so the fallback stays -- but it
+        # is no longer silent: an entire failed simulation load used to show up
+        # only as a hover reading "ft3/T".
+        logger.debug("could not read the declared length unit", exc_info=True)
         return None
     return None
 
@@ -72,7 +97,12 @@ def _declared_time_unit(model: SimulationBase) -> str | None:
             data = getattr(getattr(tdis, "time_units", None), "data", None)
             if data:
                 return str(data).strip().lower()
-    except Exception:  # noqa: BLE001 - a hover label must never break a map
+    except _UNITS_UNAVAILABLE:
+        # This is the helper that runs FIRST (``budget_value_units`` reads the
+        # time half before the length half), so on a file-backed model it is the
+        # one that pays for the lazy load -- and therefore the one whose debug
+        # line explains why both units came back blank.
+        logger.debug("could not read the declared time unit", exc_info=True)
         return None
     return None
 

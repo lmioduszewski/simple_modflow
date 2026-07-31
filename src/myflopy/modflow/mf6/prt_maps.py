@@ -29,8 +29,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from flopy.mf6.mfbase import MFDataException
 
 from myflopy import viz
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_explorer_utils import _default_show_layer_elevs
 from myflopy.modflow.mf6.package_plotting import (
     SpatialView,
@@ -46,6 +48,8 @@ from myflopy.modflow.utils.datatypes.hover import (
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.prt import PRTRunResults
+
+logger = get_logger(__name__)
 
 #: Track-CSV columns that together identify one released particle.
 _PARTICLE_KEYS = ("imdl", "iprp", "irpt", "trelease")
@@ -83,7 +87,14 @@ def _time_unit(model) -> str:
 
     try:
         declared = str(_tdis_time_units(model)).upper()
-    except Exception:  # a bare/partial model has no TDIS to read
+    except (AttributeError, MFDataException, OSError, ValueError):
+        # A bare/partial model has no TDIS to read (AttributeError). The rest
+        # come from `model.sim` being a LAZY property on a file-backed model:
+        # the first access performs the whole MFSimulation.load, which raises
+        # flopy's MFDataException, OSError on an unreadable workspace, or a
+        # UnicodeDecodeError (a ValueError) on a binary mfsim.nam. An unlabelled
+        # travel time is better than a map that will not draw.
+        logger.debug("no TDIS time unit for the PRT hover", exc_info=True)
         return ""
     return _TIME_UNIT_LABELS.get(declared, "")
 

@@ -7,9 +7,29 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from flopy.mf6.mfbase import FlopyException, MFDataException
+
+from myflopy._logging import get_logger
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+logger = get_logger(__name__)
+
+#: What "open this model's budget file and ask it something" can raise.
+#:
+#: ``_get_budget_reader`` is ``self.gwf.output.budget()``, and flopy RETURNS
+#: None from that when the ``.cbc`` is missing (it catches ``OSError``
+#: internally) -- so the dominant failure is an ``AttributeError`` on None, not
+#: a file error. The rest were measured against flopy 3.10: ``ValueError`` on an
+#: empty or truncated budget file, ``NotImplementedError`` from the base
+#: ``Grid.shape``/``.nnodes`` that ``CellBudgetFile.__init__`` touches
+#: unconditionally when a model has no discretization package, ``OSError`` on an
+#: unreadable path, and flopy's own two exception classes from a lazy load.
+BUDGET_READER_UNAVAILABLE = (
+    AttributeError, TypeError, ValueError, NotImplementedError, OSError,
+    MFDataException, FlopyException,
+)
 
 
 def _get_package_explorer_cache(model: SimulationBase) -> dict[tuple, pd.DataFrame]:
@@ -264,7 +284,11 @@ def _resolve_budget_record_names(model, budget_text: str) -> list[str]:
             str(name).strip()
             for name in reader.get_unique_record_names(decode=True)
         ]
-    except Exception:  # noqa: BLE001 - fall back to the caller's own string
+    except BUDGET_READER_UNAVAILABLE:
+        logger.debug(
+            "could not list budget record names; matching %r literally instead",
+            budget_text, exc_info=True,
+        )
         return [str(budget_text).strip()]
 
     wanted = str(budget_text).strip().upper()

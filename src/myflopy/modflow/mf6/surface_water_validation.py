@@ -15,6 +15,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.sfr import SFRBuilder
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -206,7 +210,10 @@ def _model_nlay(model: SimulationBase) -> int | None:
 
     try:
         return int(model.nlay)
-    except Exception:
+    except (AttributeError, TypeError):
+        # AttributeError: a duck-typed model with no `nlay`. TypeError: `nlay`
+        # present but None, which is what a model built without discretization
+        # carries.
         return None
 
 
@@ -221,8 +228,15 @@ def _cell_top_bottom(model: SimulationBase, layer: int, cell: int) -> tuple[floa
         if top_col in df.columns and botm_col in df.columns:
             try:
                 return float(df.loc[cell, top_col]), float(df.loc[cell, botm_col])
-            except Exception:
-                pass
+            except (KeyError, TypeError, ValueError):
+                # KeyError: `cell` is not a row label of gdf_topbtm. TypeError/
+                # ValueError: the cell holds NaN or a non-numeric value. Fall
+                # through to the modelgrid arrays below, which is the point of
+                # this two-source lookup.
+                logger.debug(
+                    "no gdf_topbtm elevations for cell %s layer %s; trying the "
+                    "modelgrid arrays", cell, layer,
+                )
 
     grid = getattr(model, "modelgrid", None)
     if grid is None:
@@ -241,7 +255,15 @@ def _cell_top_bottom(model: SimulationBase, layer: int, cell: int) -> tuple[floa
         else:
             cell_botm = None
         return cell_top, cell_botm
-    except Exception:
+    except (IndexError, TypeError, ValueError):
+        # IndexError: `cell`/`layer` outside the array. TypeError: top or botm
+        # is an object array or None-bearing. ValueError: a value that will not
+        # coerce to float. All three mean "this model cannot tell us the cell's
+        # elevations", which the caller reports as an unchecked cell.
+        logger.debug(
+            "could not read top/bottom for cell %s layer %s from the modelgrid; "
+            "elevation checks on it are skipped", cell, layer, exc_info=True,
+        )
         return None, None
 
 
@@ -315,12 +337,14 @@ def _infer_mvr_package_count(model: SimulationBase, package_name: str) -> int | 
     if package is None:
         return None
 
-    if hasattr(package, "packagedata") and getattr(package.packagedata, "array", None) is not None:
-        try:
-            return int(len(package.packagedata.array))
-        except Exception:
-            return None
-    return None
+    # Read `.array` ONCE. On a flopy package it is a property that re-reads the
+    # data every access, so the old shape -- test it in the `if`, then read it
+    # again inside the try -- could see None the second time and was relying on
+    # the broad handler to cover its own double read.
+    array = getattr(getattr(package, "packagedata", None), "array", None)
+    if array is None:
+        return None
+    return int(len(array))
 
 
 def validate_lak_configuration(

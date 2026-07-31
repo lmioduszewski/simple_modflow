@@ -324,7 +324,10 @@ class SfrFlowTargets:
             # through ``results.q``; keep reading it so those doubles resolve.
             try:
                 flow = model.packages.sfr.results.q.get().copy()
-            except Exception:
+            except (AttributeError, TypeError):
+                # A test double that exposes neither `.outputs` NOR a usable
+                # `results.q` -- an empty frame is the documented answer for
+                # "this model has no streamflow to observe".
                 return pd.DataFrame(columns=["per", "reach", "sim_flow"])
             if flow.empty:
                 return pd.DataFrame(columns=["per", "reach", "sim_flow"])

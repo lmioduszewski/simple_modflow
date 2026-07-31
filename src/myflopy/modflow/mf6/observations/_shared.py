@@ -9,6 +9,10 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def _copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Return a shallow copy with a clean integer index."""
@@ -91,7 +95,12 @@ def _workspace_csv_frames(model) -> list[tuple[Path, pd.DataFrame]]:
             continue
         try:
             frame = pd.read_csv(path)
-        except Exception:
+        except (OSError, UnicodeDecodeError, pd.errors.EmptyDataError,
+                pd.errors.ParserError):
+            # This scans a workspace for ANY csv that might be observations, so
+            # non-observation csvs are expected: unreadable, empty, wrong
+            # encoding, or not comma-shaped at all. Skipping them is the job.
+            logger.debug("skipping %s: not a readable observation csv", path)
             continue
         if frame.empty:
             continue
