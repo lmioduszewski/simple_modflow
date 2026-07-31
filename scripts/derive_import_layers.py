@@ -19,6 +19,10 @@ Rules of the graph:
   function-level (deferred) imports are excluded
 - ``myflopy._vendor`` is external (its parent-package side effects are
   import machinery, not architecture)
+- ``myflopy._logging`` is external for the same reason. It is a stdlib-only
+  leaf that plan 7.3 gave to modules at every depth, and counting it would
+  push every current L0 leaf to L1 without saying anything about the
+  architecture -- a logger is infrastructure, exactly like ``logging`` itself.
 - edges to ancestor packages (their ``__init__`` runs first anyway) are
   import machinery, not architecture — the root lazy-export table stays L0
 """
@@ -52,7 +56,7 @@ def collect_modules() -> dict[str, Path]:
 
 
 def resolve_target(raw: str, module_names: set[str]) -> str | None:
-    if raw.startswith("myflopy._vendor"):
+    if raw.startswith("myflopy._vendor") or raw.startswith("myflopy._logging"):
         return None
     parts = raw.split(".")
     for i in range(len(parts), 0, -1):

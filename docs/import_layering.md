@@ -17,6 +17,7 @@ review the diff, commit the regenerated files together.
 
 - `myflopy`
 - `myflopy._deprecation`
+- `myflopy._logging`
 - `myflopy._optional`
 - `myflopy.modflow`
 - `myflopy.modflow.calcs`

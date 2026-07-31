@@ -1,6 +1,7 @@
 {
  "myflopy": 0,
  "myflopy._deprecation": 0,
+ "myflopy._logging": 0,
  "myflopy._optional": 0,
  "myflopy.advanced": 2,
  "myflopy.builders": 2,
