@@ -64,6 +64,22 @@ delivered work. Any change that makes such a call MUST add/update its ledger
 entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
 
+## Printing? Only if a human asked for it (plan 7.2, 2026-08-01)
+Library code logs; it does not print. Use `myflopy._logging.get_logger(__name__)` —
+`logger.info` for progress on slow work, `logger.warning` for a degraded or ignored
+input, `logger.debug` for per-row detail. **The one exemption: output whose job is to
+report something a human explicitly asked for.** In practice that means output behind a
+flag the caller passed (`verbose=`, `progress=`, `verbosity_level`) — the flag IS the
+human asking — plus `runtime.run_simulation`'s "Success is:" line.
+`tests/test_no_library_prints.py` enforces it: gated prints are exempt by AST
+inspection without being listed, everything else must be in an allowlist exact in both
+directions, and `import myflopy` must be silent.
+
+**Also don't call flopy APIs it has deprecated.** `tests/test_no_deprecated_flopy_calls.py`
+names them (`gwf.package_names`, `gwf.package_name_dict` — use `get_package_list()`, or
+myflopy's own `model.package_names`). Note `getattr(gwf, "package_name_dict", {})` still
+warns: reading the attribute is what warns, so the default only covers absence.
+
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
 needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; ten
@@ -81,7 +97,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**1245 passed / 1 skipped**, 2026-07-31): `pytest -n 10` ≈ **80–90 s** (worksteal dist is in
+- Full suite (**1466 passed / 1 skipped**, 2026-08-01): `pytest -n 10` ≈ **55–90 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ 2m45s–3m40s; inner loop `pytest -m "not slow"` ≈ 32 s.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).

@@ -1488,21 +1488,32 @@ BEFORE Phase 8** so plotting files move exactly once with clean imports. (Relati
 Phase 6: either order works — 6.0's readers route through the compat module if 7.1
 landed first, else get repointed during 7.1; the sequencing block is authoritative.)
 
-### 7.2 Logging — PARTLY DONE 2026-07-31 (`_logging.py` shipped with 7.3a)
+### 7.2 Logging — DONE 2026-08-01
 
-`src/myflopy/_logging.py` (`get_logger`, NullHandler on the `myflopy` root — libraries
-never configure handlers) **is built**: 7.3 needs a logger for every narrowed handler,
-so building it twice made no sense. It is graph-EXTERNAL in the import-layer derivation,
-like `_vendor` (a stdlib-only leaf imported at every depth; counting it would push every
-current L0 leaf to L1 and say nothing about the architecture). `tests/test_logging.py`
-pins the contract, and the swallow-message convention lives in its module docstring.
+`src/myflopy/_logging.py` (`get_logger`, NullHandler on the `myflopy` root —
+libraries never configure handlers) shipped with 7.3a, because 7.3 needed a logger
+for every narrowed handler. It is graph-EXTERNAL in the import-layer derivation,
+like `_vendor` (a stdlib-only leaf imported at every depth; counting it would push
+every current L0 leaf to L1 and say nothing about the architecture).
 
-**Still open:** replace `print(...)` in live modules (grid `selection.py`, `triangle.py`,
-`pest/project.py`, `simulation/runtime.py`, `choros.py` — incl. the colorscale-fallback
-print, `readers.py`, `grid/surfaces.py`). Exemptions: deliberate console **reports**
-(`ModelDiff.report()` and friends — keep printing, keep ASCII) and `_vendor`. Test:
-`import myflopy` emits nothing to stdout. Measured 2026-07-31: 61 `print()` across 24
-files.
+**The print replacement landed 2026-08-01.** 60 `print()` calls measured across
+the package (the "61 across 24 files" line-grep over-counted: several hits were
+docstring `>>> print(...)` examples and one was the word "footprint(s)").
+**46 became logging**, 13 were already gated behind a caller's own
+`verbose=`/`progress=`/`verbosity_level` flag and keep printing, and **one
+unconditional print stays**.
+
+**The exemption rule (user's, 2026-08-01):** *anything whose job is to print a
+report a human asked for* keeps printing. In practice that is output behind a
+flag the caller passed — the flag IS the human asking — plus
+`runtime.run_simulation`'s `"Success is: …"`, which is the interactive "did my
+model run" answer, printed beneath flopy's own `silent=False` MF6 output.
+
+`tests/test_no_library_prints.py` is the ratchet: gated prints are exempt by AST
+inspection without being listed, every other print must be in an allowlist that
+is exact in both directions, `import myflopy` must be silent, and any module
+calling `logger.*` must actually define `logger` (a NameError on the one branch
+nobody runs is otherwise the failure mode).
 
 ### 7.3 Narrow the silent exception swallows — DONE 2026-07-31 (7 commits)
 
@@ -1531,7 +1542,15 @@ files.
 > including the one asymmetry documented rather than fixed (array-form RCHA/EVTA read
 > by the cell diff tier).
 
-### 7.4 Docs debt sweep
+### 7.4 Docs debt sweep — DONE 2026-08-01
+
+> The PDF is untracked and gitignored; `tests/test_docs_structure.py` checks
+> balanced fences and resolving local links. It found **120 dead links** in
+> `docs/codebase_structure.md`, all written as absolute Windows paths
+> (`C:/Users/lukem/...`) — every link in the structure guide was broken for
+> every reader. The manual's 21 unwritten chapters are listed rather than
+> exempted, and a second test fails if a listed chapter is later written.
+> No `docs/` reorganization, per this section's own instruction.
 
 RESOLVED (rev. 4): the June review's `preferred_api.md` issues (unclosed fence,
 content after "Where To Look Next") were already fixed by the 2026-06-16 rewrite —
@@ -1798,8 +1817,8 @@ lines, ~540 fast-passing (conftest auto-marks ~47 slow: 25 decorators + `_SLOW_T
       front door, the last color literals retired, and the preferred-API docs (6.4C)
 - [ ] `_flopy_compat.py` is the only importer of flopy non-mf6 internals — including the
       6.0 readers (7.1)
-- [x] exception swallows narrowed; `myflopy` logger built and wired into every
-      narrowed handler (7.3, 2026-07-31) — **stray prints still open** (7.2)
+- [x] `myflopy` logger wired; no stray prints; exception swallows narrowed
+      (7.2 + 7.3, 2026-07-31/08-01) — both ratcheted by an AST test
 - [ ] `myflopy/plot/` holds all standalone plotting; old paths warn-and-work;
       `_EXPORTS` repointed; `mf2Dplots` folded; existing plotting tests unedited (8)
 - [ ] Final full suite recorded; capability docs match reality (9)
