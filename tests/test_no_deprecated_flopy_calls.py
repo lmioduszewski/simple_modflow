@@ -43,6 +43,16 @@ FORBIDDEN = {
         "the same deprecation, reached through the simulation handle",
         "use myflopy's own `model.package_names`",
     ),
+    ("gwf", "package_name_dict"): (
+        "flopy deprecated MFModel.package_name_dict in 3.9 -- and note that even "
+        "`getattr(gwf, 'package_name_dict', {})` warns, because reading the "
+        "attribute is what warns",
+        "use `model.gwf.get_package_list()` (same names, uppercased)",
+    ),
+    ("gwf", "package_type_dict"): (
+        "flopy deprecated MFModel.package_type_dict in 3.9",
+        "use `model.gwf.get_package_list(ftype=...)`",
+    ),
 }
 
 

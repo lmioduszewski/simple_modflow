@@ -863,9 +863,12 @@ def validate_mvr_configuration(
             declared_packages=len(normalized_packages),
         )
 
+    # `get_package_list()` rather than `gwf.package_name_dict`, which flopy
+    # deprecated in 3.9 -- and note a plain `getattr(gwf, "package_name_dict",
+    # {})` still FIRES the warning, since reading the attribute is what warns.
+    list_packages = getattr(getattr(model, "gwf", None), "get_package_list", None)
     gwf_package_names = {
-        str(name).lower()
-        for name in getattr(getattr(model, "gwf", None), "package_name_dict", {}).keys()
+        str(name).lower() for name in (list_packages() if callable(list_packages) else ())
     }
 
     max_records_in_period = 0

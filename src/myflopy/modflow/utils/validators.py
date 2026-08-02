@@ -14,7 +14,11 @@ def valid_package_names_3ltr(model: SimulationBase) -> list | None:
     :return: list
     """
     if isinstance(model, SimulationBase):
-        return list(model.gwf.package_name_dict.keys())
+        # `model.package_names` reads flopy's supported `get_package_list()`;
+        # `gwf.package_name_dict` has warned since flopy 3.9. It returns the
+        # same names uppercased, and every caller of this compares lowercase
+        # three-letter types, so the case is normalized here.
+        return [str(name).lower() for name in model.package_names]
     else:
         return None
 
