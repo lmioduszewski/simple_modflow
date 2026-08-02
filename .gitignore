@@ -125,3 +125,8 @@ docs/_rendered/
 src/**/*.exe
 tools/mp3du/*
 !tools/mp3du/README.md
+
+# Generated API pamphlet — `docs/build_myflopy_api_pamphlet.py` rewrites this
+# binary on every run, so tracking it made every doc edit a binary diff and
+# made the generator unrunnable in a clean tree (plan 7.4).
+docs/*.pdf

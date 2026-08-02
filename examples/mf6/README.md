@@ -40,7 +40,8 @@ data through `.k_array()`.
 
 Reference handout:
 
-- `../docs/myflopy_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page
+- `../docs/myflopy_api_pamphlet.pdf`: a short visually organized API pamphlet covering the main workflows by topic/page.
+  **Generated, not tracked** — build your own copy with `python docs/build_myflopy_api_pamphlet.py` (needs `reportlab`)
 - `../docs/mp3du_quickstart.md`: focused quickstart for the supported MP3DU particle-tracking API
 - `../../docs/local_run_clutter.md`: where example runs, pytest temp workspaces, and scratch MP3DU folders are stored locally
 # Canonical master notebooks
