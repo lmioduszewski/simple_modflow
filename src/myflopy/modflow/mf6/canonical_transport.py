@@ -233,7 +233,7 @@ def attach_transport_model(
     # Every ADVANCED flow package needs its transport counterpart, or MF6 refuses
     # to run ("GWF water mover is active but the GWT MVT package has not been
     # specified"). Each is keyed to its flow package by name and starts clean.
-    flow_packages = {str(name).lower() for name in model.gwf.package_names}
+    flow_packages = {str(name).lower() for name in model.package_names}
     if "lak" in flow_packages:
         flopy.mf6.ModflowGwtlkt(
             gwt, flow_package_name="lak", boundnames=False, pname="lkt",

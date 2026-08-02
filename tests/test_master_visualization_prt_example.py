@@ -29,7 +29,8 @@ def test_master_example_defaults_to_large_complex_model():
 
 def test_canonical_fixture_enforces_complete_model_contract(canonical_model):
     canonical_model.canonical_contract.validate(canonical_model)
-    assert set(canonical_model.gwf.package_names) >= canonical_model.canonical_contract.required_packages
+    attached = {name.lower() for name in canonical_model.package_names}
+    assert attached >= canonical_model.canonical_contract.required_packages
     icelltype = np.asarray(canonical_model.gwf.npf.icelltype.get_data())
     assert tuple(int(icelltype[layer].reshape(-1)[0]) for layer in range(4)) == (1, 1, 0, 0)
     conductivity = np.asarray(canonical_model.gwf.npf.k.get_data())
@@ -120,7 +121,7 @@ def test_master_example_validation_profile_runs_complex_package_topology():
             "disv", "npf", "sto", "chd", "ghb", "drn", "rch", "wel",
             "lak", "sfr", "mvr", "uzf", "oc",
         }
-        assert required <= set(model.gwf.package_names)
+        assert required <= {name.lower() for name in model.package_names}
         assert model.gwf.modelgrid.nlay == config.nlay
         assert model.gwf.modelgrid.ncpl == config.ncpl
         assert model.get_region_cells("all_lakes")
