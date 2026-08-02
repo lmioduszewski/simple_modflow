@@ -9,6 +9,10 @@ import pandas as pd
 
 from myflopy.modflow.utils.datatypes.choros import Choro
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class Inputs:
     def __init__(self, model: SimulationBase):
@@ -78,7 +82,7 @@ class UzfInput:
         # create dataframe with just cellid and uzf infiltration data
         # then reindex so all model cells are included even if zero finf
         finf = perioddata.set_index('cell').reindex(list(range(ncpl)), fill_value=0)
-        print(f'using multiplier: {multiplier} for UZF infiltration rates')
+        logger.info('scaling UZF infiltration rates by %s', multiplier)
         finf = finf * multiplier
 
         return finf

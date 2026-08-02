@@ -5,10 +5,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.readers import (
     assign_voronoi_cells_to_layers,
     read_shp_gpkg,
 )
+
+logger = get_logger(__name__)
 
 
 def build_idomain(vor, idomain_path: Path):
@@ -44,7 +47,10 @@ def coerce_per_dates(per_dates):
             try:
                 per_dates = pd.to_datetime(per_dates)
             except ValueError:
-                print("Can't convert provided period dates to Pandas DateTime")
+                logger.warning(
+                    'could not parse the given period dates as datetimes; '
+                    'leaving them as provided'
+                )
         else:
             assert isinstance(per_dates, pd.DatetimeIndex), 'Cannot recognize valid dates in provide period dates'
     return per_dates

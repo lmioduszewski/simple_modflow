@@ -671,14 +671,14 @@ class XSection:
         y_max = 0
         y_min = 1_000_000
 
-        print(f'reading {self.model.name} data...', end='\n')
+        logger.info('building cross-section animation for %s', self.model.name)
         if self.interpolator:
-            print(f'using {self.interpolator} interpolation method')
+            logger.info('using the %s interpolation method', self.interpolator)
 
         periods = self.animation_kstpkpers
         for per in periods:
 
-            print(f'reading kstpkper {per}', end='\r')
+            logger.debug('reading kstpkper %s', per)
             try:
                 self.kstpkper = per
                 points, elevations = self.xsect

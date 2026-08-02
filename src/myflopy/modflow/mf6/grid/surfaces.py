@@ -12,6 +12,10 @@ from rasterio.transform import from_origin
 from rasterio.warp import transform as warp_transform
 from rasterio.windows import Window, from_bounds
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 # Above this cell count, area-weighted raster sampling is warned as potentially
 # slow (the user can switch to method="centroid"). Not an auto-fallback.
 _AREA_SAMPLE_WARN_NCPL = 50_000
@@ -127,7 +131,7 @@ def get_raster_vals_at_centroids(
     pixel at each cell centroid (faster, less faithful on coarse layers).
     """
     if raster_files is None:
-        print('No raster files provided')
+        logger.warning('no raster files provided; there are no surfaces to sample')
         return None
 
     if isinstance(raster_files, Path):
@@ -165,7 +169,7 @@ def get_raster_vals_at_centroids(
         )
 
     for label, raster_path in raster_items:
-        print(f'reading raster file {raster_path}')
+        logger.info('sampling raster %s', raster_path)
         with rasterio.open(raster_path) as src:
             if method == "area":
                 sampled = _area_weighted_sample(
@@ -201,7 +205,7 @@ def get_cell_areas(vor) -> list[float]:
     """
     Return polygon areas for each Voronoi cell.
     """
-    print('getting cell areas')
+    logger.debug('computing cell areas')
     return [poly.area for poly in vor.gdf_vorPolys['geometry']]
 
 

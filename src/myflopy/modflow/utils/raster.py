@@ -16,6 +16,10 @@ import shapely as shp
 from rasterio.features import geometry_mask
 from shapely.geometry import LineString, Point, mapping
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def _gaussian_kernel_1d(sigma: float, radius: int) -> np.ndarray:
     """A normalized 1-D Gaussian kernel of half-width ``radius`` and spread ``sigma``."""
@@ -317,10 +321,10 @@ class RasterData:
         """
 
         if self.point:
-            print(f'sampling raster from single point {self.point}')
+            logger.debug('sampling the raster at a single point %s', self.point)
             points = [self.point]
         elif self.vor:
-            print('sampling raster at all centroids in voronoi grid')
+            logger.debug('sampling the raster at every grid cell centroid')
             points = self.vor.gdf_vorPolys.centroid.to_list()
         else:
             raise ValueError('No valid sample points provided')

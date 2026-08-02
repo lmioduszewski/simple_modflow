@@ -11,6 +11,10 @@ import geopandas as gpd
 import pandas as pd
 import shapely as shp
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     """
@@ -34,7 +38,7 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     # reader cannot fully represent is now an error, not a short answer.
     for idx, row in gpkg.iterrows():
         if row.geometry is None:
-            print(f'skipping row {idx} because the geometry is None')
+            logger.debug('%s row %s has no geometry; skipping it', gpkg_path, idx)
             continue
         if isinstance(row.geometry, shp.Polygon | shp.Point | shp.MultiLineString | shp.LineString):
             layers.append(row)
@@ -54,7 +58,7 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
         # empty layer fell through to an obscure failure in `set_geometry`.
         raise ValueError(f'no usable geometries in {gpkg_path}')
 
-    print(f'Imported {num_features} features from {gpkg_path}')
+    logger.info('read %d features from %s', num_features, gpkg_path)
     gdf = gpd.GeoDataFrame.from_records(data=layers)
     gdf.set_geometry('geometry', inplace=True)
     gdf.crs = crs

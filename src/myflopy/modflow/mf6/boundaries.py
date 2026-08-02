@@ -19,6 +19,10 @@ import shapely as shp
 from myflopy.modflow.mf6.boundary_support import filter_inactive_cells
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 # Conversion factors
 inches_to_feet = 1 / 12
 
@@ -131,7 +135,10 @@ class Boundaries:
                 icells = self.vor.get_vor_cells_as_series(idomain.union_all())[0]
                 self._inactive_cells = icells
             else:
-                print('no active grid object provided. Cannot determine inactive cells')
+                logger.warning(
+                    'no grid or idomain given, so inactive cells cannot be '
+                    'determined; treating every cell as active'
+                )
         return self._inactive_cells
 
     @property

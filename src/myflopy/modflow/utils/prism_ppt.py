@@ -12,6 +12,10 @@ from shapely import Point
 from myflopy import read_shp_gpkg
 from myflopy.modflow.utils.raster import RasterData
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class PrismPrecipScaling:
     """class to determine the precipitation scaling for a voronoi grid based on a
@@ -49,8 +53,10 @@ class PrismPrecipScaling:
         assert isinstance(weather_station, Path), "weather_station must be a Path object"
         weather_station = read_shp_gpkg(weather_station)
         if len(weather_station) > 1:
-            print(f'More than one point provided for weather station. Assuming 1st weather station: '
-                  f'{weather_station.geometry.iloc[0]} is what you want')
+            logger.warning(
+                '%d weather stations given; using the first (%s)',
+                len(weather_station), weather_station.geometry.iloc[0],
+            )
         assert weather_station.crs == self.vor.crs, \
             f'weather_station crs {weather_station.crs} does not match voronoi grid {self.vor.crs}'
         station = weather_station.geometry.iloc[0]

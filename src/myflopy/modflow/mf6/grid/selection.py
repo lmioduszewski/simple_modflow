@@ -8,7 +8,12 @@ import pandas as pd
 import shapely as shp
 from shapely.geometry import Polygon
 
+from myflopy._deprecation import warn_deprecated
+from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
+
+logger = get_logger(__name__)
 
 
 def get_vor_cells_as_series(
@@ -45,7 +50,10 @@ def get_vor_cells_as_series(
     if geometries.crs is None:
         geometries.crs = gdf_vor_polys.crs
     elif geometries.crs != gdf_vor_polys.crs:
-        print('Warning: Provided geometries are not in the same CRS as the Voronoi cells. Reprojecting geometries to match Voronoi cells.')
+        logger.warning(
+            'geometries are in %s but the grid is in %s; reprojecting them to '
+            'match the grid', geometries.crs, gdf_vor_polys.crs,
+        )
         geometries = geometries.to_crs(gdf_vor_polys.crs)
 
     joined = gpd.sjoin(gdf_vor_polys, geometries.to_frame('geometry'), predicate=predicate, how='inner')
@@ -80,7 +88,9 @@ def get_vor_cells_as_dict(
 
         vor_cells = get_vor_cells_as_series(vor.gdf_vorPolys, gdf_locs.geometry[idx], predicate)
         if not isinstance(vor_cells, pd.Series):
-            print(f'Warning: {location_name} does not intersect any Voronoi cells. Skipping it.')
+            logger.warning(
+                '%s does not intersect any grid cell; skipping it', location_name,
+            )
             continue
         loc_vor_cell_dict[location_name] = vor_cells.tolist()
 
@@ -93,8 +103,11 @@ def get_model_boundary_polygons(gdf_vor_polys) -> dict:
     """
     Return a dict of polygons that form the model domain boundary.
     """
-    print("Deprecated. Only works if the convex hull is equivalent to the actual grid boundary")
-    print("Use get_grid_edge")
+    warn_deprecated(
+        "myflopy.modflow.mf6.grid.selection.get_model_boundary_polygons",
+        "get_grid_edge",
+        since="0.1",
+    )
     grid = shp.MultiPolygon(gdf_vor_polys.geometry.to_list())
     polygons = gdf_vor_polys.geometry.to_list()
     convex_hull_boundary = grid.convex_hull.boundary
@@ -147,8 +160,8 @@ def get_grid_edge_cells(vor, idomain: list = None, idomain_path: Path = None, in
         flat = pd.concat(edge_cells)
         flat.index = flat.values
 
-        print('getting grid edge cells excluding idomain cells')
+        logger.info('collecting grid edge cells, excluding inactive cells')
         return flat.loc[~flat.index.isin(icell_set)].index.tolist()
 
-    print('geting all edge cells')
+    logger.info('collecting all grid edge cells')
     return edges

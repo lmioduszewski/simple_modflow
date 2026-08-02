@@ -18,6 +18,7 @@ import shapely as shp
 from flopy.utils.triangle import Triangle
 from flopy.utils.voronoi import VoronoiGrid
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity
 from myflopy.modflow.mf6.grid.geometry import (
     adjust_cells_by_id as geometry_adjust_cells_by_id,
@@ -155,6 +156,9 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
+logger = get_logger(__name__)
+
+
 class VoronoiGridPlus(VoronoiGrid):
     """An unstructured Voronoi (DISV) grid with MODFLOW-modeling conveniences.
 
@@ -216,7 +220,7 @@ class VoronoiGridPlus(VoronoiGrid):
             Explicit vertex-grid arrays used when reconstructing from DISU data
             instead of from a Triangle mesh.
         """
-        print("VoronoiGrid initializing.")
+        logger.info('building the Voronoi grid')
         if tri:
             # FloPy's tri2vor helper currently emits harmless RuntimeWarnings from
             # point_in_polygon when domain edges are horizontal. Suppress only that
@@ -270,7 +274,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self.config = {'scrollZoom': True}
         self.scatt_layout = {'height': 1000, 'width': 1000, 'dragmode': 'pan'}
         self.grid_centroid = self.get_grid_centroid()
-        print('Voronoi grid initialized.')
+        logger.info('Voronoi grid ready: %d cells', getattr(self, 'ncpl', -1))
 
     # Attributes dropped from pickles: the Triangle builder plus caches that
     # recompute from the stored mesh geometry. Keeping them would bloat the

@@ -4,6 +4,10 @@ import numpy as np
 from shapely.geometry import LineString, MultiLineString
 from shapely.prepared import prep
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def build_disu_connectivity(
     gdf_vor_polys,
@@ -26,7 +30,8 @@ def build_disu_connectivity(
 
     iac, ja, cl12, hwva = [], [], [], []
 
-    print('getting connectivity properties (iac, ja, cl12, hwva, nja)')
+    logger.info('building connectivity (iac, ja, cl12, hwva, nja) for %d cells',
+                len(adjacent_cells_idx))
     for i, nbrs in enumerate(adjacent_cells_idx):
         poly_i = geoms[i]
         prep_i = prep(poly_i)

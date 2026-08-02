@@ -149,7 +149,10 @@ class InterpolatedSurface:
 
         if val is not None:
             if val not in self._interpolators:
-                print(f'interpolator must be one of {self._interpolators}')
+                logger.warning(
+                    'interpolator %r is not one of %s; ignoring it',
+                    val, self._interpolators,
+                )
             else:
                 self._interpolator = val
 
@@ -161,8 +164,10 @@ class InterpolatedSurface:
             if self.model:
                 self._kstpkper = self.model.kstpkper[0]
             else:
-                print('no model defined')
-                raise ValueError
+                raise ValueError(
+                    "no model was given, so there is no default (timestep, period) "
+                    "to sample; pass kstpkper=(kstp, kper) or model=."
+                )
         return self._kstpkper
 
     @kstpkper.setter
@@ -176,7 +181,10 @@ class InterpolatedSurface:
                 )
                 self._kstpkper = val
             else:
-                print('kstpkper must be a tuple of (timestep, period)')
+                logger.warning(
+                    'kstpkper must be a (timestep, period) pair, got %r; '
+                    'keeping the previous value', val,
+                )
 
     @property
     def xs(self):
@@ -265,8 +273,10 @@ class InterpolatedSurface:
                 )
                 self._hds = hds
             else:
-                print('no heads file defined')
-                raise ValueError
+                raise ValueError(
+                    "no heads file was given and no model was given to find one on; "
+                    "pass hds= or model=."
+                )
         assert isinstance(self._hds, Hp), 'the hds property must be a HeadsPlus instance'
         return self._hds
 
@@ -389,7 +399,10 @@ class InterpolatedSurface:
             elif self.interpolator == 'cloughTocher2D':
                 return self.cloughTocher2D_interp
             else:
-                print(f'interpolator must be one of {self._interpolators}')
+                logger.warning(
+                    'interpolator %r is not one of %s; ignoring it',
+                    val, self._interpolators,
+                )
         if self.use_rbf is False:
             try:
                 return self.griddata_interp

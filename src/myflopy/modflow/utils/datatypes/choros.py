@@ -783,8 +783,10 @@ class Choro:
             if colorscale.lower() in [scale.lower() for scale in valid_colorscales]:
                 self._colorscale = colorscale
             else:
-                print(f'colorscale {colorscale} not recognized, using default: "earth".\n'
-                      f'colorscale options are: {valid_colorscales}')
+                logger.warning(
+                    'colorscale %r not recognized, using "earth" instead; '
+                    'options are %s', colorscale, valid_colorscales,
+                )
                 self._colorscale = 'earth'
         elif isinstance(colorscale, (list, tuple)):
             # explicit [[position, color], ...] stops (e.g. the gaining/losing
@@ -812,12 +814,15 @@ class Choro:
                     gdf = gdf.to_crs(epsg=4326)  # convert to lat/lon
                     locations = gdf
                 except ValueError:
-                    print(f'Unable to read {locs}')
+                    logger.warning('could not read locations from %s', locs)
             elif isinstance(locs, gpd.GeoDataFrame):
                 locs = locs.to_crs(epsg=4326)
                 locations = locs
             else:
-                print('could not determine locs; locs should be path or geodataframe')
+                logger.warning(
+                    'locs must be a path or a GeoDataFrame, not %s; no location '
+                    'overlay will be drawn', type(locs).__name__,
+                )
                 locations = None
             self._locs = locations
 
@@ -1134,7 +1139,7 @@ class Choro:
 
         hillshade = ChoroplethHillshadeBackground(tif_path, self.model)
         if hillshade.png_path.exists():
-            print('hillshade png already exists, using existing file')
+            logger.info('reusing the existing hillshade png at %s', hillshade.png_path)
         else:
             hillshade.save_geotiff_as_png()
         hillshade.update_fig_layout(self.fig)
@@ -1152,7 +1157,7 @@ class Choro:
         if periods is None:
             periods = list(self.model.kstpkper)
         for per in periods:
-            print(f'reading kstpkper {per}', end='\r')
+            logger.info('building animation frame for kstpkper %s', per)
             self.kstpkper = per
             choropleth = self.get_choropleth()
             frame_values = np.asarray(choropleth.z, dtype=float)

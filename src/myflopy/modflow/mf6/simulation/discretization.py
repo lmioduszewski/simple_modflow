@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 
 import flopy
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -127,12 +131,12 @@ class DisuGrid:
             try:
                 top = vor.gdf_topbtm["top"].to_list()
             except ValueError:
-                print('no top in voronoi grid. cannot find top')
+                logger.warning('the grid carries no top surface; DISU top is unset')
         if bottom is None:
             try:
                 bottom = vor.gdf_topbtm["bottom"].to_list()
             except ValueError:
-                print('no bottom in voronoi grid. cannot find bottom')
+                logger.warning('the grid carries no bottom surface; DISU botm is unset')
         grid_props = vor.get_disv_gridprops()
         self.disu = flopy.mf6.ModflowGwfdisu(
             model.gwf,

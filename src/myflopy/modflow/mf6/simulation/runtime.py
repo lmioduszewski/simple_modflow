@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import pickle
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def run_simulation(model):
     """Write, pickle, and run ``model``'s MF6 simulation, returning ``(success, output)``.
@@ -16,7 +20,7 @@ def run_simulation(model):
     try:
         with open(model_file_path, 'wb') as file:
             pickle.dump(model, file)
-        print(f"\nSaved model object to .model file: {model_file_path}\n")
+        logger.info("saved the model object to %s", model_file_path)
     except Exception as exc:  # noqa: BLE001 - see below; the graph is unbounded
         # Deliberately broad, on an asymmetry worth stating. `pickle.dump(model)`
         # serializes an UNBOUNDED third-party object graph -- the flopy
@@ -26,7 +30,9 @@ def run_simulation(model):
         # `.model` pickle is a convenience snapshot nothing in this repo reads,
         # while an escaped exception here would abort before
         # `run_simulation()` on the next line and kill the MF6 run itself.
-        print(f"\nError saving model object to .model file: {exc}\n")
+        logger.warning(
+            "could not save the .model snapshot to %s: %s", model_file_path, exc,
+        )
 
     success, buff = model.sim.run_simulation(silent=False, report=True)
     print("\nSuccess is: ", success)

@@ -12,6 +12,10 @@ from pathlib import Path
 import pandas as pd
 from pandas import IndexSlice as idxx
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class ObservationLocations:
 
@@ -109,7 +113,7 @@ class ObservationLocations:
                 return obs_locs
 
             except ValueError:
-                print('location path not readable')
+                logger.warning('could not read locations from %s', locs)
                 return None
 
         elif isinstance(locs, int):

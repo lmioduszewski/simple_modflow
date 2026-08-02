@@ -9,6 +9,10 @@ from plotly.subplots import make_subplots
 from myflopy.modflow.mf6.paths import *
 from myflopy.viz import Fig, Template
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 'rgb(214, 39, 40)',
           'rgb(148, 103, 189)', 'rgb(140, 86, 75)', 'rgb(227, 119, 194)', 'rgb(127, 127, 127)',
           'rgb(188, 189, 34)', 'rgb(23, 190, 207)']
@@ -45,13 +49,13 @@ class WaterLevelPlot(Fig):
                     # container (BadZipFile -- which subclasses Exception, not
                     # OSError), or malformed inside (ValueError). This loop
                     # scans a whole directory, so skipping is the job.
-                    print(f'{filename.stem} is not a valid .xlsx file! Skipping...')
+                    logger.warning('%s is not a readable .xlsx file; skipping it', filename)
                     continue  # skip to next file in for loop
                 """create a dictionary of Pandas dataframes. Each item in the
                 dict is an imported excel file"""
                 df_excel_dict[filename.stem] = thisdf  # store df in dict
             else:
-                print(f'{filename.stem} is not a valid .xlsx file! Skipping...')
+                logger.debug('%s is not a .xlsx file; skipping it', filename)
         return df_excel_dict
 
     @staticmethod
@@ -76,7 +80,7 @@ class WaterLevelPlot(Fig):
         if by in valid_bys:
             return getattr(resampled_df, by)()
         else:
-            return print(f'ValueError: "by" attribute must be one of {valid_bys}')
+            raise ValueError(f'`by` must be one of {valid_bys}, not {by!r}.')
 
     def _get_colors_for_traces(self, names=None, color_list=colors) -> dict:
         """
@@ -117,7 +121,10 @@ class WaterLevelPlot(Fig):
             vary_dash_by_df=False
     ):
         if self._df_excel_dict is None:
-            return print('No Excel dict defined. Run read_excel() first.')
+            raise RuntimeError(
+                'no Excel data has been read yet; call read_excel_files_in_dir() '
+                'before plotting.'
+            )
         else:
             df_excel_dict = self._df_excel_dict
         if vary_dash_by_df:

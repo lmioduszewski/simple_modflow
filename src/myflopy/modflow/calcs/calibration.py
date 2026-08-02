@@ -17,6 +17,10 @@ from pandas import IndexSlice as idxx
 
 from myflopy import viz as f
 
+from myflopy._logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def calculate_calibration_statistics(observed, simulated):
     """
@@ -689,7 +693,6 @@ class CalibrationPlot(f.Fig):
                 # get lake stage data for each lake
                 for k, v in self.lak_obs_dict.items():
                     lak_obs[k] = self.model.outputs.lak.stage.get()[:, v].tolist()
-                print(len(lak_obs['Deep Lake']))
                 # create a multi-index for lake stage data
                 lake_names = list(lak_obs.keys())
                 layers = [0]  # set layer to 0 for all lake observations
@@ -756,8 +759,11 @@ class CalibrationPlot(f.Fig):
                 self._obs_layers = 0  # default to layer 1
             col1 = obs_data.columns[0]  # should be stress periods
             if len(obs_data) != len(self.model.kstpkper):
-                print(f'model kstpkper {len(self.model.kstpkper)} does not match length of observed data,'
-                      f'{len(obs_data)}, trimming observed data to match model kstpkper')
+                logger.warning(
+                    'the model has %d time steps but the observed data has %d rows; '
+                    'trimming the observed data to match',
+                    len(self.model.kstpkper), len(obs_data),
+                )
                 obs_data = obs_data.iloc[:len(self.model.kstpkper), :]
             obs_data['kstpkper'] = self.model.kstpkper
             # drop stress period column in favor of model kstpkper to match simulated data
@@ -803,7 +809,7 @@ class CalibrationPlot(f.Fig):
         simulated = self.simulated if simulated is None else simulated
 
         if all(isinstance(x, pd.DataFrame) for x in [observed, simulated]):
-            print('observed and simulated data are provided as DataFrames')
+            logger.debug('observed and simulated data were given as DataFrames')
             sim_obs = pd.concat([simulated, observed], axis=1).dropna()
             sim_obs.columns = ['simulated', 'observed']
             # drop nan rows so the calib stats are calculated correctly
