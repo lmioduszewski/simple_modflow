@@ -8,14 +8,14 @@ def test_choro_plot_returns_figure_without_calling_show():
 
     choro = object.__new__(Choro)
     figure = go.Figure()
-    choro.fig = figure
+    choro._fig = figure
     choro.add_choropleth = lambda: None
     choro.add_contours = lambda: None
     choro._locs = None
     choro._overlays = []
     choro.hillshade_path = None
 
-    assert choro.plot() is figure
+    assert choro.fig is figure
 
 import os
 import shutil
@@ -719,20 +719,23 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
     assert '"scrollZoom": true' in output_html
     assert '"displaylogo": false' in output_html
 
-    fitted_zoom = choro.fig.layout.map.zoom
+    # `_fig`, not `.fig`: this block tests `update_layout()`'s effect on the
+    # ACCUMULATOR, and under the 8.1 Picture contract `.fig` assembles the
+    # traces -- which this stubbed choro has no real grid to do.
+    fitted_zoom = choro._fig.layout.map.zoom
     choro.bounds_padding = 0.50
     choro.update_layout()
-    assert choro.fig.layout.map.zoom < fitted_zoom
-    assert choro.fig.layout.map.bounds.west is None
+    assert choro._fig.layout.map.zoom < fitted_zoom
+    assert choro._fig.layout.map.bounds.west is None
 
     with pytest.raises(ValueError, match="zmin must be less than zmax"):
         model.visualize.plotly_head_map_animation(zmin=20, zmax=20)
 
     choro.fit_bounds = False
-    choro.fig = go.Figure()
+    choro._fig = go.Figure()
     choro.update_layout()
-    assert choro.fig.layout.map.zoom == 13
-    assert choro.fig.layout.map.bounds.west is None
+    assert choro._fig.layout.map.zoom == 13
+    assert choro._fig.layout.map.bounds.west is None
 
 
 def test_particle_tracking_scene_uses_flopy_vtk_and_pyvista(monkeypatch):

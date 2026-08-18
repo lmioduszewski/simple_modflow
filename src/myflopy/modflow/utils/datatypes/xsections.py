@@ -19,7 +19,7 @@ from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.utils.animations import Animation
-from myflopy.viz import Fig
+from myflopy.viz import Fig, Picture
 
 logger = get_logger(__name__)
 
@@ -115,7 +115,7 @@ def render_xsections(
     raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
 
 
-class XSection:
+class XSection(Picture):
 
     def __init__(
             self,
@@ -762,8 +762,5 @@ class XSection:
         )
         return fig
 
-    def show(self):
-        """shows the figure"""
-        self.fig.show()
 
 

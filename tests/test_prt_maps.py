@@ -541,7 +541,7 @@ def test_pathline_map_draws_one_polyline_per_particle_over_the_base(prt_run):
         assert all(south <= lat <= north for lat in trace.lat)
 
     # the assembled figure is the cells plus every path
-    fig = choro.plot()
+    fig = choro.fig
     assert isinstance(fig, Fig)
     assert [trace.type for trace in fig.data] == ["choroplethmap", "scattermap", "scattermap"]
     assert fig.layout.title.text == "Particle pathlines"

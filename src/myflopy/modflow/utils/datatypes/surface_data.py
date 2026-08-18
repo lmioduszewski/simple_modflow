@@ -40,7 +40,7 @@ class ModelSurface:
             kstpkper = self.kstpkper[per]
         surf = InterpolatedSurface(model=self.model, layer=layer, kstpkper=kstpkper, **kwargs)
         if plot:
-            surf.plot()
+            surf.show()
         return surf
 
     def lyr(self, layer=0, plot: bool = False, **kwargs):
@@ -48,7 +48,7 @@ class ModelSurface:
 
         surf = InterpolatedSurface(model=self.model, layer=layer, surf_type='lyr', **kwargs)
         if plot:
-            surf.plot()
+            surf.show()
         return surf
 
     @property

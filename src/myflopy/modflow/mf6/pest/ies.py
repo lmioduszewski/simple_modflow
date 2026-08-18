@@ -1683,7 +1683,7 @@ class IesResults:
         # `title` is matplotlib-only and is not a Choroplethmap property, so it
         # must never ride the trace kwargs. plot() sets a 20px top margin; bump it
         # or the title clips.
-        return choro.plot().update_layout(title=heading, margin={"t": 40})
+        return choro.fig.update_layout(title=heading, margin={"t": 40})
 
     def plot_field_mosaic(self, target: str, *,
                           which: Sequence[str] = ("prior", "posterior"),
@@ -2231,7 +2231,7 @@ class IesResults:
                     "layer: %{customdata[5]}<extra></extra>"
                 ),
             ))
-        return choro.plot().update_layout(title=heading, margin={"t": 40})
+        return choro.fig.update_layout(title=heading, margin={"t": 40})
 
     def best(self, *, criterion: str = "base") -> str:
         """Return the label of the single 'best' realization to carry forward.

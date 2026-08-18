@@ -408,7 +408,7 @@ def test_canonical_model_prepares_contiguous_partitions_across_representative_pa
 
 @pytest.mark.canonical
 def test_split_restores_source_observations_after_outputs_are_loaded(canonical_run, tmp_path):
-    canonical_run.hds.map().plot()
+    canonical_run.hds.map().fig
     source_packages = list(canonical_run.gwf.packagelist)
     source_observation_children = {
         id(package): list(package.obs._packages)

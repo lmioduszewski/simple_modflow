@@ -29,13 +29,14 @@ from shapely.geometry import Polygon, mapping
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
+from myflopy.viz import Picture
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 logger = get_logger(__name__)
 
 
-class InterpolatedSurface:
+class InterpolatedSurface(Picture):
 
     def __init__(
             self,
@@ -510,16 +511,27 @@ class InterpolatedSurface:
             **kwargs,
         )
 
-    def plot(self, surface=None, clip=False, renderer='browser'):
+    @property
+    def fig(self):
+        """The 3-D surface figure.
+
+        Replaces a `plot()` that built a BARE `go.Figure` and immediately called
+        `.show(renderer="browser")` -- so it returned None, could not be modified
+        or embedded, forced a browser window, and silently dropped the house
+        template, `scrollZoom` and `dragmode="pan"` that every other myflopy
+        figure carries. Use `.clipped_fig()` for the clipped variant.
         """
-        plot surface using plotly, defaults to griddata_interp
-        :param surface: surface to plot, ex. self.griddata_interp or self.rbf_interp
-        :return: plots surface to browser
-        """
+
+        return self.clipped_fig(clip=False)
+
+    def clipped_fig(self, *, surface=None, clip: bool = False):
+        """The surface figure, optionally clipped to the configured polygon."""
+
         if clip:
             surface = self.clip_raster_with_polygon()[0].squeeze()
             surface = surface.astype(float)
             surface[surface == 0] = np.nan
 
-        fig = go.Figure(self.surface_trace(surface=surface))
-        fig.show(renderer=renderer)
+        figure = f.Fig()
+        figure.add_trace(self.surface_trace(surface=surface))
+        return figure

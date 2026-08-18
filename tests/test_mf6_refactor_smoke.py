@@ -811,7 +811,7 @@ def test_direct_voronoi_grid_smoke():
     section = vor.cross_section(LineString([(0.5, -0.5), (0.5, 1.5)]))
     assert isinstance(section, GridSection)
     assert len(section.poly_coords) >= 1
-    assert len(section.figure.data) >= 1
+    assert len(section.fig.data) >= 1
     section_df = section.to_frame()
     assert {"distance", "elevation", "series", "polygon_id"}.issubset(section_df.columns)
     mpl_fig, mpl_ax = section.plot_mpl()

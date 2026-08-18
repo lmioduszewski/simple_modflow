@@ -27,7 +27,7 @@ from rasterio.warp import transform_bounds
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.utils.animations import Animation
-from myflopy.viz import Fig
+from myflopy.viz import Fig, Picture
 
 logger = get_logger(__name__)
 
@@ -141,7 +141,14 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
 
-class Choro:
+class Choro(Picture):
+
+    #: Whether `.fig` has already assembled its traces. A CLASS attribute, not
+    #: just an `__init__` assignment: `Choro` is constructed via
+    #: `object.__new__` by several test doubles, and a `.fig` that raises
+    #: AttributeError on those is a contract that only half-holds.
+    _assembled = False
+
 
     def __init__(
             self,
@@ -276,7 +283,7 @@ class Choro:
         self._hover_fields = hover_fields
         self.kwargs = kwargs
 
-        self.fig = Fig()
+        self._fig = Fig()
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
         self.cell_list = [i for i in range(len(self.vor_list))]
         self.area_list = [cell.area for cell in self.vor_list]
@@ -827,7 +834,7 @@ class Choro:
             self._locs = locations
 
     def update_layout(self):
-        """Apply the default map style, center, and (fitted or fixed) zoom to ``self.fig``."""
+        """Apply the default map style, center, and (fitted or fixed) zoom to ``self._fig``."""
 
         # Set up default choropleth map styles
         if self.vor:
@@ -845,7 +852,7 @@ class Choro:
             )
         else:
             map_layout["zoom"] = self.zoom
-        self.fig.update_layout(
+        self._fig.update_layout(
             margin={"r": 0, "t": 20, "l": 0, "b": 0},
             map=map_layout,
             uirevision="lock",
@@ -890,7 +897,7 @@ class Choro:
         """creates a choropleth map based on the provided params and adds to the fig"""
         custom_data, hover_template = _content_aware_hover(self.hover_dict)
         self.update_layout()
-        self.fig.add_trace(self.get_choropleth())
+        self._fig.add_trace(self.get_choropleth())
 
     def _contour_traces(self):
         """Build -- without adding -- the contour polyline traces for this map."""
@@ -929,7 +936,7 @@ class Choro:
         """Add optional contour lines to the choropleth map."""
 
         for trace in self._contour_traces():
-            self.fig.add_trace(trace)
+            self._fig.add_trace(trace)
 
     def add_overlay(self, *traces):
         """Register extra map traces (pathlines, features, ...) drawn over the cells.
@@ -1108,24 +1115,34 @@ class Choro:
         return traces
 
     def add_locs(self, name_field='ExploName'):
-        """Overlay each location feature as a labeled point/line trace on ``self.fig``."""
+        """Overlay each location feature as a labeled point/line trace on ``self._fig``."""
 
         for trace in self._locs_traces(name_field):
-            self.fig.add_trace(trace)
+            self._fig.add_trace(trace)
 
     @property
-    def choropleth(self):
-        """The fully assembled figure: cells + contours + location markers + overlays + hillshade."""
+    def fig(self):
+        """The assembled figure: cells + contours + location markers + overlays + hillshade.
 
-        self.add_choropleth()
-        self.add_contours()
-        if self.locs is not None:
-            self.add_locs()
-        for trace in self._overlays:
-            self.fig.add_trace(trace)
-        if self.hillshade_path is not None:
-            self.add_hillshade(self.hillshade_path)
-        return self.fig
+        **Assembled once.** `add_choropleth()` and friends append traces
+        unconditionally, so before plan 8.1 -- when this was the `.choropleth`
+        property and `.plot()` returned it -- touching the figure twice silently
+        drew every trace twice. The `Picture` contract requires idempotence, so
+        the assembly is cached and `choro.fig.update_layout(...)` followed by
+        `choro.show()` operates on one figure, not two.
+        """
+
+        if not self._assembled:
+            self.add_choropleth()
+            self.add_contours()
+            if self.locs is not None:
+                self.add_locs()
+            for trace in self._overlays:
+                self._fig.add_trace(trace)
+            if self.hillshade_path is not None:
+                self.add_hillshade(self.hillshade_path)
+            self._assembled = True
+        return self._fig
 
     def add_hillshade(
             self,
@@ -1142,7 +1159,7 @@ class Choro:
             logger.info('reusing the existing hillshade png at %s', hillshade.png_path)
         else:
             hillshade.save_geotiff_as_png()
-        hillshade.update_fig_layout(self.fig)
+        hillshade.update_fig_layout(self._fig)
 
     @property
     def ani(self):
@@ -1195,7 +1212,7 @@ class Choro:
             base_data = None
             coloraxis = None
 
-        self.fig = Fig(
+        self._fig = Fig(
             data=[base_data],
             frames=frames,
             layout=go.Layout(
@@ -1218,12 +1235,8 @@ class Choro:
         )
         self.update_layout()
 
-        return self.fig
+        return self._fig
 
-    def plot(self):
-        """Return the Plotly figure for notebook display or explicit export."""
-
-        return self.choropleth
 
     def plot_mpl(
         self,
@@ -1321,7 +1334,7 @@ class Choro:
                     dbc.Col(
                         [
                             dcc.Graph(
-                                figure=self.fig,
+                                figure=self._fig,
                                 className="flex-grow-1",
                                 style={"height": "95vh"},
                                 id="fig",

@@ -15,6 +15,7 @@ from flopy.discretization.vertexgrid import VertexGrid
 from flopy.plot.crosssection import PlotCrossSection
 
 from myflopy import viz as f
+from myflopy.viz import Picture
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
@@ -99,7 +100,7 @@ def get_dash_selector(vor):
 
 def show(vor):
     """Display the default Voronoi choropleth plot."""
-    return build_choropleth(vor).plot()
+    return build_choropleth(vor)
 
 
 def map_nodes(vor) -> go.Figure:
@@ -130,9 +131,9 @@ def show_selected_cells(vor, cell_list: list = None, **kwargs):
     """
     Show selected cells on the Voronoi choropleth.
     """
-    choro = build_choropleth(vor, **kwargs).choropleth
-    choro.data[0].selectedpoints = tuple(cell_list)
-    return go.Figure(choro).show(renderer='browser')
+    picture = build_choropleth(vor, **kwargs)
+    picture.fig.data[0].selectedpoints = tuple(cell_list)
+    return picture
 
 
 def show_overlapping_geometry(vor, shp_gpkg):
@@ -281,7 +282,7 @@ def _as_linestring(geometry) -> shp.LineString:
     raise ValueError(f'line arg must resolve to a LineString, not {type(geometry)}')
 
 
-class GridSection:
+class GridSection(Picture):
     """
     Represents a section of a grid and provides tools for creating and plotting
     cross-sections.
@@ -366,7 +367,7 @@ class GridSection:
         )
 
     @property
-    def figure(self):
+    def fig(self):
         """Build a Plotly figure of the current cross section."""
         fig = f.Fig()
         for verts in self.poly_coords:
@@ -383,6 +384,3 @@ class GridSection:
             )
         return fig
 
-    def plot(self):
-        """Display the current cross-section figure."""
-        self.figure.show()

@@ -1626,7 +1626,7 @@ opening — which they do: no pickled object caches a plotting class (verified).
 So each stage DELETES what it replaces. No D12 facades, no `__compatibility__`
 growth, no stubs. Plotting tests are revised freely.
 
-### Stage 8.1 — the output contract (Layer 3)
+### Stage 8.1 — the output contract (Layer 3) — DONE 2026-08-18
 
 Give every picture object one contract: `.show()`, `.fig`, `.save(path)`,
 `.html(path)`, and `_repr_html_`/`_ipython_display_` so a picture renders itself
@@ -1679,7 +1679,14 @@ The same four verbs, bound. `model.plot.map()` replaces `model.cor()`;
 DELETE `model.cor`, `model.xs`, `model.srf`, and the eleven `vor.*` plotting
 aliases in `voronoi.py:90-120`.
 
-*Medium. Verify: `-n0` suite; the four notebooks are updated in 8.7, not here.*
+> **Collision found in 8.1, resolve before writing this stage:** `vor.plot`
+> already exists and is **flopy's** `VoronoiGrid.plot` (inherited, verified via
+> `__qualname__`). Two notebooks call `model.vor.plot()`. Making `vor.plot` a
+> namespace shadows a working flopy method -- so either the grid scope uses a
+> different attribute name, or the shadowing is deliberate and `vor.plot.grid()`
+> replaces flopy's call at those sites.
+
+*Medium. Verify: `-n0` suite; notebooks updated in this stage, per the policy above.*
 
 ### Stage 8.5 — `surface(backend="vtk")`
 

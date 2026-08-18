@@ -2577,3 +2577,57 @@ same day, which is the useful part of the result.
        rewriting someone's in-progress analysis is not ours to do. Tracked
        canonical notebooks are edited surgically (cell-level, outputs intact) --
        never checked out or regenerated wholesale.
+
+125. **8.1: one contract for every picture, and two things the survey got wrong
+     (2026-08-18).**
+     - `viz.Picture` gives `Choro`, `XSection`, `GridSection` and
+       `InterpolatedSurface` one shape: `.fig`, `.show()`, `.save(path)`,
+       `.html(path)`, and `_repr_mimebundle_` so a picture renders itself. Before
+       it there were four names for the figure (`.choropleth`, `.fig`,
+       `.figure`, and none) and THREE incompatible meanings for `.plot()`:
+       return the figure (`Choro`), show it and return None (`GridSection`), or
+       open a browser window and return None (`InterpolatedSurface`).
+     - **Correction to the scoping discussion.** I told the user `Choro` had
+       three spellings of "give me the figure". It had two (`.plot()` and
+       `.choropleth`). `get_choropleth()` returns the choropleth **trace**, which
+       `viz.mosaic` composes panels out of -- deleting it as a duplicate would
+       have broken every mosaic. It survives, with a test saying why.
+     - **A live bug the contract had to fix to exist.** `add_choropleth()` calls
+       `fig.add_trace(...)` unconditionally, so the old `.choropleth` property
+       was NOT idempotent: touching the figure twice drew every trace twice, and
+       `.plot()` just returned it. `.fig` now assembles once and caches, which is
+       what makes `picture.fig.update_layout(...)` then `picture.show()` safe.
+     - **`InterpolatedSurface` was violating the house-figure rule.** Its
+       `plot()` built a BARE `go.Figure` and called `.show(renderer="browser")`,
+       so it returned None, could not be embedded, forced a browser window, and
+       dropped the template, `scrollZoom` and `dragmode="pan"` that
+       CLAUDE.md requires. Replaced by a `.fig` built on `viz.Fig`.
+     - **Compromise: `save()` raises its kaleido ImportError inline instead of
+       through `myflopy._optional.require`.** `viz` is deliberately
+       externals-only (Layer 0), and importing any myflopy module there would
+       either push every current L0 leaf up a layer (module-level) or trip the
+       deferred-import ratchet, which only ever moves DOWN (function-level). The
+       duplicated message is the cheaper of the two.
+     - **`_assembled` is a CLASS attribute, not an `__init__` assignment.**
+       `Choro` is constructed via `object.__new__` by several test doubles; a
+       `.fig` that raises AttributeError on those is a contract that only
+       half-holds. Found by the suite, not by review.
+     - **A grep-based sweep missed a production call site**, exactly as the plan
+       warned. `pest/ies.py:1686` and `:2234` call `.plot()` on a variable named
+       `choro`, but my first regex keyed on names containing "choro"/"map" and
+       still missed them because of the surrounding expression. Receivers were
+       then resolved by reading every `.plot()` in `src/`, which is what the plan
+       says to do and what I should have done first.
+     - **Notebooks: 6 tracked files edited surgically** (12 edits, text-level, so
+       nothing but the changed strings moved and all outputs stayed intact).
+       `bearcreek_uncertainty.ipynb` and `demo_ies_uncertainty.ipynb` are
+       UNTRACKED working files and were deliberately NOT touched -- they hold 6
+       picture `.plot()` calls between them, listed for the user to apply.
+     - **Left for 8.2 on purpose:** `ies.forecast(name).plot()` in two notebooks
+       and `self.forecast(name).plot()` in `ies.py:2318` are the grammar's
+       TIMESERIES verb, not a picture accessor. `model.gwf.plot()` and
+       `model.gwf.chd.plot()` are flopy's own and are never ours.
+     - **Collision found for 8.4:** `vor.plot` already exists and is **flopy's**
+       `VoronoiGrid.plot` (verified via `__qualname__`), called as
+       `model.vor.plot()` in two notebooks. Making `vor.plot` a namespace would
+       shadow it. Recorded in the plan at 8.4 rather than decided here.

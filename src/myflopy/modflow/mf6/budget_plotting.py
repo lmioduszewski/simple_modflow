@@ -168,4 +168,4 @@ def plot_drn_choropleth(model: SimulationBase, *, per: int = 0, zmax=None):
     node.set_index("node", inplace=True)
     full_idx = range(model.vor.ncpl)
     drn_flows = node.reindex(full_idx, fill_value=0)
-    model.choro(per=per, custom_zs=drn_flows.q.to_list(), zmin=0, zmax=zmax).plot()
+    return model.choro(per=per, custom_zs=drn_flows.q.to_list(), zmin=0, zmax=zmax)

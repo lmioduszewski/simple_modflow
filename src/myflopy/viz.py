@@ -50,6 +50,7 @@ from plotly.subplots import make_subplots as _make_subplots
 
 __all__ = [
     "Fig",
+    "Picture",
     "Subplot",
     "Template",
     "create_hover",
@@ -64,6 +65,98 @@ __all__ = [
     "category_colors",
     "plot_cross_section",
 ]
+
+
+class Picture:
+    """The one contract every drawable myflopy object answers.
+
+    A picture is anything you can look at: a map, a cross-section, a surface, a
+    time series. Whatever kind it is, and whichever verb produced it, it answers
+    the same four things::
+
+        picture            # renders itself in Jupyter
+        picture.fig        # the underlying figure, to modify before display
+        picture.show()     # display it explicitly
+        picture.save(path) # write it out (.html, or .png/.svg/.pdf)
+
+    Before plan 8.1 there were four classes with four different names for their
+    figure (``Choro.choropleth``, ``XSection.fig``, ``GridSection.figure``, and
+    ``InterpolatedSurface`` with none at all) and three incompatible meanings for
+    ``.plot()``: return the figure, show the figure, or open a browser window and
+    return None. Callers learned each class separately, and
+    ``model.cor().plot().show()`` was the cost.
+
+    **Subclasses supply exactly one thing: a ``fig`` property.** It must be
+    idempotent -- repeated access returns the same assembled figure, never one
+    that has accumulated its traces twice.
+    """
+
+    @property
+    def fig(self) -> Fig:
+        """The assembled figure. Subclasses must implement this."""
+
+        raise NotImplementedError(
+            f"{type(self).__name__} is a Picture but does not define `fig`."
+        )
+
+    def show(self, *args, **kwargs):
+        """Display the picture."""
+
+        return self.fig.show(*args, **kwargs)
+
+    def html(self, path, *, include_plotlyjs: str = "cdn", **kwargs):
+        """Write a standalone HTML file and return its path.
+
+        ``include_plotlyjs="cdn"`` keeps the file small; pass ``True`` to inline
+        plotly.js for a file that works with no network.
+        """
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        self.fig.write_html(str(path), include_plotlyjs=include_plotlyjs, **kwargs)
+        return path
+
+    def save(self, path, **kwargs):
+        """Write the picture out, choosing the format from the suffix.
+
+        ``.html`` goes through :meth:`html`; raster and vector formats go through
+        Plotly's static export, which needs ``kaleido`` -- an optional dependency
+        this package does not pin, so the error names it rather than surfacing
+        Plotly's own.
+        """
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        if path.suffix.lower() in {".html", ".htm"}:
+            return self.html(path, **kwargs)
+
+        try:
+            import kaleido  # noqa: F401  - presence check only
+        except ImportError as error:
+            # Raised inline rather than through `myflopy._optional.require`:
+            # `viz` is deliberately externals-only (Layer 0 in the import map),
+            # and importing any myflopy module here -- at module level or
+            # deferred -- would either push every L0 leaf up a layer or trip the
+            # deferred-import ratchet, which only moves down.
+            raise ImportError(
+                "kaleido is required for saving a figure as a static image "
+                "(install it, or save to .html instead, which needs nothing "
+                "extra)."
+            ) from error
+        self.fig.write_image(str(path), **kwargs)
+        return path
+
+    def _repr_mimebundle_(self, *args, **kwargs):
+        """Render in Jupyter without an explicit call.
+
+        Delegates to the figure's own mimebundle, which is how Plotly renders --
+        so a picture displays exactly as its figure would, honouring the same
+        renderer settings.
+        """
+
+        return self.fig._repr_mimebundle_(*args, **kwargs)
 
 
 def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:

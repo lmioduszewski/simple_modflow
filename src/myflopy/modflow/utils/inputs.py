@@ -91,7 +91,7 @@ class UzfInput:
         """Plot the UZF infiltration (``finf``) choropleth for one period."""
 
         finf = self.finf(per, multiplier).finf
-        self.model.cor(per=per, custom_zs=finf.to_list(), **kwargs).plot()
+        return self.model.cor(per=per, custom_zs=finf.to_list(), **kwargs)
 
 class RchInput:
 
@@ -130,7 +130,7 @@ class RchInput:
         c_hov = df.reindex(list(range(vor.ncpl)), fill_value=0)  # insert missing cell nums
         c_hov = c_hov * multiplier
         c_hov = c_hov.to_dict(orient='list')
-        Choro(vor=vor, custom_hover=c_hov, custom_zs=c_hov[list(c_hov.keys())[0]]).plot()
+        return Choro(vor=vor, custom_hover=c_hov, custom_zs=c_hov[list(c_hov.keys())[0]])
 
 
 class DrnInput:
