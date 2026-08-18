@@ -1563,61 +1563,171 @@ nothing in 7.4 depends on Phase 8).
 
 ---
 
-## Phase 8 — Plotting consolidation into `myflopy/plot/` (D5; ~2–5 days)
+## Phase 8 — The plotting vocabulary (REWRITTEN 2026-08-01; ~4–7 days)
 
-**Position:** last structural phase — after 4.1 (observations split), 5.1–5.6 + the
-*landed* parts of Phase 6 (no new API work targeting moving files), and 7.1 (imports
-already normalized). CLARIFIED (rev. 4): **5.7 (grid-lazy GIS, forward-looking) does
-NOT gate Phase 8** — it targets spec/geopackage code, not plotting files; and D5's
-"after the god-module splits" means 4.1 specifically (4.2–4.5 don't touch the moving
-files, though they land earlier anyway in the stated order). Only Phase 9 comes after.
+> **The original §8 ("move nine plotting modules into `myflopy/plot/`") is
+> RETRACTED.** A full re-verification against current code (12-agent review,
+> 2026-08-01) found six of its nine import-graph rows stale, its move order not
+> leaf-first (`xsections` is scheduled third but pulls five of the eight other
+> movers), its scope boundary already violated (`headsplus.py:50` imports
+> `package_plotting` at module level), and its acceptance test impossible —
+> `pyproject.toml` escalates myflopy `DeprecationWarning`s to errors, so D12
+> facades break every test that imports an old path. Above all it was the wrong
+> target: 5,518 lines would move, 7,367 lines of plotting would stay, and the
+> user-visible surface would not change at all.
+>
+> **What the user actually wanted is a vocabulary**, not a directory. Files stay
+> where they are. Ledger 124 records the retraction in full.
 
-**Scope decision (explicit):** the `package_*` explorer family stays put
-(`package_plotting.py`, `package_surface_water.py` are explorer components).
-`datatypes/hover.py` also stays put — it is a spec engine (L0 leaf), not plotting.
-This phase consolidates the *standalone* plotting modules only.
+### The model: three layers
 
-**Verified import graph (CORRECTED 2026-07-14; re-verify before moving — Phases 4–7
-will have touched it):**
+The plotting API has been mixing three separable concerns. Naming them is the
+whole phase.
 
-| Module (current) | Imported by |
-|------------------|-------------|
-| `utils/datatypes/choros.py` (`Choro`) | `grid/plotting.py`, `simulation/accessors.py`, `utils/inputs.py`, 6 test files — NOT `package_plotting.py` (rev-3's edge was phantom; only a local variable name) |
-| `utils/datatypes/xsections.py` | `headsplus.py`, `package_plotting.py`, `simulation/accessors.py`, `project/model_group.py`, `model_results_diff.py`, tests (+221 lines in `985eb9a`) |
-| `mf6/contour_plotting.py` | `choros.py`, 1 test |
-| `mf6/cross_section_plotting.py` | `layers.py`, `interactive_plotting.py`, `mf6/__init__.py` (exported), tests |
-| `mf6/heads_plotting.py` | `headsplus.py` only |
-| `mf6/mf2Dplots.py` | `heads_plotting.py` only |
-| `mf6/budget_plotting.py` | `budget.py` only |
-| `mf6/interactive_plotting.py` | `prt.py`, `simulation/base.py`, `mf6/__init__.py`, top-level `__init__.py` (**13** exported names — rev-3's "12" was never right), tests — NOT `viz.py` (docstring mention only) |
-| `mf6/grid/plotting.py` | `grid/voronoi.py`, **`grid/__init__.py` (re-export — rev. 3 missed it)**, `pest/ies.py`, 1 test, + the `canonical_02`/`canonical_06` notebooks import `build_choropleth` — NOT `viz.py` (docstring mention only) |
+**Layer 1 — PICTURES.** One picture from data. **Geometry chooses the verb;
+content and renderer are options, never verbs.**
 
-**Target layout** — `src/myflopy/plot/`: `choropleth.py` (Choro), `xsections.py`,
-`contours.py`, `cross_sections.py`, `heads.py` (+ fold the used parts of `mf2Dplots.py`,
-attic the rest — completes 2.1's deferral), `budget.py` (reader `mf6/budget.py` stays),
-`interactive.py`, `grid.py`, `__init__.py` re-exporting all public names. `viz.py`
-remains the front door.
+| verb | space | content options | backend |
+|---|---|---|---|
+| `map` | plan view | `values`, `contours`, `pathlines`, `locs`, `grid`, `hillshade` | `plotly` \| `mpl` |
+| `section` | vertical slice | `values`, `grid` | `plotly` \| `mpl` |
+| `surface` | 3-D | `values`, `pathlines`, `layers` | `plotly` \| `vtk` |
+| `timeseries` | value vs time | — | `plotly` \| `mpl` |
 
-**Mechanic:** leaf-first move order (`contours` → `choropleth` → `xsections` → `grid` →
-`budget` → `heads` → `cross_sections` → `interactive`); per move: `git mv`, fix internal
-imports, old-path facade with 3.1's warning `__getattr__` (per D12: the old paths
-warn-and-work at runtime but are absent from `__all__`/`dir()`/TYPE_CHECKING — only
-the new `myflopy/plot/` names are completion-visible), repoint internal importers
-(so internal code never triggers its own deprecation warnings), fast suite, commit.
-Update `_EXPORTS` targets (the 13 interactive names) and `mf6/__init__.py` +
-`grid/__init__.py`; grep for string references (pickles, docs, notebooks — incl. the
-`build_choropleth` imports in the canonical notebooks); update the layer map (plot/ =
-L1 presentation leaves per the corrected 4.4 map) and the viz.py docstring. **Existing
-plotting tests must pass unedited** — if they break, the move broke something
-(`985eb9a` added five more plotting-test importers this rule now covers:
-`test_hover_spec`, `test_colorscale_policy`, `test_view_grammar_composers`,
-`test_group_map_api`, `test_hover_integration`). Note `choros.py` now lazily imports
-`datatypes/hover.py` inside `_build_hover_context` — hover stays put (L0 leaf), the
-edge just needs to survive the move. New `tests/test_plot_layout.py`: new path clean,
-old path warns-and-works and is hidden per D12 (not in `dir()`/`__all__`), top-level
-exports resolve.
+**Layer 2 — COMPOSITION.** Takes pictures, returns a picture. Knows nothing
+about what kind they are. `mosaic(panels, …)` · `animate(frames, …)`.
 
----
+**Layer 3 — OUTPUT.** Methods on *any* picture from layer 1 or 2:
+`.show()` · `.fig` · `.html(path)` · `.save(path)` · notebook repr.
+
+Three scopes share the layer-1 vocabulary verbatim:
+
+```
+model.packages.<pkg>.<inputs|results>.<noun>.<verb>()   # one package field (exists)
+model.plot.<verb>() / vor.plot.<verb>() / stack.plot.<verb>()   # NEW
+myflopy.plot.<verb>(vor_or_data, …)                     # NEW, no model needed
+```
+
+**Key consequences.** `contours` and `pathlines` stop being top-level functions
+and become map content — the code already worked this way
+(`plot_cell_contours(..., ax=)`, `plot_particle_pathlines(..., ax=, head_data=)`,
+and `Choro`'s eight content params + five `add_*` methods). `plot3d`,
+`map_nodes` and `plot2d` disappear: a node-ID map is `map(values="node")`, a mesh
+map is `map(values=None, grid=True)`, and a 3-D mesh view is `surface`. **VTK is
+a backend of `surface`, not a picture kind** — the 3-D code already splits along
+renderer lines (plotly: `InterpolatedSurface.surface_trace`, `surface_3d`,
+`plot3d`; VTK/PyVista: `vtk_3d`, `ParticleTrackingScene`,
+`export_particle_tracking_html`), and `map(backend="mpl")` is the existing
+precedent.
+
+**No deprecations.** The user has confirmed there are no other consumers and that
+old notebooks do not need to keep working, only old *models* need to keep
+opening — which they do: no pickled object caches a plotting class (verified).
+So each stage DELETES what it replaces. No D12 facades, no `__compatibility__`
+growth, no stubs. Plotting tests are revised freely.
+
+### Stage 8.1 — the output contract (Layer 3)
+
+Give every picture object one contract: `.show()`, `.fig`, `.save(path)`,
+`.html(path)`, and `_repr_html_`/`_ipython_display_` so a picture renders itself
+in Jupyter. Applies to `Choro`, `XSection`, `InterpolatedSurface`, `GridSection`.
+
+DELETE `Choro.plot()` (which is just `return self.choropleth`) and
+`Choro.get_choropleth()` — three spellings of "give me the figure" on one class.
+
+This alone turns `model.cor().plot().show()` into `model.cor()`. **It also has to
+come first**: removing `Choro.plot()` is what lets Stage 8.2 tell the grammar's
+`plot()` verb apart from every other `.plot()` in the tree.
+
+*Small. Low risk. Verify: existing map/section tests still produce figures.*
+
+### Stage 8.2 — rename the grammar verbs
+
+`xs` → `section` (58 sites, 16 files) and `plot` → `timeseries` on view nodes.
+Purely mechanical, no behaviour change, but it touches the package grammar,
+group views, both diff tiers, docs and tests, so it gets its own stage and its
+own serial run.
+
+`plot` is the risky half: `.plot()` appears ~91 times and only some are the
+grammar verb. Stage 8.1 removes the biggest confuser first; the rest must be
+disambiguated by receiver type, not by grep.
+
+*Large but mechanical. Verify: `-n0` full suite; `tests/api_snapshot.json` regen
+reviewed as the public-API change log.*
+
+### Stage 8.3 — `myflopy.plot`
+
+The four verbs as free functions over a grid + data, plus `mosaic` (re-exported
+from `viz`, which already composes arbitrary panels) and `animate` (still the
+old model-bound form at this stage).
+
+DELETE `build_choropleth`, `build_grid_section`, `plot_cell_contours`,
+`contour_line_segments*` as public names, `plot_particle_pathlines`, and the five
+legacy choropleth entry points (`heads_plotting.choropleth`/`.plot_choropleth`,
+`mf2Dplots.ChoroplethPlot`, `plot_drn_choropleth`). Their behaviour becomes
+options on `map()`.
+
+*Medium. Verify: a notebook-shaped smoke test per verb.*
+
+### Stage 8.4 — `model.plot`, `vor.plot`, `stack.plot`
+
+The same four verbs, bound. `model.plot.map()` replaces `model.cor()`;
+`model.plot.section()` replaces `model.xs()`; `model.plot.surface()` replaces
+`model.srf.hds()`/`.lyr()`; `vor.plot.map()` replaces `vor.choropleth()`,
+`map_nodes()` and `plot2d()`.
+
+DELETE `model.cor`, `model.xs`, `model.srf`, and the eleven `vor.*` plotting
+aliases in `voronoi.py:90-120`.
+
+*Medium. Verify: `-n0` suite; the four notebooks are updated in 8.7, not here.*
+
+### Stage 8.5 — `surface(backend="vtk")`
+
+Fold `LayerBuildResult.vtk_3d`, `ParticleTrackingScene` and
+`export_particle_tracking_html` into `surface(backend="vtk")`, with the standalone
+HTML coming from the Layer-3 `.html(path)` rather than a bespoke exporter. 3-D
+pathlines become `surface(pathlines=…, backend="vtk")`.
+
+DELETE `model.visualize` (`ModelVisualization`) once its four slider exports are
+reachable as `<picture>.html(path)`.
+
+*Medium. Optional deps (`trame`, `pyvista`) must stay optional — the existing
+`_optional.require` pattern applies.*
+
+### Stage 8.6 — generalize `animate` (the long pole)
+
+Today `Animation(model, periods=…)` is model-bound and redraws from the model.
+Layer 2 needs `animate(frames, …)` accepting any sequence of pictures, with
+`<node>.animate(over="per")` defined AS that function over generated frames.
+
+**This is the only stage that is new code rather than renaming and collapsing.**
+Budget accordingly.
+
+*Large. Verify: an animation over heterogeneous picture types.*
+
+### Stage 8.7 — docs, notebooks, snapshots
+
+`docs/view_layer_conventions.md` is rewritten around the three layers (it is the
+normative doc and currently states the old verb set). Then
+`docs/package_api_reference.md`, `docs/myflopy_context.md`,
+`docs/codebase_structure.md`, `docs/manual/03_getting_started.md`, and the four
+notebooks that import `build_choropleth` (`canonical_02`, `canonical_06`,
+`canonical_fast_tour`, and the untracked `bearcreek_uncertainty.ipynb` — ask
+before touching any of them; the user runs them live).
+
+Regenerate `tests/api_snapshot.json` and the import-layer pins; add
+`tests/test_plot_vocabulary.py` asserting all three scopes expose the same verb
+set, so a verb added at one scope and forgotten at another fails.
+
+### What is NOT in scope
+
+Files do not move. `package_plotting.py`, `package_surface_water.py`,
+`prt_maps.py`, `hover.py` and the `pest/ies.py` plot methods stay exactly where
+they are — they are reached through the grammar, which names no module path.
+`viz.py` stays the figure-construction toolkit (`Fig`, `Template`, `PALETTE`,
+`subplots`, `mosaic`), separate from the model-drawing vocabulary. The ~35
+internal `build_*_table`/`build_*_payload` helpers keep their prefix; it is
+accurate there and renaming them is churn with no user-visible gain.
 
 ## Phase 9 — Final wrap-up (~0.5 day)
 

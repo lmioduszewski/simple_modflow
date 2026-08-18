@@ -2496,3 +2496,69 @@ same day, which is the useful part of the result.
        "no deprecated calls" is unenforceable against dependencies we do not
        control, and `warnings.simplefilter("error")` would fail on
        pandas/geopandas/pyemu deprecations that are not ours to fix.
+
+124. **Phase 8 was retracted and rewritten: the goal was a vocabulary, not a
+     directory (2026-08-01).**
+     - The original §8 was "move nine standalone plotting modules into
+       `myflopy/plot/`". A 12-agent re-verification against current code found
+       **six of its nine import-graph rows stale** (Phases 4-7 had moved the
+       graph under it), and three structural problems the plan could not survive:
+       1. **The move order was not leaf-first.** Measured by import closure:
+          `contour_plotting`, `cross_section_plotting`, `budget_plotting` and
+          `mf2Dplots` pull nothing; `xsections` pulls FIVE of the eight other
+          movers — and it was scheduled third, ahead of `grid`, `budget` and
+          `heads`, which it depends on.
+       2. **Its acceptance test was impossible.** "Existing plotting tests must
+          pass unedited" cannot hold, because `pyproject.toml:158-164` escalates
+          `myflopy` DeprecationWarnings to errors, so the D12 facades the plan
+          prescribes break every test importing an old path — 11 files, not the
+          five it named (two of which import no moving module at all).
+       3. **Its scope boundary was already violated.** §8 says the `package_*`
+          explorer family stays put, but `headsplus.py:50` imports
+          `package_plotting` at module level; importing `xsections` loads 37
+          myflopy modules including `package_plotting` and `hover`.
+     - **A third hazard nothing had reported:** `tests/test_interactive_plotting.py`
+       monkeypatches by STRING (`monkeypatch.setattr("myflopy.modflow.mf6.
+       interactive_plotting.plot_model_head_map", …)`, three sites). After a move
+       the patch lands in the stub's namespace while the function under test
+       resolves the name from its own globals — the patch silently becomes a
+       no-op and the test passes while testing nothing.
+     - **The cost/benefit was upside-down.** 5,518 lines would move; 7,367 lines
+       of plotting would stay (`package_surface_water` 2256, `package_plotting`
+       1990, `prt_maps` 1237, `hover` 824, `interpolated_surface` 525, `viz` 451)
+       plus `pest/ies.py`'s twelve plot methods. `__compatibility__` would go
+       23 → ~49 entries, frozen for two tagged releases when the repo has ONE tag.
+       And the user-visible surface would not change at all.
+     - **The target layout was also incomplete**: three plotting modules created
+       after the plan's 2026-07-14 verification (`grid/interpolated_surface.py`,
+       `prt_maps.py`, the plotting half of `pest/ies.py`) appear nowhere in it.
+     - **What replaced it.** The user's stated goal was discoverability, so §8 is
+       now a VOCABULARY phase: three layers (pictures / composition / output),
+       four picture verbs chosen by GEOMETRY (`map`, `section`, `surface`,
+       `timeseries`), with content and renderer as options. Files do not move.
+     - **Two collapses the user identified that the code already supported.**
+       `contours` and `pathlines` are not picture kinds — `plot_cell_contours`
+       and `plot_particle_pathlines` both take `ax=`, i.e. they draw onto an
+       existing map, and `Choro` already has eight content parameters and five
+       `add_*` methods. And `mosaic`/`animate` are combinators over arbitrary
+       pictures, not map verbs — `viz.mosaic`'s docstring already says "Compose
+       arbitrary panel objects", it was just shadowed by `<node>.mosaic()` sugar.
+     - **VTK is a BACKEND of `surface`, not a picture kind.** The 3-D code splits
+       along renderer lines, not content: plotly (`InterpolatedSurface.
+       surface_trace`, `surface_3d`, `plot3d`) vs VTK/PyVista (`vtk_3d`,
+       `ParticleTrackingScene`, `export_particle_tracking_html`). The precedent
+       already exists as `map(backend="plotly"|"mpl")`.
+     - **Compromise: no deprecations at all.** The user confirmed there are no
+       other consumers and that old NOTEBOOKS need not keep working, only old
+       MODELS need to keep opening. Verified they do: no pickled object caches a
+       plotting class (`workspace.py` pickles grids and array-bearing packages;
+       no `Choro`/`GridSection`/`XSection` is cached on either). So each stage
+       deletes what it replaces. This is a deliberate departure from the
+       deprecation policy, justified by a single-user codebase at one tag.
+     - **Compromise: the ~35 internal `build_*_table`/`build_*_payload` helpers
+       keep their prefix.** Only three `build_*` names were ever public plotting
+       API. Renaming the rest is churn with no user-visible gain.
+     - **Known long pole: `animate`.** Every other stage renames or collapses
+       existing behaviour; a frame-accepting `animate(frames)` is new code,
+       because today's `Animation(model, periods)` is model-bound and redraws
+       from the model rather than composing pictures.
