@@ -126,6 +126,7 @@
  "myflopy.modflow.utils.surfaces": 1,
  "myflopy.modflow.utils.validators": 0,
  "myflopy.package_api": 5,
+ "myflopy.plot": 5,
  "myflopy.project": 13,
  "myflopy.project.components": 1,
  "myflopy.project.group": 12,

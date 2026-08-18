@@ -570,6 +570,10 @@ def __getattr__(name: str) -> Any:
         return import_module("myflopy.modflow")
     if name == "project":
         return import_module("myflopy.project")
+    if name == "plot":
+        # The plotting front door (plan 8.3). Lazy like the others, so
+        # `import myflopy` does not pull the whole plotting stack.
+        return import_module("myflopy.plot")
 
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

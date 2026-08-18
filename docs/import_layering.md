@@ -155,6 +155,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.modflow.utils.outputs`
 - `myflopy.package_api`
+- `myflopy.plot`
 
 ## Layer 6
 
