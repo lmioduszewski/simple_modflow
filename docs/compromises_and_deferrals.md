@@ -2671,3 +2671,56 @@ same day, which is the useful part of the result.
        `demo_ies_uncertainty`) were fixed on request in this pass -- 4 edits,
        picture receivers only; `model.vor.plot()` (flopy's own) and
        `ies.forecast(...).plot()` (the grammar verb, which survives) left alone.
+
+127. **8.3: `myflopy.plot`, and the legacy choropleth layer removed (2026-08-18).**
+     - **8.3a** added `src/myflopy/plot/` with four verbs chosen by GEOMETRY --
+       `map` (plan view), `section` (vertical slice), `surface` (3-D) -- plus
+       `mosaic` (re-exported from `viz`, not reimplemented) and `animate`. That
+       one rule retired three names on its own: `plot3d` is a `surface`,
+       `map_nodes`/`plot2d` are `map(values=...)`, and contours are an option on
+       `map`, not a verb. A test pins each retirement.
+     - **`mf.plot` needed a line in the root `__getattr__`**, which special-cases
+       subpackages one at a time. Without it `import myflopy.plot` works while
+       `mf.plot` raises -- a half-wired export that no import test would catch.
+     - **No `timeseries` at module scope, deliberately.** A chart belongs to a
+       node that knows the model's periods; there is no useful "chart these bare
+       arrays" that plotly does not already do better.
+     - **8.3b deleted the legacy choropleth layer**, which ran deeper than the
+       plan's "five entry points": the whole `heads_plotting.py` module (its four
+       public names were all compatibility wrappers), the three `HeadsPlus`
+       methods that fronted them (`choropleth`, `plot_choropleth`, `plot_heads`),
+       `mf2Dplots.ChoroplethPlot` (orphaned -- its only caller was
+       `heads_plotting.choropleth`), and `plot_drn_choropleth` with its
+       `budget.plot_choro` wrapper. Verified beforehand: NO external callers.
+     - **The user drew the line explicitly (2026-08-18):** remove the legacy trio
+       from `model.hds`, keep the grammar verbs (`map`/`section`/`plot`/`mosaic`/
+       `animate`). `hds` is for reading and querying head data; the pictures come
+       from the grammar or from `myflopy.plot`.
+     - **Compromise: a small capability delta on `plot_heads`.** It accepted a
+       PATH to a locations file plus a `crs=`, resolving features to cells
+       itself. Its replacement, `model.hds.plot(cells=...)`, takes cell ids. The
+       feature-to-cell resolution still exists (`vor.get_vor_cells_as_series`,
+       `datatypes/locs.py`) but the caller now does that step. Recorded rather
+       than hidden, because "deleted, replaced by" is not quite true here.
+     - **`build_choropleth`/`build_grid_section` became PRIVATE factories**
+       (`_choropleth_factory`/`_grid_section_factory`) rather than being deleted:
+       they are the implementation behind `plot.map`/`plot.section` and the
+       `vor.choropleth`/`vor.cross_section` aliases that 8.4 will fold into
+       `vor.plot`. Dropped from `grid/__init__.__all__`.
+     - **A blanket rename hit a test's EXPECTED STRING.** The `build_choropleth`
+       -> `_choropleth_factory` sweep rewrote an assertion in
+       `test_master_visualization_prt_example.py` that describes what a NOTEBOOK
+       must contain -- so the test started demanding a private name inside a
+       notebook. Caught by the suite. The lesson is the same one 8.1 recorded:
+       a rename over `tests/` can change what a test is asserting ABOUT, not just
+       how it spells it.
+     - **All four notebooks migrated off the deep import.**
+       `from myflopy.modflow.mf6.grid.plotting import build_choropleth` ->
+       `from myflopy import plot`, and the calls to `plot.map(...)`. This was the
+       stated goal of the whole phase: nothing outside the package names an
+       internal module path any more.
+     - **Notebooks are not executed by the suite**, so a migration that reads
+       fine and dies on first run is the live failure mode. The exact rewritten
+       call shapes are now pinned by a canonical-model test. That test caught one
+       real error: a comment claiming `plot.map(..., backend="mpl")`, which the
+       signature does not accept -- the mpl backend is `.plot_mpl()`.

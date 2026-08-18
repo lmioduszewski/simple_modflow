@@ -75,7 +75,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
 - `myflopy.modflow.mf6.grid.selection`
 - `myflopy.modflow.mf6.heads_observations`
-- `myflopy.modflow.mf6.heads_plotting`
 - `myflopy.modflow.mf6.mf2Dplots`
 - `myflopy.modflow.mf6.observations.drn`
 - `myflopy.modflow.mf6.observations.heads` *(deferred imports: 4)*

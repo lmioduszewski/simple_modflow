@@ -43,7 +43,7 @@ implementation behind both spellings.
 from __future__ import annotations
 
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
-from myflopy.modflow.mf6.grid.plotting import GridSection, build_choropleth
+from myflopy.modflow.mf6.grid.plotting import GridSection, _choropleth_factory
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
@@ -100,7 +100,7 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
         kwargs.setdefault("model", source)
     if values is not None:
         kwargs["custom_zs"] = list(values)
-    return build_choropleth(grid, **kwargs)
+    return _choropleth_factory(grid, **kwargs)
 
 
 def section(source, /, **kwargs):

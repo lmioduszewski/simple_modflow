@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from matplotlib.colors import to_hex
 
-from myflopy.modflow.mf6.grid.plotting import build_choropleth
+from myflopy.modflow.mf6.grid.plotting import _choropleth_factory
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.package_plotting import _blue_white_red_diverging_colorscale
 from myflopy.modflow.mf6.package_registry import (
@@ -181,7 +181,7 @@ def test_field_map_policy_survives_the_real_choropleth_front_door():
     vor = _two_cell_vor()
     values = [0.5, 10.0]
     policy = _field_map_policy("change", values)
-    choro = build_choropleth(
+    choro = _choropleth_factory(
         vor,
         custom_zs=values,
         custom_hover={"change": values},
@@ -219,7 +219,7 @@ def test_a_log_map_reads_in_real_units_on_both_backends():
 
     values = [0.001, 100.0]
     policy = _field_map_policy("mean", values)
-    choro = build_choropleth(
+    choro = _choropleth_factory(
         _two_cell_vor(), custom_zs=values, hover_heads=False, hover_ks=False, **policy
     )
     figure = choro.plot_mpl()
@@ -243,7 +243,7 @@ def test_relabeling_a_colorbar_that_does_not_exist_leaves_the_map_axes_alone():
 
     values = [0.001, 100.0]
     policy = _field_map_policy("mean", values)
-    choro = build_choropleth(
+    choro = _choropleth_factory(
         _two_cell_vor(), custom_zs=values, hover_heads=False, hover_ks=False, **policy
     )
     figure = choro.plot_mpl(colorbar=False)
@@ -258,7 +258,7 @@ def test_relabeling_a_colorbar_that_does_not_exist_leaves_the_map_axes_alone():
 
 
 def test_the_grid_accessor_accepts_what_the_function_accepts():
-    """``vor.choropleth`` restates ``build_choropleth``'s signature by hand.
+    """``vor.choropleth`` restates ``_choropleth_factory``'s signature by hand.
 
     Widening only the function would leave the accessor raising ``TypeError`` for
     arguments the function itself takes.
@@ -570,9 +570,9 @@ def test_a_pooled_mosaic_colorbar_reads_in_real_units_not_log10():
 
     vor = _two_cell_vor()
     panels = [
-        ("prior", build_choropleth(vor, custom_zs=[0.001, 0.01], colorscale="earth",
+        ("prior", _choropleth_factory(vor, custom_zs=[0.001, 0.01], colorscale="earth",
                                    logscale=True)),
-        ("posterior", build_choropleth(vor, custom_zs=[1.0, 100.0], colorscale="earth",
+        ("posterior", _choropleth_factory(vor, custom_zs=[1.0, 100.0], colorscale="earth",
                                        logscale=True)),
     ]
     figure = viz.mosaic(panels, ncols=2, colorbar=_log_decade_colorbar_for_mosaic)
@@ -591,8 +591,8 @@ def test_a_mosaic_without_a_colorbar_argument_is_untouched():
 
     vor = _two_cell_vor()
     figure = viz.mosaic(
-        [build_choropleth(vor, custom_zs=[1.0, 10.0]),
-         build_choropleth(vor, custom_zs=[2.0, 20.0])],
+        [_choropleth_factory(vor, custom_zs=[1.0, 10.0]),
+         _choropleth_factory(vor, custom_zs=[2.0, 20.0])],
         ncols=2,
     )
 
@@ -614,8 +614,8 @@ def test_a_colorbar_callback_survives_a_mosaic_with_no_finite_data():
 
     vor = _two_cell_vor()
     figure = viz.mosaic(
-        [build_choropleth(vor, custom_zs=[float("nan"), float("nan")]),
-         build_choropleth(vor, custom_zs=[float("nan"), float("nan")])],
+        [_choropleth_factory(vor, custom_zs=[float("nan"), float("nan")]),
+         _choropleth_factory(vor, custom_zs=[float("nan"), float("nan")])],
         ncols=2, colorbar=_log_decade_colorbar_for_mosaic,
     )
 

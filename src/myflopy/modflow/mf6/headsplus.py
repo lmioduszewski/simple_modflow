@@ -35,18 +35,6 @@ from myflopy.modflow.mf6.heads_observations import (
 from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
-from myflopy.modflow.mf6.heads_plotting import (
-    choropleth as _choropleth,
-)
-from myflopy.modflow.mf6.heads_plotting import (
-    multimodel_plot_heads as _multimodel_plot_heads,
-)
-from myflopy.modflow.mf6.heads_plotting import (
-    plot_choropleth as _plot_choropleth,
-)
-from myflopy.modflow.mf6.heads_plotting import (
-    plot_heads as _plot_heads,
-)
 from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
@@ -89,12 +77,6 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
         "Could not reshape values to layer/cell form. "
         f"Got shape={values.shape}, expected nlay={nlay}, ncpl={ncpl}."
     )
-
-
-def multimodel_plot_heads(models: list[SimulationBase], locs: int | list[int] | Path, **kwargs):
-    """Compatibility wrapper for the dedicated multi-model plotting helper."""
-
-    return _multimodel_plot_heads(models, locs, **kwargs)
 
 
 class DependentVariableFile(SpatialView, bf.HeadFile):
@@ -674,74 +656,6 @@ class HeadsPlus(DependentVariableFile):
             long_format=long_format,
         )
 
-    def plot_heads(
-            self,
-            locs: Path | int | list,
-            crs: str = None,
-            layer: int = 0,
-            loc_name_field='ExploName',
-            plot_fig: bool = True,
-            return_fig: bool = False,
-            show_dates: bool = False,
-            show_times: bool = False,
-            start_period: int = 0,
-            loc_names: list = None,
-            times: pd.DatetimeIndex = None
-    ):
-        """Compatibility wrapper for the dedicated heads plotting helper."""
-
-        return _plot_heads(
-            self,
-            locs,
-            crs=crs,
-            layer=layer,
-            loc_name_field=loc_name_field,
-            plot_fig=plot_fig,
-            return_fig=return_fig,
-            show_dates=show_dates,
-            show_times=show_times,
-            start_period=start_period,
-            loc_names=loc_names,
-            times=times,
-        )
-
-    def plot_choropleth(self, *args, **kwargs):
-        """Compatibility wrapper for the dedicated choropleth plotting helper."""
-
-        return _plot_choropleth(self, *args, **kwargs)
-
-    def choropleth(
-            self,
-            kstpkper: tuple = (0, 0),
-            plot_mounding: bool = False,
-            zmin=None,
-            zmax=None,
-            zoom=13,
-            custom_hover: dict = None,
-            bottom=None,
-            bottom_array=None,
-            all_layers: bool = False,
-            layer: int = 1,
-            obs: Path = None,
-            obs_name: str = 'ExploName'
-    ):
-        """Compatibility wrapper for the dedicated choropleth builder."""
-
-        return _choropleth(
-            self,
-            kstpkper=kstpkper,
-            plot_mounding=plot_mounding,
-            zmin=zmin,
-            zmax=zmax,
-            zoom=zoom,
-            custom_hover=custom_hover,
-            bottom=bottom,
-            bottom_array=bottom_array,
-            all_layers=all_layers,
-            layer=layer,
-            obs=obs,
-            obs_name=obs_name,
-        )
 
 
 class ConcResults(DependentVariableFile):

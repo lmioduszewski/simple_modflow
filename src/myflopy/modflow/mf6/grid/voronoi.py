@@ -88,10 +88,10 @@ from myflopy.modflow.mf6.grid.geometry import (
 )
 from myflopy.modflow.mf6.grid.helpers import get_griddata_from_disu
 from myflopy.modflow.mf6.grid.plotting import (
-    build_choropleth as plotting_build_choropleth,
+    _choropleth_factory as plotting_build_choropleth,
 )
 from myflopy.modflow.mf6.grid.plotting import (
-    build_grid_section as plotting_build_grid_section,
+    _grid_section_factory as plotting_build_grid_section,
 )
 from myflopy.modflow.mf6.grid.plotting import (
     get_dash_selector as plotting_get_dash_selector,
@@ -499,7 +499,7 @@ class VoronoiGridPlus(VoronoiGrid):
     ):
         """Build the standard Voronoi choropleth wrapper used by the package.
 
-        A thin restatement of :func:`~myflopy.modflow.mf6.grid.plotting.build_choropleth`'s
+        A thin restatement of :func:`~myflopy.modflow.mf6.grid.plotting._choropleth_factory`'s
         signature -- keep the two in step, or ``vor.choropleth(colorscale=...)``
         raises ``TypeError`` for arguments the function itself accepts.
         """

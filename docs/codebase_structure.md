@@ -132,8 +132,6 @@ This is the main MF6 implementation area.
   delegates observation and plotting work to the helper modules below.
 - [src/myflopy/modflow/mf6/heads_observations.py](../src/myflopy/modflow/mf6/heads_observations.py)
   Observation lookup and observation-head table shaping for `HeadsPlus`.
-- [src/myflopy/modflow/mf6/heads_plotting.py](../src/myflopy/modflow/mf6/heads_plotting.py)
-  Heads plotting and choropleth presentation helpers for `HeadsPlus`.
 - [src/myflopy/modflow/mf6/observations/](../src/myflopy/modflow/mf6/observations/__init__.py)
   Reusable observation-target package (split from the former single module,
   plan 4.1): `heads.py`/`lake.py`/`sfr.py`/`drn.py` hold `HeadTargets`,
@@ -332,7 +330,7 @@ PEST / parallel tests are auto-marked `slow` in `conftest.py`). Highlights:
   then check [simulation/accessors.py](../src/myflopy/modflow/mf6/simulation/accessors.py:1)
   and [project/model_group.py](../src/myflopy/project/model_group.py:1).
 - If you are working on reusable package snapshots: start in [project/components.py](../src/myflopy/project/components.py:1).
-- If you are working on heads logic: start in [headsplus.py](../src/myflopy/modflow/mf6/headsplus.py:1), then look at [heads_observations.py](../src/myflopy/modflow/mf6/heads_observations.py:1) and [heads_plotting.py](../src/myflopy/modflow/mf6/heads_plotting.py:1).
+- If you are working on heads logic: start in [headsplus.py](../src/myflopy/modflow/mf6/headsplus.py:1), then look at [heads_observations.py](../src/myflopy/modflow/mf6/heads_observations.py:1). Plotting goes through the grammar (`model.hds.map()`) or `myflopy.plot`.
 - If you are diffing two models or checking a faithful copy: start with the
   [ModelDiff cheat sheet](model_diff_cheatsheet.md), then
   [project/model_diff.py](../src/myflopy/project/model_diff.py:1) and

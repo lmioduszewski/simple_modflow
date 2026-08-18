@@ -32,7 +32,7 @@ def mapit(vor, crs: str = 'EPSG:2927'):
     return gpd.GeoDataFrame(geometry=poly, crs=crs).explore()
 
 
-def build_choropleth(
+def _choropleth_factory(
     vor,
     model: SimulationBase = None,
     kstpkper: tuple = None,
@@ -95,12 +95,12 @@ def build_choropleth(
 
 def get_dash_selector(vor):
     """Return the Dash selector widget from the default choropleth."""
-    return build_choropleth(vor).dash_selector()
+    return _choropleth_factory(vor).dash_selector()
 
 
 def show(vor):
     """Display the default Voronoi choropleth plot."""
-    return build_choropleth(vor)
+    return _choropleth_factory(vor)
 
 
 def map_nodes(vor) -> go.Figure:
@@ -131,7 +131,7 @@ def show_selected_cells(vor, cell_list: list = None, **kwargs):
     """
     Show selected cells on the Voronoi choropleth.
     """
-    picture = build_choropleth(vor, **kwargs)
+    picture = _choropleth_factory(vor, **kwargs)
     picture.fig.data[0].selectedpoints = tuple(cell_list)
     return picture
 
@@ -252,7 +252,7 @@ def plottri(vor):
     return trifig2d.show(config=vor.config)
 
 
-def build_grid_section(vor: VoronoiGridPlus, line: shp.LineString | Path):
+def _grid_section_factory(vor: VoronoiGridPlus, line: shp.LineString | Path):
     """
     Build a cross-section helper for the Voronoi grid.
     """

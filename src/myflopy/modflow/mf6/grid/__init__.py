@@ -33,8 +33,8 @@ from .helpers import (
 )
 from .plotting import (
     GridSection,
-    build_choropleth,
-    build_grid_section,
+    _choropleth_factory,
+    _grid_section_factory,
     get_dash_selector,
     map_nodes,
     mapit,
@@ -70,8 +70,6 @@ __all__ = [
     "GridSection",
     "adjust_cells_by_id",
     "adjust_top_btm_overlaps",
-    "build_choropleth",
-    "build_grid_section",
     "calculate_distance",
     "get_griddata_from_disu",
     "get_dash_selector",

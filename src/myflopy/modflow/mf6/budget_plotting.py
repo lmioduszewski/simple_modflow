@@ -144,28 +144,3 @@ def multimodel_plot_budget_obs(
     if return_frame:
         return obs_dict
     return fig
-
-
-def plot_drn_choropleth(model: SimulationBase, *, per: int = 0, zmax=None):
-    """Plot DRN flows for one zero-based stress-period index as a choropleth.
-
-    Parameters
-    ----------
-    model
-        Parent model whose DRN budget should be visualized.
-    per
-        Zero-based stress-period index into ``model.kstpkper``.
-    zmax
-        Optional explicit upper bound for the colorscale.
-    """
-
-    kstpkper = model.kstpkper[per]
-    drn_df = model.bud("drn").df
-    drn_flows = drn_df.loc[idxx[:, kstpkper], :].q.droplevel(1) * -1
-    if zmax is None:
-        zmax = drn_flows.max()
-    node = drn_flows.reset_index().drop_duplicates("node")
-    node.set_index("node", inplace=True)
-    full_idx = range(model.vor.ncpl)
-    drn_flows = node.reindex(full_idx, fill_value=0)
-    return model.choro(per=per, custom_zs=drn_flows.q.to_list(), zmin=0, zmax=zmax)

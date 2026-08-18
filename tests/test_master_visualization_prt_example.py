@@ -288,7 +288,7 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "style='pilotpoints'",
         "capture=True",
         "plot_field",
-        "build_choropleth",
+        "plot.map(",
         # 6.4B: the "did the data inform this?" and "where is it biased?" figures
         "stat='reduction'",
         "plot_field_mosaic",

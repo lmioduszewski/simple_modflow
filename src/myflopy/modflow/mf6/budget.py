@@ -31,9 +31,6 @@ from myflopy.modflow.mf6.budget_plotting import (
 from myflopy.modflow.mf6.budget_plotting import (
     plot_budget_obs as _plot_budget_obs,
 )
-from myflopy.modflow.mf6.budget_plotting import (
-    plot_drn_choropleth as _plot_drn_choropleth,
-)
 from myflopy.modflow.mf6.budget_tables import (
     budget_df as _budget_df,
 )
@@ -450,6 +447,3 @@ class DRNBudget:
         """Create one DRN budget plotting helper for ``model``."""
         self.model = model
 
-    def plot_choro(self, per: int = 0, zmax=None):
-        """Plot DRN flows for one zero-based stress-period index."""
-        _plot_drn_choropleth(self.model, per=per, zmax=zmax)

@@ -91,3 +91,26 @@ def test_every_verb_draws_on_the_canonical_model(canonical_run):
 
     combined = plot.mosaic([picture, plot.map(canonical_run, layer=1)])
     assert combined is not None
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_the_exact_call_shapes_the_notebooks_use(canonical_run):
+    """The notebooks are not executed by the suite, so a migration that reads
+    fine and dies on the first run is the failure mode. These are the shapes
+    8.3 rewrote `build_choropleth(...)` into, verbatim."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    model, vor = canonical_run, canonical_run.vor
+    heads = list(model.hds.array(layer=0))
+
+    # canonical_02: `wt_map = plot.map(model, values=list(wt), layer=0)`
+    assert len(plot.map(model, values=heads, layer=0).fig.data) >= 1
+
+    # canonical_02 / canonical_fast_tour: grid form, then the mpl backend
+    assert plot.map(vor, values=heads, layer=0).plot_mpl() is not None
+
+    # canonical_06 / bearcreek: grid form with extra Choro options
+    assert plot.map(vor, values=heads, layer=0, zmin=0, zmax=100) is not None

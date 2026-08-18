@@ -1669,7 +1669,7 @@ come first**: removing `Choro.plot()` is what lets Stage 8.2 tell the grammar's
 Also folded in: `RchInput.plot`/`UzfInput.plot`/`DrnInput.plot` → `map()`. They
 return CHOROPLETHS, so `plot` was wrong under every naming scheme.
 
-### Stage 8.3 — `myflopy.plot`
+### Stage 8.3 — `myflopy.plot` — DONE 2026-08-18
 
 The four verbs as free functions over a grid + data, plus `mosaic` (re-exported
 from `viz`, which already composes arbitrary panels) and `animate` (still the
@@ -1681,7 +1681,22 @@ legacy choropleth entry points (`heads_plotting.choropleth`/`.plot_choropleth`,
 `mf2Dplots.ChoroplethPlot`, `plot_drn_choropleth`). Their behaviour becomes
 options on `map()`.
 
-*Medium. Verify: a notebook-shaped smoke test per verb.*
+> **Delivered in two commits.** 8.3a the module, 8.3b the deletions + notebook
+> migration. The legacy layer ran deeper than "five entry points": the whole
+> `heads_plotting.py` module went (all four public names were compatibility
+> wrappers), along with the three `HeadsPlus` methods fronting them,
+> `mf2Dplots.ChoroplethPlot` (orphaned), and `plot_drn_choropleth`. The grammar
+> verbs stay on `hds` -- the user's line: `hds` reads and queries, pictures come
+> from the grammar or `myflopy.plot`.
+>
+> `build_choropleth`/`build_grid_section` became PRIVATE factories rather than
+> being deleted -- they are the implementation behind `plot.map`/`plot.section`
+> and the `vor.*` aliases 8.4 will fold in.
+
+*Medium. Verified: every verb draws on the canonical model, and the exact call
+shapes the notebooks were rewritten into are pinned by their own test -- the
+suite does not execute notebooks, so that is the only guard against a migration
+that reads fine and dies on first run.*
 
 ### Stage 8.4 — `model.plot`, `vor.plot`, `stack.plot`
 

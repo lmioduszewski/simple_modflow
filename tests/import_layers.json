@@ -44,7 +44,6 @@
  "myflopy.modflow.mf6.grid.triangle": 2,
  "myflopy.modflow.mf6.grid.voronoi": 4,
  "myflopy.modflow.mf6.heads_observations": 1,
- "myflopy.modflow.mf6.heads_plotting": 1,
  "myflopy.modflow.mf6.headsplus": 2,
  "myflopy.modflow.mf6.interactive_plotting": 2,
  "myflopy.modflow.mf6.kflow": 2,

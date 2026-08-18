@@ -37,7 +37,7 @@ import plotly.graph_objects as go
 from myflopy import viz
 from myflopy._logging import get_logger
 from myflopy._optional import require
-from myflopy.modflow.mf6.grid.plotting import build_choropleth
+from myflopy.modflow.mf6.grid.plotting import _choropleth_factory
 from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
@@ -1624,7 +1624,7 @@ class IesResults:
         # `model` is deliberately not passed: Choro reads the model's head output
         # whenever model is not None, so a PEST model with missing or stale heads
         # would raise at construction -- and a parameter field is not a head map.
-        choro = build_choropleth(
+        choro = _choropleth_factory(
             self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
         )
         return choro, heading, choropleth_kwargs
@@ -2177,7 +2177,7 @@ class IesResults:
         if zones.empty:
             choropleth_kwargs.setdefault("showscale", False)
 
-        choro = build_choropleth(
+        choro = _choropleth_factory(
             self.model.vor, custom_zs=list(zone_values), layer=layer,
             **choropleth_kwargs
         )
