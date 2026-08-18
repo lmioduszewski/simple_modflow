@@ -1641,19 +1641,33 @@ come first**: removing `Choro.plot()` is what lets Stage 8.2 tell the grammar's
 
 *Small. Low risk. Verify: existing map/section tests still produce figures.*
 
-### Stage 8.2 — rename the grammar verbs
+### Stage 8.2 — rename `xs` to `section` — DONE 2026-08-18
 
-`xs` → `section` (58 sites, 16 files) and `plot` → `timeseries` on view nodes.
-Purely mechanical, no behaviour change, but it touches the package grammar,
-group views, both diff tiers, docs and tests, so it gets its own stage and its
-own serial run.
+`xs` → `section`: 25 call sites, 4 definitions, plus the `kind=` string values
+(`"section"` was already a half-accepted alias and is now the only spelling).
 
-`plot` is the risky half: `.plot()` appears ~91 times and only some are the
-grammar verb. Stage 8.1 removes the biggest confuser first; the rest must be
-disambiguated by receiver type, not by grep.
+> **`xs` means TWO things and only one of them is the verb.** `XSection.xs` and
+> `InterpolatedSurface.xs` are x-COORDINATE properties; renaming those would
+> corrupt the geometry code. The rule that separates them cleanly, verified
+> against every occurrence: `.xs(` with a paren is always the verb, `.xs`
+> without is always coordinates.
 
-*Large but mechanical. Verify: `-n0` full suite; `tests/api_snapshot.json` regen
-reviewed as the public-API change log.*
+> **`plot` → `timeseries` was DROPPED, and the premise was wrong.** An inventory
+> of every `plot()` in the grammar found it does not draw time series: distance
+> profiles (`SfrProfileView`, `SfrReachProfileView`), bar charts
+> (`LakBudgetView`, `PRTEndpointsView`, `PRTCaptureView`), a cumulative arrival
+> curve (`PRTTravelTimeView`), a histogram (`IesForecast`). `endpoints.timeseries()`
+> returning a bar chart would have been worse than the status quo.
+>
+> `plot()` means **the node's non-spatial chart** -- not a map, not a section --
+> and the node decides its shape. The docs claiming "time series" were the
+> defect; `docs/view_layer_conventions.md` now defines it correctly. One verb
+> whose name does not change with the chart type is what keeps the grammar
+> guessable. Stage 8.1 had already removed the `Choro.plot()` collision that
+> made `plot` ambiguous, so no rename is needed.
+
+Also folded in: `RchInput.plot`/`UzfInput.plot`/`DrnInput.plot` → `map()`. They
+return CHOROPLETHS, so `plot` was wrong under every naming scheme.
 
 ### Stage 8.3 — `myflopy.plot`
 
@@ -1672,7 +1686,7 @@ options on `map()`.
 ### Stage 8.4 — `model.plot`, `vor.plot`, `stack.plot`
 
 The same four verbs, bound. `model.plot.map()` replaces `model.cor()`;
-`model.plot.section()` replaces `model.xs()`; `model.plot.surface()` replaces
+`model.plot.section()` replaces `model.section()`; `model.plot.surface()` replaces
 `model.srf.hds()`/`.lyr()`; `vor.plot.map()` replaces `vor.choropleth()`,
 `map_nodes()` and `plot2d()`.
 

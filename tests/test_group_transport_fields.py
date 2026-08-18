@@ -123,7 +123,7 @@ def test_the_grouped_field_answers_the_whole_grammar(gwt_group):
     assert isinstance(conc.plot(layer=0), Fig)
     # xs was BROKEN on the transport readers until 2026-07-27 (ledger 99):
     # XSection reached for model.hds, which the kind guard refuses on a GWT model
-    assert isinstance(conc.xs(cells=[0, 5, 10]), Fig)
+    assert isinstance(conc.section(cells=[0, 5, 10]), Fig)
     assert conc.mosaic(by="model") is not None
 
 

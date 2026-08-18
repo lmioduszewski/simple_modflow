@@ -54,7 +54,7 @@ def combined_section_frame(sections: dict[str, XSection]) -> pd.DataFrame:
     Each section contributes its head-profile series (labeled by its
     ``section_name``) at its *current* ``kstpkper``; the model top is included
     once, from the first section. This is the shared data step behind
-    :func:`render_xsections` and the ``kind="xs"`` composers.
+    :func:`render_xsections` and the ``kind="section"`` composers.
     """
 
     if not sections:
@@ -223,8 +223,8 @@ class XSection(Picture):
 
         Named ``all_heads`` for history, but it is whatever field the model
         actually has: heads on GWF, concentration on GWT, temperature on GWE.
-        Reading ``model.hds`` here made ``model.conc.xs()`` and
-        ``model.temp.xs()`` raise "is a GWT model; '.hds' is only available on
+        Reading ``model.hds`` here made ``model.conc.section()`` and
+        ``model.temp.section()`` raise "is a GWT model; '.hds' is only available on
         GWF models" -- so the ``xs`` verb was broken on the transport readers
         from the day §6.1/6.2 shipped them, while the docs advertised the full
         grammar (fixed 2026-07-27, ledger 99).

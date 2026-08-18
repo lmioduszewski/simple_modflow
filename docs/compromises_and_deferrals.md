@@ -853,7 +853,7 @@ same day, which is the useful part of the result.
     - What: the new `mf.dis` (structured) and `mf.disu` (fully unstructured)
       passthroughs produce valid, runnable MF6 models, but the choropleth-map /
       cross-section / animation view layer targets **DISV/Voronoi** meshes only. A
-      DIS or raw-DISU model has no `.map()`/`.xs()`/`.animate()` rendering from
+      DIS or raw-DISU model has no `.map()`/`.section()`/`.animate()` rendering from
       myflopy — a caller falls back to FloPy's own plotting, or uses DISV.
     - Why: myflopy is Voronoi/DISV-first by design; the whole spatial viz stack
       (`VoronoiGridPlus`, cell-polygon choropleths) is built on the vertex mesh.
@@ -1762,7 +1762,7 @@ same day, which is the useful part of the result.
 
 99. **`xs` was broken on the transport readers from the day they shipped — FIXED
     2026-07-27.**
-    - `model.conc.xs()` and `model.temp.xs()` raised `AttributeError: model 'trans' is
+    - `model.conc.section()` and `model.temp.section()` raised `AttributeError: model 'trans' is
       a GWT model; '.hds' (heads) is only available on GWF models`, because
       `XSection.all_heads` cached its value table from `self.model.hds` — the very
       accessor the §6.0 kind guard refuses on a transport model. Meanwhile
@@ -1780,7 +1780,7 @@ same day, which is the useful part of the result.
       model has. Renaming it would touch every `XSection` consumer for a cosmetic gain;
       the docstring states the mismatch instead. Deferred.
     - Fixing it here rather than separately was a user decision: it unblocked
-      `group.conc.xs()` in the same pass, so the group tier did not ship with a hole.
+      `group.conc.section()` in the same pass, so the group tier did not ship with a hole.
 
 100. **`GroupConc`/`GroupTemp` — the "near-mechanical clone" was refused (2026-07-27).**
     Closes plan §6.1/6.2 item 4 (ledger 56 sub-item 4).
@@ -2631,3 +2631,43 @@ same day, which is the useful part of the result.
        `VoronoiGrid.plot` (verified via `__qualname__`), called as
        `model.vor.plot()` in two notebooks. Making `vor.plot` a namespace would
        shadow it. Recorded in the plan at 8.4 rather than decided here.
+
+126. **8.2: `xs` became `section`; `plot` stayed, because the rename it was
+     given rested on a false premise (2026-08-18).**
+     - `xs` → `section` across 25 call sites and 4 definitions, plus the `kind=`
+       string values. `"section"` was ALREADY a half-accepted alias
+       (`package_plotting.py` matched `("xs", "section")`), so half the plumbing
+       was in place; it is now the only spelling.
+     - **`xs` means two different things and only one is the verb.**
+       `XSection.xs` and `InterpolatedSurface.xs` are x-COORDINATE properties --
+       a blind rename would have corrupted the geometry code. The separating
+       rule, verified against every occurrence in the tree: `.xs(` with a paren
+       is always the verb; `.xs` without a paren is always coordinates.
+     - **`plot` → `timeseries` was planned, scoped, and DROPPED on evidence.**
+       An inventory of every `plot()` on a grammar node found that it does not
+       draw time series: distance profiles (`SfrProfileView`,
+       `SfrReachProfileView`), bar charts (`LakBudgetView`, `PRTEndpointsView`,
+       `PRTCaptureView`), a cumulative arrival curve (`PRTTravelTimeView`), a
+       histogram (`IesForecast`). Renaming would have produced
+       `endpoints.timeseries()` returning a bar chart of cells.
+     - **The defect was the DOCUMENTATION, not the code.**
+       `docs/view_layer_conventions.md` and `myflopy_context.md` both described
+       `plot` as the series verb, and the code never honoured it. That stale
+       sentence is what led the user to ask for the rename in the first place --
+       a doc error that nearly became a 91-site API change. The doc now defines
+       `plot()` as *the node's non-spatial chart*, lists what shape each node
+       actually returns, and states the corollary: a `plot()` that returns a MAP
+       is misnamed.
+     - **Compromise: one verb whose name does not change with the chart type.**
+       Splitting into `timeseries`/`profile`/`bars`/`histogram` would be more
+       accurate per node and was rejected: it breaks "every noun answers the same
+       verbs", which is the property that makes the grammar guessable without
+       reading source. `chart` was considered as a more literal name and rejected
+       as ~91 call sites for a marginal gain, now that 8.1 has removed the
+       `Choro.plot()` collision that made `plot` ambiguous.
+     - `RchInput.plot`/`UzfInput.plot`/`DrnInput.plot` → `map()`: they return
+       CHOROPLETHS, so they were misnamed under every option. No callers existed.
+     - The user's two UNTRACKED notebooks (`bearcreek_uncertainty`,
+       `demo_ies_uncertainty`) were fixed on request in this pass -- 4 edits,
+       picture receivers only; `model.vor.plot()` (flopy's own) and
+       `ies.forecast(...).plot()` (the grammar verb, which survives) left alone.

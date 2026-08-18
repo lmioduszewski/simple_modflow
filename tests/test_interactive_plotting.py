@@ -523,7 +523,7 @@ def test_plotly_cross_section_animation_is_exposed_and_exportable(monkeypatch, t
     class DummySection:
         ani = figure
 
-    monkeypatch.setattr(model, "xs", lambda **_kwargs: DummySection())
+    monkeypatch.setattr(model, "section", lambda **_kwargs: DummySection())
     output = tmp_path / "plotly_cross_section.html"
     result = model.visualize.plotly_cross_section_animation(output_path=output, cells=[0])
 
@@ -561,7 +561,7 @@ def test_plotly_animation_export_can_select_frames(monkeypatch, tmp_path):
     class DummySection:
         ani = figure
 
-    monkeypatch.setattr(model, "xs", lambda **_kwargs: DummySection())
+    monkeypatch.setattr(model, "section", lambda **_kwargs: DummySection())
     result = model.visualize.plotly_cross_section_animation(
         output_path=tmp_path / "selected_plotly.html",
         frame_stride=2,

@@ -1160,16 +1160,16 @@ class SpatialView:
         fig.tight_layout()
         return fig
 
-    # -- cross-section hooks (the xs verb + kind="xs" composers) ------------
+    # -- cross-section hooks (the section verb + kind="section" composers) --
     def _sections(self, model=None, **kwargs):
         """Return ``{name: XSection}`` for this node (heads leaves override)."""
 
         raise NotImplementedError(
-            "This node has no cross-section view; xs/kind='xs' is available on "
+            "This node has no cross-section view; section/kind='section' is available on "
             "heads leaves (model.hds, group.hds, diff heads)."
         )
 
-    def xs(
+    def section(
         self,
         model=None,
         *,
@@ -1243,7 +1243,7 @@ class SpatialView:
         """Faceted grid of panels sharing one scale.
 
         ``kind`` picks the panel type: ``"map"`` (choropleths, default),
-        ``"plot"`` (series panels), or ``"xs"`` (cross sections, heads leaves).
+        ``"plot"`` (series panels), or ``"section"`` (cross sections, heads leaves).
         ``by`` picks the facet axis -- maps: ``"layer"``/``"model"``; series:
         ``"model"``/``"layer"``/an entity (``"lake"``, ``"reach"``); sections:
         ``"model"``/``"period"``. Defaults to the surface's natural axis.
@@ -1277,7 +1277,7 @@ class SpatialView:
                 ncols=ncols,
                 title=title,
             )
-        if kind_key in ("xs", "section"):
+        if kind_key == "section":
             return self._xs_mosaic(
                 by=by,
                 per=per,
@@ -1288,7 +1288,7 @@ class SpatialView:
                 title=title,
                 **kwargs,
             )
-        raise ValueError(f"kind must be 'map', 'plot', or 'xs', got {kind!r}.")
+        raise ValueError(f"kind must be 'map', 'plot', or 'section', got {kind!r}.")
 
     def _plot_mosaic(
         self, *, by, per, layer, model, cells, agg, backend, ncols, title
@@ -1378,7 +1378,7 @@ class SpatialView:
                         section.kstpkper = key
                 panels.append((f"Period {period}", self._section_lines(sections)))
         else:
-            raise ValueError(f"by must be 'model' or 'period' for kind='xs', got {axis!r}.")
+            raise ValueError(f"by must be 'model' or 'period' for kind='section', got {axis!r}.")
         heading = title or f"{self._spatial_value_label()} cross sections by {axis}"
         if self._normalize_backend(backend) == "plotly":
             return _xy_mosaic_plotly(
@@ -1544,7 +1544,7 @@ class SpatialView:
     ):
         """Animate a panel across a dimension.
 
-        ``kind`` picks the panel type: ``"map"`` (default), ``"xs"`` (cross
+        ``kind`` picks the panel type: ``"map"`` (default), ``"section"`` (cross
         sections, heads leaves), or ``"plot"`` (series). ``over="period"``
         sweeps stress periods (maps and sections); ``over="model"`` sweeps the
         group's models (any kind). ``backend="plotly"`` returns an interactive
@@ -1573,7 +1573,7 @@ class SpatialView:
                 backend=backend,
                 title=title,
             )
-        if kind_key in ("xs", "section"):
+        if kind_key == "section":
             return self._xs_animation(
                 over=over,
                 per=per,
@@ -1583,7 +1583,7 @@ class SpatialView:
                 title=title,
                 **kwargs,
             )
-        raise ValueError(f"kind must be 'map', 'plot', or 'xs', got {kind!r}.")
+        raise ValueError(f"kind must be 'map', 'plot', or 'section', got {kind!r}.")
 
     def _plot_animation(
         self, *, over, per, layer, model, cells, agg, backend, title
@@ -1594,7 +1594,7 @@ class SpatialView:
         if axis != "model":
             raise ValueError(
                 "Series panels already sweep periods on the x-axis; use "
-                "over='model', or animate kind='map'/'xs' over periods."
+                "over='model', or animate kind='map'/'section' over periods."
             )
         frame, value_column, keys = self._series_selection(
             model=model, per=per, layer=layer, cells=cells
@@ -1654,7 +1654,7 @@ class SpatialView:
                 frames.append((str(name), self._section_lines(sections)))
         else:
             raise ValueError(
-                f"over must be 'period' or 'model' for kind='xs', got {axis!r}."
+                f"over must be 'period' or 'model' for kind='section', got {axis!r}."
             )
         heading = title or f"{self._spatial_value_label()} cross section over {axis}"
         if self._normalize_backend(backend) == "plotly":
@@ -1933,10 +1933,10 @@ class FieldMappable:
 
         return self._field_accessor(field).plot(*args, **kwargs)
 
-    def xs(self, *args, field=None, **kwargs):
+    def section(self, *args, field=None, **kwargs):
         """Cross-section of one field along a line (``field=`` selects it)."""
 
-        return self._field_accessor(field).xs(*args, **kwargs)
+        return self._field_accessor(field).section(*args, **kwargs)
 
     def mosaic(self, *args, field=None, **kwargs):
         """Shared-scale mosaic of one field over layers/models."""

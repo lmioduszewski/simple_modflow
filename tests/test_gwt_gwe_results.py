@@ -383,7 +383,7 @@ def test_the_ssm_budget_is_reachable_by_its_package_name(gwt_run):
 
 @pytest.mark.slow
 def test_the_xs_verb_works_on_the_transport_readers(gwt_run, gwe_run):
-    """``model.conc.xs()`` / ``.temp.xs()`` raised from the day they shipped.
+    """``model.conc.section()`` / ``.temp.section()`` raised from the day they shipped.
 
     ``XSection`` cached its value table from ``model.hds``, which the §6.0 kind
     guard refuses on a transport model -- so ``xs`` raised "is a GWT model;
@@ -398,7 +398,7 @@ def test_the_xs_verb_works_on_the_transport_readers(gwt_run, gwe_run):
     for run, reader_name in ((gwt_run, "conc"), (gwe_run, "temp")):
         model = run.model("trans")
         reader = getattr(model, reader_name)
-        assert isinstance(reader.xs(cells=[0, 5, 10]), Fig)
+        assert isinstance(reader.section(cells=[0, 5, 10]), Fig)
 
         # the section really carries THIS model's field, not heads
         section = reader._sections(cells=[0, 5, 10])[model.name]

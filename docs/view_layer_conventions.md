@@ -9,7 +9,7 @@
 ## Why this file exists
 
 The **spatial** half of the grammar was already decided and documented
-(`docs/myflopy_context.md`: *"`map/plot/xs` + `mosaic/animate` on every leaf"*,
+(`docs/myflopy_context.md`: *"`map/plot/section` + `mosaic/animate` on every leaf"*,
 implemented by `SpatialView` / `FieldMappable` in `package_plotting.py`).
 
 What was never written down is the other half: what to do with a **derived
@@ -44,14 +44,30 @@ rule; it is what makes the API guessable without reading source.
 |---|---|---|
 | `get(...)` | `DataFrame` — the normalized rows | every noun |
 | `summary()` | `DataFrame` — a compact digest | every noun |
-| `plot(...)` | `viz.Fig` | every noun |
+| `plot(...)` | `viz.Fig` — the node's NON-SPATIAL chart | every noun |
 | `map(...)` | choropleth | spatial nouns |
-| `xs(...)` | cross-section | spatial nouns |
+| `section(...)` | cross-section | spatial nouns |
 | `mosaic(...)` / `animate(...)` | multi-panel / animated | spatial nouns |
+
+> **What `plot` means, precisely.** Not "time series" -- the codebase never
+> honoured that, and saying so misled a reader as recently as 2026-08-18.
+> `plot()` is *the chart of this node that is not a map and not a section*, and
+> its shape follows the node: a series by stress period on a field
+> (`SpatialView`, `FieldMappable`, `LakStageChangeExplorer`), a **distance
+> profile** on the SFR profile views, a **bar chart** on `LakBudgetView` /
+> `PRTEndpointsView` / `PRTCaptureView`, a **cumulative arrival curve** on
+> `PRTTravelTimeView`, a **histogram** on `IesForecast`. One verb, one question
+> -- "chart this node" -- and the node decides what chart answers it. That is
+> what keeps the grammar guessable; a verb that changed name with the chart type
+> (`timeseries`/`profile`/`bars`) would not.
+>
+> A corollary worth stating: if a `plot()` returns a MAP, it is misnamed. Three
+> did -- `RchInput`/`UzfInput`/`DrnInput` returned choropleths -- and are now
+> `map()` (plan 8.2).
 
 The model-level **dependent-variable readers** follow the same spatial-noun verb
 set: `model.hds` (GWF heads), `model.conc` (GWT concentration), `model.temp` (GWE
-temperature) all share `get/summary/array/map/xs/mosaic/animate`, built from one
+temperature) all share `get/summary/array/map/section/mosaic/animate`, built from one
 `DependentVariableFile` base (`headsplus.py`) — add a new dependent variable by
 subclassing it and setting `value_name`/`store_column`/`_binary_text`/`_choro_type`,
 not by cloning the reader. The choropleth reads whichever field the map's `type`
@@ -71,7 +87,7 @@ A noun does **not** have to be a per-cell field at all: `results.pathlines` keep
 the trajectories, and its `map()` draws one polyline per particle over a base map
 instead of coloring cells. It still answers the same verbs (`get` = the
 normalized records, `plot` = elevation vs travel time, `mosaic` = one panel per
-release group) and refuses the ones that make no sense (`xs`, `animate`) with a
+release group) and refuses the ones that make no sense (`section`, `animate`) with a
 message naming the alternative. Overlay traces reach a mosaic through
 `Choro.add_overlay` / `overlay_traces()`; a map panel that hand-adds traces to
 `choro.fig` will have them dropped when composed.

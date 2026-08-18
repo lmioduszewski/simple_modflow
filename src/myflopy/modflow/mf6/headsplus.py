@@ -101,7 +101,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
     """A per-cell dependent-variable output reader (heads / concentration / temperature).
 
     Also a full :class:`SpatialView` leaf in the unified grammar --
-    ``.get()/.summary()`` (tables), ``.map()/.plot()/.xs()`` (panels),
+    ``.get()/.summary()`` (tables), ``.map()/.plot()/.section()`` (panels),
     ``.mosaic()/.animate()`` (composers). ``SpatialView`` is first in the MRO
     deliberately so the grammar's ``plot`` shadows flopy's legacy
     ``LayerFile.plot``. Subclasses set the class attributes below.
@@ -271,7 +271,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         del model  # single-model surface; SpatialView validates the selector
         if self.model is None:
-            raise ValueError(f"{type(self).__name__}.xs() requires a parent model.")
+            raise ValueError(f"{type(self).__name__}.section() requires a parent model.")
         from myflopy.modflow.utils.datatypes.xsections import XSection
 
         return {

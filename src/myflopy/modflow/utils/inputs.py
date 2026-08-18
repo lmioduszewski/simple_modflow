@@ -87,7 +87,7 @@ class UzfInput:
 
         return finf
 
-    def plot(self, per: int = 0, multiplier: float = 12 * 30, **kwargs):
+    def map(self, per: int = 0, multiplier: float = 12 * 30, **kwargs):
         """Plot the UZF infiltration (``finf``) choropleth for one period."""
 
         finf = self.finf(per, multiplier).finf
@@ -114,7 +114,7 @@ class RchInput:
         df = df.set_index('cellid')
         return df
 
-    def plot(
+    def map(
             self,
             per: tuple = None,
             multiplier: float | int = 1
@@ -143,7 +143,7 @@ class DrnInput:
 
         self.model = model
 
-    def plot(
+    def map(
             self,
             per: tuple = None,
     ):

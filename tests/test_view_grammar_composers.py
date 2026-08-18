@@ -1,5 +1,5 @@
 """Tests for the unified grammar's composers -- ``mosaic``/``animate`` with
-``kind="map"|"plot"|"xs"`` -- and the free-form ``viz.mosaic`` panel composer
+``kind="map"|"plot"|"section"`` -- and the free-form ``viz.mosaic`` panel composer
 (Phase 2 of the panel-verbs/composer redesign).
 """
 
@@ -300,22 +300,22 @@ def test_plot_animation_requires_model_axis():
         single.animate(kind="plot")
 
 
-# --- kind="xs" plumbing -----------------------------------------------------------
+# --- kind="section" plumbing -----------------------------------------------------------
 def test_xs_kind_raises_cleanly_off_heads_leaves():
     host = _FakeSeriesHost(_series_frame(), models=["a", "b"])
     with pytest.raises(NotImplementedError):
-        host.xs()
+        host.section()
     with pytest.raises(NotImplementedError):
-        host.mosaic(kind="xs")
+        host.mosaic(kind="section")
     with pytest.raises(NotImplementedError):
-        host.animate(kind="xs")
+        host.animate(kind="section")
 
 
 def test_field_mappable_xs_dispatch():
     sentinel = object()
 
     class _Leaf:
-        def xs(self, *args, **kwargs):
+        def section(self, *args, **kwargs):
             return sentinel
 
     class _Namespace(FieldMappable):
@@ -328,7 +328,7 @@ def test_field_mappable_xs_dispatch():
         def q(self):
             return _Leaf()
 
-    assert _Namespace().xs(line=None) is sentinel
+    assert _Namespace().section(line=None) is sentinel
 
 
 # --- real renders on the canonical model ------------------------------------------
@@ -351,17 +351,17 @@ def test_composers_render_on_canonical(canonical_run):
     )
 
     # -- single model: animated + mosaicked cross sections -------------------
-    xs_animation = model.hds.animate(kind="xs", line=line)  # over periods
+    xs_animation = model.hds.animate(kind="section", line=line)  # over periods
     # the house viz.Fig carries the interaction defaults (pan, scroll-zoom)
     assert isinstance(xs_animation, viz.Fig) and len(xs_animation.frames) >= 2
     assert xs_animation.layout.template.layout.dragmode == "pan"
     assert isinstance(
-        model.hds.animate(kind="xs", line=line, backend="mpl"), FuncAnimation
+        model.hds.animate(kind="section", line=line, backend="mpl"), FuncAnimation
     )
-    xs_mosaic = model.hds.mosaic(kind="xs", line=line, per=[0, 1])
+    xs_mosaic = model.hds.mosaic(kind="section", line=line, per=[0, 1])
     assert isinstance(xs_mosaic, go.Figure)
     assert isinstance(
-        model.hds.mosaic(kind="xs", line=line, per=[0, 1], backend="mpl"), Figure
+        model.hds.mosaic(kind="section", line=line, per=[0, 1], backend="mpl"), Figure
     )
 
     # -- single model: entity-faceted series mosaic --------------------------
@@ -372,7 +372,7 @@ def test_composers_render_on_canonical(canonical_run):
     reloaded = mf.load_mf6_run(model.workspace)
     group = ModelGroup({"a": model, "b": reloaded}, reference="a")
 
-    group_xs_mosaic = group.hds.mosaic(kind="xs", line=line)  # panel per member
+    group_xs_mosaic = group.hds.mosaic(kind="section", line=line)  # panel per member
     titles = [annotation.text for annotation in group_xs_mosaic.layout.annotations]
     assert titles[:2] == ["a", "b"]
 
@@ -390,7 +390,7 @@ def test_composers_render_on_canonical(canonical_run):
 
     # -- diff surface ----------------------------------------------------------
     diff = group.diff()
-    diff_xs_mosaic = diff.hds.mosaic(kind="xs", line=line)
+    diff_xs_mosaic = diff.hds.mosaic(kind="section", line=line)
     assert isinstance(diff_xs_mosaic, go.Figure)
 
     # -- free-form composer: a map and a timeseries in one grid ----------------

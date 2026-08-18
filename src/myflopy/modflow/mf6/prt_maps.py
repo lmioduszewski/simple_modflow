@@ -940,7 +940,7 @@ class PRTPathlineView(_PRTDerivedView):
         fig.tight_layout()
         return fig
 
-    def xs(self, *args, **kwargs):
+    def section(self, *args, **kwargs):
         """Trajectories are not a per-cell field, so there is no section to slice."""
 
         raise NotImplementedError(

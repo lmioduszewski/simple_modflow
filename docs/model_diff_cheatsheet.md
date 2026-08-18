@@ -102,7 +102,7 @@ diff.hds.summary()                # max/mean|Δ|, RMSE, argmax cell/layer/kstpkp
 diff.hds.get(per=8, layer=1)      # aligned elev / reference_elev / diff per cell
 diff.hds.map("F9b", per=8, layer=1)   # Δhead choropleth (model - reference)
 diff.hds.plot(layer=0)            # mean Δhead by stress period, line per model
-diff.hds.xs(line=line)            # reference vs model head profiles along a section line
+diff.hds.section(line=line)            # reference vs model head profiles along a section line
 
 # overall (volumetric) budget — term by term
 diff.bud.summary()                # per term: totals, % change, within_tolerance

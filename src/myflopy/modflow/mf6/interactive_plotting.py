@@ -1314,7 +1314,7 @@ class ModelVisualization:
                 selection_built_in = True
             except (AttributeError, TypeError):
                 pass
-        fig = self.model.xs(**xsection_kwargs).ani
+        fig = self.model.section(**xsection_kwargs).ani
         if not selection_built_in:
             fig = _select_plotly_frames(
                 fig,

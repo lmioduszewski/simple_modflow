@@ -110,7 +110,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | Plotting front door (`viz.Fig/subplots/mosaic/mpl_axes/PALETTE/category_colors`, figs backend) | ✅ | `viz.py` — import every figure from here, not raw plotly/matplotlib. figs is vendored (`myflopy/_vendor/figs`, synced via `scripts/sync_vendored_figs.py`): viz.py imports the live figs first and falls back to the snapshot, so pip installs work without the local figs project |
-| Unified view grammar: `map/plot/xs` + `mosaic/animate` on every leaf (model / group / diff), `backend="plotly"\|"mpl"` | ✅ | `package_plotting.py` (`SpatialView`, composers), `viz.mosaic` |
+| Unified view grammar: `map/plot/section` + `mosaic/animate` on every leaf (model / group / diff), `backend="plotly"\|"mpl"` | ✅ | `package_plotting.py` (`SpatialView`, composers), `viz.mosaic` |
 | **Derived-table views** (`<pkg>.<inputs\|results>.<noun>.<verb>` for merged tables, not just mappable fields) | ✅ | **`docs/view_layer_conventions.md` is the normative rule.** Reference impl: `SfrProfileView` (`sfr.results.profile`). Before 2026-07-18 derived tables sat OUTSIDE the grammar as `foo()`/`plot_foo()` pairs — that gap is what let two notebooks hand-roll matplotlib over a built-in |
 | Map mosaics framed to data + **synced pan/zoom** (`sync_views=`) | ✅ | `viz.py` (`shared_map_view`, `_map_sync_post_script`), `Choro.map_view` |
 | **Sectioned hover** (`HoverSpec`/`HoverStyle`; layer/surface tables, dry marking; `hover_*` sugar on every map verb) | ✅ | `utils/datatypes/hover.py`; defaults wired on all choropleth paths; LAK/SFR maps join feature stage |
@@ -208,7 +208,7 @@ centerline** (`SFRBuilder`), LAK/MVR/UZF builders, full spec `to_dict`/`from_dic
 ATS, `to_xugrid`, and the **unified PEST** stack — `cal.parameterize`
 (constant/zone/grid/pilotpoints), pilot points on Voronoi, PESTPP-IES + prior MC +
 parallel workers, and run review (`open_ies_run`).
-Also done (2026-06/07): the **viz front door + unified view grammar** (`map/plot/xs` +
+Also done (2026-06/07): the **viz front door + unified view grammar** (`map/plot/section` +
 `mosaic/animate` everywhere, synced map mosaics), the **sectioned hover system**
 (`HoverSpec`, defaults on every choropleth, LAK/SFR stage joins), the **colorscale
 policy**, the **inspection/diff stack** (ONE `diff()` verb, `model.config`, ModelDiff

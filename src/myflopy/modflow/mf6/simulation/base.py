@@ -706,7 +706,7 @@ class SimulationBase:
             **kwargs,
         )
 
-    def xs(
+    def section(
         self,
         per: int = None,
         kstpkper: tuple = None,

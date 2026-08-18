@@ -417,7 +417,7 @@ of the model-level readers, with the same verbs plus `compare()`:
 ```python
 group.conc.get()                     # aligned concentration, one block per member
 group.conc.compare()                 # vs the reference: conc / reference_conc / diff
-group.conc.map(); group.conc.plot(); group.conc.xs(line=line)
+group.conc.map(); group.conc.plot(); group.conc.section(line=line)
 group.diff().conc.map("variant")     # Δconc choropleth -- the ONE public diff route
 group.diff().temp.summary()          # max/mean |Δtemp|, RMSE, argmax cell/layer
 ```
