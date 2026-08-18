@@ -1032,15 +1032,43 @@ class SpatialView:
                 parts.append(f"{column.capitalize()} {int(value)}")
         return " / ".join(parts) if parts else "All"
 
+    def _no_series_message(self) -> str:
+        """Why ``plot()`` has nothing to draw here, and what to call instead.
+
+        ``plot()`` is the node's NON-SPATIAL CHART, and for a per-cell field
+        that chart is a series by stress period (see
+        ``docs/view_layer_conventions.md``; the verb is not "time series" in
+        general -- on other nodes it is a profile, a bar chart or a histogram).
+        A static property (NPF ``k``, DISV ``top`` ...) has no stress-period
+        dimension at all, so there is no series to draw -- and saying only
+        "this node has no 'per' data" leaves the reader to guess that the
+        spatial verb is ``map()``.
+        """
+
+        package = getattr(self, "package_name", None)
+        field = getattr(self, "field_name", None)
+        noun = f"{package}.{field}" if package and field else "this field"
+
+        spatial = []
+        for verb, call in (("map", "map(layer=0)"), ("section", "section(...)")):
+            if callable(getattr(self, verb, None)):
+                spatial.append(f".{call}")
+        alternatives = " or ".join(spatial) if spatial else ".get()"
+
+        return (
+            f"plot() charts {noun} by stress period, but it is a static property "
+            f"with no stress-period dimension -- there is nothing to put on the "
+            f"time axis. Use {alternatives} for its spatial distribution, or "
+            ".get() / .summary() for the values themselves."
+        )
+
     def _series_selection(self, *, model=None, per=None, layer=None, cells=None):
         """Filter the series table; return ``(frame, value_column, line_keys)``."""
 
         selected_models = self._resolve_models(model)
         frame = self._series_table()
         if frame is None or "per" not in getattr(frame, "columns", []):
-            raise ValueError(
-                "plot() requires period-indexed rows; this node has no 'per' data."
-            )
+            raise ValueError(self._no_series_message())
         frame = frame.copy()
 
         # column-based filters (a filter is skipped when its column is absent)

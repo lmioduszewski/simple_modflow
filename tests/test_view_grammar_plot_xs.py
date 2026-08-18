@@ -1,4 +1,4 @@
-"""Tests for the unified grammar's ``plot`` (series) and ``xs`` (cross-section)
+"""Tests for the unified grammar's ``plot`` (series) and ``section`` (cross-section)
 panel verbs -- Phase 1 of the panel-verbs/composer redesign.
 
 Fast tests exercise the generic series engine and the section-line
@@ -155,7 +155,7 @@ def test_headsplus_is_a_spatial_view_leaf():
     assert issubclass(HeadsPlus, SpatialView)
     # the grammar's plot deliberately shadows flopy's legacy LayerFile.plot
     assert HeadsPlus.plot is SpatialView.plot
-    for verb in ("get", "summary", "map", "plot", "xs", "mosaic", "animate"):
+    for verb in ("get", "summary", "map", "plot", "section", "mosaic", "animate"):
         assert callable(getattr(HeadsPlus, verb))
 
 
@@ -163,14 +163,14 @@ def test_group_heads_is_a_group_spatial_view_leaf():
     from myflopy.project.model_group import GroupHeads, _GroupSpatialView
 
     assert issubclass(GroupHeads, _GroupSpatialView)
-    for verb in ("get", "compare", "map", "plot", "xs", "mosaic", "animate"):
+    for verb in ("get", "compare", "map", "plot", "section", "mosaic", "animate"):
         assert callable(getattr(GroupHeads, verb))
 
 
 def test_heads_result_diff_has_plot_and_xs():
     from myflopy.project.model_results_diff import HeadsResultDiff
 
-    for verb in ("get", "summary", "map", "plot", "xs", "mosaic", "animate"):
+    for verb in ("get", "summary", "map", "plot", "section", "mosaic", "animate"):
         assert callable(getattr(HeadsResultDiff, verb))
 
 
@@ -204,9 +204,9 @@ def test_plot_and_xs_verbs_render_on_canonical(canonical_run):
             (bounds[0] + 0.75 * (bounds[2] - bounds[0]), bounds[1] + 0.75 * (bounds[3] - bounds[1])),
         ]
     )
-    section = model.hds.xs(line=line)
+    section = model.hds.section(line=line)
     assert isinstance(section, go.Figure) and len(section.data) >= 2  # head + top
-    assert isinstance(model.hds.xs(line=line, backend="mpl"), Figure)
+    assert isinstance(model.hds.section(line=line, backend="mpl"), Figure)
 
     # -- single model: package leaves --------------------------------------
     ghb_series = model.packages.ghb.results.plot()  # flux by period (per layer)
@@ -231,7 +231,7 @@ def test_plot_and_xs_verbs_render_on_canonical(canonical_run):
     assert len(group_series.data) == 2 * nlay
     group_layer0 = group.hds.plot(layer=0)  # layer filter -> one line per model
     assert len(group_layer0.data) == 2
-    group_section = group.hds.xs(line=line)
+    group_section = group.hds.section(line=line)
     assert isinstance(group_section, go.Figure)
     assert len(group_section.data) >= 3  # two member profiles + model top
 
@@ -242,7 +242,48 @@ def test_plot_and_xs_verbs_render_on_canonical(canonical_run):
     diff = group.diff()
     diff_series = diff.hds.plot(layer=0)  # mean dHead line per model
     assert isinstance(diff_series, go.Figure) and len(diff_series.data) == 1
-    diff_section = diff.hds.xs(line=line)
+    diff_section = diff.hds.section(line=line)
     assert isinstance(diff_section, go.Figure) and len(diff_section.data) >= 3
     diff_q_series = diff.packages.ghb.results.q.plot()
     assert isinstance(diff_q_series, go.Figure) and len(diff_q_series.data) >= 1
+
+
+# --- plot() on a static field (no time axis) -----------------------------------
+def test_plot_on_a_static_field_names_the_spatial_verb_instead():
+    """`plot()` is the node's non-spatial CHART, which on a per-cell field is a
+    series by stress period. A static property (NPF k, DISV top) has no
+    stress-period dimension at all, so there is no series to draw -- and the old
+    message, "this node has no 'per' data", described the problem without naming
+    the fix. A reader hitting this is one `.map()` away from what they wanted,
+    so the error has to say so.
+    """
+
+    class _StaticField(SpatialView):
+        value_name = "k"
+        package_name = "npf"
+        field_name = "k"
+
+        def get(self):
+            # No 'per' column: a static array is one value per cell, full stop.
+            return pd.DataFrame({"layer": [0, 0], "cell": [1, 2], "k": [10.0, 20.0]})
+
+        def _spatial_models(self):
+            return None
+
+        def map(self, **kwargs):        # the verb the message should point at
+            return object()
+
+    with pytest.raises(ValueError) as excinfo:
+        _StaticField().plot()
+
+    message = str(excinfo.value)
+    assert "npf.k" in message, "the message must name the field the user typed"
+    assert ".map(" in message, "the message must name the verb that does work"
+    assert "static" in message.lower()
+
+
+def test_plot_still_works_where_periods_exist():
+    """The guard above must not swallow a genuine series."""
+
+    host = _FakeSeriesHost(_series_frame(), models=["a", "b"])
+    assert isinstance(host.plot(), go.Figure)
