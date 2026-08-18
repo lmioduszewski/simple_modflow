@@ -1705,15 +1705,48 @@ Budget accordingly.
 
 *Large. Verify: an animation over heterogeneous picture types.*
 
-### Stage 8.7 — docs, notebooks, snapshots
+### Notebooks — edited IN the stage that breaks them, not at the end
 
-`docs/view_layer_conventions.md` is rewritten around the three layers (it is the
-normative doc and currently states the old verb set). Then
-`docs/package_api_reference.md`, `docs/myflopy_context.md`,
-`docs/codebase_structure.md`, `docs/manual/03_getting_started.md`, and the four
-notebooks that import `build_choropleth` (`canonical_02`, `canonical_06`,
-`canonical_fast_tour`, and the untracked `bearcreek_uncertainty.ipynb` — ask
-before touching any of them; the user runs them live).
+**11 notebooks call the API this phase changes.** They are NOT deferred to 8.7:
+the user runs them live, so a stage that breaks one and postpones the fix leaves
+a broken notebook for days. **Every stage updates the notebooks it breaks, in the
+same commit, and the canonical set is re-executed before that commit lands.**
+
+| stage | what breaks | notebooks (occurrences) |
+|---|---|---|
+| 8.1 | `Choro.plot()` deleted | whichever of the 24 `.plot()` calls have a picture receiver — resolve per call site, not by grep |
+| 8.2 | `xs`→`section`, `plot`→`timeseries` | the remaining `.plot()` calls (grammar verb) across 10 notebooks |
+| 8.3 | `build_choropleth` deleted | `canonical_02` (7), `canonical_06` (2), `canonical_fast_tour` (2), **`bearcreek_uncertainty`** (2) |
+| 8.4 | `model.cor` deleted | `code_geometry_refined_model_workflow` (1), `refined_feature_rich_model_workflow` (1) |
+| 8.5 | `model.visualize` deleted | `master_large_model_visualization_prt_workflow` (6) + its `plot_model_cross_section` import |
+| 8.6 | `animate` signature | `canonical_fast_tour` (2) |
+
+**Two rules on how they are edited.**
+
+1. **Tracked notebooks are edited SURGICALLY** — cell by cell, in place. Never
+   `git checkout`, never strip outputs, never regenerate wholesale. A canonical
+   notebook carries executed output the user reads.
+2. **`bearcreek_uncertainty.ipynb` and `demo_ies_uncertainty.ipynb` are UNTRACKED
+   working files** — the user's uncommitted work in progress. Flag what needs
+   changing and **ask before editing them**; they are not ours to rewrite.
+
+`tests/test_master_visualization_prt_example.py` asserts specific API strings are
+present in the master notebook (`:192-213`) and structural properties of
+`canonical_00..03` (`:215-255`). Those assertions move with the vocabulary and are
+part of the stage that changes it, not an afterthought.
+
+Verification per stage: `scripts/render_notebooks.py` on the canonical set — a
+source edit that leaves a notebook unrunnable is the failure mode a grep cannot
+see.
+
+### Stage 8.7 — docs, snapshots, and the vocabulary test
+
+`docs/view_layer_conventions.md` is rewritten around the three layers — it is the
+normative doc and currently states the old verb set (`map/plot/xs` +
+`mosaic/animate`). Then `docs/package_api_reference.md`,
+`docs/myflopy_context.md`, `docs/codebase_structure.md`, and
+`docs/manual/03_getting_started.md` (which teaches the old
+`build_choropleth` import in an executable fence at `:347`).
 
 Regenerate `tests/api_snapshot.json` and the import-layer pins; add
 `tests/test_plot_vocabulary.py` asserting all three scopes expose the same verb

@@ -2562,3 +2562,18 @@ same day, which is the useful part of the result.
        existing behaviour; a frame-accepting `animate(frames)` is new code,
        because today's `Animation(model, periods)` is model-bound and redraws
        from the model rather than composing pictures.
+     - **Notebooks are edited IN the stage that breaks them, not batched at the
+       end (user's call, 2026-08-01).** 11 notebooks call the changing API. The
+       first draft deferred all of them to 8.7; the user runs them live, so that
+       would have left a broken notebook standing for days. Each stage now fixes
+       what it breaks in the same commit, and re-executes the canonical set via
+       `scripts/render_notebooks.py` -- a source edit that leaves a notebook
+       unrunnable is exactly the failure a grep cannot see.
+     - **Compromise: two notebooks are flagged, not edited.**
+       `bearcreek_uncertainty.ipynb` and `demo_ies_uncertainty.ipynb` are
+       UNTRACKED working files -- the user's uncommitted work. Between them they
+       hold 2 `build_choropleth` calls and 8 `.plot()` calls that this phase
+       breaks. They get a written list of what to change and an explicit ask;
+       rewriting someone's in-progress analysis is not ours to do. Tracked
+       canonical notebooks are edited surgically (cell-level, outputs intact) --
+       never checked out or regenerated wholesale.
