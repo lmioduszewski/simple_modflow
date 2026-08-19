@@ -33,7 +33,6 @@ from flopy.mf6.mfbase import MFDataException
 
 from myflopy import viz
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.package_explorer_utils import _default_show_layer_elevs
 from myflopy.modflow.mf6.package_plotting import (
     SpatialView,
     _apply_backend,
@@ -323,9 +322,8 @@ class _PRTDerivedView(SpatialView):
             fill_value=fill_value,
             agg="first",  # the frame is already one row per cell
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         kwargs.setdefault("hover_spec", hover_spec)
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=0,
             layer=0 if layer is None else int(layer),
             type="custom",
@@ -668,7 +666,7 @@ class PRTPathlineView(_PRTDerivedView):
     def _blank_base(self, **kwargs):
         """A map with the grid framed but no cell values -- context for ``base=None``."""
 
-        return self.model.cor(
+        return self.model.plot.map(
             type="custom",
             custom_zs=[float("nan")] * self._ncpl,
             custom_hover={},
@@ -734,7 +732,7 @@ class PRTPathlineView(_PRTDerivedView):
             Figure title. On a caller-supplied ``base`` the existing title is left
             alone unless this is given.
         **base_kwargs
-            Forwarded to the base map (``model.cor(...)``) -- e.g. ``contours=``,
+            Forwarded to the base map (``model.plot.map(...)``) -- e.g. ``contours=``,
             ``zmin=``/``zmax=``, ``locs=``.
 
         Returns
@@ -794,7 +792,6 @@ class PRTPathlineView(_PRTDerivedView):
                 )
             choro, borrowed = base, True
         elif base is None or base == "heads":
-            base_kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
             layer_index = 0 if layer is None else int(layer)
             if base is None:
                 clashes = sorted(base_kwargs.keys() & _BLANK_BASE_KWARGS)
@@ -805,7 +802,7 @@ class PRTPathlineView(_PRTDerivedView):
                     )
                 choro = self._blank_base(per=per, layer=layer_index, **base_kwargs)
             else:
-                choro = self.model.cor(per=per, layer=layer_index, **base_kwargs)
+                choro = self.model.plot.map(per=per, layer=layer_index, **base_kwargs)
         elif isinstance(base, str):
             raise ValueError(
                 f"base={base!r} is not a pathline base map; use 'heads', None, "

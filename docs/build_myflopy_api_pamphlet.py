@@ -105,7 +105,7 @@ PAGES = [
         "takeaway": "The heads workflow should make it easy to move from raw results to a map or cross-section in one or two calls.",
         "bullets": [
             "`model.hds` exposes the `HeadsPlus` helper, while `model.all_heads` provides the normalized heads table.",
-            "Use `model.cor(...)` for choropleths and `model.xsect(...)` or `plot_model_cross_section(...)` for section views.",
+            "Use `model.plot.map(...)` for choropleths and `model.plot.section(...)` for section views.",
             "Result viewers can now pivot between time selectors like `per` and explicit `kstpkper` pairs more consistently.",
             "The same model object supports both interactive review and file-backed reopened runs.",
         ],
@@ -115,7 +115,7 @@ PAGES = [
             "table = model.all_heads.reset_index()",
             "",
             "# map one stress period",
-            "fig = model.cor(per=0, layer=0, type='hds').plot()",
+            "picture = model.plot.map(per=0, layer=0, type='hds')  # a Picture: .show() / .save(path)",
             "",
             "# build a section view through selected cells",
             "section = model.xsect(per=0, cells=[10, 20, 30])",

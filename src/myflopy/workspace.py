@@ -562,7 +562,7 @@ class Run:
         """Return the preferred myflopy model view for this run.
 
         Built models return a live :class:`ModelView` with myflopy helper methods
-        (``.packages``, ``.budget``, ``.cor(...)``, ``.diff(...)``, plus the
+        (``.packages``, ``.budget``, ``.plot.map(...)``, ``.diff(...)``, plus the
         kind-appropriate dependent variable: ``.hds`` on GWF, ``.conc`` on GWT,
         ``.temp`` on GWE). Reopened/file-backed models return a ``LoadedMf6Run``,
         which answers the same grammar over the written files.

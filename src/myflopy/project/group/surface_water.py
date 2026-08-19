@@ -15,7 +15,7 @@ from myflopy.modflow.mf6.package_explorer import (
     build_surface_water_q_map_payload,
 )
 from myflopy.modflow.utils.datatypes.hover import surface_water_hover
-from myflopy.project.group._shared import _default_show_layer_elevs, _filter_group_input_table
+from myflopy.project.group._shared import _filter_group_input_table
 from myflopy.project.group.spatial import _GroupSpatialView
 
 if TYPE_CHECKING:
@@ -83,7 +83,6 @@ class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
             include=include,
             lak_connection_type=lak_connection_type,
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_surface_water_q_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -97,7 +96,7 @@ class GroupSurfaceWaterExchangeResults(_GroupSpatialView):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", surface_water_hover())
-        return target_model.cor(
+        return target_model.plot.map(
             per=per,
             layer=layer,
             type="custom",

@@ -25,7 +25,6 @@ from myflopy.modflow.mf6.package_budget import (
 from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
     _coerce_numeric_like_columns,
-    _default_show_layer_elevs,
     _extract_structured_column,
     _filter_normalized_table,
     _get_package_explorer_cache,
@@ -144,7 +143,6 @@ __all__ = [
     "_normalize_iterable_filter",
     "_filter_normalized_table",
     "_aggregate_hover_strings",
-    "_default_show_layer_elevs",
     "build_cell_package_input_table",
     "build_uzf_field_input_table",
     "build_uzf_field_input_wide_table",

@@ -21,7 +21,6 @@ from myflopy.modflow.mf6.package_explorer import (
 from myflopy.modflow.mf6.package_tables import PACKAGE_TABLE_UNAVAILABLE
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover
 from myflopy.project.group._shared import (
-    _default_show_layer_elevs,
     _ensure_group_map_compatible,
     _filter_group_input_table,
     _resolve_group_compare_target,
@@ -250,7 +249,6 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         )
         if chosen_value_column is None:
             raise ValueError(f"Could not infer a numeric value column for package {self.package_name!r}.")
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -262,7 +260,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             agg=agg,
         )
         kwargs.setdefault("hover_spec", cell_input_hover(chosen_value_column))
-        return target_model.cor(
+        return target_model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -303,7 +301,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         colorscale
             Optional diverging colorscale override.
         kwargs
-            Forwarded to ``reference_model.cor(...)``.
+            Forwarded to ``reference_model.plot.map(...)``.
         """
 
         target_name = _resolve_group_compare_target(self.group, model_name)
@@ -330,7 +328,6 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         diff_column = f"{chosen_value_column}_diff"
         if diff_column not in source.columns:
             raise KeyError(f"Difference column {diff_column!r} was not found.")
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
         values, hover, absmax = build_group_input_compare_map_payload(
             selected,
             ncpl=reference_model.vor.ncpl,
@@ -347,7 +344,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("hover_spec", compare_hover(chosen_value_column, diff_column))
-        return reference_model.cor(
+        return reference_model.plot.map(
             per=per,
             layer=layer,
             type="custom",

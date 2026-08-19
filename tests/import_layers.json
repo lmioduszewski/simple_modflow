@@ -115,7 +115,6 @@
  "myflopy.modflow.utils.datatypes.locs": 0,
  "myflopy.modflow.utils.datatypes.modelgrid": 0,
  "myflopy.modflow.utils.datatypes.readers": 0,
- "myflopy.modflow.utils.datatypes.surface_data": 4,
  "myflopy.modflow.utils.datatypes.xsections": 4,
  "myflopy.modflow.utils.derived_raster": 0,
  "myflopy.modflow.utils.inputs": 3,

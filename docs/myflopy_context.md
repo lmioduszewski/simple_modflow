@@ -26,7 +26,7 @@ A capability often exists in one or both of these. Always check both before addi
 | Layer | Where | Style |
 |---|---|---|
 | **Modern declarative spec API** (preferred) | `src/myflopy/*.py` — `package_api.py`, `specs.py`, `sources.py`, `geopackage.py`, `surfaces.py`, `advanced.py`, `builders.py`, `workspace.py`, `grid_spec_resolver.py` | `mf.gwf(...)`, `mf.disv(...)`, `mf.ghb.gpkg(...)`, dataclass specs, `to_dict`/`from_dict` |
-| **Legacy OO API** | `src/myflopy/modflow/mf6/*.py` — `simplemodel.py`, `simulation/`, `boundaries.py`, `drn.py`/`ghb.py`/`chd.py`, `recharge.py`, `lakes.py`, `sfr.py`, `mvr.py`, `uzf.py`, `ModelSurface` | `SimulationBase`, `Boundaries`, builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …) |
+| **Legacy OO API** | `src/myflopy/modflow/mf6/*.py` — `simplemodel.py`, `simulation/`, `boundaries.py`, `drn.py`/`ghb.py`/`chd.py`, `recharge.py`, `lakes.py`, `sfr.py`, `mvr.py`, `uzf.py` | `SimulationBase`, `Boundaries`, builder classes (`SFRBuilder`, `LAKBuilder`, `RCHBuilder`, …) |
 
 The authoritative public surface is `src/myflopy/__init__.py` (`_EXPORTS`).
 

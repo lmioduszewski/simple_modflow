@@ -48,8 +48,8 @@ Matplotlib cross-section style.
 
 Before this review, `myflopy` already supported:
 
-- `model.section(...).ani` for Plotly cross-section animations
-- `model.cor(...).ani` for Plotly map animations
+- `model.plot.section(...).ani` for Plotly cross-section animations
+- `model.plot.map(...).ani` for Plotly map animations
 
 Those paths are now exposed consistently through:
 

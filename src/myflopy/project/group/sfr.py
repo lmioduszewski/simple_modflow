@@ -20,7 +20,6 @@ from myflopy.modflow.mf6.package_explorer import (
 from myflopy.modflow.mf6.package_surface_water import join_sfr_stage
 from myflopy.modflow.utils.datatypes.hover import compare_hover, sfr_hover
 from myflopy.project.group._shared import (
-    _default_show_layer_elevs,
     _ensure_group_map_compatible,
     _filter_group_input_table,
     _reduce_to_period_end,
@@ -145,7 +144,6 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         selected = join_sfr_stage(
             target_model, self.get(model_name=target_name, per=per, layer=layer), per=per
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_sfr_q_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -160,7 +158,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", sfr_hover())
-        return target_model.cor(
+        return target_model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -219,7 +217,6 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         comparison["q_per_length_diff"] = (
             comparison["q_per_length"].astype(float) - comparison["reference_q_per_length"].astype(float)
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
         values, hover, absmax = build_group_input_compare_map_payload(
             comparison,
             ncpl=reference_model.vor.ncpl,
@@ -250,7 +247,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
                 labels={"q_per_length_diff": "Δ q / length"},
             ),
         )
-        return reference_model.cor(
+        return reference_model.plot.map(
             per=per,
             layer=layer,
             type="custom",

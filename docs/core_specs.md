@@ -95,7 +95,7 @@ For a single-model simulation, the model name is optional:
 ```python
 model = run.model()
 model.gwf       # raw flopy.mf6.ModflowGwf
-model.cor()     # myflopy map/dashboard helper
+model.plot.map() # myflopy map helper (also .section()/.surface())
 model.hds       # heads helper
 ```
 

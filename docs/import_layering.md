@@ -142,7 +142,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.ies`
-- `myflopy.modflow.utils.datatypes.surface_data`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
 
 ## Layer 5

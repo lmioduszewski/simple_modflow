@@ -490,7 +490,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
         if hover is None:
             hover = self._default_hover(layers=hover_layers, surfaces=hover_surfaces)
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             kstpkper=kstpkper,
             layer=layer,

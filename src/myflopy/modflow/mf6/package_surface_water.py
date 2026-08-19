@@ -28,7 +28,6 @@ from myflopy.modflow.mf6.package_budget import (
     build_surface_water_exchange_cell_table,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
-    _default_show_layer_elevs,
     _filter_normalized_table,
     _normalize_connection_type_filter,
 )
@@ -334,7 +333,6 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
 
         del agg
         selected = join_sfr_stage(self.model, self.get(per=per, layer=layer), per=per)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_sfr_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -349,7 +347,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", sfr_hover())
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -594,7 +592,6 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             self.get(per=per, layer=layer, connection_type=connection_type),
             per=per,
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_lak_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -609,7 +606,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", lak_hover())
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -943,7 +940,6 @@ class LakConnectionsExplorer:
         selected = self.get(lake=lake, layer=layer)
         if value_column not in selected.columns:
             raise KeyError(f"LAK connection column {value_column!r} was not found.")
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -955,7 +951,7 @@ class LakConnectionsExplorer:
             agg=agg,
         )
         kwargs.setdefault("hover_spec", cell_input_hover(value_column))
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=0,
             layer=layer,
             type="custom",
@@ -1923,7 +1919,6 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             include=include,
             lak_connection_type=lak_connection_type,
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_surface_water_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -1937,7 +1932,7 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", surface_water_hover())
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -2046,9 +2041,8 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",

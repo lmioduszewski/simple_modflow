@@ -52,6 +52,7 @@ from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     plot_model_head_map,
 )
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.plot import ModelPlots  # noqa: E402
 from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
@@ -523,7 +524,7 @@ def test_plotly_cross_section_animation_is_exposed_and_exportable(monkeypatch, t
     class DummySection:
         ani = figure
 
-    monkeypatch.setattr(model, "section", lambda **_kwargs: DummySection())
+    monkeypatch.setattr(ModelPlots, "section", lambda _self, **_kwargs: DummySection())
     output = tmp_path / "plotly_cross_section.html"
     result = model.visualize.plotly_cross_section_animation(output_path=output, cells=[0])
 
@@ -561,7 +562,7 @@ def test_plotly_animation_export_can_select_frames(monkeypatch, tmp_path):
     class DummySection:
         ani = figure
 
-    monkeypatch.setattr(model, "section", lambda **_kwargs: DummySection())
+    monkeypatch.setattr(ModelPlots, "section", lambda _self, **_kwargs: DummySection())
     result = model.visualize.plotly_cross_section_animation(
         output_path=tmp_path / "selected_plotly.html",
         frame_stride=2,
@@ -665,7 +666,7 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
         choro._zmax = kwargs.get("zmax")
         return DummyMap()
 
-    monkeypatch.setattr(model, "cor", build_dummy_map)
+    monkeypatch.setattr(ModelPlots, "map", lambda _self, **kwargs: build_dummy_map(**kwargs))
     output = tmp_path / "plotly_map.html"
     result = model.visualize.plotly_head_map_animation(output_path=output, layer=0, zmin=-5, zmax=20)
 

@@ -226,12 +226,6 @@ def _aggregate_hover_strings(series: pd.Series) -> str:
     return ", ".join(unique_values)
 
 
-def _default_show_layer_elevs(model) -> bool:
-    """Return whether choropleths should show layer elevations by default."""
-
-    return getattr(model.vor, "gdf_topbtm", None) is not None
-
-
 def _normalize_budget_nodes(
     frame: pd.DataFrame, *, columns: tuple[str, ...] = ("node", "node2")
 ) -> pd.DataFrame:
@@ -396,7 +390,6 @@ __all__ = [
     "_normalize_iterable_filter",
     "_filter_normalized_table",
     "_aggregate_hover_strings",
-    "_default_show_layer_elevs",
     "_normalize_budget_nodes",
     "_model_budget_record_frame",
 ]

@@ -44,7 +44,7 @@ def _choropleth_factory(
     zmin: float | int = None,
     zmax: float | int = None,
     zoom: int = 13,
-    show_layer_elevs: bool = False,
+    show_layer_elevs: bool | None = None,
     show_mounding: bool = False,
     hover_heads: bool = True,
     hover_ks: bool = False,
@@ -57,11 +57,16 @@ def _choropleth_factory(
     """
     Create a Choro wrapper for Voronoi plotting.
 
-    ``show_layer_elevs`` defaults to ``False`` here and to ``True`` on
-    :class:`Choro` on purpose: this is the grid-only front door (``model=None``),
-    where a ``vor`` carrying no layer elevations makes Choro's own default raise
-    ``AttributeError`` as soon as the hover is built. Do not "simplify" this into
-    a bare passthrough.
+    ``show_layer_elevs=None`` (the default) means **decide from the grid**: the
+    layer-elevation hover needs ``vor.gdf_topbtm``, and a grid without it makes
+    Choro's own ``True`` default raise ``AttributeError`` as soon as the hover is
+    built. Pass ``True``/``False`` to force it.
+
+    That resolution used to live at the CALL SITES -- 25 of them repeated
+    ``kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(model))``
+    around a hardcoded ``False`` here, and the two that forgot silently lost five
+    hover rows. It belongs in one place, next to the attribute it depends on. Do
+    not "simplify" this back into a bare passthrough.
 
     ``colorscale``/``logscale``/``hover_spec`` are named because callers reach
     for them constantly; anything else in ``**choro_kwargs`` rides through to the
@@ -69,6 +74,8 @@ def _choropleth_factory(
     Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
     in particular is a matplotlib-only argument and raises there.
     """
+    if show_layer_elevs is None:
+        show_layer_elevs = getattr(vor, "gdf_topbtm", None) is not None
     return Choro(
         vor=vor,
         model=model,

@@ -91,7 +91,7 @@ class UzfInput:
         """Plot the UZF infiltration (``finf``) choropleth for one period."""
 
         finf = self.finf(per, multiplier).finf
-        return self.model.cor(per=per, custom_zs=finf.to_list(), **kwargs)
+        return self.model.plot.map(per=per, custom_zs=finf.to_list(), **kwargs)
 
 class RchInput:
 

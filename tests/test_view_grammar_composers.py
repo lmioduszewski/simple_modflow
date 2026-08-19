@@ -450,7 +450,7 @@ def test_real_choro_overlays_survive_composition(canonical_run):
         ],
         crs=vor.crs,
     )
-    choro = canonical_run.cor(layer=0, contours=True, contour_levels=3, locs=locs)
+    choro = canonical_run.plot.map(layer=0, contours=True, contour_levels=3, locs=locs)
 
     overlays = choro.overlay_traces()
     names = [trace.name for trace in overlays]

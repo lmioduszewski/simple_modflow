@@ -20,7 +20,6 @@ from myflopy.modflow.mf6.package_explorer import (
 from myflopy.modflow.utils.datatypes.hover import compare_hover
 from myflopy.project.group._shared import (
     _coerce_kstpkper,
-    _default_show_layer_elevs,
     _ensure_group_map_compatible,
     _reduce_to_period_end,
     _resolve_group_compare_target,
@@ -295,7 +294,6 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         selected = self.compare(per=per, layer=layer)
         if not selected.empty:
             selected = selected[selected["model"] == target_name]
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
         values, hover, absmax = build_group_input_compare_map_payload(
             selected,
             ncpl=reference_model.vor.ncpl,
@@ -327,7 +325,7 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
                 labels={"diff": f"Δ {self.value_label}"},
             ),
         )
-        return reference_model.cor(
+        return reference_model.plot.map(
             per=per,
             layer=layer,
             type="custom",

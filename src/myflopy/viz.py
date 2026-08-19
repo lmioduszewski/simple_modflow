@@ -83,8 +83,8 @@ class Picture:
     figure (``Choro.choropleth``, ``XSection.fig``, ``GridSection.figure``, and
     ``InterpolatedSurface`` with none at all) and three incompatible meanings for
     ``.plot()``: return the figure, show the figure, or open a browser window and
-    return None. Callers learned each class separately, and
-    ``model.cor().plot().show()`` was the cost.
+    return None. Callers learned each class separately, and ``model.cor().plot()
+    .show()`` -- three calls to see one map -- was the cost.
 
     **Subclasses supply exactly one thing: a ``fig`` property.** It must be
     idempotent -- repeated access returns the same assembled figure, never one

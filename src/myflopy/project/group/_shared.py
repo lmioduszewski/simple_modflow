@@ -167,12 +167,6 @@ def _ensure_group_map_compatible(group: ModelGroup, model_name: str):
         )
 
 
-def _default_show_layer_elevs(model) -> bool:
-    """Return whether group choropleths should include layer elevation hover."""
-
-    return getattr(model.vor, "gdf_topbtm", None) is not None
-
-
 def _load_group_model(model_or_path, *, crs: str, verbosity_level: int):
     """Normalize one model/group entry into a model-like object.
 

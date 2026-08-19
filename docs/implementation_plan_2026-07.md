@@ -1714,6 +1714,41 @@ aliases in `voronoi.py:90-120`.
 > namespace shadows a working flopy method -- so either the grid scope uses a
 > different attribute name, or the shadowing is deliberate and `vor.plot.grid()`
 > replaces flopy's call at those sites.
+>
+> **RESOLVED:** the user approved the shadowing. `vor.plot.grid()` is the
+> replacement, and the namespace defines `__call__` delegating to it so the two
+> untracked notebooks' `model.vor.plot()` keep working.
+
+> **A SECOND collision the survey missed: `SimulationBase.plot` already exists
+> too** (`base.py:1419`), a one-line delegate to FloPy's `MFSimulation.plot`.
+> **Zero callers** anywhere in the tree, and `model.sim.plot(...)` still reaches
+> the renderer, so 8.4a takes the name. Recorded because the approval that
+> covered `vor.plot` was not asked about this one.
+
+> **Delivered in two commits.** 8.4a `model.plot` + the model-side deletions;
+> 8.4b the grid aliases, notebooks and docs.
+>
+> The stage is not the rename it looked like. **`show_layer_elevs` was the real
+> find:** `_choropleth_factory` hardcoded `False` where `cor` defaulted `True`,
+> so `plot.map(model)` had been dropping five hover rows since 8.3 -- and **25
+> call sites in 11 files** already worked around it with
+> `kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(model))`, whose
+> helper was duplicated verbatim in two modules. Resolving the default inside the
+> factory deleted all 25 plus both copies.
+>
+> Also deleted: **~90 lines of pure signature restatement**. `cor` (31 params) ->
+> `build_choro` (31 params) -> `Choro.__init__`, and `section` (15) ->
+> `build_xsection` -> `XSection`, each middle layer with exactly one caller. They
+> had already drifted -- `build_xsection` disagreed with `XSection` on `use_rbf`
+> and `x_or_y`, and made four `XSection` params unreachable. `ModelSurface` turned
+> out to be dead (its only caller was inside a commented-out block), so
+> `surface_data.py` went with `model.srf`.
+>
+> **Import cost: zero.** `simulation.base` (L8) imports `myflopy.plot` (L5)
+> downward; layer map unchanged, `deferred_total` still 60. The GRID namespace
+> must therefore live in `grid/plotting.py` (L3), NOT `myflopy.plot` --
+> `voronoi.py` is L4, so reaching upward would force a deferred import and the
+> exact-match ratchet forbids adding one.
 
 *Medium. Verify: `-n0` suite; notebooks updated in this stage, per the policy above.*
 

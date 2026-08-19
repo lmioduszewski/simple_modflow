@@ -11,7 +11,6 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.package_explorer_utils import (
-    _default_show_layer_elevs,
     _filter_normalized_table,
 )
 from myflopy.modflow.mf6.package_plotting import (
@@ -191,7 +190,6 @@ class CellPackageInputFieldExplorer(SpatialView):
         """Build a choropleth for this specific input field."""
 
         selected = self.inputs.get(per=per, layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -203,7 +201,7 @@ class CellPackageInputFieldExplorer(SpatialView):
             agg=self.field_spec.agg if agg is None else agg,
         )
         kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -288,7 +286,6 @@ class UzfFieldInputsExplorer(SpatialView):
         """Build a choropleth for the selected UZF field."""
 
         selected = self.get(per=per, layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -300,7 +297,7 @@ class UzfFieldInputsExplorer(SpatialView):
             agg=agg,
         )
         kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -566,7 +563,6 @@ class StaticArrayFieldExplorer(SpatialView):
 
         del per
         selected = self.get(layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -576,7 +572,7 @@ class StaticArrayFieldExplorer(SpatialView):
             agg="first",
         )
         kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=0,
             layer=layer,
             type="custom",

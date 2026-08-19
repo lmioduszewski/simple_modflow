@@ -23,7 +23,6 @@ from myflopy.modflow.mf6.package_explorer import (
 from myflopy.modflow.mf6.package_surface_water import join_lak_stage
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover, lak_hover
 from myflopy.project.group._shared import (
-    _default_show_layer_elevs,
     _ensure_group_map_compatible,
     _filter_group_input_table,
     _resolve_group_compare_target,
@@ -145,7 +144,6 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             self.get(model_name=target_name, per=per, layer=layer, connection_type=connection_type),
             per=per,
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_lak_q_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -160,7 +158,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         kwargs.setdefault("hover_spec", lak_hover())
-        return target_model.cor(
+        return target_model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -223,7 +221,6 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         comparison["q_per_area_diff"] = (
             comparison["q_per_area"].astype(float) - comparison["reference_q_per_area"].astype(float)
         )
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
         values, hover, absmax = build_group_input_compare_map_payload(
             comparison,
             ncpl=reference_model.vor.ncpl,
@@ -254,7 +251,7 @@ class GroupLakBudgetResults(GroupCellPackageResults):
                 labels={"q_per_area_diff": "Δ q / area"},
             ),
         )
-        return reference_model.cor(
+        return reference_model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -444,7 +441,6 @@ class GroupLakConnections:
         selected = self.get(model_name=target_name, lake=lake, layer=layer)
         if value_column not in selected.columns:
             raise KeyError(f"LAK connection column {value_column!r} was not found.")
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -456,7 +452,7 @@ class GroupLakConnections:
             agg=agg,
         )
         kwargs.setdefault("hover_spec", cell_input_hover(value_column))
-        return target_model.cor(
+        return target_model.plot.map(
             per=0,
             layer=layer,
             type="custom",

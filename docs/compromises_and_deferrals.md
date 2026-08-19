@@ -2724,3 +2724,70 @@ same day, which is the useful part of the result.
        call shapes are now pinned by a canonical-model test. That test caught one
        real error: a comment claiming `plot.map(..., backend="mpl")`, which the
        signature does not accept -- the mpl backend is `.plot_mpl()`.
+
+128. **8.4a: `model.plot`, and the 25-site workaround it let us delete (2026-08-18).**
+     The stage as planned was "bind the verbs, delete `model.cor`/`section`/`srf`".
+     Measuring first turned up more than a rename, and three things the plan had
+     wrong.
+     - **`SimulationBase.plot` ALREADY EXISTED** (`base.py:1419`), a one-line
+       delegate to FloPy's `MFSimulation.plot`. The plan flagged only the
+       `vor.plot` collision, and the user's shadowing approval was given for that
+       one. Shadowing it costs nothing measurable: **zero callers** anywhere in
+       `src/`, `tests/`, `docs/` or `examples/`, and the renderer is still
+       reachable as `model.sim.plot(...)`, which is where it actually lives.
+       `patch_simulation_plot` (`run_model.py`) patches `sim.plot`, not
+       `model.plot`, so it is unaffected.
+     - **The real find: `show_layer_elevs`.** `_choropleth_factory` hardcoded
+       `False` while `cor` defaulted `True`, so from 8.3 until this commit
+       `plot.map(model)` silently dropped five hover rows ('Top of Model' plus
+       each 'Layer N Bottom') that `model.cor()` showed. The codebase was already
+       working around it: **25 call sites** in 11 files repeated
+       `kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(model))`,
+       and that helper was **duplicated verbatim** in `project/group/_shared.py`
+       and `package_explorer_utils.py`. The rule now lives once, in the factory,
+       resolved from `vor.gdf_topbtm` -- the exact condition both copies tested.
+       All 25 rituals, both helper copies, and their re-exports are gone. Pinned
+       in both directions (model keeps the hover; a grid without `gdf_topbtm`
+       still opts out) and mutation-tested.
+     - **~90 lines of signature restatement deleted.** `SimulationBase.cor` (31
+       params) -> `accessors.build_choro` (31 params) -> `Choro.__init__` was
+       three hand-maintained copies of one signature; `section` -> `build_xsection`
+       -> `XSection` was the same shape in 15. Both middle layers had exactly one
+       caller. **They had already drifted**, which is the argument against them:
+       `build_xsection` disagreed with `XSection.__init__` on `use_rbf` (False vs
+       True) and `x_or_y` (None vs `'x'`), and four `XSection` parameters
+       (`surf_type`, `interpolator`, `section_name`, `clip`) were simply
+       unreachable through `model.section()`.
+     - **COMPROMISE — the drifted defaults resolve toward the class.**
+       `model.plot.section()` uses `XSection.__init__`'s own defaults, so
+       `use_rbf` is now True and `x_or_y` None where `model.section()` gave False
+       and `'x'`. Not preserved, because the class is the source of truth and the
+       restatement was the bug; the blast radius is one internal caller
+       (`interactive_plotting.py:1317`) and zero notebooks. Same call for
+       `model.plot.surface()`, which uses `InterpolatedSurface`'s
+       `kstpkper[0]` rather than `ModelSurface.hds()`'s `(nstp[0]-1, 0)` --
+       identical on a steady-state model, different on a transient one.
+     - **COMPROMISE — discoverability, not behaviour, is what the collapse
+       costs.** `plot.map`'s signature is `(source, /, values=None, **kwargs)`, so
+       `help()` and IDE completion no longer advertise the 15 contour/hillshade/
+       bounds parameters `model.cor` spelled out. Verified they all still ARRIVE:
+       each is named in `Choro.__init__` with an identical default and rides
+       `**choro_kwargs` untouched. Deferred rather than fixed -- naming them on
+       `_choropleth_factory` would rebuild the restatement this entry deletes.
+     - **`ModelSurface` was already dead.** Its only apparent caller
+       (`xsections.py:273`) was inside a string used as a commented-out block, so
+       `surface_data.py` went with `model.srf` rather than surviving as an
+       internal helper. That also removes its `plot: bool = False` flag, a
+       Layer-3 concern 8.1 had left embedded in a Layer-1 constructor.
+     - **Two monkeypatches had to move, not just be renamed.** Tests that patched
+       `model.cor`/`model.section` now patch `ModelPlots.map`/`.section` on the
+       CLASS: `model.plot` returns a fresh namespace per access (deliberately --
+       `from_built_run` rehydrates via `cls.__new__`, so a memoized namespace
+       could outlive its state), and patching an attribute of a throwaway object
+       does nothing.
+     - **Import layering cost: zero.** `simulation.base` is L8 and `myflopy.plot`
+       is L5, so the namespace imports downward at module level; the derived layer
+       map is unchanged and `deferred_total` stays at 60. This is why the GRID
+       namespace (8.4b) must be built in `grid/plotting.py` (L3) instead --
+       `voronoi.py` is L4, and reaching for `myflopy.plot` there would point
+       upward and force a deferred import, which the exact-match ratchet forbids.

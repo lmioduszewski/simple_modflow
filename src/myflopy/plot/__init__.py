@@ -55,6 +55,7 @@ __all__ = [
     "surface",
     "mosaic",
     "animate",
+    "ModelPlots",
     "Picture",
     "Choro",
     "XSection",
@@ -152,3 +153,63 @@ def animate(model, periods=None, **kwargs) -> Animation:
     """
 
     return Animation(model, periods=periods, **kwargs)
+
+
+class ModelPlots:
+    """The verbs bound to one model -- ``model.plot.map()`` (plan 8.4).
+
+    Exactly the same functions as the module-level front door, with the model
+    already supplied: ``model.plot.map(layer=0)`` is ``plot.map(model, layer=0)``.
+    Which spelling you reach for is taste; there is one implementation.
+
+    Bound rather than re-dispatched: the module verbs duck-type on ``.vor`` to
+    tell a model from a grid, and a model whose grid has not been resolved yet
+    carries ``vor = None`` -- which would silently make it look like a grid. The
+    namespace knows what it holds, so it passes the model straight through.
+
+    A fresh instance per access, like ``model.packages``: models are rehydrated
+    via ``cls.__new__`` in ``from_built_run``, so a memoized namespace could
+    outlive the state it closed over.
+    """
+
+    def __init__(self, model):
+        """Bind the plotting verbs to ``model``."""
+
+        self.model = model
+
+    def __repr__(self):
+        """Name the subject and the verbs, so tab-completion has a companion."""
+
+        return f"ModelPlots({getattr(self.model, 'name', '?')!r}: map, section, surface, animate, mosaic)"
+
+    # The bare names below resolve to this module's functions, not to these
+    # methods -- class scope is not in a method's name-lookup chain.
+    def map(self, values=None, **kwargs) -> Choro:      # noqa: A003 - the verb IS `map`
+        """This model's plan-view map. See :func:`myflopy.plot.map`."""
+
+        return map(self.model, values=values, **kwargs)
+
+    def section(self, **kwargs) -> XSection:
+        """A vertical slice through this model. See :func:`myflopy.plot.section`."""
+
+        return section(self.model, **kwargs)
+
+    def surface(self, **kwargs) -> InterpolatedSurface:
+        """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`."""
+
+        return surface(self.model, **kwargs)
+
+    def animate(self, periods=None, **kwargs) -> Animation:
+        """Frames through this model's periods. See :func:`myflopy.plot.animate`."""
+
+        return animate(self.model, periods=periods, **kwargs)
+
+    def mosaic(self, panels, **kwargs):
+        """Compose any pictures into one figure. See :func:`myflopy.viz.mosaic`.
+
+        Subject-free -- it takes the panels you hand it, which need not all come
+        from this model. It lives here so the five verbs are discoverable in one
+        place from a model you already have.
+        """
+
+        return mosaic(panels, **kwargs)

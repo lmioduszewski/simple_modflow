@@ -268,12 +268,6 @@ class XSection(Picture):
             self._vor = self.model.vor
         return self._vor
 
-    """@property
-    def surface(self):
-        surface = ModelSurface(model=self.model)
-        surface = surface.hds(layer=self.layer, kstpkper=self.kstpkper)
-        return surface"""
-
     @property
     def kstpkper(self):
         """The ``(timestep, stress_period)`` sampled (defaults to the model's first)."""

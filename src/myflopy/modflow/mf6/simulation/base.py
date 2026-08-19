@@ -12,9 +12,8 @@ import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
 from myflopy._logging import get_logger
+from myflopy.plot import ModelPlots
 from myflopy.modflow.mf6.simulation.accessors import (
-    build_choro,
-    build_xsection,
     field_reader,
     get_all_conc,
     get_all_heads,
@@ -31,7 +30,6 @@ from myflopy.modflow.mf6.simulation.accessors import (
     get_outputs,
     get_packages,
     get_sfr_output,
-    get_surface,
     get_temp,
     get_uzf_output,
 )
@@ -628,120 +626,29 @@ class SimulationBase:
         return self.hds.to_xugrid(layers=layers, times=times, name=name, masked=masked)
 
     @property
-    def srf(self):
-        """Surface/top-of-model values used by plotting and summaries."""
+    def plot(self) -> ModelPlots:
+        """The plotting verbs for this model: ``map``, ``section``, ``surface``,
+        ``animate``, ``mosaic``.
 
-        return get_surface(self)
+        ``model.plot.map(layer=0)`` is exactly ``myflopy.plot.map(model, layer=0)``
+        -- one implementation, two spellings. Everything returned is a
+        :class:`~myflopy.viz.Picture`, so it renders itself in Jupyter and answers
+        ``.fig`` / ``.show()`` / ``.save(path)`` / ``.html(path)``.
 
-    def cor(
-        self,
-        kstpkper: tuple = None,
-        per: int = None,
-        per_timestep: int | str = "last",
-        layer: int = 0,
-        type: str = 'hds',
-        custom_hover: dict = None,
-        custom_zs: list = None,
-        zmin: float | int = None,
-        zmax: float | int = None,
-        zoom: int = 13,
-        fit_bounds: bool = True,
-        bounds_padding: float = 0.05,
-        show_layer_elevs: bool = True,
-        show_mounding: bool = False,
-        hover_heads: bool = True,
-        hover_ks: bool = False,
-        locs=None,
-        rch_scale=None,
-        bgs=False,
-        hillshade_path: Path = None,
-        colorscale: str = None,
-        logscale: bool = False,
-        contours: bool | str = False,
-        contour_values=None,
-        contour_levels: int | float | list[float] = 10,
-        contour_color: str = "black",
-        contour_width: float = 1.5,
-        contour_name: str = None,
-        contour_clip: bool = True,
-        contour_resolution: int = 150,
-        contour_method: str = "linear",
-        **kwargs,
-    ):
-        """Build a choropleth-style spatial plot from heads or other model values."""
+        Replaces ``cor()`` (now ``plot.map()``), ``section()`` (``plot.section()``)
+        and ``srf.hds()``/``srf.lyr()`` (``plot.surface()``), each of which was a
+        hand-restated copy of the picture class's own signature. It also shadows
+        the old one-line delegate to FloPy's ``MFSimulation.plot``; that renderer
+        is still there as ``model.sim.plot(...)``.
 
-        return build_choro(
-            self,
-            kstpkper=kstpkper,
-            per=per,
-            per_timestep=per_timestep,
-            layer=layer,
-            type=type,
-            custom_hover=custom_hover,
-            custom_zs=custom_zs,
-            zmin=zmin,
-            zmax=zmax,
-            zoom=zoom,
-            fit_bounds=fit_bounds,
-            bounds_padding=bounds_padding,
-            show_layer_elevs=show_layer_elevs,
-            show_mounding=show_mounding,
-            hover_heads=hover_heads,
-            hover_ks=hover_ks,
-            locs=locs,
-            rch_scale=rch_scale,
-            bgs=bgs,
-            hillshade_path=hillshade_path,
-            colorscale=colorscale,
-            logscale=logscale,
-            contours=contours,
-            contour_values=contour_values,
-            contour_levels=contour_levels,
-            contour_color=contour_color,
-            contour_width=contour_width,
-            contour_name=contour_name,
-            contour_clip=contour_clip,
-            contour_resolution=contour_resolution,
-            contour_method=contour_method,
-            **kwargs,
-        )
+        Examples
+        --------
+        >>> model.plot.map(layer=0, contours=True).show()
+        >>> model.plot.section(cells=[1653, 651]).save("section.png")
+        >>> model.plot.surface(layer=0)
+        """
 
-    def section(
-        self,
-        per: int = None,
-        kstpkper: tuple = None,
-        layer: int = 0,
-        cells: int | list[int] = None,
-        line=None,
-        x_or_y: str = None,
-        spacing: int = 10,
-        num_points: int = 100,
-        extrapolate_beyond_section_ends: bool = False,
-        interpolate: bool = False,
-        use_rbf: bool = False,
-        show_model_top=True,
-        show_model_btm=False,
-        animation_kstpkpers=None,
-    ):
-        """Build a cross-section style plot/view through the current model."""
-
-        return build_xsection(
-            self,
-            per=per,
-            kstpkper=kstpkper,
-            layer=layer,
-            cells=cells,
-            line=line,
-            x_or_y=x_or_y,
-            spacing=spacing,
-            num_points=num_points,
-            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
-            interpolate=interpolate,
-            use_rbf=use_rbf,
-            show_model_top=show_model_top,
-            show_model_btm=show_model_btm,
-            animation_kstpkpers=animation_kstpkpers,
-        )
+        return ModelPlots(self)
 
     @property
     def inputs(self):
@@ -1415,11 +1322,6 @@ class SimulationBase:
                 }
             ]
         )
-
-    def plot(self, *args, **kwargs):
-        """Delegate to FloPy's simulation-level plot helper."""
-
-        return self.sim.plot(*args, **kwargs)
 
     def run_simulation(self):
         """Write and run the current simulation."""

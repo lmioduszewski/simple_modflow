@@ -19,7 +19,6 @@ from myflopy.modflow.mf6.package_explorer import (
 )
 from myflopy.modflow.utils.datatypes.hover import compare_hover, result_hover
 from myflopy.project.group._shared import (
-    _default_show_layer_elevs,
     _ensure_group_map_compatible,
     _filter_group_input_table,
     _reduce_to_period_end,
@@ -139,7 +138,6 @@ class GroupCellPackageResults(_GroupSpatialView):
         target_name = self._group_target(model)
         target_model = self.group.models[target_name]
         selected = self.get(model_name=target_name, per=per, layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(target_model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
@@ -171,7 +169,7 @@ class GroupCellPackageResults(_GroupSpatialView):
                 ),
             ),
         )
-        return target_model.cor(
+        return target_model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -207,7 +205,6 @@ class GroupCellPackageResults(_GroupSpatialView):
         reference_model = self.group.models[self.group.reference]
         selected = self.compare(model_name=target_name, per=per, layer=layer)
         diff_column = f"{self.value_name}_diff"
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(reference_model))
         values, hover, absmax = build_group_input_compare_map_payload(
             selected,
             ncpl=reference_model.vor.ncpl,
@@ -232,7 +229,7 @@ class GroupCellPackageResults(_GroupSpatialView):
                 title=f"Δ {self.package_name.upper()} {self.value_name} vs reference",
             ),
         )
-        return reference_model.cor(
+        return reference_model.plot.map(
             per=per,
             layer=layer,
             type="custom",

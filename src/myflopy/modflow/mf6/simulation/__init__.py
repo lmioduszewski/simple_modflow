@@ -1,8 +1,6 @@
 """Simulation helpers extracted from the MF6 base model module."""
 
 from .accessors import (
-    build_choro,
-    build_xsection,
     get_all_heads,
     get_budget,
     get_budget_cumulative,
@@ -12,7 +10,6 @@ from .accessors import (
     get_kstpkper,
     get_lak_output,
     get_sfr_output,
-    get_surface,
     get_uzf_output,
 )
 from .base import SimulationBase
@@ -63,8 +60,6 @@ __all__ = [
     "build_ncpl_arr",
     "build_node_to_lni",
     "build_offsets",
-    "build_choro",
-    "build_xsection",
     "coerce_per_dates",
     "get_all_heads",
     "get_budget",
@@ -75,7 +70,6 @@ __all__ = [
     "get_kstpkper",
     "get_lak_output",
     "get_sfr_output",
-    "get_surface",
     "get_uzf_output",
     "run_simulation",
 ]

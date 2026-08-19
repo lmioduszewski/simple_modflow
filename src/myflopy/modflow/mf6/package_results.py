@@ -17,7 +17,6 @@ from myflopy.modflow.mf6.package_budget import (
     build_budget_result_table,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
-    _default_show_layer_elevs,
     _filter_normalized_table,
     _normalize_iterable_filter,
     _normalize_term_filter,
@@ -202,7 +201,6 @@ class CellBudgetResultsExplorer(SpatialView):
         """Build a choropleth for this cell-based result field."""
 
         selected = self.get(per=per, layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -231,7 +229,7 @@ class CellBudgetResultsExplorer(SpatialView):
                 ),
             ),
         )
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
@@ -306,7 +304,6 @@ class StageResultsExplorer(SpatialView):
         """Build a stage choropleth mapped to cells."""
 
         selected = self.get(per=per, layer=layer)
-        kwargs.setdefault("show_layer_elevs", _default_show_layer_elevs(self.model))
         values, hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -325,7 +322,7 @@ class StageResultsExplorer(SpatialView):
                 units={"stage": "ft"},
             ),
         )
-        choro = self.model.cor(
+        choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
