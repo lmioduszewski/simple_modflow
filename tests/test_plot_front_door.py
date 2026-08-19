@@ -337,3 +337,24 @@ def test_the_grid_verbs_draw_on_the_canonical_grid(canonical_run):
     # `select=` absorbs show_selected_cells / show_overlapping_geometry.
     picked = vor.plot.map(select=[0, 1, 2])
     assert tuple(picked.fig.data[0].selectedpoints) == (0, 1, 2)
+
+
+def test_the_cell_selector_is_still_reachable_from_a_grid():
+    """`vor.dash_selector` was deleted in 8.4b, but the workflow it served was
+    not: box/lasso-select cells on the map, read back the cell-id list, query
+    that batch. That has always lived on `Choro`; the grid attribute was a
+    property wrapping a default map.
+
+    Pinned because the reachable path is now two steps
+    (`vor.plot.map().dash_selector()`) and nothing else in the suite exercises
+    it -- it launches a Dash server, so it cannot be CALLED here.
+    """
+
+    from myflopy.modflow.utils.datatypes.choros import Choro
+    from myflopy.plot import GridPlots
+
+    assert callable(Choro.dash_selector)
+    # A method, not a property: reading it must not start a server. This is the
+    # bug the old grid alias had.
+    assert not isinstance(Choro.dash_selector, property)
+    assert "dash_selector" not in dir(GridPlots)

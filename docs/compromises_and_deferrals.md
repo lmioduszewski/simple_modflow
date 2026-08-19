@@ -2810,9 +2810,17 @@ same day, which is the useful part of the result.
        `pyproject.toml`, so every call raised. **`plottri` is not a picture of
        the Voronoi grid at all** -- it draws the *triangulation* the grid was
        derived from, returns None, opens a browser, and raises on any grid not
-       built from a Triangle mesh. **`dash_selector` blocked on a Dash server
-       just to be READ**, being a property. Deleted outright; `dash_selector`
-       survives where it belongs, as a method on the `Choro` you get from `map()`.
+       built from a Triangle mesh. Both deleted outright.
+     - **`dash_selector` is a LIVE user workflow, and only the alias went.**
+       (User, after the fact: it is how they box/lasso-select Voronoi cells and
+       get the cell-id list back, for querying a batch of cells quickly.) The
+       capability is untouched -- `Choro.dash_selector()` is where it always
+       lived; `vor.dash_selector` was a property wrapping a default Choro. The
+       spelling is now `vor.plot.map().dash_selector()`, which also accepts the
+       map's own options (`values=`, `zmin=`, ...) instead of only the default.
+       Being a property was in fact a bug for this use: merely tab-completing or
+       `repr`-ing `vor.dash_selector` launched a Dash server on port 8050. It
+       only starts when called now.
      - **`plot3d` is retired with no replacement in this stage.** It drew 3-D
        Voronoi edges as a bare `go.Figure`. `plot.surface` is the 3-D verb, but
        it interpolates a field rather than drawing mesh geometry, so this is a
