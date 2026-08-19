@@ -23,6 +23,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import myflopy  # noqa: E402
+from myflopy.viz import Picture  # noqa: E402
 from myflopy import (  # noqa: E402
     ModelContext,
     Project,
@@ -801,14 +802,17 @@ def test_direct_voronoi_grid_smoke():
 
     assert vor.set_k_vor({5.0: [1]}, k_default=1.0) == [1.0, 5.0]
 
-    fig2d = vor.plot2d()
-    fig3d = vor.plot3d()
-    assert isinstance(fig2d, go.Figure)
-    assert isinstance(fig3d, go.Figure)
-    assert len(fig2d.data) == 2
-    assert len(fig3d.data) == 2
+    # 8.4: `plot2d` became `vor.plot.grid()` and returns a Picture rather than a
+    # bare go.Figure -- still one trace per cell. `vor.plot()` is the same call,
+    # which is what keeps `model.vor.plot()` working after the flopy shadowing.
+    mesh = vor.plot.grid()
+    assert isinstance(mesh, Picture)
+    assert len(mesh.fig.data) == 2
+    assert len(vor.plot().fig.data) == 2
+    # The matplotlib renderer is flopy's own, reached through the Picture.
+    assert mesh.plot_mpl() is not None
 
-    section = vor.cross_section(LineString([(0.5, -0.5), (0.5, 1.5)]))
+    section = vor.plot.section(LineString([(0.5, -0.5), (0.5, 1.5)]))
     assert isinstance(section, GridSection)
     assert len(section.poly_coords) >= 1
     assert len(section.fig.data) >= 1

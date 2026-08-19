@@ -1,4 +1,4 @@
-"""The plotting front door: one verb per kind of picture (plan 8.3).
+"""The plotting front door: one verb per kind of picture (plans 8.3-8.4).
 
     from myflopy import plot
 
@@ -7,6 +7,7 @@
     plot.section(model, cells=[1653, 651])    # vertical slice through results
     plot.section(vor, line=line)              # ... of the grid itself
     plot.surface(model, layer=0)              # 3-D
+    plot.grid(vor)                            # the bare mesh, no basemap
     plot.mosaic([a, b, c])                    # compose any pictures
     plot.animate(model)                       # frames through time
 
@@ -15,6 +16,11 @@ view whatever is drawn on it, so contours, observation locations and a hillshade
 are *options* on ``map`` rather than verbs of their own -- which is why there is
 no ``plot.contours``. The same rule retires ``plot3d`` (a 3-D view is
 ``surface``) and ``map_nodes`` (a map whose values are node ids).
+
+``grid`` is the one exception, and it earns it on a constraint rather than a
+taste: a choropleth draws over a web basemap and so **requires a CRS**, while the
+mesh view needs none. Without it there is no picture at all for a grid you are
+still refining, before a projection exists.
 
 **What you pass decides what you get.** Every verb takes a model or a bare grid
 as its first argument: a model draws its results, a grid draws itself. Nothing
@@ -35,15 +41,27 @@ Two things deliberately absent:
   ``myflopy.viz`` builds and styles figures. ``mosaic`` appears in both because
   it is genuinely both -- it is re-exported here, not reimplemented.
 
-The same verbs exist on the objects themselves (``model.plot.map()``,
-``vor.plot.map()``) -- plan 8.4. These are the same functions, so there is one
-implementation behind both spellings.
+**The same verbs exist on the objects themselves** -- ``model.plot.map()``,
+``vor.plot.grid()`` -- and they call these functions, so there is one
+implementation behind both spellings. A model answers all six; a bare grid
+answers ``map``, ``section`` and ``grid``, which are the three questions it can
+answer without results. ``vor.plot()`` is shorthand for ``vor.plot.grid()``.
+
+Binding these replaced ``model.cor()``, ``model.section()``, ``model.srf`` and
+eleven ``vor.*`` aliases, and deliberately shadows FloPy's inherited
+``VoronoiGrid.plot`` -- whose renderer is still there as
+``vor.plot.grid().plot_mpl()``.
 """
 
 from __future__ import annotations
 
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
-from myflopy.modflow.mf6.grid.plotting import GridSection, _choropleth_factory
+from myflopy.modflow.mf6.grid.plotting import (
+    GridMesh,
+    GridPlots,
+    GridSection,
+    _choropleth_factory,
+)
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
@@ -53,13 +71,16 @@ __all__ = [
     "map",
     "section",
     "surface",
+    "grid",
     "mosaic",
     "animate",
     "ModelPlots",
+    "GridPlots",
     "Picture",
     "Choro",
     "XSection",
     "GridSection",
+    "GridMesh",
     "InterpolatedSurface",
 ]
 
@@ -96,12 +117,12 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
     Picture: it renders itself, and answers ``.fig``/``.show()``/``.save()``.
     """
 
-    grid, is_model = _grid_of(source)
+    vor, is_model = _grid_of(source)
     if is_model:
         kwargs.setdefault("model", source)
     if values is not None:
         kwargs["custom_zs"] = list(values)
-    return _choropleth_factory(grid, **kwargs)
+    return _choropleth_factory(vor, **kwargs)
 
 
 def section(source, /, **kwargs):
@@ -122,10 +143,10 @@ def section(source, /, **kwargs):
     questions, not because the API could not decide.
     """
 
-    grid, is_model = _grid_of(source)
+    vor, is_model = _grid_of(source)
     if is_model:
         return XSection(model=source, **kwargs)
-    return GridSection(vor=grid, **kwargs)
+    return GridSection(vor=vor, **kwargs)
 
 
 def surface(source, /, **kwargs) -> InterpolatedSurface:
@@ -139,10 +160,26 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
     (``vtk_3d``, particle-tracking) in behind this same verb.
     """
 
-    grid, is_model = _grid_of(source)
+    vor, is_model = _grid_of(source)
     if is_model:
         return InterpolatedSurface(model=source, **kwargs)
-    return InterpolatedSurface(vor=grid, **kwargs)
+    return InterpolatedSurface(vor=vor, **kwargs)
+
+
+def grid(source, /, **kwargs) -> GridMesh:
+    """The bare mesh: cell edges, in the grid's own coordinates.
+
+    The one picture ``map`` cannot give you. A choropleth colours cells against a
+    web basemap and so requires a CRS; this needs none, which makes it the view
+    for a grid you are still refining -- before there is a model, or a projection.
+
+    ``plot.grid(model)`` draws that model's grid. Replaces ``vor.plot2d()`` and
+    FloPy's inherited ``VoronoiGrid.plot()``, whose matplotlib rendering is still
+    right there as ``.plot_mpl()``.
+    """
+
+    vor, _ = _grid_of(source)
+    return GridMesh(vor, **kwargs)
 
 
 def animate(model, periods=None, **kwargs) -> Animation:
@@ -180,7 +217,7 @@ class ModelPlots:
     def __repr__(self):
         """Name the subject and the verbs, so tab-completion has a companion."""
 
-        return f"ModelPlots({getattr(self.model, 'name', '?')!r}: map, section, surface, animate, mosaic)"
+        return f"ModelPlots({getattr(self.model, 'name', '?')!r}: map, section, surface, grid, animate, mosaic)"
 
     # The bare names below resolve to this module's functions, not to these
     # methods -- class scope is not in a method's name-lookup chain.
@@ -198,6 +235,11 @@ class ModelPlots:
         """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`."""
 
         return surface(self.model, **kwargs)
+
+    def grid(self, **kwargs) -> GridMesh:
+        """This model's bare mesh. See :func:`myflopy.plot.grid`."""
+
+        return grid(self.model, **kwargs)
 
     def animate(self, periods=None, **kwargs) -> Animation:
         """Frames through this model's periods. See :func:`myflopy.plot.animate`."""

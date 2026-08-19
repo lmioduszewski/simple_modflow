@@ -1,4 +1,7 @@
-"""`myflopy.plot` -- the verbs, and what they deliberately do not include (8.3).
+"""`myflopy.plot` -- the verbs, and what they deliberately do not include.
+
+Built in 8.3 as module-level functions; 8.4 bound the same functions onto the
+objects (`model.plot.*`, `vor.plot.*`) and deleted the accessors they replace.
 
 The point of this module is discoverability: one verb per KIND OF PICTURE, where
 the kind is decided by geometry (plan view / vertical slice / 3-D), never by
@@ -16,7 +19,7 @@ import pytest
 
 from myflopy import plot, viz
 
-VERBS = ("map", "section", "surface", "mosaic", "animate")
+VERBS = ("map", "section", "surface", "grid", "mosaic", "animate")
 
 
 def test_the_front_door_exposes_exactly_the_verbs():
@@ -46,7 +49,8 @@ def test_mosaic_is_vizs_own_function_not_a_reimplementation():
 @pytest.mark.parametrize("retired", ["plot3d", "map_nodes", "plot2d", "contours", "timeseries"])
 def test_the_retired_spellings_are_not_verbs(retired):
     """Each of these is a picture kind that turned out not to be one:
-    `plot3d` -> `surface`, `map_nodes`/`plot2d` -> `map(values=...)`,
+    `plot3d` -> `surface`, `map_nodes` -> `map(values=...)`, `plot2d` -> `grid`
+    (8.4 -- it is the mesh, which `map` cannot draw without a CRS),
     `contours` -> `map(contours=True)`. `timeseries` is absent because a chart
     belongs to a node, which knows the model's periods."""
 
@@ -117,7 +121,7 @@ def test_the_exact_call_shapes_the_notebooks_use(canonical_run):
 
 
 # --- 8.4: the same verbs, bound to the object ---------------------------------
-BOUND_VERBS = ("map", "section", "surface", "animate", "mosaic")
+BOUND_VERBS = ("map", "section", "surface", "grid", "animate", "mosaic")
 
 
 def test_the_model_namespace_delegates_to_the_module_verbs():
@@ -138,7 +142,7 @@ def test_the_model_namespace_delegates_to_the_module_verbs():
     seen = {}
     model = SimpleNamespace(vor=SimpleNamespace(ncpl=2))
     ns = ModelPlots(model)
-    for verb in ("map", "section", "surface", "animate"):
+    for verb in ("map", "section", "surface", "grid", "animate"):
         original = getattr(plot, verb)
         try:
             setattr(plot, verb, lambda source, _v=verb, **kw: seen.setdefault(_v, source))
@@ -227,3 +231,109 @@ def test_a_bare_grid_map_still_opts_out_of_layer_elevations(canonical_run):
         assert _choropleth_factory(vor).show_layer_elevs is False
     finally:
         vor.gdf_topbtm = saved
+
+
+# --- 8.4b: the grid scope -----------------------------------------------------
+RETIRED_GRID_ALIASES = (
+    "mapit", "choropleth", "dash_selector", "show", "map_nodes",
+    "show_selected_cells", "show_overlapping_geometry",
+    "plot3d", "plot2d", "plottri", "cross_section",
+)
+
+
+@pytest.mark.parametrize("alias", RETIRED_GRID_ALIASES)
+def test_the_eleven_grid_aliases_are_gone(alias):
+    """Deleted, not deprecated. Five were real pictures and live on as
+    `vor.plot.map/section/grid` or options on them; the rest were dead
+    (`mapit` needs folium, which is not a dependency), duplicated, or not
+    pictures at all (`dash_selector` blocked on a Dash server just to be READ).
+    """
+
+    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+
+    assert not hasattr(VoronoiGridPlus, alias)
+
+
+def test_the_grid_namespace_lives_below_myflopy_plot():
+    """Not a style point -- a ratchet constraint.
+
+    `voronoi.py` sits below `myflopy.plot` in the import graph, so binding the
+    namespace from there would point upward and force a deferred import, which
+    `test_import_layering` pins exactly. Building `GridPlots` in
+    `grid/plotting.py` keeps the edge downward and the count unchanged.
+    """
+
+    import json
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    layers = json.loads((root / "tests/import_layers.json").read_text())
+    assert layers["myflopy.modflow.mf6.grid.plotting"] <= layers["myflopy.modflow.mf6.grid.voronoi"]
+
+
+def test_calling_the_grid_namespace_draws_the_grid():
+    """`vor.plot()` must keep working: it used to be FloPy's `VoronoiGrid.plot`,
+    and notebooks call it that way. `__call__` routes it to the mesh."""
+
+    from myflopy.plot import GridMesh, GridPlots
+
+    class FakeVor:
+        ncpl = 2
+        x_coords_by_node = [[0, 1, 1, 0], [1, 2, 2, 1]]
+        y_coords_by_node = [[0, 0, 1, 1], [0, 0, 1, 1]]
+
+    ns = GridPlots(FakeVor())
+    assert isinstance(ns(), GridMesh)
+    assert len(ns().fig.data) == 2
+
+
+def test_the_mesh_is_a_picture_and_needs_no_crs():
+    """The reason `grid` is a verb rather than a `map` option: Choro requires a
+    CRS for its basemap, and a grid under construction may not have one. The
+    mesh draws in the grid's own coordinates."""
+
+    from myflopy.plot import GridMesh
+
+    class NoCrsVor:
+        crs = None
+        x_coords_by_node = [[0, 1, 1, 0]]
+        y_coords_by_node = [[0, 0, 1, 1]]
+
+    mesh = GridMesh(NoCrsVor())
+    assert isinstance(mesh, viz.Picture)
+    assert isinstance(mesh.fig, viz.Fig)
+    assert len(mesh.fig.data) == 1
+
+
+def test_flopys_renderer_survives_the_shadowing():
+    """`vor.plot` is now the namespace, so FloPy's method is unreachable by that
+    name. It is not gone -- `GridMesh.plot_mpl` calls it unbound, which is what
+    makes the shadowing a rename rather than a removal."""
+
+    import inspect
+
+    from flopy.utils.voronoi import VoronoiGrid
+
+    from myflopy.plot import GridMesh
+
+    assert "VoronoiGrid.plot" in inspect.getsource(GridMesh.plot_mpl)
+    assert callable(VoronoiGrid.plot)
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_the_grid_verbs_draw_on_the_canonical_grid(canonical_run):
+    """Imports prove nothing; these must actually render."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    vor = canonical_run.vor
+
+    assert len(vor.plot.grid().fig.data) == int(vor.ncpl)
+    assert vor.plot.grid().plot_mpl() is not None
+    assert len(vor.plot.map().fig.data) >= 1
+
+    # `select=` absorbs show_selected_cells / show_overlapping_geometry.
+    picked = vor.plot.map(select=[0, 1, 2])
+    assert tuple(picked.fig.data[0].selectedpoints) == (0, 1, 2)

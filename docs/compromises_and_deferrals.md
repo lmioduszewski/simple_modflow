@@ -2791,3 +2791,65 @@ same day, which is the useful part of the result.
        namespace (8.4b) must be built in `grid/plotting.py` (L3) instead --
        `voronoi.py` is L4, and reaching for `myflopy.plot` there would point
        upward and force a deferred import, which the exact-match ratchet forbids.
+
+129. **8.4b: the eleven grid aliases, and what only five of them were (2026-08-18).**
+     `vor.plot` is now a namespace with three verbs -- `map`, `section`, `grid`
+     -- **deliberately shadowing FloPy's inherited `VoronoiGrid.plot`**, which
+     the user approved. Reading the eleven aliases before deleting them changed
+     what the stage was:
+     - **Only five were distinct pictures.** `choropleth`/`show` were the same
+       Choro (`show` returned it rather than showing anything); `cross_section`
+       is now `plot.section`; `plot2d` is now `plot.grid`;
+       `show_selected_cells` became the `select=` option on `map`.
+     - **`show_overlapping_geometry` folded into that same option.** It was a
+       two-liner over `get_vor_cells_as_series` + `show_selected_cells`, so
+       `map(select=<gpkg or geometry>)` now accepts either cell indices or
+       something to intersect. One option, both spellings.
+     - **`mapit` was dead code** -- it calls GeoPandas `.explore()`, which needs
+       `folium`/`mapclassify`; neither is installed nor declared in
+       `pyproject.toml`, so every call raised. **`plottri` is not a picture of
+       the Voronoi grid at all** -- it draws the *triangulation* the grid was
+       derived from, returns None, opens a browser, and raises on any grid not
+       built from a Triangle mesh. **`dash_selector` blocked on a Dash server
+       just to be READ**, being a property. Deleted outright; `dash_selector`
+       survives where it belongs, as a method on the `Choro` you get from `map()`.
+     - **`plot3d` is retired with no replacement in this stage.** It drew 3-D
+       Voronoi edges as a bare `go.Figure`. `plot.surface` is the 3-D verb, but
+       it interpolates a field rather than drawing mesh geometry, so this is a
+       genuine (small) capability gap until 8.5 does the 3-D work. Zero callers
+       anywhere, which is why it is recorded rather than rebuilt.
+     - **COMPROMISE — `grid` is a fifth verb, not a `map` option.** It breaks the
+       "geometry chooses the verb" rule on its face: a mesh view IS a plan view.
+       It earns the exception on a measured constraint -- **`Choro` hard-requires
+       a CRS** (a naive-geometry grid raises "Cannot transform naive geometries"),
+       because its basemap does, while `plot2d` and FloPy's `plot` are both
+       CRS-free. Deleting both without a CRS-free verb would remove the only view
+       available for a grid still being refined, before a projection exists.
+     - **The namespace defines `__call__`.** `vor.plot()` -> `vor.plot.grid()`,
+       so the two UNTRACKED notebooks that call `model.vor.plot()` keep working
+       untouched -- they use it purely as "show me the grid", which is exactly
+       what `grid()` draws. That meant this stage needed **no edits to the user's
+       work-in-progress files at all**. The return type does change (a plotly
+       Picture, not an mpl Axes); `plot.grid().plot_mpl()` is FloPy's renderer,
+       called unbound, and is pinned by a test that reads its source.
+     - **`vor.choropleth` was a FOURTH copy of the choropleth signature** (after
+       `cor`, `build_choro`, and the factory), and its own docstring admitted it:
+       "A thin restatement ... keep the two in step". Gone with the rest.
+     - **A migration bug fixed in passing.** `inputs.py:156` called
+       `vor.show_selected_cells(drn_cells)` and **discarded the result** -- a
+       method named `map()` that returned None. It now returns the picture.
+     - **`grid/__init__.py` exported nine of these names with zero consumers**
+       repo-wide. Dropped.
+     - **Layer cost: still zero.** `GridPlots` lives in `grid/plotting.py` (L3),
+       which `voronoi.py` (L4) already imported. Building it in `myflopy.plot`
+       (L5) instead would have pointed upward and forced a deferred import; the
+       derived layer map is byte-identical and `deferred_total` stays at 60.
+       A test now pins that ordering so the next person does not "tidy" it.
+     - **`import myflopy` is not a syntax check.** Removing the last name from
+       `voronoi.py`'s `if TYPE_CHECKING:` block left it empty -- a hard
+       `IndentationError` -- and `python -c "import myflopy"` still printed "ok",
+       because the top-level package resolves subpackages lazily via `__getattr__`
+       and never touched the file. `ruff` caught it as `invalid-syntax`. The habit
+       worth keeping: after deleting imports, lint the FILES rather than importing
+       the package, and diff the lint output against the pre-change baseline so
+       one new error is not lost among the pre-existing ones.

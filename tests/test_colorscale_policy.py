@@ -258,14 +258,17 @@ def test_relabeling_a_colorbar_that_does_not_exist_leaves_the_map_axes_alone():
 
 
 def test_the_grid_accessor_accepts_what_the_function_accepts():
-    """``vor.choropleth`` restates ``_choropleth_factory``'s signature by hand.
+    """An unnamed trace kwarg must survive the whole way to the Plotly trace.
 
-    Widening only the function would leave the accessor raising ``TypeError`` for
-    arguments the function itself takes.
+    This used to guard a hand-restated signature on ``vor.choropleth``, which
+    8.4 deleted -- ``vor.plot.map`` takes ``**kwargs`` and forwards them, so
+    there is no second parameter list to drift. What still needs pinning is the
+    passthrough itself: ``zmid`` is named nowhere in myflopy and reaches the
+    trace only by riding ``**choro_kwargs``.
     """
 
-    choro = _two_cell_vor().choropleth(
-        custom_zs=[1.0, 2.0], colorscale="earth", logscale=True, zmid=0.0
+    choro = _two_cell_vor().plot.map(
+        values=[1.0, 2.0], colorscale="earth", logscale=True, zmid=0.0
     )
     assert choro.get_choropleth().zmid == 0.0
 

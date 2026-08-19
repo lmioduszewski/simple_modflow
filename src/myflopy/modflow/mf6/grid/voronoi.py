@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import geopandas as gpd
 import numpy as np
@@ -87,39 +86,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     voronoi_refine_by_point as geometry_voronoi_refine_by_point,
 )
 from myflopy.modflow.mf6.grid.helpers import get_griddata_from_disu
-from myflopy.modflow.mf6.grid.plotting import (
-    _choropleth_factory as plotting_build_choropleth,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    _grid_section_factory as plotting_build_grid_section,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    get_dash_selector as plotting_get_dash_selector,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    map_nodes as plotting_map_nodes,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    mapit as plotting_mapit,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    plot2d as plotting_plot2d,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    plot3d as plotting_plot3d,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    plottri as plotting_plottri,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    show as plotting_show,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    show_overlapping_geometry as plotting_show_overlapping_geometry,
-)
-from myflopy.modflow.mf6.grid.plotting import (
-    show_selected_cells as plotting_show_selected_cells,
-)
+from myflopy.modflow.mf6.grid.plotting import GridPlots
 from myflopy.modflow.mf6.grid.selection import (
     get_grid_edge_cells,
     get_model_boundary_polygons,
@@ -151,10 +118,6 @@ from myflopy.modflow.mf6.grid.surfaces import (
 from myflopy.modflow.mf6.grid.surfaces import (
     get_raster_vals_at_centroids as surface_get_raster_vals_at_centroids,
 )
-
-if TYPE_CHECKING:
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
-
 
 logger = get_logger(__name__)
 
@@ -471,73 +434,22 @@ class VoronoiGridPlus(VoronoiGrid):
         """Return the Voronoi polygons as shapely geometry objects."""
         return geometry_get_voronoi_polygons(self)
 
-    def mapit(self, crs='EPSG:2927'):
-        """Open a quick interactive map view of the Voronoi polygons."""
-        return plotting_mapit(self, crs=crs)
-
-    def choropleth(
-        self,
-        model: SimulationBase = None,
-        kstpkper: tuple = None,
-        per: int = None,
-        layer: int = 0,
-        type: str = 'hds',
-        custom_hover: dict = None,
-        custom_zs: list = None,
-        zmin: float | int = None,
-        zmax: float | int = None,
-        zoom: int = 13,
-        show_layer_elevs: bool = False,
-        show_mounding: bool = False,
-        hover_heads: bool = True,
-        hover_ks: bool = False,
-        locs: Path = None,
-        colorscale: str | list | tuple = None,
-        logscale: bool = False,
-        hover_spec=None,
-        **choro_kwargs,
-    ):
-        """Build the standard Voronoi choropleth wrapper used by the package.
-
-        A thin restatement of :func:`~myflopy.modflow.mf6.grid.plotting._choropleth_factory`'s
-        signature -- keep the two in step, or ``vor.choropleth(colorscale=...)``
-        raises ``TypeError`` for arguments the function itself accepts.
-        """
-        return plotting_build_choropleth(
-            self,
-            model=model,
-            kstpkper=kstpkper,
-            per=per,
-            layer=layer,
-            type=type,
-            custom_hover=custom_hover,
-            custom_zs=custom_zs,
-            zmin=zmin,
-            zmax=zmax,
-            zoom=zoom,
-            show_layer_elevs=show_layer_elevs,
-            show_mounding=show_mounding,
-            hover_heads=hover_heads,
-            hover_ks=hover_ks,
-            locs=locs,
-            colorscale=colorscale,
-            logscale=logscale,
-            hover_spec=hover_spec,
-            **choro_kwargs,
-        )
-
     @property
-    def dash_selector(self):
-        """Return a Dash-compatible selector for choropleth exploration."""
-        return plotting_get_dash_selector(self)
+    def plot(self) -> GridPlots:
+        """The plotting verbs for this grid: ``map``, ``section``, ``grid``.
 
-    def show(self):
-        """Display the default choropleth view."""
-        return plotting_show(self)
+        ``vor.plot.map(values=...)`` for a basemap choropleth,
+        ``vor.plot.section(line)`` for a geometry section, ``vor.plot.grid()``
+        -- or just ``vor.plot()`` -- for the bare mesh. Everything returned is a
+        :class:`~myflopy.viz.Picture`.
 
-    def map_nodes(self):
-        """Display cell polygons with node IDs in an interactive map."""
-        return plotting_map_nodes(self)
+        **This deliberately shadows FloPy's inherited ``VoronoiGrid.plot()``.**
+        That renderer is not lost: ``vor.plot.grid().plot_mpl()`` is the same
+        call, and ``vor.plot()`` still draws the grid, so the shorthand people
+        actually used keeps working. Replaces eleven plotting aliases.
+        """
+
+        return GridPlots(self)
 
     def get_vor_cells_as_series(
         self,
@@ -573,14 +485,6 @@ class VoronoiGridPlus(VoronoiGrid):
             return_gdf=return_gdf,
         )
 
-    def show_selected_cells(self, cell_list: list = None, **kwargs):
-        """Show a quick map of a selected list of cells."""
-        return plotting_show_selected_cells(self, cell_list=cell_list, **kwargs)
-
-    def show_overlapping_geometry(self, shp_gpkg):
-        """Show cells that overlap the provided geometry."""
-        return plotting_show_overlapping_geometry(self, shp_gpkg)
-
     def get_model_boundary_polygons(self) -> dict:
         """Return polygon geometries for the model boundary components."""
         return get_model_boundary_polygons(self.gdf_vorPolys)
@@ -593,18 +497,6 @@ class VoronoiGridPlus(VoronoiGrid):
             idomain_path=idomain_path,
             include_interiors=include_interiors,
         )
-
-    def plot3d(self, z=None):
-        """Plot the grid as a simple 3D line or centroid view."""
-        return plotting_plot3d(self, z=z)
-
-    def plot2d(self):
-        """Plot the Voronoi edges in 2D using Plotly."""
-        return plotting_plot2d(self)
-
-    def plottri(self):
-        """Plot the underlying Triangle mesh used to build the Voronoi grid."""
-        return plotting_plottri(self)
 
     def generate_grid_coordinates(self, grid_spacing: int) -> list:
         """Generate regularly spaced coordinates over the grid extent."""
@@ -984,10 +876,6 @@ class VoronoiGridPlus(VoronoiGrid):
             layer_bottom_name=layer_bottom_name,
             min_sep=min_sep,
         )
-
-    def cross_section(self, line: shp.LineString | Path):
-        """Build a cross-section helper for the provided line."""
-        return plotting_build_grid_section(self, line=line)
 
     @classmethod
     def vor_from_disu(

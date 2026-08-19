@@ -153,4 +153,4 @@ class DrnInput:
         vor = model.vor
 
         drn_cells = pd.DataFrame(model.gwf.drn.stress_period_data.data[per])['cellid'].apply(lambda x: x[1]).to_list()
-        vor.show_selected_cells(drn_cells)
+        return vor.plot.map(select=drn_cells)

@@ -339,17 +339,21 @@ See [Chapter 13, *Reading Results*](13_results.md).
 
 ### Visualization
 
-Maps render over the Voronoi cells with `build_choropleth`; figure/axis
-plumbing goes through the `myflopy.viz` front door (figures, subplots, a shared
-palette). A layer head map is one call:
+Every picture comes from one of a handful of verbs, on the model itself or on
+`myflopy.plot`; figure/axis plumbing goes through the `myflopy.viz` front door
+(figures, subplots, a shared palette). A layer head map is one call:
 
 ```python
-from myflopy.modflow.mf6.grid.plotting import build_choropleth
-
-choro = build_choropleth(model.vor, custom_zs=list(model.hds.array(layer=0)), layer=0)
-choro.plot_mpl(title="Layer 1 head (ft)")   # static matplotlib map
-# choro.plot()                              # interactive Plotly map
+model.plot.map(layer=0)                     # interactive Plotly map
+model.plot.map(layer=0).plot_mpl(title="Layer 1 head (ft)")   # static matplotlib
 ```
+
+The verbs are `map` (plan view), `section` (vertical slice), `surface` (3-D),
+`grid` (the bare mesh), plus `mosaic` and `animate`. They exist both bound —
+`model.plot.map(...)`, `vor.plot.grid()` — and free, as
+`plot.map(model, ...)`; they are the same functions either way. Everything they
+return is a *Picture*: it renders itself in Jupyter and answers `.fig`,
+`.show()`, `.save(path)` and `.html(path)`.
 
 For something you can share without a kernel, export a **standalone HTML slider**
 that pages through time:

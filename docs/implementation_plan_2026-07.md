@@ -1728,6 +1728,23 @@ aliases in `voronoi.py:90-120`.
 > **Delivered in two commits.** 8.4a `model.plot` + the model-side deletions;
 > 8.4b the grid aliases, notebooks and docs.
 >
+> **8.4b: only five of the eleven grid aliases were distinct pictures.**
+> `choropleth`/`show` were the same Choro, `cross_section` -> `plot.section`,
+> `plot2d` -> `plot.grid`, `show_selected_cells`/`show_overlapping_geometry` ->
+> `map(select=…)`. `mapit` was dead (needs folium, not a dependency); `plottri`
+> draws the *triangulation*, not the grid, and returns None; `dash_selector`
+> blocked on a Dash server just to be READ, and survives as a `Choro` method.
+> `plot3d` retired with no replacement -- a small, zero-caller gap until 8.5.
+>
+> **`grid` is a fifth verb on purpose.** `Choro` hard-requires a CRS (its
+> basemap does); `plot2d` and flopy's `plot` are CRS-free. Without it there is no
+> view at all for a grid being refined before a projection exists.
+>
+> **`stack.plot` was deferred to 8.5** (user's call): `LayerBuildResult
+> .cross_section` returns a matplotlib Axes and `surface_3d` a bare `go.Figure`
+> with `html_path=`/`browser=` baked in, so binding it is a return-type change,
+> not a rename -- and 8.5 already owns `vtk_3d` on the same class.
+>
 > The stage is not the rename it looked like. **`show_layer_elevs` was the real
 > find:** `_choropleth_factory` hardcoded `False` where `cor` defaulted `True`,
 > so `plot.map(model)` had been dropping five hover rows since 8.3 -- and **25
