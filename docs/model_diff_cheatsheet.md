@@ -136,7 +136,7 @@ diff.packages.uzf.results.gwrch.map("F9b") # Δ UZF recharge
 diff.hds.mosaic(by="model")                 # synced Δ mosaic, one panel per model
 diff.hds.mosaic(by="model", backend="mpl")  # static (matplotlib) instead of Plotly
 diff.hds.animate(over="period")             # Δ animated across stress periods (play/slider)
-diff.hds.animate(kind="xs", line=line)      # animated cross section (ref vs models)
+diff.hds.animate(kind="section", line=line)  # animated cross section (ref vs models)
 diff.packages.ghb.inputs.mosaic(by="model") # setup-value Δ mosaic
 diff.packages.ghb.results.map(field="q")    # field= sugar == .results.q.map()
 

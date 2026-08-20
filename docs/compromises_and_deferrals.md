@@ -2997,3 +2997,24 @@ same day, which is the useful part of the result.
        close matters for a long notebook session.
      - Ratchet moved DOWN, 60 -> 59: `prt.py` lost a deferred import when
        `export_3d_html` stopped reaching for the module-level exporter.
+
+134. **8.2's `xs` -> `section` rename left a canonical notebook broken (2026-08-20).**
+     Found while scoping 8.6. `canonical_fast_tour.ipynb` cell[9] called
+     `model.hds.animate(kind='xs', line=line)`, and `kind='xs'` has raised
+     `ValueError: kind must be 'map', 'plot', or 'section'` since 8.2 --
+     `package_plotting.py:1614`. `docs/model_diff_cheatsheet.md:139` carried the
+     same stale spelling. Both fixed.
+     - **The tests were NOT the gap.** `test_view_grammar_composers.py:354`
+       exercises `animate(kind="section")` directly and has passed throughout;
+       the code was covered. What was missed is that **the suite does not execute
+       notebooks**, so a notebook can name an API that no longer exists and stay
+       green forever. `git log` confirms 8.2 (`35ddc73`) never touched
+       `canonical_fast_tour.ipynb` despite renaming the verb it calls.
+     - The Phase 8 notebook policy ("every stage updates the notebooks it
+       breaks, in the same commit") was written precisely for this and was not
+       followed in 8.2 -- the stage's own table listed `canonical_fast_tour`
+       under 8.6 for the `animate` SIGNATURE change, which is a different break,
+       and the `kind=` argument slipped between the two rows.
+     - Corrective habit, applied from 8.5a onward and worth keeping: **execute
+       the notebooks a stage touches**, do not just edit them. That is what
+       caught this class of error in 8.5a and 8.5b.
