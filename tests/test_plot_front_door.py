@@ -457,5 +457,5 @@ def test_the_bespoke_particle_exporters_are_gone(gone):
     from myflopy.modflow.mf6 import interactive_plotting
 
     assert not hasattr(interactive_plotting, gone)
-    assert not hasattr(interactive_plotting.ModelVisualization, "particle_tracking_scene")
-    assert not hasattr(interactive_plotting.ModelVisualization, "particle_tracking_html")
+    # `ModelVisualization`, which wrapped them, is itself gone (8.6b).
+    assert not hasattr(interactive_plotting, "ModelVisualization")

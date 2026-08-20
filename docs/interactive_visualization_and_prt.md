@@ -53,107 +53,57 @@ python -m pip install -e ".[viz3d]"
 The `viz3d` extra installs PyVista and the Trame packages needed by
 `Plotter.export_html()`.
 
-## Model-Bound Visualization API
+## Standalone HTML Exports
 
-Use `model.visualize` as the preferred entry point:
+Two different artifacts, for two different jobs.
+
+**Matplotlib frame sliders** pre-render each frame to a PNG and page through
+them with a small JS controller. Their size does not grow with cell count, and
+they support the machinery a big model needs -- resumable exports, progress
+callbacks, external frame directories, a concurrent-writer guard. They render
+through FloPy's `PlotMapView` (grid lines, contour overlays, a `ModelMapStyle`),
+which is a different picture from the house choropleth:
 
 ```python
-# Existing myflopy/FloPy Matplotlib cross-section style, through time.
-model.visualize.cross_section_slider_html(
-    line,
-    "cross_section.html",
+import myflopy as mf
+
+mf.export_cross_section_slider_html(model, line, "cross_section.html")
+
+mf.export_head_map_slider_html(model, "head_map.html", layer=0)
+
+mf.export_head_layer_mosaic_slider_html(
+    model, "head_mosaic.html", layers=[0, 1, 2], ncols=3, dpi=240,
 )
 
-# FloPy PlotMapView head maps through time.
-model.visualize.head_map_slider_html(
-    "head_map.html",
-    layer=0,
-)
-
-# Multi-layer head mosaics through time.
-model.visualize.head_layer_mosaic_slider_html(
-    "head_mosaic.html",
-    layers=[0, 1, 2],
-    ncols=3,
-    dpi=240,
-    panel_figsize=(7, 5),
-)
-
-# Existing Plotly cross-section animation.
-model.visualize.plotly_cross_section_animation(
-    cells=[10, 20, 30],
-    output_path="cross_section_plotly.html",
-)
-
-# Existing Plotly map animation.
-model.visualize.plotly_head_map_animation(
-    layer=0,
-    output_path="head_map_plotly.html",
-    frame_stride=2,
-    max_frames=12,
-    zmin=100,
-    zmax=125,
-    include_plotlyjs="cdn",
+# What a long export actually wants: bounded frames, resumable, reporting.
+mf.export_head_map_slider_html(
+    model, "head_map.html", layer=0,
+    embed_frames=False, frame_stride=2, max_frames=12,
+    resume=True, progress=True,
 )
 ```
 
-Layer mosaics default to `200` DPI. Use `dpi=` for the most direct resolution
-control. `panel_figsize=(width, height)` controls each layer panel's size in
-inches, so final pixel dimensions are approximately
-`panel_figsize * rows/columns * dpi`. Higher DPI and larger panels produce
-sharper maps but increase render time, memory use, and HTML or PNG size.
-
-Plotly cross-section animations preserve the current interactive x- and y-axis
-zoom while playing or selecting frames. Double-click the plot to deliberately
-reset the axes to their initial ranges. Plotly HTML exports also inherit the
-standard `figs` configuration, including scroll-wheel zoom and a hidden Plotly
-modebar logo. Pass `config={...}` to override or extend those defaults.
-
-Plotly maps calculate an initial center and zoom from padded WGS84 model bounds,
-but do not constrain navigation; users can zoom out or pan anywhere. Use
-`fit_bounds=False, zoom=13` to supply the initial zoom directly, or adjust the
-automatically calculated home view with `bounds_padding=0.1`.
-
-Standalone Plotly head-map HTML exports use a trace-only replay controller:
-each frame restyles the existing map trace's values and hover data while the
-layout and global coloraxis remain unchanged. This avoids the colorbar flashing
-and unreliable second-play behavior seen when Plotly's native map-frame engine
-redraws choropleth traces. The returned Python figure retains normal Plotly
-frames for notebook inspection; use `output_path=...` for the repeatable
-standalone animation.
-
-Plotly frame selection is applied before traces are built, and the DISV GeoJSON
-is stored only on the base trace rather than repeated in every animation frame.
-Each animation frame explicitly updates that base trace with its own result
-values and hover table. (These standalone animation exports carry per-frame
-hover tables — time step, stress period, cell, heads by layer, model top, layer
-bottoms; the interactive grammar maps above use the newer sectioned
-`HoverSpec` hover instead.)
-The shared colorscale and colorbar live on a persistent layout-level
-`coloraxis`, while map view remains locked so user pan and zoom are preserved.
-For renderer compatibility and reliable repeated playback, each frame carries a
-complete choropleth trace, including geometry and hover metadata. Provide
-`zmin` and `zmax` to set the fixed global colorscale range explicitly; otherwise
-it is calculated across the selected animation frames.
-For large standalone exports, `include_plotlyjs="cdn"` avoids embedding the
-Plotly JavaScript library while preserving the model geometry and results.
-
-The standalone Matplotlib slider exporter pre-renders figures into PNG frames
-and embeds those frames plus a browser-side slider into one HTML file. This is
-the standalone equivalent of an `ipywidgets.Image` plus `IntSlider` callback.
-
-For large models, prefer resumable external frames:
+**Plotly animations** are live figures -- pan, zoom, hover -- built from
+pictures you supply, so the frame selection is explicit:
 
 ```python
-model.visualize.head_map_slider_html(
-    "head_map.html",
-    embed_frames=False,
-    frame_stride=2,
-    max_frames=12,
-    resume=True,
-    progress=True,
-)
+from myflopy import plot
+
+periods = model.kstpkper[::2][:12]
+animation = plot.animate([
+    (str(period), model.plot.map(kstpkper=period, layer=0, zmin=100, zmax=125))
+    for period in periods
+])
+animation.show()
+animation.html("head_map_plotly.html")   # standalone page
 ```
+
+`animate(..., backend="png")` rasterizes the same frames instead, which is the
+one form that can hold pictures of DIFFERENT kinds in a single animation.
+
+> `model.visualize` was deleted in plan 8.6b. It was a namespace over the
+> exporter functions above, which were always public -- the functions did not
+> change, only the spelling.
 
 External-frame exports use atomic file writes, a frame manifest, and an
 exclusive output lock. Interrupted exports can reuse completed frames with

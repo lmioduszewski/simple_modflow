@@ -1839,6 +1839,13 @@ than reuse it.*
 >
 > **Delivered in two commits.** 8.6a the combinator; 8.6b deletes
 > `model.visualize` and migrates the notebooks.
+>
+> **8.6b's stated premise was also wrong.** The slider exports are NOT reachable
+> as `<picture>.html(path)` -- they render through FloPy's `PlotMapView`, which
+> `animate(backend="png")` does not reproduce. All four `export_*_slider_html`
+> functions therefore SURVIVE; what goes is the namespace class wrapping them,
+> which was five one-line delegations to functions already in `mf.__all__`.
+> See ledger 137.
 
 Today `Animation(model, periods=…)` is model-bound and redraws from the model.
 Layer 2 needs `animate(frames, …)` accepting any sequence of pictures, with

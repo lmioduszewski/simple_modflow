@@ -407,7 +407,6 @@ class LoadedMf6Run(SimulationBase):
         self._idomain = None
         self._grid_type_override = grid_type if grid_type != "unknown" else None
         self._targets = None
-        self._visualize = None
         self._particle_tracking = None
         self._parallel = None
         self.regions = RegionRegistry(self)

@@ -59,7 +59,6 @@ if TYPE_CHECKING:
     import numpy as np
 
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
-    from myflopy.modflow.mf6.interactive_plotting import ModelVisualization
     from myflopy.modflow.mf6.observations import TargetRegistry
     from myflopy.modflow.mf6.package_explorer import ModelPackages
     from myflopy.modflow.mf6.parallel import ParallelModelWorkflow
@@ -133,7 +132,6 @@ class SimulationBase:
         self._grid_type_override = grid_type_override
         self.regions = RegionRegistry(self)
         self._targets = None
-        self._visualize = None
         self._particle_tracking = None
         self._parallel = None
 
@@ -377,16 +375,6 @@ class SimulationBase:
 
             self._targets = TargetRegistry(self)
         return self._targets
-
-    @property
-    def visualize(self) -> ModelVisualization:
-        """Model-bound standalone visualization and export helpers."""
-
-        if self._visualize is None:
-            from myflopy.modflow.mf6.interactive_plotting import ModelVisualization
-
-            self._visualize = ModelVisualization(self)
-        return self._visualize
 
     @property
     def particle_tracking(self) -> ParticleTracking:

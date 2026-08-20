@@ -62,7 +62,6 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.interactive_plotting import (
         FrameExportProgress,
         ModelMapStyle,
-        ModelVisualization,
         StandaloneHtmlSlider,
         build_particle_tracking_scene,
         export_cross_section_slider_html,
@@ -379,10 +378,6 @@ _EXPORTS = {
     "FrameExportProgress": (
         "myflopy.modflow.mf6.interactive_plotting",
         "FrameExportProgress",
-    ),
-    "ModelVisualization": (
-        "myflopy.modflow.mf6.interactive_plotting",
-        "ModelVisualization",
     ),
     "ParticleTracking": ("myflopy.modflow.mf6.prt", "ParticleTracking"),
     "StandaloneHtmlSlider": (

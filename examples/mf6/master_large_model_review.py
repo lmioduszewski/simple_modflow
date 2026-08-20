@@ -14,6 +14,29 @@ import myflopy as mf
 from myflopy.modflow.mf6.canonical_example import representative_cells
 
 
+def _export_plotly_head_map(model, output_path, *, frame_stride=1, max_frames=None):
+    """One interactive head-map animation, written to a standalone page.
+
+    8.6b deleted `model.visualize.plotly_head_map_animation`; this is the same
+    picture built from public verbs. Selecting the periods up front is the point
+    -- an animation costs one rendered map per frame, so a big model wants a
+    stride rather than every step.
+    """
+
+    from myflopy import plot
+
+    periods = list(model.kstpkper)[::max(1, frame_stride)]
+    if max_frames is not None:
+        periods = periods[:max_frames]
+    frames = [
+        (str(period), model.plot.map(kstpkper=period, layer=0, show_layer_elevs=False))
+        for period in periods
+    ]
+    animation = plot.animate(frames)
+    animation.html(output_path, include_plotlyjs="cdn")
+    return animation
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -82,7 +105,8 @@ def main():
     head_slider = timed(
         summary,
         "head_map_export",
-        lambda: model.visualize.head_map_slider_html(
+        lambda: mf.export_head_map_slider_html(
+            model,
             html_dir / "head_map_review.html",
             layer=0,
             style=style,
@@ -96,7 +120,8 @@ def main():
     mosaic_slider = timed(
         summary,
         "mosaic_export",
-        lambda: model.visualize.head_layer_mosaic_slider_html(
+        lambda: mf.export_head_layer_mosaic_slider_html(
+            model,
             html_dir / "head_mosaic_review.html",
             layers=list(range(config.nlay)),
             ncols=2,
@@ -120,19 +145,17 @@ def main():
         plotly_map = timed(
             summary,
             "plotly_head_map_export",
-            lambda: model.visualize.plotly_head_map_animation(
-                output_path=plotly_path,
-                layer=0,
-                show_layer_elevs=False,
+            lambda: _export_plotly_head_map(
+                model,
+                plotly_path,
                 frame_stride=args.frame_stride,
                 max_frames=args.max_frames,
-                include_plotlyjs="cdn",
             ),
         )
         summary["exports"].update(
             {
                 "plotly_head_map": str(plotly_path),
-                "plotly_head_map_frames": len(plotly_map.frames),
+                "plotly_head_map_frames": len(plotly_map.fig.frames),
                 "plotly_head_map_bytes": plotly_path.stat().st_size,
             }
         )

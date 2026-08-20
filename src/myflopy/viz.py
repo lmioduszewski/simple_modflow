@@ -40,6 +40,8 @@ Plotly equivalent to defer to.
 from __future__ import annotations
 
 from collections import Counter
+from pathlib import Path
+from typing import Any
 
 # Re-export the figs primitives the project uses, so `myflopy.viz` is a superset
 # drop-in for `figs`: a module can `from myflopy import viz as f` (or
@@ -394,6 +396,145 @@ def _build_frame_figure(frames, *, title=None):
 
 
 
+_DEFAULT_PLOTLY_CONFIG = {
+    "scrollZoom": True,
+    "displaylogo": False,
+}
+
+
+def _plotly_config(fig, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Merge the standard figs Plotly config with optional export overrides."""
+
+    merged = dict(_DEFAULT_PLOTLY_CONFIG)
+    figure_config = getattr(fig, "_config", None)
+    if figure_config:
+        merged.update(figure_config)
+    if config:
+        merged.update(config)
+    return merged
+
+
+def _write_plotly_choropleth_restyle_html(
+    fig,
+    output_path: str | Path,
+    *,
+    include_plotlyjs: bool | str = True,
+    interval_ms: int = 250,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Export a choropleth animation using repeatable trace-only restyles."""
+
+    import json
+
+    import plotly.io as pio
+    from plotly.utils import PlotlyJSONEncoder
+
+    if not fig.frames:
+        raise ValueError("A choropleth restyle export requires at least one frame.")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frame_payload = [
+        {
+            "name": str(frame.name),
+            "z": frame.data[0].z,
+            "customdata": frame.data[0].customdata,
+        }
+        for frame in fig.frames
+    ]
+    payload_json = json.dumps(frame_payload, cls=PlotlyJSONEncoder)
+
+    export_fig = go.Figure(data=fig.data, layout=fig.layout)
+    export_fig.frames = ()
+    export_fig.update_layout(
+        updatemenus=[
+            {
+                "type": "buttons",
+                "buttons": [
+                    {"label": "Play", "method": "skip", "args": []},
+                    {"label": "Pause", "method": "skip", "args": []},
+                ],
+            }
+        ],
+        sliders=[
+            {
+                "active": 0,
+                "currentvalue": {"prefix": "Frame:"},
+                "steps": [
+                    {"label": frame["name"], "method": "skip", "args": []}
+                    for frame in frame_payload
+                ],
+            }
+        ],
+    )
+    post_script = f"""
+const smGraph = document.getElementById("{{plot_id}}");
+const smFrames = {payload_json};
+let smFrameIndex = 0;
+let smTimer = null;
+let smPlayToken = 0;
+
+function smStop() {{
+  smPlayToken += 1;
+  if (smTimer !== null) {{
+    clearTimeout(smTimer);
+    smTimer = null;
+  }}
+}}
+
+function smApplyFrame(index) {{
+  smFrameIndex = index;
+  const frame = smFrames[index];
+  const z = frame.z.slice();
+  const customdata = frame.customdata.map(
+    (row) => Array.isArray(row) ? row.slice() : row
+  );
+  return Plotly.restyle(
+    smGraph,
+    {{z: [z], customdata: [customdata]}},
+    [0]
+  ).then(() => Plotly.relayout(smGraph, {{"sliders[0].active": index}}));
+}}
+
+function smPlayFrame(index, token) {{
+  if (token !== smPlayToken) return;
+  smApplyFrame(index).then(() => {{
+    if (token !== smPlayToken || index >= smFrames.length - 1) return;
+    smTimer = setTimeout(() => smPlayFrame(index + 1, token), {int(interval_ms)});
+  }});
+}}
+
+smGraph.on("plotly_sliderchange", (event) => {{
+  smStop();
+  const index = smFrames.findIndex((frame) => frame.name === String(event.step.label));
+  if (index >= 0) smApplyFrame(index);
+}});
+
+smGraph.on("plotly_buttonclicked", (event) => {{
+  if (event.button.label === "Pause") {{
+    smStop();
+    return;
+  }}
+  if (event.button.label !== "Play") return;
+  smStop();
+  const token = smPlayToken;
+  smPlayFrame(0, token);
+}});
+smGraph.dataset.simpleModflowRestyleReady = "true";
+"""
+    pio.write_html(
+        export_fig,
+        file=output_path,
+        include_plotlyjs=include_plotlyjs,
+        post_script=post_script,
+        config=_plotly_config(fig, config),
+        auto_play=False,
+        auto_open=False,
+    )
+    return output_path
+
+
+
 class FrameAnimation(Picture):
     """Frames flipped in one interactive Plotly figure (plan 8.6a).
 
@@ -434,6 +575,38 @@ class FrameAnimation(Picture):
         if self._fig is None:
             self._fig = _build_frame_figure(self.frames, title=self.title)
         return self._fig
+
+    def html(self, path, *, include_plotlyjs: bool | str = True, **kwargs):
+        """Write a standalone page and return its path.
+
+        For a CHOROPLETH animation this deliberately does not write ``self.fig``
+        verbatim. A plotly frames figure re-embeds the whole cell geometry in
+        EVERY frame, and its native playback repaints the colorbar each step,
+        which flashes and makes a second play unreliable. The exported page
+        ships the geometry once and restyles only the values.
+
+        The saving is therefore per-frame geometry, so it grows with
+        frames x cells: measured at 6 frames on a 441-cell grid it is ~17%
+        (5.7 MB vs 6.9 MB, mostly inlined plotly.js either way), and at 20
+        frames on a 2,000-cell grid roughly an order of magnitude. Anything
+        that is not a choropleth falls through to plotly's own writer.
+
+        ``include_plotlyjs`` defaults to ``True`` (inlined) rather than
+        ``Picture``'s ``"cdn"``: this is the artifact you send someone, so it
+        should open with no network.
+        """
+
+        from pathlib import Path as _Path
+
+        figure = self.fig
+        path = _Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if figure.frames and getattr(figure.frames[0].data[0], "z", None) is not None:
+            return _write_plotly_choropleth_restyle_html(
+                figure, path, include_plotlyjs=include_plotlyjs, **kwargs
+            )
+        figure.write_html(str(path), include_plotlyjs=include_plotlyjs, **kwargs)
+        return path
 
 
 

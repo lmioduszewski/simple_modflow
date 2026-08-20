@@ -152,7 +152,8 @@ This is the main MF6 implementation area.
   explorers plus the `join_lak_stage`/`join_sfr_stage` hover joins.
 - [src/myflopy/modflow/mf6/interactive_plotting.py](../src/myflopy/modflow/mf6/interactive_plotting.py)
   Standalone HTML exports: matplotlib frame sliders, Plotly map/cross-section
-  animations, and PyVista/Trame particle scenes (`model.visualize`).
+  animations (`plot.animate`), the standalone `export_*_slider_html` pages,
+  and PyVista/Trame particle scenes (`plot.grid(backend="vtk")`).
 - [src/myflopy/modflow/mf6/prt.py](../src/myflopy/modflow/mf6/prt.py)
   MF6 PRT: `PRTProject`, `PRTReleasePoints`, `PRTRunResults`, `open_prt_run`,
   and the `model.particle_tracking` namespace.

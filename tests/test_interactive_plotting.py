@@ -41,17 +41,19 @@ from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     FrameExportProgress,
     ModelMapStyle,
-    ModelVisualization,
     StandaloneHtmlSlider,
     build_particle_tracking_scene,
     export_cross_section_slider_html,
     export_head_layer_mosaic_slider_html,
     export_head_map_slider_html,
+    _select_plotly_frames,
     export_matplotlib_slider_html,
     plot_model_head_map,
 )
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
+from myflopy.modflow.mf6.grid.plotting import _choropleth_factory  # noqa: E402
 from myflopy.plot import ModelPlots  # noqa: E402
+from myflopy.viz import _write_plotly_choropleth_restyle_html  # noqa: E402
 from myflopy.viz import VtkScene  # noqa: E402
 from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
@@ -489,14 +491,25 @@ def test_cross_section_slider_reuses_canonical_matplotlib_cross_section(tmp_path
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_model_bound_visualization_surface(tmp_path):
+def test_the_model_namespace_is_gone_but_its_exporters_are_not(tmp_path):
+    """8.6b deletes `ModelVisualization` -- a thin namespace over module-level
+    functions that were ALREADY public. The functions stay: they render through
+    flopy's `PlotMapView` (grid lines, contour overlays, a `ModelMapStyle`),
+    which `animate(backend="png")` does NOT reproduce, so they are a distinct
+    picture rather than a duplicate spelling.
+    """
+
+    from myflopy.modflow.mf6 import interactive_plotting
+    from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+    assert not hasattr(interactive_plotting, "ModelVisualization")
+    assert not hasattr(SimulationBase, "visualize")
+
     workspace = _workspace("model_visualize")
     try:
         model = _two_cell_model("model_visualize", workspace)
-        assert isinstance(model.visualize, ModelVisualization)
-        assert model.visualize is model.visualize
-
-        result = model.visualize.head_map_slider_html(
+        result = export_head_map_slider_html(
+            model,
             tmp_path / "bound_map.html",
             head_frames=[np.array([[8.0, 9.0]])],
             style=ModelMapStyle(show_contours=False, dpi=70),
@@ -507,42 +520,41 @@ def test_model_bound_visualization_surface(tmp_path):
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_plotly_cross_section_animation_is_exposed_and_exportable(monkeypatch, tmp_path):
+def test_a_non_choropleth_animation_falls_through_to_plotly(tmp_path):
+    """`FrameAnimation.html` writes the restyle page only for choropleths.
+
+    The restyle controller reads `frame.data[0].z`, so it only means anything for
+    a map. A section animation has Scatter frames and must take plotly's own
+    writer instead -- the branch this exercises.
+    """
     import plotly.graph_objects as go
 
-    model = object.__new__(SimulationBase)
-    model._visualize = None
-    figure = go.Figure(
-        data=[go.Scatter(x=[0, 1], y=[1, 2])],
-        frames=[
-            go.Frame(name="0", data=[go.Scatter(x=[0, 1], y=[1, 2])]),
-            go.Frame(name="1", data=[go.Scatter(x=[0, 1], y=[2, 3])]),
-        ],
+    from myflopy.viz import FrameAnimation
+
+    class _ScatterPicture:
+        def __init__(self, ys):
+            self.fig = go.Figure(go.Scatter(x=[0, 1], y=ys))
+
+    animation = FrameAnimation(
+        [("first", _ScatterPicture([1, 2])), ("second", _ScatterPicture([2, 3]))]
     )
-    figure.update_layout(sliders=[{"steps": [{"label": "0", "method": "animate", "args": [["0"]]}]}])
+    output = animation.html(tmp_path / "section_animation.html")
 
-    class DummySection:
-        ani = figure
-
-    monkeypatch.setattr(ModelPlots, "section", lambda _self, **_kwargs: DummySection())
-    output = tmp_path / "plotly_cross_section.html"
-    result = model.visualize.plotly_cross_section_animation(output_path=output, cells=[0])
-
-    assert result is figure
-    assert len(result.frames) == 2
-    assert result.layout.sliders
     assert output.exists()
-    output_html = output.read_text(encoding="utf-8").lower()
-    assert "plotly" in output_html
-    assert '"scrollzoom": true' in output_html
-    assert '"displaylogo": false' in output_html
+    text = output.read_text(encoding="utf-8")
+    assert "plotly" in text.lower()
+    assert "smApplyFrame" not in text          # the restyle controller is map-only
+    assert len(animation.fig.frames) == 2
 
 
-def test_plotly_animation_export_can_select_frames(monkeypatch, tmp_path):
+def test_plotly_animation_export_can_select_frames(tmp_path):
+    """Frame subselection survives `ModelVisualization`'s deletion.
+
+    It was never that class's logic -- `_select_plotly_frames` did the work and
+    still does. What went is the method that called it.
+    """
     import plotly.graph_objects as go
 
-    model = object.__new__(SimulationBase)
-    model._visualize = None
     frames = [
         go.Frame(name=str(index), data=[go.Scatter(x=[0, 1], y=[index, index + 1])])
         for index in range(6)
@@ -559,16 +571,7 @@ def test_plotly_animation_export_can_select_frames(monkeypatch, tmp_path):
         ]
     )
 
-    class DummySection:
-        ani = figure
-
-    monkeypatch.setattr(ModelPlots, "section", lambda _self, **_kwargs: DummySection())
-    result = model.visualize.plotly_cross_section_animation(
-        output_path=tmp_path / "selected_plotly.html",
-        frame_stride=2,
-        max_frames=2,
-        cells=[0],
-    )
+    result = _select_plotly_frames(figure, frame_stride=2, max_frames=2)
 
     assert [frame.name for frame in result.frames] == ["0", "2"]
     assert [step.label for step in result.layout.sliders[0].steps] == ["0", "2"]
@@ -668,7 +671,10 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
 
     monkeypatch.setattr(ModelPlots, "map", lambda _self, **kwargs: build_dummy_map(**kwargs))
     output = tmp_path / "plotly_map.html"
-    result = model.visualize.plotly_head_map_animation(output_path=output, layer=0, zmin=-5, zmax=20)
+    # 8.6b: `plotly_head_map_animation` is gone. The animation figure and its
+    # export are the picture's own -- `.ani` builds it, `.html()` writes it.
+    result = model.plot.map(layer=0, zmin=-5, zmax=20).ani
+    _write_plotly_choropleth_restyle_html(result, output)
 
     assert len(result.frames) == len(periods)
     assert len(result.layout.sliders[0].steps) == len(periods)
@@ -729,8 +735,10 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
     assert choro._fig.layout.map.zoom < fitted_zoom
     assert choro._fig.layout.map.bounds.west is None
 
+    # 8.6b moved this guard DOWN into `_choropleth_factory`, so it now covers
+    # every map rather than only the animated head map.
     with pytest.raises(ValueError, match="zmin must be less than zmax"):
-        model.visualize.plotly_head_map_animation(zmin=20, zmax=20)
+        _choropleth_factory(choro.vor, zmin=20, zmax=20)
 
     choro.fit_bounds = False
     choro._fig = go.Figure()

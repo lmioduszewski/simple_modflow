@@ -180,7 +180,7 @@ Throughout, two example models recur so the code stays concrete:
 - 14.2 Choropleth maps over Voronoi cells (matplotlib `.plot_mpl()` and Plotly)
 - 14.3 Cross-sections through the grid
 - 14.4 Standalone interactive HTML sliders: head maps, layer mosaics, cross-sections through time (`export_*_slider_html`, `StandaloneHtmlSlider`, `ModelMapStyle`)
-- 14.5 The model-bound entry point `ModelVisualization`
+- 14.5 Standalone HTML: `export_*_slider_html` (raster frames) vs `plot.animate(...).html()`
 - 14.6 Progress callbacks and frame caching for large exports
 
 **15. Particle Tracking** — *[15_particle_tracking.md](15_particle_tracking.md)*

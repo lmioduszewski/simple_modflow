@@ -54,7 +54,6 @@ def test_primary_model_namespaces_have_ide_visible_return_annotations():
     # strips the redundant inner quotes.
     expected = {
         "targets": "TargetRegistry",
-        "visualize": "ModelVisualization",
         "particle_tracking": "ParticleTracking",
         "parallel": "ParallelModelWorkflow",
         "outputs": "ModelOutputs",

@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from myflopy.modflow.mf6.interactive_plotting import export_head_map_slider_html
+
 from examples.mf6.visualization_prt_master_support import (
     MasterExampleConfig,
     build_transient_model,
@@ -176,7 +178,8 @@ def test_master_example_validation_profile_runs_complex_package_topology():
         assert sfr_signals["losing_reach_count"] >= 3
         assert sfr_signals["minimum_routed_flow"] > 5_000.0
 
-        slider = model.visualize.head_map_slider_html(
+        slider = export_head_map_slider_html(
+            model,
             workspace / "validation_head_slider.html",
             kstpkpers=heads.get_kstpkper()[:2],
             layer=0,
@@ -199,11 +202,15 @@ def test_master_notebook_documents_full_integration_surface():
 
     for required in (
         "10,000-cell",
-        "head_map_slider_html",
-        "head_layer_mosaic_slider_html",
-        "cross_section_slider_html",
-        "plotly_head_map_animation",
-        "plotly_cross_section_animation",
+        # The three matplotlib slider exporters survive 8.6b -- they render
+        # through flopy's PlotMapView, a picture `animate(backend="png")` does
+        # not reproduce -- but the `model.visualize` NAMESPACE around them does
+        # not, so the notebook now calls them as functions.
+        "export_head_map_slider_html",
+        "export_head_layer_mosaic_slider_html",
+        "export_cross_section_slider_html",
+        # The two plotly animation methods folded into the verb.
+        "plot.animate(",
         "PRTReleasePoints",
         "open_prt_run",
         "export_3d_html",

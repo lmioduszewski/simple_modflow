@@ -23,7 +23,7 @@
  "myflopy.modflow.mf6.prt": 4,
  "myflopy.modflow.mf6.prt_maps": 2,
  "myflopy.modflow.mf6.sfr": 1,
- "myflopy.modflow.mf6.simulation.base": 8,
+ "myflopy.modflow.mf6.simulation.base": 7,
  "myflopy.modflow.utils.datatypes.choros": 1,
  "myflopy.modflow.utils.datatypes.xsections": 2,
  "myflopy.project.group._shared": 1,

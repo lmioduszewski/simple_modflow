@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.interactive_plotting import (
         FrameExportProgress,
         ModelMapStyle,
-        ModelVisualization,
         StandaloneHtmlSlider,
     )
     from myflopy.modflow.mf6.observations import (
@@ -90,7 +89,6 @@ _EXPORTS = {
     "ModelCrossSectionStyle": ("myflopy.modflow.mf6.cross_section_plotting", "ModelCrossSectionStyle"),
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
     "FrameExportProgress": ("myflopy.modflow.mf6.interactive_plotting", "FrameExportProgress"),
-    "ModelVisualization": ("myflopy.modflow.mf6.interactive_plotting", "ModelVisualization"),
     "ParticleTracking": ("myflopy.modflow.mf6.prt", "ParticleTracking"),
     "ParallelCompatibilityError": ("myflopy.modflow.mf6.parallel", "ParallelCompatibilityError"),
     "ParallelEnvironment": ("myflopy.modflow.mf6.parallel", "ParallelEnvironment"),

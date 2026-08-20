@@ -3099,3 +3099,46 @@ same day, which is the useful part of the result.
        assembly and needs only what viz already has, so viz (L0) is its correct
        home anyway; `SliderAnimation` stays at L2 because it needs the exporter.
        `deferred_total` unchanged at 59.
+
+137. **8.6b: `model.visualize` deleted -- but not for the reason the plan gave
+     (2026-08-20).**
+     The plan said to delete it "once its four slider exports are reachable as
+     `<picture>.html(path)`". **They are not, and I verified it before acting.**
+     `plot_model_head_map` renders through FloPy's `PlotMapView` --
+     `plot_array` + `plot_grid` + `contour_array`, styled by a `ModelMapStyle`
+     -- while `animate(backend="png")` rasterizes via `Choro.plot_mpl`, a
+     geopandas cell fill. Different drawings, not two spellings of one.
+     - **I told the user the three exporters were "redundant wrappers" and that
+       was wrong.** They pushed back ("seems like the export_* functions are
+       useful right?"), which is what prompted the check. Deleting them would
+       have removed a picture. All four `export_*_slider_html` functions stay.
+     - What IS redundant is the CLASS: five methods, each a one-line delegation
+       to a module-level function already exported in `mf.__all__`. So the
+       namespace goes and the functions stay --
+       `model.visualize.head_map_slider_html(path)` becomes
+       `mf.export_head_map_slider_html(model, path)`.
+     - **COMPROMISE — ergonomics for consistency.** A method on the model reads
+       better than a function you pass the model to. The trade is that Phase 8's
+       rule is "pictures come from verbs on objects", and these are neither
+       pictures nor verbs: they are exporters that write a file and return a
+       handle. Keeping the namespace would have left a second way to make an
+       animation sitting outside the grammar.
+     - **The two plotly-animation methods folded into the verb.** They were
+       `model.plot.map(...).ani` plus frame subselection plus an HTML write, all
+       of which `plot.animate(frames).html(path)` now does -- with the frame
+       selection explicit at the call site, which is honest about the cost (one
+       rendered map per frame).
+     - **`_write_plotly_choropleth_restyle_html` was re-homed, not deleted.** It
+       had exactly one caller, `plotly_head_map_animation`, so deleting the
+       method would have orphaned the real size fix: it ships the cell geometry
+       ONCE and restyles values per frame. It is now what `FrameAnimation.html()`
+       writes for a choropleth, with plotly's own writer as the fallback for
+       anything else. Moved to `viz.py` (L0) with `_build_frame_figure`, since
+       `package_plotting` (L1) cannot reach `interactive_plotting` (L2).
+     - **A guard was moved DOWN rather than lost.** `zmin >= zmax` was validated
+       inside the deleted method; it now lives in `_choropleth_factory`, so it
+       covers every map instead of only the animated head map. An inverted range
+       renders an all-one-colour picture with no error, which reads as a broken
+       model.
+     - Ratchet 59 -> 58 (`base.py` lost the deferred import behind the property);
+       api_snapshot dropped `visualize` and `ModelVisualization`.

@@ -64,6 +64,12 @@ def _choropleth_factory(
     Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
     in particular is a matplotlib-only argument and raises there.
     """
+    if zmin is not None and zmax is not None and zmin >= zmax:
+        # Kept from `ModelVisualization.plotly_head_map_animation`, which 8.6b
+        # deleted -- and moved DOWN here, so it now guards every map rather than
+        # only the animated head map. An inverted range renders an all-one-colour
+        # picture with no error, which reads as a broken model.
+        raise ValueError(f"zmin must be less than zmax; got zmin={zmin}, zmax={zmax}.")
     if show_layer_elevs is None:
         show_layer_elevs = getattr(vor, "gdf_topbtm", None) is not None
     return Choro(
