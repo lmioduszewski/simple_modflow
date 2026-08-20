@@ -161,7 +161,9 @@ def test_the_model_namespace_delegates_to_the_module_verbs():
     seen = {}
     model = SimpleNamespace(vor=SimpleNamespace(ncpl=2))
     ns = ModelPlots(model)
-    for verb in ("map", "section", "surface", "grid", "animate"):
+    # `mosaic` and `animate` are COMBINATORS -- their first argument is the
+    # frames, not the model -- so only the subject verbs pass the model through.
+    for verb in ("map", "section", "surface", "grid"):
         original = getattr(plot, verb)
         try:
             setattr(plot, verb, lambda source, _v=verb, **kw: seen.setdefault(_v, source))

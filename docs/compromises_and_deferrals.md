@@ -3044,3 +3044,58 @@ same day, which is the useful part of the result.
        are mutation-tested.
      - `MplPicture`/`VtkScene` are excluded by name -- their `.fig` raises on
        purpose -- and `LayerSurface` needs a built stack to instantiate.
+
+136. **8.6a: `animate` becomes a combinator, and the plan's "only new code" stage
+     turned out to be mostly promotion (2026-08-20).**
+     `plot.animate(model, periods=)` returned `Animation` -- a config bag with
+     `.sliders`/`.updatemenus` and nothing else. It was in `__all__`, documented
+     as a verb, and could not `.show()`, `.save()` or `.html()`. It had **zero
+     callers** outside its own docstring, so it is deleted rather than adapted.
+     - **The Layer-2 combinator already existed, privately.**
+       `SpatialView._plotly_animation(frames, title=)` took exactly
+       `[(label, Picture), ...]`, and `_frame_panels` already produced that
+       shape. The node grammar also already had a `backend="plotly"|"mpl"`
+       switch. So the stage is: promote the private builder to
+       `viz._build_frame_figure`, wrap it in a Picture, and add the one genuinely
+       missing piece -- a raster backend.
+     - **Delegating fixed a real bug.** `_plotly_animation` passed only
+       `choro.get_choropleth()`, so contours, location markers and pathlines
+       drawn over a map silently vanished between the static picture and its
+       animation. The shared builder includes `overlay_traces()`.
+     - **Two Picture classes, matching the renderer split viz.py already has.**
+       `FrameAnimation` (plotly, `.fig` is the frames figure) and
+       `SliderAnimation` (rasterized frames, `.fig` RAISES and names `.frames`,
+       exactly as `MplPicture`/`VtkScene` do). Heterogeneous frames are a
+       `SliderAnimation`, so they need no third concept.
+     - **Mixed frames + `backend="plotly"` RAISE rather than falling back.**
+       Silently returning a raster page instead of an interactive figure changes
+       WHAT you get, which is the same class of lie that made 8.5 rename
+       `surface(backend="vtk")` to `grid(backend="vtk")` (ledger 133). Plotly
+       itself does not validate this -- it accepts mismatched frame traces and
+       fails in the browser -- so the builder checks trace counts explicitly.
+     - **The PNG bridge does NOT go through Plotly's static export.** Measured:
+       `kaleido` v1 imports fine (so viz.py's friendly ImportError never fires)
+       and then raises `RuntimeError: Kaleido requires Google Chrome`; kaleido is
+       not in `pyproject.toml` at all. Every plotly picture here already carries
+       a `plot_mpl()`, so `_mpl_figure_of` routes through those -- normalizing
+       the three return shapes they use (Figure, Axes, `(fig, ax)`).
+     - **CORRECTION to my own earlier claim.** I told the user the raster slider
+       was ~0.7 MB against 17.7 MB for plotly -- a 25x win. At shipped defaults
+       (dpi=140) it is 8.65 MB for 20 frames. Measured on the canonical model
+       (441 cells x 6 frames): plotly 2.05 MB, png 1.10 MB. The honest statement
+       is that **png size is independent of cell count while plotly grows with
+       cells x frames**, so png wins on big grids, not universally.
+     - **`export_matplotlib_slider_html` KEPT as the engine.** The user pushed
+       back on deleting it, correctly: it takes a `render_frame` callable plus
+       values and knows nothing about MODFLOW, so it is a general primitive, not
+       a redundant wrapper. `SliderAnimation.export()` calls it and returns the
+       full `StandaloneHtmlSlider` handle; `.html(path)` returns a `Path` like
+       every other picture. Only the three MODEL-SPECIFIC wrappers are
+       duplicative, and those go in 8.6b with `model.visualize`.
+     - **COMPROMISE — `_build_frame_figure` lives in `viz.py`, not next to the
+       slider machinery.** `package_plotting` is L1 and `interactive_plotting` is
+       L2, so the node grammar could not import the builder from there without a
+       deferred import, which the exact-match ratchet forbids. It is pure figure
+       assembly and needs only what viz already has, so viz (L0) is its correct
+       home anyway; `SliderAnimation` stays at L2 because it needs the exporter.
+       `deferred_total` unchanged at 59.

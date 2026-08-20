@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from myflopy.viz import Fig, mpl_axes, shared_map_view, subplots
+from myflopy.viz import Fig, _build_frame_figure, mpl_axes, subplots
 from myflopy.viz import mosaic as viz_mosaic
 
 if TYPE_CHECKING:
@@ -1702,56 +1702,16 @@ class SpatialView:
         )
 
     def _plotly_animation(self, frames, *, title):
-        """Build a Plotly play/slider map animation over ``[(label, Choro), ...]`` frames.
+        """Delegate to the shared combinator -- one implementation, two spellings.
 
-        All frames share one data-fitted map view so the map does not reset to a
-        world view between frames.
+        This method WAS that implementation, privately. `plot.animate` promoted
+        it (8.6a), and delegating rather than keeping a copy fixed a real bug on
+        the way: this version passed only `choro.get_choropleth()`, so contours,
+        location markers and pathlines drawn over a map silently vanished
+        between the static picture and its animation.
         """
 
-        if not frames:
-            raise ValueError("animate requires at least one frame.")
-        names = [str(label) for label, _ in frames]
-        traces = [choro.get_choropleth() for _, choro in frames]
-        fig = Fig(data=[traces[0]])
-        fig.frames = [
-            go.Frame(data=[trace], name=name)
-            for name, trace in zip(names, traces, strict=False)
-        ]
-        # A single map flipped across frames still needs its view fitted to the
-        # data -- otherwise it renders zoomed out to the world, like the mosaic
-        # subplots did. All frames share the site, so one shared view suffices.
-        map_view = shared_map_view([choro for _, choro in frames])
-        play = {"frame": {"duration": 600, "redraw": True}, "fromcurrent": True}
-        pause = {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}
-        fig.update_layout(
-            title=title,
-            uirevision="lock",
-            map=map_view or {},
-            updatemenus=[
-                {
-                    "type": "buttons",
-                    "showactive": False,
-                    "buttons": [
-                        {"label": "Play", "method": "animate", "args": [None, play]},
-                        {"label": "Pause", "method": "animate", "args": [[None], pause]},
-                    ],
-                }
-            ],
-            sliders=[
-                {
-                    "active": 0,
-                    "steps": [
-                        {
-                            "method": "animate",
-                            "args": [[name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
-                            "label": name,
-                        }
-                        for name in names
-                    ],
-                }
-            ],
-        )
-        return fig
+        return _build_frame_figure(frames, title=title)
 
     def _mpl_animation(self, frames, *, title):
         """Build a matplotlib ``FuncAnimation`` over ``[(label, Choro), ...]`` map frames.

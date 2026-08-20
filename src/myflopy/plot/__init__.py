@@ -9,7 +9,7 @@
     plot.surface(model, layer=0)              # 3-D
     plot.grid(vor)                            # the bare mesh, no basemap
     plot.mosaic([a, b, c])                    # compose any pictures
-    plot.animate(model)                       # frames through time
+    plot.animate(frames)                      # flip through pictures
 
 **Geometry chooses the verb.** Not content, and not renderer. A map is a plan
 view whatever is drawn on it, so contours, observation locations and a hillshade
@@ -41,6 +41,12 @@ Two things deliberately absent:
   ``myflopy.viz`` builds and styles figures. ``mosaic`` appears in both because
   it is genuinely both -- it is re-exported here, not reimplemented.
 
+**Two of the verbs are COMBINATORS.** ``map``, ``section``, ``surface`` and
+``grid`` are picture verbs: their first argument is the subject being drawn.
+``mosaic`` and ``animate`` take a collection of finished pictures instead --
+they compose rather than draw. They appear on the namespaces too, for
+discoverability, but the model is not their subject.
+
 **The same verbs exist on the objects themselves** -- ``model.plot.map()``,
 ``vor.plot.grid()`` -- and they call these functions, so there is one
 implementation behind both spellings. A model answers all six; a bare grid
@@ -62,11 +68,13 @@ from myflopy.modflow.mf6.grid.plotting import (
     GridSection,
     _choropleth_factory,
 )
-from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
-from myflopy.modflow.utils.animations import Animation
+from myflopy.modflow.mf6.interactive_plotting import (
+    SliderAnimation,
+    build_particle_tracking_scene,
+)
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
-from myflopy.viz import Picture, mosaic
+from myflopy.viz import FrameAnimation, Picture, mosaic
 
 __all__ = [
     "map",
@@ -76,6 +84,8 @@ __all__ = [
     "mosaic",
     "animate",
     "ModelPlots",
+    "FrameAnimation",
+    "SliderAnimation",
     "GridPlots",
     "Picture",
     "Choro",
@@ -216,14 +226,41 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
     return build_particle_tracking_scene(source, pathlines, **kwargs)
 
 
-def animate(model, periods=None, **kwargs) -> Animation:
-    """Frames through time for one model.
+def animate(frames, *, backend: str = "plotly", title=None, **kwargs):
+    """Flip through a sequence of pictures (plan 8.6a).
 
-    Still the model-bound form. Plan 8.6 generalizes it to accept any sequence of
-    pictures, so an animation can mix kinds the way :func:`mosaic` already does.
+    A COMBINATOR, like :func:`mosaic` -- its first argument is the frames, not a
+    subject. It takes the same shapes mosaic does: bare pictures, or
+    ``(label, picture)`` pairs::
+
+        plot.animate([model.plot.map(per=p) for p in range(nper)])
+        plot.animate([("start", first), ("end", last)])
+
+    Two backends, both drawing the same frames:
+
+    * ``"plotly"`` (default) -- one live figure with play/pause and a slider.
+      Fast and interactive, but every frame must share a trace structure, and a
+      choropleth re-embeds its geometry per frame, so the file grows with
+      cells x frames.
+    * ``"png"`` -- each frame rasterized and paged by a browser slider. Frames
+      need share NOTHING, so a map, a section and a 3-D scene can sit in one
+      animation, and the size does not grow with cell count. This is the form
+      to reach for on a large grid.
+
+    Mixed frames with ``backend="plotly"`` RAISE rather than quietly falling
+    back: swapping an interactive figure for a raster page is a change in what
+    you get, not how it is drawn.
+
+    To animate a model's own results over time, prefer the grammar --
+    ``model.hds.animate(kind="map", over="period")`` -- which generates the
+    frames for you and calls this.
     """
 
-    return Animation(model, periods=periods, **kwargs)
+    if backend == "plotly":
+        return FrameAnimation(frames, title=title, **kwargs)
+    if backend == "png":
+        return SliderAnimation(frames, title=title, **kwargs)
+    raise ValueError(f"backend must be 'plotly' or 'png', not {backend!r}.")
 
 
 class ModelPlots:
@@ -278,10 +315,16 @@ class ModelPlots:
 
         return grid(self.model, backend=backend, pathlines=pathlines, **kwargs)
 
-    def animate(self, periods=None, **kwargs) -> Animation:
-        """Frames through this model's periods. See :func:`myflopy.plot.animate`."""
+    def animate(self, frames, **kwargs):
+        """Flip through pictures. See :func:`myflopy.plot.animate`.
 
-        return animate(self.model, periods=periods, **kwargs)
+        Subject-free, like :meth:`mosaic` -- it animates the frames you hand it,
+        which need not all come from this model. For this model's results over
+        time, the grammar generates the frames for you:
+        ``model.hds.animate(kind="map", over="period")``.
+        """
+
+        return animate(frames, **kwargs)
 
     def mosaic(self, panels, **kwargs):
         """Compose any pictures into one figure. See :func:`myflopy.viz.mosaic`.

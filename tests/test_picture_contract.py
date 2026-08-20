@@ -292,6 +292,9 @@ def test_every_real_picture_is_idempotent(canonical_run):
         "GridMesh": vor.plot.grid(),
         "GridSection": vor.plot.section(LineString([(xmin, mid), (xmax, mid)])),
         "InterpolatedSurface": model.plot.surface(layer=0),
+        "FrameAnimation": model.plot.animate(
+            [model.plot.map(per=0, layer=0), model.plot.map(per=1, layer=0)]
+        ),
     }
 
     # Every PLOTLY Picture subclass must be represented -- the point is that a
@@ -301,7 +304,7 @@ def test_every_real_picture_is_idempotent(canonical_run):
         cls.__name__
         for cls in Picture.__subclasses__()
         if cls.__module__.startswith("myflopy.")          # not this file's stubs
-        and cls.__name__ not in {"MplPicture", "VtkScene", "LayerSurface"}
+        and cls.__name__ not in {"MplPicture", "VtkScene", "SliderAnimation", "LayerSurface"}
     }
     assert plotly_pictures <= set(pictures), (
         f"unchecked Picture subclasses: {sorted(plotly_pictures - set(pictures))}"

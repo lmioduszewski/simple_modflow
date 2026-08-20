@@ -52,6 +52,7 @@ try:
 except ImportError:  # vendored fallback for installed environments
     from myflopy._vendor.figs import Fig, Subplot, Template, create_hover
     from myflopy._vendor.figs.mpl import REPORT, Theme, get_mplfig, plot_cross_section
+import plotly.graph_objects as go
 from plotly.subplots import make_subplots as _make_subplots
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "shared_map_view",
     "MplPicture",
     "VtkScene",
+    "FrameAnimation",
     "mpl_axes",
     "report_axes",
     "Theme",
@@ -290,6 +292,149 @@ class MplPicture(Picture):
         buffer = io.BytesIO()
         self.axes.figure.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
         return {"image/png": base64.b64encode(buffer.getvalue()).decode("ascii")}
+
+
+def _normalize_frames(frames):
+    """``[picture | (label, picture), ...]`` -> ``[(label, picture), ...]``.
+
+    The same normalization :func:`myflopy.viz.mosaic` does, so the two
+    combinators accept the same shapes.
+    """
+
+    normalized = []
+    for index, item in enumerate(frames):
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            label, picture = item
+        else:
+            label, picture = None, item
+        if label is None:
+            layout_title = getattr(getattr(picture, "layout", None), "title", None)
+            label = getattr(layout_title, "text", None) or f"Frame {index + 1}"
+        normalized.append((str(label), picture))
+    if not normalized:
+        raise ValueError("animate requires at least one frame.")
+    return normalized
+
+
+
+def _build_frame_figure(frames, *, title=None):
+    """One plotly figure whose frames flip between ``[(label, picture), ...]``.
+
+    Promoted from ``SpatialView._plotly_animation``, which had this exact shape
+    but was private and reachable only from the view grammar.
+
+    Choropleths contribute ``get_choropleth()`` -- the cell trace PLUS whatever
+    is drawn over it (contours, location markers, pathlines). Reading only the
+    cell trace is how an overlay silently disappears between the static picture
+    and its animation, which is the bug ``viz.mosaic`` carries a comment about.
+    """
+
+    labels = [label for label, _ in frames]
+    pictures = [picture for _, picture in frames]
+
+    traces = []
+    for picture in pictures:
+        if hasattr(picture, "get_choropleth"):
+            cells = [picture.get_choropleth()]
+            overlays = list(picture.overlay_traces()) if hasattr(picture, "overlay_traces") else []
+            traces.append(cells + overlays)
+        else:
+            traces.append(list(picture.fig.data))
+
+    widths = {len(group) for group in traces}
+    if len(widths) > 1:
+        raise ValueError(
+            "backend='plotly' needs every frame to have the same trace "
+            f"structure; got frames with {sorted(widths)} traces. These frames "
+            'are not the same picture with different data -- use backend="png".'
+        )
+
+    figure = Fig(data=traces[0])
+    figure.frames = [
+        go.Frame(data=group, name=name)
+        for name, group in zip(labels, traces, strict=False)
+    ]
+    play = {"frame": {"duration": 600, "redraw": True}, "fromcurrent": True}
+    pause = {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}
+    layout = {
+        "title": title,
+        "uirevision": "lock",
+        "updatemenus": [
+            {
+                "type": "buttons",
+                "showactive": False,
+                "buttons": [
+                    {"label": "Play", "method": "animate", "args": [None, play]},
+                    {"label": "Pause", "method": "animate", "args": [[None], pause]},
+                ],
+            }
+        ],
+        "sliders": [
+            {
+                "active": 0,
+                "steps": [
+                    {
+                        "method": "animate",
+                        "args": [[name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                        "label": name,
+                    }
+                    for name in labels
+                ],
+            }
+        ],
+    }
+    # A map flipped across frames still needs its view fitted to the data, or it
+    # renders zoomed out to the world -- the same fix mosaic's subplots needed.
+    if all(hasattr(picture, "get_choropleth") for picture in pictures):
+        shared = shared_map_view(pictures)
+        if shared:
+            layout["map"] = shared
+    figure.update_layout(**layout)
+    return figure
+
+
+
+class FrameAnimation(Picture):
+    """Frames flipped in one interactive Plotly figure (plan 8.6a).
+
+    The fast, live form: every frame is a plotly trace in a single figure with
+    play/pause and a slider. Requires the frames to share a trace structure --
+    they are the same picture with different data -- so it suits a field over
+    stress periods, not a mixed bag.
+
+    ``.html(path)`` does NOT write this figure verbatim. A choropleth animation
+    re-embeds the whole geojson in every frame, which is why a 20-frame map of a
+    2,000-cell grid weighs ~15 MB; the exported page instead ships the geometry
+    once and swaps only the values, for ~1.6 MB. Same picture, one tenth the
+    file -- and no colorbar flash, which the frame-based page has.
+    """
+
+    def __init__(self, frames, *, title=None):
+        """Hold ``[(label, picture), ...]`` for a single flipped figure."""
+
+        self.frames = _normalize_frames(frames)
+        self.title = title
+        self._fig = None
+
+    def __repr__(self):
+        """Name the frame count, which is what you check when one is missing."""
+
+        return f"FrameAnimation({len(self.frames)} frames)"
+
+    @property
+    def labels(self) -> list[str]:
+        """The per-frame slider labels, in order."""
+
+        return [label for label, _ in self.frames]
+
+    @property
+    def fig(self):
+        """The assembled play/slider figure (built once, then reused)."""
+
+        if self._fig is None:
+            self._fig = _build_frame_figure(self.frames, title=self.title)
+        return self._fig
+
 
 
 class VtkScene(Picture):
@@ -552,7 +697,6 @@ def mosaic(
     """
 
     import numpy as np
-    import plotly.graph_objects as go
 
     normalized = []
     for index, item in enumerate(panels):

@@ -28,7 +28,7 @@ from myflopy.modflow.mf6.cross_section_plotting import (
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
-from myflopy.viz import VtkScene, mpl_axes
+from myflopy.viz import Picture, VtkScene, _normalize_frames, mpl_axes
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -1308,3 +1308,144 @@ class ModelVisualization:
                 config=config,
             )
         return fig
+
+
+# --- animate: the Layer-2 combinator over pictures (plan 8.6a) -----------------
+def _mpl_figure_of(picture):
+    """A Matplotlib ``Figure`` for ``picture``, whatever renderer it is.
+
+    The bridge that makes a PNG animation work across renderers. Deliberately
+    NOT via Plotly's static export: ``kaleido`` needs a Chrome install that this
+    package does not depend on, and every plotly picture here already carries a
+    ``plot_mpl()``. Those return a Figure, an Axes, or a ``(fig, ax)`` pair
+    depending on the class, so the shapes are normalized here rather than at
+    four call sites.
+    """
+
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    if isinstance(picture, Figure):
+        return picture
+    axes = getattr(picture, "axes", None)
+    if isinstance(axes, Axes):                      # viz.MplPicture
+        return axes.figure
+    if hasattr(picture, "plot_mpl"):
+        drawn = picture.plot_mpl()
+        if isinstance(drawn, Figure):
+            return drawn
+        if isinstance(drawn, Axes):
+            return drawn.figure
+        if isinstance(drawn, (tuple, list)) and drawn:
+            first = drawn[0]
+            return first if isinstance(first, Figure) else first.figure
+    raise TypeError(
+        f"{type(picture).__name__} cannot be rendered to a frame image: it has "
+        "no `plot_mpl()` and is not a Matplotlib picture. Use "
+        'backend="plotly" for a live plotly animation.'
+    )
+
+
+class SliderAnimation(Picture):
+    """Frames pre-rendered to images, paged by a browser slider (plan 8.6a).
+
+    The general form: each frame is rasterized independently, so the frames need
+    share nothing at all -- a map, a cross-section and a 3-D scene can sit in one
+    animation. It is also the form whose size does not grow with cell count,
+    which is what makes it the practical choice for a large grid.
+
+    There is no single figure behind it, so ``.fig`` raises; the picture IS the
+    exported page. ``.html(path)`` writes it and returns the path, and
+    ``.export(path, ...)`` returns the richer
+    :class:`StandaloneHtmlSlider` handle when you want the frame manifest or the
+    resume/progress machinery.
+    """
+
+    def __init__(self, frames, *, title=None, dpi: int = 140, interval_ms: int = 700):
+        """Hold ``[(label, picture), ...]`` to be rasterized on export."""
+
+        self.frames = _normalize_frames(frames)
+        self.title = title or "Model results through time"
+        self.dpi = dpi
+        self.interval_ms = interval_ms
+
+    def __repr__(self):
+        """Name the frame count, which is what you check when one is missing."""
+
+        return f"SliderAnimation({len(self.frames)} frames)"
+
+    @property
+    def labels(self) -> list[str]:
+        """The per-frame slider labels, in order."""
+
+        return [label for label, _ in self.frames]
+
+    @property
+    def fig(self):
+        """Not available: the frames are images, not one figure."""
+
+        raise TypeError(
+            "A SliderAnimation has no single figure -- its frames are rendered "
+            "images. Use `.html(path)` to write the page, `.frames` for the "
+            '(label, picture) pairs, or backend="plotly" for a live figure.'
+        )
+
+    def export(self, path, **kwargs) -> StandaloneHtmlSlider:
+        """Write the slider page and return the full :class:`StandaloneHtmlSlider`.
+
+        ``.html(path)`` returns a ``Path`` like every other picture; this is the
+        same write with the richer handle -- frame counts, the frame directory,
+        and how many frames were rendered vs reused. ``resume=``, ``progress=``,
+        ``embed_frames=`` and the rest ride through to
+        :func:`export_matplotlib_slider_html`.
+        """
+
+        pictures = [picture for _, picture in self.frames]
+        kwargs.setdefault("dpi", self.dpi)
+        kwargs.setdefault("interval_ms", self.interval_ms)
+        return export_matplotlib_slider_html(
+            lambda picture, _index: _mpl_figure_of(picture),
+            pictures,
+            path,
+            labels=self.labels,
+            title=self.title,
+            **kwargs,
+        )
+
+    def html(self, path, **kwargs):
+        """Write the standalone slider page and return its path."""
+
+        return self.export(path, **kwargs).path
+
+    def save(self, path, **kwargs):
+        """Write the animation out; only ``.html`` can hold every frame."""
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        if path.suffix.lower() in {".html", ".htm"}:
+            return self.html(path, **kwargs)
+        raise ValueError(
+            f"An animation cannot be saved as {path.suffix!r} -- a still image "
+            "holds one frame. Save to .html, or save a single frame's picture."
+        )
+
+    def show(self, *args, **kwargs):
+        """Display the animation inline (Jupyter) by embedding the slider page."""
+
+        import tempfile
+
+        from IPython.display import HTML, display
+
+        with tempfile.TemporaryDirectory() as tmp:
+            written = self.html(Path(tmp) / "animation.html")
+            return display(HTML(written.read_text(encoding="utf-8")))
+
+    def _repr_mimebundle_(self, *args, **kwargs):
+        """Render inline in Jupyter as the self-contained slider page."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            written = self.html(Path(tmp) / "animation.html")
+            return {"text/html": written.read_text(encoding="utf-8")}

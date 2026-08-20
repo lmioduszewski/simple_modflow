@@ -1825,7 +1825,20 @@ reachable as `<picture>.html(path)`.
 `layers.py`'s `import pyvista` is unguarded, so 8.5b must ADD that wiring rather
 than reuse it.*
 
-### Stage 8.6 — generalize `animate` (the long pole)
+### Stage 8.6 — generalize `animate`
+
+> **NOT "the only stage that is new code" -- the combinator already existed.**
+> `SpatialView._plotly_animation` took `[(label, Picture), ...]` and
+> `_frame_panels` produced it; the node grammar already had a `backend=` switch.
+> 8.6a promotes that builder, wraps it in a Picture, and adds the one genuinely
+> missing piece: a raster backend for heterogeneous frames. See ledger 136.
+>
+> **The plan's `over="per"` spelling does not exist** -- the axis keyword is
+> `over="period"` (`package_plotting.py:1547`), and `per=` separately selects
+> WHICH periods.
+>
+> **Delivered in two commits.** 8.6a the combinator; 8.6b deletes
+> `model.visualize` and migrates the notebooks.
 
 Today `Animation(model, periods=…)` is model-bound and redraws from the model.
 Layer 2 needs `animate(frames, …)` accepting any sequence of pictures, with
