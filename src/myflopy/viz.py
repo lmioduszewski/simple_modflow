@@ -24,11 +24,17 @@ Custom per-plot themes are fine -- keep them next to the plot, sourced from here
 
 Deliberate exceptions (kept on raw ``plotly.graph_objects`` by design, *not*
 ``Fig``): **3-D scenes** (layer/surface ``surface_trace`` plots in ``layers``,
-``surfaces``), **mapbox maps** (the node-id / cell debug plots in
-``grid/plotting``; the model-data choropleth already runs through ``Fig`` via the
-``Choro`` class), and **animation re-wraps** (``interactive_plotting`` rebuilds a
+``surfaces``) and **animation re-wraps** (``interactive_plotting`` rebuilds a
 figure from existing data + frames). The 2-D house template (paper-anchored
 border, x/y axis styling) does not belong on those, so they stay raw.
+
+The mapbox-map exception is GONE as of plan 8.4b: the node-id and cell debug
+plots that claimed it (``map_nodes``, ``plot2d``, ``plot3d``) were deleted, and
+every map now runs through ``Fig`` via ``Choro`` or ``GridMesh``.
+
+Not every picture is Plotly. :class:`MplPicture` answers the same verbs over a
+Matplotlib Axes, for drawings -- filled geologic cross-sections -- that have no
+Plotly equivalent to defer to.
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ __all__ = [
     "subplots",
     "mosaic",
     "shared_map_view",
+    "MplPicture",
     "mpl_axes",
     "report_axes",
     "Theme",
@@ -86,9 +93,15 @@ class Picture:
     return None. Callers learned each class separately, and ``model.cor().plot()
     .show()`` -- three calls to see one map -- was the cost.
 
-    **Subclasses supply exactly one thing: a ``fig`` property.** It must be
-    idempotent -- repeated access returns the same assembled figure, never one
+    **Plotly subclasses supply exactly one thing: a ``fig`` property.** It must
+    be idempotent -- repeated access returns the same assembled figure, never one
     that has accumulated its traces twice.
+
+    Most pictures here are Plotly, so the four methods below are written in terms
+    of ``fig``. That is a DEFAULT, not the contract: a picture whose native
+    renderer is something else answers the same four verbs by overriding them --
+    see :class:`MplPicture`. What callers are promised is the verbs, not the
+    figure object behind them.
     """
 
     @property
@@ -157,6 +170,125 @@ class Picture:
         """
 
         return self.fig._repr_mimebundle_(*args, **kwargs)
+
+
+class MplPicture(Picture):
+    """A :class:`Picture` whose native renderer is Matplotlib, not Plotly.
+
+    Some drawings genuinely are Matplotlib: a filled, layer-coloured geologic
+    cross-section is built by FloPy's ``PlotCrossSection``, and there is no
+    Plotly equivalent to defer to. Rather than exempt those from the picture
+    grammar -- or fake a ``fig`` that is not a :class:`Fig` -- this answers the
+    same four verbs over an Axes.
+
+    Subclasses implement :meth:`draw`. Everything else follows::
+
+        picture                 # renders inline
+        picture.axes            # the Matplotlib Axes, to adjust before display
+        picture.show()
+        picture.save("s.png")   # .png/.pdf/.svg via savefig; .html embeds a PNG
+
+    ``fig`` deliberately RAISES here. It is documented package-wide as "the
+    Plotly figure", and returning an ``mpl.Figure`` from it would break every
+    caller that reasonably expects ``.add_trace``/``.update_layout``. The error
+    names the alternative instead of pretending.
+    """
+
+    #: Cached Axes from the first :meth:`draw`, so the picture is idempotent the
+    #: way `Picture` requires -- repeated access must not redraw.
+    _axes = None
+
+    def draw(self, ax=None, **kwargs):
+        """Render into ``ax`` (or a new one) and return the Axes."""
+
+        raise NotImplementedError(
+            f"{type(self).__name__} is an MplPicture but does not define `draw`."
+        )
+
+    @property
+    def axes(self):
+        """The rendered Matplotlib Axes (drawn once, then cached)."""
+
+        if self._axes is None:
+            self._axes = self.draw()
+        return self._axes
+
+    @property
+    def fig(self) -> Fig:
+        """Not available: this picture is Matplotlib, not Plotly."""
+
+        raise TypeError(
+            f"{type(self).__name__} is drawn with Matplotlib, so it has no Plotly "
+            "`fig`. Use `.axes` (or `.plot_mpl(ax=...)`) to adjust it, `.show()` "
+            "to display it, and `.save(path)` to write it out."
+        )
+
+    def plot_mpl(self, ax=None, **kwargs):
+        """Draw into a specific Axes -- the mosaic/panel entry point.
+
+        Named to match :meth:`Choro.plot_mpl` and ``GridSection.plot_mpl``, which
+        are the Matplotlib BACKEND of a Plotly picture. Here it is the only
+        renderer, but the spelling is the same so callers need not care which.
+        """
+
+        return self.draw(ax=ax, **kwargs)
+
+    def show(self, *args, **kwargs):
+        """Display the picture."""
+
+        import matplotlib.pyplot as plt
+
+        self.axes  # ensure it is drawn
+        return plt.show(*args, **kwargs)
+
+    def save(self, path, *, dpi: int = 150, **kwargs):
+        """Write the picture out; ``.html`` embeds the PNG in a minimal page."""
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        if path.suffix.lower() in {".html", ".htm"}:
+            return self.html(path, dpi=dpi, **kwargs)
+        self.axes.figure.savefig(path, dpi=dpi, bbox_inches="tight", **kwargs)
+        return path
+
+    def html(self, path, *, dpi: int = 150, **kwargs):
+        """Write a standalone HTML page with the rendered figure inlined as a PNG.
+
+        Self-contained and needs no network -- there is no plotly.js to fetch,
+        because there is no Plotly figure. The trade against an interactive
+        export is deliberate: this is the artifact you email someone.
+        """
+
+        import base64
+        import io
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        buffer = io.BytesIO()
+        self.axes.figure.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight", **kwargs)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        title = getattr(self, "title", None) or type(self).__name__
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<!doctype html><meta charset='utf-8'>"
+            f"<title>{title}</title>"
+            "<body style='margin:0;display:flex;justify-content:center'>"
+            f"<img alt='{title}' style='max-width:100%' src='data:image/png;base64,{encoded}'>"
+            "</body>",
+            encoding="utf-8",
+        )
+        return path
+
+    def _repr_mimebundle_(self, *args, **kwargs):
+        """Render inline in Jupyter as a PNG."""
+
+        import base64
+        import io
+
+        buffer = io.BytesIO()
+        self.axes.figure.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+        return {"image/png": base64.b64encode(buffer.getvalue()).decode("ascii")}
 
 
 def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:

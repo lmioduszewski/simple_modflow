@@ -28,8 +28,9 @@ from typing import Any
 
 import numpy as np
 
+from myflopy.modflow.mf6.grid.plotting import GridPlots
 from myflopy.surfaces import LayerSurfaces, Surface
-from myflopy.viz import mpl_axes
+from myflopy.viz import Fig, MplPicture, Picture, mpl_axes
 
 # Convenience source aliases -- the existing Surface constructors under friendlier
 # names for layer authoring (NOT new implementations).
@@ -421,12 +422,16 @@ class LayerBuildResult:
             nlay=self.nlay, ncpl=p["ncpl"], crs=str(getattr(self.vor, "crs", None)),
         )
 
-    def cross_section(
+    def _draw_cross_section(
         self, line=None, *, x=None, y=None, color_by="layer", ax=None,
         cmap="tab10", show_grid=True, legend=True, title=None,
     ):
-        """Draw a layer cross-section. One-liners: ``result.cross_section(y=300)``
-        or ``result.cross_section(x=500)``. Returns the Matplotlib axes.
+        """Render the layer cross-section into ``ax`` and return it.
+
+        Private: this is the RENDERER. ``stack.plot.section(y=300)`` is the verb,
+        and it returns a Picture that answers ``.show()``/``.save()``/``.html()``
+        like every other. Matplotlib-native by necessity -- see
+        :class:`LayerSection`.
 
         Layer coloring delegates to the shared
         :func:`~myflopy.modflow.mf6.cross_section_plotting.plot_layered_cross_section`
@@ -501,11 +506,18 @@ class LayerBuildResult:
         r, g, b = (int(round(255 * c)) for c in rgba[:3])
         return f"rgb({r},{g},{b})"
 
-    def surface_3d(
+    def _surface_fig(
         self, layer="top", *, resolution=120, colorscale="Earth_r",
-        color_by=None, opacity=None, height=None, html_path=None, browser=False,
+        color_by=None, opacity=None, height=None,
     ):
-        """Interactive 3D surface(s) of one or more layers (plotly).
+        """The 3-D surface figure. Reached as ``stack.plot.surface(...)``.
+
+        Private because it is Layer 1 only: it BUILDS the figure and nothing
+        else. Writing it out and opening it are `.html(path)` / `.show()` on the
+        Picture that wraps it -- this used to take `html_path=`/`browser=` and do
+        both itself.
+
+        Interactive 3D surface(s) of one or more layers (plotly).
 
         ``layer`` selects which surface(s) to draw and may be:
 
@@ -519,11 +531,7 @@ class LayerBuildResult:
         ``color_by="elevation"`` / ``"surface"`` and tune ``opacity``.
 
         ``height`` sets the figure height in pixels (default ``None`` = fill the
-        container / browser window). ``html_path`` writes a standalone,
-        self-contained HTML file; ``browser=True`` opens the figure in your
-        default web browser. The figure is always returned, so it still displays
-        inline in a notebook."""
-        import plotly.graph_objects as go
+        container / browser window)."""
 
         from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 
@@ -574,7 +582,7 @@ class LayerBuildResult:
             zaxis["range"] = [zmin, zmax]
             aspectmode = "cube"
 
-        fig = go.Figure()
+        fig = Fig()
         if color_by == "elevation":
             for i, (name, isurf, zz) in enumerate(grids):
                 fig.add_trace(isurf.surface_trace(
@@ -603,14 +611,6 @@ class LayerBuildResult:
             autosize=True, height=height, margin=dict(l=0, r=0, t=40, b=0),
             showlegend=(color_by == "surface" and multi), scene=scene,
         )
-        if html_path is not None:
-            fig.write_html(
-                str(html_path), include_plotlyjs=True,
-                default_height=(f"{height}px" if height else "100vh"),
-                default_width="100%",
-            )
-        if browser:
-            fig.show(renderer="browser")
         return fig
 
     def _resolve_layer_indices(self, layers) -> list[int]:
@@ -720,15 +720,17 @@ class LayerBuildResult:
             src = str(html_path)
         return IFrame(src=src, width=width, height=height)
 
-    def thickness_map(self, *, layer=None, ax=None):
-        """Per-cell thickness choropleth (total, or a single named layer)."""
+    def _thickness_values(self, layer=None):
+        """Per-cell thickness (total, or a single named layer) and its label."""
 
         if layer is None:
-            values = self.thickness.sum(axis=0)
-            title = "total thickness"
-        else:
-            values = self.thickness[self.names.index(layer)]
-            title = f"{layer!r} thickness"
+            return self.thickness.sum(axis=0), "total thickness"
+        return self.thickness[self.names.index(layer)], f"{layer!r} thickness"
+
+    def _draw_thickness_map(self, *, layer=None, ax=None):
+        """Render the thickness choropleth into ``ax`` (geopandas, no basemap)."""
+
+        values, title = self._thickness_values(layer)
         gdf = self.vor.gdf_vorPolys.copy().assign(_thickness=values)
         if ax is None:
             _, ax = mpl_axes()
@@ -737,21 +739,148 @@ class LayerBuildResult:
         ax.set_aspect("equal")
         return ax
 
-    def views(self, *, line=None, x=None, y=None, surface="all", layers=None):
-        """Show all four views at once: thickness map, cross-section, 3D surface,
-        and 3D grid. Renders inline (call from a notebook). ``surface`` chooses
-        which contact(s) the 3D surface plot shows (default ``"all"``; see
-        :meth:`surface_3d`); ``layers`` chooses which layers the VTK grid shows
-        (default all; see :meth:`vtk_3d`)."""
-        import matplotlib.pyplot as plt
-        from IPython.display import display
+    @property
+    def plot(self) -> StackPlots:
+        """The plotting verbs for this layer geometry: ``map``, ``section``,
+        ``surface``.
 
-        self.thickness_map()
-        plt.show()
-        self.cross_section(line=line, x=x, y=y)
-        plt.show()
-        display(self.surface_3d(surface))
-        display(self.vtk_3d(layers))
+        Same verbs as ``model.plot`` and ``vor.plot``, and everything returned is
+        a :class:`~myflopy.viz.Picture`. A stack has no results and no time, so
+        there is no ``animate``; ``qc()`` stays a report rather than becoming a
+        picture, because it is text you read.
+
+        Replaces ``thickness_map()``/``preview()`` (now ``plot.map()``),
+        ``cross_section()`` (``plot.section()``), ``surface_3d()``
+        (``plot.surface()``) and ``views()`` (compose what you want with
+        ``myflopy.plot.mosaic``).
+        """
+
+        return StackPlots(self)
+
+
+class LayerSection(MplPicture):
+    """A filled, layer-coloured cross-section through a built stack.
+
+    Matplotlib by necessity, not by preference: the renderer is FloPy's
+    ``PlotCrossSection``, and the Plotly ``GridSection`` draws cell outlines
+    without layer fills. Rather than exempt it from the picture grammar, it is an
+    :class:`~myflopy.viz.MplPicture` -- same verbs, Axes underneath.
+    """
+
+    def __init__(self, result, line=None, *, x=None, y=None, **kwargs):
+        """Bind a section of ``result`` along ``line`` (or ``x=``/``y=``)."""
+
+        self._result = result
+        self._line, self._x, self._y = line, x, y
+        self._kwargs = kwargs
+        self.title = kwargs.get("title") or "Layer cross-section"
+
+    def draw(self, ax=None, **kwargs):
+        """Render the section into ``ax`` (or a new one) and return the Axes."""
+
+        return self._result._draw_cross_section(
+            self._line, x=self._x, y=self._y, ax=ax, **{**self._kwargs, **kwargs}
+        )
+
+
+class LayerThicknessMap(MplPicture):
+    """Per-cell layer thickness, drawn on the grid without a basemap.
+
+    Deliberately NOT a :class:`Choro`: a stack under construction is often on
+    synthetic or local coordinates, and a web basemap would put it in the ocean.
+    ``stack.plot.map(basemap=True)`` gives the georeferenced choropleth when the
+    grid really is where it says it is.
+    """
+
+    def __init__(self, result, layer=None):
+        """Bind a thickness map of ``result`` (total, or one named layer)."""
+
+        self._result = result
+        self._layer = layer
+        _, self.title = result._thickness_values(layer)
+
+    def draw(self, ax=None, **kwargs):
+        """Render the thickness map into ``ax`` (or a new one)."""
+
+        return self._result._draw_thickness_map(layer=self._layer, ax=ax, **kwargs)
+
+
+class LayerSurface(Picture):
+    """One or more layer contacts as an interactive 3-D Plotly surface."""
+
+    def __init__(self, result, layer="top", **kwargs):
+        """Bind a 3-D surface of ``result`` for the chosen contact(s)."""
+
+        self._result = result
+        self._layer = layer
+        self._kwargs = kwargs
+        self._built = None
+
+    @property
+    def fig(self) -> Fig:
+        """The assembled 3-D figure (built once, then cached)."""
+
+        if self._built is None:
+            self._built = self._result._surface_fig(self._layer, **self._kwargs)
+        return self._built
+
+
+class StackPlots:
+    """The plotting verbs for layer geometry -- ``stack.plot.map()`` (plan 8.5a).
+
+    Three verbs, because a layer stack can answer three questions: how thick is
+    it (:meth:`map`), what does it look like in section (:meth:`section`), and
+    what shape is a given contact (:meth:`surface`). No ``animate`` -- a stack has
+    no stress periods. ``qc()`` stays a method on the stack, because a QC report
+    is text you read, not a picture you look at.
+
+    Everything returned is a :class:`~myflopy.viz.Picture`, so it renders inline
+    and answers ``.show()`` / ``.save(path)`` / ``.html(path)``. Two of the three
+    are Matplotlib underneath and answer those over ``.axes``; only
+    :meth:`surface` has a Plotly ``.fig``.
+    """
+
+    def __init__(self, result):
+        """Bind the plotting verbs to a built :class:`LayerBuildResult`."""
+
+        self.result = result
+
+    def __repr__(self):
+        """Name the verbs, since tab-completion is how this gets found."""
+
+        return f"StackPlots({self.result.nlay} layers: map, section, surface)"
+
+    def map(self, layer=None, *, basemap: bool = False, **kwargs):
+        """Per-cell thickness -- total, or one named layer.
+
+        Draws on the grid with no basemap by default, because a stack is often
+        still on synthetic coordinates. ``basemap=True`` routes through the
+        shared choropleth instead, for a grid that really is georeferenced.
+        """
+
+        if basemap:
+            values, _ = self.result._thickness_values(layer)
+            # `GridPlots`, not `myflopy.plot`: that module is a layer ABOVE this
+            # one in the import graph, so reaching it would need a deferred
+            # import and the exact-match ratchet only moves down. Same function
+            # either way -- `vor.plot.map` is what the front door calls too.
+            return GridPlots(self.result.vor).map(values=list(values), **kwargs)
+        return LayerThicknessMap(self.result, layer=layer)
+
+    def section(self, line=None, *, x=None, y=None, **kwargs) -> LayerSection:
+        """A filled, layer-coloured cross-section: ``stack.plot.section(y=300)``."""
+
+        return LayerSection(self.result, line, x=x, y=y, **kwargs)
+
+    def surface(self, layer="top", **kwargs) -> LayerSurface:
+        """One or more contacts as an interactive 3-D surface.
+
+        ``layer`` is a name, a list of names, or ``"all"``; discover them with
+        ``result.surface_names``. The VTK rendering of the layered grid VOLUME is
+        a different picture -- ``plot.grid(backend="vtk")``, plan 8.5b.
+        """
+
+        return LayerSurface(self.result, layer, **kwargs)
 
 
 class LayerStack:
@@ -1124,38 +1253,25 @@ class LayerStack:
         report.reconcile_max_shift = max_shift
         return report
 
-    # -- one-liner views (build with defaults, then view the result) ------ #
-    def cross_section(self, line=None, *, x=None, y=None, **kwargs):
-        """Build and draw a layer cross-section, e.g. ``stack.cross_section(y=300)``."""
-        return self.build().cross_section(line, x=x, y=y, **kwargs)
+    # -- views: build with defaults, then view the result ----------------- #
+    @property
+    def plot(self) -> StackPlots:
+        """The plotting verbs for this stack: ``map``, ``section``, ``surface``.
 
-    def surface_3d(self, layer="top", **kwargs):
-        """Build and show one or more layer surfaces in interactive 3D (plotly).
+        Builds the stack with default options and returns the result's namespace,
+        so ``stack.plot.map()`` is ``stack.build().plot.map()``. Build with
+        non-default options first if you need them.
+        """
 
-        ``layer`` may be a single name, a list of names, or ``"all"`` -- see
-        :meth:`LayerBuildResult.surface_3d`."""
-        return self.build().surface_3d(layer, **kwargs)
+        return self.build().plot
 
     def vtk_3d(self, layers=None, **kwargs):
         """Build and show the layered grid in interactive 3D (VTK → pyvista).
 
         ``layers`` selects a subset of layers to show -- see
-        :meth:`LayerBuildResult.vtk_3d`."""
+        :meth:`LayerBuildResult.vtk_3d`. Folded into
+        ``plot.grid(backend="vtk")`` by plan 8.5b."""
         return self.build().vtk_3d(layers, **kwargs)
-
-    def views(self, **kwargs):
-        """Build and show all four views: thickness map, cross-section, 3D
-        surface, and 3D grid."""
-        return self.build().views(**kwargs)
-
-    def preview(self, *, layer: str | None = None, ax=None, **build_kwargs):
-        """Plot a per-cell thickness map (total, or a single named layer).
-
-        Builds the stack and draws a choropleth on the grid cells -- a quick
-        visual check before committing to ``to_disv``. Returns the Matplotlib
-        axes. ``build_kwargs`` are forwarded to :meth:`build`.
-        """
-        return self.build(**build_kwargs).thickness_map(layer=layer, ax=ax)
 
     def to_disv(
         self,

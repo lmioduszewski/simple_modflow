@@ -119,7 +119,6 @@ review the diff, commit the regenerated files together.
 ## Layer 3
 
 - `myflopy.geopackage`
-- `myflopy.layers` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.budget_plotting`
 - `myflopy.modflow.mf6.grid.interpolated_surface`
 - `myflopy.modflow.mf6.grid.plotting` *(deferred imports: 1)*
@@ -135,6 +134,7 @@ review the diff, commit the regenerated files together.
 
 ## Layer 4
 
+- `myflopy.layers` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.budget` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.evapotranspiration`
 - `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 1)*

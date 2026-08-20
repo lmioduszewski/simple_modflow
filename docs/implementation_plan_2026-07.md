@@ -1779,8 +1779,37 @@ pathlines become `surface(pathlines=…, backend="vtk")`.
 DELETE `model.visualize` (`ModelVisualization`) once its four slider exports are
 reachable as `<picture>.html(path)`.
 
-*Medium. Optional deps (`trame`, `pyvista`) must stay optional — the existing
-`_optional.require` pattern applies.*
+> **Split into 8.5a / 8.5b (user's call), and the premise was wrong.**
+> `<picture>.html(path)` CANNOT replace the slider exporters: it is plotly
+> `write_html`, while they write pre-rendered matplotlib PNG frames plus a JS
+> slider and no plotly.js. Measured on a real 1,979-cell grid, a 20-frame plotly
+> choropleth animation is **17.7 MB** (22.6 offline) against **~0.7 MB** for the
+> slider, because `Choro.ani` re-embeds the whole geojson per frame. The
+> exporters are the artifact you email someone; they are not redundant.
+>
+> `model.visualize`'s seven methods (not four) split three ways: 3 slider exports
+> are Layer-3 output of an ANIMATION and need 8.6 first; 2 plotly animations are
+> 8.6; 2 particle-tracking methods have **zero callers** (the live path is
+> `PRTRunResults.scene`/`export_3d_html`). **So the deletion moves to 8.6.**
+>
+> **8.5a DELIVERED:** `stack.plot` (map/section/surface) + `viz.MplPicture`, a
+> Picture whose native renderer is matplotlib — needed because the filled
+> layer-coloured section has no plotly equivalent. `preview`/`thickness_map`/
+> `cross_section`/`surface_3d`/`views` deleted; `surface_3d`'s bare `go.Figure`
+> and its `html_path=`/`browser=` went with them.
+>
+> **8.5b REMAINING:** the 3-D scene contract. Per the user, the verb is
+> **`grid(backend="vtk")`**, NOT `surface(backend="vtk")` — `surface` means a
+> height field `z(x,y)`, while `vtk_3d` draws a cell VOLUME and the particle
+> scene draws POLYLINE tubes, so `backend=` would silently switch the SUBJECT.
+> `grid` already means "the mesh itself", so a 3-D layered mesh is the same
+> subject in a different renderer, and pathlines stay an option exactly as they
+> already are on the 2-D `map(pathlines=...)`.
+
+*Medium. Optional deps (`trame`, `pyvista`) must stay optional — but note
+`_optional._EXTRA_FOR_MODULE` does NOT list pyvista/trame today, and
+`layers.py`'s `import pyvista` is unguarded, so 8.5b must ADD that wiring rather
+than reuse it.*
 
 ### Stage 8.6 — generalize `animate` (the long pole)
 

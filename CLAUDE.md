@@ -161,7 +161,10 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
 - **Layers** (same facade/engine pattern): use the facade **`mf.LayerStack`** (`layers.py`) —
   `LayerStack(vor, top=Raster("ground.tif")).add("sand", thickness=20, pinch="inactive")
   .add("clay", bottom=Contours(...)).build()` → disv-ready top/botm/idomain (plus `.qc()`,
-  `.cross_section()/.surface_3d()/.vtk_3d()`, `from_modflow`). It **compiles to** the
+  `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
+  **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
+  `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a
+  report you read, not a picture. It **compiles to** the
   `LayerSurfaces` engine (`surfaces.py`: area-weighted sampling, top-down reconcile, pinch-out
   → idomain), which uses atomic `Surface` objects (`raster`/`from_contours`/`from_points`/
   `from_array`/constant + algebra). Use `LayerStack`; `LayerSurfaces`/`Surface` are the engine/atoms.

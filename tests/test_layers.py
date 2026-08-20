@@ -225,10 +225,20 @@ def test_facade_surface_algebra_bottom():
     assert list(result.botm[1]) == [20, 20, 20]
 
 
-def test_preview_returns_axes():
+def test_thickness_map_is_a_picture_over_matplotlib_axes():
+    """8.5a: `preview()`/`thickness_map()` became `plot.map()`.
+
+    It stays Matplotlib and basemap-free -- a stack under construction is often
+    on synthetic coordinates, where a web basemap lands in the ocean -- but it is
+    now a Picture, so `.show()`/`.save()`/`.html()` work like everywhere else.
+    """
+    from myflopy.viz import MplPicture
+
     vor = _poly_vor([box(0, 0, 1, 1), box(1, 0, 2, 1)])
-    ax = LayerStack(vor, top=Flat(100)).add("a", thickness=10).preview(reconcile=False)
-    assert hasattr(ax, "set_title")  # a Matplotlib axes
+    picture = LayerStack(vor, top=Flat(100)).add("a", thickness=10).build(reconcile=False).plot.map()
+    assert isinstance(picture, MplPicture)
+    assert hasattr(picture.axes, "set_title")   # the Matplotlib axes, as before
+    assert picture.axes is picture.axes         # idempotent, per the contract
 
 
 def test_algebra_aliases_build_the_right_kinds():
@@ -258,41 +268,60 @@ def test_result_vertex_grid(real_vor):
     assert vg.nlay == 1 and vg.ncpl == real_vor.ncpl
 
 
-def test_cross_section_returns_axes(real_vor):
+def test_section_is_a_picture_over_matplotlib_axes(real_vor):
     res = (
         LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(30)).add("b", bottom=Flat(10))
         .build()
     )
-    assert hasattr(res.cross_section(y=150), "set_title")            # y= shorthand
-    assert hasattr(res.cross_section(x=200, legend=False), "set_title")  # x= shorthand
-    assert hasattr(res.cross_section(line=[(0, 150), (400, 150)]), "set_title")
+    assert hasattr(res.plot.section(y=150).axes, "set_title")            # y= shorthand
+    assert hasattr(res.plot.section(x=200, legend=False).axes, "set_title")  # x= shorthand
+    assert hasattr(res.plot.section(line=[(0, 150), (400, 150)]).axes, "set_title")
 
 
-def test_cross_section_defaults_to_center_line(real_vor):
+def test_section_defaults_to_center_line(real_vor):
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    assert hasattr(res.cross_section(), "set_title")  # no line/x/y -> W-E centre
+    assert hasattr(res.plot.section().axes, "set_title")  # no line/x/y -> W-E centre
 
 
-def test_thickness_map_returns_axes(real_vor):
+def test_thickness_map_totals_or_one_layer(real_vor):
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    assert hasattr(res.thickness_map(), "set_title")
-    assert hasattr(res.thickness_map(layer="a"), "set_title")
+    assert hasattr(res.plot.map().axes, "set_title")
+    assert hasattr(res.plot.map(layer="a").axes, "set_title")
 
 
-def test_views_runs_all_four(real_vor):
-    # Smoke test: thickness map + cross-section + both 3D views in one call.
+def test_thickness_map_can_opt_into_the_georeferenced_choropleth(real_vor):
+    """`basemap=True` routes through the shared choropleth instead.
+
+    The default is basemap-free on purpose (synthetic coordinates), but a grid
+    that really is georeferenced should get the same map everything else draws.
+    """
+    from myflopy.viz import Fig
+
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    assert res.views() is None
+    picture = res.plot.map(basemap=True)
+    assert isinstance(picture.fig, Fig)
+    assert len(picture.fig.data) >= 1
+
+
+def test_views_is_gone_compose_with_mosaic_instead(real_vor):
+    """`views()` displayed four pictures and returned None -- a Layer-3 concern
+    fused into Layer 1. Composing is `myflopy.plot.mosaic`, which takes any
+    pictures you like rather than a fixed four."""
+    res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
+    assert not hasattr(res, "views")
+    assert not hasattr(res, "thickness_map")
+    assert not hasattr(res, "cross_section")
+    assert not hasattr(res, "surface_3d")
 
 
 def test_surface_3d_returns_plotly_figure(real_vor):
     import plotly.graph_objects as go
 
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    fig_top = res.surface_3d("top", resolution=30)
+    fig_top = res.plot.surface("top", resolution=30).fig
     assert isinstance(fig_top, go.Figure)
     assert len(fig_top.data) == 1                       # single surface
-    assert isinstance(res.surface_3d("a", resolution=30), go.Figure)
+    assert isinstance(res.plot.surface("a", resolution=30).fig, go.Figure)
 
 
 def test_surface_names_lists_top_and_each_bottom(real_vor):
@@ -310,7 +339,7 @@ def test_surface_3d_accepts_a_list_of_layers(real_vor):
         LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(30)).add("b", bottom=Flat(10))
         .build()
     )
-    fig = res.surface_3d(["top", "b"], resolution=30)
+    fig = res.plot.surface(["top", "b"], resolution=30).fig
     assert isinstance(fig, go.Figure)
     assert len(fig.data) == 2
     assert {tr.name for tr in fig.data} == {"top", "b"}
@@ -322,7 +351,7 @@ def test_surface_3d_all_draws_every_surface(real_vor):
         LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(30)).add("b", bottom=Flat(10))
         .build()
     )
-    fig = res.surface_3d("all", resolution=30)
+    fig = res.plot.surface("all", resolution=30).fig
     assert len(fig.data) == len(res.surface_names)      # top + a + b == 3
 
 
@@ -331,7 +360,7 @@ def test_surface_3d_color_by_elevation_shares_one_colorbar(real_vor):
         LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(30)).add("b", bottom=Flat(10))
         .build()
     )
-    fig = res.surface_3d("all", color_by="elevation", resolution=30)
+    fig = res.plot.surface("all", color_by="elevation", resolution=30).fig
     shown = [tr for tr in fig.data if tr.showscale]
     assert len(shown) == 1                              # exactly one colorbar
 
@@ -341,7 +370,7 @@ def test_surface_3d_unknown_name_raises(real_vor):
 
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
     with pytest.raises(KeyError):
-        res.surface_3d("nope", resolution=30)
+        res.plot.surface("nope", resolution=30).fig  # lazy: raises on assembly
 
 
 def test_surface_3d_flat_single_layer_stays_visible(real_vor):
@@ -351,7 +380,7 @@ def test_surface_3d_flat_single_layer_stays_visible(real_vor):
     import numpy as np
 
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    fig = res.surface_3d("a", resolution=30)              # flat -> solid fill + relief
+    fig = res.plot.surface("a", resolution=30).fig          # flat -> solid fill + relief
     tr = fig.data[0]
     z = np.asarray(tr.z, dtype=float)
     assert len(tr.colorscale) == 2                        # solid 2-stop scale, not elevation
@@ -363,16 +392,19 @@ def test_surface_3d_flat_single_layer_stays_visible(real_vor):
 
 def test_surface_3d_height_defaults_to_fill_container(real_vor):
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    assert res.surface_3d("top", resolution=20).layout.height is None      # fills page
-    assert res.surface_3d("top", resolution=20, height=700).layout.height == 700
+    assert res.plot.surface("top", resolution=20).fig.layout.height is None   # fills page
+    assert res.plot.surface("top", resolution=20, height=700).fig.layout.height == 700
 
 
-def test_surface_3d_html_path_writes_self_contained_file(real_vor, tmp_path):
+def test_surface_writes_standalone_html_through_the_picture(real_vor, tmp_path):
+    """`html_path=`/`browser=` were Layer-3 concerns baked into the builder.
+    Writing the file is `.html(path)`, the same call on every picture."""
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
     out = tmp_path / "s.html"
-    fig = res.surface_3d("a", resolution=20, html_path=out)
+    picture = res.plot.surface("a", resolution=20)
+    assert picture.html(out, include_plotlyjs=True) == out
     assert out.exists() and out.stat().st_size > 0       # standalone HTML written
-    assert hasattr(fig, "data")                           # figure still returned
+    assert hasattr(picture.fig, "data")                   # and the figure is still there
 
 
 def test_resolve_layer_indices_by_name_and_index(real_vor):
@@ -448,11 +480,17 @@ def test_vtk_3d_shows_a_subset_of_layers(real_vor, tmp_path):
 
 
 def test_stack_level_view_oneliners(real_vor):
+    """`stack.plot` builds with defaults, then hands over the result's namespace.
+
+    The one-liner shape survives 8.5a -- you still never call `.build()` for a
+    quick look -- it is just spelled through the same verbs as everything else.
+    """
     import plotly.graph_objects as go
 
     stack = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20))
-    assert hasattr(stack.cross_section(y=150), "set_title")  # builds, then views
-    assert isinstance(stack.surface_3d(), go.Figure)
+    assert hasattr(stack.plot.section(y=150).axes, "set_title")  # builds, then views
+    assert isinstance(stack.plot.surface().fig, go.Figure)
+    assert hasattr(stack.plot.map().axes, "set_title")
 
 
 # --- QC / validation ---------------------------------------------------------

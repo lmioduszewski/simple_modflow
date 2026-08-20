@@ -7,7 +7,7 @@
  "myflopy.builders": 2,
  "myflopy.geopackage": 3,
  "myflopy.grid_spec_resolver": 5,
- "myflopy.layers": 3,
+ "myflopy.layers": 4,
  "myflopy.modflow": 0,
  "myflopy.modflow.calcs": 0,
  "myflopy.modflow.calcs.calibration": 9,

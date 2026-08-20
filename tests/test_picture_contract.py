@@ -156,3 +156,111 @@ def test_an_animation_is_the_choros_figure_from_then_on(canonical_run):
     assert choro.fig is animation
     assert len(choro.fig.data) == before
     assert choro.fig.frames, "accessing .fig dropped the frames"
+
+
+# --- 8.5a: a Picture whose renderer is not Plotly -----------------------------
+def _demo_mpl_picture():
+    """A minimal MplPicture, so these test the CONTRACT and not layers.py."""
+
+    from myflopy.viz import MplPicture, mpl_axes
+
+    class Demo(MplPicture):
+        title = "demo"
+
+        def __init__(self):
+            self.draws = 0
+
+        def draw(self, ax=None, **kwargs):
+            self.draws += 1
+            if ax is None:
+                _, ax = mpl_axes()
+            ax.plot([0, 1], [0, 1])
+            return ax
+
+    return Demo()
+
+
+def test_an_mpl_picture_answers_the_same_verbs(tmp_path):
+    """The point of `MplPicture`: a filled cross-section has no Plotly form, and
+    exempting it from the grammar would mean callers learning which pictures are
+    "real" ones. It answers show/save/html/inline like everything else."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    picture = _demo_mpl_picture()
+
+    assert picture.save(tmp_path / "a.png").exists()
+    assert picture.save(tmp_path / "a.pdf").exists()
+    assert "image/png" in picture._repr_mimebundle_()
+
+
+def test_an_mpl_picture_draws_once(tmp_path):
+    """`Picture` requires idempotence -- the defect 8.1 and ledger 130 both fixed
+    for Plotly. The Axes is cached, so repeated output does not redraw."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    picture = _demo_mpl_picture()
+
+    picture.axes
+    picture.axes
+    picture.save(tmp_path / "a.png")
+    assert picture.draws == 1
+
+
+def test_an_mpl_pictures_html_is_self_contained(tmp_path):
+    """No plotly.js to fetch, because there is no Plotly figure. This is the
+    artifact you email someone -- it must not need a network."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    out = _demo_mpl_picture().html(tmp_path / "a.html")
+    text = out.read_text(encoding="utf-8")
+
+    assert "data:image/png;base64," in text
+    assert "http://" not in text and "https://" not in text
+
+
+def test_asking_an_mpl_picture_for_fig_says_what_to_use_instead():
+    """`fig` is documented package-wide as the PLOTLY figure. Returning an
+    `mpl.Figure` would satisfy the letter and break every caller reaching for
+    `.add_trace`/`.update_layout`, so it raises and names `.axes`."""
+
+    import pytest
+
+    picture = _demo_mpl_picture()
+    with pytest.raises(TypeError, match=r"\.axes"):
+        picture.fig
+
+
+@pytest.mark.slow
+def test_the_stack_verbs_are_all_pictures(tmp_path):
+    """Imports prove nothing; each verb must actually draw."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import myflopy as mf
+    from myflopy.layers import Flat, LayerStack
+    from myflopy.viz import Fig, MplPicture, Picture
+
+    tri = mf.TriangleGrid(model_ws=str(tmp_path), angle=30)
+    tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0))
+    tri.build(verbose=False)
+    vor = mf.VoronoiGridPlus(tri)
+    result = LayerStack(vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
+
+    thickness = result.plot.map()
+    assert isinstance(thickness, MplPicture)
+    assert hasattr(thickness.axes, "set_title")
+
+    section = result.plot.section(y=150)
+    assert isinstance(section, MplPicture)
+    assert hasattr(section.axes, "set_title")
+
+    surface = result.plot.surface("top", resolution=20)
+    assert isinstance(surface, Picture)
+    assert isinstance(surface.fig, Fig)   # a house Fig, not a bare go.Figure

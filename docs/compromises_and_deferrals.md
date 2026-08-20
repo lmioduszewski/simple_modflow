@@ -2902,3 +2902,48 @@ same day, which is the useful part of the result.
        -126.86, 45.15), it is worse. `.plot_mpl()` is basemap-free, so
        `stack.plot.map().plot_mpl()` reproduces today's picture exactly while
        `stack.plot.map()` gives the georeferenced one. Both spellings kept.
+
+132. **8.5a: `stack.plot`, and a Picture that is not Plotly (2026-08-20).**
+     Deferred out of 8.4 because binding these verbs is a RETURN-TYPE change, not
+     a rename. Three views, three different violations: `thickness_map`/`preview`
+     returned a matplotlib Axes, `cross_section` returned an Axes, and
+     `surface_3d` returned a **bare `go.Figure`** (not `viz.Fig`, so no house
+     template) with `html_path=`/`browser=` baked in.
+     - **`viz.MplPicture` is the new idea.** Some drawings genuinely ARE
+       matplotlib: the filled, layer-coloured section comes from FloPy's
+       `PlotCrossSection` and has no Plotly equivalent to defer to. Rather than
+       exempt it from the grammar or fake a `fig`, `MplPicture` answers the same
+       four verbs over an Axes. `.fig` deliberately RAISES with a message naming
+       `.axes`, because `fig` is documented package-wide as the Plotly figure and
+       returning an `mpl.Figure` would break every caller expecting `.add_trace`.
+       `.html(path)` writes a self-contained page with the PNG inlined — no
+       network, no plotly.js. **No change to `Picture` was needed**: overriding
+       all four methods was always legal; only its docstring claimed otherwise.
+     - **COMPROMISE — `plot.map()` is basemap-FREE by default**, unlike every
+       other `map` in the vocabulary. A `Choro` draws on a web basemap, and a
+       stack under construction is usually on synthetic or local coordinates:
+       `layer_management_workflow.ipynb`'s (0,0)-(1000,600) EPSG:2927 domain
+       reprojects to open ocean off Oregon (measured -126.86, 45.15), so the
+       shared choropleth would be strictly worse there. `basemap=True` opts into
+       it for a genuinely georeferenced stack. Both spellings tested.
+     - **`views()` deleted, not replaced.** It rendered four fixed pictures and
+       returned None — Layer-3 display fused into Layer 1. The notebook cell now
+       calls the four verbs, which is longer and honest; a general composer
+       (`plot.mosaic`) takes plotly panels and cannot hold the matplotlib two.
+       Recorded as a real, if small, ergonomic loss.
+     - **Laziness moved an error.** `plot.surface("nope")` no longer raises at
+       call time; the `KeyError` now surfaces when `.fig` assembles. That is the
+       price of a Picture that builds on demand, and the test was updated to
+       assert it at the new point rather than papered over.
+     - **`layers.py` moved L3 -> L4** by importing `grid/plotting.py` for the
+       `basemap=True` path. The first attempt reached `myflopy.plot` (L5) with a
+       function-local import and tripped the ratchet 2 -> 3; the fix is the same
+       one 8.4b used for `GridPlots` — call the L3 factory, not the L5 front door.
+       `deferred_total` stays 60.
+     - **The notebook was executed, not just edited.** `scripts/render_notebooks.py`
+       needs nbconvert, which is not installed, so the code cells were run
+       directly: all clean except a pre-existing cell hardcoding a **Windows**
+       GRASS path (`AppData/Local/.../grass84.bat`), which cannot run on Linux
+       and is unrelated to this stage.
+     - Still on 8.5b: `vtk_3d` keeps its `IFrame` return and its `Path.cwd()`
+       write, and becomes `plot.grid(backend="vtk")`.
