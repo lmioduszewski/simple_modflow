@@ -456,27 +456,55 @@ def test_surface_trace_builds_one_go_surface(real_vor):
     assert isinstance(isurf.surface_trace(showlegend=True, name="x"), go.Surface)
 
 
-def test_vtk_3d_writes_html_and_returns_iframe(real_vor, tmp_path):
-    from IPython.display import IFrame
+def test_the_3d_grid_is_a_scene_that_writes_nothing_by_itself(real_vor, tmp_path, monkeypatch):
+    """8.5b: `vtk_3d()` became `plot.grid(backend="vtk")`.
 
+    It used to write a standalone HTML file on EVERY call -- into `Path.cwd()`
+    when given no path -- and hand back an `IFrame` pointing at it. That litter
+    was real enough that `.gitignore` carried a line naming the file. Building a
+    picture is now Layer 1 only; writing it is `.html(path)`.
+    """
+    from myflopy.viz import VtkScene
+
+    monkeypatch.chdir(tmp_path)
     res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
-    iframe = res.vtk_3d(html_path=tmp_path / "v.html")
-    assert isinstance(iframe, IFrame)
-    assert (tmp_path / "v.html").exists() and (tmp_path / "v.html").stat().st_size > 0
+    scene = res.plot.grid()
+
+    assert isinstance(scene, VtkScene)
+    assert list(tmp_path.glob("*.html")) == []      # nothing written just by building
+    try:
+        out = scene.html(tmp_path / "v.html")
+        assert out.exists() and out.stat().st_size > 0
+    finally:
+        scene.scene.close()
 
 
-def test_vtk_3d_shows_a_subset_of_layers(real_vor, tmp_path):
-    from IPython.display import IFrame
+def test_the_3d_grid_shows_a_subset_of_layers(real_vor, tmp_path):
+    from myflopy.viz import VtkScene
 
     res = (
         LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(40))
         .add("b", bottom=Flat(20)).add("c", bottom=Flat(5)).build()
     )
-    one = res.vtk_3d("b", html_path=tmp_path / "one.html")          # single, by name
-    some = res.vtk_3d(["a", "c"], html_path=tmp_path / "some.html")  # subset, by name
-    assert isinstance(one, IFrame) and isinstance(some, IFrame)
-    assert (tmp_path / "one.html").stat().st_size > 0
-    assert (tmp_path / "some.html").stat().st_size > 0
+    one = res.plot.grid("b")            # single, by name
+    some = res.plot.grid(["a", "c"])    # subset, by name
+    try:
+        assert isinstance(one, VtkScene) and isinstance(some, VtkScene)
+        assert one.html(tmp_path / "one.html").stat().st_size > 0
+        assert some.html(tmp_path / "some.html").stat().st_size > 0
+    finally:
+        one.scene.close()
+        some.scene.close()
+
+
+def test_the_3d_grid_rejects_an_unknown_backend(real_vor):
+    """`backend=` is a renderer switch with exactly two settings; a typo should
+    say so rather than silently drawing the wrong thing."""
+    import pytest
+
+    res = LayerStack(real_vor, top=Flat(50)).add("a", bottom=Flat(20)).build()
+    with pytest.raises(ValueError, match="'vtk' or 'plotly'"):
+        res.plot.grid(backend="opengl")
 
 
 def test_stack_level_view_oneliners(real_vor):

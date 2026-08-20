@@ -188,7 +188,7 @@ Throughout, two example models recur so the code stays concrete:
 - 15.2 Release points: `PRTReleasePoints.from_cells(...)`
 - 15.3 Tracking controls: porosity, stop times, weak sinks, tracking times
 - 15.4 Results: `PRTRunResults`, pathlines; reopening with `open_prt_run`
-- 15.5 Plotting: `plot_particle_pathlines` (2-D) and 3-D `build_particle_tracking_scene` / `export_particle_tracking_html`
+- 15.5 Plotting: `model.plot.map(pathlines=...)` (2-D) and `model.plot.grid(pathlines=..., backend="vtk")` (3-D)
 - 15.6 The legacy mod-PATH3DU path (`ParticleTrackingInput`) — when and why
 
 **16. Parallel Workflows** — *[16_parallel.md](16_parallel.md)*

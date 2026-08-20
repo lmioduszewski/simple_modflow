@@ -262,15 +262,23 @@ the same viewers:
 
 ```python
 pathlines = result.track_records          # the raw MF6 track table these viewers expect
-mf.plot_particle_pathlines(model, pathlines)
+model.plot.map(pathlines=pathlines)       # 2-D, over the plan-view map
 
-scene = mf.build_particle_tracking_scene(
-    model,
-    pathlines,
+scene = model.plot.grid(                  # 3-D, tubes over the grid volume
+    pathlines=pathlines,
+    backend="vtk",
     vertical_exaggeration=5,
 )
-scene.export_html("particle_scene.html")
+scene.html("particle_scene.html")         # or .show(), or .save("scene.png")
 ```
+
+`grid(backend="vtk")` rather than `surface(...)`: the 3-D picture is the model
+MESH with tubes over it, and `surface` means a height field `z(x, y)`. A
+`backend=` switch should change the renderer, not the subject.
+
+From a completed PRT run you can also go straight through the results object --
+`result.scene(...)` is the same picture, and `result.export_3d_html(path)` is
+`result.scene().html(path)` with the plotter closed afterwards.
 
 The 3D implementation follows the FloPy pattern:
 

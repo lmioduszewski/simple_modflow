@@ -63,14 +63,12 @@ if TYPE_CHECKING:
         FrameExportProgress,
         ModelMapStyle,
         ModelVisualization,
-        ParticleTrackingScene,
         StandaloneHtmlSlider,
         build_particle_tracking_scene,
         export_cross_section_slider_html,
         export_head_layer_mosaic_slider_html,
         export_head_map_slider_html,
         export_matplotlib_slider_html,
-        export_particle_tracking_html,
         plot_model_head_map,
         plot_particle_pathlines,
     )
@@ -386,10 +384,6 @@ _EXPORTS = {
         "myflopy.modflow.mf6.interactive_plotting",
         "ModelVisualization",
     ),
-    "ParticleTrackingScene": (
-        "myflopy.modflow.mf6.interactive_plotting",
-        "ParticleTrackingScene",
-    ),
     "ParticleTracking": ("myflopy.modflow.mf6.prt", "ParticleTracking"),
     "StandaloneHtmlSlider": (
         "myflopy.modflow.mf6.interactive_plotting",
@@ -469,10 +463,6 @@ _EXPORTS = {
     "export_matplotlib_slider_html": (
         "myflopy.modflow.mf6.interactive_plotting",
         "export_matplotlib_slider_html",
-    ),
-    "export_particle_tracking_html": (
-        "myflopy.modflow.mf6.interactive_plotting",
-        "export_particle_tracking_html",
     ),
     "plot_model_head_map": (
         "myflopy.modflow.mf6.interactive_plotting",

@@ -31,7 +31,6 @@ if TYPE_CHECKING:
         FrameExportProgress,
         ModelMapStyle,
         ModelVisualization,
-        ParticleTrackingScene,
         StandaloneHtmlSlider,
     )
     from myflopy.modflow.mf6.observations import (
@@ -92,7 +91,6 @@ _EXPORTS = {
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
     "FrameExportProgress": ("myflopy.modflow.mf6.interactive_plotting", "FrameExportProgress"),
     "ModelVisualization": ("myflopy.modflow.mf6.interactive_plotting", "ModelVisualization"),
-    "ParticleTrackingScene": ("myflopy.modflow.mf6.interactive_plotting", "ParticleTrackingScene"),
     "ParticleTracking": ("myflopy.modflow.mf6.prt", "ParticleTracking"),
     "ParallelCompatibilityError": ("myflopy.modflow.mf6.parallel", "ParallelCompatibilityError"),
     "ParallelEnvironment": ("myflopy.modflow.mf6.parallel", "ParallelEnvironment"),
@@ -194,10 +192,6 @@ _EXPORTS = {
     "build_particle_tracking_scene": (
         "myflopy.modflow.mf6.interactive_plotting",
         "build_particle_tracking_scene",
-    ),
-    "export_particle_tracking_html": (
-        "myflopy.modflow.mf6.interactive_plotting",
-        "export_particle_tracking_html",
     ),
     "validate_surface_water_configuration": (
         "myflopy.modflow.mf6.surface_water_validation",

@@ -1,8 +1,8 @@
 """Import helpers for optional third-party dependencies.
 
 Some myflopy features depend on packages that are not core requirements: PEST
-calibration needs :mod:`pyemu`, and the unstructured xarray/NetCDF interchange
-needs :mod:`xugrid`. These are declared as install *extras* in
+calibration needs :mod:`pyemu`, the unstructured xarray/NetCDF interchange
+needs :mod:`xugrid`, and interactive 3-D scenes need :mod:`pyvista`/:mod:`trame`. These are declared as install *extras* in
 ``pyproject.toml`` and imported lazily, so the base package imports cleanly
 without them. This module centralizes the "import it or explain how to install
 it" pattern behind :func:`require`.
@@ -18,6 +18,9 @@ _EXTRA_FOR_MODULE = {
     "pyemu": "pest",
     "xugrid": "xugrid",
     "xarray": "xugrid",
+    "pyvista": "viz3d",
+    "trame": "viz3d",
+    "dash": "viz",
 }
 
 

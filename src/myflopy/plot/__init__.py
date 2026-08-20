@@ -62,6 +62,7 @@ from myflopy.modflow.mf6.grid.plotting import (
     GridSection,
     _choropleth_factory,
 )
+from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
@@ -162,8 +163,10 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
     ``surf_type="lyr"`` gives the layer elevation instead. Replaces ``plot3d``,
     which drew the same kind of picture for the grid alone.
 
-    A ``backend="vtk"`` option lands in plan 8.5, which folds the PyVista scenes
-    (``vtk_3d``, particle-tracking) in behind this same verb.
+    Always Plotly, and always a height field ``z(x, y)``. The 3-D VOLUME and
+    3-D pathlines are a different shape and live on :func:`grid` with
+    ``backend="vtk"`` -- a ``backend=`` switch should change the renderer, not
+    what is being drawn.
     """
 
     vor, is_model = _grid_of(source)
@@ -172,20 +175,45 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
     return InterpolatedSurface(vor=vor, **kwargs)
 
 
-def grid(source, /, **kwargs) -> GridMesh:
-    """The bare mesh: cell edges, in the grid's own coordinates.
+def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
+    """The mesh itself -- flat in 2-D, or the layered volume in 3-D.
 
-    The one picture ``map`` cannot give you. A choropleth colours cells against a
-    web basemap and so requires a CRS; this needs none, which makes it the view
-    for a grid you are still refining -- before there is a model, or a projection.
+    ``backend="plotly"`` (the default) draws cell edges in the grid's own
+    coordinates. It is the one picture ``map`` cannot give you: a choropleth
+    colours cells against a web basemap and so requires a CRS, while this needs
+    none, which makes it the view for a grid you are still refining. Replaces
+    ``vor.plot2d()`` and FloPy's inherited ``VoronoiGrid.plot()``, whose
+    matplotlib rendering is still right there as ``.plot_mpl()``.
 
-    ``plot.grid(model)`` draws that model's grid. Replaces ``vor.plot2d()`` and
-    FloPy's inherited ``VoronoiGrid.plot()``, whose matplotlib rendering is still
-    right there as ``.plot_mpl()``.
+    ``backend="vtk"`` draws the same subject in 3-D -- the cell VOLUME, as an
+    interactive PyVista scene (needs the ``viz3d`` extra). ``pathlines=`` adds
+    particle tracks as time-coloured tubes over it, mirroring
+    ``map(pathlines=...)`` in plan view::
+
+        model.plot.grid(pathlines=run.track_records, backend="vtk")
+        stack.plot.grid(["sand", "clay"])          # vtk is the default there
+
+    Both branches draw this grid, so ``backend=`` switches only the renderer --
+    which is why the 3-D volume is ``grid`` and not ``surface``.
     """
 
-    vor, _ = _grid_of(source)
-    return GridMesh(vor, **kwargs)
+    if backend == "plotly":
+        if pathlines is not None:
+            raise ValueError(
+                "pathlines are only drawn by the 3-D scene; pass backend='vtk' "
+                "for tubes over the grid, or use map(pathlines=...) in plan view."
+            )
+        vor, _ = _grid_of(source)
+        return GridMesh(vor, **kwargs)
+    if backend != "vtk":
+        raise ValueError(f"backend must be 'plotly' or 'vtk', not {backend!r}.")
+
+    if pathlines is None:
+        raise ValueError(
+            "plot.grid(backend='vtk') needs either pathlines= (a model's particle "
+            "tracks) or a layer stack -- use stack.plot.grid() for layer geometry."
+        )
+    return build_particle_tracking_scene(source, pathlines, **kwargs)
 
 
 def animate(model, periods=None, **kwargs) -> Animation:
@@ -242,10 +270,13 @@ class ModelPlots:
 
         return surface(self.model, **kwargs)
 
-    def grid(self, **kwargs) -> GridMesh:
-        """This model's bare mesh. See :func:`myflopy.plot.grid`."""
+    def grid(self, *, backend: str = "plotly", pathlines=None, **kwargs):
+        """This model's mesh -- flat, or the 3-D volume with particle tracks.
 
-        return grid(self.model, **kwargs)
+        See :func:`myflopy.plot.grid`.
+        """
+
+        return grid(self.model, backend=backend, pathlines=pathlines, **kwargs)
 
     def animate(self, periods=None, **kwargs) -> Animation:
         """Frames through this model's periods. See :func:`myflopy.plot.animate`."""

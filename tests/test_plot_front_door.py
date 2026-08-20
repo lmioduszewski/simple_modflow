@@ -377,3 +377,83 @@ def test_the_cell_selector_is_still_reachable_from_a_grid():
     # bug the old grid alias had.
     assert not isinstance(Choro.dash_selector, property)
     assert "dash_selector" not in dir(GridPlots)
+
+
+# --- 8.5b: the 3-D scene -------------------------------------------------------
+def test_grid_takes_a_backend_not_a_different_verb():
+    """Why the 3-D volume is `grid` and not `surface`.
+
+    `surface` means a height field `z(x, y)`. `vtk_3d` draws a cell VOLUME and
+    the particle scene draws POLYLINE tubes, so hanging them off `surface` with
+    a `backend=` switch would silently change the SUBJECT, not the renderer --
+    the exact thing this module's docstring forbids. `grid` already means "the
+    mesh itself", so a 3-D layered mesh is that same subject, redrawn.
+    """
+
+    import inspect
+
+    assert "backend" in inspect.signature(plot.grid).parameters
+    assert "pathlines" in inspect.signature(plot.grid).parameters
+    assert "backend" not in inspect.signature(plot.surface).parameters
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"backend": "opengl"}, "'plotly' or 'vtk'"),
+        ({"backend": "plotly", "pathlines": object()}, "map\\(pathlines"),
+        ({"backend": "vtk"}, "pathlines="),
+    ],
+)
+def test_grid_says_what_went_wrong(kwargs, match):
+    """Three ways to ask for a picture that does not exist, each answered with
+    the spelling that does."""
+
+    import pytest as _pytest
+    from types import SimpleNamespace
+
+    with _pytest.raises(ValueError, match=match):
+        plot.grid(SimpleNamespace(ncpl=2), **kwargs)
+
+
+def test_a_vtk_scene_is_a_picture_that_is_not_plotly():
+    """The third renderer. A PyVista scene answers the same verbs; `.fig` raises
+    and names `.scene`, because `fig` is documented as the Plotly figure."""
+
+    pv = pytest.importorskip("pyvista")
+
+    from myflopy.viz import VtkScene
+
+    plotter = pv.Plotter(off_screen=True)
+    plotter.add_mesh(pv.Line((0, 0, 0), (1, 1, 1)))
+    scene = VtkScene(plotter)
+    try:
+        assert isinstance(scene, viz.Picture)
+        with pytest.raises(TypeError, match=r"\.scene"):
+            scene.fig
+    finally:
+        plotter.close()
+
+
+def test_the_3d_dependencies_are_named_by_the_optional_helper():
+    """`pyvista`/`trame` are the `viz3d` extra. Before 8.5b `_optional.require`
+    had never heard of them and one call site imported pyvista with no guard at
+    all, so a missing dependency surfaced as a bare ImportError."""
+
+    from myflopy._optional import _EXTRA_FOR_MODULE
+
+    assert _EXTRA_FOR_MODULE["pyvista"] == "viz3d"
+    assert _EXTRA_FOR_MODULE["trame"] == "viz3d"
+
+
+@pytest.mark.parametrize("gone", ["ParticleTrackingScene", "export_particle_tracking_html"])
+def test_the_bespoke_particle_exporters_are_gone(gone):
+    """Both folded into `VtkScene`: the dataclass became the Picture, and the
+    exporter became `.html(path)`. `ModelVisualization`'s two wrappers around
+    them had zero callers and went too."""
+
+    from myflopy.modflow.mf6 import interactive_plotting
+
+    assert not hasattr(interactive_plotting, gone)
+    assert not hasattr(interactive_plotting.ModelVisualization, "particle_tracking_scene")
+    assert not hasattr(interactive_plotting.ModelVisualization, "particle_tracking_html")

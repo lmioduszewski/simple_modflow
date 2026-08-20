@@ -112,7 +112,6 @@ examples/mf6/yaml_spec/runs/
 # Layer-management notebook generated artifacts (rasters, sidecars, exports)
 examples/mf6/notebooks/artifacts/
 examples/mf6/notebooks/*.html
-layer_vtk_3d_all.html
 
 # Scratch docs
 scripts/consol.py

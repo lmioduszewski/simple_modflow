@@ -421,7 +421,12 @@ class PRTRunResults:
         return self._maps().PRTCaptureView(self)
 
     def scene(self, **kwargs):
-        """Build a 3D PyVista particle-tracking scene from the pathlines and flow grid."""
+        """The 3-D pathline scene, as a :class:`~myflopy.viz.VtkScene` Picture.
+
+        The same picture as ``flow_model.plot.grid(pathlines=..., backend="vtk")``
+        -- this is the spelling you reach for when you already have the run
+        results in hand. Display it, ``.show()`` it, or ``.html(path)`` it.
+        """
 
         from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
 
@@ -435,11 +440,18 @@ class PRTRunResults:
         return plot_particle_pathlines(self.flow_model, self.track_records, **kwargs)
 
     def export_3d_html(self, output_path: str | Path, **kwargs) -> Path:
-        """Export a standalone 3D HTML particle-tracking scene to ``output_path``."""
+        """Write the 3-D pathline scene to a standalone interactive HTML file.
 
-        from myflopy.modflow.mf6.interactive_plotting import export_particle_tracking_html
+        Kept as a named convenience because "give me a file I can send" is a
+        distinct intent; it is exactly ``self.scene(**kwargs).html(output_path)``,
+        and closes the plotter afterwards.
+        """
 
-        return export_particle_tracking_html(self.flow_model, self.track_records, output_path, **kwargs)
+        scene = self.scene(**kwargs)
+        try:
+            return scene.html(output_path)
+        finally:
+            scene.scene.close()
 
 
 class PRTProject:

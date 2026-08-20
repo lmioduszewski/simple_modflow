@@ -1769,7 +1769,21 @@ aliases in `voronoi.py:90-120`.
 
 *Medium. Verify: `-n0` suite; notebooks updated in this stage, per the policy above.*
 
-### Stage 8.5 — `surface(backend="vtk")`
+### Stage 8.5 — the 3-D scenes and `stack.plot`
+
+> **RENAMED IN FLIGHT: it is `grid(backend="vtk")`, not `surface(...)`.** The
+> three things being folded draw three different shapes -- a height field, a cell
+> volume, polyline tubes -- so hanging the last two off `surface` would make
+> `backend=` change the SUBJECT. `grid` already means "the mesh itself". See
+> ledger 133.
+>
+> **Delivered in two commits.** 8.5a `stack.plot` + `viz.MplPicture` (the
+> deferred 8.4 item); 8.5b the VTK scenes + `viz.VtkScene`.
+>
+> **`model.visualize` is NOT deleted here** -- deferred to 8.6. Its three slider
+> exports are "save an animation to a file", and `.ani` returns a bare `viz.Fig`
+> rather than a Picture, so they have nowhere to land until `animate` exists.
+> Only its two DEAD particle methods (zero callers) went in 8.5b.
 
 Fold `LayerBuildResult.vtk_3d`, `ParticleTrackingScene` and
 `export_particle_tracking_html` into `surface(backend="vtk")`, with the standalone

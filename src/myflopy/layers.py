@@ -28,9 +28,10 @@ from typing import Any
 
 import numpy as np
 
+from myflopy._optional import require
 from myflopy.modflow.mf6.grid.plotting import GridPlots
 from myflopy.surfaces import LayerSurfaces, Surface
-from myflopy.viz import Fig, MplPicture, Picture, mpl_axes
+from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
 # Convenience source aliases -- the existing Surface constructors under friendlier
 # names for layer authoring (NOT new implementations).
@@ -634,30 +635,28 @@ class LayerBuildResult:
                 raise KeyError(f"no layer named {it!r}; choose from {self.names} or an index.")
         return sorted(set(idx))
 
-    def vtk_3d(
+    def _vtk_plotter(
         self, layers=None, *, color_by="layer", scale=8, cmap="tab10",
-        html_path=None, width=900, height=580, browser=False,
+        width=900, height=580,
     ):
-        """Interactive 3D of the layered grid (flopy VTK → pyvista). Writes a
-        standalone, self-contained HTML scene and returns an ``IFrame`` for
-        inline display (drag to rotate, scroll to zoom).
+        """Build the PyVista plotter for the layered grid volume.
+
+        Private: this is Layer 1 only -- it BUILDS the scene. Displaying it and
+        writing it out belong to the :class:`~myflopy.viz.VtkScene` that wraps it.
+        Reached as ``stack.plot.grid(backend="vtk")``.
 
         ``layers`` selects which layers to show: ``None``/``"all"`` (default) for
         every layer, a single layer name or index, or a list mixing them
         (e.g. ``["sand", "clay"]`` or ``[0, 2]``). Colors stay keyed to each
         layer's position, so a subset keeps the same colors it has in the full
-        stack.
-
-        ``html_path`` overrides where the standalone scene is written;
-        ``browser=True`` opens that file in your default web browser."""
-        import os
+        stack."""
         import tempfile
         from pathlib import Path
 
         import flopy
-        import pyvista as pv
         from flopy.export.vtk import Vtk
-        from IPython.display import IFrame
+
+        pv = require("pyvista", feature="interactive 3-D scenes")
 
         sel = self._resolve_layer_indices(layers)
         p = self.vor.get_disv_gridprops()
@@ -701,24 +700,7 @@ class LayerBuildResult:
         plotter.set_scale(zscale=scale)
         plotter.add_axes()
         plotter.camera_position = "yz"
-        if html_path is not None:
-            html_path = Path(html_path)
-        else:
-            # Encode the selection so multiple vtk_3d calls in one notebook write
-            # distinct files instead of clobbering a single shared scene.
-            tag = "all" if len(sel) == self.nlay else "-".join(self.names[i] for i in sel)
-            tag = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in tag)
-            html_path = Path.cwd() / f"layer_vtk_3d_{tag}.html"
-        plotter.export_html(str(html_path))
-        if browser:
-            import webbrowser
-
-            webbrowser.open(html_path.resolve().as_uri())
-        try:
-            src = os.path.relpath(html_path, Path.cwd())
-        except ValueError:
-            src = str(html_path)
-        return IFrame(src=src, width=width, height=height)
+        return plotter
 
     def _thickness_values(self, layer=None):
         """Per-cell thickness (total, or a single named layer) and its label."""
@@ -848,7 +830,7 @@ class StackPlots:
     def __repr__(self):
         """Name the verbs, since tab-completion is how this gets found."""
 
-        return f"StackPlots({self.result.nlay} layers: map, section, surface)"
+        return f"StackPlots({self.result.nlay} layers: map, section, surface, grid)"
 
     def map(self, layer=None, *, basemap: bool = False, **kwargs):
         """Per-cell thickness -- total, or one named layer.
@@ -876,11 +858,39 @@ class StackPlots:
         """One or more contacts as an interactive 3-D surface.
 
         ``layer`` is a name, a list of names, or ``"all"``; discover them with
-        ``result.surface_names``. The VTK rendering of the layered grid VOLUME is
-        a different picture -- ``plot.grid(backend="vtk")``, plan 8.5b.
+        ``result.surface_names``. That is a height field ``z(x, y)``; the layered
+        grid VOLUME is :meth:`grid`, a different shape entirely.
         """
 
         return LayerSurface(self.result, layer, **kwargs)
+
+    def grid(self, layers=None, *, backend: str = "vtk", **kwargs):
+        """The layered grid mesh itself.
+
+        ``backend="vtk"`` (the default here) renders the cell VOLUME in 3-D,
+        coloured by layer -- the picture the old ``vtk_3d()`` drew, minus its
+        habit of writing an HTML file into the working directory on every call.
+        ``backend="plotly"`` gives the flat 2-D mesh instead, the same picture as
+        ``vor.plot.grid()``.
+
+        ``layers`` selects a subset by name or index; colours stay keyed to each
+        layer's position, so a subset looks the same as it does in the full stack.
+
+        A ``backend`` switch is honest here because both branches draw the SAME
+        subject -- this grid -- and differ only in renderer. That is why the 3-D
+        volume is `grid`, not `surface`: `surface` means a height field.
+        """
+
+        if backend == "plotly":
+            return GridPlots(self.result.vor).grid(**kwargs)
+        if backend != "vtk":
+            raise ValueError(
+                f"backend must be 'vtk' or 'plotly', not {backend!r}."
+            )
+        return VtkScene(
+            self.result._vtk_plotter(layers, **kwargs),
+            title="layered grid",
+        )
 
 
 class LayerStack:
@@ -1265,13 +1275,6 @@ class LayerStack:
 
         return self.build().plot
 
-    def vtk_3d(self, layers=None, **kwargs):
-        """Build and show the layered grid in interactive 3D (VTK → pyvista).
-
-        ``layers`` selects a subset of layers to show -- see
-        :meth:`LayerBuildResult.vtk_3d`. Folded into
-        ``plot.grid(backend="vtk")`` by plan 8.5b."""
-        return self.build().vtk_3d(layers, **kwargs)
 
     def to_disv(
         self,

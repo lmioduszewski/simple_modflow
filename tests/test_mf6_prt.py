@@ -20,6 +20,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from myflopy.modflow.mf6.canonical_example import representative_cells  # noqa: E402
+from myflopy.viz import VtkScene
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.prt import (  # noqa: E402
     PRTProject,
@@ -252,9 +253,11 @@ def test_real_gwf_to_prt_run_and_shared_scene():
         assert not result.pathlines.get().empty
         scene = result.scene(off_screen=True)
         try:
+            # 8.5b: a VtkScene Picture -- `.scene` is the PyVista Plotter.
             assert len(scene.meshes) >= 2
+            assert isinstance(scene, VtkScene)
         finally:
-            scene.plotter.close()
+            scene.scene.close()
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 

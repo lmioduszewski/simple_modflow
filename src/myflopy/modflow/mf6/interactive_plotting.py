@@ -23,11 +23,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from flopy.plot import PlotMapView
 
+from myflopy._optional import require
 from myflopy.modflow.mf6.cross_section_plotting import (
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
-from myflopy.viz import mpl_axes
+from myflopy.viz import VtkScene, mpl_axes
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -153,41 +154,6 @@ class FrameExportProgress:
     label: str
     status: str
     path: Path | None = None
-
-
-@dataclass
-class ParticleTrackingScene:
-    """An interactive 3-D particle-tracking scene (FloPy VTK / PyVista).
-
-    Wraps the PyVista ``plotter`` and its ``meshes`` for a 3-D rendering of
-    particle pathlines over the model grid, produced by
-    :func:`build_particle_tracking_scene`. Call :meth:`export_html` to write a
-    standalone interactive HTML viewer (requires PyVista's ``trame`` extras).
-
-    Attributes
-    ----------
-    plotter
-        The configured PyVista plotter.
-    meshes
-        The grid/pathline meshes added to the scene.
-    """
-
-    plotter: Any
-    meshes: tuple[Any, ...]
-
-    def export_html(self, path: str | Path) -> Path:
-        """Export the interactive PyVista scene as standalone HTML."""
-
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.plotter.export_html(path)
-        except ImportError as error:
-            raise ImportError(
-                "PyVista standalone HTML export requires its trame dependencies. "
-                "Install them with `python -m pip install trame trame-vtk trame-vuetify`."
-            ) from error
-        return path
 
 
 def _figure_to_data_uri(fig: Figure, *, dpi: int) -> str:
@@ -971,13 +937,13 @@ def build_particle_tracking_scene(
     pathline_width: float = 4.0,
     show_edges: bool = True,
     off_screen: bool = True,
-) -> ParticleTrackingScene:
+) -> VtkScene:
     """Build an interactive 3-D PyVista scene of particle pathlines over the grid.
 
     Exports the model grid and ``pathlines`` to VTK, renders the grid as a
     translucent wireframe with the pathlines drawn as time-colored tubes, and
-    returns a :class:`ParticleTrackingScene` you can display or write to HTML with
-    :func:`export_particle_tracking_html`. Requires ``pyvista``.
+    returns a :class:`~myflopy.viz.VtkScene` -- display it, ``.show()`` it, or
+    ``.html(path)`` it like any other picture. Requires ``pyvista``.
 
     Parameters
     ----------
@@ -996,14 +962,11 @@ def build_particle_tracking_scene(
 
     Returns
     -------
-    ParticleTrackingScene
-        The configured plotter + meshes.
+    VtkScene
+        The configured plotter + meshes, as a Picture.
     """
 
-    try:
-        import pyvista as pv
-    except ImportError as error:
-        raise ImportError("Particle-tracking 3D scenes require pyvista.") from error
+    pv = require("pyvista", feature="interactive 3-D particle-tracking scenes")
     from flopy.export.vtk import Vtk
 
     vtk = Vtk(
@@ -1038,44 +1001,7 @@ def build_particle_tracking_scene(
             )
     plotter.add_axes()
     plotter.reset_camera()
-    return ParticleTrackingScene(plotter=plotter, meshes=meshes)
-
-
-def export_particle_tracking_html(
-    model: SimulationBase,
-    pathlines,
-    output_path: str | Path,
-    **scene_kwargs,
-) -> Path:
-    """Render particle pathlines to a standalone interactive 3-D HTML file.
-
-    Convenience wrapper that calls :func:`build_particle_tracking_scene` and writes
-    the resulting PyVista scene to a self-contained interactive HTML viewer (orbit/
-    zoom in a browser, no kernel needed), closing the plotter afterward. Requires
-    ``pyvista`` plus its ``trame`` HTML-export extras.
-
-    Parameters
-    ----------
-    model
-        The flow model providing the grid.
-    pathlines
-        Particle pathline records to render.
-    output_path
-        Destination HTML file.
-    **scene_kwargs
-        Forwarded to :func:`build_particle_tracking_scene` (styling, exaggeration).
-
-    Returns
-    -------
-    pathlib.Path
-        The written HTML file.
-    """
-
-    scene = build_particle_tracking_scene(model, pathlines, **scene_kwargs)
-    try:
-        return scene.export_html(output_path)
-    finally:
-        scene.plotter.close()
+    return VtkScene(plotter, meshes=meshes, title="particle pathlines")
 
 
 def _select_plotly_frames(
@@ -1271,16 +1197,6 @@ class ModelVisualization:
         """Export a standalone HTML multi-layer head-mosaic frame-slider through time."""
 
         return export_head_layer_mosaic_slider_html(self.model, output_path, **kwargs)
-
-    def particle_tracking_scene(self, pathlines, **kwargs) -> ParticleTrackingScene:
-        """Build a 3D PyVista particle-tracking scene from ``pathlines`` and the model grid."""
-
-        return build_particle_tracking_scene(self.model, pathlines, **kwargs)
-
-    def particle_tracking_html(self, pathlines, output_path, **kwargs) -> Path:
-        """Export a standalone 3D HTML particle-tracking scene to ``output_path``."""
-
-        return export_particle_tracking_html(self.model, pathlines, output_path, **kwargs)
 
     def plotly_cross_section_animation(
         self,

@@ -64,6 +64,7 @@ __all__ = [
     "mosaic",
     "shared_map_view",
     "MplPicture",
+    "VtkScene",
     "mpl_axes",
     "report_axes",
     "Theme",
@@ -289,6 +290,98 @@ class MplPicture(Picture):
         buffer = io.BytesIO()
         self.axes.figure.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
         return {"image/png": base64.b64encode(buffer.getvalue()).decode("ascii")}
+
+
+class VtkScene(Picture):
+    """A :class:`Picture` over an interactive 3-D PyVista scene (plan 8.5b).
+
+    The third renderer, after Plotly and Matplotlib. A layered grid VOLUME and a
+    bundle of pathline TUBES are neither a Plotly figure nor a Matplotlib Axes,
+    but they answer the same questions -- show me, save this, write me a file I
+    can send -- so they answer the same verbs::
+
+        scene                   # renders inline
+        scene.scene             # the PyVista Plotter, to adjust before display
+        scene.show()
+        scene.html("grid.html") # self-contained vtk.js page, ~1 MB, no network
+        scene.save("grid.png")  # a screenshot
+
+    Wraps an already-built ``Plotter``: the *building* is the caller's job and is
+    where ``pyvista`` gets imported (through ``myflopy._optional.require``, which
+    names the ``viz3d`` extra). This module stays externals-only, so the one
+    optional-dependency error it raises itself -- for ``trame``, needed only by
+    HTML export -- is written inline, exactly as :meth:`Picture.save` does for
+    ``kaleido``.
+    """
+
+    def __init__(self, plotter, *, meshes=(), title: str | None = None):
+        """Wrap a configured PyVista ``plotter`` (and the meshes in it)."""
+
+        self.scene = plotter
+        self.meshes = tuple(meshes)
+        self.title = title
+
+    @property
+    def fig(self) -> Fig:
+        """Not available: this picture is PyVista, not Plotly."""
+
+        raise TypeError(
+            f"{type(self).__name__} is a 3-D PyVista scene, so it has no Plotly "
+            "`fig`. Use `.scene` (the Plotter) to adjust it, `.show()` to display "
+            "it, and `.save(path)` / `.html(path)` to write it out."
+        )
+
+    def _export_html(self, filename):
+        """``Plotter.export_html``, with the trame hint attached on failure."""
+
+        try:
+            return self.scene.export_html(filename)
+        except ImportError as error:
+            # Inline rather than via `myflopy._optional.require`: `viz` is
+            # deliberately externals-only (Layer 0), and importing a myflopy
+            # module here would push every L0 leaf up a layer.
+            raise ImportError(
+                "Writing a 3-D scene to HTML needs PyVista's trame extras. "
+                "Install them with `pip install 'myflopy[viz3d]'` (or "
+                "`pip install trame trame-vtk trame-vuetify`)."
+            ) from error
+
+    def html(self, path, **kwargs):
+        """Write a self-contained interactive vtk.js page and return its path."""
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._export_html(str(path))
+        return path
+
+    def save(self, path, **kwargs):
+        """Write the scene out; ``.html`` is interactive, image formats are stills."""
+
+        from pathlib import Path as _Path
+
+        path = _Path(path)
+        if path.suffix.lower() in {".html", ".htm"}:
+            return self.html(path, **kwargs)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.scene.screenshot(str(path), **kwargs)
+        return path
+
+    def show(self, *args, **kwargs):
+        """Display the scene in its own window (or inline, per PyVista config)."""
+
+        return self.scene.show(*args, **kwargs)
+
+    def _repr_mimebundle_(self, *args, **kwargs):
+        """Render inline in Jupyter as a self-contained vtk.js page.
+
+        Exported to a string rather than a file, so nothing is written to disk
+        just by looking at a scene -- which is what the old ``vtk_3d`` did,
+        dropping an HTML file into the working directory on every call.
+        """
+
+        return {"text/html": self._export_html(None).getvalue()}
 
 
 def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:

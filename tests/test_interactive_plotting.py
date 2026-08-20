@@ -42,7 +42,6 @@ from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     FrameExportProgress,
     ModelMapStyle,
     ModelVisualization,
-    ParticleTrackingScene,
     StandaloneHtmlSlider,
     build_particle_tracking_scene,
     export_cross_section_slider_html,
@@ -53,6 +52,7 @@ from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
 )
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
 from myflopy.plot import ModelPlots  # noqa: E402
+from myflopy.viz import VtkScene  # noqa: E402
 from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
@@ -771,12 +771,12 @@ def test_particle_tracking_scene_uses_flopy_vtk_and_pyvista(monkeypatch):
     )
     scene = build_particle_tracking_scene(DummyModel(), pathlines)
     try:
-        assert isinstance(scene, ParticleTrackingScene)
+        assert isinstance(scene, VtkScene)
         assert len(scene.meshes) == 2
         assert calls["model"] is DummyModel.gwf
         assert calls["pathlines"].equals(pathlines)
     finally:
-        scene.plotter.close()
+        scene.scene.close()
 
 
 def test_particle_tracking_scene_builds_with_real_flopy_vtk():
@@ -799,18 +799,20 @@ def test_particle_tracking_scene_builds_with_real_flopy_vtk():
             assert len(scene.meshes) >= 2
             assert any("time" in mesh.array_names for mesh in scene.meshes)
         finally:
-            scene.plotter.close()
+            scene.scene.close()
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
 def test_particle_tracking_scene_exports_real_standalone_html(tmp_path):
+    """8.5b: `ParticleTrackingScene.export_html` became `VtkScene.html` -- the
+    same verb every other picture answers."""
     pv = pytest.importorskip("pyvista")
 
     plotter = pv.Plotter(off_screen=True)
     plotter.add_mesh(pv.Line((0, 0, 0), (1, 1, 1)), line_width=4)
-    scene = ParticleTrackingScene(plotter=plotter, meshes=())
-    output = scene.export_html(tmp_path / "particle_scene.html")
+    scene = VtkScene(plotter)
+    output = scene.html(tmp_path / "particle_scene.html")
     try:
         assert output.exists()
         assert output.stat().st_size > 100_000
@@ -831,3 +833,42 @@ def test_slider_validation_rejects_empty_frames_and_label_mismatch(tmp_path):
             tmp_path / "bad_labels.html",
             labels=["one"],
         )
+
+
+def test_the_pathline_scene_is_reachable_through_the_grid_verb():
+    """The 8.5b entry point, end to end.
+
+    The error paths are pinned in `test_plot_front_door`, but only this proves
+    `plot.grid(model, pathlines=..., backend="vtk")` and its bound twin actually
+    build a scene -- the failure mode being a verb that dispatches fine and dies
+    on the first real call.
+    """
+
+    pytest.importorskip("pyvista")
+
+    import myflopy.plot as plot
+    from myflopy.viz import VtkScene
+
+    workspace = _workspace("grid_verb_scene")
+    try:
+        model = _two_cell_model("grid_verb_scene", workspace)
+        pathlines = pd.DataFrame(
+            {
+                "particleid": [0, 0, 0],
+                "time": [0.0, 0.5, 1.0],
+                "k": [0, 0, 0],
+                "x": [0.25, 0.75, 1.25],
+                "y": [0.5, 0.5, 0.5],
+                "z": [8.0, 7.5, 7.0],
+            }
+        )
+        free = plot.grid(model, pathlines=pathlines, backend="vtk")
+        bound = model.plot.grid(pathlines=pathlines, backend="vtk")
+        try:
+            assert isinstance(free, VtkScene) and isinstance(bound, VtkScene)
+            assert len(free.meshes) >= 2
+        finally:
+            free.scene.close()
+            bound.scene.close()
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)

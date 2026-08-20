@@ -2947,3 +2947,53 @@ same day, which is the useful part of the result.
        and is unrelated to this stage.
      - Still on 8.5b: `vtk_3d` keeps its `IFrame` return and its `Path.cwd()`
        write, and becomes `plot.grid(backend="vtk")`.
+
+133. **8.5b: the 3-D scenes get a contract, and `backend=` earns its name (2026-08-20).**
+     `plot.grid(backend="vtk")` is the 3-D layered mesh; `pathlines=` draws
+     particle tracks as tubes over it. `LayerBuildResult.vtk_3d`,
+     `ParticleTrackingScene`, `export_particle_tracking_html` and
+     `ModelVisualization`'s two particle wrappers are gone.
+     - **The plan said `surface(backend="vtk")`; that would have been dishonest.**
+       Measured, the three things draw three different SHAPES:
+       `InterpolatedSurface` emits one `go.Surface(x, y, z)` -- a height field;
+       `vtk_3d` renders a DISV cell VOLUME coloured by layer; the particle scene
+       renders POLYLINE tubes. A `backend=` switch that turns a height field into
+       a volume changes the SUBJECT, which `myflopy/plot/__init__.py` explicitly
+       forbids ("Geometry chooses the verb. Not content, and not renderer.").
+       `grid` already means "the mesh itself", so a 3-D layered mesh is that same
+       subject redrawn -- and `backend=` is then a true renderer switch, matching
+       the `map(backend="mpl")` precedent. Pathlines stay an OPTION, exactly as
+       they already are on the 2-D map.
+       **My own first framing of this was wrong** ("field vs geometry"):
+       `surface_3d` already draws layer GEOMETRY via
+       `InterpolatedSurface(surf_type="lyr")`. The real axis is height-field vs
+       volume vs polyline.
+     - **`viz.VtkScene` is the third renderer.** `Picture` is Plotly-shaped
+       (`html` -> `fig.write_html`, `save` -> `fig.write_image`), and a
+       `pv.Plotter` answers none of it -- measured: no `write_html`, no
+       `write_image`, no `_repr_html_`. It has `export_html` and `screenshot`,
+       so `VtkScene` overrides all four verbs, exactly as `MplPicture` (8.5a)
+       does for Matplotlib. `.fig` raises and names `.scene`.
+     - **Nothing is written to disk just by building a picture any more.**
+       `vtk_3d` exported an HTML file on EVERY call -- into `Path.cwd()` when
+       given no path -- and returned an `IFrame` pointing at it. That litter was
+       real enough that **`.gitignore` carried a line naming the file**
+       (`layer_vtk_3d_all.html`); the line is deleted with the behaviour, and a
+       test asserts the working directory stays clean. Jupyter display now
+       exports to a string, not a file.
+     - **The optional dependencies were never actually optional.**
+       `_optional._EXTRA_FOR_MODULE` had never heard of `pyvista` or `trame`
+       despite the `viz3d` extra existing, and `layers.py` imported pyvista with
+       NO guard at all. Both now route through `require(...)`, so a missing
+       dependency names the extra. `dash` was added at the same time (the
+       `Choro.dash_selector` path had the same gap).
+     - **COMPROMISE — `VtkScene.html` inlines ~1 MB.** Measured 1,080,568 bytes
+       for a trivial scene, self-contained with no remote `<script src>`. That is
+       inherent to vtk.js offline export, not something this stage introduced;
+       recorded because `_repr_mimebundle_` now embeds that per inline display.
+     - **`PRTRunResults.export_3d_html` KEPT** rather than folded away. It is
+       `self.scene(**kwargs).html(path)` with the plotter closed afterwards --
+       "give me a file I can send" is a distinct intent from "show me", and the
+       close matters for a long notebook session.
+     - Ratchet moved DOWN, 60 -> 59: `prt.py` lost a deferred import when
+       `export_3d_html` stopped reaching for the module-level exporter.
