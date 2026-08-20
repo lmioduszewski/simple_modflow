@@ -58,17 +58,36 @@ def test_the_retired_spellings_are_not_verbs(retired):
 
 
 def test_the_verbs_dispatch_on_what_you_pass():
-    """A model draws its results; a bare grid draws itself. Duck-typed on `.vor`
-    so loaded runs, live builds and group members all work without this module
-    importing three model classes."""
+    """A thing with results draws its results; anything else draws geometry.
+
+    Duck-typed so loaded runs, live builds and group members all work without
+    this module importing three model classes. The discriminator is RESULTS, not
+    `.vor` -- see the next test for why.
+    """
 
     from types import SimpleNamespace
 
     grid = SimpleNamespace(ncpl=2)
-    model = SimpleNamespace(vor=grid)
+    model = SimpleNamespace(vor=grid, hds=object())
 
     assert plot._grid_of(model) == (grid, True)
     assert plot._grid_of(grid) == (grid, False)
+
+
+def test_a_layer_stack_is_not_mistaken_for_a_model():
+    """A `LayerStack`/`LayerBuildResult` carries `.vor` too.
+
+    Dispatching on `.vor` alone read one as a model and sent it down the results
+    path, where it died on `.hds`. A layer stack is geometry: it has a grid and
+    no results, so it must answer the GRID verbs.
+    """
+
+    from types import SimpleNamespace
+
+    grid = SimpleNamespace(ncpl=5)
+    stack = SimpleNamespace(vor=grid, top=[], botm=[], names=["sand"])
+
+    assert plot._grid_of(stack) == (grid, False)
 
 
 # --- the test that would catch a verb that cannot draw ------------------------

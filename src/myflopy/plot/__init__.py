@@ -86,17 +86,23 @@ __all__ = [
 
 
 def _grid_of(source):
-    """The Voronoi grid for ``source``, and whether ``source`` is a model.
+    """The Voronoi grid for ``source``, and whether ``source`` carries RESULTS.
 
-    A model carries its grid as ``.vor``; a grid is its own. Duck-typed rather
-    than isinstance-checked so loaded runs, live builds and group members all
-    work without this module importing three model classes.
+    Duck-typed rather than isinstance-checked, so loaded runs, live builds and
+    group members all work without this module importing three model classes.
+
+    ``.vor`` alone is not enough to mean "model": a :class:`~myflopy.layers
+    .LayerStack` and a ``LayerBuildResult`` carry one too, and reading ``.vor``
+    as "this is a model" sent them down the results path to die on ``.hds``.
+    What actually distinguishes a model is that it HAS results, so that is what
+    is asked. A layer stack is geometry -- it answers the grid verbs.
     """
 
     grid = getattr(source, "vor", None)
-    if grid is not None:
-        return grid, True
-    return source, False
+    if grid is None:
+        return source, False
+    has_results = any(hasattr(source, attr) for attr in ("hds", "conc", "temp"))
+    return grid, has_results
 
 
 def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb IS `map`

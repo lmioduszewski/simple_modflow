@@ -2881,3 +2881,24 @@ same day, which is the useful part of the result.
        mutation-tested. **8.6 still has to decide what `.ani` IS** -- it returns a
        bare `viz.Fig` rather than a Picture, so an animation cannot answer
        `.html(path)` today. That is the redesign, not this fix.
+
+131. **`plot._grid_of` read `.vor` as "this is a model" (2026-08-20).**
+     Found while scoping 8.5a; fixed before `stack.plot` could depend on it.
+     A `LayerStack` and a `LayerBuildResult` both carry `.vor`, so the duck-typed
+     dispatcher classified them as MODELS and sent them down the results path,
+     where they died on `.hds` (verified: `AttributeError: ... no attribute
+     'hds'`). The discriminator is now RESULTS -- `hds`/`conc`/`temp` -- because
+     that is what actually distinguishes a model from geometry that happens to
+     know its grid.
+     - The 8.4 sweep flagged this as a hazard for the model namespace and
+       `ModelPlots` sidesteps it by binding its subject explicitly (ledger 128).
+       That did not help the FREE functions, which is where a layer stack enters.
+     - **NOTE for 8.5a's `stack.plot.map()`:** delegating to `plot.map(vor,
+       values=thickness)` returns a `Choro`, which draws on a web basemap.
+       `LayerBuildResult.thickness_map` uses plain geopandas plotting with no
+       basemap. For a real georeferenced stack the Choro is better; for
+       `layer_management_workflow.ipynb`, whose synthetic (0,0)-(1000,600)
+       EPSG:2927 domain reprojects to open ocean off Oregon (measured:
+       -126.86, 45.15), it is worse. `.plot_mpl()` is basemap-free, so
+       `stack.plot.map().plot_mpl()` reproduces today's picture exactly while
+       `stack.plot.map()` gives the georeferenced one. Both spellings kept.
