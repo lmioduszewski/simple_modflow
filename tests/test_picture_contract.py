@@ -131,3 +131,28 @@ def test_a_picture_without_fig_says_so():
 
     with pytest.raises(NotImplementedError, match="does not define `fig`"):
         _Undefined().show()
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_an_animation_is_the_choros_figure_from_then_on(canonical_run):
+    """`.ani` swaps in the animation figure; the static traces must not come back.
+
+    `.ani` builds a frames figure and assigns it to `_fig`. It used to leave
+    `_assembled` False, so the next `.fig` access -- which `.show()`, `.html()`
+    and `.save()` ALL go through -- re-ran the assembly and appended the static
+    choropleth, contours, locs and overlays on top of the animation. The bug was
+    invisible to the shipping exporters because they read `.ani` and never touch
+    `.fig`.
+    """
+
+    choro = canonical_run.plot.map(layer=0)
+    animation = choro.ani
+
+    assert animation.frames, "no frames on the animation figure"
+    before = len(animation.data)
+
+    # The Picture output path. Idempotent, and still the animation.
+    assert choro.fig is animation
+    assert len(choro.fig.data) == before
+    assert choro.fig.frames, "accessing .fig dropped the frames"

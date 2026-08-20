@@ -2861,3 +2861,23 @@ same day, which is the useful part of the result.
        worth keeping: after deleting imports, lint the FILES rather than importing
        the package, and diff the lint output against the pre-change baseline so
        one new error is not lost among the pre-existing ones.
+
+130. **`Choro.ani` broke the idempotence the Picture contract requires (2026-08-20).**
+     Found while scoping 8.5, fixed on the spot because it is one line and live.
+     `.ani` builds the frames figure and assigns it to `_fig`, but left
+     `_assembled` False -- so the next `.fig` access re-ran the assembly and
+     appended the static choropleth, contours, locs and overlays **on top of the
+     animation**. Since `.show()`, `.html()` and `.save()` all route through
+     `.fig`, `choro.ani` followed by any of them produced a doubled figure.
+     - **Why nothing caught it.** The shipping exporters
+       (`ModelVisualization.plotly_*_animation`) read `.ani` and never touch
+       `.fig`, so the whole tested path missed it. It is the *natural* new
+       spelling -- `model.plot.map(...).ani` then `.show()` -- that was broken,
+       which is exactly what 8.6 will make canonical.
+     - This is the same defect class 8.1 fixed for the static figure (ledger
+       125): assembly that mutates rather than rebuilds. The `Picture` docstring
+       already required `fig` to be idempotent; `.ani` was simply not honoring it.
+     - Pinned by `test_an_animation_is_the_choros_figure_from_then_on` and
+       mutation-tested. **8.6 still has to decide what `.ani` IS** -- it returns a
+       bare `viz.Fig` rather than a Picture, so an animation cannot answer
+       `.html(path)` today. That is the redesign, not this fix.

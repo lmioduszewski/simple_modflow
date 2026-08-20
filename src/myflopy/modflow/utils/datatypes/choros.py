@@ -1233,6 +1233,11 @@ class Choro(Picture):
                 sliders=Animation(self.model, periods=periods).sliders,
             ),
         )
+        # The animation figure IS this Choro's figure from here on. Without this,
+        # `_assembled` stays False and the next `.fig` access -- which is what
+        # `.show()`, `.html()` and `.save()` all go through -- appends the static
+        # choropleth, contours, locs and overlays ON TOP of the animation.
+        self._assembled = True
         self.update_layout()
 
         return self._fig
