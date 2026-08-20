@@ -117,6 +117,12 @@ def render_xsections(
 
 class XSection(Picture):
 
+    #: Whether `.fig` has assembled its traces. A CLASS attribute so instances
+    #: built via `object.__new__` (test doubles) still answer the contract.
+    _assembled = False
+    _fig = None
+
+
     def __init__(
             self,
             model: SimulationBase = None,
@@ -626,8 +632,16 @@ class XSection(Picture):
 
     @property
     def fig(self):
-        """returns figure of the cross-section"""
+        """The assembled cross-section figure (built once, then reused).
 
+        Caching is the contract, not an optimization: `Picture` requires that
+        repeated access return the SAME figure, so `xs.fig.update_layout(...)`
+        followed by `xs.show()` acts on one figure. This property used to rebuild
+        from scratch on every access, which silently dropped any such edit.
+        """
+
+        if self._assembled:
+            return self._fig
         fig = f.Fig()
         points, elevations = self.xsect
 
@@ -655,6 +669,8 @@ class XSection(Picture):
                         line=dict(color='black', width=1, dash='dash')
                     )
 
+        self._fig = fig
+        self._assembled = True
         return fig
 
     @property
@@ -754,6 +770,12 @@ class XSection(Picture):
             xaxis=dict(uirevision="lock"),
             yaxis=dict(uirevision="lock"),
         )
+        # The animation figure IS this section's figure from here on -- same fix
+        # `Choro.ani` needed (ledger 130). Without it `.fig` rebuilds the STATIC
+        # section, so `plot.section(...).ani` then `.show()`/`.html()` silently
+        # wrote the wrong picture.
+        self._fig = fig
+        self._assembled = True
         return fig
 
 

@@ -126,6 +126,11 @@ class GridSection(Picture):
     cross-sections.
     """
 
+    #: Whether `.fig` has assembled its traces. A CLASS attribute, matching the
+    #: other pictures, so instances built via `object.__new__` still answer.
+    _assembled = False
+    _fig = None
+
     def __init__(self, vor, line: shp.LineString | shp.MultiLineString | Path):
         """Build a cross-section of grid ``vor`` along ``line`` (a geometry or vector file)."""
 
@@ -206,7 +211,14 @@ class GridSection(Picture):
 
     @property
     def fig(self):
-        """Build a Plotly figure of the current cross section."""
+        """The assembled cross-section figure (built once, then reused).
+
+        Cached because `Picture` requires repeated access to return the SAME
+        figure, so `section.fig.update_layout(...)` then `section.show()` acts
+        on one figure.
+        """
+        if self._assembled:
+            return self._fig
         fig = f.Fig()
         for verts in self.poly_coords:
             xs, ys = verts[:, 0], verts[:, 1]
@@ -220,6 +232,8 @@ class GridSection(Picture):
                     name='Polygon',
                 )
             )
+        self._fig = fig
+        self._assembled = True
         return fig
 
 
@@ -237,6 +251,11 @@ class GridMesh(Picture):
     ``VoronoiGrid.plot()`` (Matplotlib, still reachable as :meth:`plot_mpl`).
     """
 
+    #: Whether `.fig` has assembled its traces. A CLASS attribute, matching
+    #: `Choro`/`XSection`, so instances built via `object.__new__` still answer.
+    _assembled = False
+    _fig = None
+
     def __init__(self, vor):
         """Bind a mesh view to grid ``vor``."""
 
@@ -244,8 +263,15 @@ class GridMesh(Picture):
 
     @property
     def fig(self):
-        """Cell edges as one Plotly trace per cell, in the grid's own coordinates."""
+        """Cell edges as one Plotly trace per cell, in the grid's own coordinates.
 
+        Assembled once and cached: `Picture` requires repeated access to return
+        the SAME figure, so `mesh.fig.update_layout(...)` then `mesh.show()`
+        acts on one figure.
+        """
+
+        if self._assembled:
+            return self._fig
         fig = f.Fig(layout=getattr(self.vor, "scatt_layout", None))
         for cell in range(len(self.vor.x_coords_by_node)):
             fig.add_scattergl(
@@ -257,6 +283,8 @@ class GridMesh(Picture):
                 line_width=1,
                 showlegend=False,
             )
+        self._fig = fig
+        self._assembled = True
         return fig
 
     def plot_mpl(self, ax=None, plot_title: bool = True, **kwargs):

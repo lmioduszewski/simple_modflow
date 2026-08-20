@@ -264,3 +264,72 @@ def test_the_stack_verbs_are_all_pictures(tmp_path):
     surface = result.plot.surface("top", resolution=20)
     assert isinstance(surface, Picture)
     assert isinstance(surface.fig, Fig)   # a house Fig, not a bare go.Figure
+
+
+# --- the contract, applied to the REAL classes (8.6a) --------------------------
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_every_real_picture_is_idempotent(canonical_run):
+    """`test_assembling_twice_does_not_draw_twice` uses a STUB, so it proved the
+    contract about a class written to satisfy it -- and every real subclass went
+    unchecked. `XSection.fig` rebuilt from scratch on every access for exactly
+    that reason: repeated access returned equivalent but DIFFERENT figures, so
+    `xs.fig.update_layout(...)` then `xs.show()` silently dropped the edit.
+
+    Parametrized over the live classes so a new Picture cannot quietly opt out.
+    """
+
+    import matplotlib
+    from shapely.geometry import LineString
+
+    matplotlib.use("Agg")
+    model, vor = canonical_run, canonical_run.vor
+    xmin, ymin, xmax, ymax = vor.gdf_vorPolys.total_bounds
+    mid = (ymin + ymax) / 2
+    pictures = {
+        "Choro": model.plot.map(layer=0),
+        "XSection": model.plot.section(cells=[0, 1, 2]),
+        "GridMesh": vor.plot.grid(),
+        "GridSection": vor.plot.section(LineString([(xmin, mid), (xmax, mid)])),
+        "InterpolatedSurface": model.plot.surface(layer=0),
+    }
+
+    # Every PLOTLY Picture subclass must be represented -- the point is that a
+    # new one cannot quietly opt out. MplPicture/VtkScene are the two whose
+    # `.fig` deliberately raises, and LayerSurface needs a built stack.
+    plotly_pictures = {
+        cls.__name__
+        for cls in Picture.__subclasses__()
+        if cls.__module__.startswith("myflopy.")          # not this file's stubs
+        and cls.__name__ not in {"MplPicture", "VtkScene", "LayerSurface"}
+    }
+    assert plotly_pictures <= set(pictures), (
+        f"unchecked Picture subclasses: {sorted(plotly_pictures - set(pictures))}"
+    )
+
+    for name, picture in pictures.items():
+        first = picture.fig
+        assert picture.fig is first, f"{name}.fig rebuilt on second access"
+        before = len(first.data)
+        picture.fig.update_layout(title="edited")
+        assert picture.fig.layout.title.text == "edited", f"{name} lost a layout edit"
+        assert len(picture.fig.data) == before, f"{name} drew its traces twice"
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_a_section_animation_is_the_sections_figure_from_then_on(canonical_run):
+    """The `XSection` half of ledger 130.
+
+    `Choro.ani` was fixed to persist its animation figure; `XSection.ani` built
+    one, returned it, and never assigned it -- so `plot.section(...).ani` then
+    `.show()` or `.html()` wrote the STATIC section. One sibling was fixed and
+    the other was not.
+    """
+
+    section = canonical_run.plot.section(cells=[0, 1, 2])
+    animation = section.ani
+
+    assert animation.frames, "no frames on the section animation"
+    assert section.fig is animation
+    assert section.fig.frames, "accessing .fig dropped the frames"

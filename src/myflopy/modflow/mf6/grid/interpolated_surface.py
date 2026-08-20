@@ -38,6 +38,12 @@ logger = get_logger(__name__)
 
 class InterpolatedSurface(Picture):
 
+    #: Whether `.fig` has been assembled. A CLASS attribute, matching the other
+    #: pictures, so instances built via `object.__new__` still answer.
+    _assembled = False
+    _fig = None
+
+
     def __init__(
             self,
             xs: np.array = None,
@@ -519,10 +525,18 @@ class InterpolatedSurface(Picture):
         `.show(renderer="browser")` -- so it returned None, could not be modified
         or embedded, forced a browser window, and silently dropped the house
         template, `scrollZoom` and `dragmode="pan"` that every other myflopy
-        figure carries. Use `.clipped_fig()` for the clipped variant.
+        figure carries. Use `.clipped_fig()` for the clipped variant -- that one
+        is a METHOD precisely because it takes arguments, so it rebuilds.
+
+        Assembled once and cached: `Picture` requires repeated access to return
+        the SAME figure, so `surface.fig.update_layout(...)` then
+        `surface.show()` acts on one figure.
         """
 
-        return self.clipped_fig(clip=False)
+        if not self._assembled:
+            self._fig = self.clipped_fig(clip=False)
+            self._assembled = True
+        return self._fig
 
     def clipped_fig(self, *, surface=None, clip: bool = False):
         """The surface figure, optionally clipped to the configured polygon."""

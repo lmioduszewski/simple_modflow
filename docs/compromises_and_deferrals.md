@@ -3018,3 +3018,29 @@ same day, which is the useful part of the result.
      - Corrective habit, applied from 8.5a onward and worth keeping: **execute
        the notebooks a stage touches**, do not just edit them. That is what
        caught this class of error in 8.5a and 8.5b.
+
+135. **The Picture idempotence contract was proven against a STUB, and four real
+     classes had drifted off it (2026-08-20).**
+     8.1 wrote `test_assembling_twice_does_not_draw_twice` against
+     `_TwoTraceStub` -- a class written in the test file to satisfy the contract.
+     It proved the rule about itself and checked no real subclass. Applying the
+     same assertions to the live classes found **four violators immediately**:
+     - `XSection.fig` rebuilt from scratch on every access, so
+       `xs.fig.update_layout(...)` then `xs.show()` silently dropped the edit.
+     - `GridSection.fig` likewise.
+     - `InterpolatedSurface.fig` delegated to `clipped_fig(clip=False)`, a fresh
+       build each time.
+     - **`GridMesh.fig` -- written by me in 8.4b**, with the same defect, three
+       stages after the contract was introduced.
+     Only `Choro` (fixed in 8.1) and `LayerSurface` (8.5a) were correct.
+     - **`XSection.ani` was the `Choro.ani` bug again** (ledger 130): it built the
+       animation figure, returned it, and never assigned `self._fig`, so
+       `plot.section(...).ani` then `.show()`/`.html()` wrote the STATIC section.
+       I fixed one sibling in `98814ec` and did not check the other.
+     - The lesson is about the SHAPE of the test, not the bug: a contract test
+       that constructs its own conformant subject is a tautology. The test now
+       enumerates `Picture.__subclasses__()` and asserts every myflopy plotly
+       picture is exercised, so a new one cannot silently opt out. Both guards
+       are mutation-tested.
+     - `MplPicture`/`VtkScene` are excluded by name -- their `.fig` raises on
+       purpose -- and `LayerSurface` needs a built stack to instantiate.
