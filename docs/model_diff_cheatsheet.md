@@ -132,7 +132,7 @@ diff.packages.ghb.results.map("F9b")       # Δ GHB leakage (also drn/chd/wel/rc
 diff.packages.uzf.results.gwrch.map("F9b") # Δ UZF recharge
 
 # UNIFIED GRAMMAR -- every leaf (single-model / group / diff, inputs & results)
-# has the same verbs: get/summary + map/plot/xs + mosaic/animate, all with backend=:
+# has the same verbs: get/summary + map/plot/section + mosaic/animate, all with backend=:
 diff.hds.mosaic(by="model")                 # synced Δ mosaic, one panel per model
 diff.hds.mosaic(by="model", backend="mpl")  # static (matplotlib) instead of Plotly
 diff.hds.animate(over="period")             # Δ animated across stress periods (play/slider)

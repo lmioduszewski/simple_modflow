@@ -12,7 +12,7 @@ JupyterLab or a running Python kernel after export.
 ## The Unified View Grammar (start here for everyday maps)
 
 Every result/input leaf — single model, `ModelGroup`, or `group.diff()` — shares
-the same verbs: `get`/`summary` plus `map` / `plot` / `xs` and the composers
+the same verbs: `get`/`summary` plus `map` / `plot` / `section` and the composers
 `mosaic` / `animate`, each with `backend="plotly"|"mpl"`:
 
 ```python

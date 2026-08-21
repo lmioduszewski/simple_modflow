@@ -47,11 +47,26 @@ change log. An un-regenerated snapshot fails CI.
 ## Adding a table, plot, or map to a package? Read `docs/view_layer_conventions.md`
 The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every noun
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
-`map`/`xs`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
+`map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
 method pair; add a view class exposed as a noun property.
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
+**Drawing anything at all? Six verbs, and only six** (Phase 8, 2026-08-20):
+`map` `section` `surface` `grid` (pictures) + `mosaic` `animate` (combinators over
+pictures). They are free functions in `myflopy.plot` AND bound as `model.plot` /
+`vor.plot` / `stack.plot`; the bound form calls the free one. **Geometry chooses
+the verb** — contours, locations, hillshade and pathlines are OPTIONS on `map`,
+never verbs; **`backend=` switches the renderer, never the subject** (which is why
+the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means a
+height field). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
+`.save(path)` / `.html(path)`, and never a trailing `.plot()`.
+`tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
+the stray verb, so adding one in one place and forgetting another is caught.
+Runnable tour: `examples/mf6/notebooks/plotting_vocabulary_tour.ipynb`.
+RETIRED, do not reintroduce: `model.cor`, `model.srf`, `model.visualize`, the
+eleven `vor.*` plotting aliases, `stack.preview/views/vtk_3d/surface_3d`.
+
 Only the *spatial* half of this was documented before 2026-07-18; derived tables
 had no rule, and the gap produced `sfr.results.long_profile`/`plot_long_profile`
 plus ~20 lines of hand-rolled matplotlib in two notebooks that redrew — off-color —

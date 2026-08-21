@@ -86,7 +86,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 |---|---|---|
 | GWF / GWT / GWE / PRT models + exchanges | ✅ | `package_api.py` `gwf/gwt/gwe/prt`; `builders.py` `build_gwf_{gwt,gwe,prt,gwf}_exchange` |
 | GWT/GWE **package helpers** (adv/dsp/mst/ist/ssm/cnc/src; est/cnd/ctp/esl) | ✅ | `package_api.py` factories build `ModflowGwt*`/`ModflowGwe*` (plan §5.3B); `mf.ic/oc/disv/dis/disu` dispatch the FloPy class on the model kind (§5.3A/§5.5) |
-| GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/xs/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
+| GWT/GWE **results tier** — reader + maps | ✅ | `model.conc`/`model.temp` (`headsplus.py` `DependentVariableFile` base + `ConcResults`/`TempResults`); full grammar (`get/summary/array/map/section/mosaic/animate`), field hover (`conc_hover`/`temp_hover`), `'earth'` colorscale; kind-gated (§6.0/6.1/6.2, 2026-07-24) |
 | GWT/GWE results — budget **tables** | ✅ | Transport budget terms read correctly through `build_budget_result_table` and `model.bud(...)` as of 2026-07-27: transport models save flows by default, imeth=1 full-array terms (`STORAGE-AQUEOUS`/`STORAGE-CELLBLK`) build a real per-cell table, both paths agree on zero-based nodes, hover units follow the model kind (`M/T`/`E/T`), and `model.bud("ssm")` resolves (ledger 90–92, 95) |
 | GWT/GWE results — budget **noun** | ✅ | `model.budget.<term>` (`package_results.py` `ModelBudgetNamespace` → `CellBudgetResultsExplorer`): every term in the model's own budget file as a spatial noun with the full verb set. Terms **discovered** from the file, so they follow kind + packages (`storage_aqueous` on GWT, `storage_cellblk` on GWE). Available on all kinds, incl. GWF terms with no package accessor (`sto_ss`, `data_spdis`) — §6.1/6.2 item 3, 2026-07-27 |
 | GWT/GWE results — **group + diff** | ✅ | `group.conc`/`group.temp` + `group.diff().conc`/`.temp` (`project/group/conc.py`, `temp.py`). NOT clones: `GroupHeads` was refactored onto a shared `_GroupFieldView`, so all three kinds are one implementation with five class attributes each (§6.1/6.2 item 4, 2026-07-27). Needed `SimulationBase.all_conc`/`.all_temp` (kind-gated, unlike `all_heads`) |
@@ -177,7 +177,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
    runtime-discovered terms, full spatial verb set, every model kind).
    `GroupConc`/`GroupTemp` + `diff().conc`/`.temp` shipped 2026-07-27 (§6.1/6.2
    item 4), on a shared `_GroupFieldView` rather than as clones — which also
-   fixed `xs` on the transport readers (ledger 99). Still deferred:
+   fixed `section` on the transport readers (ledger 99). Still deferred:
    `ConcTargets`/`TempTargets` → PEST.
 3. **PRT**: **DONE 2026-07-25** — derived cell maps (§6.3B: `results.travel_time`/
    `.endpoints`/`.capture` nouns + release groups) and the plotly pathline map +

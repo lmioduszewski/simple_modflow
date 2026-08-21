@@ -3174,3 +3174,38 @@ same day, which is the useful part of the result.
        the common entry point and discoverability was the phase's whole goal.
        Recorded as a deliberate asymmetry rather than left to look accidental,
        and pinned by the scope table so it cannot drift further.
+
+139. **The master notebook's missing output file was a typo, not a regression
+     (2026-08-20).**
+     Cell 10 asserted ten MF6 output files exist and one did not:
+     `{model.name}_lake_budget.csv`. The file MF6 writes is
+     `{model.name}_lak_budget.csv` -- the package abbreviation, matching
+     `_uzf_budget.csv` and `_sfr_budget.sfr` beside it. `git log -S` dates the
+     typo to `fb24b54`, long before Phase 8; nothing else in the tree shares it.
+     - Worth recording because I hunted it as a Phase 8 regression first. The
+       notebook had presumably never been run end-to-end since that commit --
+     which is the same gap ledger 134 records: the suite does not execute
+       notebooks, so a broken cell stays green indefinitely.
+
+140. **`mf.LayerStack` was exported without any of its arguments (2026-08-20).**
+     Found writing the plotting tour: `mf.LayerStack` is on the facade but
+     `Raster`, `Flat`, `Contours`, `Points`, `Array`, `Isopach`, `Min`, `Max`,
+     `Clamp` and `Where` were not -- all ten are in `myflopy.layers.__all__` and
+     none reached `mf`. So CLAUDE.md's own documented one-liner,
+     `LayerStack(vor, top=Raster("ground.tif"))`, did not work from
+     `import myflopy as mf`; it needed a second, deeper import for the argument
+     types. All ten added to the lazy export map; api_snapshot diff is exactly
+     those names.
+     - The lesson is about what a facade owes: exporting a class without the
+       types its constructor takes is only half an export. Writing a notebook
+       that used the documented spelling is what surfaced it -- no test did,
+       because the tests import from `myflopy.layers` directly.
+
+141. **My notebook runner is not a Jupyter kernel (2026-08-20).**
+     The master notebook "failed" at cell 25 with `NameError: display`. Jupyter
+     injects `display` as a builtin; seven notebooks in this repo rely on that,
+     which is normal practice. The failure was in my `exec`-based runner, not the
+     notebook. Recorded so the next person checking a notebook this way injects
+     `display` (and remembers that a bare `exec` loop differs from a kernel in
+     other ways too -- no `_`/`__` history, no rich reprs, no cell ordering
+     guarantees beyond what the loop imposes).

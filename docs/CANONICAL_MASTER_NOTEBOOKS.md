@@ -35,6 +35,14 @@ next topic.
    review layer — parameter-field maps, the uncertainty-reduction map, the
    prior-vs-posterior mosaic and the observation residual map.
 
+### Reference tours (not part of the numbered series)
+
+- `plotting_vocabulary_tour.ipynb` — the whole drawing API in one place: the six
+  verbs, the four scopes that carry them, the output contract every picture
+  answers, and the two `backend=` switches. Runs on the smallest canonical
+  profile, so it is fast. Read `docs/view_layer_conventions.md` alongside it —
+  this notebook is the runnable version of that file.
+
 Use `CanonicalModelConfig.validation()` for quick work and
 `CanonicalModelConfig()` for the full model with at least 10,000 horizontal cells.
 The PEST notebooks run PESTPP-IES, which fires hundreds of forward solves — use

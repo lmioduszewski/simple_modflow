@@ -270,6 +270,21 @@ _EXPORTS = {
     "LayerStack": ("myflopy.layers", "LayerStack"),
     "LayerBuildResult": ("myflopy.layers", "LayerBuildResult"),
     "LayerQCReport": ("myflopy.layers", "LayerQCReport"),
+    # The surface constructors `LayerStack` takes as arguments. Exporting the
+    # class without them meant the documented one-liner --
+    # `mf.LayerStack(vor, top=mf.Raster("ground.tif"))` -- did not work from
+    # `import myflopy as mf` alone; you needed a second, deeper import for the
+    # argument types. Found writing the plotting tour notebook (2026-08-20).
+    "Raster": ("myflopy.layers", "Raster"),
+    "Flat": ("myflopy.layers", "Flat"),
+    "Contours": ("myflopy.layers", "Contours"),
+    "Points": ("myflopy.layers", "Points"),
+    "Array": ("myflopy.layers", "Array"),
+    "Isopach": ("myflopy.layers", "Isopach"),
+    "Min": ("myflopy.layers", "Min"),
+    "Max": ("myflopy.layers", "Max"),
+    "Clamp": ("myflopy.layers", "Clamp"),
+    "Where": ("myflopy.layers", "Where"),
     "modflow_surfaces": ("myflopy.layers", "modflow_surfaces"),
     "ProjectLayout": ("myflopy.workspace", "ProjectLayout"),
     "ModelView": ("myflopy.workspace", "ModelView"),

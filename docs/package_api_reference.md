@@ -6,6 +6,8 @@ MODFLOW 6 models in myflopy. Two halves:
 - **Build side** — `mf.<pkg>(...)` helpers that assemble a model (`package_api.py`).
 - **Read side** — the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
   view grammar for tables, plots, and maps.
+- **Drawing** — the six plotting verbs, free in `myflopy.plot` and bound as
+  `model.plot` / `vor.plot` / `stack.plot` (section C).
 
 > **Authoritative sources (this doc is the human-readable overview of them):**
 > - Build-side signatures are pinned in `tests/api_snapshot.json` (regenerate with
@@ -138,7 +140,7 @@ node ids, and label hovers `M/T` (GWT) / `E/T` (GWE) rather than `ft³/d`
 (ledger 90–92, 95). The `model.budget.<term>` noun shipped 2026-07-27 (§6.1/6.2
 item 3) — see "Model-level reads" below. The grouped transport fields
 (`group.conc`/`group.temp`, `group.diff().conc`/`.temp`) shipped the same day
-(§6.1/6.2 item 4), which also fixed `xs` on `model.conc`/`model.temp` — it had
+(§6.1/6.2 item 4), which also fixed `section` on `model.conc`/`model.temp` — it had
 raised since those readers shipped (ledger 99). **Transport calibration** ships as of
 2026-07-28: `ConcTargets` observations go straight into `cal.observe(...)`, and the
 canonical model has a GWT sibling (`build_canonical_transport_calibration_demo`) whose
@@ -368,12 +370,12 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 **PRT** (a finished run's `PRTRunResults`, not `model.packages`): `results.pathlines`
 (trajectories — `map` draws polylines, not cells), `results.travel_time`,
 `results.endpoints`, `results.capture`. These are derived, time-integrated views, so
-they reject `per=`; `pathlines` also refuses `xs`/`animate` (a trajectory is not a
+they reject `per=`; `pathlines` also refuses `section`/`animate` (a trajectory is not a
 per-cell field to slice) and `travel_time`/`endpoints`/`capture` refuse `animate`.
 The raw MF6 track table is `results.track_records`. Full detail in §A above.
 
 **Model-level reads:** `model.hds` (GWF heads explorer — `get`/`summary`/`array`/
-`map`/`xs`/`mosaic`/`animate`), and its transport twins **`model.conc`** (GWT
+`map`/`section`/`mosaic`/`animate`), and its transport twins **`model.conc`** (GWT
 concentration) and **`model.temp`** (GWE temperature) — the same dependent-variable
 grammar, reading the `.ucn` binary via the shared `DependentVariableFile` base. The
 readers are **kind-gated**: `.hds` on a transport model (or `.conc` on a flow model)
@@ -381,7 +383,7 @@ raises a clear error. `model.outputs.<pkg>.bud` (raw budget accessor),
 `model.targets.<family>` (`compare`/`stats`/`calibration_plot`), `model.pest_runs`.
 
 **`model.budget.<term>`** — every term in the model's *own* budget file, as a spatial
-noun (`get`/`summary`/`plot`/`map`/`xs`/`mosaic`/`animate`). Terms are **discovered
+noun (`get`/`summary`/`plot`/`map`/`section`/`mosaic`/`animate`). Terms are **discovered
 from the file**, not declared, so they follow the model's kind and packages:
 
 ```python
@@ -437,6 +439,77 @@ of `dir()`/completion; they return exactly what they used to. Prefer the noun fo
 | `sfr.results.long_profile()` / `plot_long_profile()` | `sfr.results.profile.get()` / `.plot()` |
 | `sfr.results.q.plot_profile()` / `sfr.results.stage.plot_profile()` | `…profile.plot()` |
 | `lak.results.q.budget_summary()` / `plot_budget()` | `lak.results.q.budget.get()` / `.plot()` |
+
+---
+
+---
+
+## C · Drawing — the plotting verbs
+
+Six verbs cover every picture. They exist as free functions and bound to the
+objects, and the bound form calls the free one, so the two cannot diverge.
+
+```python
+from myflopy import plot
+
+plot.map(model, layer=0)      # or  model.plot.map(layer=0)
+plot.grid(vor)                # or  vor.plot.grid()   -- or just vor.plot()
+```
+
+### The verbs
+
+| verb | draws | notes |
+|---|---|---|
+| `map(source, values=, ...)` | plan view | contours, locations, hillshade, pathlines are **options**, not verbs |
+| `section(source, ...)` | vertical slice | results through a model, geometry through a grid |
+| `surface(source, ...)` | 3-D height field `z(x, y)` | Plotly |
+| `grid(source, backend=)` | the mesh itself | `"plotly"` flat 2-D (no CRS needed), `"vtk"` the 3-D volume |
+| `mosaic(panels, ncols=)` | many pictures, one figure | **combinator** — takes pictures, not a subject |
+| `animate(frames, backend=)` | frames in sequence | **combinator**; `"plotly"` live, `"png"` rasterized |
+
+### Which scope answers which
+
+A scope answers the verbs it can *know*: a bare grid has no results, a layer
+stack has no time.
+
+| scope | verbs |
+|---|---|
+| `myflopy.plot` | all six |
+| `model.plot` | all six |
+| `vor.plot` | `map` `section` `grid` |
+| `stack.plot` | `map` `section` `surface` `grid` |
+
+Pinned by `tests/test_plot_vocabulary.py`, which fails naming both the scope and
+the stray verb if one drifts.
+
+### Everything returned is a Picture
+
+```python
+picture = model.plot.map(layer=0)
+picture                       # renders itself in Jupyter
+picture.fig                   # the figure, to adjust before display
+picture.show()
+picture.save("heads.png")     # suffix picks the format
+picture.html("heads.html")    # standalone page
+```
+
+There is never a trailing `.plot()`. Three renderers back this: most pictures are
+Plotly; `MplPicture` (Matplotlib) offers `.axes` and `VtkScene` (PyVista) offers
+`.scene` instead of `.fig`, and their `.fig` raises saying so.
+
+### Standalone HTML
+
+Two artifacts for two jobs. `plot.animate(frames).html(path)` writes an
+interactive page — for a choropleth it ships the cell geometry once and restyles
+per frame rather than re-embedding the grid. The `mf.export_*_slider_html`
+functions instead pre-render frames to PNG and page through them: their size is
+independent of cell count, and they carry the machinery a long export needs
+(`resume=`, `progress=`, external frame directories, a concurrent-writer lock).
+They render through FloPy's `PlotMapView`, so they are a *different picture*,
+not a second spelling.
+
+> Runnable tour: `examples/mf6/notebooks/plotting_vocabulary_tour.ipynb`.
+> Normative rules: `docs/view_layer_conventions.md`.
 
 ---
 

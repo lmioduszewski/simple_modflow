@@ -147,7 +147,7 @@ This is the main MF6 implementation area.
 - [src/myflopy/modflow/mf6/package_inputs.py / package_results.py / package_tables.py / package_budget.py / package_plotting.py / package_surface_water.py / package_model.py](../src/myflopy/modflow/mf6/package_plotting.py)
   The `package_*` family implementing the explorers behind `model.packages...`
   (`package_explorer.py` is the compatibility facade). `package_plotting.py`
-  holds the unified view grammar (`SpatialView`: `map/plot/xs` + `mosaic/animate`)
+  holds the unified view grammar (`SpatialView`: `map/plot/section` + `mosaic/animate`)
   and the map payload builders; `package_surface_water.py` holds the LAK/SFR
   explorers plus the `join_lak_stage`/`join_sfr_stage` hover joins.
 - [src/myflopy/modflow/mf6/interactive_plotting.py](../src/myflopy/modflow/mf6/interactive_plotting.py)
