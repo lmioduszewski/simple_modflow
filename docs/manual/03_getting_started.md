@@ -450,7 +450,7 @@ unless noted.
 |---|---|
 | `model.hds.array(layer=)`, `model.hds.kstpkper` | Heads. |
 | `HeadTargets / LakeStageTargets / Sfr*Targets / DrnFlowTargets` | Observation targets (`compare/stats`). |
-| `build_choropleth(model.vor, custom_zs=).plot_mpl()`, `export_*_slider_html(...)` | Maps and interactive sliders. |
+| `model.plot.map(layer=)`, `plot.animate(frames)`, `export_*_slider_html(...)` | Maps, animations, standalone sliders. |
 | `model.pest(name).parameterize / observe / forecast / build / run_ies` | Calibration. |
 | `model.particle_tracking.prt(workspace=, release_points=)` | Particle tracking (MF6 PRT). |
 | `mf.ParallelModelWorkflow(model).split_model(...)` | Domain-decomposed parallel run. |

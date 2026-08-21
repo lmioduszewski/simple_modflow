@@ -1900,8 +1900,24 @@ normative doc and currently states the old verb set (`map/plot/xs` +
 `build_choropleth` import in an executable fence at `:347`).
 
 Regenerate `tests/api_snapshot.json` and the import-layer pins; add
-`tests/test_plot_vocabulary.py` asserting all three scopes expose the same verb
-set, so a verb added at one scope and forgotten at another fails.
+`tests/test_plot_vocabulary.py` so a verb added at one scope and forgotten at
+another fails.
+
+> **"All three scopes expose the same verb set" is wrong, and there are four
+> scopes.** Module and model answer all six verbs; a bare GRID answers three
+> (no results, so no `surface` and no `animate`); a layer STACK answers four
+> (geometry with no time, so no `animate`). The test pins each scope's declared
+> subset and asserts no scope invents a verb outside the vocabulary -- which is
+> the property actually worth having.
+>
+> **Delivered.** The conventions doc gained the three-layer frame rather than
+> being rewritten: its grammar, colorscale-policy and signed-exchange sections
+> were accurate and specific, and replacing them wholesale would have destroyed
+> the detail the file exists for.
+>
+> The stage also found `conftest._SLOW_TESTS` naming two tests 8.5b had renamed.
+> Nothing failed -- the tests passed, in the wrong lane -- so heavy pyvista
+> exports had silently moved into the fast loop. Now guarded.
 
 ### What is NOT in scope
 

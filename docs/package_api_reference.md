@@ -325,7 +325,7 @@ Every **noun** is an object; every object answers the same **verbs**. Different 
 | `summary()` | every noun | a compact digest frame |
 | `plot()` | every noun | the noun's **one** canonical chart (`viz.Fig`) † |
 | `map()` | **spatial** nouns | choropleth on the grid |
-| `xs()` | spatial nouns | cross-section |
+| `section()` | spatial nouns | cross-section |
 | `mosaic()` | spatial nouns | small-multiples panel |
 | `animate()` | spatial nouns | animation over stress periods |
 | `long()` / `wide()` / `stack()` | cell-budget fields | frame reshapes |
@@ -333,7 +333,7 @@ Every **noun** is an object; every object answers the same **verbs**. Different 
 
 † Exception: `lak.results.q.budget.plot()` currently returns a **matplotlib** figure
 (the `viz.Fig` conversion is deferred — ledger 52). Derived-table nouns (`profile`,
-`budget`) are not spatial, so they have no `map`/`xs` (ledger 17); use the field
+`budget`) are not spatial, so they have no `map`/`section` (ledger 17); use the field
 noun's own `map()` (e.g. `sfr.results.q.map()`).
 
 ### Nouns per package

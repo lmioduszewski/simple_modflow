@@ -4,7 +4,74 @@
 > `plot_long_profile` drifted outside the grammar and two notebooks
 > hand-rolled ~20 lines of matplotlib to redraw a figure the library already
 > built — losing `scrollZoom`, pan, the house template, *and* the documented
-> gaining/losing colors in the process.
+> gaining/losing colors in the process. Extended 2026-08-20 (plan 8.7) with the
+> three-layer model Phase 8 built.
+
+## The three layers
+
+Everything that draws in myflopy sits in one of three layers. Knowing which
+layer a thing belongs to answers most design questions about it.
+
+| Layer | What it is | Verbs |
+|---|---|---|
+| **1 — Pictures** | one drawing of one subject | `map` `section` `surface` `grid` |
+| **2 — Composition** | combines finished pictures | `mosaic` `animate` |
+| **3 — Output** | what you do with any picture | `.fig` `.show()` `.save(p)` `.html(p)` |
+
+Three rules follow from the table, and they are the whole design:
+
+1. **Geometry chooses the Layer-1 verb — not content, and not renderer.** A map
+   is a plan view whatever is drawn on it, so contours, well markers, a
+   hillshade and particle pathlines are *options* on `map`, never verbs. This is
+   what retired `plot3d` (a 3-D view is `surface`), `map_nodes` (a map whose
+   values are node ids) and a top-level `contours`.
+2. **Layer 2 takes a collection, Layer 1 takes a subject.** `map(model)` draws
+   the model; `mosaic(panels)` and `animate(frames)` draw what you hand them.
+   That is why the combinators do not fit the "first argument is the subject"
+   rule the picture verbs follow — they have no subject.
+3. **Layer 3 is uniform.** Every picture answers the same four things, so you
+   never learn per-class output methods. There is no trailing `.plot()`.
+
+### `backend=` switches the renderer, never the subject
+
+`grid(backend="vtk")` draws the same mesh in 3-D. `animate(backend="png")`
+rasterizes the same frames. Both are legal because the *subject* is unchanged.
+
+The counter-example is instructive: plan 8.5 was written as
+`surface(backend="vtk")`, and that would have been a lie — `surface` means a
+height field `z(x, y)`, while the VTK scene draws a cell **volume** and the
+particle scene draws **polyline tubes**. Three shapes, not one shape three ways.
+Hence `grid(backend="vtk")`: `grid` already means "the mesh itself", so the
+3-D layered mesh is that same subject, redrawn. See ledger 133.
+
+### Three renderers, one contract
+
+Most pictures are Plotly, and `Picture` is written in terms of `.fig`. That is a
+*default*, not the contract. A picture whose native renderer is something else
+answers the same four verbs by overriding them, and its `.fig` raises and names
+what to use instead:
+
+| Class | Native renderer | Instead of `.fig` |
+|---|---|---|
+| `MplPicture` | Matplotlib | `.axes` |
+| `VtkScene` | PyVista | `.scene` |
+| `SliderAnimation` | rasterized frames | `.frames` |
+
+Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
+caller reaching for `.add_trace`; raising is the honest answer.
+
+### Two spellings, one implementation
+
+```python
+plot.map(model, layer=0)     # free function, from `myflopy.plot`
+model.plot.map(layer=0)      # bound to the object
+```
+
+The bound form *calls* the free one, so they cannot diverge. Which verbs a scope
+answers depends on what that scope can know: a bare grid has no results, so no
+`surface` or `animate`; a layer stack has no time, so no `animate`.
+`tests/test_plot_vocabulary.py` pins each scope's set, and fails naming both the
+scope and the stray verb if one drifts.
 
 ## Why this file exists
 
@@ -48,6 +115,13 @@ rule; it is what makes the API guessable without reading source.
 | `map(...)` | choropleth | spatial nouns |
 | `section(...)` | cross-section | spatial nouns |
 | `mosaic(...)` / `animate(...)` | multi-panel / animated | spatial nouns |
+
+These are the same Layer-1 and Layer-2 verbs as the table at the top of this
+file, scoped to one noun. `surface` and `grid` are not in the grammar because a
+package field has no 3-D contact and no mesh of its own — those belong to the
+model, the grid, and the layer stack (`model.plot`, `vor.plot`, `stack.plot`).
+Everything returned obeys the Layer-3 contract, so `…​.q.map(per=0).save("q.png")`
+works without knowing which class produced it.
 
 > **What `plot` means, precisely.** Not "time series" -- the codebase never
 > honoured that, and saying so misled a reader as recently as 2026-08-18.
@@ -275,3 +349,13 @@ The retired spelling must not survive anywhere an IDE reads — not in `dir()`,
 - `tests/test_deprecation.py` pins D12 hiding and the compatibility registry.
 - `tests/api_snapshot.json` records the public surface; regenerate with
   `scripts/derive_api_snapshot.py` and review the diff.
+- `tests/test_plot_vocabulary.py` pins the verb set at every scope (module,
+  model, grid, stack), that no scope invents a verb, and that every retired
+  spelling stays gone. A verb added in one place and forgotten in another fails
+  here, naming both.
+- `tests/test_picture_contract.py` pins Layer 3 against the REAL picture
+  classes, enumerated from `Picture.__subclasses__()`. It is written that way on
+  purpose: the original version proved the contract about a stub defined in the
+  test file, which let four classes drift off it for three stages (ledger 135).
+- `tests/test_plot_front_door.py` pins `myflopy.plot` itself — the verbs, the
+  dispatch, and what is deliberately absent.

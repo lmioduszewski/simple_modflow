@@ -3142,3 +3142,35 @@ same day, which is the useful part of the result.
        model.
      - Ratchet 59 -> 58 (`base.py` lost the deferred import behind the property);
        api_snapshot dropped `visualize` and `ModelVisualization`.
+
+138. **8.7: the vocabulary pinned, and an allowlist that had gone stale in
+     silence (2026-08-20).**
+     `tests/test_plot_vocabulary.py` pins the verb set at all four scopes, that
+     no scope invents a spelling outside it, and that every retired name stays
+     gone. The conventions doc gained the three-layer frame.
+     - **The plan's acceptance criterion was wrong twice over:** "all three
+       scopes expose the same verb set". There are FOUR scopes, and they do not
+       and should not match -- a bare grid has no results (no `surface`, no
+       `animate`), a layer stack has no time (no `animate`). The test declares
+       each subset and asserts `scope_verbs <= VOCABULARY`, which is the property
+       worth having: a scope may answer fewer verbs, never different ones.
+     - **`conftest._SLOW_TESTS` named two tests that 8.5b had renamed.** It marks
+       heavy tests by STRING, so a rename silently un-marks one. Nothing failed
+       -- the tests kept passing, just in the fast lane -- so two pyvista VTK
+       exports had been running in the inner loop since 8.5b -- measured 3.1 s
+       of pyvista work against a ~32 s fast loop, so roughly a tenth of it. A
+       guard now asserts
+       every name in the set resolves to a real test, plus a `_RETIRED_SLOW_TESTS`
+       register asserted disjoint from the collected names. Mutation-tested.
+     - **COMPROMISE — the conventions doc was EXTENDED, not rewritten.** The plan
+       said "rewritten around the three layers". Its existing grammar,
+       colorscale-policy, signed-exchange and naming sections were accurate and
+       hard-won; a rewrite would have destroyed the specifics the file exists to
+       record. The three-layer model is now the frame at the top and the grammar
+       reads as one scope within it.
+     - **COMPROMISE — `mosaic`/`animate` sit on `model.plot` but not on
+       `vor.plot`/`stack.plot`.** They are subject-free combinators, so strictly
+       they belong at module level only. They are on the model because that is
+       the common entry point and discoverability was the phase's whole goal.
+       Recorded as a deliberate asymmetry rather than left to look accidental,
+       and pinned by the scope table so it cannot drift further.

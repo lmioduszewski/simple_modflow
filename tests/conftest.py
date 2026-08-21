@@ -170,9 +170,20 @@ _SLOW_TESTS = {
     "test_run_builds_writes_executes_and_reopens_with_flopy_310",
     "test_project_multi_model_run_uses_per_model_subdirs",
     # test_layers.py -- flopy VTK -> pyvista export (heavy)
-    "test_vtk_3d_writes_html_and_returns_iframe",
-    "test_vtk_3d_shows_a_subset_of_layers",
-    "test_views_runs_all_four",
+    "test_the_3d_grid_is_a_scene_that_writes_nothing_by_itself",
+    "test_the_3d_grid_shows_a_subset_of_layers",
+}
+
+
+#: Names removed from `_SLOW_TESTS` because the tests themselves were deleted or
+#: renamed. Kept as a REGISTER, not a list to re-add: this set is asserted to be
+#: disjoint from the collected test names, so a stale entry cannot linger
+#: unnoticed. Plan 8.7 found two here that plan 8.5b's renames had orphaned --
+#: heavy pyvista tests that had silently moved into the fast lane.
+_RETIRED_SLOW_TESTS = {
+    "test_vtk_3d_writes_html_and_returns_iframe",     # -> the_3d_grid_is_a_scene...
+    "test_vtk_3d_shows_a_subset_of_layers",           # -> the_3d_grid_shows...
+    "test_views_runs_all_four",                       # `views()` deleted in 8.5a
 }
 
 
