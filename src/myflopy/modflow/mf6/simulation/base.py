@@ -615,13 +615,21 @@ class SimulationBase:
 
     @property
     def plot(self) -> ModelPlots:
-        """The plotting verbs for this model: ``map``, ``section``, ``surface``,
-        ``animate``, ``mosaic``.
+        """All six plotting verbs for this model.
+
+        ``map`` / ``section`` / ``surface`` / ``grid`` draw a picture of this
+        model; ``mosaic`` / ``animate`` are **combinators** that compose pictures
+        you already have, so their first argument is a collection rather than a
+        subject.
 
         ``model.plot.map(layer=0)`` is exactly ``myflopy.plot.map(model, layer=0)``
         -- one implementation, two spellings. Everything returned is a
         :class:`~myflopy.viz.Picture`, so it renders itself in Jupyter and answers
-        ``.fig`` / ``.show()`` / ``.save(path)`` / ``.html(path)``.
+        ``.fig`` / ``.show()`` / ``.save(path)`` / ``.html(path)``. There is never
+        a trailing ``.plot()``.
+
+        Each verb spells its parameters out rather than taking ``**kwargs``, so
+        an editor can complete them; see :class:`~myflopy.plot.ModelPlots`.
 
         Replaces ``cor()`` (now ``plot.map()``), ``section()`` (``plot.section()``)
         and ``srf.hds()``/``srf.lyr()`` (``plot.surface()``), each of which was a
@@ -629,11 +637,18 @@ class SimulationBase:
         the old one-line delegate to FloPy's ``MFSimulation.plot``; that renderer
         is still there as ``model.sim.plot(...)``.
 
+        See Also
+        --------
+        myflopy.plot : the same six verbs as free functions.
+
         Examples
         --------
         >>> model.plot.map(layer=0, contours=True).show()
         >>> model.plot.section(cells=[1653, 651]).save("section.png")
         >>> model.plot.surface(layer=0)
+        >>> model.plot.grid()                                    # the bare mesh
+        >>> model.plot.grid(pathlines=tracks, backend="vtk")     # 3-D scene
+        >>> model.plot.mosaic([a, b, c], ncols=2)
         """
 
         return ModelPlots(self)

@@ -3279,3 +3279,58 @@ same day, which is the useful part of the result.
        in CLAUDE.md is `<pkg>.<inputs|results>.<noun>.<verb>()`, so the
        static-array packages deviate from it. Pre-existing and out of scope
        here; recorded so it is not re-discovered as new.
+
+145. **Explicit signatures on the plotting verbs; a `**kwargs` tail kept (2026-08-24).**
+     The 8.7 docstring pass documented ~30 parameters for `plot.map` and the
+     user reported the IDE still showed `**kwargs`. Correct: PyCharm and Pylance
+     are static analyzers, so `__doc__`, `__signature__` and `functools.wraps`
+     all miss them. Only the `def` line reaches an editor. The verbs now name
+     their parameters; the bound namespace methods repeat them.
+     - **The duplication is the compromise.** `plot.map` and `ModelPlots.map`
+       carry the same 35 names. Generating one from the other would put them
+       back out of static reach, and a `.pyi` stub is ruled out by CLAUDE.md
+       §4.7.7. `test_the_bound_model_verb_mirrors_the_free_one` fails naming the
+       parameter that drifted, which is what makes the copies safe rather than
+       merely duplicated.
+     - **A `**kwargs` tail survives on every verb, deliberately.** Explicit
+       parameters are ADDITIVE: naming the common ones without keeping the tail
+       would break any call passing something unlisted. `map`'s tail is also
+       genuinely open — it reaches the `go.Choroplethmap` trace, whose names
+       Plotly owns and validates at render time.
+     - **Restated defaults are a real hazard**, so they are machine-checked.
+       `test_a_named_default_matches_the_link_that_owns_it` reads the expected
+       value off the forwarding target at runtime; nothing is hand-written. It
+       caught `show_layer_elevs` immediately: `_choropleth_factory` owns it with
+       `None` (resolve from the grid) while `Choro` declares `True`, and the
+       nearest link is the one a caller sees.
+     - **`FieldMappable`'s `field=` sugar stays `(*args, **kwargs)` on purpose.**
+       Measured: it dispatches to accessors with incompatible signatures —
+       `LakConnectionsExplorer.map` has no `per`, `DrnInput.map` takes `per`
+       positionally, `PRTCaptureView.map` has neither `per` nor `model`. One
+       merged signature could only be written by lying about some of them. Its
+       docstring now says so and points at the leaf. NOT a deferral: unifying
+       those accessors would flatten distinctions that carry meaning.
+     - Scoping correction worth keeping: the leaf verbs were assumed bare and
+       measured otherwise. `packages.npf.k.map`, `ghb.results.q.map`,
+       `model.hds.map` and the rest already resolve to concrete Explorer classes
+       with explicit typed parameters. Only the four namespace-level dispatchers
+       were bare.
+
+     Defects the work surfaced, all fixed in the same pass:
+     - `plot.grid` documented `layers`/`scale`/`color_by`/`cmap` under "Other
+       Parameters". Those live on `LayerBuildResult._vtk_plotter`, reachable
+       only via `stack.plot.grid()`; through `plot.grid` they raised. Meanwhile
+       the seven parameters it *does* accept (`vertical_exaggeration`,
+       `model_style`, ...) were undocumented, and `_vtk_plotter`'s
+       `width`/`height` were undocumented anywhere.
+     - `SimulationBase.plot` and `LayerStack.plot` property docstrings both
+       omitted `grid` from the verb list — added in 8.5b, never documented.
+     - `stack.plot.map(**kwargs)` silently DISCARDED its kwargs unless
+       `basemap=True`: the Matplotlib branch ignored them. Now raises naming them.
+     - `GridPlots.grid(**kwargs)` was a dead passthrough — `GridMesh` takes only
+       the grid, so every kwarg raised. Signature is now `grid(self)`.
+     - `_inherit_verb_docs` appended the free docstring behind a 70-dash rule,
+       which is malformed NumPy (a section underline with no title above it) and
+       made PyCharm drop structured rendering for the whole docstring. It now
+       splices sections into one well-formed docstring and drops the `source`
+       entry, which a bound verb does not take.

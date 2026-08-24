@@ -1919,6 +1919,44 @@ another fails.
 > Nothing failed -- the tests passed, in the wrong lane -- so heavy pyvista
 > exports had silently moved into the fast loop. Now guarded.
 
+### Stage 8.8 — signatures an editor can read (ADDED 2026-08-24)
+
+8.7 documented ~30 parameters for `plot.map`; the IDE still showed `**kwargs`.
+That is not a docstring problem. **PyCharm and Pylance are static analyzers** —
+they read the `def` line and never execute the module — so `__doc__`,
+`__signature__` and `functools.wraps` all miss them, and a `.pyi` stub is ruled
+out by CLAUDE.md §4.7.7. The only fix is naming the parameters in the `def`.
+
+Done for the five free verbs, the thirteen bound namespace methods, and
+`GridPlots`/`StackPlots`, each mirroring the default of whichever link in its
+forwarding chain owns the argument. A `**kwargs` tail stays on every verb so the
+change is purely additive.
+
+> **The `field=` sugar is a real exception, not a shortcut.** Measured before
+> assuming: `FieldMappable.map` dispatches to accessors with incompatible
+> signatures — `LakConnectionsExplorer.map` has no `per`, `DrnInput.map` takes
+> `per` positionally, `PRTCaptureView.map` has neither `per` nor `model`. One
+> merged signature could only be written by lying. It keeps `*args, **kwargs`
+> and its docstring sends the reader to the leaf.
+>
+> **The leaf verbs were already explicit** — assumed bare, measured otherwise.
+> `packages.npf.k.map`, `ghb.results.q.map` and `model.hds.map` all resolve to
+> concrete Explorer classes with typed parameters. Only the four namespace-level
+> dispatchers were bare, which shrank the stage considerably.
+>
+> Three anti-drift tests, each mutation-verified to fail by name: restated
+> defaults vs. their owning link, bound-vs-free parity, and documented-vs-accepted
+> in **both** directions. The default check caught `show_layer_elevs` on its
+> first run (`_choropleth_factory` owns it with `None`; `Choro` declares `True`).
+>
+> Five defects fell out of writing it, all fixed here: `plot.grid` documenting
+> four parameters that live on the layer-stack builder and are unreachable
+> through it; `model.plot`/`stack.plot` docstrings both omitting `grid`;
+> `stack.plot.map` silently discarding kwargs unless `basemap=True`;
+> `GridPlots.grid(**kwargs)` a dead passthrough; and `_inherit_verb_docs`
+> emitting malformed NumPy that made PyCharm drop structured rendering entirely.
+> Ledger 145.
+
 ### What is NOT in scope
 
 Files do not move. `package_plotting.py`, `package_surface_water.py`,

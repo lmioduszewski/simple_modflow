@@ -724,17 +724,28 @@ class LayerBuildResult:
     @property
     def plot(self) -> StackPlots:
         """The plotting verbs for this layer geometry: ``map``, ``section``,
-        ``surface``.
+        ``surface``, ``grid``.
 
         Same verbs as ``model.plot`` and ``vor.plot``, and everything returned is
         a :class:`~myflopy.viz.Picture`. A stack has no results and no time, so
         there is no ``animate``; ``qc()`` stays a report rather than becoming a
         picture, because it is text you read.
 
+        ``surface`` is a height field -- one contact as ``z(x, y)``. The layered
+        cell VOLUME is ``grid(backend="vtk")``, a different shape entirely.
+
         Replaces ``thickness_map()``/``preview()`` (now ``plot.map()``),
         ``cross_section()`` (``plot.section()``), ``surface_3d()``
-        (``plot.surface()``) and ``views()`` (compose what you want with
-        ``myflopy.plot.mosaic``).
+        (``plot.surface()``), ``vtk_3d()`` (``plot.grid()``) and ``views()``
+        (compose what you want with ``myflopy.plot.mosaic``).
+
+        Examples
+        --------
+        >>> stack.plot.map()                          # total thickness
+        >>> stack.plot.map("sand", basemap=True)      # one layer, on a basemap
+        >>> stack.plot.section(y=300)
+        >>> stack.plot.surface("all")
+        >>> stack.plot.grid(["sand", "clay"], scale=12)
         """
 
         return StackPlots(self)
@@ -807,6 +818,14 @@ class LayerSurface(Picture):
         return self._built
 
 
+#: `_vtk_plotter`'s own defaults, so `grid(backend="plotly")` can tell a value
+#: the caller chose from one it merely inherited. Mirrored, not imported, because
+#: the signature is the public contract and a test pins the two equal.
+_VTK_GRID_DEFAULTS = {
+    "color_by": "layer", "scale": 8, "cmap": "tab10", "width": 900, "height": 580,
+}
+
+
 class StackPlots:
     """The plotting verbs for layer geometry -- ``stack.plot.map()`` (plan 8.5a).
 
@@ -838,6 +857,25 @@ class StackPlots:
         Draws on the grid with no basemap by default, because a stack is often
         still on synthetic coordinates. ``basemap=True`` routes through the
         shared choropleth instead, for a grid that really is georeferenced.
+
+        Parameters
+        ----------
+        layer : str or int, optional
+            One layer by name or index. With none, total thickness.
+        basemap : bool, default False
+            Route through the shared choropleth (``vor.plot.map``) so the cells
+            sit on a web basemap. Requires a real CRS.
+        **kwargs
+            Choropleth styling, forwarded to :meth:`~myflopy.modflow.mf6.grid
+            .plotting.GridPlots.map`. **Only meaningful with ``basemap=True``**
+            -- the default renderer is Matplotlib and takes none of them.
+
+        Raises
+        ------
+        TypeError
+            If styling arguments are given without ``basemap=True``. They used
+            to be accepted and silently discarded, which quietly produced an
+            unstyled picture.
         """
 
         if basemap:
@@ -847,24 +885,117 @@ class StackPlots:
             # import and the exact-match ratchet only moves down. Same function
             # either way -- `vor.plot.map` is what the front door calls too.
             return GridPlots(self.result.vor).map(values=list(values), **kwargs)
+        if kwargs:
+            raise TypeError(
+                f"{', '.join(sorted(kwargs))} style the choropleth, which is "
+                f"only drawn with basemap=True; the default thickness map is "
+                f"Matplotlib and ignores them."
+            )
         return LayerThicknessMap(self.result, layer=layer)
 
-    def section(self, line=None, *, x=None, y=None, **kwargs) -> LayerSection:
-        """A filled, layer-coloured cross-section: ``stack.plot.section(y=300)``."""
+    def section(
+        self,
+        line=None,
+        *,
+        x=None,
+        y=None,
+        color_by: str = "layer",
+        cmap: str = "tab10",
+        show_grid: bool = True,
+        legend: bool = True,
+        title: str | None = None,
+        **kwargs,
+    ) -> LayerSection:
+        """A filled, layer-coloured cross-section: ``stack.plot.section(y=300)``.
 
-        return LayerSection(self.result, line, x=x, y=y, **kwargs)
+        Parameters
+        ----------
+        line : LineString or Path, optional
+            The section line. Alternatively give ``x=`` or ``y=`` for an
+            axis-aligned slice.
+        x, y : float, optional
+            Draw the section along a constant x or constant y.
+        color_by : str, default 'layer'
+            Cell scalar the fill is keyed to.
+        cmap : str, default 'tab10'
+            Colormap for that scalar.
+        show_grid : bool, default True
+            Draw cell edges over the fill.
+        legend : bool, default True
+            Include the layer legend.
+        title : str, optional
+            Plot title. Defaults to "Layer cross-section".
+        **kwargs
+            Forwarded to :class:`LayerSection`.
 
-    def surface(self, layer="top", **kwargs) -> LayerSurface:
+        Returns
+        -------
+        LayerSection
+            A Matplotlib :class:`~myflopy.viz.Picture`; ``.axes`` rather than
+            ``.fig``.
+        """
+
+        return LayerSection(
+            self.result, line, x=x, y=y, color_by=color_by, cmap=cmap,
+            show_grid=show_grid, legend=legend, title=title, **kwargs,
+        )
+
+    def surface(
+        self,
+        layer="top",
+        *,
+        resolution: int = 120,
+        colorscale: str = "Earth_r",
+        color_by: str | None = None,
+        opacity: float | None = None,
+        height: int | None = None,
+        **kwargs,
+    ) -> LayerSurface:
         """One or more contacts as an interactive 3-D surface.
 
         ``layer`` is a name, a list of names, or ``"all"``; discover them with
         ``result.surface_names``. That is a height field ``z(x, y)``; the layered
         grid VOLUME is :meth:`grid`, a different shape entirely.
+
+        Parameters
+        ----------
+        layer : str or list of str, default 'top'
+            Which contact(s) to draw. ``"all"`` draws every one.
+        resolution : int, default 120
+            Interpolation grid size per axis.
+        colorscale : str, default 'Earth_r'
+            Plotly colorscale for the height field.
+        color_by : str, optional
+            Colour by a scalar other than elevation.
+        opacity : float, optional
+            Surface opacity, useful when stacking several contacts.
+        height : int, optional
+            Figure height in pixels.
+        **kwargs
+            Forwarded to :class:`LayerSurface`.
+
+        Returns
+        -------
+        LayerSurface
+            A Plotly :class:`~myflopy.viz.Picture`.
         """
 
-        return LayerSurface(self.result, layer, **kwargs)
+        return LayerSurface(
+            self.result, layer, resolution=resolution, colorscale=colorscale,
+            color_by=color_by, opacity=opacity, height=height, **kwargs,
+        )
 
-    def grid(self, layers=None, *, backend: str = "vtk", **kwargs):
+    def grid(
+        self,
+        layers=None,
+        *,
+        backend: str = "vtk",
+        color_by: str = "layer",
+        scale: float = 8,
+        cmap: str = "tab10",
+        width: int = 900,
+        height: int = 580,
+    ):
         """The layered grid mesh itself.
 
         ``backend="vtk"`` (the default here) renders the cell VOLUME in 3-D,
@@ -873,22 +1004,59 @@ class StackPlots:
         ``backend="plotly"`` gives the flat 2-D mesh instead, the same picture as
         ``vor.plot.grid()``.
 
-        ``layers`` selects a subset by name or index; colours stay keyed to each
-        layer's position, so a subset looks the same as it does in the full stack.
-
         A ``backend`` switch is honest here because both branches draw the SAME
         subject -- this grid -- and differ only in renderer. That is why the 3-D
         volume is `grid`, not `surface`: `surface` means a height field.
+
+        Parameters
+        ----------
+        layers : str or int or list, optional
+            *(vtk only)* Which layers to show: a name, an index, or a list mixing
+            them. Colours stay keyed to each layer's position, so a subset looks
+            the same as it does in the full stack.
+        backend : {'vtk', 'plotly'}, default 'vtk'
+            ``'vtk'`` renders the 3-D volume and needs the ``viz3d`` extra;
+            ``'plotly'`` draws the flat 2-D mesh.
+        color_by : str, default 'layer'
+            *(vtk only)* Cell scalar to colour by.
+        scale : float, default 8
+            *(vtk only)* Vertical exaggeration.
+        cmap : str, default 'tab10'
+            *(vtk only)* Colormap for ``color_by``.
+        width, height : int, default 900, 580
+            *(vtk only)* Scene size in pixels.
+
+        Returns
+        -------
+        VtkScene or GridMesh
+            A :class:`~myflopy.viz.Picture` either way. ``VtkScene`` exposes
+            ``.scene`` instead of ``.fig``.
+
+        Raises
+        ------
+        ValueError
+            If ``backend`` is neither value, or if a vtk-only argument is given
+            with ``backend="plotly"``.
         """
 
+        scene_args = {"color_by": color_by, "scale": scale, "cmap": cmap,
+                      "width": width, "height": height}
         if backend == "plotly":
-            return GridPlots(self.result.vor).grid(**kwargs)
+            stray = [n for n, v in scene_args.items() if v != _VTK_GRID_DEFAULTS[n]]
+            if layers is not None:
+                stray.insert(0, "layers")
+            if stray:
+                raise ValueError(
+                    f"{', '.join(stray)} configure the 3-D scene; the flat mesh "
+                    f"has no use for them. Drop backend='plotly', or drop these."
+                )
+            return GridPlots(self.result.vor).grid()
         if backend != "vtk":
             raise ValueError(
                 f"backend must be 'vtk' or 'plotly', not {backend!r}."
             )
         return VtkScene(
-            self.result._vtk_plotter(layers, **kwargs),
+            self.result._vtk_plotter(layers, **scene_args),
             title="layered grid",
         )
 

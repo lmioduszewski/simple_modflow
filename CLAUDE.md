@@ -63,6 +63,17 @@ height field). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
 `.save(path)` / `.html(path)`, and never a trailing `.plot()`.
 `tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
 the stray verb, so adding one in one place and forgetting another is caught.
+**Never give a picture verb a bare `**kwargs`** (8.8, 2026-08-24): PyCharm and
+Pylance are STATIC — they read the `def` line and never run the module, so
+`__doc__`, `__signature__` and `functools.wraps` reach `help()` and reach no
+editor. Name the parameters, mirroring the default of whichever link in the
+forwarding chain owns each one, and keep a `**kwargs` tail only where it is
+genuinely open (Plotly trace names). The bound namespace method repeats the free
+verb's list; three tests fail by name if a default drifts, a bound copy falls
+behind, or a parameter is documented-but-unaccepted (or the reverse). A narrower
+scope may offer FEWER parameters, never other ones. The one exemption is the
+namespace-level `field=` sugar, which dispatches to accessors with incompatible
+signatures — it stays `*args, **kwargs` and points at the leaf.
 Runnable tour: `examples/mf6/notebooks/plotting_vocabulary_tour.ipynb`.
 RETIRED, do not reintroduce: `model.cor`, `model.srf`, `model.visualize`, the
 eleven `vor.*` plotting aliases, `stack.preview/views/vtk_3d/surface_3d`.
@@ -112,8 +123,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**1466 passed / 1 skipped**, 2026-08-01): `pytest -n 10` ≈ **55–90 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ 2m45s–3m40s; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**1609 passed / 1 skipped**, 2026-08-24): `pytest -n 10` ≈ **75 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **4m30s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+  Serial is ~3.7x the parallel run — that gap is the price of the `-n0`
+  pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
 - Tests share ONE session-scoped canonical model on

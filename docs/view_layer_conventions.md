@@ -73,6 +73,34 @@ answers depends on what that scope can know: a bare grid has no results, so no
 `tests/test_plot_vocabulary.py` pins each scope's set, and fails naming both the
 scope and the stray verb if one drifts.
 
+### Write the parameters into the `def`, not only the docstring
+
+**Never give a picture verb a bare `**kwargs`.** PyCharm and Pylance are static
+— they read the `def` line and never execute the module — so a forwarder shows
+the caller nothing no matter how thorough its docstring. `__signature__` and
+`functools.wraps` reach `help()` and neither reaches an editor, and a `.pyi` stub
+is ruled out here for the reason in CLAUDE.md §4.7.7 (a stub replaces the whole
+module for type checkers).
+
+So each verb names its parameters, with the exact default of whichever link in
+its forwarding chain owns that argument. The bound form repeats them. Keep a
+`**kwargs` tail **only where the tail is genuinely open** — `map`'s reaches the
+`go.Choroplethmap` trace, whose names Plotly owns.
+
+Two rules follow, both enforced:
+
+* A narrower scope may offer **fewer** parameters, never other ones. `vor.plot.map`
+  drops `per`/`layer`/`type` — a bare grid has no results — and what it drops
+  still rides the tail, so narrowing a signature never narrows what worked.
+* A parameter you document must be one you accept. `plot.grid` documented
+  `layers`/`scale`/`color_by`/`cmap` for three releases; those live on the
+  *layer-stack* builder and were never reachable through it.
+
+The exception is a verb that is genuinely polymorphic. The namespace-level
+`field=` sugar dispatches to accessors with incompatible signatures, so it keeps
+`(*args, field=None, **kwargs)` and its docstring says to call the leaf instead.
+That is a real property of the design, not a shortcut.
+
 ## Why this file exists
 
 The **spatial** half of the grammar was already decided and documented

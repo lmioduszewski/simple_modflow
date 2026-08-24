@@ -482,6 +482,40 @@ stack has no time.
 Pinned by `tests/test_plot_vocabulary.py`, which fails naming both the scope and
 the stray verb if one drifts.
 
+### The parameters are in the signature, not just the docstring
+
+Every verb spells its parameters out in the `def`. `plot.map` names 35 of them;
+`model.plot.map` names the same 35. That duplication is deliberate and is the
+only thing that works: **PyCharm and Pylance are static analyzers** — they read
+the `def` line and never execute the module, so `__signature__`, `functools.wraps`
+and a beautifully written docstring reach `help()` and reach no editor at all.
+A `**kwargs` forwarder shows the caller nothing.
+
+Each verb still keeps a `**kwargs` tail, but only where the tail is *genuinely*
+open — `map`'s rides through to the `go.Choroplethmap` trace, whose parameter
+names belong to Plotly and are validated at render time.
+
+Three tests keep the copies honest, and all three fail by name:
+
+| test | catches |
+|---|---|
+| `test_a_named_default_matches_the_link_that_owns_it` | a restated default that drifted from the function that owns it |
+| `test_the_bound_model_verb_mirrors_the_free_one` | a parameter added to `plot.map` and forgotten on `model.plot.map` |
+| `test_every_signature_parameter_is_documented` | accepted-but-undocumented **and** documented-but-not-accepted |
+
+Narrower scopes may offer *fewer* parameters, never other ones: `vor.plot.map`
+drops `per`/`layer`/`type` because a bare grid has no results to read. Anything
+dropped still rides the `**kwargs` tail, so narrowing a signature never narrowed
+what already worked.
+
+**One deliberate exception.** The namespace-level `field=` sugar —
+`packages.lak.results.map(field="stage")` — stays `(*args, field=None, **kwargs)`.
+It dispatches to accessors with genuinely incompatible signatures (a lake's
+`connections` map has no `per=`; `DrnInput.map` takes `per` positionally), so a
+single merged signature could only be produced by lying about one of them. Call
+the leaf — `packages.lak.results.stage.map(` — when you want completion; every
+leaf verb is explicit.
+
 ### Everything returned is a Picture
 
 ```python

@@ -61,6 +61,8 @@ eleven ``vor.*`` aliases, and deliberately shadows FloPy's inherited
 
 from __future__ import annotations
 
+import inspect
+
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import (
     GridMesh,
@@ -116,12 +118,65 @@ def _grid_of(source):
     return grid, has_results
 
 
-def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb IS `map`
+def map(      # noqa: A001 - the verb IS `map`
+    source,
+    /,
+    values=None,
+    *,
+    # -- which numbers ------------------------------------------------------
+    per: int | None = None,
+    kstpkper: tuple[int, int] | None = None,
+    per_timestep: str | int = "last",
+    layer: int = 0,
+    type: str = "hds",
+    # -- colour -------------------------------------------------------------
+    zmin: float | None = None,
+    zmax: float | None = None,
+    colorscale: str | list | tuple | None = None,
+    logscale: bool = False,
+    # -- contours -----------------------------------------------------------
+    contours: bool | str = False,
+    contour_values=None,
+    contour_levels: int | float | list = 10,
+    contour_color: str = "black",
+    contour_width: float = 1.5,
+    contour_name: str | None = None,
+    contour_clip: bool = True,
+    contour_resolution: int = 150,
+    contour_method: str = "linear",
+    # -- overlays and framing ------------------------------------------------
+    locs=None,
+    hillshade_path=None,
+    bgs: bool = False,
+    zoom: int = 13,
+    fit_bounds: bool = True,
+    bounds_padding: float = 0.05,
+    # -- hover ---------------------------------------------------------------
+    hover=None,
+    hover_layers: str | None = None,
+    hover_surfaces: bool | None = None,
+    hover_fields=None,
+    show_layer_elevs: bool | None = None,
+    show_mounding: bool = False,
+    hover_heads: bool = True,
+    hover_ks: bool = False,
+    custom_hover: dict | None = None,
+    # -- niche ---------------------------------------------------------------
+    rch_scale: float | None = None,
+    animation_kstpkpers=None,
+    **trace_kwargs,
+) -> Choro:
     """Draw a plan-view map of one value per grid cell.
 
     The single map verb. Contours, observation markers, a hillshade and particle
     pathlines are all **options** here rather than verbs of their own, because a
     map is a plan view whatever is drawn on it.
+
+    Every parameter below is spelled out in the signature rather than swept into
+    ``**kwargs``, so an editor can complete and type-check them. The defaults are
+    not restated here by hand -- each mirrors the default of whichever link in the
+    ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
+    ``test_plot_vocabulary`` fails if the two ever drift apart.
 
     Parameters
     ----------
@@ -139,6 +194,9 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
     kstpkper : tuple of (int, int), optional
         Exact ``(timestep, period)`` to read, as MODFLOW reports it. Use
         ``model.kstpkper`` to list what is available.
+    per_timestep : {'last', 'first'} or int, default 'last'
+        Which timestep WITHIN ``per`` to read, when a period has several. Ignored
+        when ``kstpkper`` names the timestep outright.
     layer : int, default 0
         Zero-based layer. Layer 0 is the top.
     type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
@@ -164,7 +222,9 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
     contour_levels : int or float or list of float, default 10
         A count of levels, a fixed interval, or explicit level values.
     contour_color : str, default 'black'
+        Line colour for the contour trace.
     contour_width : float, default 1.5
+        Line width for the contour trace.
     contour_name : str, optional
         Legend name for the contour trace.
     contour_clip : bool, default True
@@ -187,14 +247,6 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
         Fit the initial view to the grid extent rather than using ``zoom``.
     bounds_padding : float, default 0.05
         Fractional padding around the fitted bounds.
-    show_layer_elevs : bool, optional
-        Add model-top and per-layer-bottom rows to the hover. Defaults to
-        whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
-        because forcing it on a grid without them raises.
-    show_mounding : bool, default False
-        Add head-above-initial (mounding) to the hover.
-    hover_heads, hover_ks : bool
-        Include heads / hydraulic conductivity in the legacy flat hover.
     hover : HoverSpec, optional
         Replace the sectioned hover outright. See
         :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -204,13 +256,29 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
         Add the model-top / layer-bottom table to the sectioned hover.
     hover_fields : sequence of str, optional
         Extra columns to append to the hover.
+    show_layer_elevs : bool, optional
+        Add model-top and per-layer-bottom rows to the hover. Defaults to
+        whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+        because forcing it on a grid without them raises.
+    show_mounding : bool, default False
+        Add head-above-initial (mounding) to the hover.
+    hover_heads : bool, default True
+        Include heads in the legacy flat hover.
+    hover_ks : bool, default False
+        Include hydraulic conductivity in the legacy flat hover.
     custom_hover : dict, optional
         Legacy flat hover: ``{label: per-cell sequence}``. Supplying it
         suppresses the default sectioned hover.
-    **kwargs
+    rch_scale : float, optional
+        Multiplier applied to recharge values when ``type='rch'``.
+    animation_kstpkpers : sequence of tuple, optional
+        The output times ``.ani`` steps through. Defaults to every time the model
+        wrote.
+    **trace_kwargs
         Anything else rides through to the ``go.Choroplethmap`` trace --
         ``zmid``, ``colorbar``, ``reversescale``, ``showscale``. These are
-        validated LATE, by Plotly at render time, not here.
+        genuinely open-ended and Plotly owns their names, so they are validated
+        LATE, at render time, not here.
 
     Returns
     -------
@@ -238,68 +306,188 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
 
     vor, is_model = _grid_of(source)
     if is_model:
-        kwargs.setdefault("model", source)
+        trace_kwargs.setdefault("model", source)
     if values is not None:
-        kwargs["custom_zs"] = list(values)
-    return _choropleth_factory(vor, **kwargs)
+        trace_kwargs["custom_zs"] = list(values)
+    return _choropleth_factory(
+        vor,
+        per=per,
+        kstpkper=kstpkper,
+        layer=layer,
+        type=type,
+        zmin=zmin,
+        zmax=zmax,
+        colorscale=colorscale,
+        logscale=logscale,
+        zoom=zoom,
+        locs=locs,
+        custom_hover=custom_hover,
+        show_layer_elevs=show_layer_elevs,
+        show_mounding=show_mounding,
+        hover_heads=hover_heads,
+        hover_ks=hover_ks,
+        # Not named by the factory; these ride its own **choro_kwargs to `Choro`.
+        per_timestep=per_timestep,
+        contours=contours,
+        contour_values=contour_values,
+        contour_levels=contour_levels,
+        contour_color=contour_color,
+        contour_width=contour_width,
+        contour_name=contour_name,
+        contour_clip=contour_clip,
+        contour_resolution=contour_resolution,
+        contour_method=contour_method,
+        hillshade_path=hillshade_path,
+        bgs=bgs,
+        fit_bounds=fit_bounds,
+        bounds_padding=bounds_padding,
+        hover=hover,
+        hover_layers=hover_layers,
+        hover_surfaces=hover_surfaces,
+        hover_fields=hover_fields,
+        rch_scale=rch_scale,
+        animation_kstpkpers=animation_kstpkpers,
+        **trace_kwargs,
+    )
 
 
-def section(source, /, **kwargs):
+#: Section arguments that only mean something with results behind them. A bare
+#: grid has no periods and no field to interpolate, so `GridSection` accepts none
+#: of them -- naming them lets the grid branch say so instead of raising an
+#: opaque TypeError from a constructor the caller never named.
+def _asked_for(value, default) -> bool:
+    """Did the caller actually supply this argument?
+
+    Not simply ``value != default``: ``cells`` and ``layer`` accept sequences,
+    and a numpy array compared against ``None`` returns an ELEMENTWISE array,
+    which raises "truth value is ambiguous" the moment it is used in a boolean
+    context. An array is never a default, so treat that as supplied.
+    """
+
+    if value is default:
+        return False
+    try:
+        return bool(value != default)
+    except ValueError:
+        return True
+
+
+#: name -> the default that means "not asked for". `GridSection.__init__` takes
+#: `(vor, line)` and nothing else, so every one of these is model-only.
+_MODEL_ONLY_SECTION_ARGS = {
+    "cells": None,
+    "per": None,
+    "kstpkper": None,
+    "layer": 0,
+    "x_or_y": "x",
+    "spacing": 10,
+    "num_points": 100,
+    "interpolate": False,
+    "use_rbf": True,
+    "interpolator": None,
+    "extrapolate_beyond_section_ends": False,
+    "show_model_top": True,
+    "show_model_btm": False,
+    "surf_type": "hds",
+    "section_name": None,
+    "clip": None,
+    "animation_kstpkpers": None,
+}
+
+
+def section(
+    source,
+    /,
+    line=None,
+    *,
+    cells=None,
+    per: int | None = None,
+    kstpkper: tuple[int, int] | None = None,
+    layer: int | list[int] = 0,
+    x_or_y: str = "x",
+    spacing: int = 10,
+    num_points: int = 100,
+    interpolate: bool = False,
+    use_rbf: bool = True,
+    interpolator: str | None = None,
+    extrapolate_beyond_section_ends: bool = False,
+    show_model_top: bool = True,
+    show_model_btm: bool = False,
+    surf_type: str = "hds",
+    section_name: str | None = None,
+    clip=None,
+    animation_kstpkpers=None,
+    **kwargs,
+):
     """Draw a vertical slice through a model's results, or a grid's geometry.
 
     Through a MODEL this is the results section -- the field against distance
     along the line. Through a bare GRID it is the geometry section: layers and
     cell edges, no results. They are different classes because they answer
-    different questions.
+    different questions, and **most arguments below only apply to the model
+    branch** -- they are marked. A grid takes ``line`` and nothing else.
 
     Parameters
     ----------
     source : SimulationBase or VoronoiGridPlus
         Positional only. A model gives results; a grid gives geometry.
-    cells : int or list of int, optional
-        Cell indices defining the section path, in order. Mutually exclusive
-        with ``line``.
     line : LineString or Path, optional
-        The section line as a geometry or a vector file. For a bare grid this
-        is the only way to specify the path, and it is positional.
+        The section line as a geometry or a vector file. Positional, so
+        ``plot.section(vor, line)`` reads naturally. For a bare grid this is the
+        only way to specify the path. Mutually exclusive with ``cells``.
+    cells : int or list of int, optional
+        *(model only)* Cell indices defining the section path, in order.
     per : int, optional
-        Stress period (0-based). Mutually exclusive with ``kstpkper``.
+        *(model only)* Stress period (0-based). Mutually exclusive with
+        ``kstpkper``.
     kstpkper : tuple of (int, int), optional
-        Exact ``(timestep, period)``.
+        *(model only)* Exact ``(timestep, period)``.
     layer : int or list of int, default 0
-        Layer(s) to draw. A list overlays several.
+        *(model only)* Layer(s) to draw. A list overlays several.
     x_or_y : {'x', 'y'}, default 'x'
         Which coordinate becomes the horizontal axis.
     spacing : int, default 10
-        Sample spacing along the line, in model units.
+        *(model only)* Sample spacing along the line, in model units.
     num_points : int, default 100
-        Number of samples when interpolating.
+        *(model only)* Number of samples when interpolating.
     interpolate : bool, default False
-        Interpolate between cell centers rather than stepping cell to cell.
+        *(model only)* Interpolate between cell centers rather than stepping
+        cell to cell.
     use_rbf : bool, default True
-        Use radial-basis interpolation when ``interpolate`` is True.
+        *(model only)* Use radial-basis interpolation when ``interpolate`` is
+        True.
     interpolator : str, optional
-        Override the interpolation method by name.
+        *(model only)* Override the interpolation method by name.
     extrapolate_beyond_section_ends : bool, default False
-        Extend the section past the first and last cell centers.
+        *(model only)* Extend the section past the first and last cell centers.
     show_model_top : bool, default True
-        Draw the model-top profile.
+        *(model only)* Draw the model-top profile.
     show_model_btm : bool, default False
-        Draw layer-bottom profiles.
+        *(model only)* Draw layer-bottom profiles.
     surf_type : {'hds', 'lyr'}, default 'hds'
-        Section the head field, or the layer elevations.
+        *(model only)* Section the head field, or the layer elevations.
     section_name : str, optional
-        Legend name for the traces.
+        *(model only)* Legend name for the traces.
     clip : Path or geometry, optional
-        Restrict the section to cells intersecting this region.
+        *(model only)* Restrict the section to cells intersecting this region.
     animation_kstpkpers : sequence of tuple, optional
-        The periods ``.ani`` steps through; defaults to every output time.
+        *(model only)* The periods ``.ani`` steps through; defaults to every
+        output time.
+    **kwargs
+        Forwarded to the underlying section class.
 
     Returns
     -------
     XSection or GridSection
         A :class:`~myflopy.viz.Picture`. ``XSection`` (model) also carries
         ``.ani``; both answer ``.plot_mpl()``.
+
+    Raises
+    ------
+    ValueError
+        If a model-only argument is given for a bare grid. It names the
+        arguments, because the alternative is a ``TypeError`` from a constructor
+        the caller never mentioned.
 
     See Also
     --------
@@ -316,11 +504,70 @@ def section(source, /, **kwargs):
 
     vor, is_model = _grid_of(source)
     if is_model:
-        return XSection(model=source, **kwargs)
-    return GridSection(vor=vor, **kwargs)
+        return XSection(
+            model=source,
+            line=line,
+            cells=cells,
+            per=per,
+            kstpkper=kstpkper,
+            layer=layer,
+            x_or_y=x_or_y,
+            spacing=spacing,
+            num_points=num_points,
+            interpolate=interpolate,
+            use_rbf=use_rbf,
+            interpolator=interpolator,
+            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
+            show_model_top=show_model_top,
+            show_model_btm=show_model_btm,
+            surf_type=surf_type,
+            section_name=section_name,
+            clip=clip,
+            animation_kstpkpers=animation_kstpkpers,
+            **kwargs,
+        )
+
+    asked = {
+        "cells": cells, "per": per, "kstpkper": kstpkper, "layer": layer,
+        "x_or_y": x_or_y, "spacing": spacing, "num_points": num_points,
+        "interpolate": interpolate, "use_rbf": use_rbf,
+        "interpolator": interpolator,
+        "extrapolate_beyond_section_ends": extrapolate_beyond_section_ends,
+        "show_model_top": show_model_top, "show_model_btm": show_model_btm,
+        "surf_type": surf_type, "section_name": section_name, "clip": clip,
+        "animation_kstpkpers": animation_kstpkpers,
+    }
+    given = [
+        name for name, value in asked.items()
+        if _asked_for(value, _MODEL_ONLY_SECTION_ARGS[name])
+    ]
+    if given:
+        raise ValueError(
+            f"{', '.join(given)} need a model's results; a bare grid section "
+            f"draws geometry only. Pass a model as the first argument, or drop "
+            f"these and give just the line."
+        )
+    return GridSection(vor=vor, line=line, **kwargs)
 
 
-def surface(source, /, **kwargs) -> InterpolatedSurface:
+def surface(
+    source,
+    /,
+    *,
+    layer: int = 0,
+    per: int | None = None,
+    kstpkper: tuple[int, int] | None = None,
+    surf_type: str = "hds",
+    resolution: int = 1000,
+    use_rbf: bool = False,
+    interpolator: str | None = None,
+    clip=None,
+    crs: str | None = None,
+    xs=None,
+    ys=None,
+    zs=None,
+    **kwargs,
+) -> InterpolatedSurface:
     """Draw a 3-D interpolated surface -- a height field ``z(x, y)``.
 
     Always Plotly, and always a height field. The 3-D grid VOLUME and 3-D
@@ -353,6 +600,9 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
         Override the grid's CRS.
     xs, ys, zs : array-like, optional
         Supply the point cloud directly instead of reading it from a model.
+    **kwargs
+        Forwarded to :class:`~myflopy.modflow.mf6.grid.interpolated_surface
+        .InterpolatedSurface`.
 
     Returns
     -------
@@ -372,12 +622,54 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
     """
 
     vor, is_model = _grid_of(source)
+    common = dict(
+        layer=layer,
+        per=per,
+        kstpkper=kstpkper,
+        surf_type=surf_type,
+        resolution=resolution,
+        use_rbf=use_rbf,
+        interpolator=interpolator,
+        clip=clip,
+        crs=crs,
+        xs=xs,
+        ys=ys,
+        zs=zs,
+    )
     if is_model:
-        return InterpolatedSurface(model=source, **kwargs)
-    return InterpolatedSurface(vor=vor, **kwargs)
+        return InterpolatedSurface(model=source, **common, **kwargs)
+    return InterpolatedSurface(vor=vor, **common, **kwargs)
 
 
-def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
+#: name -> "not asked for" default, for the 3-D scene builder. Same purpose as
+#: `_MODEL_ONLY_SECTION_ARGS`: the plotly branch draws a flat mesh and accepts
+#: none of these, so silently dropping them would be worse than saying so.
+_VTK_ONLY_GRID_ARGS = {
+    "vertical_exaggeration": 1.0,
+    "model_style": "wireframe",
+    "model_opacity": 0.25,
+    "pathline_cmap": "viridis",
+    "pathline_width": 4.0,
+    "show_edges": True,
+    "off_screen": True,
+}
+
+
+def grid(
+    source,
+    /,
+    *,
+    backend: str = "plotly",
+    pathlines=None,
+    vertical_exaggeration: float = 1.0,
+    model_style: str = "wireframe",
+    model_opacity: float = 0.25,
+    pathline_cmap: str = "viridis",
+    pathline_width: float = 4.0,
+    show_edges: bool = True,
+    off_screen: bool = True,
+    **kwargs,
+):
     """Draw the mesh itself -- flat in 2-D, or the layered volume in 3-D.
 
     The one picture :func:`map` cannot give you. A choropleth colours cells
@@ -403,18 +695,23 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
         Requires ``backend="vtk"``; in plan view the equivalent is
         ``map(pathlines=...)``. Passing it with ``backend="plotly"`` raises.
 
-    Other Parameters
-    ----------------
-    layers : str or int or list, optional
-        (``backend="vtk"`` on a layer stack.) Which layers to show: a name, an
-        index, or a list mixing them. Colours stay keyed to each layer's
-        position, so a subset looks the same as it does in the full stack.
-    scale : float, default 8
-        (``backend="vtk"``.) Vertical exaggeration.
-    color_by : str, default 'layer'
-        (``backend="vtk"``.) Cell scalar to colour by.
-    cmap : str, default 'tab10'
-        (``backend="vtk"``.) Colormap for that scalar.
+    vertical_exaggeration : float, default 1.0
+        *(vtk only)* Multiplier on z, to make a thin model legible.
+    model_style : {'wireframe', 'surface', 'points'}, default 'wireframe'
+        *(vtk only)* How the grid itself is drawn beneath the tracks.
+    model_opacity : float, default 0.25
+        *(vtk only)* Opacity of the grid, so tracks inside it stay visible.
+    pathline_cmap : str, default 'viridis'
+        *(vtk only)* Colormap for the time-coloured tubes.
+    pathline_width : float, default 4.0
+        *(vtk only)* Tube width.
+    show_edges : bool, default True
+        *(vtk only)* Draw cell edges on the mesh.
+    off_screen : bool, default True
+        *(vtk only)* Render without opening a window -- the right default in a
+        notebook or on a headless machine.
+    **kwargs
+        Forwarded to the backend's builder.
 
     Returns
     -------
@@ -427,13 +724,17 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
     ------
     ValueError
         If ``backend`` is neither ``'plotly'`` nor ``'vtk'``, if ``pathlines``
-        is given with the plotly backend, or if the VTK backend is asked for
-        without either pathlines or a layer stack.
+        or any ``vtk only`` argument above is given with the plotly backend, or
+        if the VTK backend is asked for without either pathlines or a layer
+        stack.
 
     See Also
     --------
     map : values over the cells, on a basemap.
     surface : a 3-D height field, which is a different shape.
+    myflopy.layers.StackPlots.grid : the LAYER-stack 3-D volume, which takes
+        ``layers``/``scale``/``color_by``/``cmap`` -- a different builder, and
+        not reachable through this function.
 
     Examples
     --------
@@ -444,11 +745,29 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
     >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
     """
 
+    scene_args = {
+        "vertical_exaggeration": vertical_exaggeration,
+        "model_style": model_style,
+        "model_opacity": model_opacity,
+        "pathline_cmap": pathline_cmap,
+        "pathline_width": pathline_width,
+        "show_edges": show_edges,
+        "off_screen": off_screen,
+    }
+
     if backend == "plotly":
         if pathlines is not None:
             raise ValueError(
                 "pathlines are only drawn by the 3-D scene; pass backend='vtk' "
                 "for tubes over the grid, or use map(pathlines=...) in plan view."
+            )
+        # Named but not accepted by the flat mesh. Forwarding them would raise a
+        # TypeError from `GridMesh`; dropping them silently would be worse still.
+        stray = [n for n, v in scene_args.items() if _asked_for(v, _VTK_ONLY_GRID_ARGS[n])]
+        if stray:
+            raise ValueError(
+                f"{', '.join(stray)} configure the 3-D scene; the flat mesh has "
+                f"no use for them. Pass backend='vtk', or drop them."
             )
         vor, _ = _grid_of(source)
         return GridMesh(vor, **kwargs)
@@ -460,10 +779,18 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
             "plot.grid(backend='vtk') needs either pathlines= (a model's particle "
             "tracks) or a layer stack -- use stack.plot.grid() for layer geometry."
         )
-    return build_particle_tracking_scene(source, pathlines, **kwargs)
+    return build_particle_tracking_scene(source, pathlines, **scene_args, **kwargs)
 
 
-def animate(frames, *, backend: str = "plotly", title=None, **kwargs):
+def animate(
+    frames,
+    *,
+    backend: str = "plotly",
+    title=None,
+    dpi: int = 140,
+    interval_ms: int = 700,
+    **kwargs,
+):
     """Flip through a sequence of pictures.
 
     A **combinator**, like :func:`mosaic` -- its first argument is the frames,
@@ -487,9 +814,11 @@ def animate(frames, *, backend: str = "plotly", title=None, **kwargs):
     title : str, optional
         Figure title (plotly) or document title (png).
     dpi : int, default 140
-        (``backend="png"``.) Raster resolution per frame.
+        *(png only)* Raster resolution per frame.
     interval_ms : int, default 700
-        (``backend="png"``.) Milliseconds per frame during playback.
+        *(png only)* Milliseconds per frame during playback.
+    **kwargs
+        Forwarded to the backend's animation class.
 
     Returns
     -------
@@ -525,10 +854,42 @@ def animate(frames, *, backend: str = "plotly", title=None, **kwargs):
     """
 
     if backend == "plotly":
+        # A live plotly figure has no raster step, so these two mean nothing to
+        # it. `FrameAnimation` would raise TypeError naming an argument the
+        # caller never wrote; say which backend they belong to instead.
+        stray = [
+            n for n, v, default in
+            (("dpi", dpi, 140), ("interval_ms", interval_ms, 700))
+            if v != default
+        ]
+        if stray:
+            raise ValueError(
+                f"{', '.join(stray)} configure the rasterised slider; the live "
+                f"plotly figure has no frames to rasterise. Pass backend='png'."
+            )
         return FrameAnimation(frames, title=title, **kwargs)
     if backend == "png":
-        return SliderAnimation(frames, title=title, **kwargs)
+        return SliderAnimation(
+            frames, title=title, dpi=dpi, interval_ms=interval_ms, **kwargs
+        )
     raise ValueError(f"backend must be 'plotly' or 'png', not {backend!r}.")
+
+
+def _bound_args(local_vars: dict, tail: str) -> dict:
+    """The named arguments of a bound verb, ready to forward to the free one.
+
+    Called as the FIRST statement of each bound verb, so ``locals()`` holds
+    exactly ``self``, the named parameters, and the ``**kwargs`` tail -- nothing
+    else has been assigned yet.
+
+    Why not retype the names in the call? Because each bound verb mirrors thirty-
+    odd parameters of its free counterpart, and a forwarding list written out by
+    hand is a second place to forget one. The signature stays explicit (that is
+    the whole point -- an editor reads the ``def``), while the body cannot drift
+    from it.
+    """
+
+    return {k: v for k, v in local_vars.items() if k not in ("self", tail)}
 
 
 class ModelPlots:
@@ -546,6 +907,12 @@ class ModelPlots:
     A fresh instance per access, like ``model.packages``: models are rehydrated
     via ``cls.__new__`` in ``from_built_run``, so a memoized namespace could
     outlive the state it closed over.
+
+    Each verb repeats its free counterpart's parameters in full rather than
+    taking ``**kwargs``. That duplication is deliberate: PyCharm and Pylance are
+    static, so a ``**kwargs`` forwarder shows the caller nothing, no matter how
+    good the docstring is. ``test_plot_vocabulary`` asserts each bound signature
+    equals the free one minus ``source``, so the copies cannot drift.
     """
 
     def __init__(self, model):
@@ -560,30 +927,130 @@ class ModelPlots:
 
     # The bare names below resolve to this module's functions, not to these
     # methods -- class scope is not in a method's name-lookup chain.
-    def map(self, values=None, **kwargs) -> Choro:      # noqa: A003 - the verb IS `map`
+    def map(      # noqa: A003 - the verb IS `map`
+        self,
+        values=None,
+        *,
+        per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
+        per_timestep: str | int = "last",
+        layer: int = 0,
+        type: str = "hds",
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        locs=None,
+        hillshade_path=None,
+        bgs: bool = False,
+        zoom: int = 13,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        hover=None,
+        hover_layers: str | None = None,
+        hover_surfaces: bool | None = None,
+        hover_fields=None,
+        show_layer_elevs: bool | None = None,
+        show_mounding: bool = False,
+        hover_heads: bool = True,
+        hover_ks: bool = False,
+        custom_hover: dict | None = None,
+        rch_scale: float | None = None,
+        animation_kstpkpers=None,
+        **trace_kwargs,
+    ) -> Choro:
         """This model's plan-view map. See :func:`myflopy.plot.map`."""
 
-        return map(self.model, values=values, **kwargs)
+        return map(self.model, **_bound_args(locals(), "trace_kwargs"), **trace_kwargs)
 
-    def section(self, **kwargs) -> XSection:
+    def section(
+        self,
+        line=None,
+        *,
+        cells=None,
+        per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
+        layer: int | list[int] = 0,
+        x_or_y: str = "x",
+        spacing: int = 10,
+        num_points: int = 100,
+        interpolate: bool = False,
+        use_rbf: bool = True,
+        interpolator: str | None = None,
+        extrapolate_beyond_section_ends: bool = False,
+        show_model_top: bool = True,
+        show_model_btm: bool = False,
+        surf_type: str = "hds",
+        section_name: str | None = None,
+        clip=None,
+        animation_kstpkpers=None,
+        **kwargs,
+    ) -> XSection:
         """A vertical slice through this model. See :func:`myflopy.plot.section`."""
 
-        return section(self.model, **kwargs)
+        return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
 
-    def surface(self, **kwargs) -> InterpolatedSurface:
+    def surface(
+        self,
+        *,
+        layer: int = 0,
+        per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
+        surf_type: str = "hds",
+        resolution: int = 1000,
+        use_rbf: bool = False,
+        interpolator: str | None = None,
+        clip=None,
+        crs: str | None = None,
+        xs=None,
+        ys=None,
+        zs=None,
+        **kwargs,
+    ) -> InterpolatedSurface:
         """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`."""
 
-        return surface(self.model, **kwargs)
+        return surface(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
 
-    def grid(self, *, backend: str = "plotly", pathlines=None, **kwargs):
+    def grid(
+        self,
+        *,
+        backend: str = "plotly",
+        pathlines=None,
+        vertical_exaggeration: float = 1.0,
+        model_style: str = "wireframe",
+        model_opacity: float = 0.25,
+        pathline_cmap: str = "viridis",
+        pathline_width: float = 4.0,
+        show_edges: bool = True,
+        off_screen: bool = True,
+        **kwargs,
+    ):
         """This model's mesh -- flat, or the 3-D volume with particle tracks.
 
         See :func:`myflopy.plot.grid`.
         """
 
-        return grid(self.model, backend=backend, pathlines=pathlines, **kwargs)
+        return grid(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
 
-    def animate(self, frames, **kwargs):
+    def animate(
+        self,
+        frames,
+        *,
+        backend: str = "plotly",
+        title=None,
+        dpi: int = 140,
+        interval_ms: int = 700,
+        **kwargs,
+    ):
         """Flip through pictures. See :func:`myflopy.plot.animate`.
 
         Subject-free, like :meth:`mosaic` -- it animates the frames you hand it,
@@ -592,9 +1059,18 @@ class ModelPlots:
         ``model.hds.animate(kind="map", over="period")``.
         """
 
-        return animate(frames, **kwargs)
+        return animate(**_bound_args(locals(), "kwargs"), **kwargs)
 
-    def mosaic(self, panels, **kwargs):
+    def mosaic(
+        self,
+        panels,
+        *,
+        ncols: int = 3,
+        title: str | None = None,
+        diff: bool = False,
+        sync_views: bool = True,
+        colorbar=None,
+    ):
         """Compose any pictures into one figure. See :func:`myflopy.viz.mosaic`.
 
         Subject-free -- it takes the panels you hand it, which need not all come
@@ -602,23 +1078,89 @@ class ModelPlots:
         place from a model you already have.
         """
 
-        return mosaic(panels, **kwargs)
+        return mosaic(
+            panels,
+            ncols=ncols,
+            title=title,
+            diff=diff,
+            sync_views=sync_views,
+            colorbar=colorbar,
+        )
 
 
 # --- one docstring per verb, shown wherever the verb appears -------------------
+_SECTION_HEADS = (
+    "Parameters", "Other Parameters", "Returns", "Yields", "Raises", "Warns",
+    "See Also", "Notes", "References", "Examples",
+)
+
+
+def _split_sections(doc: str) -> tuple[str, str]:
+    """Split a NumPy docstring into (summary + prose, the sectioned remainder).
+
+    The split point is the first section heading -- a known title on its own
+    line with a dashed underline beneath it.
+    """
+
+    lines = doc.splitlines()
+    for i, line in enumerate(lines[:-1]):
+        stripped = line.strip()
+        underline = lines[i + 1].strip()
+        if (
+            stripped in _SECTION_HEADS
+            and underline
+            and set(underline) == {"-"}
+            and len(underline) >= len(stripped)
+        ):
+            return "\n".join(lines[:i]).rstrip(), "\n".join(lines[i:])
+    return doc.rstrip(), ""
+
+
+def _drop_parameter(sections: str, name: str) -> str:
+    """Remove one entry from a Parameters block -- its head line and its body.
+
+    A bound verb already supplies ``source``; leaving it documented tells the
+    reader to pass an argument the signature does not have.
+    """
+
+    lines = sections.splitlines()
+    kept, skipping = [], False
+    for line in lines:
+        head = line.split(":")[0].strip()
+        starts_entry = line[:1].strip() != "" and not line.startswith(" ")
+        if starts_entry and (head == name or head.startswith(f"{name} ")):
+            skipping = True
+            continue
+        if skipping:
+            # Continuation lines of the dropped entry are indented; anything at
+            # column 0 begins the next entry (or the next section) and ends it.
+            if line.startswith(" ") or not line.strip():
+                continue
+            skipping = False
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _inherit_verb_docs(namespace) -> None:
-    """Append each free verb's full docstring to its bound counterpart.
+    """Give each bound verb its free counterpart's reference, as ONE docstring.
 
     `model.plot.map(` is what an editor shows you, and a bound method whose
     docstring is "See :func:`myflopy.plot.map`" is a dead end at exactly the
     moment you wanted the parameter list. Duplicating the text onto thirteen
-    bound methods would drift within a release, so the bound docstring keeps its
-    own short note about what binding means and the full reference is appended
-    from the single source.
+    bound methods would drift within a release, so the prose is written once on
+    the free verb and re-headed here.
 
-    Runtime introspection -- `help()`, Jupyter's `?`, and most editor hovers --
-    reads `__doc__`, so this reaches them. A purely static reader still sees the
-    short source docstring, which is why that is written to stand alone.
+    Spliced rather than APPENDED. The previous version concatenated the two
+    docstrings behind a row of dashes, which is malformed NumPy -- a dashed line
+    is a section underline, and one with no title above it makes the whole
+    docstring unparseable, so PyCharm drops structured rendering and shows the
+    lot as plain text. Here the bound summary replaces the free summary and the
+    sections carry over untouched, which is a single well-formed docstring.
+
+    Runtime introspection (`help()`, Jupyter's `?`, most editor hovers) reads
+    `__doc__`, so this reaches them. A purely static reader sees only the short
+    source docstring, which is why that is written to stand alone -- and why the
+    signature, which static readers DO see, is explicit rather than `**kwargs`.
     """
 
     for verb in ("map", "section", "surface", "grid", "mosaic", "animate"):
@@ -626,8 +1168,16 @@ def _inherit_verb_docs(namespace) -> None:
         free = globals().get(verb)
         if method is None or free is None or not free.__doc__:
             continue
-        own = (method.__doc__ or "").strip()
-        method.__doc__ = f"{own}\n\n{'-' * 70}\nFull reference (`myflopy.plot.{verb}`):\n\n{free.__doc__}"
+        own = inspect.cleandoc(method.__doc__ or "").strip()
+        prose, sections = _split_sections(inspect.cleandoc(free.__doc__))
+        if not sections:
+            continue
+        # Keep the free verb's extended prose, drop its summary line: the bound
+        # method's own summary says what binding this subject means.
+        extended = "\n".join(prose.splitlines()[1:]).strip()
+        sections = _drop_parameter(sections, "source")
+        parts = [own, extended, sections, f"Bound form of :func:`myflopy.plot.{verb}`."]
+        method.__doc__ = "\n\n".join(p for p in parts if p)
 
 
 _inherit_verb_docs(ModelPlots)

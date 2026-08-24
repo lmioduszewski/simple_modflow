@@ -360,12 +360,40 @@ class GridPlots:
 
         return f"GridPlots({getattr(self.vor, 'ncpl', '?')} cells: map, section, grid)"
 
-    def __call__(self, **kwargs) -> GridMesh:
+    def __call__(self) -> GridMesh:
         """``vor.plot()`` -> the mesh. See :meth:`grid`."""
 
-        return self.grid(**kwargs)
+        return self.grid()
 
-    def map(self, values=None, *, select=None, **kwargs) -> Choro:
+    def map(
+        self,
+        values=None,
+        *,
+        select=None,
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        locs=None,
+        hillshade_path=None,
+        bgs: bool = False,
+        zoom: int = 13,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        show_layer_elevs: bool | None = None,
+        custom_hover: dict | None = None,
+        hover=None,
+        **trace_kwargs,
+    ) -> Choro:
         """A plan-view map of this grid, on a basemap.
 
         ``values`` is any per-cell array; with none, cells are keyed by node id
@@ -375,11 +403,42 @@ class GridPlots:
 
         Requires a CRS, because the basemap does. Use :meth:`grid` for a grid
         that does not have one yet.
+
+        A DELIBERATE SUBSET of :func:`myflopy.plot.map`. Everything omitted --
+        ``per``, ``kstpkper``, ``layer``, ``type``, ``show_mounding``, the
+        sectioned-hover knobs -- reads a model's results, and a bare grid has
+        none, so advertising them here would promise something this scope cannot
+        do. They still ride the ``**trace_kwargs`` tail if you pass one, because
+        narrowing the signature should not narrow what already worked.
         """
 
-        if values is not None:
-            kwargs["custom_zs"] = list(values)
-        picture = _choropleth_factory(self.vor, **kwargs)
+        picture = _choropleth_factory(
+            self.vor,
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=colorscale,
+            logscale=logscale,
+            zoom=zoom,
+            locs=locs,
+            custom_hover=custom_hover,
+            show_layer_elevs=show_layer_elevs,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            hillshade_path=hillshade_path,
+            bgs=bgs,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            hover=hover,
+            **({"custom_zs": list(values)} if values is not None else {}),
+            **trace_kwargs,
+        )
         if select is not None:
             if isinstance(select, (str, Path)) or hasattr(select, "geom_type"):
                 select = self.vor.get_vor_cells_as_series(select).to_list()
@@ -395,7 +454,12 @@ class GridPlots:
 
         return _grid_section_factory(self.vor, line=line)
 
-    def grid(self, **kwargs) -> GridMesh:
-        """The bare mesh: cell edges, no values, no basemap, no CRS needed."""
+    def grid(self) -> GridMesh:
+        """The bare mesh: cell edges, no values, no basemap, no CRS needed.
 
-        return GridMesh(self.vor, **kwargs)
+        Takes nothing: the mesh is fully determined by the grid. The ``**kwargs``
+        that used to sit here reached ``GridMesh(vor)``, which accepts no other
+        argument, so every one of them raised.
+        """
+
+        return GridMesh(self.vor)

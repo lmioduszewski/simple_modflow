@@ -1910,29 +1910,64 @@ class FieldMappable:
     def map(self, *args, field=None, **kwargs):
         """Map one result/input field (``field=`` selects it; default otherwise).
 
-        Extra positional/keyword args pass through to the field's ``map`` -- e.g.
-        a group namespace forwards a positional model name: ``results.map("F9b")``.
+        **The accepted arguments depend on ``field=``**, which is why this takes
+        ``*args, **kwargs`` while every leaf verb is explicit. ``ns.map()`` is
+        sugar for ``ns.<field>.map()``, and the accessors it dispatches to are
+        genuinely different pictures with genuinely different knobs -- a lake's
+        ``connections`` map takes ``lake=``/``value_column=`` and has no ``per``;
+        a budget map takes ``per=``/``agg=``. Collapsing them into one signature
+        would have to either drop arguments or invent ones that raise.
+
+        So: **for completion and type checking, call the leaf** --
+        ``ns.stage.map(`` shows its real signature, this does not. Use
+        :meth:`field_names` to see the choices.
+
+        Extra positional/keyword args pass through -- e.g. a group namespace
+        forwards a positional model name: ``results.map("F9b")``.
+
+        Examples
+        --------
+        >>> ns.field_names()                 # ['q', 'stage', 'stage_change']
+        >>> ns.map()                         # the default field
+        >>> ns.map(field="stage")            # same as ns.stage.map()
+        >>> ns.stage.map(per=3)              # <- the spelling an editor can help with
         """
 
         return self._field_accessor(field).map(*args, **kwargs)
 
     def plot(self, *args, field=None, **kwargs):
-        """Series plot of one field by stress period (``field=`` selects it)."""
+        """Series plot of one field by stress period (``field=`` selects it).
+
+        Signature varies with ``field=`` -- see :meth:`map` for why, and call
+        ``ns.<field>.plot(`` when you want an editor to complete the arguments.
+        """
 
         return self._field_accessor(field).plot(*args, **kwargs)
 
     def section(self, *args, field=None, **kwargs):
-        """Cross-section of one field along a line (``field=`` selects it)."""
+        """Cross-section of one field along a line (``field=`` selects it).
+
+        Signature varies with ``field=`` -- see :meth:`map` for why, and call
+        ``ns.<field>.section(`` when you want an editor to complete the arguments.
+        """
 
         return self._field_accessor(field).section(*args, **kwargs)
 
     def mosaic(self, *args, field=None, **kwargs):
-        """Shared-scale mosaic of one field over layers/models."""
+        """Shared-scale mosaic of one field over layers/models.
+
+        Signature varies with ``field=`` -- see :meth:`map` for why, and call
+        ``ns.<field>.mosaic(`` when you want an editor to complete the arguments.
+        """
 
         return self._field_accessor(field).mosaic(*args, **kwargs)
 
     def animate(self, *args, field=None, **kwargs):
-        """Animate one field over periods/models."""
+        """Animate one field over periods/models.
+
+        Signature varies with ``field=`` -- see :meth:`map` for why, and call
+        ``ns.<field>.animate(`` when you want an editor to complete the arguments.
+        """
 
         return self._field_accessor(field).animate(*args, **kwargs)
 

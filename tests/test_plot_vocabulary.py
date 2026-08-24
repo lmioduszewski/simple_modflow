@@ -330,3 +330,217 @@ def test_every_model_backed_map_gets_the_sectioned_hover(canonical_run):
         if not isinstance(picture._resolved_hover_spec(), HoverSpec):
             flat.append(name)
     assert not flat, f"these maps fell back to the flat hover: {flat}"
+
+
+# --- signatures, not just docstrings (plan 8.8) -------------------------------
+#
+# PyCharm and Pylance are STATIC: they read the `def` line and never execute the
+# module, so `__signature__`, `functools.wraps` and a beautifully written
+# docstring all reach `help()` and none of them reach the editor. The only thing
+# that does is an explicit parameter list. These tests are the price of that --
+# they keep the explicit copies honest so the duplication cannot rot.
+
+#: Each verb's forwarding chain, nearest link first. A parameter's default is
+#: owned by the FIRST link that names it; that is the value the verb must mirror.
+def _chains():
+    from myflopy.modflow.mf6.grid import plotting as gp
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+    from myflopy.modflow.mf6.grid.plotting import Choro
+    from myflopy.modflow.mf6.interactive_plotting import (
+        SliderAnimation,
+        build_particle_tracking_scene,
+    )
+    from myflopy.modflow.utils.datatypes.xsections import XSection
+
+    return {
+        "map": [gp._choropleth_factory, Choro.__init__],
+        "section": [XSection.__init__],
+        "surface": [InterpolatedSurface.__init__],
+        "grid": [build_particle_tracking_scene],
+        "animate": [SliderAnimation.__init__],
+    }
+
+
+def _named(func) -> dict:
+    """{name: default} for a callable's named parameters, minus var-args."""
+
+    return {
+        name: p.default
+        for name, p in inspect.signature(func).parameters.items()
+        if p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL) and name != "self"
+    }
+
+
+_SECTION_HEADS = {
+    "Parameters", "Other Parameters", "Returns", "Yields", "Raises", "Warns",
+    "See Also", "Notes", "References", "Examples",
+}
+
+
+def _documented(func) -> set[str]:
+    """Parameter names carrying an entry in a NumPy Parameters block.
+
+    Written out rather than regexed because NumPy style groups names on one
+    line -- `zmin, zmax : float, optional` documents two parameters, and a
+    naive `"\\nzmax "` search calls the second one undocumented.
+    """
+
+    lines = (inspect.getdoc(func) or "").splitlines()
+    names, inside = set(), False
+    for i, line in enumerate(lines):
+        head = line.strip()
+        underlined = (
+            i + 1 < len(lines)
+            and lines[i + 1].strip()
+            and set(lines[i + 1].strip()) == {"-"}
+        )
+        if head in _SECTION_HEADS and underlined:
+            inside = head in ("Parameters", "Other Parameters")
+            continue
+        if inside and line and not line[0].isspace():
+            for part in line.split(":")[0].split(","):
+                part = part.strip().lstrip("*")
+                if part.isidentifier():
+                    names.add(part)
+    return names
+
+
+@pytest.mark.parametrize("verb", sorted(_chains()))
+def test_a_named_default_matches_the_link_that_owns_it(verb):
+    """The verb restates its chain's defaults; this proves it restates them right.
+
+    A mirrored default that drifts is worse than no signature at all: the editor
+    would confidently show `zoom=13` while the call actually produced something
+    else. Nothing here is hand-written -- the expected values are read off the
+    forwarding target at runtime.
+    """
+
+    free = _named(getattr(plot, verb))
+    owner, expected = {}, {}
+    for link in _chains()[verb]:
+        for name, default in _named(link).items():
+            # First link wins: `_choropleth_factory` resolves `show_layer_elevs`
+            # from the grid and passes the RESULT to `Choro`, so the factory's
+            # `None` is the default a caller sees, not `Choro`'s `True`.
+            if name not in expected and default is not inspect._empty:
+                owner[name], expected[name] = link.__qualname__, default
+    wrong = [
+        f"{verb}.{name}: signature says {free[name]!r}, "
+        f"{owner[name]} uses {expected[name]!r}"
+        for name in sorted(set(free) & set(expected))
+        if free[name] != expected[name]
+    ]
+    assert not wrong, "mirrored defaults drifted:\n  " + "\n  ".join(wrong)
+
+
+@pytest.mark.parametrize("verb", sorted(VOCABULARY))
+def test_the_bound_model_verb_mirrors_the_free_one(verb):
+    """`model.plot.map` must accept exactly what `plot.map` does, minus `source`.
+
+    Two hand-written parameter lists is the cost of a facade an editor can read.
+    This is what keeps them one list in practice: add a parameter to the free
+    verb, forget the bound one, and the diff shows up here by name.
+    """
+
+    from myflopy.plot import ModelPlots
+
+    free = _named(getattr(plot, verb) if verb != "mosaic" else viz.mosaic)
+    free.pop("source", None)
+    bound = _named(getattr(ModelPlots, verb))
+    assert bound == free, (
+        f"model.plot.{verb} and plot.{verb} disagree.\n"
+        f"  only on the free verb:  {sorted(set(free) - set(bound))}\n"
+        f"  only on the bound verb: {sorted(set(bound) - set(free))}\n"
+        f"  differing defaults:     "
+        f"{ {k: (free[k], bound[k]) for k in set(free) & set(bound) if free[k] != bound[k]} }"
+    )
+
+
+@pytest.mark.parametrize("scope", ["grid", "stack"])
+def test_a_narrower_scope_stays_a_subset_of_the_free_verb(scope):
+    """`vor.plot.map` may offer FEWER parameters than `plot.map`, never other ones.
+
+    A bare grid has no periods, so dropping `per=` is right. Inventing a name
+    that the shared factory does not know would not be -- it would typo-check
+    clean and then vanish into `**kwargs`.
+    """
+
+    #: Genuinely local to the scope: not forwarded to the free verb at all.
+    local = {
+        "grid": {"select"},
+        "stack": {"basemap", "layers", "backend", "color_by", "scale", "cmap",
+                  "width", "height", "x", "y", "line", "resolution", "colorscale",
+                  "opacity", "show_grid", "legend", "title"},
+    }[scope]
+    namespace = _namespace(scope)
+    strays = {}
+    for verb in SCOPES[scope]:
+        free = set(_named(getattr(plot, verb))) - {"source"}
+        bound = set(_named(getattr(namespace, verb)))
+        extra = bound - free - local
+        if extra:
+            strays[verb] = sorted(extra)
+    assert not strays, f"{scope} scope invented parameters the free verb lacks: {strays}"
+
+
+@pytest.mark.parametrize("verb", sorted(VOCABULARY))
+def test_every_signature_parameter_is_documented(verb):
+    """A parameter an editor completes but the docstring never mentions is a trap.
+
+    The reverse direction (documented but not accepted) is the one that bit
+    hardest: `plot.grid` documented `layers`/`scale`/`color_by`/`cmap`, which
+    live on the LAYER-stack builder and were never reachable through it.
+    """
+
+    func = getattr(plot, verb) if verb != "mosaic" else viz.mosaic
+    # `**trace_kwargs` is documented, and should be -- but it is an open tail,
+    # not a parameter, so it belongs in neither set.
+    var_args = {
+        n for n, p in inspect.signature(func).parameters.items()
+        if p.kind in (p.VAR_KEYWORD, p.VAR_POSITIONAL)
+    }
+    documented = _documented(func) - var_args
+    accepted = set(_named(func)) - {"source"}
+    assert not accepted - documented, (
+        f"plot.{verb} accepts but never documents: {sorted(accepted - documented)}"
+    )
+    assert not documented - accepted - {"source"}, (
+        f"plot.{verb} documents parameters it cannot accept: "
+        f"{sorted(documented - accepted - {'source'})}"
+    )
+
+
+def test_the_verbs_a_user_calls_are_not_bare_kwargs_forwarders():
+    """The whole point of 8.8, pinned: no `(*args, **kwargs)` on a picture verb.
+
+    `FieldMappable`'s namespace-level `field=` sugar is exempt and stays exempt:
+    it dispatches to accessors with genuinely incompatible signatures (a lake's
+    `connections` map has no `per=`; `DrnInput.map` takes `per` positionally), so
+    one merged signature could only be achieved by lying. Its docstring says so
+    and sends you to the leaf. Everything else must be explicit.
+    """
+
+    from myflopy.layers import StackPlots
+    from myflopy.plot import GridPlots, ModelPlots
+
+    def is_bare(func) -> bool:
+        """Var-args and nothing else. Taking NO arguments is not bare -- it is
+        the most informative signature there is, and `vor.plot.grid()` earns it:
+        a mesh is fully determined by its grid."""
+
+        params = [p for n, p in inspect.signature(func).parameters.items() if n != "self"]
+        varargs = [p for p in params if p.kind in (p.VAR_KEYWORD, p.VAR_POSITIONAL)]
+        return bool(varargs) and len(varargs) == len(params)
+
+    bare = [
+        f"{label}.{verb}"
+        for label, namespace in (("model.plot", ModelPlots), ("vor.plot", GridPlots),
+                                 ("stack.plot", StackPlots))
+        for verb in _verbs(namespace)
+        if is_bare(getattr(namespace, verb))
+    ]
+    bare += [
+        f"plot.{verb}" for verb in VOCABULARY
+        if is_bare(getattr(plot, verb) if verb != "mosaic" else viz.mosaic)
+    ]
+    assert not bare, f"these verbs still tell an editor nothing: {bare}"
