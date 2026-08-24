@@ -3258,3 +3258,24 @@ same day, which is the useful part of the result.
        misplaced until you check the layering.
      - Writing the guard immediately caught `viz.mosaic` with no `Returns`
        section. Fixed rather than excluded from the check.
+
+144. **Hover audit: every model-backed map is sectioned (2026-08-20).**
+     Follow-up to ledger 142, asked directly: is it ALL maps now, or is more
+     work needed? Built one map of each kind on the canonical model and read the
+     resolved spec off each -- the verb, the dependent-variable readers, a
+     static-array package (`npf.k`, `sto.ss`), a per-period array package
+     (`rch.inputs`) and four cell-stress packages. All sectioned.
+     - **`vor.plot.map()` is the one deliberate exception** and is not a gap: a
+       bare grid has no layers, periods or dates, so there is nothing to section
+       BY. It keeps the flat `Cell No. / Area / x / y` hover, which is the right
+       answer for geometry.
+     - Pinned by `test_every_model_backed_map_gets_the_sectioned_hover`, which
+       builds ten real maps rather than checking one and generalizing. The
+       paths differ -- some pass `hover_spec`, some `custom_hover`, some
+       neither -- so breadth is the only honest check.
+     - Noted in passing, NOT fixed: `model.packages.npf` exposes its nouns
+       directly (`packages.npf.k`) with no `.inputs` tier, unlike the
+       cell-stress packages (`packages.ghb.inputs.head`). The documented grammar
+       in CLAUDE.md is `<pkg>.<inputs|results>.<noun>.<verb>()`, so the
+       static-array packages deviate from it. Pre-existing and out of scope
+       here; recorded so it is not re-discovered as new.

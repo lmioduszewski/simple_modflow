@@ -294,3 +294,39 @@ def test_a_bare_grid_map_keeps_the_flat_hover(canonical_run):
     picture.fig
     assert picture._resolved_hover_spec() is None
     assert "Cell No." in (picture.get_choropleth().hovertemplate or "")
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_every_model_backed_map_gets_the_sectioned_hover(canonical_run):
+    """Breadth, not just the two entry points ledger 142 compared.
+
+    A map reached through the verb, the dependent-variable reader, a
+    static-array package or a cell-stress package must all hover the same way.
+    They arrive by different code paths -- some pass `hover_spec`, some
+    `custom_hover`, some neither -- so the only honest check is to build one of
+    each and look.
+    """
+
+    from myflopy.modflow.utils.datatypes.hover import HoverSpec
+
+    model = canonical_run
+    surfaces = {
+        "plot.map":        lambda: model.plot.map(layer=0),
+        "hds.map":         lambda: model.hds.map(layer=0),
+        "npf.k.map":       lambda: model.packages.npf.k.map(),
+        "sto.ss.map":      lambda: model.packages.sto.ss.map(),
+        "rch.inputs.map":  lambda: model.packages.rch.inputs.map(per=0),
+        "ghb.results.q":   lambda: model.packages.ghb.results.q.map(per=0),
+        "drn.inputs.elev": lambda: model.packages.drn.inputs.elev.map(per=0),
+        "lak.results.q":   lambda: model.packages.lak.results.q.map(per=0),
+        "sfr.results.q":   lambda: model.packages.sfr.results.q.map(per=0),
+        "uzf.inputs.finf": lambda: model.packages.uzf.inputs.finf.map(per=0),
+    }
+    flat = []
+    for name, build in surfaces.items():
+        picture = build()
+        picture.fig
+        if not isinstance(picture._resolved_hover_spec(), HoverSpec):
+            flat.append(name)
+    assert not flat, f"these maps fell back to the flat hover: {flat}"
