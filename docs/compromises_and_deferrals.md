@@ -3209,3 +3209,52 @@ same day, which is the useful part of the result.
      `display` (and remembers that a bare `exec` loop differs from a kernel in
      other ways too -- no `_`/`__` history, no rich reprs, no cell ordering
      guarantees beyond what the loop imposes).
+
+142. **The sectioned hover reached the grammar but not the map verb (2026-08-20).**
+     User-reported: `model.plot.map()` showed the flat `Cell No. / Area / x / y`
+     dump while `model.hds.map()` showed the sectioned hover the 6.x work built.
+     Measured side by side -- the first resolved `hover_spec` to `None`, the
+     second to a `HoverSpec`.
+     - **NOT a Phase 8 regression.** `model.cor()` never passed a `hover_spec`
+       either, so the flat hover is what the direct map verb has always given.
+       What changed is that `model.plot.map` is now THE map verb, so "the
+       documented way to draw a map" and "the way that gets the good hover"
+       stopped being different things by accident and started being different
+       things visibly.
+     - Fixed where `show_layer_elevs` was fixed (ledger 128): the factory
+       resolves a default from the map's `type` -- `hds`/`conc`/`temp` to
+       `head_hover`/`conc_hover`/`temp_hover`, the same builders the grammar
+       uses. `type="custom"` (the package/group path, which supplies
+       `custom_hover`) and `rch`/`ks` are left alone, so their behaviour is
+       unchanged.
+     - **A bare grid still gets the flat hover, deliberately.** The sectioned
+       one needs model context -- layers, periods, dates -- so the default is
+       gated on `model is not None`. Both halves are pinned.
+     - Lesson worth keeping: the two entry points to one picture had drifted
+       apart with nothing asserting they agree. The test now compares the
+       rendered `hovertemplate` of `model.plot.map` against `model.hds.map`
+       directly, which is the only form that could have caught this.
+
+143. **Docstrings are the API surface for a `**kwargs` facade (2026-08-20).**
+     The plotting verbs forward to picture classes with 15-39 constructor
+     parameters, so there is no signature to read -- the docstring is the only
+     place a caller can learn what is accepted. They were prose-only: no
+     `Parameters`, no `Returns`, no examples, which is what an editor renders as
+     a structured tooltip.
+     - All six verbs rewritten in NumPy style with every forwarded parameter
+       documented, including the traps: pass a diverging colorscale as STOPS not
+       a name (the plotly-to-matplotlib table reverses `rdbu`, ledger 69/70), and
+       `zmin >= zmax` raises rather than rendering one flat colour.
+     - **The BOUND methods are what an editor shows** on `model.plot.map(`, and
+       they were 57 characters. Duplicating thirteen docstrings would drift
+       within a release, so `_inherit_verb_docs` appends the free function's full
+       reference to each at import, from the single source. Runtime
+       introspection (`help()`, Jupyter `?`, most editor hovers) reads `__doc__`
+       and gets it; a purely static reader still sees the short source
+       docstring, which is written to stand alone.
+     - **COMPROMISE — `StackPlots` is bound from `myflopy.plot`, not `layers`.**
+       `layers` is L4 and `plot` is L5, so the binding cannot live next to the
+       class; it happens where both are in scope. Recorded because it looks
+       misplaced until you check the layering.
+     - Writing the guard immediately caught `viz.mosaic` with no `Returns`
+       section. Fixed rather than excluded from the check.

@@ -867,6 +867,17 @@ def mosaic(
     ...     group.hds.map("F9b"),                       # a choropleth
     ...     group.packages.lak.results.stage.plot(),     # a timeseries
     ... ], ncols=2)
+
+    Returns
+    -------
+    Fig
+        A single Plotly figure holding every panel as a subplot. Not a
+        :class:`Picture` -- it is already the assembled figure, so use it
+        directly (``.show()``, ``.write_html(...)``).
+
+    See Also
+    --------
+    myflopy.plot.animate : the same panels in sequence rather than side by side.
     """
 
     import numpy as np

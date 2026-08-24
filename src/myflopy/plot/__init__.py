@@ -117,21 +117,123 @@ def _grid_of(source):
 
 
 def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb IS `map`
-    """A plan-view map: cell values, with optional contours, locations, hillshade.
+    """Draw a plan-view map of one value per grid cell.
 
-    ``source`` is a model (draws its results) or a bare grid (draws the grid).
-    ``values`` is any per-cell array -- heads, drawdown, K, a zone id, anything
-    one-value-per-cell -- which is what makes this the single map verb rather
-    than one function per quantity.
+    The single map verb. Contours, observation markers, a hillshade and particle
+    pathlines are all **options** here rather than verbs of their own, because a
+    map is a plan view whatever is drawn on it.
 
-    Content is an option, never a separate call::
+    Parameters
+    ----------
+    source : SimulationBase or VoronoiGridPlus
+        A model draws its own results; a bare grid draws the grid. Positional
+        only. Passing a grid disables everything that needs model context
+        (periods, layer elevations, the sectioned hover).
+    values : sequence of float, optional
+        One value per cell -- heads, drawdown, K, a zone id, a residual, any
+        per-cell array. Overrides whatever ``type`` would have read. Length must
+        equal ``vor.ncpl``.
+    per : int, optional
+        Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
+        with neither, the model's first output time is used.
+    kstpkper : tuple of (int, int), optional
+        Exact ``(timestep, period)`` to read, as MODFLOW reports it. Use
+        ``model.kstpkper`` to list what is available.
+    layer : int, default 0
+        Zero-based layer. Layer 0 is the top.
+    type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
+        Which field to read when ``values`` is not given. ``'hds'`` heads,
+        ``'conc'`` GWT concentration, ``'temp'`` GWE temperature. The first
+        three also select the default sectioned hover.
+    zmin, zmax : float, optional
+        Fixed color-scale limits. Set both to hold the scale steady across
+        frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+        color. With neither, the range comes from the data.
+    colorscale : str or list of (float, str), optional
+        A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
+        scale** -- names round-trip through a plotly-to-matplotlib table that
+        maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
+        renders mirrored between backends (ledger 69/70).
+    logscale : bool, default False
+        Color on a log scale. Non-positive values are masked.
+    contours : bool or str, default False
+        Overlay contour lines. ``True`` contours the mapped values; a string
+        names a different field to contour instead.
+    contour_values : sequence of float, optional
+        Contour a supplied array rather than the mapped one.
+    contour_levels : int or float or list of float, default 10
+        A count of levels, a fixed interval, or explicit level values.
+    contour_color : str, default 'black'
+    contour_width : float, default 1.5
+    contour_name : str, optional
+        Legend name for the contour trace.
+    contour_clip : bool, default True
+        Clip contours to the active domain instead of the full grid extent.
+    contour_resolution : int, default 150
+        Interpolation grid size used to build the contours. Higher is smoother
+        and slower.
+    contour_method : {'linear', 'cubic', 'nearest'}, default 'linear'
+        Interpolation method for that grid.
+    locs : Path or GeoDataFrame, optional
+        Point locations to mark -- wells, observations, samples. A path is read
+        as a vector file.
+    hillshade_path : Path, optional
+        A hillshade GeoTIFF to draw beneath the cells for topographic context.
+    bgs : bool, default False
+        Draw the basemap beneath a semi-transparent cell layer.
+    zoom : int, default 13
+        Initial map zoom. Ignored when ``fit_bounds`` is True.
+    fit_bounds : bool, default True
+        Fit the initial view to the grid extent rather than using ``zoom``.
+    bounds_padding : float, default 0.05
+        Fractional padding around the fitted bounds.
+    show_layer_elevs : bool, optional
+        Add model-top and per-layer-bottom rows to the hover. Defaults to
+        whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+        because forcing it on a grid without them raises.
+    show_mounding : bool, default False
+        Add head-above-initial (mounding) to the hover.
+    hover_heads, hover_ks : bool
+        Include heads / hydraulic conductivity in the legacy flat hover.
+    hover : HoverSpec, optional
+        Replace the sectioned hover outright. See
+        :mod:`myflopy.modflow.utils.datatypes.hover`.
+    hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
+        How the per-layer profile renders in the hover.
+    hover_surfaces : bool, optional
+        Add the model-top / layer-bottom table to the sectioned hover.
+    hover_fields : sequence of str, optional
+        Extra columns to append to the hover.
+    custom_hover : dict, optional
+        Legacy flat hover: ``{label: per-cell sequence}``. Supplying it
+        suppresses the default sectioned hover.
+    **kwargs
+        Anything else rides through to the ``go.Choroplethmap`` trace --
+        ``zmid``, ``colorbar``, ``reversescale``, ``showscale``. These are
+        validated LATE, by Plotly at render time, not here.
 
-        plot.map(model, layer=0, contours=True)
-        plot.map(model, locs=wells_gpkg, hillshade_path=hillshade)
-        plot.map(vor, values=node_ids)        # replaces map_nodes()
+    Returns
+    -------
+    Choro
+        A :class:`~myflopy.viz.Picture`: renders itself in Jupyter, and answers
+        ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. Also carries
+        ``.plot_mpl()`` for a static Matplotlib rendering and ``.ani`` for the
+        animation over periods.
 
-    Returns a :class:`~myflopy.modflow.utils.datatypes.choros.Choro`, which is a
-    Picture: it renders itself, and answers ``.fig``/``.show()``/``.save()``.
+    See Also
+    --------
+    section : the same data as a vertical slice.
+    grid : the mesh with no values and no basemap (and no CRS needed).
+    myflopy.plot.animate : flip a sequence of these through time.
+
+    Examples
+    --------
+    >>> model.plot.map(layer=0)                          # this model's heads
+    >>> model.plot.map(values=drawdown, layer=0)         # any per-cell array
+    >>> model.plot.map(layer=0, contours=True, contour_levels=8)
+    >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
+    >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
+    >>> vor.plot.map(values=node_ids)                    # a bare grid
     """
 
     vor, is_model = _grid_of(source)
@@ -143,21 +245,73 @@ def map(source, /, values=None, **kwargs) -> Choro:      # noqa: A001 - the verb
 
 
 def section(source, /, **kwargs):
-    """A vertical slice.
+    """Draw a vertical slice through a model's results, or a grid's geometry.
 
-    Through a MODEL, this is the results section -- a field against distance
-    along the line, animatable over periods::
+    Through a MODEL this is the results section -- the field against distance
+    along the line. Through a bare GRID it is the geometry section: layers and
+    cell edges, no results. They are different classes because they answer
+    different questions.
 
-        plot.section(model, cells=[1653, 651, 1241])
-        plot.section(model, line=line, layer=[0, 1])
+    Parameters
+    ----------
+    source : SimulationBase or VoronoiGridPlus
+        Positional only. A model gives results; a grid gives geometry.
+    cells : int or list of int, optional
+        Cell indices defining the section path, in order. Mutually exclusive
+        with ``line``.
+    line : LineString or Path, optional
+        The section line as a geometry or a vector file. For a bare grid this
+        is the only way to specify the path, and it is positional.
+    per : int, optional
+        Stress period (0-based). Mutually exclusive with ``kstpkper``.
+    kstpkper : tuple of (int, int), optional
+        Exact ``(timestep, period)``.
+    layer : int or list of int, default 0
+        Layer(s) to draw. A list overlays several.
+    x_or_y : {'x', 'y'}, default 'x'
+        Which coordinate becomes the horizontal axis.
+    spacing : int, default 10
+        Sample spacing along the line, in model units.
+    num_points : int, default 100
+        Number of samples when interpolating.
+    interpolate : bool, default False
+        Interpolate between cell centers rather than stepping cell to cell.
+    use_rbf : bool, default True
+        Use radial-basis interpolation when ``interpolate`` is True.
+    interpolator : str, optional
+        Override the interpolation method by name.
+    extrapolate_beyond_section_ends : bool, default False
+        Extend the section past the first and last cell centers.
+    show_model_top : bool, default True
+        Draw the model-top profile.
+    show_model_btm : bool, default False
+        Draw layer-bottom profiles.
+    surf_type : {'hds', 'lyr'}, default 'hds'
+        Section the head field, or the layer elevations.
+    section_name : str, optional
+        Legend name for the traces.
+    clip : Path or geometry, optional
+        Restrict the section to cells intersecting this region.
+    animation_kstpkpers : sequence of tuple, optional
+        The periods ``.ani`` steps through; defaults to every output time.
 
-    Through a bare GRID it is the geometry section: layers and cell edges, no
-    results::
+    Returns
+    -------
+    XSection or GridSection
+        A :class:`~myflopy.viz.Picture`. ``XSection`` (model) also carries
+        ``.ani``; both answer ``.plot_mpl()``.
 
-        plot.section(vor, line=line)
+    See Also
+    --------
+    map : the same data in plan view.
+    myflopy.plot.grid : the mesh itself.
 
-    Both are Pictures. They are different classes because they answer different
-    questions, not because the API could not decide.
+    Examples
+    --------
+    >>> model.plot.section(cells=[1653, 651, 1241])
+    >>> model.plot.section(line=line, layer=[0, 1], interpolate=True)
+    >>> model.plot.section(cells=cells).save("section.png")
+    >>> vor.plot.section(line)                       # geometry, no results
     """
 
     vor, is_model = _grid_of(source)
@@ -167,16 +321,54 @@ def section(source, /, **kwargs):
 
 
 def surface(source, /, **kwargs) -> InterpolatedSurface:
-    """A 3-D interpolated surface.
+    """Draw a 3-D interpolated surface -- a height field ``z(x, y)``.
 
-    ``plot.surface(model, layer=0)`` interpolates the model's heads;
-    ``surf_type="lyr"`` gives the layer elevation instead. Replaces ``plot3d``,
-    which drew the same kind of picture for the grid alone.
-
-    Always Plotly, and always a height field ``z(x, y)``. The 3-D VOLUME and
-    3-D pathlines are a different shape and live on :func:`grid` with
-    ``backend="vtk"`` -- a ``backend=`` switch should change the renderer, not
+    Always Plotly, and always a height field. The 3-D grid VOLUME and 3-D
+    particle pathlines are different shapes and live on :func:`grid` with
+    ``backend="vtk"``: a ``backend=`` switch should change the renderer, not
     what is being drawn.
+
+    Parameters
+    ----------
+    source : SimulationBase or VoronoiGridPlus
+        Positional only.
+    layer : int, default 0
+        Zero-based layer to interpolate.
+    per : int, optional
+        Stress period (0-based). Mutually exclusive with ``kstpkper``.
+    kstpkper : tuple of (int, int), optional
+        Exact ``(timestep, period)``. Defaults to the model's FIRST output time.
+    surf_type : {'hds', 'lyr'}, default 'hds'
+        Interpolate the head field, or the layer elevation surface.
+    resolution : int, default 1000
+        Interpolation grid size per axis. Higher is smoother and slower.
+    use_rbf : bool, default False
+        Radial-basis interpolation instead of linear.
+    interpolator : str, optional
+        Override the interpolation method by name.
+    clip : Path or geometry, optional
+        Restrict the surface to cells intersecting this region. See also
+        ``.clipped_fig()`` on the result.
+    crs : str, optional
+        Override the grid's CRS.
+    xs, ys, zs : array-like, optional
+        Supply the point cloud directly instead of reading it from a model.
+
+    Returns
+    -------
+    InterpolatedSurface
+        A :class:`~myflopy.viz.Picture`; also carries ``.clipped_fig()`` and
+        ``.surface_trace()`` for composing into a larger scene.
+
+    See Also
+    --------
+    grid : the mesh itself, including the 3-D volume via ``backend="vtk"``.
+
+    Examples
+    --------
+    >>> model.plot.surface(layer=0)
+    >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
+    >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
     """
 
     vor, is_model = _grid_of(source)
@@ -186,25 +378,70 @@ def surface(source, /, **kwargs) -> InterpolatedSurface:
 
 
 def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
-    """The mesh itself -- flat in 2-D, or the layered volume in 3-D.
+    """Draw the mesh itself -- flat in 2-D, or the layered volume in 3-D.
 
-    ``backend="plotly"`` (the default) draws cell edges in the grid's own
-    coordinates. It is the one picture ``map`` cannot give you: a choropleth
-    colours cells against a web basemap and so requires a CRS, while this needs
-    none, which makes it the view for a grid you are still refining. Replaces
-    ``vor.plot2d()`` and FloPy's inherited ``VoronoiGrid.plot()``, whose
-    matplotlib rendering is still right there as ``.plot_mpl()``.
+    The one picture :func:`map` cannot give you. A choropleth colours cells
+    against a web basemap and so **requires a CRS**; this draws in the grid's own
+    coordinates and needs none, which makes it the view for a grid you are still
+    refining, before there is a model or a projection.
 
-    ``backend="vtk"`` draws the same subject in 3-D -- the cell VOLUME, as an
-    interactive PyVista scene (needs the ``viz3d`` extra). ``pathlines=`` adds
-    particle tracks as time-coloured tubes over it, mirroring
-    ``map(pathlines=...)`` in plan view::
+    Both backends draw the same subject -- this grid -- so ``backend=`` switches
+    only the renderer. That is why the 3-D volume is ``grid`` and not
+    ``surface``: ``surface`` means a height field.
 
-        model.plot.grid(pathlines=run.track_records, backend="vtk")
-        stack.plot.grid(["sand", "clay"])          # vtk is the default there
+    Parameters
+    ----------
+    source : SimulationBase or VoronoiGridPlus or LayerBuildResult
+        Positional only. Anything that carries a grid.
+    backend : {'plotly', 'vtk'}, default 'plotly'
+        ``'plotly'`` draws cell edges in 2-D -- fast, CRS-free, no basemap.
+        ``'vtk'`` renders the cell VOLUME in 3-D as an interactive PyVista
+        scene, and needs the ``viz3d`` extra
+        (``pip install 'myflopy[viz3d]'``).
+    pathlines : DataFrame, optional
+        Particle track records, drawn as time-coloured tubes over the 3-D mesh.
+        Requires ``backend="vtk"``; in plan view the equivalent is
+        ``map(pathlines=...)``. Passing it with ``backend="plotly"`` raises.
 
-    Both branches draw this grid, so ``backend=`` switches only the renderer --
-    which is why the 3-D volume is ``grid`` and not ``surface``.
+    Other Parameters
+    ----------------
+    layers : str or int or list, optional
+        (``backend="vtk"`` on a layer stack.) Which layers to show: a name, an
+        index, or a list mixing them. Colours stay keyed to each layer's
+        position, so a subset looks the same as it does in the full stack.
+    scale : float, default 8
+        (``backend="vtk"``.) Vertical exaggeration.
+    color_by : str, default 'layer'
+        (``backend="vtk"``.) Cell scalar to colour by.
+    cmap : str, default 'tab10'
+        (``backend="vtk"``.) Colormap for that scalar.
+
+    Returns
+    -------
+    GridMesh or VtkScene
+        Both are :class:`~myflopy.viz.Picture`. ``GridMesh`` carries
+        ``.plot_mpl()``, which is FloPy's own patch renderer. ``VtkScene``
+        exposes ``.scene`` (the PyVista ``Plotter``) instead of ``.fig``.
+
+    Raises
+    ------
+    ValueError
+        If ``backend`` is neither ``'plotly'`` nor ``'vtk'``, if ``pathlines``
+        is given with the plotly backend, or if the VTK backend is asked for
+        without either pathlines or a layer stack.
+
+    See Also
+    --------
+    map : values over the cells, on a basemap.
+    surface : a 3-D height field, which is a different shape.
+
+    Examples
+    --------
+    >>> vor.plot.grid()                         # the 2-D mesh
+    >>> vor.plot()                              # the same thing, shorthand
+    >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
+    >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
+    >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
     """
 
     if backend == "plotly":
@@ -227,33 +464,64 @@ def grid(source, /, *, backend: str = "plotly", pathlines=None, **kwargs):
 
 
 def animate(frames, *, backend: str = "plotly", title=None, **kwargs):
-    """Flip through a sequence of pictures (plan 8.6a).
+    """Flip through a sequence of pictures.
 
-    A COMBINATOR, like :func:`mosaic` -- its first argument is the frames, not a
-    subject. It takes the same shapes mosaic does: bare pictures, or
-    ``(label, picture)`` pairs::
-
-        plot.animate([model.plot.map(per=p) for p in range(nper)])
-        plot.animate([("start", first), ("end", last)])
-
-    Two backends, both drawing the same frames:
-
-    * ``"plotly"`` (default) -- one live figure with play/pause and a slider.
-      Fast and interactive, but every frame must share a trace structure, and a
-      choropleth re-embeds its geometry per frame, so the file grows with
-      cells x frames.
-    * ``"png"`` -- each frame rasterized and paged by a browser slider. Frames
-      need share NOTHING, so a map, a section and a 3-D scene can sit in one
-      animation, and the size does not grow with cell count. This is the form
-      to reach for on a large grid.
-
-    Mixed frames with ``backend="plotly"`` RAISE rather than quietly falling
-    back: swapping an interactive figure for a raster page is a change in what
-    you get, not how it is drawn.
-
-    To animate a model's own results over time, prefer the grammar --
-    ``model.hds.animate(kind="map", over="period")`` -- which generates the
+    A **combinator**, like :func:`mosaic` -- its first argument is the frames,
+    not a subject. To animate one model's results over time, prefer the grammar
+    (``model.hds.animate(kind="map", over="period")``), which generates the
     frames for you and calls this.
+
+    Parameters
+    ----------
+    frames : sequence
+        The frames, as bare pictures or ``(label, picture)`` pairs -- the same
+        shapes :func:`mosaic` accepts. Unlabelled frames are numbered.
+    backend : {'plotly', 'png'}, default 'plotly'
+        ``'plotly'`` builds one live figure with play/pause and a slider: fast
+        and interactive, but every frame must share a trace structure, and a
+        choropleth re-embeds its geometry per frame, so the file grows with
+        cells x frames. ``'png'`` rasterizes each frame and pages through them
+        with a browser slider: frames need share NOTHING, so kinds can be mixed,
+        and the size does not grow with cell count. Prefer ``'png'`` on a large
+        grid.
+    title : str, optional
+        Figure title (plotly) or document title (png).
+    dpi : int, default 140
+        (``backend="png"``.) Raster resolution per frame.
+    interval_ms : int, default 700
+        (``backend="png"``.) Milliseconds per frame during playback.
+
+    Returns
+    -------
+    FrameAnimation or SliderAnimation
+        Both are :class:`~myflopy.viz.Picture`. ``FrameAnimation.fig`` is the
+        plotly figure; ``SliderAnimation`` has no single figure, so its ``.fig``
+        raises and names ``.frames`` instead. ``SliderAnimation.export()``
+        returns the richer ``StandaloneHtmlSlider`` handle when you want the
+        frame manifest or the resume/progress machinery.
+
+    Raises
+    ------
+    ValueError
+        If ``frames`` is empty, if ``backend`` is neither value, or if the
+        plotly backend is given frames that do not share a trace structure. That
+        last one raises rather than silently falling back to raster -- swapping
+        an interactive figure for a static page changes what you get.
+
+    See Also
+    --------
+    myflopy.viz.mosaic : the same frames side by side instead of in sequence.
+    myflopy.export_head_map_slider_html : a FloPy-rendered slider, which is a
+        different picture rather than a second spelling of this one.
+
+    Examples
+    --------
+    >>> frames = [model.plot.map(per=p, layer=0) for p in range(model.nper)]
+    >>> plot.animate(frames).show()
+    >>> plot.animate(frames, backend="png").html("heads.html")
+    >>> plot.animate([("start", first), ("end", last)])
+    >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
+    >>> plot.animate(mixed, backend="png")           # only png can mix kinds
     """
 
     if backend == "plotly":
@@ -335,3 +603,38 @@ class ModelPlots:
         """
 
         return mosaic(panels, **kwargs)
+
+
+# --- one docstring per verb, shown wherever the verb appears -------------------
+def _inherit_verb_docs(namespace) -> None:
+    """Append each free verb's full docstring to its bound counterpart.
+
+    `model.plot.map(` is what an editor shows you, and a bound method whose
+    docstring is "See :func:`myflopy.plot.map`" is a dead end at exactly the
+    moment you wanted the parameter list. Duplicating the text onto thirteen
+    bound methods would drift within a release, so the bound docstring keeps its
+    own short note about what binding means and the full reference is appended
+    from the single source.
+
+    Runtime introspection -- `help()`, Jupyter's `?`, and most editor hovers --
+    reads `__doc__`, so this reaches them. A purely static reader still sees the
+    short source docstring, which is why that is written to stand alone.
+    """
+
+    for verb in ("map", "section", "surface", "grid", "mosaic", "animate"):
+        method = getattr(namespace, verb, None)
+        free = globals().get(verb)
+        if method is None or free is None or not free.__doc__:
+            continue
+        own = (method.__doc__ or "").strip()
+        method.__doc__ = f"{own}\n\n{'-' * 70}\nFull reference (`myflopy.plot.{verb}`):\n\n{free.__doc__}"
+
+
+_inherit_verb_docs(ModelPlots)
+_inherit_verb_docs(GridPlots)
+
+# `StackPlots` lives in `myflopy.layers` (L4) and cannot import this module
+# (L5), so the binding happens here, where both are already in scope.
+from myflopy.layers import StackPlots as _StackPlots  # noqa: E402
+
+_inherit_verb_docs(_StackPlots)

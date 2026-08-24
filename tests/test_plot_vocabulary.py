@@ -219,3 +219,78 @@ def test_the_slow_test_allowlist_names_only_tests_that_exist():
     assert not revived, (
         f"these names are in _RETIRED_SLOW_TESTS but exist again: {sorted(revived)}"
     )
+
+
+# --- docstrings are the API surface an editor shows ---------------------------
+@pytest.mark.parametrize("verb", sorted(VOCABULARY))
+def test_every_verb_documents_its_parameters(verb):
+    """A verb that takes `**kwargs` and does not list them is undiscoverable.
+
+    These forward to picture classes with 15-39 constructor parameters, so the
+    docstring is the only place the caller can learn what is accepted -- there
+    is no signature to read.
+    """
+
+    import inspect
+
+    doc = inspect.getdoc(getattr(plot, verb)) or ""
+    for section in ("Parameters", "Returns", "Examples"):
+        assert section in doc, f"plot.{verb} has no {section} section"
+    assert ">>>" in doc, f"plot.{verb} has no runnable example"
+
+
+@pytest.mark.parametrize("scope", ["model", "grid", "stack"])
+def test_the_bound_verbs_carry_the_full_reference(scope):
+    """`model.plot.map(` is what an editor shows on hover.
+
+    The bound methods are thin forwarders, so their own docstrings are short by
+    design. `_inherit_verb_docs` appends the free function's full reference to
+    each, from the single source -- duplicating it onto thirteen methods would
+    drift within a release.
+    """
+
+    import inspect
+
+    namespace = _namespace(scope)
+    for verb in SCOPES[scope]:
+        doc = inspect.getdoc(getattr(namespace, verb)) or ""
+        assert "Parameters" in doc, f"{scope}.plot.{verb} lost its parameter reference"
+        assert f"myflopy.plot.{verb}" in doc, f"{scope}.plot.{verb} does not name its source"
+
+
+# --- the hover a map gets by default ------------------------------------------
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_a_model_map_gets_the_sectioned_hover(canonical_run):
+    """The verb and the grammar must agree on what a map's hover looks like.
+
+    `model.hds.map()` built a `HoverSpec` and `model.plot.map()` did not, so the
+    same picture reached by the two documented routes carried different hovers --
+    the sectioned one, or a flat `Cell No. / Area / x / y` dump. The default now
+    resolves from the map's `type`, like `show_layer_elevs` does.
+    """
+
+    from myflopy.modflow.utils.datatypes.hover import HoverSpec
+
+    model = canonical_run
+    direct = model.plot.map(layer=0)
+    grammar = model.hds.map(layer=0)
+    for picture in (direct, grammar):
+        picture.fig
+        assert isinstance(picture._resolved_hover_spec(), HoverSpec)
+
+    assert direct.get_choropleth().hovertemplate == grammar.get_choropleth().hovertemplate
+
+
+@pytest.mark.canonical
+@pytest.mark.slow
+def test_a_bare_grid_map_keeps_the_flat_hover(canonical_run):
+    """The other side of that default: the sectioned hover needs model context --
+    layers, periods, dates -- which a bare grid does not have. `None` is the
+    right answer there, not a broken section."""
+
+    vor = canonical_run.vor
+    picture = vor.plot.map(values=list(canonical_run.hds.array(layer=0)))
+    picture.fig
+    assert picture._resolved_hover_spec() is None
+    assert "Cell No." in (picture.get_choropleth().hovertemplate or "")

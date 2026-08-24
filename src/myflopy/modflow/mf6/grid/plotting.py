@@ -15,11 +15,31 @@ from flopy.plot.crosssection import PlotCrossSection
 from myflopy import viz as f
 from myflopy.viz import Picture
 from myflopy.modflow.utils.datatypes.choros import Choro
+from myflopy.modflow.utils.datatypes.hover import conc_hover, head_hover, temp_hover
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+
+#: The sectioned hover each dependent variable gets by default. Without one,
+#: `Choro` falls back to a flat `Cell No. / Area / x / y / ...` dump -- readable
+#: only if you already know what you are looking at.
+_HOVER_FOR_TYPE = {"hds": head_hover, "conc": conc_hover, "temp": temp_hover}
+
+
+def _default_hover_spec(map_type: str):
+    """The default :class:`HoverSpec` for a map of ``map_type``, or None.
+
+    Only the three dependent variables get one. ``type="custom"`` is the
+    package/group path, which supplies its own ``custom_hover``; ``"rch"``/
+    ``"ks"`` read fields whose hover is assembled inline. Returning None for
+    those leaves their existing behaviour exactly as it was.
+    """
+
+    builder = _HOVER_FOR_TYPE.get(str(map_type).lower())
+    return builder() if builder is not None else None
 
 
 def _choropleth_factory(
@@ -64,6 +84,8 @@ def _choropleth_factory(
     Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
     in particular is a matplotlib-only argument and raises there.
     """
+    if hover_spec is None and custom_hover is None and model is not None:
+        hover_spec = _default_hover_spec(type)
     if zmin is not None and zmax is not None and zmin >= zmax:
         # Kept from `ModelVisualization.plotly_head_map_animation`, which 8.6b
         # deleted -- and moved DOWN here, so it now guards every map rather than
