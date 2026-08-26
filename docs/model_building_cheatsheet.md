@@ -33,16 +33,20 @@ import numpy as np
 import myflopy as mf
 ```
 
-**Using `mf.Contours`?** It shells out to GRASS, and two env vars are required on
-Linux — the library's auto-discovery only globs `grass*.bat` (OSGeo4W/Windows), so
-`/usr/bin/grass` is never found on its own:
+**Using `mf.Contours`?** It shells out to GRASS, which is a **system**
+dependency — install it with your package manager (Linux/macOS) or via OSGeo4W
+(Windows). Nothing else is needed: the launcher is found on `PATH` (or by
+globbing the OSGeo4W/QGIS bundles on Windows), and the GRASS Python bindings —
+which live inside the install at `<prefix>/etc/python` and are *not* on
+`sys.path` — are located by asking that launcher, so no `PYTHONPATH` either.
+
+Only if GRASS is installed somewhere undiscoverable, point at the launcher:
 
 ```bash
-export GRASS_BIN=/usr/bin/grass
-export PYTHONPATH=/usr/lib/grass84/etc/python
+export GRASS_BIN=/usr/bin/grass     # or .../grass84.bat on Windows
 ```
 
-Adjust `grass84` to your version. Skip both if you're starting from rasters.
+Skip all of this if you're starting from rasters.
 
 ---
 
@@ -328,8 +332,11 @@ never a trailing `.plot()`.
 
 ## Gotchas that cost real time
 
-1. **`mf.Contours` needs `GRASS_BIN` on Linux.** Auto-discovery globs `grass*.bat`
-   only, so a perfectly working `/usr/bin/grass` is invisible to it.
+1. **`mf.Contours` needs GRASS *installed*** — it is a system dependency, not a
+   pip one, so `pip install` will never supply it. Discovery itself is automatic
+   on every platform (fixed 2026-08-26; it used to glob `grass*.bat` only and so
+   never found `/usr/bin/grass`). `GRASS_BIN` remains the override for an install
+   that isn't on `PATH`.
 2. **`mf.Contours` needs a region** — `region_vector=` or `region_raster=`.
 3. **`boundary=` wants a `ShapeSource`,** not a path string.
 4. **`GridSpec.resolve` is keyword-only**: `resolve(workspace=...)`, not

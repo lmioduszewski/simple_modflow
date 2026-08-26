@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -293,6 +294,134 @@ def test_grass_bin_env_var_takes_precedence(tmp_path, monkeypatch):
 
     monkeypatch.setenv("GRASS_BIN", str(tmp_path / "my_grass.bat"))
     assert _default_grass_bin() == tmp_path / "my_grass.bat"
+
+
+def test_grass_launcher_found_on_path_when_there_is_no_bat(monkeypatch):
+    # The Linux/macOS install: a plain `/usr/bin/grass`, never a `.bat`. Globbing
+    # OSGeo4W directories finds nothing, so PATH is the whole search.
+    from myflopy.modflow.utils import contour_interp
+
+    monkeypatch.delenv("GRASS_BIN", raising=False)
+    monkeypatch.setattr(contour_interp.os, "name", "posix")
+    monkeypatch.setattr(contour_interp, "_grass_search_dirs", lambda: [])
+    monkeypatch.setattr(
+        contour_interp.shutil, "which", lambda n: "/usr/bin/grass" if n == "grass" else None
+    )
+    assert contour_interp._default_grass_bin() == Path("/usr/bin/grass")
+
+
+def test_grass_path_discovery_falls_back_to_versioned_names(monkeypatch):
+    from myflopy.modflow.utils import contour_interp
+
+    monkeypatch.setattr(
+        contour_interp.shutil,
+        "which",
+        lambda n: "/usr/bin/grass83" if n == "grass83" else None,
+    )
+    assert contour_interp._find_grass_on_path() == Path("/usr/bin/grass83")
+
+
+def test_grass_bin_env_var_beats_path_discovery(tmp_path, monkeypatch):
+    from myflopy.modflow.utils import contour_interp
+
+    monkeypatch.setenv("GRASS_BIN", str(tmp_path / "chosen_grass"))
+    monkeypatch.setattr(contour_interp.shutil, "which", lambda n: "/usr/bin/grass")
+    assert contour_interp._default_grass_bin() == tmp_path / "chosen_grass"
+
+
+def test_missing_grass_message_does_not_say_osgeo4w_on_posix(monkeypatch):
+    # "install GRASS via OSGeo4W" is meaningless advice on Linux/macOS.
+    from myflopy.modflow.utils import contour_interp
+
+    monkeypatch.delenv("GRASS_BIN", raising=False)
+    monkeypatch.setattr(contour_interp.os, "name", "posix")
+    monkeypatch.setattr(contour_interp, "_grass_search_dirs", lambda: [])
+    monkeypatch.setattr(contour_interp.shutil, "which", lambda n: None)
+
+    with pytest.raises(ValueError, match="GRASS_BIN") as excinfo:
+        contour_interp._default_grass_bin()
+    assert "OSGeo4W" not in str(excinfo.value)
+    assert "/usr/bin/grass" in str(excinfo.value)
+
+
+def test_missing_grass_message_still_says_osgeo4w_on_windows(monkeypatch):
+    from myflopy.modflow.utils import contour_interp
+
+    monkeypatch.delenv("GRASS_BIN", raising=False)
+    monkeypatch.setattr(contour_interp.os, "name", "nt")
+    monkeypatch.setattr(contour_interp, "_grass_search_dirs", lambda: [])
+    # A `which` hit must NOT rescue Windows: the .bat glob is the Windows search.
+    monkeypatch.setattr(contour_interp.shutil, "which", lambda n: "/usr/bin/grass")
+
+    with pytest.raises(ValueError, match="OSGeo4W"):
+        contour_interp._default_grass_bin()
+
+
+def test_grass_python_path_read_from_the_launcher(tmp_path, monkeypatch):
+    # The bindings live inside the install, so the launcher is asked where.
+    from myflopy.modflow.utils import contour_interp
+
+    bindings = tmp_path / "etc" / "python"
+    bindings.mkdir(parents=True)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=f"{bindings}\n", stderr="")
+
+    monkeypatch.setattr(contour_interp.subprocess, "run", fake_run)
+    assert contour_interp._grass_python_path("/usr/bin/grass") == bindings
+    assert calls == [["/usr/bin/grass", "--config", "python_path"]]
+
+
+def test_grass_python_path_falls_back_to_the_install_prefix(tmp_path, monkeypatch):
+    # Older launchers answer `--config path` (the prefix) but not `python_path`.
+    from myflopy.modflow.utils import contour_interp
+
+    (tmp_path / "etc" / "python").mkdir(parents=True)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[-1] == "python_path":
+            return SimpleNamespace(returncode=1, stdout="", stderr="unknown option")
+        return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+
+    monkeypatch.setattr(contour_interp.subprocess, "run", fake_run)
+    found = contour_interp._grass_python_path("/usr/bin/grass")
+    assert found == tmp_path / "etc" / "python"
+
+
+def test_grass_python_path_is_none_when_the_launcher_cannot_run(monkeypatch):
+    from myflopy.modflow.utils import contour_interp
+
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(contour_interp.subprocess, "run", fake_run)
+    assert contour_interp._grass_python_path("/nope/grass") is None
+
+
+def test_grass_bindings_are_added_to_sys_path_once(tmp_path, monkeypatch):
+    from myflopy.modflow.utils import contour_interp
+
+    bindings = tmp_path / "etc" / "python"
+    bindings.mkdir(parents=True)
+    monkeypatch.setattr(contour_interp, "_grass_python_path", lambda _bin: bindings)
+    monkeypatch.setattr(contour_interp.sys, "path", list(sys.path))
+
+    assert contour_interp._add_grass_python_path("/usr/bin/grass") == bindings
+    assert contour_interp._add_grass_python_path("/usr/bin/grass") == bindings
+    assert contour_interp.sys.path.count(str(bindings)) == 1
+
+
+def test_add_grass_python_path_is_none_when_no_launcher_exists(monkeypatch):
+    # No launcher to ask => no bindings, and NOT a ValueError escaping as one.
+    from myflopy.modflow.utils import contour_interp
+
+    def no_launcher():
+        raise ValueError("Could not find a GRASS launcher.")
+
+    monkeypatch.setattr(contour_interp, "_default_grass_bin", no_launcher)
+    assert contour_interp._add_grass_python_path(None) is None
 
 
 # --- area-weighted raster sampling -------------------------------------------

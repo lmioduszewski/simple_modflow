@@ -13,12 +13,15 @@ need a multi-layer DISV model out of them.
 Run it directly and it builds its own contour fixtures, so it works with no data
 of your own; the comments mark exactly where to swap yours in.
 
-**GRASS prerequisites.** ``mf.Contours`` shells out to GRASS GIS. The library's
-launcher auto-discovery globs ``grass*.bat`` (OSGeo4W/Windows), so on Linux a
-working ``/usr/bin/grass`` is invisible to it and you must point at it::
+**GRASS prerequisites.** ``mf.Contours`` shells out to GRASS GIS, a **system**
+dependency that ``pip`` does not supply: install it with your package manager
+(Linux/macOS) or via OSGeo4W (Windows). Discovery is then automatic -- the
+launcher is found on ``PATH`` or in the OSGeo4W/QGIS bundles, and the GRASS
+Python bindings (inside the install, at ``<prefix>/etc/python``) are located by
+asking that launcher, so no ``PYTHONPATH`` is needed. Override only if GRASS
+lives somewhere undiscoverable::
 
-    export GRASS_BIN=/usr/bin/grass
-    export PYTHONPATH=/usr/lib/grass84/etc/python   # the GRASS python bindings
+    export GRASS_BIN=/usr/bin/grass     # or ...\\grass84.bat on Windows
 
 If you would rather not depend on GRASS at all, ``mf.Points(xs, ys, zs)``
 interpolates the same contour vertices with no external tool -- see

@@ -3334,3 +3334,43 @@ same day, which is the useful part of the result.
        made PyCharm drop structured rendering for the whole docstring. It now
        splices sections into one well-formed docstring and drops the `source`
        entry, which a bound verb does not take.
+
+146. **GRASS auto-discovery reaches POSIX, and finds its own bindings (2026-08-26).**
+     `_find_grass_launcher` globbed `grass*.bat` only — an OSGeo4W shape — so
+     `/usr/bin/grass` was invisible and `mf.Contours` raised "Could not find a
+     GRASS launcher … install GRASS via OSGeo4W" on a machine where GRASS worked
+     fine. `shutil.which` over `_GRASS_EXECUTABLES` now runs after the `.bat`
+     glob, and `_grass_modules` asks the resolved launcher for
+     `--config python_path` and appends it to `sys.path`. Measured on this
+     machine: launcher `/usr/bin/grass`, bindings `/usr/lib/grass84/etc/python`,
+     both found with `GRASS_BIN` **and** `PYTHONPATH` unset — the two env vars
+     the cheat sheet used to require are now genuinely optional.
+     - **The `which` fallback is gated to non-Windows, deliberately.** A GRASS on
+       Windows `PATH` but outside the OSGeo4W/QGIS bundle directories is still
+       not auto-discovered. The gate keeps Windows resolution byte-identical
+       (the platform the `.bat` search was written for and the one that can't be
+       re-measured here), and `GRASS_BIN` covers the gap. Revisit if a Windows
+       user reports a PATH-only install.
+     - **`_GRASS_EXECUTABLES` is a fixed tuple**, so a future `grass9` binary
+       installed *without* the unversioned `grass` symlink would need `GRASS_BIN`.
+       Nearly every distribution ships the plain name, so the list is a fallback
+       for side-by-side installs rather than the primary path. Revisit: add names
+       when GRASS 9 ships.
+     - **The launcher is re-queried per `run()`**, not cached. It is one
+       subprocess against an interpolation that takes seconds to minutes, and a
+       module-level cache would go stale across a `GRASS_BIN` change inside one
+       session. Not worth the state.
+     - **The retry path cannot be unit-tested without GRASS installed**, so it
+       carries `# pragma: no cover`. What *is* tested is everything around it:
+       PATH discovery, env-var precedence, both `--config` shapes, the
+       launcher-won't-run and no-launcher-at-all branches, the `sys.path`
+       de-duplication, and — in both directions — that the error message says
+       OSGeo4W on Windows and does not on POSIX. The end-to-end import was
+       verified by hand instead, recorded above.
+     - **The notebook preflight reaches into private functions.**
+       `layer_management_workflow.ipynb` cell 25 hardcoded an
+       `AppData/…/grass84.bat` path (flagged in entry 132 as un-runnable on
+       Linux); it now calls `_default_grass_bin` / `_grass_modules` to report
+       what discovery found. There is no public API for "is GRASS available",
+       and inventing one for a preflight cell was out of scope — the cell says
+       so in a comment.

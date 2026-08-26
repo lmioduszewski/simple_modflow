@@ -12,22 +12,85 @@ only actually running an interpolation does.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
 
+#: Executable names a POSIX GRASS install puts on ``PATH``. Most distributions
+#: ship the unversioned ``grass``; the versioned names are the fallbacks for
+#: installs that keep several side by side.
+_GRASS_EXECUTABLES = ("grass", "grass84", "grass83", "grass8", "grass78")
 
-def _grass_modules():
-    """Import GRASS Python modules lazily, with a clear error if unavailable."""
+
+def _import_grass_modules():
+    """The bare imports, so the retry after a ``sys.path`` fix is one call."""
+
+    import grass.script.setup as gsetup
+    from grass.pygrass.modules.shortcuts import general as g
+    from grass.pygrass.modules.shortcuts import raster as r
+    from grass.pygrass.modules.shortcuts import vector as v
+
+    return r, g, v, gsetup
+
+
+def _grass_python_path(grass_bin: Path | str) -> Path | None:
+    """Ask a GRASS launcher where its Python bindings live, or ``None``.
+
+    ``grass --config python_path`` prints the directory directly; older
+    launchers only answer ``--config path`` (the install prefix), whose
+    ``etc/python`` is the same place.
+    """
+
+    for option, suffix in (("python_path", None), ("path", "etc/python")):
+        try:
+            result = subprocess.run(
+                [str(grass_bin), "--config", option], capture_output=True, text=True
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("could not run GRASS launcher %s", grass_bin, exc_info=True)
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        path = Path(result.stdout.strip().splitlines()[0])
+        if suffix:
+            path = path / suffix
+        if path.is_dir():
+            return path
+    return None
+
+
+def _add_grass_python_path(grass_bin: Path | str | None) -> Path | None:
+    """Put the GRASS Python bindings on ``sys.path``; return the path added."""
 
     try:
-        import grass.script.setup as gsetup
-        from grass.pygrass.modules.shortcuts import general as g
-        from grass.pygrass.modules.shortcuts import raster as r
-        from grass.pygrass.modules.shortcuts import vector as v
+        launcher = Path(grass_bin) if grass_bin else _default_grass_bin()
+    except ValueError:
+        logger.debug("no GRASS launcher to ask for the bindings path", exc_info=True)
+        return None
+    path = _grass_python_path(launcher)
+    if path is None:
+        return None
+    if str(path) not in sys.path:
+        sys.path.append(str(path))
+    return path
+
+
+def _grass_modules(grass_bin: Path | str | None = None):
+    """Import GRASS Python modules lazily, with a clear error if unavailable.
+
+    The bindings ship *inside* the GRASS install (``<prefix>/etc/python``) and
+    are not on a normal interpreter's ``sys.path``, so a first failure is not
+    the answer: the launcher is asked where they live and the import retried.
+    That is what spares callers a hand-set ``PYTHONPATH``.
+    """
+
+    try:
+        return _import_grass_modules()
     except Exception as error:  # noqa: BLE001 - see below  # pragma: no cover
         # Broad on purpose, and it does not swallow: every failure to load the
         # optional GRASS SYSTEM dependency is re-raised as one actionable
@@ -35,11 +98,23 @@ def _grass_modules():
         # ctypes bindings and shells out to the launcher, so it raises far more
         # than ImportError -- OSError, RuntimeError, CalledProcessError -- and
         # the caller needs the same message for all of them.
-        raise ImportError(
-            "GRASS GIS Python modules are required for contour interpolation. "
-            "Install GRASS GIS and run from a GRASS-enabled environment."
-        ) from error
-    return r, g, v, gsetup
+        last_error = error
+
+    added = _add_grass_python_path(grass_bin)  # pragma: no cover - needs GRASS
+    if added is not None:  # pragma: no cover - needs GRASS
+        logger.debug("added GRASS Python bindings at %s to sys.path", added)
+        try:
+            return _import_grass_modules()
+        except Exception as error:  # noqa: BLE001 - same reason as above
+            last_error = error
+
+    raise ImportError(  # pragma: no cover - needs GRASS
+        "GRASS GIS Python modules are required for contour interpolation. "
+        "Install GRASS GIS and run from a GRASS-enabled environment. The "
+        "bindings live in <grass prefix>/etc/python and are found via the "
+        "launcher, so set GRASS_BIN (or pass grass_bin=...) if GRASS is "
+        "installed somewhere this could not discover."
+    ) from last_error
 
 
 def _grass_search_dirs() -> list[Path]:
@@ -57,7 +132,9 @@ def _grass_search_dirs() -> list[Path]:
 def _find_grass_launcher(search_dirs) -> Path | None:
     """Return the highest-versioned ``grass*.bat`` launcher found, if any.
 
-    The ``python-grass*.bat`` wrapper is skipped in favor of the main launcher.
+    Windows-shaped: OSGeo4W and the QGIS bundles ship ``.bat`` launchers in a
+    known directory. The ``python-grass*.bat`` wrapper is skipped in favor of
+    the main launcher. POSIX installs are found by :func:`_find_grass_on_path`.
     """
 
     for directory in search_dirs:
@@ -70,19 +147,49 @@ def _find_grass_launcher(search_dirs) -> Path | None:
     return None
 
 
+def _find_grass_on_path() -> Path | None:
+    """Return the first GRASS executable on ``PATH``, if any (POSIX installs).
+
+    A Linux or macOS install is a plain executable -- ``/usr/bin/grass``,
+    ``/opt/homebrew/bin/grass`` -- never a ``.bat``, and it is already on
+    ``PATH``, so ``which`` is the whole search.
+    """
+
+    for name in _GRASS_EXECUTABLES:
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    return None
+
+
 def _default_grass_bin() -> Path:
-    """Resolve a GRASS launcher: GRASS_BIN env var, then auto-discovery."""
+    """Resolve a GRASS launcher: ``GRASS_BIN`` env var, then auto-discovery.
+
+    ``GRASS_BIN`` always wins. Otherwise the Windows bundle directories are
+    globbed for a ``grass*.bat``, and on every other platform ``PATH`` is
+    searched for a GRASS executable.
+    """
 
     env = os.environ.get("GRASS_BIN")
     if env:
         return Path(env)
     found = _find_grass_launcher(_grass_search_dirs())
+    if found is None and os.name != "nt":
+        found = _find_grass_on_path()
     if found is not None:
         return found
+    if os.name == "nt":
+        example, install = "the path to grass84.bat", "install GRASS via OSGeo4W"
+    else:
+        example, install = (
+            "/usr/bin/grass",
+            "install GRASS GIS with your package manager (it is a SYSTEM "
+            "dependency, not a pip one) -- PATH was searched for "
+            + ", ".join(_GRASS_EXECUTABLES),
+        )
     raise ValueError(
-        "Could not find a GRASS launcher. Pass grass_bin=... (e.g. the path to "
-        "grass84.bat), set the GRASS_BIN environment variable, or install GRASS "
-        "via OSGeo4W."
+        f"Could not find a GRASS launcher. Pass grass_bin=... (e.g. {example}), "
+        f"set the GRASS_BIN environment variable, or {install}."
     )
 
 
@@ -135,7 +242,7 @@ class ContourSurfaceInterpolator:
     def run(self) -> Path:
         """Run the full interpolation and return the written GeoTIFF path."""
 
-        r, g, v, gsetup = _grass_modules()
+        r, g, v, gsetup = _grass_modules(self.grass_bin)
         self._start_session(gsetup)
         v.in_ogr(input=self.contours.as_posix(), output=self._vect, overwrite=True, flags="o")
         self._set_region(r, g, v)
