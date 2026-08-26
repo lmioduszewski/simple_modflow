@@ -3374,3 +3374,42 @@ same day, which is the useful part of the result.
        what discovery found. There is no public API for "is GRASS available",
        and inventing one for a preflight cell was out of scope — the cell says
        so in a comment.
+147. **The classmethod-binding tripwire is arity-based, so a 2+-argument
+     misbinding still slips through (2026-08-26).**
+     `Surface.maximum/minimum/clamp/where/isopach/shift` are classmethods, so an
+     instance call binds the instance to `cls` and drops it. Measured before the
+     fix: `a.maximum(b).operands` was `(b,)` — no error, no warning, a
+     plausible-looking Surface that ignores one input, and downstream a wrong
+     contact elevation that surfaces only as odd heads. `maximum`/`minimum` now
+     reject fewer than two surfaces and `clamp` requires `lower=` or `upper=`,
+     each naming both fixes (`Surface.maximum(a, b)` and the fluent
+     `a.floored_at(b)`). `shift`/`isopach`/`where` already raised for the
+     now-missing positional argument and are pinned by test rather than guarded.
+     - **The compromise: `a.maximum(b, c)` still drops `a` silently.** Two
+       operands arrive, the arity guard is satisfied, and nothing distinguishes
+       it from a legitimate `Surface.maximum(b, c)`. Judged acceptable because
+       the fluent mental model that produces the bug is binary — someone who
+       writes three surfaces is already thinking variadically and spells it on
+       the class. Same residue on `a.clamp(b, upper=c)`. Revisit if either
+       spelling turns up in a real notebook.
+     - **A class-only descriptor was considered and rejected.** Replacing
+       `@classmethod` with a descriptor that refuses instance binding would close
+       the hole exactly, at every arity. It was not taken because it puts the
+       *correct* spelling out of static reach: PyCharm and Pylance read the `def`
+       line and the decorator, so a custom descriptor loses the "this is a
+       classmethod" signal and `Surface.maximum(a, b)` starts drawing a
+       wrong-argument squiggle. Making the right call look broken in the editor
+       is a worse trade than the residual hole (see ledger 145 — only the `def`
+       line reaches an IDE). Raising on attribute access would also break
+       `hasattr`/`inspect.getmembers` over an instance.
+     - **`where` gets no guard even in principle.** `Surface.where(zone, inside,
+       outside)` takes three required positionals: `a.where(zone, b)` raises for
+       the missing one, and `a.where(zone, b, c)` is semantically the call the
+       user wanted — `a` plays no role in the correct spelling, so nothing is
+       lost. The test pins the loud failure so a later default value cannot
+       quietly reopen it.
+     - **One-surface envelopes are now an error even when deliberate.**
+       `Surface.minimum(x)` returned `x`, a no-op; making the arity the tripwire
+       costs that. No call site in the repo splats a variable-length list into
+       either constructor (checked across `src`, `tests`, `docs`, `examples`), and
+       a splat that collapses to one element is itself worth hearing about.

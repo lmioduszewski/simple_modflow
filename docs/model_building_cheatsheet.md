@@ -123,21 +123,31 @@ blended   = mf.Surface.maximum(clay_top, bedrock)    # elementwise, BOTH surface
 ```
 
 **Watch the binding.** `maximum` / `minimum` / `shift` / `clamp` / `isopach` /
-`where` are **classmethods**, so calling them on an instance silently drops the
-instance:
+`where` are **classmethods**, so calling one on an instance binds the instance to
+`cls` and drops it. Every such spelling now raises `TypeError` naming the fix,
+so this is a stop, not a silent wrong answer:
 
 ```python
 mf.Surface.maximum(a, b)     # correct — max of a and b
-a.maximum(b)                 # WRONG — binds cls, passes only b, returns b
+a.floored_at(b)              # correct — the same thing, instance-bound
+a.maximum(b)                 # TypeError: takes two or more surfaces, got 1
 ```
 
-The instance-bound pair `capped_at` / `floored_at` do the same job safely
-(`a.capped_at(b)` is `min(a, b)`), so prefer them for two-surface work.
+The instance-bound pair `capped_at` / `floored_at` do the two-surface job safely
+(`a.capped_at(b)` is `min(a, b)`), so prefer them. Reach for `mf.Surface.minimum`
+/ `maximum` when you have three or more surfaces to blend.
+
+Guards, and why each one is where it is: `maximum`/`minimum` take `*surfaces`, so
+a misbound call arrives as one operand rather than an arity error — they reject
+fewer than two. `clamp`'s bounds are both optional, so a misbound `a.clamp(b)`
+arrives with neither — it requires `lower=` or `upper=`. `shift`, `isopach` and
+`where` already raise for the now-missing positional argument, so they need no
+guard of their own.
 
 | instance methods (safe to chain) | classmethods (call on `mf.Surface`) |
 |---|---|
 | `.above(d)` `.below(d)` `.between(lower=, upper=)` | `mf.Surface.shift(s, d)` |
-| `.capped_at(o)` `.floored_at(o)` | `mf.Surface.maximum(*s)` `mf.Surface.minimum(*s)` |
+| `.capped_at(o)` `.floored_at(o)` | `mf.Surface.maximum(a, b, ...)` `mf.Surface.minimum(a, b, ...)` — two or more |
 | `.thickness()` `.within(zone, outside=)` | `mf.Surface.clamp(s, lower=, upper=)` |
 | `+` `-` | `mf.Surface.isopach(src)` `mf.Surface.where(zone, inside, outside)` |
 

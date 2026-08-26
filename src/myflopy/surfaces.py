@@ -226,14 +226,49 @@ class Surface:
             return Surface.raster(x)
         raise TypeError(f"Expected a Surface, path, or number; got {type(x).__name__}.")
 
+    @staticmethod
+    def _reject_lone_envelope(name: str, fluent: str, surfaces: tuple) -> None:
+        """Refuse a one-surface envelope -- nearly always a misbound instance call.
+
+        ``minimum``/``maximum`` are classmethods taking ``*surfaces``, so
+        ``a.maximum(b)`` binds ``a`` to ``cls`` and arrives here as the single
+        operand ``b``: a plausible-looking Surface that quietly ignores ``a``,
+        and downstream a wrong contact elevation nobody sees until the heads
+        look odd. The variadic signature is what hides it -- ``a.shift(-25)``
+        raises for the missing ``distance``, but ``*surfaces`` swallows the
+        arity error. An envelope of one surface is a no-op even when it is
+        deliberate, so it costs nothing to make it the tripwire.
+        """
+
+        if len(surfaces) >= 2:
+            return
+        raise TypeError(
+            f"Surface.{name}() takes two or more surfaces, got {len(surfaces)}. "
+            f"If you wrote `a.{name}(b)`: {name} is a classmethod, so `a` binds to "
+            f"`cls` and is dropped -- the result would be `b` alone. Write "
+            f"`Surface.{name}(a, b)`, or the instance-bound `a.{fluent}(b)`."
+        )
+
     @classmethod
     def minimum(cls, *surfaces) -> Surface:
-        """Per-cell minimum (lower envelope) of two or more surfaces."""
+        """Per-cell minimum (lower envelope) of two or more surfaces.
+
+        A classmethod: call it as ``Surface.minimum(a, b)``, or reach for the
+        instance-bound :meth:`capped_at`. One surface raises :class:`TypeError`,
+        because that is what a misbound ``a.minimum(b)`` looks like from here.
+        """
+        cls._reject_lone_envelope("minimum", "capped_at", surfaces)
         return cls(kind="min", operands=tuple(cls._coerce(s) for s in surfaces))
 
     @classmethod
     def maximum(cls, *surfaces) -> Surface:
-        """Per-cell maximum (upper envelope) of two or more surfaces."""
+        """Per-cell maximum (upper envelope) of two or more surfaces.
+
+        A classmethod: call it as ``Surface.maximum(a, b)``, or reach for the
+        instance-bound :meth:`floored_at`. One surface raises :class:`TypeError`,
+        because that is what a misbound ``a.maximum(b)`` looks like from here.
+        """
+        cls._reject_lone_envelope("maximum", "floored_at", surfaces)
         return cls(kind="max", operands=tuple(cls._coerce(s) for s in surfaces))
 
     @classmethod
@@ -242,8 +277,18 @@ class Surface:
 
         ``lower``/``upper`` may be surfaces, paths, or constants; either may be
         a relative surface (e.g. ``upper=Surface.offset_below(5)`` to keep this
-        surface at least 5 below the one above).
+        surface at least 5 below the one above). At least one is required: with
+        neither, the result is ``surface`` unchanged, which is also exactly what
+        a misbound ``a.clamp(b)`` produces, so both raise :class:`TypeError`.
         """
+        if lower is None and upper is None:
+            raise TypeError(
+                "Surface.clamp() needs lower= or upper=; with neither it would "
+                "return `surface` unchanged. If you wrote `a.clamp(b)`: clamp is a "
+                "classmethod, so `a` binds to `cls` and is dropped. Write "
+                "`Surface.clamp(a, lower=..., upper=...)`, or the instance-bound "
+                "`a.between(lower=..., upper=...)`."
+            )
         return cls(
             kind="clamp",
             operands=(

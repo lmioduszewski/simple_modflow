@@ -659,3 +659,75 @@ def test_fluent_capped_at_shifted_surface():
 def test_subtracting_a_surface_from_a_surface_is_unsupported():
     with pytest.raises(TypeError):
         Surface.flat(100) - Surface.flat(5)
+
+
+# --- the classmethod-binding tripwire ----------------------------------------
+# `minimum`/`maximum`/`clamp` are classmethods, so an instance call binds the
+# instance to `cls` and drops it. `shift`/`isopach`/`where` already raise for the
+# now-missing positional argument; the variadic `*surfaces` of the envelopes and
+# the all-optional bounds of `clamp` were the two spellings that swallowed it and
+# returned a plausible Surface built from one operand. Measured 2026-08-26 before
+# the guard: `a.maximum(b).operands` was `(b,)`, silently. These pin that a wrong
+# contact elevation cannot be built that way again.
+@pytest.mark.parametrize(
+    "name, fluent",
+    [("minimum", "capped_at"), ("maximum", "floored_at")],
+)
+def test_envelope_called_on_an_instance_raises_instead_of_dropping_it(name, fluent):
+    a, b = Surface.flat(10), Surface.flat(20)
+    with pytest.raises(TypeError, match=rf"Surface\.{name}\(\) takes two or more") as err:
+        getattr(a, name)(b)                      # binds cls -- `a` never arrives
+    # The message has to name the fix, not just the symptom: the whole failure
+    # mode is that the caller believed this call was fluent.
+    assert f"a.{fluent}(b)" in str(err.value)
+    assert f"Surface.{name}(a, b)" in str(err.value)
+
+
+@pytest.mark.parametrize("name", ["minimum", "maximum"])
+def test_envelope_of_one_surface_raises_even_when_deliberate(name):
+    # min/max of a single surface is that surface, so nothing is lost by making
+    # the arity the tripwire -- and a `*surfaces` splat that collapsed to one
+    # element is a bug worth hearing about too.
+    with pytest.raises(TypeError, match=r"takes two or more surfaces, got 1"):
+        getattr(Surface, name)(Surface.flat(10))
+    with pytest.raises(TypeError, match=r"takes two or more surfaces, got 0"):
+        getattr(Surface, name)()
+
+
+def test_clamp_called_on_an_instance_raises_instead_of_dropping_it():
+    a, b = Surface.flat(10), Surface.flat(20)
+    with pytest.raises(TypeError, match=r"Surface\.clamp\(\) needs lower= or upper=") as err:
+        a.clamp(b)                               # binds cls -- would have returned b
+    assert "a.between(lower=..., upper=...)" in str(err.value)
+
+
+def test_clamp_without_a_bound_raises_rather_than_doing_nothing():
+    with pytest.raises(TypeError, match=r"needs lower= or upper="):
+        Surface.clamp(Surface.flat(10))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda a, b: a.shift(-25),
+        lambda a, b: a.isopach(),
+        lambda a, b: a.where("zone", b),
+    ],
+    ids=["shift", "isopach", "where"],
+)
+def test_the_remaining_classmethods_already_fail_loudly_when_misbound(call):
+    # No guard needed on these: the dropped instance leaves a required positional
+    # missing, so Python itself raises. Pinned so a later signature change (e.g.
+    # giving `shift` a default distance) cannot quietly reopen the hole.
+    a, b = Surface.flat(10), Surface.flat(20)
+    with pytest.raises(TypeError, match="required positional argument"):
+        call(a, b)
+
+
+def test_the_correct_and_fluent_spellings_keep_both_operands():
+    a, b = Surface.flat(10), Surface.flat(20)
+    assert len(Surface.maximum(a, b).operands) == 2
+    assert len(Surface.minimum(a, b).operands) == 2
+    assert len(Surface.minimum(a, b, Surface.flat(30)).operands) == 3   # still variadic
+    assert a.floored_at(b).operands == (a, b)
+    assert a.capped_at(b).operands == (a, b)

@@ -149,13 +149,14 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 **Starting a new model? `docs/model_building_cheatsheet.md`** is the ordered path —
 contours → `Surface` → `LayerStack` → `ModelContext` → packages → `Project`/run →
 results — every call verified end to end 2026-08-26, runnable as
-`examples/mf6/contours_to_model.py`. One library gap it documents rather than
-fixes: `Surface.maximum/minimum/shift/clamp` are classmethods, so `a.maximum(b)`
-silently drops `a` and returns `b`. (The GRASS gap it originally documented —
-launcher discovery globbing `grass*.bat` only, so `mf.Contours` needed
-`GRASS_BIN` plus a hand-set `PYTHONPATH` on Linux — was **fixed** 2026-08-26:
-`contour_interp.py` now falls back to `shutil.which` on non-Windows and asks the
-resolved launcher for its bindings path.)
+`examples/mf6/contours_to_model.py`. The two library gaps it used to document
+rather than fix were both **closed 2026-08-26**: GRASS launcher discovery globbed
+`grass*.bat` only, so `mf.Contours` needed `GRASS_BIN` plus a hand-set
+`PYTHONPATH` on Linux — `contour_interp.py` now falls back to `shutil.which` on
+non-Windows and asks the resolved launcher for its bindings path (ledger 146);
+and `Surface.maximum/minimum/clamp` are classmethods, so a misbound `a.maximum(b)`
+dropped `a` silently — they now raise `TypeError` naming `Surface.maximum(a, b)`
+and the fluent `a.floored_at(b)` (ledger 147).
 **`docs/package_api_reference.md` is the human-readable map of the whole API** — the
 `mf.*` build helpers and the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
 read grammar (pinned by `tests/api_snapshot.json` + `package_registry.py`).
