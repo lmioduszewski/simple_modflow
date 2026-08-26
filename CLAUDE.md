@@ -146,6 +146,13 @@ A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
 - **Parallel model workflows** — `ParallelModelWorkflow` in `parallel.py`
 
 ## Canonical model-building API: package-first (use this for new work)
+**Starting a new model? `docs/model_building_cheatsheet.md`** is the ordered path —
+contours → `Surface` → `LayerStack` → `ModelContext` → packages → `Project`/run →
+results — every call verified end to end 2026-08-26, runnable as
+`examples/mf6/contours_to_model.py`. Two library gaps it documents rather than
+fixes: GRASS launcher auto-discovery globs `grass*.bat` only, so `mf.Contours`
+needs `GRASS_BIN` on Linux; and `Surface.maximum/minimum/shift/clamp` are
+classmethods, so `a.maximum(b)` silently drops `a` and returns `b`.
 **`docs/package_api_reference.md` is the human-readable map of the whole API** — the
 `mf.*` build helpers and the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
 read grammar (pinned by `tests/api_snapshot.json` + `package_registry.py`).

@@ -19,6 +19,12 @@ MODFLOW 6 models in myflopy. Two halves:
 >
 > When these disagree with this file, they win — update this file to match.
 
+> **Starting a new model?** `docs/model_building_cheatsheet.md` is the ordered
+> walkthrough — contours → surfaces → layer stack → packages → run → results —
+> with every call verified end to end. Runnable:
+> `examples/mf6/contours_to_model.py`. This file is the per-symbol reference; the
+> cheat sheet is the path through it.
+
 ---
 
 ## A · Build side — `mf.*`
