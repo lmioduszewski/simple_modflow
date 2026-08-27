@@ -237,10 +237,34 @@ toggling `progress` leaves `cache_status()` at `fresh`.
 | source | use |
 |---|---|
 | `mf.Contours(path, z="Elev", region_vector=...)` | digitized elevation contours (GRASS) |
-| `mf.Raster(path, fill=...)` | a DEM or any GeoTIFF |
+| `mf.Raster(path, fill=…, nodata=…)` | a DEM or any GeoTIFF |
 | `mf.Points(xs, ys, zs, method="linear")` | scattered control points — **the GRASS-free fallback** |
 | `Array(values)` | one value per cell, already computed (`from myflopy.layers import Array`) |
 | `mf.Surface.from_array(values)` | same, via the atom class |
+
+#### If your DEM was clipped but not labelled
+
+A raster clipped to a boundary and exported **without a no-data value in its
+header** is a very common GIS product — the fill (usually `0`) is then read as a
+real elevation. It shows up as a rectangular surface instead of a domain-shaped
+one, ground at elevation zero outside the boundary, and every layer beneath
+collapsing to `min_sep` once its contact gets capped to that zero.
+
+```python
+mf.Raster("clipped.tif", nodata=0)      # declare it at read time
+```
+
+Measured on a real project: 4.3 M pixels of exact `0.0` outside the domain, and
+median layer thicknesses of `[0.10, 0.10, 0.10]`. With `nodata=0` they became
+`[6.62, 21.33, 58.60]` — identical to rewriting the file properly.
+
+Masking happens *before* the per-cell average, so a cell straddling the boundary
+is the mean of its real pixels rather than a blend with the sentinel.
+
+The durable fix is still to label the raster, which helps every other tool too —
+in QGIS, **Clip Raster by Mask Layer** with *"Assign a specified nodata value"*
+set to `-9999` (never `0`; it is a plausible elevation). Check it took with
+`gdalinfo out.tif | grep -i nodata`.
 
 ### Surface algebra
 

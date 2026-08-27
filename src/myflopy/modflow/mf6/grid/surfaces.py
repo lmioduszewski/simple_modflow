@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 _AREA_SAMPLE_WARN_NCPL = 50_000
 
 
-def _centroid_sample(src, vor_crs, xs, ys, raster_path) -> np.ndarray:
+def _centroid_sample(src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarray:
     """Sample the raster at each cell centroid (point sampling)."""
 
     # Reproject centroids from the grid CRS to the raster CRS so we sample the
@@ -41,12 +41,15 @@ def _centroid_sample(src, vor_crs, xs, ys, raster_path) -> np.ndarray:
     )
     # rasterio.sample() yields the nodata value (e.g. -9999) for nodata and
     # out-of-bounds points, never None, so convert those to NaN explicitly.
-    if src.nodata is not None:
-        sampled[sampled == src.nodata] = np.nan
+    # `nodata` overrides the file's own, for rasters that use a sentinel (often
+    # 0) without declaring it in the header.
+    fill = src.nodata if nodata is None else nodata
+    if fill is not None:
+        sampled[sampled == fill] = np.nan
     return sampled
 
 
-def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path) -> np.ndarray:
+def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarray:
     """Per-cell mean of raster pixels falling within each Voronoi cell polygon.
 
     Cells that cover no raster pixel (too small relative to the raster, or
@@ -83,8 +86,12 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path) -> np.ndarray:
             win = None
     if win is not None and win.width >= 1 and win.height >= 1:
         band = src.read(1, window=win).astype(float)
-        if src.nodata is not None:
-            band[band == src.nodata] = np.nan
+        # Masked BEFORE the per-cell mean: averaging first would blend the
+        # sentinel into every cell that straddles the edge, and no later
+        # comparison could recover it (half of 0 and 500 is a plausible 250).
+        fill = src.nodata if nodata is None else nodata
+        if fill is not None:
+            band[band == fill] = np.nan
         # Burn cell ids (1..ncpl) onto the raster grid, then average the valid
         # pixels of each cell in one vectorized pass.
         shapes = (
@@ -111,8 +118,13 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path) -> np.ndarray:
 
     missing = ~covered
     if missing.any():
+        # `nodata` MUST be forwarded here. A cell whose every pixel was masked
+        # counts as uncovered, so it lands in this fallback -- and without the
+        # override the centroid read hands the sentinel straight back, undoing
+        # the masking for exactly the cells that needed it most.
         mean[missing] = _centroid_sample(
-            src, vor_crs, np.asarray(xs)[missing], np.asarray(ys)[missing], raster_path
+            src, vor_crs, np.asarray(xs)[missing], np.asarray(ys)[missing],
+            raster_path, nodata=nodata,
         )
     return mean
 
@@ -123,12 +135,17 @@ def get_raster_vals_at_centroids(
     labels: str | list[str] | list[int] | None = None,
     *,
     method: str = "area",
+    nodata: float | None = None,
 ) -> gpd.GeoDataFrame | None:
     """Sample raster values or constants onto Voronoi cells.
 
     ``method="area"`` (default) returns the area-weighted mean of the raster
     pixels within each cell polygon; ``method="centroid"`` samples a single
     pixel at each cell centroid (faster, less faithful on coarse layers).
+
+    ``nodata`` overrides each raster's declared no-data value, for files that use
+    a sentinel without recording it in the header. It applies to every raster in
+    the call, so pass one raster at a time when they differ.
     """
     if raster_files is None:
         logger.warning('no raster files provided; there are no surfaces to sample')
@@ -173,10 +190,12 @@ def get_raster_vals_at_centroids(
         with rasterio.open(raster_path) as src:
             if method == "area":
                 sampled = _area_weighted_sample(
-                    vor, src, vor_crs, xs, ys, raster_path
+                    vor, src, vor_crs, xs, ys, raster_path, nodata=nodata
                 )
             else:
-                sampled = _centroid_sample(src, vor_crs, xs, ys, raster_path)
+                sampled = _centroid_sample(
+                    src, vor_crs, xs, ys, raster_path, nodata=nodata
+                )
             centroid_vals[label] = sampled
 
     for label, val in numeric_vals.items():

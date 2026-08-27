@@ -101,6 +101,8 @@ class Surface:
     value: float | None = None
     path: Path | None = None
     fill: str | None = None
+    #: Overrides the raster's declared no-data value; see `Surface.raster`.
+    nodata: float | None = None
     units: str | None = None  # source units, if different from the model units
     # contour-interpolation parameters
     contours: Path | None = None
@@ -128,18 +130,59 @@ class Surface:
 
     @classmethod
     def raster(
-        cls, path: Path | str, *, fill: str | None = None, units: str | None = None
+        cls,
+        path: Path | str,
+        *,
+        fill: str | None = None,
+        units: str | None = None,
+        nodata: float | None = None,
     ) -> Surface:
         """A surface sampled from an existing raster.
 
-        ``fill="propagate"`` carries the surface above down into cells where the
-        raster has no data (nodata or outside coverage), so the layer pinches
-        against the surface above instead of leaving a ``NaN`` elevation.
-        ``units`` (e.g. ``"meters"``) converts the sampled elevations to the
-        model length units when sampled through a stack that declares them.
+        Parameters
+        ----------
+        path : Path or str
+            The raster to sample.
+        fill : {'propagate'}, optional
+            ``"propagate"`` carries the surface above down into cells where the
+            raster has no data (nodata or outside coverage), so the layer
+            pinches against the surface above instead of leaving a ``NaN``
+            elevation.
+        units : str, optional
+            e.g. ``"meters"``. Converts the sampled elevations to the model
+            length units when sampled through a stack that declares them.
+        nodata : float, optional
+            Treat this value as no-data, overriding whatever the file declares.
+
+            For rasters clipped to a boundary but written WITHOUT a no-data
+            value in the header -- a very common GIS export -- where the fill
+            (usually ``0``) is then read as a real elevation. Symptoms: a
+            surface that is rectangular rather than domain-shaped, ground at
+            elevation zero outside the boundary, and every layer beneath it
+            collapsing to ``min_sep`` once the contacts get capped to it.
+
+            Masking happens BEFORE the per-cell average, so a cell straddling
+            the edge is the mean of its valid pixels rather than a blend with
+            the sentinel.
+
+            ``mf.Raster(dem, nodata=0)`` is the fix without rewriting the file;
+            declaring it properly in the raster (``gdalwarp -dstnodata``) is the
+            fix that helps every other tool too.
+
+        Returns
+        -------
+        Surface
+
+        Examples
+        --------
+        >>> mf.Raster("ground.tif")                       # header nodata is honoured
+        >>> mf.Raster("clipped.tif", nodata=0)            # 0 is fill, not ground
+        >>> mf.Raster("bedrock.tif", fill="propagate")    # gaps inherit from above
         """
 
-        return cls(kind="raster", path=Path(path), fill=fill, units=units)
+        return cls(
+            kind="raster", path=Path(path), fill=fill, units=units, nodata=nodata
+        )
 
     @classmethod
     def flat(cls, value: float, *, units: str | None = None) -> Surface:
@@ -627,7 +670,8 @@ class Surface:
             return griddata((xs, ys), zs, (cx, cy), method=self.method)
 
         gdf = get_raster_vals_at_centroids(
-            vor, [self.resolve_source(refresh=refresh)], [0], method=method
+            vor, [self.resolve_source(refresh=refresh)], [0], method=method,
+            nodata=self.nodata,
         )
         vals = gdf[0].to_numpy(dtype=float)
         if self.fill == "propagate":
