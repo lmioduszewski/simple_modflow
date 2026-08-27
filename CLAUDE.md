@@ -59,7 +59,8 @@ pictures). They are free functions in `myflopy.plot` AND bound as `model.plot` /
 the verb** — contours, locations, hillshade and pathlines are OPTIONS on `map`,
 never verbs; **`backend=` switches the renderer, never the subject** (which is why
 the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means a
-height field). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
+height field; `surface(backend="vtk")` exists and draws those height fields as
+separate PyVista sheets, which is the rule holding rather than bending). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
 `.save(path)` / `.html(path)`, and never a trailing `.plot()`.
 `tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
 the stray verb, so adding one in one place and forgetting another is caught.

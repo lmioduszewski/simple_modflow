@@ -3466,3 +3466,75 @@ same day, which is the useful part of the result.
        corrected -- measured cost, a 597,000 ft offset that hangs `r.surf.contour`
        at 0% forever. A CRS check and a no-overlap check are filed as a task; the
        cheat sheet documents the manual `to_crs` in the meantime.
+
+150. **`clip` promoted alongside `region_vector`; it stays in the cache signature (2026-08-27).**
+     Same invisibility as ledger 149 -- reachable only through `**grass_kwargs` --
+     on a flag that defaults to ON and shapes the output (with a vector region it
+     clips to the POLYGON, not its bounding box).
+     - **The care needed was the opposite of `progress`'s.** `progress` is
+       deliberately EXCLUDED from the derived-raster signature: it changes what
+       you see, not what is written. `clip` changes what is written, so moving it
+       out of `grass_kwargs` would have silently dropped it from the signature
+       and let a clipped and an unclipped surface share one cached file. It is
+       added to `params` explicitly, with a test that fails if it leaves.
+
+151. **`mf.Raster(..., nodata=)` overrides the header (2026-08-27).**
+     A raster clipped to a boundary but exported with no no-data value in its
+     header is a common GIS product; the fill (usually 0) is then read as real
+     ground. Measured: 4.3M pixels of exact 0.0 outside a domain, collapsing all
+     three layers to `min_sep` once contacts were capped to it.
+     - **Masking is threaded into both samplers rather than applied after.**
+       `method="area"` averages each cell's pixels, so masking afterwards leaves
+       a boundary-straddling cell already blended -- half 0, half real ground --
+       reading as a plausible elevation with nothing left to detect. Pinned by a
+       test asserting a straddling cell returns 500, not 250.
+     - Writing it produced a bug now covered by its own test: a cell whose every
+       pixel is masked counts as UNCOVERED and falls to the centroid fallback,
+       which did not forward the override and handed the sentinel back.
+     - NOT done: no heuristic warning for "this raster declares no nodata and is
+       suspiciously full of zeros". Too clever -- 0 is a legitimate elevation.
+       The docs name the durable fix (`gdalwarp -dstnodata`) instead.
+
+152. **Interpolated surfaces drop no-value samples (2026-08-27).**
+     `griddata` triangulates every point it is given, so ONE NaN vertex makes
+     every output cell of every triangle touching it NaN; scattered NaNs erase
+     the whole surface. Measured: 300 valid cells of 582 gave 0 finite pixels of
+     14,400, which renders as nothing and reads as "plotting is broken".
+     - Pre-existing, not introduced by 151 -- any properly declared no-data
+       raster reached it. `nodata=` merely made it easy to reach.
+     - Fixed at `_finite_samples`, which griddata AND rbf both draw from, rather
+       than at either call site.
+     - An all-NaN surface now RAISES naming the likely causes. Returning an empty
+       picture is what made the original failure so hard to place.
+
+153. **`surface(backend="vtk")` renders contacts as separate sheets (2026-08-27).**
+     `grid(backend="vtk")` fuses layers into one volume, so no contact can be
+     isolated in it -- which is the actual question when someone wants to see
+     surfaces individually. Separate actors let a viewer hide the sheets above.
+     - **Does not weaken the `backend=` rule**: `surface` still means a height
+       field and only the renderer changes. Both paths interpolate through the
+       shared `InterpolatedSurface`, so a VTK sheet and its Plotly counterpart
+       are the same numbers.
+     - NaN cells are thresholded out. Drawn, they would be a sheet at z=0 --
+       a contact at sea level, exactly the failure 151 exists to prevent.
+     - `show_edges` is recorded in `test_plot_vocabulary`'s stack-local allowlist
+       rather than added to the free verb: it is a vtk sheet detail, like
+       `scale`/`cmap`/`width` beside it. The guard rejected it first; the
+       allowlist entry is the reviewed answer, not a workaround.
+     - The import ratchet rejected the new deferred import; hoisting it removed
+       the duplicate in `_surface_fig` too, so the deferred total went 58 -> 57.
+
+154. **A bare EPSG number is normalized to `EPSG:<n>` (2026-08-27).**
+     `crs="2927"` failed with `CRSError: The WKT could not be parsed`, nine frames
+     deep in raster sampling and several steps from the line that was wrong.
+     - **Why it was so far from its cause:** pyproj accepts a bare `"2927"`, so
+       geopandas reprojection, the boundary clip and the whole grid build
+       succeed. Rasterio's `warp_transform` is the only thing that rejects it, so
+       the first symptom is the first RASTER sample.
+     - Normalized at `VoronoiGridPlus.__init__`. A bare integer string is never
+       valid WKT or PROJ, so reading it as EPSG cannot be wrong. It also lines up
+       with `mf.Contours(epsg="2927")`, which has always taken the bare form --
+       the inconsistency that made `"2927"` natural to write.
+     - NOT done: no general CRS validation at construction. Only the unambiguous
+       case is handled; anything else still passes through to pyproj/rasterio to
+       interpret and to complain about in their own words.
