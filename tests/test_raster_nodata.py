@@ -109,3 +109,67 @@ def test_a_declared_header_nodata_still_wins_when_no_override(tmp_path):
 
 def test_nodata_defaults_to_none():
     assert mf.Raster("x.tif").nodata is None
+
+
+# --- NaN cells must not poison an interpolated surface ---------------------- #
+
+def test_a_surface_interpolates_around_cells_with_no_value():
+    """Reported as "surfaces are not plotting". They were built and were entirely
+    NaN, so plotly drew nothing.
+
+    `griddata` triangulates every point it is handed, so ONE NaN vertex makes
+    every output cell of every triangle touching it NaN. Scattered NaNs -- a DEM
+    masked to a boundary, inactive cells in a head array -- therefore wipe out
+    the whole surface. Measured on a real stack: 300 valid cells of 582 produced
+    0 finite pixels of 14,400.
+
+    Pre-existing rather than new: any raster with a properly declared no-data
+    value hit it too. `mf.Raster(nodata=)` merely made it easy to reach.
+    """
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    rng = np.random.default_rng(0)
+    xs = rng.uniform(0, 100, 300)
+    ys = rng.uniform(0, 100, 300)
+    zs = 50 + 0.1 * xs
+    zs[rng.uniform(size=zs.size) < 0.4] = np.nan       # 40% of cells have no value
+
+    grid = InterpolatedSurface(
+        xs=xs, ys=ys, zs=zs, surf_type="lyr", resolution=40, crs="EPSG:2927"
+    ).surface
+    finite = np.isfinite(np.asarray(grid, float))
+
+    assert finite.any(), "NaN samples wiped out the entire interpolated surface"
+    assert finite.mean() > 0.5
+
+
+def test_an_all_nan_surface_says_so_rather_than_drawing_nothing():
+    """The degenerate case still has to be an error, not an empty picture."""
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    xs = np.linspace(0, 10, 25)
+    surf = InterpolatedSurface(
+        xs=xs, ys=xs, zs=np.full(25, np.nan), surf_type="lyr",
+        resolution=10, crs="EPSG:2927",
+    )
+    with pytest.raises(ValueError, match="every cell in this surface is NaN"):
+        _ = surf.surface
+
+
+def test_a_surface_with_no_nans_is_unchanged():
+    """The fix must not perturb the ordinary path."""
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    rng = np.random.default_rng(1)
+    xs, ys = rng.uniform(0, 100, 200), rng.uniform(0, 100, 200)
+    zs = 50 + 0.1 * xs + 0.05 * ys
+    grid = np.asarray(InterpolatedSurface(
+        xs=xs, ys=ys, zs=zs, surf_type="lyr", resolution=30, crs="EPSG:2927"
+    ).surface, float)
+
+    inside = grid[np.isfinite(grid)]
+    assert inside.size > 0
+    assert 50 <= inside.min() and inside.max() <= 50 + 0.1 * 100 + 0.05 * 100 + 1e-6
