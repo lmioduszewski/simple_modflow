@@ -122,6 +122,30 @@ from myflopy.modflow.mf6.grid.surfaces import (
 logger = get_logger(__name__)
 
 
+def normalize_crs(crs):
+    """Accept a bare EPSG code as well as a full CRS identifier.
+
+    ``2927`` and ``"2927"`` become ``"EPSG:2927"``; anything else passes through
+    untouched for pyproj/rasterio to interpret.
+
+    Worth doing because the failure was silent until it was baffling. pyproj --
+    and therefore geopandas ``to_crs`` -- accepts a bare ``"2927"``, so a grid
+    built with it reprojects, clips and plots perfectly well. Only rasterio's
+    ``warp_transform`` rejects it, so the first thing to break is raster
+    sampling, several steps later, with ``CRSError: The WKT could not be parsed``
+    -- which names WKT at someone who typed a number. Reported 2026-08-27.
+
+    A bare integer string is never valid WKT or PROJ, so reading it as an EPSG
+    code cannot be wrong.
+    """
+
+    if isinstance(crs, int):
+        return f"EPSG:{crs}"
+    if isinstance(crs, str) and crs.strip().isdigit():
+        return f"EPSG:{crs.strip()}"
+    return crs
+
+
 class VoronoiGridPlus(VoronoiGrid):
     """An unstructured Voronoi (DISV) grid with MODFLOW-modeling conveniences.
 
@@ -218,7 +242,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self._nlay = None
         self._latlon = None
         self.rasters = rasters
-        self.crs = crs
+        self.crs = normalize_crs(crs)
         self.name = name
         self.x_coords_by_node = []
         self.y_coords_by_node = []

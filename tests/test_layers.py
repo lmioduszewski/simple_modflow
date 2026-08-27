@@ -981,3 +981,49 @@ def test_no_data_cells_do_not_become_a_sheet_at_zero(tmp_path):
                  and a.GetMapper().GetInput().GetNumberOfCells() > 1)
     bounds = sheet.GetBounds()          # (xmin, xmax, ymin, ymax, zmin, zmax)
     assert bounds[4] > 0, "a sheet reaching z=0 means the NaN cells were drawn"
+
+
+# --- a bare EPSG number is a CRS (2026-08-27) ------------------------------- #
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [(2927, "EPSG:2927"), ("2927", "EPSG:2927"), (" 2927 ", "EPSG:2927"),
+     ("EPSG:2927", "EPSG:2927"), ("ESRI:102748", "ESRI:102748"), (None, None)],
+)
+def test_a_bare_epsg_number_is_normalised(given, expected):
+    """`crs='2927'` failed in one place only, several steps from where it was
+    written. pyproj accepts it, so geopandas reprojection, clipping and plotting
+    all work; rasterio's `warp_transform` does not, so the first break is raster
+    SAMPLING, with `CRSError: The WKT could not be parsed` -- naming WKT at
+    someone who typed a number. A bare integer string is never valid WKT or
+    PROJ, so reading it as EPSG cannot be wrong."""
+
+    from myflopy.modflow.mf6.grid.voronoi import normalize_crs
+
+    assert normalize_crs(given) == expected
+
+
+def test_a_grid_built_with_a_bare_number_can_sample_a_raster(tmp_path):
+    """The end-to-end version: the grid must carry a CRS rasterio can parse."""
+
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+    from rasterio.warp import transform as warp_transform
+
+    import myflopy as mf
+
+    path = tmp_path / "r.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float32",
+        crs="EPSG:2927", transform=from_origin(0, 4, 1, 1),
+    ) as handle:
+        handle.write(np.full((4, 4), 10.0, dtype="float32"), 1)
+
+    tri = mf.TriangleGrid(model_ws=str(tmp_path), angle=30)
+    tri.set_domain_rectangle(x_dist=4, y_dist=4, origin=(0, 0))
+    tri.build()
+    vor = mf.VoronoiGridPlus(tri, crs="2927")        # the bare number
+
+    assert vor.crs == "EPSG:2927"
+    with rasterio.open(path) as src:                 # what the sampler does
+        warp_transform(vor.crs, src.crs, [1.0], [1.0])
