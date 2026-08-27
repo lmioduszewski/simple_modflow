@@ -16,6 +16,7 @@ from myflopy.layers import (
     LayerStack,
     Max,
     Min,
+    Raster,
 )
 from myflopy.surfaces import LayerSurfaces, Surface
 
@@ -678,11 +679,14 @@ def test_using_a_deferred_stack_without_a_grid_names_the_fix(consume, pattern):
         getattr(stack, consume)()
 
 
-def test_plot_on_a_deferred_stack_names_both_spellings():
-    """A property cannot take a grid, so it has to say what does."""
+def test_plot_without_a_grid_falls_back_rather_than_refusing():
+    """Superseded the "name both spellings" error one commit later: `.plot` now
+    draws on a draft grid instead of raising. It can still only fail for want of
+    an EXTENT -- these surfaces are `Flat`, so there is nothing to infer -- and
+    that message points at the extent, not at binding a grid."""
 
     stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
-    with pytest.raises(ValueError, match=r"for_grid\(vor\)\.plot"):
+    with pytest.raises(ValueError, match="no surface in this stack carries"):
         stack.plot
 
 
@@ -797,3 +801,110 @@ def test_capping_the_contact_keeps_a_veneer_instead_of_cutting_it_out():
     assert cut.idomain[0][ch] == 0 and cut.thickness[0][ch] < 1
     assert capped.idomain[0][ch] == 1
     assert capped.thickness[0][ch] == pytest.approx(2.0)
+
+
+# --- looking at a stack before its grid exists (2026-08-27) ------------------ #
+#
+# `.plot` on a gridless stack draws on a coarse `draft_grid` over the surfaces'
+# own extent. Pictures only: an approximate picture is useful, invented model
+# geometry is not, so build/qc/to_disv still demand a real grid.
+
+@pytest.fixture
+def dem(tmp_path):
+    """A small georeferenced GeoTIFF: 3000 x 2000 at EPSG:2927."""
+
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+
+    path = tmp_path / "ground.tif"
+    values = np.array(
+        [[200.0 - 0.02 * (x * 25) for x in range(120)] for _ in range(80)],
+        dtype="float32",
+    )
+    with rasterio.open(
+        path, "w", driver="GTiff", height=80, width=120, count=1, dtype="float32",
+        crs="EPSG:2927", transform=from_origin(0, 2000, 25, 25),
+    ) as handle:
+        handle.write(values, 1)
+    return path
+
+
+def _gridless(dem):
+    return (
+        LayerStack(top=Raster(dem), length_units="feet")
+        .add("sand", thickness=40.0, pinch="inactive")
+        .add("clay", bottom=Flat(120), min_thickness=2.0, pinch="passthrough")
+    )
+
+
+@pytest.mark.parametrize("verb", ["map", "section", "surface"])
+def test_a_gridless_stack_can_still_be_looked_at(dem, verb):
+    stack = _gridless(dem)
+    assert stack.vor is None
+    assert getattr(stack.plot, verb)() is not None
+
+
+def test_the_draft_grid_takes_its_extent_from_the_surfaces(dem):
+    grid = _gridless(dem).draft_grid(cells=200)
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    assert (round(xmin), round(ymin), round(xmax), round(ymax)) == (0, 0, 3000, 2000)
+    assert "2927" in str(grid.crs)
+
+
+def test_the_draft_grid_is_built_once_and_reused(dem, monkeypatch):
+    """Otherwise every picture pays for a fresh mesh."""
+
+    stack = _gridless(dem)
+    calls = []
+    original = LayerStack.draft_grid
+    monkeypatch.setattr(
+        LayerStack, "draft_grid",
+        lambda self, **kw: (calls.append(1), original(self, **kw))[1],
+    )
+    stack.plot.map()
+    stack.plot.section(y=1000)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("consume", ["build", "qc", "to_disv"])
+def test_the_draft_grid_is_never_used_for_model_geometry(dem, consume):
+    """The line that makes the fallback safe: pictures may be approximate,
+    a DISV may not be invented."""
+
+    with pytest.raises(ValueError, match="needs a grid"):
+        getattr(_gridless(dem), consume)()
+
+
+def test_an_explicit_extent_overrides_the_surfaces():
+    """Also the escape hatch for a stack whose surfaces carry no extent."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    grid = stack.draft_grid(cells=100, extent=(0, 0, 500, 400), crs="EPSG:2927")
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    assert (round(xmax - xmin), round(ymax - ymin)) == (500, 400)
+
+
+def test_a_stack_with_no_extent_anywhere_says_so():
+    """`Flat`/`Array` describe thickness with no notion of where -- nothing to infer."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    with pytest.raises(ValueError, match="no surface in this stack carries"):
+        stack.draft_grid()
+
+
+def test_an_empty_extent_is_rejected():
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    with pytest.raises(ValueError, match="empty extent"):
+        stack.draft_grid(extent=(10, 10, 10, 50))
+
+
+def test_the_extent_walk_descends_into_composed_surfaces(dem):
+    """A stack whose only georeferenced surface is buried inside algebra --
+    `Flat(150).capped_at(Raster(...) - 2)` -- must still find the raster."""
+
+    ground = Raster(dem)
+    stack = LayerStack(top=Flat(300)).add(
+        "sand", bottom=Flat(150).capped_at(ground - 2.0)
+    )
+    assert stack._georeferenced_surfaces(), "the walk missed a nested raster"
+    assert round(stack.draft_grid(cells=100).gdf_vorPolys.total_bounds[2]) == 3000

@@ -21,6 +21,7 @@ the existing, tested `LayerSurfaces` engine.
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
 from pathlib import Path
@@ -28,10 +29,15 @@ from typing import Any
 
 import numpy as np
 
+from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.modflow.mf6.grid.plotting import GridPlots
+from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.surfaces import LayerSurfaces, Surface
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
+
+logger = get_logger(__name__)
 
 # Convenience source aliases -- the existing Surface constructors under friendlier
 # names for layer authoring (NOT new implementations).
@@ -1178,6 +1184,8 @@ class LayerStack:
         self.vor = vor
         self._top = _coerce_surface(top)
         self._layers: list[_Layer] = []
+        #: Cached draft grid for `.plot` on a gridless stack; see `draft_grid`.
+        self._draft = None
         self.length_units = length_units
         self.time_units = time_units
 
@@ -1197,6 +1205,100 @@ class LayerStack:
                 f"it once with `stack.for_grid(vor)`."
             )
         return resolved
+
+    def _georeferenced_surfaces(self) -> list[Surface]:
+        """Every surface in the stack that carries its own extent, composites included.
+
+        A raster or contour surface knows where it is; ``flat``/``array`` and the
+        algebra kinds do not, but they are *built from* ones that might, so the
+        walk descends through ``operands``.
+        """
+
+        found, seen = [], set()
+
+        def walk(surface):
+            if id(surface) in seen:
+                return
+            seen.add(id(surface))
+            if surface.kind in ("raster", "contours"):
+                found.append(surface)
+            for operand in surface.operands or ():
+                if isinstance(operand, Surface):
+                    walk(operand)
+
+        walk(self._top)
+        for layer in self._layers:
+            if isinstance(layer.surface, Surface):
+                walk(layer.surface)
+        return found
+
+    def draft_grid(self, *, cells: int = 400, extent=None, crs: str | None = None):
+        """Build a throwaway Voronoi grid covering this stack's own extent.
+
+        For LOOKING at a stack before its real grid exists. The extent comes from
+        the first raster- or contour-backed surface in the stack -- those are the
+        only kinds that know where they are -- and the mesh is deliberately coarse.
+
+        **Not a modelling grid.** It has no boundary polygon, no refinement, and
+        an extent that is whatever your DEM happens to cover rather than your
+        model domain. :meth:`build`, :meth:`qc` and :meth:`to_disv` will not use
+        it and still demand a real grid; only :attr:`plot` falls back to it.
+
+        Parameters
+        ----------
+        cells : int, default 400
+            Roughly how many cells to aim for. Coarse on purpose -- a few hundred
+            renders in well under a second and is plenty to see shape, ordering
+            and where a layer pinches.
+        extent : tuple of float, optional
+            ``(xmin, ymin, xmax, ymax)`` to use instead of the surfaces' own --
+            for previewing over your real domain, or a corner of it.
+        crs : str, optional
+            Overrides the CRS read from the source raster.
+
+        Returns
+        -------
+        VoronoiGridPlus
+
+        Raises
+        ------
+        ValueError
+            If no surface carries an extent and none was given. A stack of
+            ``Flat``/``Array`` surfaces describes thicknesses with no notion of
+            where they are, so there is nothing to infer.
+        """
+
+        if extent is None:
+            rasterio = require("rasterio", feature="reading a surface extent for draft_grid()")
+            for surface in self._georeferenced_surfaces():
+                source = surface.resolve_source()
+                if isinstance(source, Path):
+                    with rasterio.open(source) as handle:
+                        extent = tuple(handle.bounds)
+                        crs = crs or str(handle.crs)
+                    break
+            else:
+                raise ValueError(
+                    "draft_grid() needs an extent: no surface in this stack carries "
+                    "one. `Raster` and `Contours` know where they are; `Flat`, "
+                    "`Array` and the algebra built on them do not. Pass "
+                    "extent=(xmin, ymin, xmax, ymax), or use a real grid."
+                )
+
+        xmin, ymin, xmax, ymax = (float(v) for v in extent)
+        width, height = xmax - xmin, ymax - ymin
+        if width <= 0 or height <= 0:
+            raise ValueError(
+                f"draft_grid() got an empty extent: {(xmin, ymin, xmax, ymax)}."
+            )
+
+        tri = TriangleGrid(model_ws=tempfile.mkdtemp(prefix="draft_grid_"), angle=30)
+        tri.set_domain_rectangle(
+            x_dist=width, y_dist=height, origin=(xmin, ymin),
+            max_area=(width * height) / max(int(cells), 1),
+        )
+        tri.build()
+        return VoronoiGridPlus(tri, crs=crs)
 
     def for_grid(self, vor) -> LayerStack:
         """Return a copy of this stack bound to ``vor``.
@@ -1580,18 +1682,31 @@ class LayerStack:
         so ``stack.plot.map()`` is ``stack.build().plot.map()``. Build with
         non-default options first if you need them.
 
-        A property cannot take a grid, so on a stack declared without one this
-        raises and names the two spellings that work:
-        ``stack.build(vor).plot`` or ``stack.for_grid(vor).plot``.
+        **Works without a grid.** A stack declared with none draws on a coarse
+        :meth:`draft_grid` covering the surfaces' own extent, so you can look at
+        the layering before committing to a mesh. One INFO line records the
+        extent and cell count, because a blocky preview should not be mistaken
+        for your model. The draft is cached, so repeated ``.plot`` calls reuse it.
+
+        Only pictures do this. :meth:`build`, :meth:`qc` and :meth:`to_disv`
+        still require a real grid -- an approximate picture is useful, invented
+        model geometry is not. Control the draft with
+        ``stack.for_grid(stack.draft_grid(cells=2000)).plot``.
         """
 
-        if self.vor is None:
-            raise ValueError(
-                "This LayerStack was declared without a grid, and `.plot` cannot "
-                "take one. Use `stack.build(vor).plot` for a one-off, or bind the "
-                "stack first with `stack.for_grid(vor).plot`."
+        if self.vor is not None:
+            return self.build().plot
+
+        if self._draft is None:
+            self._draft = self.draft_grid()
+            xmin, ymin, xmax, ymax = self._draft.gdf_vorPolys.total_bounds
+            logger.info(
+                "LayerStack.plot: no grid on this stack, drawing on a draft grid "
+                "of %d cells over (%.0f, %.0f)-(%.0f, %.0f). Pictures only -- "
+                "build()/qc()/to_disv() still need a real grid.",
+                int(self._draft.ncpl), xmin, ymin, xmax, ymax,
             )
-        return self.build().plot
+        return self.build(self._draft).plot
 
 
     def to_disv(

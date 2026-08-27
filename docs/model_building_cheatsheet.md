@@ -278,6 +278,46 @@ than failing as `NoneType has no attribute ncpl` three frames down; so does
 `LayerStack(ground)`, which reads as the deferred form but binds the surface to
 `vor`.
 
+#### Looking at it before any grid exists
+
+`.plot` needs no grid at all. On a gridless stack it draws on a coarse **draft
+grid** covering the surfaces' own extent, so you can check the layering before
+committing to a mesh:
+
+```python
+stack.plot.section(y=1000)     # works with vor is None
+stack.plot.map()
+stack.plot.surface("all")
+```
+
+```
+INFO  LayerStack.plot: no grid on this stack, drawing on a draft grid of 574
+      cells over (0, 0)-(3000, 2000). Pictures only -- build()/qc()/to_disv()
+      still need a real grid.
+```
+
+The extent comes from the first `Raster` or `Contours` surface in the stack —
+those are the only kinds that know where they are, and the search descends
+through algebra, so a raster buried in `Flat(150).capped_at(ground - 2)` is still
+found. The draft is built once (~0.05 s for a few hundred cells) and cached.
+
+**Pictures only, deliberately.** `build()`, `qc()` and `to_disv()` still demand a
+real grid: an approximate picture is useful, invented model geometry is not. A
+draft has no boundary polygon, no refinement, and whatever extent your DEM
+happens to cover rather than your model domain — which is exactly why it must
+never become a DISV.
+
+Control it, or supply an extent when nothing carries one:
+
+```python
+stack.for_grid(stack.draft_grid(cells=2000)).plot.section(y=1000)   # finer
+stack.draft_grid(extent=(0, 0, 500, 400), crs="EPSG:2927")          # all-Flat stack
+```
+
+A stack of only `Flat`/`Array` surfaces describes thicknesses with no notion of
+where they are, so `.plot` raises pointing at `extent=` rather than inventing
+one.
+
 | | `LayerSurfaces` | `LayerStack` |
 |---|---|---|
 | declare before the grid | ✅ | ✅ (since 2026-08-27) |

@@ -134,7 +134,6 @@ review the diff, commit the regenerated files together.
 
 ## Layer 4
 
-- `myflopy.layers` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.budget` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.evapotranspiration`
 - `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 1)*
@@ -147,13 +146,13 @@ review the diff, commit the regenerated files together.
 ## Layer 5
 
 - `myflopy.grid_spec_resolver`
+- `myflopy.layers` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.package_model`
 - `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.modflow.utils.outputs`
 - `myflopy.package_api`
-- `myflopy.plot`
 
 ## Layer 6
 
@@ -161,6 +160,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.gis`
 - `myflopy.modflow.mf6.pest.observations` *(deferred imports: 1)*
+- `myflopy.plot`
 
 ## Layer 7
 
