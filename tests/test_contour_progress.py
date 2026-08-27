@@ -163,3 +163,26 @@ def test_exactly_one_region_is_required_and_said_early(kwargs, expected):
 
     with pytest.raises(ValueError, match=f"got {expected}"):
         Surface.from_contours("c.gpkg", **kwargs)
+
+
+def test_clip_is_a_named_parameter_and_defaults_on():
+    """Clipping to the region is what almost everyone wants, and it was reachable
+    only as a `**grass_kwargs` passenger -- the same invisibility as
+    `region_vector`. With `region_vector` it clips to the POLYGON, not the bbox."""
+
+    import inspect
+
+    assert "clip" in inspect.signature(Surface.from_contours).parameters
+    surface = Surface.from_contours("c.gpkg", region_vector="d.gpkg")
+    assert surface.clip is True
+    assert surface.grass_kwargs == {}
+
+
+def test_clip_stays_in_the_cache_signature():
+    """Unlike `progress`, clip CHANGES THE OUTPUT, so moving it out of
+    `grass_kwargs` must not drop it from the signature -- two surfaces differing
+    only in clip must not share a cached raster."""
+
+    on = Surface.from_contours("c.gpkg", region_vector="d.gpkg")
+    off = Surface.from_contours("c.gpkg", region_vector="d.gpkg", clip=False)
+    assert on._derived_raster().params != off._derived_raster().params

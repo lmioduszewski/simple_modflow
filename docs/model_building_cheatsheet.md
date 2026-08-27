@@ -171,6 +171,12 @@ the worst case for `r.surf.contour`, which flood-fills outward from contour
 lines and has nothing to work from out there. Switching to the domain polygon
 took each layer to ~30 s.
 
+**The output is clipped to the region already.** `clip=True` is the default, and
+with `region_vector` it nulls everything outside the POLYGON, not merely its
+bounding box — so a domain-shaped raster with nodata in the bbox corners. Verified
+on a real domain: raster bounds equal to the domain's, 64% of pixels non-null.
+Pass `clip=False` only when a neighbouring model needs the overlap.
+
 **myflopy does not reproject for you.** GRASS is given `-o` (override projection
 check), so contours and region are placed at their raw coordinates and a CRS
 mismatch is silently accepted, not corrected. Contours in EPSG:2926 with a

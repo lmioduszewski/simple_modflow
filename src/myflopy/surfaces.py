@@ -107,6 +107,7 @@ class Surface:
     z: str = "Elev"
     region_raster: Path | None = None
     region_vector: Path | None = None
+    clip: bool = True
     resolution: float = 4
     out: Path | None = None
     epsg: str = "2927"
@@ -174,6 +175,7 @@ class Surface:
         out: Path | str | None = None,
         epsg: str = "2927",
         units: str | None = None,
+        clip: bool = True,
         progress: bool = False,
         **grass_kwargs: Any,
     ) -> Surface:
@@ -217,6 +219,12 @@ class Surface:
             EPSG code for the GRASS location.
         units : str, optional
             Length unit of the elevations, converted to the model's if they differ.
+        clip : bool, default True
+            Null out everything beyond the region. With ``region_vector`` that
+            means the POLYGON, not merely its bounding box -- a domain-shaped
+            result, with the bbox corners left as nodata. Already what you want
+            in nearly every case; ``False`` keeps the full rectangle, which is
+            occasionally useful when a neighbouring model needs the overlap.
         progress : bool, default False
             Print GRASS's own per-step percentages while it works.
 
@@ -268,6 +276,7 @@ class Surface:
             z=z,
             region_raster=region_raster,
             region_vector=region_vector,
+            clip=clip,
             resolution=resolution,
             out=out,
             epsg=epsg,
@@ -491,6 +500,7 @@ class Surface:
                 z_field=self.z,
                 region_raster=self.region_raster,
                 region_vector=self.region_vector,
+                clip=self.clip,
                 resolution=self.resolution,
                 epsg=self.epsg,
                 progress=self.progress,
@@ -510,6 +520,9 @@ class Surface:
             "z": self.z,
             "resolution": self.resolution,
             "epsg": self.epsg,
+            # Geometry-affecting, so it belongs here. `progress` deliberately
+            # does NOT: it changes what you see, not what gets written.
+            "clip": self.clip,
             "grass_kwargs": {k: str(v) for k, v in self.grass_kwargs.items()},
         }
         return DerivedRaster(self.out, sources, params, produce)
