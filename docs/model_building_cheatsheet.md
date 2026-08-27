@@ -674,8 +674,22 @@ layers.plot.grid(scale=12)           # the layered cell VOLUME (needs `viz3d` ex
 **To look at contacts individually, render them as VTK sheets:**
 
 ```python
-layers.plot.surface("all", backend="vtk")            # one actor per contact
-layers.plot.surface("clay", backend="vtk", scale=12) # just this one
+layers.plot.surface("all", backend="vtk").show()             # one actor per contact
+layers.plot.surface("clay", backend="vtk", scale=12).show()  # just this one
+```
+
+**In Jupyter, call `.show()` on a VTK scene** — unlike every other Picture, where
+the bare expression is the idiomatic form. `.show()` hands you PyVista's trame
+widget: interactive, server-backed, and nothing stored in the notebook file. The
+bare expression instead emits a **self-contained 1–1.5 MB HTML blob**, which
+JupyterLab commonly drops on the floor (the iopub data-rate limit is 1 MB/s by
+default, and embedded vtk.js scripts can be sanitized) — and on the occasions it
+*does* render, it writes those megabytes into your `.ipynb` for every scene.
+
+For a file to keep or send, ask for one explicitly:
+
+```python
+layers.plot.surface("all", backend="vtk").html("surfaces.html")
 ```
 
 `grid(backend="vtk")` fuses the layers into one volume, so a contact cannot be

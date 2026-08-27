@@ -618,11 +618,21 @@ class VtkScene(Picture):
     but they answer the same questions -- show me, save this, write me a file I
     can send -- so they answer the same verbs::
 
-        scene                   # renders inline
+        scene.show()            # IN JUPYTER, USE THIS -- see below
         scene.scene             # the PyVista Plotter, to adjust before display
-        scene.show()
         scene.html("grid.html") # self-contained vtk.js page, ~1 MB, no network
         scene.save("grid.png")  # a screenshot
+        scene                   # a static inline export; read the caveat first
+
+    **This is the one Picture where the bare expression is the wrong habit.**
+    `.show()` gives PyVista's trame widget: interactive, server-backed, and
+    nothing kept in the notebook file. The `_repr_mimebundle_` below instead
+    emits a self-contained 1-1.5 MB HTML document, which JupyterLab commonly
+    discards -- the iopub data-rate limit is 1 MB/s by default, and embedded
+    vtk.js scripts can be sanitized -- and when it does render it writes those
+    megabytes into the `.ipynb` for every scene. It stays because it is the right
+    behaviour outside a live kernel, and because `.html(path)` shares its export
+    path; it is not the display route to reach for.
 
     Wraps an already-built ``Plotter``: the *building* is the caller's job and is
     where ``pyvista`` gets imported (through ``myflopy._optional.require``, which
