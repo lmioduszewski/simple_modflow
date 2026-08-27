@@ -1411,17 +1411,50 @@ class LayerStack:
 
         Parameters
         ----------
+        vor : VoronoiGridPlus, optional
+            The grid to sample onto. Required only if this stack was declared
+            without one (``LayerStack(top=...)``); an explicit grid here wins
+            over the stack's own. See :meth:`for_grid` to bind one instead.
         default_min_thickness : float, default 1.0
             Minimum layer thickness used where a layer does not set its own.
         default_pinch : str, default "passthrough"
             Default thin-layer policy: ``"passthrough"`` (idomain -1),
             ``"inactive"`` (idomain 0, a true pinch-out), or ``"floor"`` (clamp to
             the minimum).
-        reconcile : str, default "bottom"
-            How crossing surfaces are reconciled (e.g. push conflicts to the
-            ``"bottom"``).
+        reconcile : {'bottom', 'top', True, False, None}, default 'bottom'
+            What to do where two surfaces cross or come closer than 1 length unit
+            of each other -- interpolated contacts routinely do, and a crossing
+            means a negative layer thickness.
+
+            ``'bottom'``
+                Trust the surface ABOVE: push the lower one down to
+                ``upper - min_sep``. **The usual choice**, and the only one that
+                leaves your model top where you put it -- which matters when the
+                top is a measured DEM. Corrections cascade downward, so one
+                intruding contact pushes every contact below it clear.
+            ``'top'``
+                Trust the surface BELOW: raise the upper one to
+                ``lower + min_sep``. Corrections propagate upward and CAN MOVE
+                THE MODEL TOP -- with ``top=100, a=105`` it returns ``top=105.1``.
+                Reach for it only when the deeper contact is the reliable one
+                (say a well-picked bedrock surface under a coarse interpolated
+                top), and check ``qc()`` afterwards.
+            ``True``
+                Same as ``'bottom'``.
+            ``False`` or ``None``
+                Do not reconcile. Crossing surfaces stay crossed, so layers get
+                zero or negative thickness and the pinch policy is what saves
+                you -- useful for seeing the raw sampled surfaces, not for
+                building a model.
+
+            Either way ``qc()`` reports, per layer, how many cells reconcile had
+            to move and the largest move, which is how you tell "tidied two
+            cells" from "rebuilt the geometry".
         min_sep : float, default 0.1
-            Minimum vertical separation enforced between reconciled surfaces.
+            The vertical separation reconcile enforces where it acts. The
+            *trigger* is separate and fixed at 1 length unit -- surfaces closer
+            than that are treated as conflicting even if they never actually
+            cross -- and is not exposed on this facade.
         method : str, default "area"
             Raster sampling method: ``"area"`` (area-weighted) or ``"centroid"``.
         refresh : bool, default False
@@ -1496,7 +1529,25 @@ class LayerStack:
         cells, thickness), this samples the surfaces *without* reconciling and
         reports, per layer, how many cells reconcile had to move and the largest
         move -- showing where surfaces were crossing before reconcile fixed them.
-        Returns a :class:`LayerQCReport`."""
+
+        Read this before trusting a build. A large ``reconcile_moved`` count
+        means the geometry you got is substantially not the geometry you
+        described, which is worth knowing before it becomes an idomain.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus, optional
+            Required only if the stack was declared without a grid.
+        default_min_thickness, default_pinch, reconcile, min_sep, method, refresh
+            Passed straight through to :meth:`build`, so QC reports on the
+            geometry you are actually going to build. Documented there -- in
+            particular the ``reconcile`` options, which are what this report is
+            diagnosing.
+
+        Returns
+        -------
+        LayerQCReport
+        """
         vor = self._require_grid(vor, "qc")
         result = self.build(
             vor,
@@ -1556,7 +1607,34 @@ class LayerStack:
         method: str = "area",
         refresh: bool = False,
     ):
-        """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain)."""
+        """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain).
+
+        The one-call alternative to ``build()`` + hand-written ``mf.disv(...)``,
+        and the form worth preferring: it returns a
+        :class:`~myflopy.specs.PackageSpec`, so the stack can be registered on a
+        project (``project.add_package("disv/base", spec)``) and referenced with
+        ``mf.ref``, which is what keeps an array-heavy model persistable.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus, optional
+            Required only if the stack was declared without a grid.
+        name : str, default "disv"
+            Package name on the built model.
+        attach : bool, default True
+            Publish the sampled elevations onto ``vor.gdf_topbtm`` -- note this
+            defaults to True here and to False on :meth:`build`. Surface-aware
+            builders (``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering) and
+            the layer-elevation hover rows read it.
+        default_min_thickness, default_pinch, reconcile, min_sep, method, refresh
+            Passed straight through to the sampling pass; documented on
+            :meth:`build`, including the ``reconcile`` options.
+
+        Returns
+        -------
+        PackageSpec
+            A DISV spec with pinch-out idomain applied.
+        """
         if not self._layers:
             raise ValueError("Add at least one layer before to_disv().")
         vor = self._require_grid(vor, "to_disv")

@@ -696,3 +696,58 @@ def test_passing_a_surface_as_the_grid_is_caught_at_construction():
         LayerStack(Flat(200), Flat(100))
     with pytest.raises(TypeError, match="needs a `top` surface"):
         LayerStack()
+
+
+# --- the documented reconcile options are the accepted ones ----------------- #
+
+@pytest.mark.parametrize("value", ["bottom", "top", True, False, None])
+def test_every_documented_reconcile_option_is_accepted(value):
+    """The docstring on `build` lists these five; `_reconcile_args` must take them."""
+
+    vor = _fake_vor(3)
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    assert stack.build(vor, reconcile=value) is not None
+
+
+def test_an_undocumented_reconcile_value_is_rejected():
+    vor = _fake_vor(3)
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    with pytest.raises(ValueError, match="reconcile must be"):
+        stack.build(vor, reconcile="sideways")
+
+
+def test_the_docstring_lists_exactly_the_accepted_options():
+    """Catches the drift this test file exists to prevent: a new option added to
+    `_reconcile_args` and never documented, or a documented one that never
+    worked. Compared against the parser's own source, not a hand-copied list."""
+
+    import inspect
+
+    from myflopy.layers import _reconcile_args
+
+    accepted = set()
+    for token in ("'bottom'", "'top'", "True", "False", "None"):
+        assert token.strip("'") in inspect.getsource(_reconcile_args), token
+        accepted.add(token)
+
+    doc = inspect.getdoc(LayerStack.build) or ""
+    header = next(ln for ln in doc.splitlines() if ln.startswith("reconcile :"))
+    for token in accepted:
+        bare = token.strip("'")
+        assert bare in header, f"{bare!r} is accepted but missing from the signature line"
+
+
+def test_bottom_holds_the_model_top_and_top_can_move_it():
+    """The behavioural claim the docstring makes, pinned with real numbers."""
+
+    import pandas as pd
+
+    from myflopy.modflow.mf6.grid.geometry import reconcile_surfaces
+
+    crossed = pd.DataFrame({"top": [100.0], "a": [105.0], "b": [90.0]})
+    lowered = reconcile_surfaces(None, df=crossed.copy(), which="bottom")
+    raised = reconcile_surfaces(None, df=crossed.copy(), which="top")
+
+    assert lowered["top"][0] == 100.0, "'bottom' must leave the model top alone"
+    assert lowered["a"][0] < lowered["top"][0]
+    assert raised["top"][0] > 100.0, "'top' moves the model top -- documented as such"

@@ -580,10 +580,41 @@ class LayerSurfaces:
         above it (relative surfaces and ``fill="propagate"``). With
         ``reconcile=True`` (default), a flat surface stays flat where it fits and
         is lowered where it would intrude on the surface above -- the "flat where
-        possible, fit between" behavior. ``method`` selects raster sampling
-        (``"area"`` area-weighted, default, or ``"centroid"``). ``length_units``
-        is the model length unit; a surface declaring different ``units`` is
-        converted to it. ``refresh`` rebuilds any derived (contour) caches.
+        possible, fit between" behavior.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto.
+        reconcile : bool, default True
+            Enforce layer ordering where surfaces cross or crowd. ``False``
+            returns the raw sampled surfaces, crossings and all.
+        min_sep : float, default 0.1
+            The separation reconcile enforces where it acts.
+        trigger_sep : float, default 1
+            How close counts as a conflict. Surfaces nearer than this are
+            separated even if they never actually cross, so the default treats
+            "within 1 length unit" as touching.
+        which : {'bottom', 'top'}, default 'bottom'
+            Which side gives way. ``'bottom'`` lowers the deeper surface to
+            ``upper - min_sep`` and cascades downward, leaving the model top
+            untouched. ``'top'`` raises the shallower one to ``lower + min_sep``
+            and propagates upward, so it CAN MOVE THE MODEL TOP -- with
+            ``top=100, a=105`` it returns ``top=105.1``. Prefer ``'bottom'``
+            unless the deeper contact is the one you trust.
+        method : {'area', 'centroid'}, default 'area'
+            Raster sampling: area-weighted over the cell, or a single centroid
+            lookup.
+        length_units : str, optional
+            The model length unit. A surface declaring different ``units`` is
+            converted to it; relative surfaces cannot be, and raise.
+        refresh : bool, default False
+            Rebuild any derived (contour) caches before sampling.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            Cell centroids with one column per surface, in stack order.
         """
 
         columns: dict = {}
