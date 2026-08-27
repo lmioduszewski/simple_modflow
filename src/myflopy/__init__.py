@@ -16,6 +16,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     # These imports are for static analysis and IDE completion only. Runtime
     # access still goes through the lazy ``_EXPORTS`` / ``__getattr__`` path.
+    #
+    # EVERY name in `_EXPORTS` must appear here, or it is invisible to PyCharm
+    # and Pylance -- both are static and neither runs `__getattr__`. The name
+    # still WORKS; it just cannot be completed, jumped to, or type-checked, so
+    # the omission looks like the export is missing.
+    # `tests/test_lazy_exports.py` fails naming any name that drifts out.
+    from myflopy import modflow, plot, project
     from myflopy.advanced import (
         chd_spec,
         drn_spec,
@@ -39,9 +46,19 @@ if TYPE_CHECKING:
     )
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
     from myflopy.layers import (
+        Array,
+        Clamp,
+        Contours,
+        Flat,
+        Isopach,
         LayerBuildResult,
         LayerQCReport,
         LayerStack,
+        Max,
+        Min,
+        Points,
+        Raster,
+        Where,
         modflow_surfaces,
     )
     from myflopy.modflow.mf6.canonical import (
@@ -95,6 +112,7 @@ if TYPE_CHECKING:
         ParallelSplitRun,
     )
     from myflopy.modflow.mf6.pest import (
+        ConcObservationSpec,
         DrnFlowObservationSpec,
         ExpGeoStruct,
         HeadTargetObservationSpec,
@@ -106,6 +124,7 @@ if TYPE_CHECKING:
         VectorParameterSource,
         find_pest_runs,
     )
+    from myflopy.modflow.mf6.pest.zones import ZoneSpec
     from myflopy.modflow.mf6.prt import (
         ParticleTracking,
         PRTProject,
@@ -159,6 +178,7 @@ if TYPE_CHECKING:
         ims,
         ist,
         lak,
+        lak_connection,
         mip,
         mst,
         mvr,
@@ -169,6 +189,7 @@ if TYPE_CHECKING:
         rch,
         riv,
         sfr,
+        sfr_connection,
         simulation,
         src,
         ssm,
