@@ -606,3 +606,93 @@ def test_from_modflow_resamples_and_defaults_names(real_vor):
     assert stack.names == ["layer1"]
     res = stack.build()
     assert np.allclose(res.top, base.top, atol=1e-6, equal_nan=True)
+
+
+# --- the grid can arrive after the layering (2026-08-27) --------------------- #
+#
+# `LayerSurfaces` was always declarable before the grid; `LayerStack` was not,
+# because it took `vor` in its constructor. That forced a choice between the
+# ordering (declare layering first, project-first) and the per-layer control
+# (`thickness=`, per-layer `min_thickness`/`pinch`) that only the facade offers.
+# `vor` is now optional, and `build`/`qc`/`to_disv` accept one -- mirroring the
+# override `to_disv` already had.
+
+def test_a_stack_can_be_declared_with_no_grid():
+    """The layering is lazy: `add` resolves nothing, so no grid is needed yet."""
+
+    stack = (
+        LayerStack(top=Flat(200))
+        .add("sand", thickness=40.0, min_thickness=2.0, pinch="inactive")
+        .add("clay", thickness=25.0, pinch="passthrough")
+    )
+    assert stack.vor is None
+    assert stack.names == ["sand", "clay"]
+
+
+@pytest.mark.parametrize("consume", ["build", "to_disv"])
+def test_the_grid_can_be_supplied_at_use_time(consume):
+    vor = _fake_vor(3)
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    assert getattr(stack, consume)(vor) is not None
+
+
+def test_qc_takes_the_grid_too(real_vor):
+    """Separate from the others: `qc`'s isolated-cell check needs a real grid
+    (`adjacent_cells_idx`), which the lightweight `_fake_vor` does not carry."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    assert "1 layers" in str(stack.qc(real_vor))
+
+
+def test_for_grid_binds_a_copy_and_leaves_the_original_deferred():
+    """One declaration, several grids -- the layering is the expensive part."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    coarse, fine = _fake_vor(2), _fake_vor(5)
+    a, b = stack.for_grid(coarse), stack.for_grid(fine)
+
+    assert stack.vor is None, "for_grid must not mutate the declaration"
+    assert a.vor is coarse and b.vor is fine
+    assert a.build().top.size == 2
+    assert b.build().top.size == 5
+
+
+def test_a_bound_stack_still_takes_the_old_positional_form():
+    """`LayerStack(vor, top)` is in every notebook and doc; it must keep working."""
+
+    vor = _fake_vor(3)
+    assert LayerStack(vor, Flat(200)).add("a", thickness=10.0).build().nlay == 1
+    assert LayerStack(vor, top=Flat(200)).add("a", thickness=10.0).build().nlay == 1
+
+
+@pytest.mark.parametrize(
+    ("consume", "pattern"),
+    [("build", r"stack\.build\(vor\)"), ("qc", r"stack\.qc\(vor\)"),
+     ("to_disv", r"stack\.to_disv\(vor\)")],
+)
+def test_using_a_deferred_stack_without_a_grid_names_the_fix(consume, pattern):
+    """Otherwise this surfaces as `NoneType has no attribute ncpl`, three frames down."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    with pytest.raises(ValueError, match=pattern):
+        getattr(stack, consume)()
+
+
+def test_plot_on_a_deferred_stack_names_both_spellings():
+    """A property cannot take a grid, so it has to say what does."""
+
+    stack = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    with pytest.raises(ValueError, match=r"for_grid\(vor\)\.plot"):
+        stack.plot
+
+
+def test_passing_a_surface_as_the_grid_is_caught_at_construction():
+    """`LayerStack(ground)` reads as the deferred form and is not; without this
+    guard `ground` binds to `vor` and fails much later, somewhere else."""
+
+    with pytest.raises(TypeError, match="passed the top surface positionally"):
+        LayerStack(Flat(200))
+    with pytest.raises(TypeError, match="first argument is the grid"):
+        LayerStack(Flat(200), Flat(100))
+    with pytest.raises(TypeError, match="needs a `top` surface"):
+        LayerStack()

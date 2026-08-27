@@ -3413,3 +3413,31 @@ same day, which is the useful part of the result.
        costs that. No call site in the repo splats a variable-length list into
        either constructor (checked across `src`, `tests`, `docs`, `examples`), and
        a splat that collapses to one element is itself worth hearing about.
+
+148. **`LayerStack` accepts its grid late; `vor` stays first-positional (2026-08-27).**
+     `LayerSurfaces` could always be declared before the grid; `LayerStack` could
+     not, because `vor` was a required constructor argument. That forced a choice
+     between the project-first ORDERING (declare the layering, then build the
+     grid) and the per-layer CONTROL only the facade offers (`thickness=`,
+     per-layer `min_thickness`/`pinch`). `vor` is now optional and
+     `build`/`qc`/`to_disv` accept one, mirroring the override `to_disv` already
+     had. `for_grid(vor)` returns a BOUND COPY.
+     - **`vor` stays the first positional parameter** rather than moving to
+       keyword-only, so `LayerStack(vor, top)` — which is in every notebook, doc
+       and example — keeps working untouched. The cost is that `LayerStack(ground)`
+       reads like the deferred form and silently binds a Surface to `vor`; that is
+       guarded with a TypeError naming both spellings, so it is a stop rather than
+       a failure three frames down in `sample()`.
+     - **`for_grid` copies rather than mutates.** The layering is the expensive
+       thing to write and the grid is the thing you vary, so one declaration can
+       serve a coarse test grid and a fine production grid. Mutating would make
+       the second binding silently reuse the first.
+     - **`.plot` cannot take a grid** — it is a property — so on a deferred stack
+       it raises naming `build(vor).plot` and `for_grid(vor).plot`. Considered
+       making it a method for symmetry; rejected, because `stack.plot.map()` is
+       documented in CLAUDE.md and four notebooks, and the whole plotting
+       vocabulary treats `.plot` as a namespace rather than a call.
+     - NOT done: `LayerSurfaces` still takes only a global `minimum_thickness` /
+       `pinch` in `to_disv`. Per-layer rules there would duplicate what the facade
+       exists to provide. The cheat-sheet table records this as the real remaining
+       difference between the two.

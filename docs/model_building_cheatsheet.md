@@ -242,22 +242,55 @@ GRASS yet; `mf.Raster` has not opened a file. The grid arrives later, in §5.
 want to see in section plots and hover rows. There is one more label than there
 are layers — the first is the top.
 
-> **`LayerSurfaces` is the engine; `LayerStack` is the facade.** The facade takes
-> the grid in its constructor (`mf.LayerStack(vor, top=…)`) and so *cannot* come
-> first — but it gives you `.add(name, thickness=…)`, `.qc()` and `.plot`. Pick by
-> what you need:
->
-> | | `LayerSurfaces` | `LayerStack` |
-> |---|---|---|
-> | needs a grid to construct | no | yes |
-> | declare before the grid | ✅ | ✗ |
-> | per-layer `thickness=` sugar | ✗ (derive it: `s.below(20)`) | ✅ |
-> | QC report | `.thickness_report(vor)` | `.qc()` |
-> | `.plot` namespace | ✗ | ✅ (on the build result) |
-> | one call to a DISV spec | `.to_disv(vor)` | `.build()` then `mf.disv(...)` |
->
-> They are the same machinery — `LayerStack` compiles to `LayerSurfaces`. §5 shows
-> both bindings.
+### `LayerStack` defers its grid too — and keeps per-layer control
+
+`LayerSurfaces` is the engine; **`LayerStack` is the facade, and as of 2026-08-27
+its `vor` is optional.** So you no longer choose between declaring early and
+having per-layer rules — take both:
+
+```python
+stack = (
+    mf.LayerStack(top=ground, length_units="feet")     # <- no grid
+      .add("upper_sand",    bottom=clay_top,           min_thickness=2.0, pinch="inactive")
+      .add("clay",          thickness=20.0,            pinch="passthrough")
+      .add("lower_aquifer", bottom=bedrock,            min_thickness=5.0, pinch="inactive")
+)
+
+layers = stack.build(vor)        # the grid arrives here
+print(stack.qc(vor))
+disv = stack.to_disv(vor)        # ...or straight to a registerable PackageSpec
+```
+
+Bind it once instead, when you want to keep it — or reuse one declaration across
+grids, which is the point of returning a copy:
+
+```python
+bound = stack.for_grid(vor)
+bound.build(); bound.plot.section(y=1000)
+
+coarse = stack.for_grid(vor_coarse).build()    # same layering,
+fine   = stack.for_grid(vor_fine).build()      # two grids
+```
+
+`LayerStack(vor, top)` is unchanged and still correct whenever the grid already
+exists. Using a deferred stack without a grid raises and names the fix, rather
+than failing as `NoneType has no attribute ncpl` three frames down; so does
+`LayerStack(ground)`, which reads as the deferred form but binds the surface to
+`vor`.
+
+| | `LayerSurfaces` | `LayerStack` |
+|---|---|---|
+| declare before the grid | ✅ | ✅ (since 2026-08-27) |
+| `thickness=20.0` sugar | ✗ — derive it (`s.below(20)`) | ✅ |
+| `min_thickness` / `pinch` | one **global** rule | **per layer** |
+| QC report | `.thickness_report(vor)` | `.qc(vor)` |
+| `.plot` namespace | ✗ | ✅ (bind first, or `build(vor).plot`) |
+| one call to a DISV spec | `.to_disv(vor)` | `.to_disv(vor)` |
+
+**Prefer `LayerStack`** — it is the documented facade and the per-layer rules are
+usually what a real stack needs. Reach for `LayerSurfaces` when you already hold
+an explicit surface for every contact and one global pinch rule is right, which
+makes the list form the shorter spelling.
 
 ---
 
@@ -359,8 +392,9 @@ print(layering.thickness_report(vor, minimum_thickness=2.0))
 
 ### Or bind through the `LayerStack` facade
 
-If you want `.add(thickness=…)`, `.qc()` and `.plot`, construct the facade once
-the grid exists — the layering is then declared here rather than in §3:
+The facade gives `.add(thickness=…)`, per-layer `min_thickness`/`pinch`, `.qc()`
+and `.plot`. It can be declared back in §3 with no grid and bound here, or
+constructed with the grid directly when the grid already exists:
 
 Sources mix here exactly as they do in `LayerSurfaces` (§2) — `top=` and
 `bottom=` take a raster, a contoured contact or a derived one interchangeably:

@@ -1125,18 +1125,102 @@ class LayerStack:
     qc : Geometry quality-control report (NaN, thin/pinched, connectivity).
     """
 
-    def __init__(self, vor, top, *, length_units: str = "feet", time_units: str = "days"):
-        """Start an editable layer stack on grid ``vor`` with the model-top surface ``top``.
+    def __init__(
+        self,
+        vor=None,
+        top=None,
+        *,
+        length_units: str = "feet",
+        time_units: str = "days",
+    ):
+        """Start an editable layer stack with the model-top surface ``top``.
 
         Layers are added below the top with :meth:`add`; ``length_units`` /
         ``time_units`` are carried onto the built :class:`LayerBuildResult`.
+
+        **``vor`` is optional.** Surfaces are lazy and ``add`` resolves nothing, so
+        the whole layering -- names, sources, per-layer ``min_thickness`` and
+        ``pinch`` -- can be declared before a grid exists::
+
+            stack = (mf.LayerStack(top=ground)          # no grid yet
+                     .add("sand", thickness=40.0, pinch="inactive")
+                     .add("clay", bottom=clay_base))
+            layers = stack.build(vor)                   # grid arrives here
+
+        Supply it later to :meth:`build`, :meth:`qc` or :meth:`to_disv`, or bind
+        it once with :meth:`for_grid`. Passing it here still works and is right
+        whenever the grid already exists -- the deferred form exists so that
+        declaring the layering does not force the grid to be built first.
+
+        Raises
+        ------
+        TypeError
+            If ``top`` is missing, or if a :class:`~myflopy.surfaces.Surface` is
+            passed as ``vor`` -- ``LayerStack(ground)`` reads as "the deferred
+            form" but binds ``ground`` to the grid, which would fail much later
+            and somewhere else.
         """
+
+        if top is None:
+            hint = (
+                " It looks like you passed the top surface positionally: the "
+                "first positional argument is the GRID, so write "
+                "`LayerStack(top=...)` for the deferred form, or "
+                "`LayerStack(vor, top)`."
+            ) if isinstance(vor, Surface) else ""
+            raise TypeError(f"LayerStack needs a `top` surface.{hint}")
+        if isinstance(vor, Surface):
+            raise TypeError(
+                "LayerStack's first argument is the grid, not a surface. Write "
+                "`LayerStack(top=...)` to defer the grid, or `LayerStack(vor, top)`."
+            )
 
         self.vor = vor
         self._top = _coerce_surface(top)
         self._layers: list[_Layer] = []
         self.length_units = length_units
         self.time_units = time_units
+
+    def _require_grid(self, vor, caller: str):
+        """Resolve the grid for ``caller``, preferring an explicit one.
+
+        One message for every consumer, because "NoneType has no attribute
+        ncpl" three frames down is the failure a deferred stack would otherwise
+        produce.
+        """
+
+        resolved = self.vor if vor is None else vor
+        if resolved is None:
+            raise ValueError(
+                f"LayerStack.{caller}() needs a grid. This stack was declared "
+                f"without one, so pass it now -- `stack.{caller}(vor)` -- or bind "
+                f"it once with `stack.for_grid(vor)`."
+            )
+        return resolved
+
+    def for_grid(self, vor) -> LayerStack:
+        """Return a copy of this stack bound to ``vor``.
+
+        The layering is the expensive thing to write and the grid is the thing
+        you change, so binding returns a NEW stack rather than mutating this one:
+        one declaration can serve a coarse test grid and a fine production grid
+        without being restated.
+
+            coarse = stack.for_grid(vor_coarse).build()
+            fine   = stack.for_grid(vor_fine).build()
+
+        Also what makes ``.plot`` reachable on a deferred stack, since a property
+        cannot take a grid argument.
+        """
+
+        bound = LayerStack(
+            vor,
+            self._top,
+            length_units=self.length_units,
+            time_units=self.time_units,
+        )
+        bound._layers = list(self._layers)
+        return bound
 
     @classmethod
     def from_modflow(
@@ -1308,6 +1392,7 @@ class LayerStack:
 
     def build(
         self,
+        vor=None,
         *,
         default_min_thickness: float = 1.0,
         default_pinch: str = "passthrough",
@@ -1369,10 +1454,11 @@ class LayerStack:
         """
         if not self._layers:
             raise ValueError("Add at least one layer with .add(...) before build().")
+        vor = self._require_grid(vor, "build")
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
         gdf = ls.sample(
-            self.vor, reconcile=rec_on, which=which, min_sep=min_sep,
+            vor, reconcile=rec_on, which=which, min_sep=min_sep,
             method=method, length_units=self.length_units, refresh=refresh,
         )
         top, botm = ls._split_top_botm(gdf)
@@ -1387,14 +1473,15 @@ class LayerStack:
             top=top, botm=botm, idomain=idomain, thickness=thickness,
             names=self.names, min_thickness=min_thk, pinch=pinch,
             length_units=self.length_units, time_units=self.time_units,
-            vor=self.vor,
+            vor=vor,
         )
         if attach:
-            result.attach_to_grid(self.vor)
+            result.attach_to_grid(vor)
         return result
 
     def qc(
         self,
+        vor=None,
         *,
         default_min_thickness: float = 1.0,
         default_pinch: str = "passthrough",
@@ -1410,14 +1497,16 @@ class LayerStack:
         reports, per layer, how many cells reconcile had to move and the largest
         move -- showing where surfaces were crossing before reconcile fixed them.
         Returns a :class:`LayerQCReport`."""
+        vor = self._require_grid(vor, "qc")
         result = self.build(
+            vor,
             default_min_thickness=default_min_thickness, default_pinch=default_pinch,
             reconcile=reconcile, min_sep=min_sep, method=method, refresh=refresh,
         )
         report = result.qc()
         ls = self._layer_surfaces()
         raw = ls.sample(
-            self.vor, reconcile=False, method=method,
+            vor, reconcile=False, method=method,
             length_units=self.length_units, refresh=refresh,
         )
         _, raw_botm = ls._split_top_botm(raw)
@@ -1439,8 +1528,18 @@ class LayerStack:
         Builds the stack with default options and returns the result's namespace,
         so ``stack.plot.map()`` is ``stack.build().plot.map()``. Build with
         non-default options first if you need them.
+
+        A property cannot take a grid, so on a stack declared without one this
+        raises and names the two spellings that work:
+        ``stack.build(vor).plot`` or ``stack.for_grid(vor).plot``.
         """
 
+        if self.vor is None:
+            raise ValueError(
+                "This LayerStack was declared without a grid, and `.plot` cannot "
+                "take one. Use `stack.build(vor).plot` for a one-off, or bind the "
+                "stack first with `stack.for_grid(vor).plot`."
+            )
         return self.build().plot
 
 
@@ -1460,7 +1559,7 @@ class LayerStack:
         """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain)."""
         if not self._layers:
             raise ValueError("Add at least one layer before to_disv().")
-        vor = self.vor if vor is None else vor
+        vor = self._require_grid(vor, "to_disv")
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
         min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)

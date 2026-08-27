@@ -7,7 +7,7 @@ raster for bedrock, and you need a multi-layer DISV model out of the mixture.
     Project                       <- made FIRST; paths resolve against its root
       inputs/*.tif, *.gpkg        <- your reference data
         raster ---------\\
-                          >-- Surface -- LayerSurfaces      (no grid needed yet)
+                          >-- Surface -- LayerStack        (no grid needed yet)
         contours --GRASS/                     |
       add_grid("base", GridSpec) -> resolve --+
                                               v
@@ -20,8 +20,11 @@ against and the registry that ``mf.ref``/``mf.grid_ref`` resolve through, so
 declaring against it from the start makes the whole model a portable recipe that
 ``save()``/``load()`` round-trips.
 
-**The layering does not need the grid.** Surfaces are lazy and ``LayerSurfaces``
-is just an ordered list of them, so it is declared before the grid exists.
+**The layering does not need the grid.** Surfaces are lazy and ``LayerStack``
+takes its ``vor`` optionally, so the layering -- names, sources, and the
+per-layer ``min_thickness``/``pinch`` rules -- is declared before the grid
+exists; ``build(vor)``/``qc(vor)``/``to_disv(vor)`` take the grid later, and
+``for_grid(vor)`` returns a bound copy.
 ``Surface`` is one type whatever produced it -- raster, contours, or algebra on
 another surface -- and differing resolutions need no pre-alignment, since every
 surface is area-weighted onto the same Voronoi cells.
@@ -161,14 +164,17 @@ def build(root: Path):
     bedrock = mf.Raster(src["bedrock"])
 
     # ------------------------------------------------------------------ #
-    # 3. LAYERING -- still no grid. `LayerSurfaces` is an ordered list of
-    #    surfaces: [0] is the model top, each one after is a layer bottom.
+    # 3. LAYERING -- still no grid. `LayerStack`'s `vor` is optional, so the
+    #    layering is declared here with its PER-LAYER min_thickness/pinch,
+    #    and the grid arrives at build/qc/to_disv below.
     #    Sources are mixed and nothing here has to know: raster top,
     #    contoured contact, a DERIVED contact 20 ft below it, raster base.
     # ------------------------------------------------------------------ #
-    layering = mf.LayerSurfaces(
-        [ground, clay_top, clay_top.below(20), bedrock],
-        labels=["ground", "upper_sand", "clay", "lower_aquifer"],
+    layering = (
+        mf.LayerStack(top=ground, length_units="feet")
+        .add("upper_sand", bottom=clay_top, min_thickness=2.0, pinch="inactive")
+        .add("clay", bottom=clay_top.below(20), pinch="passthrough")
+        .add("lower_aquifer", bottom=bedrock, min_thickness=5.0, pinch="inactive")
     )
 
     # ------------------------------------------------------------------ #
@@ -192,10 +198,9 @@ def build(root: Path):
     #    project be saved: the simulation then holds only a reference, and
     #    the arrays ride in a pickle sidecar beside the library JSON.
     # ------------------------------------------------------------------ #
-    print(layering.thickness_report(vor, minimum_thickness=2.0))
-    project.add_package("disv/base", layering.to_disv(
-        vor, pinch_out=True, minimum_thickness=2.0,
-        length_units="FEET", attach=True))          # attach -> vor.gdf_topbtm
+    print(layering.qc(vor))                     # READ THIS before trusting it
+    project.add_package("disv/base",
+                        layering.to_disv(vor, attach=True))   # -> vor.gdf_topbtm
     project.add_package("npf/base", mf.npf(
         k=[25.0, 0.05, 40.0], k33=[2.5, 0.005, 4.0],
         icelltype=1, save_flows=True))
@@ -208,7 +213,7 @@ def build(root: Path):
     # ------------------------------------------------------------------ #
     # 7. PACKAGES -- one flat declarative list, library entries by name.
     # ------------------------------------------------------------------ #
-    top = np.asarray(vor.gdf_topbtm["ground"], dtype=float)
+    top = np.asarray(vor.gdf_topbtm["top"], dtype=float)
     cx, _ = vor.centroids
     west = int(min(range(vor.ncpl), key=lambda i: cx[i]))
     east = int(max(range(vor.ncpl), key=lambda i: cx[i]))
@@ -287,11 +292,8 @@ def main() -> int:
     # `.html()` is used here because it needs nothing extra; `.save("x.png")`
     # rasterizes through kaleido, which requires Chrome (`plotly_get_chrome`).
     model.plot.map(layer=0, contours=True).html(root / "heads.html")
-    # `LayerSurfaces` has no `.plot` namespace; the `LayerStack` facade does.
-    # `from_modflow` takes a flopy model (anything with `.modelgrid`), so read
-    # the geometry straight back off the built model to draw it.
-    stack = mf.LayerStack.from_modflow(vor, model.gwf, resample=False)
-    stack.build().plot.section(y=HEIGHT / 2).save(root / "section.png")
+    # `.plot` is a property and cannot take a grid, so bind the deferred stack.
+    layering.for_grid(vor).plot.section(y=HEIGHT / 2).save(root / "section.png")
     print(f"wrote {root / 'heads.html'} and {root / 'section.png'}")
 
     # The payoff of declaring against the project: it is a portable recipe.

@@ -200,6 +200,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
 - **Layers** (same facade/engine pattern): use the facade **`mf.LayerStack`** (`layers.py`) —
   `LayerStack(vor, top=Raster("ground.tif")).add("sand", thickness=20, pinch="inactive")
   .add("clay", bottom=Contours(...)).build()` → disv-ready top/botm/idomain (plus `.qc()`,
+  **`vor` is OPTIONAL since 2026-08-27** — `LayerStack(top=...)` declares the layering
+  before any grid exists, and `build(vor)`/`qc(vor)`/`to_disv(vor)` take it later, or
+  `for_grid(vor)` returns a bound copy (ledger 148). That is what lets the project-first
+  order (declare layering → build grid) keep the per-layer `thickness=`/`min_thickness`/
+  `pinch` control that only the facade has; `LayerSurfaces` has one global rule.
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
   **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
   `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a
