@@ -1,17 +1,24 @@
-"""Contours -> surfaces -> layer stack -> model: the copy-me starting point.
+"""Rasters + contours -> layer stack -> model: the copy-me starting point.
 
-The path most real projects actually take: you have **digitized elevation
-contours** for the ground surface and for one or two geologic contacts, and you
-need a multi-layer DISV model out of them.
+The path most real projects actually take: you have a **DEM raster** for the
+ground surface, **digitized contours** for some geologic contacts, maybe another
+raster for bedrock, and you need a multi-layer DISV model out of the mixture.
 
-    contours (.gpkg)  --GRASS-->  Surface  --LayerStack-->  top/botm/idomain
-                                                                  |
-                                            ModelContext ---------+
+    raster (.tif) ------------------\\
+                                     >--  Surface --LayerStack--> top/botm/idomain
+    contours (.gpkg) --GRASS-------/                        |
+                                            ModelContext ---+
                                                   |
                           mf.gwf(context=ctx, packages=[...]) --> Project --> run
 
-Run it directly and it builds its own contour fixtures, so it works with no data
-of your own; the comments mark exactly where to swap yours in.
+**Source kinds mix freely.** ``Surface`` is one type whatever produced it, so
+``top=`` and ``bottom=`` do not care whether a contact came from a raster, from
+contours, or from algebra on another surface. Differing resolutions need no
+pre-alignment either -- every surface is area-weighted onto the same Voronoi
+cells.
+
+Run it directly and it builds its own raster + contour fixtures, so it works with
+no data of your own; the comments mark exactly where to swap yours in.
 
 **GRASS prerequisites.** ``mf.Contours`` shells out to GRASS GIS, a **system**
 dependency that ``pip`` does not supply: install it with your package manager
@@ -55,7 +62,7 @@ WIDTH, HEIGHT = 3000.0, 2000.0
 # Fixtures -- delete this whole section and point at your own files.
 # --------------------------------------------------------------------------- #
 def write_fixtures(root: Path) -> dict[str, Path]:
-    """Write a boundary polygon and two contour sets, as you'd have on disk."""
+    """Write a boundary, a DEM raster, a contour set, and a bedrock raster."""
 
     gpd.GeoDataFrame(
         {"name": ["domain"]},
@@ -63,28 +70,54 @@ def write_fixtures(root: Path) -> dict[str, Path]:
         crs=CRS,
     ).to_file(root / "boundary.gpkg", driver="GPKG")
 
+    def raster(surface, name, res=25.0):
+        """Write `surface` as a north-up GeoTIFF, standing in for a real DEM."""
+
+        import rasterio
+        from rasterio.transform import from_origin
+
+        nx, ny = int(WIDTH / res), int(HEIGHT / res)
+        data = np.array(
+            [[surface(x, y) for x in np.linspace(0, WIDTH, nx)]
+             for y in np.linspace(HEIGHT, 0, ny)],
+            dtype="float32",
+        )
+        path = root / f"{name}.tif"
+        with rasterio.open(path, "w", driver="GTiff", height=ny, width=nx,
+                           count=1, dtype="float32", crs=CRS,
+                           transform=from_origin(0, HEIGHT, res, res)) as dst:
+            dst.write(data, 1)
+        return path
+
     def contours(surface, levels, name):
         """Digitize `surface` as labelled LineStrings, the way a map would."""
 
         rows = []
         for z in levels:
+            # Walk west to east and solve surface(x, y) = z for y. `surface`
+            # takes REAL coordinates, same as the raster writer above.
             pts = []
             for x in np.linspace(0, WIDTH, 60):
-                lo, hi = surface(x, 0.0), surface(x, 1.0)
+                lo, hi = surface(x, 0.0), surface(x, HEIGHT)
                 y = (z - lo) / max(hi - lo, 1e-9) * HEIGHT
                 if 0.0 <= y <= HEIGHT:
                     pts.append((x, y))
             if len(pts) > 1:
                 rows.append({"Elev": float(z), "geometry": LineString(pts)})
+        if not rows:
+            raise ValueError(f"{name}: no contour crossed the domain -- check levels")
         gpd.GeoDataFrame(rows, crs=CRS).to_file(root / f"{name}.gpkg", driver="GPKG")
         return root / f"{name}.gpkg"
 
     return {
         "boundary": root / "boundary.gpkg",
-        "ground": contours(lambda x, y: 200.0 - 0.020 * x + 15.0 * y,
-                           np.arange(140, 216, 5), "ground_contours"),
-        "clay_top": contours(lambda x, y: 150.0 - 0.015 * x + 10.0 * y,
-                             np.arange(105, 166, 5), "clay_top_contours"),
+        # a DEM, as you'd get from LiDAR
+        "ground_dem": raster(lambda x, y: 200.0 - 0.020 * x + 0.008 * y, "ground_dem"),
+        # a contact digitized as labelled contour lines
+        "clay_top": contours(lambda x, y: 150.0 - 0.015 * x + 0.005 * y,
+                             np.arange(100, 166, 5), "clay_top_contours"),
+        # and another raster underneath
+        "bedrock": raster(lambda x, y: 60.0 - 0.008 * x + 0.003 * y, "bedrock"),
     }
 
 
@@ -103,21 +136,24 @@ def build(root: Path):
         boundary_max_area=40_000.0,
     ).resolve(workspace=root / "_grid")
 
-    # 2. CONTOURS -> SURFACES. Lazy: interpolated once to `<name>.interp.tif`
-    #    next to the source, then sampled as often as you like. `region_vector`
-    #    (or `region_raster`) is REQUIRED -- it defines the GRASS region.
-    ground = mf.Contours(src["ground"], z="Elev", epsg="2927",
-                         resolution=25, region_vector=src["boundary"])
+    # 2. SOURCES -> SURFACES. Three different kinds, one `Surface` type.
+    #    Rasters are read directly. `mf.Contours` interpolates through GRASS
+    #    ONCE, caches to `<name>.interp.tif` beside the source, and reuses it
+    #    forever after -- so only the first build pays for it. `region_vector`
+    #    (or `region_raster`) is REQUIRED: it defines the GRASS region.
+    ground = mf.Raster(src["ground_dem"])
     clay_top = mf.Contours(src["clay_top"], z="Elev", epsg="2927",
                            resolution=25, region_vector=src["boundary"])
+    bedrock = mf.Raster(src["bedrock"])
 
     # 3. LAYER STACK -- top once, then each layer by bottom OR thickness.
-    #    `clay_base` is derived rather than digitized: 25 ft below the contact.
+    #    Note the sources are mixed and nothing here has to know: raster top,
+    #    contoured contact, a DERIVED contact 20 ft below it, raster base.
     stack = (
         mf.LayerStack(vor, top=ground, length_units="feet")
         .add("upper_sand", bottom=clay_top, min_thickness=2.0, pinch="inactive")
-        .add("clay", bottom=clay_top.below(25), pinch="passthrough")
-        .add("lower_aquifer", thickness=60.0)
+        .add("clay", bottom=clay_top.below(20), pinch="passthrough")
+        .add("lower_aquifer", bottom=bedrock, min_thickness=5.0, pinch="inactive")
     )
     print(stack.qc())                    # READ THIS before trusting the build
     layers = stack.build(attach=True)    # attach=True publishes vor.gdf_topbtm

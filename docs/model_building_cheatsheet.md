@@ -1,9 +1,14 @@
 # Building a model, package-first — cheat sheet
 
-Every call below was executed end to end on 2026-08-26 (contours → GRASS
-interpolation → 3-layer stack → DISV → MF6 converged → heads read → maps drawn).
-The runnable version is **`examples/mf6/contours_to_model.py`** — it generates its
-own contour fixtures, so it runs anywhere.
+Every call below was executed end to end on 2026-08-26, in a shell with **no
+GRASS environment variables set**: DEM raster + digitized contours + a second
+raster → 3-layer stack → DISV → MF6 converged → heads read → maps drawn. The
+runnable version is **`examples/mf6/contours_to_model.py`**; it writes its own
+raster and contour fixtures, so it runs anywhere.
+
+Source kinds mix freely — §3 is the case where some contacts are rasters and some
+are contours. §6 covers project workspace layout, reusable libraries, scenarios,
+and what persistence will and won't accept.
 
 > Reference for the read-side grammar: `docs/package_api_reference.md`.
 > Normative view-layer rules: `docs/view_layer_conventions.md`.
@@ -39,6 +44,16 @@ dependency — install it with your package manager (Linux/macOS) or via OSGeo4W
 globbing the OSGeo4W/QGIS bundles on Windows), and the GRASS Python bindings —
 which live inside the install at `<prefix>/etc/python` and are *not* on
 `sys.path` — are located by asking that launcher, so no `PYTHONPATH` either.
+
+**It is pure Python from your side.** `mf.Contours` starts and tears down its own
+GRASS session per interpolation — you never open a GRASS shell, never set
+`GRASS_BIN`, never set `PYTHONPATH`, and nothing is left running afterwards.
+Re-verified 2026-08-26 with both variables explicitly unset:
+
+```
+launcher : /usr/bin/grass                 (shutil.which)
+bindings : /usr/lib/grass84/etc/python    (grass --config python_path)
+```
 
 Only if GRASS is installed somewhere undiscoverable, point at the launcher:
 
@@ -157,17 +172,61 @@ guard of their own.
 
 Declare **top once**, then each layer by its *bottom* or its *thickness*.
 
+### Mixing rasters and contours
+
+This is the normal case, and it needs no special handling: **`Surface` is one
+type whatever produced it**, so a raster contact, a contoured contact and a
+derived contact are interchangeable arguments to `top=` and `bottom=`. Nothing
+below cares where a surface came from.
+
 ```python
+ground   = mf.Raster("ground_dem.tif")                       # LiDAR DEM
+clay_top = mf.Contours("clay_top.gpkg", z="Elev",            # digitized contours
+                       region_vector="boundary.gpkg")
+bedrock  = mf.Raster("bedrock.tif")                          # another raster
+
 stack = (
     mf.LayerStack(vor, top=ground, length_units="feet")
-      .add("upper_sand",    bottom=clay_top, min_thickness=2.0, pinch="inactive")
-      .add("clay",          thickness=25.0,                     pinch="passthrough")
-      .add("lower_aquifer", thickness=60.0)
+      .add("upper_sand",    bottom=clay_top,           min_thickness=2.0, pinch="inactive")
+      .add("clay",          bottom=clay_top.below(20), pinch="passthrough")
+      .add("lower_aquifer", bottom=bedrock,            min_thickness=5.0, pinch="inactive")
 )
 
 print(stack.qc())          # read this BEFORE build — it is a report, not a picture
 layers = stack.build(attach=True)
 ```
+
+Verified 2026-08-26 on a 293-cell grid, three layers from three different source
+kinds:
+
+```
+[0] upper_sand      thickness   28.89 ..   61.83   active 293/293
+[1] clay            thickness   20.00 ..   20.00   active 293/293
+[2] lower_aquifer   thickness   51.31 ..   71.69   active 293/293
+```
+
+Three things worth knowing when the sources are mixed:
+
+* **Resolution differences don't matter.** Every surface is sampled onto the same
+  Voronoi cells by area-weighted averaging (`grid/surfaces.py`), so a 25-ft DEM
+  and a coarsely-contoured contact land on the same footing. You do **not** need
+  to pre-align, resample, or clip them to each other.
+* **Only `mf.Contours` costs anything.** Its GRASS interpolation runs once, caches
+  to `<name>.interp.tif`, and is reused on every later build. Rasters are read
+  directly. So a stack with one contoured contact is slow on the *first* build
+  and fast thereafter.
+* **Mismatched CRS is the one thing to check yourself.** Sources are sampled in
+  the grid's CRS; a contact in a different projection samples in the wrong place
+  and shows up as a nonsense `qc()` thickness rather than an error.
+
+A contact you have *neither* a raster nor contours for is derived (`clay_top
+.below(20)` above) — see the algebra table in §2.
+
+### Where a layer only exists in part of the domain
+
+Give it a source that goes above the layer above it, and let `pinch="inactive"`
+cut it out — that is the whole mechanism. `qc()` reports the count, and
+`layers.idomain[k]` is what MODFLOW sees.
 
 `qc()` reports per layer: NaN bottoms, cells below `min_thickness`, pinch-outs,
 non-positive thickness in active cells, and how far the top-down reconcile had to
@@ -314,9 +373,103 @@ if not success:
     print("\n".join(report[-25:]))
 ```
 
-Inspect before running with `run.model("valley")`. Reopen later with
-`mf.load_run(path)`. Serialize the whole simulation with `sim.to_yaml(path)` /
-`mf.SimulationSpec.from_yaml(path)`.
+### Setting up the workspace
+
+`mf.Project(root, name=)` creates nothing on disk until you ask it to. Runs land
+under `<root>/runs/<name>`; persistence (opt-in, see below) writes under
+`<root>/specs/`:
+
+```
+project/
+├─ project.json                     # the manifest        (project.manifest_path)
+├─ specs/
+│   ├─ project_spec.json            # written by .save()
+│   ├─ simulations/<name>.json
+│   ├─ packages/<key>.json          # the reusable library
+│   └─ grids/<key>.…
+└─ runs/
+    ├─ baseline/                    # MF6 input + output  (run.workspace)
+    └─ dry/
+```
+
+Rename any of those directories with `ProjectLayout(root, specs_dir_name=...,
+simulations_dir_name=..., inputs_dir_name=..., packages_dir_name=...,
+grids_dir_name=...)` passed as `layout=`. A custom layout round-trips through
+`save()`/`load()`.
+
+### Reusable libraries
+
+Register a grid or a package once and reference it from several simulations, so a
+change lands in one place:
+
+```python
+project.add_grid("valley_voronoi", vor)
+project.add_package("npf/base", mf.npf(k=[25.0, 0.05, 40.0], icelltype=1))
+
+flow = mf.gwf("valley", context=ctx, packages=[
+    mf.disv(...),
+    mf.ref("npf/base"),          # ← resolved from the library when the run builds
+    ...
+])
+```
+
+### Scenarios
+
+A scenario is just another simulation on the same project. The runs are
+independent workspaces, so you can compare them directly:
+
+```python
+project.add_simulation(make_sim("baseline", rch=4.0e-4))
+project.add_simulation(make_sim("dry",      rch=1.0e-4))
+
+base = project.prepare_run("baseline", "baseline"); base.execute()
+dry  = project.prepare_run("dry",      "dry");      dry.execute()
+
+drawdown = base.model("valley").hds.array(layer=0) - dry.model("valley").hds.array(layer=0)
+```
+
+| call | does |
+|---|---|
+| `project.prepare_run(name, sim)` | build **in memory** — nothing written yet |
+| `run.execute()` | write MF6 input, run it, return `(success, report)` |
+| `project.run(name, sim)` | both at once |
+| `project.discover_runs()` | every run with a lifecycle manifest |
+| `project.reopen_run(name)` | reopen one by name |
+| `mf.load_run(path)` | reopen a run from a bare path, no project needed |
+
+**`prepare_run` before `execute` is the useful habit** — the model is fully built
+and inspectable (`run.model("valley")`, and every plotting verb) while no input
+files exist yet, so a bad layer stack or a mis-mapped BC is visible before MF6
+ever sees it.
+
+### Persistence is opt-in, and refuses numpy
+
+`project.save()` writes the project + its simulations + its package library;
+`mf.Project.load(root)` reads them back. But a spec can only be persisted if it is
+**serializable**, and *numpy is not*:
+
+```python
+mf.npf(k=[1.0] * ncpl)          # list      -> serializable
+mf.npf(k=np.ones(ncpl))         # ndarray   -> NOT serializable
+mf.oc(saverecord=[("HEAD", np.int64(1))])   # even a numpy SCALAR blocks it
+```
+
+Which means an eagerly-built stack — whose `layers.top/botm/idomain` are arrays,
+and whose `vor.get_disv_gridprops()["ncpl"]` is a `numpy.int64` — cannot be saved
+as-is. Two honest options:
+
+* **Don't save.** Runs, scenarios, discovery and reopening all work without it.
+  This is the normal choice for an array-heavy model.
+* **Convert at the boundary** — `top=layers.top.tolist()`, `ncpl=int(gp["ncpl"])`,
+  and so on. Verified to round-trip through `save()` → `load()`.
+
+Call **`project.validate()`** to find out which it is; it lists the offending
+simulations without touching disk, and `save()` raises with the same message
+rather than writing a project that cannot be reloaded.
+
+For a single simulation the lighter option is `sim.to_yaml(path)` /
+`mf.SimulationSpec.from_yaml(path)` (`Project.add_simulation_from_yaml` too),
+which carries the same serializability rule.
 
 ---
 
@@ -358,3 +511,11 @@ never a trailing `.plot()`.
    inactive region you'll spend an afternoon chasing in the head field.
 8. `GridSpec.structured` / `from_geopackage` exist but **fail fast** — only
    `voronoi` and `python` resolve. Use `GridSpec.from_object` for a built grid.
+9. **`project.save()` refuses numpy** — arrays *and* scalars. An eagerly-built
+   stack cannot be persisted without `.tolist()` at the boundary. Call
+   `project.validate()` to see this without touching disk; running and reopening
+   work fine either way.
+10. **Mixed source resolutions need no pre-alignment.** Area-weighted sampling
+    puts a 25-ft DEM and a coarse contoured contact on the same footing. A
+    mismatched **CRS**, though, samples in the wrong place and surfaces as a
+    nonsense `qc()` thickness rather than an error — check that yourself.
