@@ -751,3 +751,49 @@ def test_bottom_holds_the_model_top_and_top_can_move_it():
     assert lowered["top"][0] == 100.0, "'bottom' must leave the model top alone"
     assert lowered["a"][0] < lowered["top"][0]
     assert raised["top"][0] > 100.0, "'top' moves the model top -- documented as such"
+
+
+# --- erosion: a surface cutting down through the layers below ---------------- #
+
+def _channel_stack(pinch, cap=False):
+    """Ground at 200 with a channel incised to 115, cutting sand AND clay."""
+
+    ground_vals = np.array([200.0, 115.0, 200.0])          # middle cell is the channel
+    ground = Surface.from_array(ground_vals)
+    sand_base = Flat(150).capped_at(ground - 2.0) if cap else Flat(150)
+    return (
+        LayerStack(top=ground, length_units="feet")
+        .add("sand", bottom=sand_base, min_thickness=2.0, pinch=pinch)
+        .add("clay", bottom=Flat(120), min_thickness=2.0, pinch=pinch)
+        .add("till", bottom=Flat(60), min_thickness=2.0, pinch=pinch)
+    )
+
+
+@pytest.mark.parametrize(
+    ("pinch", "cut_idomain"), [("inactive", 0), ("passthrough", -1)]
+)
+def test_an_incised_channel_cuts_every_layer_it_passes_through(pinch, cut_idomain):
+    """The documented erosion mechanism: reconcile pushes the cut contacts down
+    and `pinch` decides what the emptied cells become. No separate "cut" call."""
+
+    layers = _channel_stack(pinch).build(_fake_vor(3))
+    ch = 1                                                  # the channel cell
+
+    assert layers.idomain[0][ch] == cut_idomain, "sand is cut out"
+    assert layers.idomain[1][ch] == cut_idomain, "clay is cut out too -- it cascades"
+    assert layers.idomain[2][ch] == 1, "till survives and floors the channel"
+    assert layers.thickness[2][ch] > 50, "till reaches up to the channel floor"
+
+
+def test_capping_the_contact_keeps_a_veneer_instead_of_cutting_it_out():
+    """The explicit alternative. Same channel, different geology: `capped_at`
+    thins the unit to a remnant that stays ACTIVE, where reconcile removes it."""
+
+    vor = _fake_vor(3)
+    ch = 1
+    cut = _channel_stack("inactive").build(vor)
+    capped = _channel_stack("inactive", cap=True).build(vor)
+
+    assert cut.idomain[0][ch] == 0 and cut.thickness[0][ch] < 1
+    assert capped.idomain[0][ch] == 1
+    assert capped.thickness[0][ch] == pytest.approx(2.0)

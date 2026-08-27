@@ -471,9 +471,66 @@ layer-elevation hover rows.
 
 | value | effect |
 |---|---|
-| `"passthrough"` *(default)* | keep the cell active; layer stays vanishingly thin |
-| `"inactive"` | `idomain = 0` — a true pinch-out |
-| `"floor"` | clamp thickness to `min_thickness` |
+| `"passthrough"` *(default)* | `idomain = -1` — cell inactive but vertically transmissive |
+| `"inactive"` | `idomain = 0` — a true pinch-out, no flow through |
+| `"floor"` | clamp thickness to `min_thickness`, cell stays active |
+
+#### Erosion — a surface that cuts down through the layers below
+
+An incised channel, a buried valley, a scoured contact: the overlying surface
+drops *below* one or more contacts underneath it. **There is no separate "cut"
+operation** — `reconcile="bottom"` already does it. It pushes every contact the
+cut passes through down to `cut - min_sep`, cascading, and the layers that end up
+thinner than `min_thickness` are handled by their `pinch`.
+
+Measured on a 441-cell grid, ground at 200 with a channel incised to 115, through
+`sand` (base 150) and `clay` (base 120) into `till`:
+
+```python
+stack = (mf.LayerStack(top=ground, length_units="feet")
+         .add("sand", bottom=Flat(150), min_thickness=2.0, pinch="inactive")
+         .add("clay", bottom=Flat(120), min_thickness=2.0, pinch="inactive")
+         .add("till", bottom=Flat(60),  min_thickness=2.0, pinch="inactive"))
+```
+
+```
+              thickness in channel      idomain in channel
+  sand              0.10                  0    ← cut out
+  clay              0.10                  0    ← cut out
+  till             54.80                  1    ← now directly under the channel floor
+```
+
+with `pinch="passthrough"` the cut-out layers read `idomain = -1` instead — same
+geometry, but flow still passes vertically through the gap. **That is usually the
+one you want for an erosional cut**, since a column of `0`s can disconnect the
+till from the channel above it.
+
+`qc()` names the cut rather than hiding it:
+
+```
+[0] sand   nan_bottom=0 thin=139 pinched=139 ... reconcile_moved=139 (max 10.10)
+```
+
+##### Or declare the cut explicitly
+
+Relying on reconcile means the geometry is a side effect of a repair pass. To
+make it intentional, cap the contact against the cutting surface:
+
+```python
+.add("sand", bottom=Flat(150).capped_at(ground - 2.0), min_thickness=2.0)
+```
+
+Same channel, different answer — and the difference is hydrogeology, not style:
+
+| | in the channel | `qc()` |
+|---|---|---|
+| reconcile does it | sand `0.10` thick, **idomain 0** — unit absent | `reconcile_moved=139` |
+| `capped_at(ground - 2)` | sand `2.00` thick, **idomain 1** — thin veneer kept | `reconcile_moved=0` |
+
+Use reconcile when the unit is genuinely truncated and gone; use `capped_at` when
+a remnant survives, or when you want the cell to stay active. The `reconcile_moved=0`
+in the second row is the tell that you described the geometry rather than
+discovering it.
 
 #### Look at it before you trust it
 
