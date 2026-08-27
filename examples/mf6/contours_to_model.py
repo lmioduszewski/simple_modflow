@@ -4,18 +4,27 @@ The path most real projects actually take: you have a **DEM raster** for the
 ground surface, **digitized contours** for some geologic contacts, maybe another
 raster for bedrock, and you need a multi-layer DISV model out of the mixture.
 
-    raster (.tif) ------------------\\
-                                     >--  Surface --LayerStack--> top/botm/idomain
-    contours (.gpkg) --GRASS-------/                        |
-                                            ModelContext ---+
-                                                  |
-                          mf.gwf(context=ctx, packages=[...]) --> Project --> run
+    Project                       <- made FIRST; paths resolve against its root
+      inputs/*.tif, *.gpkg        <- your reference data
+        raster ---------\\
+                          >-- Surface -- LayerSurfaces      (no grid needed yet)
+        contours --GRASS/                     |
+      add_grid("base", GridSpec) -> resolve --+
+                                              v
+                          to_disv(vor) -> add_package("disv/base")
+                                              |
+                    mf.gwf(packages=[mf.ref("disv/base"), ...]) -> run
 
-**Source kinds mix freely.** ``Surface`` is one type whatever produced it, so
-``top=`` and ``bottom=`` do not care whether a contact came from a raster, from
-contours, or from algebra on another surface. Differing resolutions need no
-pre-alignment either -- every surface is area-weighted onto the same Voronoi
-cells.
+**The Project comes first.** It is the root that relative data paths resolve
+against and the registry that ``mf.ref``/``mf.grid_ref`` resolve through, so
+declaring against it from the start makes the whole model a portable recipe that
+``save()``/``load()`` round-trips.
+
+**The layering does not need the grid.** Surfaces are lazy and ``LayerSurfaces``
+is just an ordered list of them, so it is declared before the grid exists.
+``Surface`` is one type whatever produced it -- raster, contours, or algebra on
+another surface -- and differing resolutions need no pre-alignment, since every
+surface is area-weighted onto the same Voronoi cells.
 
 Run it directly and it builds its own raster + contour fixtures, so it works with
 no data of your own; the comments mark exactly where to swap yours in.
@@ -62,7 +71,11 @@ WIDTH, HEIGHT = 3000.0, 2000.0
 # Fixtures -- delete this whole section and point at your own files.
 # --------------------------------------------------------------------------- #
 def write_fixtures(root: Path) -> dict[str, Path]:
-    """Write a boundary, a DEM raster, a contour set, and a bedrock raster."""
+    """Write a boundary, a DEM raster, a contour set, and a bedrock raster.
+
+    ``root`` is the project's ``inputs/`` directory, so everything lands where
+    a relative ``ShapeSource("inputs/...")`` will find it.
+    """
 
     gpd.GeoDataFrame(
         {"name": ["domain"]},
@@ -123,46 +136,79 @@ def write_fixtures(root: Path) -> dict[str, Path]:
 
 # --------------------------------------------------------------------------- #
 def build(root: Path):
-    """Build the project, returning (project, simulation, layers, vor)."""
+    """Build the project, returning (project, simulation, layering, vor)."""
 
-    src = write_fixtures(root)                      # <- your files instead
+    # ------------------------------------------------------------------ #
+    # 1. PROJECT FIRST. It is the root that relative data paths resolve
+    #    against and the registry that mf.ref/mf.grid_ref resolve through,
+    #    so everything below is declared against it.
+    # ------------------------------------------------------------------ #
+    project = mf.Project(root / "valley", name="valley")
+    project.layout.ensure()                      # specs/ inputs/ runs/
 
-    # 1. GRID -- eagerly, because the GIS package helpers resolve cells at
-    #    declaration time. `boundary=` needs a ShapeSource, not a path string.
-    vor = mf.GridSpec.voronoi(
-        name="valley",
-        boundary=mf.ShapeSource(src["boundary"], crs=CRS),
-        crs=CRS,
-        boundary_max_area=40_000.0,
-    ).resolve(workspace=root / "_grid")
+    src = write_fixtures(project.layout.inputs_dir)   # <- your files instead
 
-    # 2. SOURCES -> SURFACES. Three different kinds, one `Surface` type.
-    #    Rasters are read directly. `mf.Contours` interpolates through GRASS
-    #    ONCE, caches to `<name>.interp.tif` beside the source, and reuses it
-    #    forever after -- so only the first build pays for it. `region_vector`
-    #    (or `region_raster`) is REQUIRED: it defines the GRASS region.
+    # ------------------------------------------------------------------ #
+    # 2. SOURCES -> SURFACES. Three kinds, one `Surface` type, NO grid yet:
+    #    surfaces are lazy, so nothing is read or interpolated here.
+    #    `mf.Contours` runs GRASS ONCE, caches to `<name>.interp.tif` beside
+    #    the source, and reuses it forever after. `region_vector` (or
+    #    `region_raster`) is REQUIRED: it defines the GRASS region.
+    # ------------------------------------------------------------------ #
     ground = mf.Raster(src["ground_dem"])
     clay_top = mf.Contours(src["clay_top"], z="Elev", epsg="2927",
                            resolution=25, region_vector=src["boundary"])
     bedrock = mf.Raster(src["bedrock"])
 
-    # 3. LAYER STACK -- top once, then each layer by bottom OR thickness.
-    #    Note the sources are mixed and nothing here has to know: raster top,
+    # ------------------------------------------------------------------ #
+    # 3. LAYERING -- still no grid. `LayerSurfaces` is an ordered list of
+    #    surfaces: [0] is the model top, each one after is a layer bottom.
+    #    Sources are mixed and nothing here has to know: raster top,
     #    contoured contact, a DERIVED contact 20 ft below it, raster base.
-    stack = (
-        mf.LayerStack(vor, top=ground, length_units="feet")
-        .add("upper_sand", bottom=clay_top, min_thickness=2.0, pinch="inactive")
-        .add("clay", bottom=clay_top.below(20), pinch="passthrough")
-        .add("lower_aquifer", bottom=bedrock, min_thickness=5.0, pinch="inactive")
+    # ------------------------------------------------------------------ #
+    layering = mf.LayerSurfaces(
+        [ground, clay_top, clay_top.below(20), bedrock],
+        labels=["ground", "upper_sand", "clay", "lower_aquifer"],
     )
-    print(stack.qc())                    # READ THIS before trusting the build
-    layers = stack.build(attach=True)    # attach=True publishes vor.gdf_topbtm
 
-    # 4. CONTEXT -- geometry the package builders read; rides on the MODEL.
-    ctx = mf.ModelContext(grid=vor, domain=layers.idomain, surfaces=vor.gdf_topbtm)
+    # ------------------------------------------------------------------ #
+    # 4. GRID -- the recipe is registered on the project, with a path
+    #    RELATIVE to the project root, then resolved into a real grid.
+    # ------------------------------------------------------------------ #
+    project.add_grid("base", mf.GridSpec.voronoi(
+        name="valley",
+        boundary=mf.ShapeSource("inputs/boundary.gpkg", crs=CRS),
+        crs=CRS,
+        boundary_max_area=40_000.0,
+    ))
+    vor = project.grids["base"].resolve(
+        project_root=project.root,                     # <- anchors the path
+        workspace=project.root / "grids" / "base",
+    )
 
-    # 5. PACKAGES -- one flat declarative list.
-    gp = vor.get_disv_gridprops()
+    # ------------------------------------------------------------------ #
+    # 5. BIND the layering to the grid -> a PackageSpec -> register it.
+    #    Putting DISV in the library rather than inline is what lets the
+    #    project be saved: the simulation then holds only a reference, and
+    #    the arrays ride in a pickle sidecar beside the library JSON.
+    # ------------------------------------------------------------------ #
+    print(layering.thickness_report(vor, minimum_thickness=2.0))
+    project.add_package("disv/base", layering.to_disv(
+        vor, pinch_out=True, minimum_thickness=2.0,
+        length_units="FEET", attach=True))          # attach -> vor.gdf_topbtm
+    project.add_package("npf/base", mf.npf(
+        k=[25.0, 0.05, 40.0], k33=[2.5, 0.005, 4.0],
+        icelltype=1, save_flows=True))
+
+    # ------------------------------------------------------------------ #
+    # 6. CONTEXT -- geometry the package builders read; rides on the MODEL.
+    # ------------------------------------------------------------------ #
+    ctx = mf.ModelContext(grid=vor, surfaces=vor.gdf_topbtm)
+
+    # ------------------------------------------------------------------ #
+    # 7. PACKAGES -- one flat declarative list, library entries by name.
+    # ------------------------------------------------------------------ #
+    top = np.asarray(vor.gdf_topbtm["ground"], dtype=float)
     cx, _ = vor.centroids
     west = int(min(range(vor.ncpl), key=lambda i: cx[i]))
     east = int(max(range(vor.ncpl), key=lambda i: cx[i]))
@@ -172,18 +218,13 @@ def build(root: Path):
         context=ctx,
         save_flows=True,
         packages=[
-            mf.disv(nlay=layers.nlay, ncpl=gp["ncpl"], nvert=len(gp["vertices"]),
-                    vertices=gp["vertices"], cell2d=gp["cell2d"],
-                    top=layers.top, botm=layers.botm, idomain=layers.idomain,
-                    length_units="FEET"),
-            mf.ic(strt=float(np.nanmean(layers.top)) - 10.0),
-            # one value per layer: sand / clay aquitard / lower aquifer
-            mf.npf(k=[25.0, 0.05, 40.0], k33=[2.5, 0.005, 4.0],
-                   icelltype=1, save_flows=True),
+            mf.ref("disv/base"),          # <- the layer stack, by reference
+            mf.ic(strt=float(np.nanmean(top)) - 10.0),
+            mf.ref("npf/base"),
             mf.sto(steady_state={0: True}),
             mf.chd(stress_period_data={0: [
-                [(0, west), float(layers.top[west]) - 5.0],
-                [(0, east), float(layers.top[east]) - 15.0],
+                [(0, west), float(top[west]) - 5.0],
+                [(0, east), float(top[east]) - 25.0],
             ]}),                          # or mf.chd.gpkg("bcs.gpkg", context=ctx, nper=1)
             mf.rch.flopy(stress_period_data={
                 0: [[(0, c), 4.0e-4] for c in range(vor.ncpl)]
@@ -193,7 +234,9 @@ def build(root: Path):
         ],
     )
 
-    # 6. SIMULATION + PROJECT
+    # ------------------------------------------------------------------ #
+    # 8. SIMULATION, registered on the project.
+    # ------------------------------------------------------------------ #
     simulation = mf.SimulationSpec(
         "baseline",
         models=(flow,),
@@ -202,9 +245,8 @@ def build(root: Path):
             mf.ims(models=("valley",), complexity="COMPLEX"),
         ),
     )
-    project = mf.Project(root / "project", name="valley")
     project.add_simulation(simulation)
-    return project, simulation, layers, vor
+    return project, simulation, layering, vor
 
 
 def surfaces_without_grass(contours_gpkg: Path) -> mf.Surface:
@@ -227,7 +269,7 @@ def surfaces_without_grass(contours_gpkg: Path) -> mf.Surface:
 
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="contours_to_model_"))
-    project, _, layers, _ = build(root)
+    project, _, layering, vor = build(root)
 
     run = project.prepare_run("baseline", "baseline")
     success, report = run.execute()
@@ -245,8 +287,21 @@ def main() -> int:
     # `.html()` is used here because it needs nothing extra; `.save("x.png")`
     # rasterizes through kaleido, which requires Chrome (`plotly_get_chrome`).
     model.plot.map(layer=0, contours=True).html(root / "heads.html")
-    layers.plot.section(y=HEIGHT / 2).save(root / "section.png")   # Matplotlib
+    # `LayerSurfaces` has no `.plot` namespace; the `LayerStack` facade does.
+    # `from_modflow` takes a flopy model (anything with `.modelgrid`), so read
+    # the geometry straight back off the built model to draw it.
+    stack = mf.LayerStack.from_modflow(vor, model.gwf, resample=False)
+    stack.build().plot.section(y=HEIGHT / 2).save(root / "section.png")
     print(f"wrote {root / 'heads.html'} and {root / 'section.png'}")
+
+    # The payoff of declaring against the project: it is a portable recipe.
+    # The simulation holds only mf.ref/mf.grid_ref, so it stays JSON-clean;
+    # the array-laden DISV rides in a pickle sidecar beside its library JSON.
+    print(f"validate(): {project.validate() or 'serializable'}")
+    project.save()
+    reloaded = mf.Project.load(project.root)
+    rerun = reloaded.prepare_run("reloaded", "baseline")
+    print(f"reloaded from disk and rebuilt: nlay={rerun.model('valley').nlay}")
     return 0
 
 

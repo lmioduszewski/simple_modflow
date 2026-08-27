@@ -18,16 +18,37 @@ and what persistence will and won't accept.
 ## The mental model
 
 ```
-Project                 durable workspace + run lifecycle  — holds NO geometry
-  └─ SimulationSpec     one MF6 simulation: tdis + solver + model(s)
-       └─ ModelSpec     = mf.gwf(name, context=ctx, packages=[...])
-            ├─ ModelContext(grid=, domain=, surfaces=)   ← geometry, on the MODEL
-            └─ packages  disv · npf/ic/sto/oc · chd/ghb/drn/riv/wel/rch/evt
-                         · uzf/sfr/lak · mvr
+Project                 the workspace everything is declared against
+  ├─ inputs/            your reference data (relative paths resolve HERE)
+  ├─ grids     ─────────  add_grid("base", GridSpec)     → mf.grid_ref("base")
+  ├─ packages  ─────────  add_package("npf/base", spec)  → mf.ref("npf/base")
+  ├─ simulations ───────  add_simulation(sim)
+  │    └─ SimulationSpec   tdis + solver + model(s)
+  │         └─ ModelSpec   = mf.gwf(name, context=ctx, packages=[...])
+  │              ├─ ModelContext(grid=, domain=, surfaces=)   ← geometry
+  │              └─ packages  disv · npf/ic/sto/oc · chd/ghb/… · uzf/sfr/lak
+  └─ runs/<name>/       one workspace per run or scenario
 ```
 
-Geometry rides on the **model**, not the project. The project is the lifecycle
-wrapper — runs, scenarios, reuse.
+**Make the Project first.** It is not just a run wrapper: it is the root that
+reference-data paths resolve against, and the registry that `mf.grid_ref` /
+`mf.ref` resolve through. Declare against it from the start and the whole model
+is a portable recipe — `save()` it, `load()` it elsewhere, rebuild. Build
+geometry first and hand the project finished arrays, and you get a project that
+runs but cannot be persisted (§7).
+
+Two things that follow, and often trip people:
+
+* **Geometry attaches to the MODEL, not the project.** `ModelContext` rides on
+  `mf.gwf(..., context=ctx)`. The project holds the *declarations*; the model
+  holds the resolved geometry.
+* **The layering does not need the grid to exist.** Surfaces are lazy, and
+  `LayerSurfaces` is just an ordered list of them, so §3 comes before §4 on
+  purpose. Binding it to a grid (§5) produces a `PackageSpec`, which registers on
+  the project like anything else and is referenced with `mf.ref`.
+
+There is no `add_surface`/`add_layers` registry — the layering enters the project
+as its **bound DISV package**, which is the same door every other package uses.
 
 ---
 
@@ -65,37 +86,67 @@ Skip all of this if you're starting from rasters.
 
 ---
 
-## 1 · Grid
-
-Build it **eagerly**. The GIS-aware helpers (`mf.uzf/sfr/lak`, `mf.X.gpkg`)
-resolve cells the moment you call them, so they need a real grid, not a recipe.
+## 1 · Project — make this first
 
 ```python
-grid = mf.GridSpec.voronoi(
-    name="valley",
-    boundary=mf.ShapeSource("boundary.gpkg", crs="EPSG:2927"),
-    refinement=mf.ShapeSource("refine_area.gpkg", crs="EPSG:2927"),  # optional
-    crs="EPSG:2927",
-    boundary_max_area=40_000.0,      # target cell area in CRS units²
-)
-vor = grid.resolve(workspace="_grid")     # -> VoronoiGridPlus
+project = mf.Project("./valley", name="valley")
+project.layout.ensure()          # creates specs/, inputs/, runs/ …
 ```
 
-`boundary=` takes a **`DataSourceSpec`/`ShapeSource`, not a bare path string.**
+`mf.Project(root, name=)` touches no disk until asked. The layout:
 
-<details><summary>Direct construction, if you'd rather drive Triangle yourself</summary>
+```
+valley/
+├─ project.json                  # manifest              project.manifest_path
+├─ inputs/                       # YOUR reference data   project.layout.inputs_dir
+│   ├─ boundary.gpkg
+│   ├─ ground_dem.tif
+│   └─ clay_top.gpkg
+├─ specs/                        # written by .save()
+│   ├─ project_spec.json
+│   ├─ simulations/<name>.json
+│   ├─ packages/<key>.json
+│   └─ grids/<key>.json
+├─ grids/                        # resolved grid artifacts (your choice of name)
+└─ runs/<name>/                  # MF6 input + output    run.workspace
+```
+
+Rename any of those with `ProjectLayout(root, specs_dir_name=…,
+simulations_dir_name=…, inputs_dir_name=…, packages_dir_name=…,
+grids_dir_name=…)` passed as `layout=`; a custom layout round-trips through
+`save()`/`load()`.
+
+### Put reference data under the project and refer to it *relatively*
+
+This is the payoff, and it is worth being deliberate about:
 
 ```python
-tri = mf.TriangleGrid(model_ws="_grid", angle=30)
-tri.set_domain_rectangle(x_dist=3000, y_dist=2000, origin=(0, 0), max_area=40_000)
-tri.build()
-vor = mf.VoronoiGridPlus(tri, crs="EPSG:2927")
+mf.ShapeSource("inputs/boundary.gpkg", crs=CRS)      # ✅ relative to project root
+mf.ShapeSource("/home/me/gis/boundary.gpkg")         # ⚠️ absolute — pins the machine
+mf.ShapeSource("/mnt/shared/regional.gpkg", external=True)   # deliberate, marked
 ```
-</details>
+
+A relative `DataSourceSpec` resolves against `project.root` — **not** the working
+directory. Verified 2026-08-26 by building a run after `os.chdir("/")`: the grid
+still resolved, `ncpl=293`. `external=True` opts a path out of that, for genuinely
+shared data that should not be copied into the project.
+
+### The libraries
+
+Register once, reference from many simulations, change in one place:
+
+```python
+project.add_grid("base", grid_spec)                       # → mf.grid_ref("base")
+project.add_package("npf/base", mf.npf(k=10.0, icelltype=1))   # → mf.ref("npf/base")
+project.add_simulation(sim)
+project.add_simulation_from_yaml("specs/simulations/alt.yaml")
+```
+
+`project.grids`, `project.packages` and `project.simulation(name)` read them back.
 
 ---
 
-## 2 · Contours → surfaces
+## 2 · Contours and rasters → surfaces
 
 This is the atom layer. A `Surface` is lazy — it interpolates **once**, caches the
 raster next to the source, then samples many times.
@@ -168,23 +219,153 @@ guard of their own.
 
 ---
 
-## 3 · Layer stack
+## 3 · Layering — declare it before the grid
 
-Declare **top once**, then each layer by its *bottom* or its *thickness*.
-
-### Mixing rasters and contours
-
-This is the normal case, and it needs no special handling: **`Surface` is one
-type whatever produced it**, so a raster contact, a contoured contact and a
-derived contact are interchangeable arguments to `top=` and `bottom=`. Nothing
-below cares where a surface came from.
+A `Surface` is lazy and knows nothing about any grid, and **`LayerSurfaces` is
+just an ordered list of them**. So the layering — which contacts, in what order,
+under what names — is declarable with no grid in existence:
 
 ```python
-ground   = mf.Raster("ground_dem.tif")                       # LiDAR DEM
-clay_top = mf.Contours("clay_top.gpkg", z="Elev",            # digitized contours
-                       region_vector="boundary.gpkg")
-bedrock  = mf.Raster("bedrock.tif")                          # another raster
+layering = mf.LayerSurfaces(
+    [ground,                 # [0] is the model TOP
+     clay_top,               # each subsequent surface is a layer BOTTOM
+     clay_top.below(20),
+     bedrock],
+    labels=["ground", "upper_sand", "clay", "lower_aquifer"],
+)
+```
 
+Nothing is read, interpolated or sampled here. `mf.Contours` has not touched
+GRASS yet; `mf.Raster` has not opened a file. The grid arrives later, in §5.
+
+`labels` name the columns that land on `vor.gdf_topbtm`, so pick the names you
+want to see in section plots and hover rows. There is one more label than there
+are layers — the first is the top.
+
+> **`LayerSurfaces` is the engine; `LayerStack` is the facade.** The facade takes
+> the grid in its constructor (`mf.LayerStack(vor, top=…)`) and so *cannot* come
+> first — but it gives you `.add(name, thickness=…)`, `.qc()` and `.plot`. Pick by
+> what you need:
+>
+> | | `LayerSurfaces` | `LayerStack` |
+> |---|---|---|
+> | needs a grid to construct | no | yes |
+> | declare before the grid | ✅ | ✗ |
+> | per-layer `thickness=` sugar | ✗ (derive it: `s.below(20)`) | ✅ |
+> | QC report | `.thickness_report(vor)` | `.qc()` |
+> | `.plot` namespace | ✗ | ✅ (on the build result) |
+> | one call to a DISV spec | `.to_disv(vor)` | `.build()` then `mf.disv(...)` |
+>
+> They are the same machinery — `LayerStack` compiles to `LayerSurfaces`. §5 shows
+> both bindings.
+
+---
+
+## 4 · Grid — declare it in the project, then resolve it
+
+Declare the **recipe** on the project, so the grid is part of the saved document
+rather than something you rebuilt by hand:
+
+```python
+grid_spec = mf.GridSpec.voronoi(
+    name="valley",
+    boundary=mf.ShapeSource("inputs/boundary.gpkg", crs=CRS),        # relative
+    refinement=mf.ShapeSource("inputs/refine_area.gpkg", crs=CRS),   # optional
+    crs=CRS,
+    boundary_max_area=40_000.0,          # target cell area in CRS units²
+)
+project.add_grid("base", grid_spec)
+```
+
+`boundary=` takes a **`DataSourceSpec`/`ShapeSource`, not a bare path string.**
+
+Then get a real grid object out of it — **still declared in the project**:
+
+```python
+vor = project.grids["base"].resolve(
+    project_root=project.root,                     # relative paths anchor here
+    workspace=project.root / "grids" / "base",     # where Triangle's files land
+)
+```
+
+**Why resolve now rather than defer?** Because a `LayerStack` and the GIS package
+helpers (`mf.uzf/sfr/lak`, `mf.X.gpkg`) resolve cells the moment you call them —
+they need a grid object, not a recipe. Resolving from the library gets you both:
+the declaration lives in the project and survives `save()`, and you hold a real
+grid for the next four sections.
+
+<details><summary>Fully deferred, when the model needs no layer stack or GIS packages</summary>
+
+Hand the model a reference and let the run build the grid:
+
+```python
+flow = mf.gwf("valley", grid=mf.grid_ref("base"), packages=[...])
+```
+
+The grid is built into `run.workspace/_grid/<model>` at `prepare_run` time.
+Verified to round-trip: `save()` → `load()` → `prepare_run` rebuilt the same
+293-cell grid. This composes with `disv` + simple BCs only — see gotcha 5.
+</details>
+
+<details><summary>Direct construction, if you'd rather drive Triangle yourself</summary>
+
+```python
+tri = mf.TriangleGrid(model_ws="grids/base", angle=30)
+tri.set_domain_rectangle(x_dist=3000, y_dist=2000, origin=(0, 0), max_area=40_000)
+tri.build()
+vor = mf.VoronoiGridPlus(tri, crs=CRS)
+project.add_grid("base", vor)        # a built grid can go in the library too
+```
+</details>
+
+---
+
+## 5 · Bind the layering to the grid, and register it
+
+`to_disv` samples the surfaces onto the cells and hands back a **`PackageSpec`** —
+so the layer stack becomes an ordinary project package:
+
+```python
+disv = layering.to_disv(
+    vor,
+    pinch_out=True, minimum_thickness=2.0,     # thin cells -> idomain
+    length_units="FEET",
+    attach=True,                               # publish onto vor.gdf_topbtm
+)
+project.add_package("disv/base", disv)         # <- registered on the project
+```
+
+and the model refers to it by name, alongside every other library entry:
+
+```python
+flow = mf.gwf("valley", context=ctx, packages=[
+    mf.ref("disv/base"),          # the layer stack
+    mf.ref("npf/base"),
+    mf.ic(strt=150.0),
+    ...
+])
+```
+
+Verified end to end 2026-08-26: layering declared before the grid, grid resolved
+from the project library, `to_disv` → `add_package` → `mf.ref`, run converged at
+`nlay=3`, and the whole project `save()`/`load()`-ed and rebuilt.
+
+**Check it before you trust it.** `thickness_report` is the `LayerSurfaces`
+equivalent of `qc()` and takes the grid, since that is what thickness needs:
+
+```python
+print(layering.thickness_report(vor, minimum_thickness=2.0))
+```
+
+### Or bind through the `LayerStack` facade
+
+If you want `.add(thickness=…)`, `.qc()` and `.plot`, construct the facade once
+the grid exists — the layering is then declared here rather than in §3:
+
+Sources mix here exactly as they do in `LayerSurfaces` (§2) — `top=` and
+`bottom=` take a raster, a contoured contact or a derived one interchangeably:
+
+```python
 stack = (
     mf.LayerStack(vor, top=ground, length_units="feet")
       .add("upper_sand",    bottom=clay_top,           min_thickness=2.0, pinch="inactive")
@@ -205,6 +386,10 @@ kinds:
 [2] lower_aquifer   thickness   51.31 ..   71.69   active 293/293
 ```
 
+`stack.build()` returns arrays; feed them to `mf.disv(top=layers.top, …)` as in §7
+— or use `LayerSurfaces.to_disv` above, which does it in one call and is the
+registerable form.
+
 Three things worth knowing when the sources are mixed:
 
 * **Resolution differences don't matter.** Every surface is sampled onto the same
@@ -222,7 +407,7 @@ Three things worth knowing when the sources are mixed:
 A contact you have *neither* a raster nor contours for is derived (`clay_top
 .below(20)` above) — see the algebra table in §2.
 
-### Where a layer only exists in part of the domain
+#### Where a layer only exists in part of the domain
 
 Give it a source that goes above the layer above it, and let `pinch="inactive"`
 cut it out — that is the whole mechanism. `qc()` reports the count, and
@@ -242,13 +427,13 @@ grid-aware builders need — SFR reach tops and LAK lake-cell layering read it. 
 it whenever you use `mf.sfr`/`mf.lak`. It is also what gives maps their
 layer-elevation hover rows.
 
-### What `build()` returns
+#### What `build()` returns
 
 `LayerBuildResult` — fields `top`, `botm`, `idomain`, `thickness`, `names`,
 `nlay`, `vor`; methods `qc()`, `report()`, `validate()`, `prune_isolated()`,
 `attach_to_grid()`, and the `plot` namespace.
 
-### `pinch=` — what happens where a layer goes thin
+#### `pinch=` — what happens where a layer goes thin
 
 | value | effect |
 |---|---|
@@ -256,7 +441,7 @@ layer-elevation hover rows.
 | `"inactive"` | `idomain = 0` — a true pinch-out |
 | `"floor"` | clamp thickness to `min_thickness` |
 
-### Look at it before you trust it
+#### Look at it before you trust it
 
 ```python
 layers.plot.section(y=1000)          # filled, layer-coloured cross-section
@@ -269,7 +454,25 @@ Starting from an existing model instead? `mf.LayerStack.from_modflow(vor, source
 
 ---
 
-## 4 · Context
+
+### Why registering matters for persistence
+
+Putting the DISV in the **package library** rather than inline in the model is
+what lets an array-heavy model be saved at all. A simulation must be JSON-clean,
+and `to_disv` emits numpy arrays for `top`/`botm` — but a *library* entry falls
+back to a pickle sidecar beside its JSON:
+
+```
+specs/packages/disv/base.json     +  base.pkl  +  base.versions.json
+```
+
+So the simulation holds only `mf.ref("disv/base")`, stays serializable, and the
+arrays ride along in the sidecar. Verified: `save()` → `load()` → `prepare_run`
+rebuilt the same 3-layer model. §8 has the full persistence rules.
+
+---
+
+## 6 · Context
 
 ```python
 ctx = mf.ModelContext(grid=vor, domain=layers.idomain, surfaces=vor.gdf_topbtm)
@@ -280,7 +483,7 @@ exposes it as `model.myflopy_context`. Every GIS-aware helper takes `context=`.
 
 ---
 
-## 5 · Packages
+## 7 · Packages
 
 One flat, declarative list — the readable payoff.
 
@@ -350,7 +553,7 @@ in the model *and* ordered before the mover.
 
 ---
 
-## 6 · Simulation, project, run
+## 8 · Simulation, runs, scenarios, persistence
 
 ```python
 sim = mf.SimulationSpec(
@@ -442,30 +645,37 @@ and inspectable (`run.model("valley")`, and every plotting verb) while no input
 files exist yet, so a bad layer stack or a mis-mapped BC is visible before MF6
 ever sees it.
 
-### Persistence is opt-in, and refuses numpy
+### Persistence is opt-in, and the library is the escape hatch
 
 `project.save()` writes the project + its simulations + its package library;
-`mf.Project.load(root)` reads them back. But a spec can only be persisted if it is
-**serializable**, and *numpy is not*:
+`mf.Project.load(root)` reads them back.
+
+The rule that matters: **a SIMULATION must be JSON-clean, and numpy is not.**
 
 ```python
-mf.npf(k=[1.0] * ncpl)          # list      -> serializable
-mf.npf(k=np.ones(ncpl))         # ndarray   -> NOT serializable
+mf.npf(k=[1.0] * ncpl)                      # list     -> serializable
+mf.npf(k=np.ones(ncpl))                     # ndarray  -> blocks save()
 mf.oc(saverecord=[("HEAD", np.int64(1))])   # even a numpy SCALAR blocks it
 ```
 
-Which means an eagerly-built stack — whose `layers.top/botm/idomain` are arrays,
-and whose `vor.get_disv_gridprops()["ncpl"]` is a `numpy.int64` — cannot be saved
-as-is. Two honest options:
+So an array-laden package written **inline** in the model — `mf.disv(top=layers
+.top, ncpl=gp["ncpl"], …)` — cannot be saved. Three ways out, best first:
 
-* **Don't save.** Runs, scenarios, discovery and reopening all work without it.
-  This is the normal choice for an array-heavy model.
-* **Convert at the boundary** — `top=layers.top.tolist()`, `ncpl=int(gp["ncpl"])`,
-  and so on. Verified to round-trip through `save()` → `load()`.
+1. **Register it and reference it (§5).** `project.add_package("disv/base", disv)`
+   + `mf.ref("disv/base")`. The simulation then holds only a reference and stays
+   JSON-clean, while the library entry falls back to a **pickle sidecar**:
+   `specs/packages/disv/base.json` + `base.pkl` + `base.versions.json`. This is
+   the intended shape, and it is why declaring against the project pays off.
+   Verified to round-trip and rebuild.
+2. **Convert at the boundary** — `top=layers.top.tolist()`, `ncpl=int(gp["ncpl"])`.
+   Also verified, but you must remember it at every call site.
+3. **Don't save.** Runs, scenarios, discovery and reopening never needed it.
 
-Call **`project.validate()`** to find out which it is; it lists the offending
-simulations without touching disk, and `save()` raises with the same message
-rather than writing a project that cannot be reloaded.
+Call **`project.validate()`** to see which case you are in; it lists the offending
+simulations without touching disk, and `save()` raises the same message rather
+than writing a project that cannot be reloaded. Note it inspects *simulations*, so
+a model built entirely from `mf.ref`/`mf.grid_ref` reports clean — correctly, since
+the arrays are the library's problem and the library can hold them.
 
 For a single simulation the lighter option is `sim.to_yaml(path)` /
 `mf.SimulationSpec.from_yaml(path)` (`Project.add_simulation_from_yaml` too),
@@ -473,7 +683,7 @@ which carries the same serializability rule.
 
 ---
 
-## 7 · Read and draw
+## 9 · Read and draw
 
 ```python
 model = run.model("valley")
