@@ -11,10 +11,12 @@ only actually running an interpolation does.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from myflopy._logging import get_logger
@@ -193,6 +195,68 @@ def _default_grass_bin() -> Path:
     )
 
 
+@contextlib.contextmanager
+def _teed_console(enabled: bool):
+    """Route the C-level output of GRASS subprocesses into Python's stdout.
+
+    GRASS modules -- ``v.to.rast``, ``r.surf.contour``, ``r.out.gdal`` -- are
+    subprocesses that write their progress percentages to the file descriptors
+    they inherit. In a terminal that already lands on screen, which is why this
+    is off by default and a no-op there in every way that matters.
+
+    In Jupyter it does NOT: fd 1 belongs to the kernel's console, not the cell,
+    and `contextlib.redirect_stdout` cannot help because it rebinds
+    ``sys.stdout`` while the writing happens below Python entirely. So the fds
+    themselves are swapped for a pipe and a reader thread re-emits what arrives
+    through ``sys.stdout``, which in a kernel is the object that reaches the cell.
+
+    Read in small chunks rather than by line: GRASS separates percentages with
+    carriage returns and no newline, so line buffering would hold the whole run
+    back and deliver it at the end, which is the opposite of progress.
+    """
+
+    if not enabled:
+        yield
+        return
+
+    # Where to re-emit. In a terminal `sys.stdout` IS fd 1, which is about to
+    # become the pipe -- writing there would feed the reader its own output --
+    # so the duplicate of the original fd is used instead. A Jupyter OutStream
+    # has no real fileno and raises, which is exactly how it is recognised.
+    try:
+        writes_to_fd1 = sys.stdout.fileno() == 1
+    except (AttributeError, OSError, ValueError):
+        writes_to_fd1 = False
+
+    read_fd, write_fd = os.pipe()
+    saved_out, saved_err = os.dup(1), os.dup(2)
+    sink = os.fdopen(os.dup(saved_out), "w", buffering=1) if writes_to_fd1 else sys.stdout
+
+    def pump() -> None:
+        with os.fdopen(read_fd, "rb", 0) as reader:
+            while chunk := reader.read(128):
+                sink.write(chunk.decode("utf-8", "replace"))
+                sink.flush()
+
+    reader_thread = threading.Thread(target=pump, name="grass-progress", daemon=True)
+    reader_thread.start()
+    try:
+        os.dup2(write_fd, 1)
+        os.dup2(write_fd, 2)
+        os.close(write_fd)
+        yield
+    finally:
+        # Restoring drops the last references to the pipe's write end, which is
+        # what lets the reader see EOF and finish.
+        os.dup2(saved_out, 1)
+        os.dup2(saved_err, 2)
+        os.close(saved_out)
+        os.close(saved_err)
+        reader_thread.join(timeout=10)
+        if sink is not sys.stdout:
+            sink.close()
+
+
 class ContourSurfaceInterpolator:
     """Create an interpolated raster surface from vector elevation contours.
 
@@ -215,6 +279,7 @@ class ContourSurfaceInterpolator:
         grassdata: Path | str | None = None,
         location: str = "myflopy_interp",
         clip: bool = True,
+        progress: bool = False,
     ):
         """Configure a GRASS contour-to-raster interpolation (see the class docstring for parameters)."""
 
@@ -229,6 +294,7 @@ class ContourSurfaceInterpolator:
         self.grassdata = Path(grassdata) if grassdata else Path.home() / "grassdata"
         self.location = location
         self.clip = clip
+        self.progress = progress
         self.session = None
         self._vect = "vectContours"
         self._rast = "rastContours"
@@ -243,6 +309,12 @@ class ContourSurfaceInterpolator:
         """Run the full interpolation and return the written GeoTIFF path."""
 
         r, g, v, gsetup = _grass_modules(self.grass_bin)
+        with _teed_console(self.progress):
+            return self._run_grass(r, g, v, gsetup)
+
+    def _run_grass(self, r, g, v, gsetup) -> Path:
+        """The GRASS pipeline itself, with the console already routed if asked."""
+
         self._start_session(gsetup)
         v.in_ogr(input=self.contours.as_posix(), output=self._vect, overwrite=True, flags="o")
         self._set_region(r, g, v)

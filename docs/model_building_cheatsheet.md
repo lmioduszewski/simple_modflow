@@ -166,6 +166,47 @@ raises. `z=` names the elevation attribute on the contour lines; it defaults to
 The interpolated GeoTIFF lands beside the contours as `<name>.interp.tif` and is
 reused on later runs. Pass `out=` to place it elsewhere.
 
+#### When does the interpolation actually run?
+
+Not when you declare the surface. Measured by counting calls to the interpolator:
+
+| | interpolations |
+|---|---|
+| `mf.Contours(...)` + `.add(...)` the stack | **0** — fully lazy |
+| `stack.draft_grid()` / a gridless `stack.plot` | **1** — it needs the raster's *bounds* |
+| `build()` · `qc()` · `to_disv()` · later plots | still 1 — cached |
+
+So a gridless preview is **not** cheaper than a build: the only way to learn where
+a contour surface is, is to interpolate it. After that the GeoTIFF is reused
+across builds, sessions and processes. `surface.cache_status()` reports
+`fresh`/stale/absent; `refresh=True` on `build`/`qc`/`to_disv` forces a rebuild.
+
+#### Watching it work
+
+```python
+ground = mf.Contours("ground.gpkg", z="Elev", region_vector="domain.gpkg",
+                     progress=True)
+```
+
+```
+Reading features...
+  11%  22%  33%  44%  55%  66%  77%  88% 100%
+Writing raster map...
+   0%   4%   8%  12%  16% ...
+```
+
+**In a terminal you already see this** without the flag — GRASS modules are
+subprocesses writing to the inherited file descriptors. **In Jupyter you do not**:
+those descriptors belong to the kernel's console, not the cell, and
+`contextlib.redirect_stdout` cannot catch them because the writing happens below
+Python entirely. `progress=True` swaps the descriptors for a pipe and re-emits
+through `sys.stdout`, which is what the cell displays.
+
+It is a **named parameter, deliberately not part of `**grass_kwargs`** — those
+feed the derived-raster cache signature, so a display flag riding through them
+would silently re-interpolate the first time you asked to watch. Verified:
+toggling `progress` leaves `cache_status()` at `fresh`.
+
 ### Every surface source
 
 | source | use |

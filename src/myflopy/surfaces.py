@@ -110,6 +110,11 @@ class Surface:
     out: Path | None = None
     epsg: str = "2927"
     grass_kwargs: dict = field(default_factory=dict)
+    #: Show GRASS's own per-step progress while interpolating. Deliberately NOT
+    #: part of `grass_kwargs`: those feed the derived-raster cache signature, so
+    #: routing a display flag through them would invalidate the cache and force a
+    #: silent re-interpolation the first time anyone asked to watch.
+    progress: bool = False
     # point-interpolation parameters
     points: tuple[Any, Any, Any] | None = None
     method: str = "linear"
@@ -167,6 +172,7 @@ class Surface:
         out: Path | str | None = None,
         epsg: str = "2927",
         units: str | None = None,
+        progress: bool = False,
         **grass_kwargs: Any,
     ) -> Surface:
         """A surface interpolated from drawn elevation contours via GRASS.
@@ -174,6 +180,61 @@ class Surface:
         The interpolated raster is written to ``out`` (default: alongside the
         contours with a ``.interp.tif`` suffix) the first time the surface is
         resolved, then reused -- interpolate once, sample many times.
+
+        **When does the interpolation run?** Not here. Declaring the surface is
+        free; the first call that needs its values -- or merely its extent, which
+        includes ``LayerStack.draft_grid`` and so a gridless ``stack.plot`` --
+        resolves it. After that the GeoTIFF is reused across builds, sessions and
+        processes. :meth:`cache_status` reports ``fresh``/stale/absent, and
+        ``refresh=True`` on ``build``/``qc``/``to_disv`` forces a rebuild.
+
+        Parameters
+        ----------
+        contours : Path or str
+            Vector file of labelled elevation contour lines.
+        z : str, default "Elev"
+            The attribute holding each contour's elevation.
+        region_raster : Path or str, optional
+            Raster defining the GRASS region. One of this or ``region_vector``
+            (via ``**grass_kwargs``) is REQUIRED -- without a region GRASS has no
+            extent and raises.
+        resolution : float, default 4
+            Output cell size, in the CRS's units.
+        out : Path or str, optional
+            Where the interpolated GeoTIFF lands. Defaults to the contours path
+            with a ``.interp.tif`` suffix.
+        epsg : str, default "2927"
+            EPSG code for the GRASS location.
+        units : str, optional
+            Length unit of the elevations, converted to the model's if they differ.
+        progress : bool, default False
+            Print GRASS's own per-step percentages while it works.
+
+            GRASS modules are subprocesses that write to the inherited file
+            descriptors, so **in a terminal you already see them** and this flag
+            changes nothing. In a **Jupyter** notebook they go to the kernel's
+            console instead of the cell, and `contextlib.redirect_stdout` cannot
+            catch them because the writing happens below Python. This captures
+            them at the fd level and re-emits them through Python, so they land
+            in the cell.
+
+            Off by default: library code logs rather than prints, and the flag is
+            the human asking. It is NOT part of the cache signature, so turning it
+            on does not re-interpolate anything.
+        **grass_kwargs
+            Forwarded to :class:`~myflopy.modflow.utils.contour_interp
+            .ContourSurfaceInterpolator` -- ``region_vector``, ``clip``,
+            ``grass_bin``, ``grassdata``, ``location``. These DO feed the cache
+            signature, so changing one invalidates the cached raster.
+
+        Returns
+        -------
+        Surface
+
+        Examples
+        --------
+        >>> ground = mf.Contours("ground.gpkg", z="Elev", region_vector="domain.gpkg")
+        >>> watch = mf.Contours("clay.gpkg", region_vector="domain.gpkg", progress=True)
         """
 
         contours = Path(contours)
@@ -188,6 +249,7 @@ class Surface:
             epsg=epsg,
             units=units,
             grass_kwargs=grass_kwargs,
+            progress=progress,
         )
 
     @classmethod
@@ -406,6 +468,7 @@ class Surface:
                 region_raster=self.region_raster,
                 resolution=self.resolution,
                 epsg=self.epsg,
+                progress=self.progress,
                 **self.grass_kwargs,
             )
 
