@@ -106,6 +106,7 @@ class Surface:
     contours: Path | None = None
     z: str = "Elev"
     region_raster: Path | None = None
+    region_vector: Path | None = None
     resolution: float = 4
     out: Path | None = None
     epsg: str = "2927"
@@ -168,6 +169,7 @@ class Surface:
         *,
         z: str = "Elev",
         region_raster: Path | str | None = None,
+        region_vector: Path | str | None = None,
         resolution: float = 4,
         out: Path | str | None = None,
         epsg: str = "2927",
@@ -195,9 +197,17 @@ class Surface:
         z : str, default "Elev"
             The attribute holding each contour's elevation.
         region_raster : Path or str, optional
-            Raster defining the GRASS region. One of this or ``region_vector``
-            (via ``**grass_kwargs``) is REQUIRED -- without a region GRASS has no
-            extent and raises.
+            Raster whose extent becomes the GRASS region. **Exactly one of this
+            or ``region_vector`` is required** -- without a region GRASS has no
+            extent to work in.
+
+            Note it uses the WHOLE raster. A DEM covering more ground than your
+            model makes every interpolation proportionally slower, and the extra
+            area is the worst case for ``r.surf.contour`` because it has no
+            contours to work from out there. Prefer ``region_vector``.
+        region_vector : Path or str, optional
+            Polygon whose extent becomes the GRASS region -- usually your model
+            domain, which is normally what you want interpolated and no more.
         resolution : float, default 4
             Output cell size, in the CRS's units.
         out : Path or str, optional
@@ -237,6 +247,19 @@ class Surface:
         >>> watch = mf.Contours("clay.gpkg", region_vector="domain.gpkg", progress=True)
         """
 
+        # Checked here, not in `_set_region`: that runs after GRASS has started a
+        # session, so the message arrives late and buried. This is a typo you can
+        # catch while writing the line.
+        if (region_raster is None) == (region_vector is None):
+            both = region_raster is not None
+            raise ValueError(
+                "Contours need exactly one region, and got "
+                + ("both" if both else "neither")
+                + ". Pass region_vector=<your domain polygon> (usually what you "
+                "want) or region_raster=<a raster whose extent to use>. GRASS has "
+                "no extent to interpolate in without one."
+            )
+
         contours = Path(contours)
         out = Path(out) if out is not None else contours.with_suffix(".interp.tif")
         return cls(
@@ -244,6 +267,7 @@ class Surface:
             contours=contours,
             z=z,
             region_raster=region_raster,
+            region_vector=region_vector,
             resolution=resolution,
             out=out,
             epsg=epsg,
@@ -466,6 +490,7 @@ class Surface:
                 out=self.out,
                 z_field=self.z,
                 region_raster=self.region_raster,
+                region_vector=self.region_vector,
                 resolution=self.resolution,
                 epsg=self.epsg,
                 progress=self.progress,
@@ -473,8 +498,14 @@ class Surface:
             )
 
         sources = [self.contours]
-        if self.region_raster is not None:
-            sources.append(self.region_raster)
+        # BOTH region kinds belong here, not just the raster. `sources` is
+        # content-tracked while `params` holds only values, so while
+        # `region_vector` rode `grass_kwargs` its path was recorded and its
+        # CONTENT was not -- editing the domain polygon left the cache "fresh"
+        # and returned a raster interpolated over the old extent.
+        for region in (self.region_raster, self.region_vector):
+            if region is not None:
+                sources.append(region)
         params = {
             "z": self.z,
             "resolution": self.resolution,

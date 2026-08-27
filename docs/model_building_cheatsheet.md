@@ -158,10 +158,29 @@ clay_top = mf.Contours("clay_top.gpkg", z="Elev", epsg="2927",
                        resolution=25, region_vector="boundary.gpkg")
 ```
 
-**A region is required** — pass `region_vector=` (any polygon; your boundary is
-the natural choice) or `region_raster=`. Without one GRASS has no extent and
-raises. `z=` names the elevation attribute on the contour lines; it defaults to
-`"Elev"`.
+**Exactly one region is required** — `region_vector=` (a polygon, normally your
+model domain) or `region_raster=` (a raster whose extent to use). Giving neither
+or both raises at construction. `z=` names the elevation attribute on the contour
+lines; it defaults to `"Elev"`.
+
+**Prefer `region_vector`.** `region_raster` uses the WHOLE raster, and a DEM
+usually covers far more ground than your model. Measured on a real project: a
+47,105 × 46,525 ft LiDAR as the region gave 3.5 M cells at `resolution=25` — 7.3×
+the area of the domain, and 6.4× the area the contours covered. The extra area is
+the worst case for `r.surf.contour`, which flood-fills outward from contour
+lines and has nothing to work from out there. Switching to the domain polygon
+took each layer to ~30 s.
+
+**myflopy does not reproject for you.** GRASS is given `-o` (override projection
+check), so contours and region are placed at their raw coordinates and a CRS
+mismatch is silently accepted, not corrected. Contours in EPSG:2926 with a
+region raster in EPSG:2927 landed 597,000 ft apart — `v.to.rast` then rasterized
+nothing inside the region, `r.surf.contour` had no seed cells, and it scanned
+forever at 0%. Reproject first:
+
+```python
+gpd.read_file(src).to_crs("EPSG:2927").to_file(dst, driver="GPKG")
+```
 
 The interpolated GeoTIFF lands beside the contours as `<name>.interp.tif` and is
 reused on later runs. Pass `out=` to place it elsewhere.

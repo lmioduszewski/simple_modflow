@@ -26,7 +26,7 @@ from myflopy.surfaces import Surface
 def test_progress_is_off_by_default():
     """Library code logs; it does not print. The flag is the human asking."""
 
-    assert Surface.from_contours("c.gpkg").progress is False
+    assert Surface.from_contours("c.gpkg", region_vector="d.gpkg").progress is False
 
 
 def test_progress_is_not_part_of_the_cache_signature():
@@ -36,8 +36,9 @@ def test_progress_is_not_part_of_the_cache_signature():
     the opposite of what someone asking to watch the progress wants.
     """
 
-    quiet = Surface.from_contours("c.gpkg", z="Elev", resolution=25)
-    loud = Surface.from_contours("c.gpkg", z="Elev", resolution=25, progress=True)
+    shared = dict(z="Elev", resolution=25, region_vector="d.gpkg")
+    quiet = Surface.from_contours("c.gpkg", **shared)
+    loud = Surface.from_contours("c.gpkg", progress=True, **shared)
 
     assert loud.progress and not quiet.progress
     assert quiet.grass_kwargs == loud.grass_kwargs == {}
@@ -49,7 +50,7 @@ def test_progress_does_not_leak_into_grass_kwargs():
 
     surface = Surface.from_contours("c.gpkg", progress=True, region_vector="d.gpkg")
     assert "progress" not in surface.grass_kwargs
-    assert surface.grass_kwargs == {"region_vector": "d.gpkg"}
+    assert surface.grass_kwargs == {}   # region_vector is a field now, too
 
 
 def test_the_tee_is_a_no_op_when_disabled():
@@ -117,3 +118,48 @@ def test_the_tee_restores_even_when_the_body_raises(enabled):
         assert os.fstat(1).st_ino == os.fstat(saved).st_ino
     finally:
         os.close(saved)
+
+
+# --- region_vector is a real parameter, not a **kwargs passenger ------------- #
+#
+# It always WORKED, but only through `**grass_kwargs`, so it never appeared in
+# the signature -- a user reasonably concluded it was not an argument. The worse
+# half: `sources` is content-tracked and `params` is not, so while it rode kwargs
+# only its PATH was recorded. Editing the domain polygon left the cache "fresh"
+# and returned a raster interpolated over the old extent.
+
+def test_region_vector_is_a_named_parameter():
+    import inspect
+
+    params = inspect.signature(Surface.from_contours).parameters
+    assert "region_vector" in params, "invisible in the signature = invisible in an IDE"
+    assert "region_raster" in params
+
+
+def test_region_vector_no_longer_lands_in_grass_kwargs():
+    surface = Surface.from_contours("c.gpkg", region_vector="domain.gpkg")
+    assert surface.region_vector == "domain.gpkg"
+    assert surface.grass_kwargs == {}
+
+
+@pytest.mark.parametrize("kind", ["region_raster", "region_vector"])
+def test_both_region_kinds_are_content_tracked(kind):
+    """The bug this closes: only the raster was in `sources`, so a domain polygon
+    could be edited without invalidating the cached interpolation."""
+
+    surface = Surface.from_contours("c.gpkg", **{kind: "region.file"})
+    sources = [str(p) for p in surface._derived_raster().sources]
+    assert "region.file" in sources
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [({}, "neither"),
+     ({"region_raster": "r.tif", "region_vector": "d.gpkg"}, "both")],
+)
+def test_exactly_one_region_is_required_and_said_early(kwargs, expected):
+    """Raised at construction rather than inside `_set_region`, which only runs
+    after a GRASS session has started -- late, and buried in GRASS chatter."""
+
+    with pytest.raises(ValueError, match=f"got {expected}"):
+        Surface.from_contours("c.gpkg", **kwargs)

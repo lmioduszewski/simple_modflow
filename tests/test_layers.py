@@ -197,7 +197,10 @@ def test_report_is_a_string():
 
 def test_cache_status_reports_only_derived_surfaces(tmp_path):
     vor = _fake_vor(2)
-    contour = Surface.from_contours(tmp_path / "c.gpkg", z="e", out=tmp_path / "c.interp.tif")
+    contour = Surface.from_contours(
+        tmp_path / "c.gpkg", z="e", out=tmp_path / "c.interp.tif",
+        region_vector=tmp_path / "domain.gpkg",
+    )
     stack = LayerStack(vor, top=Flat(10)).add("bed", bottom=contour).add("x", thickness=5)
     # Only the contour layer is derived; no GRASS is invoked by status().
     assert stack.cache_status() == {"bed": "missing"}

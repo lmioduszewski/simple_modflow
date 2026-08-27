@@ -3441,3 +3441,28 @@ same day, which is the useful part of the result.
        `pinch` in `to_disv`. Per-layer rules there would duplicate what the facade
        exists to provide. The cheat-sheet table records this as the real remaining
        difference between the two.
+
+149. **`region_vector` promoted from `**grass_kwargs` to a real parameter (2026-08-27).**
+     Reported as "region_vector doesn't appear to be an arg of mf.Contours". It
+     worked, but only as a `**grass_kwargs` passenger, so it never appeared in the
+     signature -- the same static-visibility class as ledger 145 and the lazy
+     exports, on a parameter that is REQUIRED half the time.
+     - **The real defect was the cache, not the naming.** `sources` is
+       content-tracked and `params` holds values only. `region_raster` was a field
+       and went into `sources`; `region_vector` rode kwargs, so only its PATH
+       STRING was recorded. Editing the domain polygon left `cache_status()` at
+       `fresh` and returned a raster interpolated over the old extent. Both region
+       kinds are now in `sources`.
+     - **"Exactly one region" is now checked at construction**, not in
+       `_set_region`, which runs only after a GRASS session has started -- late,
+       and buried in GRASS's own output.
+     - **Behaviour change, accepted:** constructing a region-less `Contours` used
+       to succeed and fail later at interpolation; it now raises immediately. Two
+       test fixtures relied on the old laxity (they check `cache_status` without
+       ever interpolating) and were updated. Existing caches invalidate once,
+       because `params` changes shape when `region_vector` leaves `grass_kwargs`.
+     - NOT done: myflopy still does not reproject contours to the region's CRS.
+       GRASS is invoked with `-o`, so a mismatch is accepted silently rather than
+       corrected -- measured cost, a 597,000 ft offset that hangs `r.surf.contour`
+       at 0% forever. A CRS check and a no-overlap check are filed as a task; the
+       cheat sheet documents the manual `to_crs` in the meantime.

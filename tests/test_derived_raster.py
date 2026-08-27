@@ -84,7 +84,8 @@ def test_derived_raster_missing_when_output_deleted(tmp_path):
 def test_contour_surface_is_derived_and_cache_status(tmp_path):
     # No GRASS is invoked: we only inspect derived/cache metadata.
     surface = Surface.from_contours(
-        tmp_path / "c.gpkg", z="elev", out=tmp_path / "c.interp.tif"
+        tmp_path / "c.gpkg", z="elev", out=tmp_path / "c.interp.tif",
+        region_vector=tmp_path / "domain.gpkg",   # required since 2026-08-27
     )
     assert surface.is_derived is True
     assert surface.cache_status() == "missing"
