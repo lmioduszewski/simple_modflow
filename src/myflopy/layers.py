@@ -31,6 +31,7 @@ import numpy as np
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridPlots
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
@@ -540,8 +541,6 @@ class LayerBuildResult:
         ``height`` sets the figure height in pixels (default ``None`` = fill the
         container / browser window)."""
 
-        from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
-
         names = self._resolve_surface_names(layer)
         crs = str(getattr(self.vor, "crs", None))
         xs = np.asarray(self.vor.centroids[0])
@@ -640,6 +639,67 @@ class LayerBuildResult:
             else:
                 raise KeyError(f"no layer named {it!r}; choose from {self.names} or an index.")
         return sorted(set(idx))
+
+    def _vtk_surface_plotter(
+        self, layer="all", *, resolution=120, scale=8, cmap="tab10",
+        opacity=1.0, width=900, height=580, show_edges=False,
+    ):
+        """Build the PyVista scene for one or more CONTACT SURFACES.
+
+        Private, Layer 1 only: it builds the scene, and the
+        :class:`~myflopy.viz.VtkScene` that wraps it does the showing and
+        writing. Reached as ``stack.plot.surface(..., backend="vtk")``.
+
+        The sibling of :meth:`_vtk_plotter`, and a different subject: that one
+        renders the layered cell VOLUME, this renders the contacts as separate
+        sheets. Sheets are what you want when the question is "where does this
+        contact go" -- each is its own actor, so a viewer can hide the ones above
+        to look underneath, which a single fused volume will not let you do.
+
+        Each surface is interpolated by the shared
+        :class:`~myflopy.modflow.mf6.grid.interpolated_surface.InterpolatedSurface`,
+        so a VTK sheet and its Plotly counterpart are the same numbers.
+        """
+
+        pv = require("pyvista", feature="interactive 3-D scenes")
+        import matplotlib as mpl
+
+        names = self._resolve_surface_names(layer)
+        xs = np.asarray(self.vor.centroids[0])
+        ys = np.asarray(self.vor.centroids[1])
+        colors = mpl.colormaps[cmap]
+
+        plotter = pv.Plotter(window_size=(width, height))
+        for i, name in enumerate(names):
+            interp = InterpolatedSurface(
+                xs=xs, ys=ys, zs=np.asarray(self._surface_z(name)),
+                surf_type="lyr", resolution=resolution,
+                crs=str(getattr(self.vor, "crs", None)),
+            )
+            gx, gy = interp.xy_meshgrid
+            gz = np.asarray(interp.surface, dtype=float)
+            grid = pv.StructuredGrid(
+                np.asarray(gx, float), np.asarray(gy, float), gz * scale
+            )
+            # Cells with no data would otherwise render as a sheet pinned to z=0,
+            # which reads as a real contact at sea level.
+            grid["elevation"] = gz.ravel(order="F")
+            sheet = grid.threshold(scalars="elevation")
+            plotter.add_mesh(
+                sheet,
+                # PyVista wants floats or hex, not plotly's `rgb(r,g,b)` string,
+                # so `_rgb` (which the Plotly path uses) is deliberately skipped.
+                color=tuple(colors(i % colors.N)[:3]),
+                opacity=opacity,
+                show_edges=show_edges,
+                label=str(name),
+                smooth_shading=True,
+            )
+        if len(names) > 1:
+            plotter.add_legend(bcolor=None)
+        plotter.show_axes()
+        plotter.add_axes()
+        return plotter
 
     def _vtk_plotter(
         self, layers=None, *, color_by="layer", scale=8, cmap="tab10",
@@ -950,13 +1010,18 @@ class StackPlots:
         self,
         layer="top",
         *,
+        backend: str = "plotly",
         resolution: int = 120,
         colorscale: str = "Earth_r",
         color_by: str | None = None,
         opacity: float | None = None,
         height: int | None = None,
+        scale: float = 8,
+        cmap: str = "tab10",
+        width: int = 900,
+        show_edges: bool = False,
         **kwargs,
-    ) -> LayerSurface:
+    ):
         """One or more contacts as an interactive 3-D surface.
 
         ``layer`` is a name, a list of names, or ``"all"``; discover them with
@@ -977,15 +1042,47 @@ class StackPlots:
             Surface opacity, useful when stacking several contacts.
         height : int, optional
             Figure height in pixels.
+        backend : {'plotly', 'vtk'}, default 'plotly'
+            ``'plotly'`` overlays the surfaces in one figure. ``'vtk'`` renders
+            each contact as its own interactive sheet in a PyVista scene, which
+            is the one to reach for when you need to look at surfaces
+            INDIVIDUALLY -- every sheet is a separate actor, so you can hide the
+            ones above and see underneath. Needs the ``viz3d`` extra.
+        scale : float, default 8
+            *(vtk only)* Vertical exaggeration.
+        cmap : str, default 'tab10'
+            *(vtk only)* Colormap the sheets are coloured from, one per surface.
+        width : int, default 900
+            *(vtk only)* Scene width in pixels.
+        show_edges : bool, default False
+            *(vtk only)* Draw the interpolation mesh on each sheet.
         **kwargs
-            Forwarded to :class:`LayerSurface`.
+            Forwarded to :class:`LayerSurface` (plotly) or the scene builder.
 
         Returns
         -------
-        LayerSurface
-            A Plotly :class:`~myflopy.viz.Picture`.
+        LayerSurface or VtkScene
+            A :class:`~myflopy.viz.Picture` either way. The VTK scene exposes
+            ``.scene`` (the PyVista ``Plotter``) rather than ``.fig``.
+
+        Raises
+        ------
+        ValueError
+            If ``backend`` is neither ``'plotly'`` nor ``'vtk'``.
         """
 
+        if backend == "vtk":
+            return VtkScene(
+                self.result._vtk_surface_plotter(
+                    layer, resolution=resolution, scale=scale, cmap=cmap,
+                    opacity=1.0 if opacity is None else opacity,
+                    width=width, height=height or 580, show_edges=show_edges,
+                    **kwargs,
+                ),
+                title="layer surfaces",
+            )
+        if backend != "plotly":
+            raise ValueError(f"backend must be 'plotly' or 'vtk', not {backend!r}.")
         return LayerSurface(
             self.result, layer, resolution=resolution, colorscale=colorscale,
             color_by=color_by, opacity=opacity, height=height, **kwargs,

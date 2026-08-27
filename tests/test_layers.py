@@ -911,3 +911,73 @@ def test_the_extent_walk_descends_into_composed_surfaces(dem):
     )
     assert stack._georeferenced_surfaces(), "the walk missed a nested raster"
     assert round(stack.draft_grid(cells=100).gdf_vorPolys.total_bounds[2]) == 3000
+
+
+# --- contact surfaces as individual VTK sheets (2026-08-27) ----------------- #
+
+@pytest.mark.slow
+def test_surface_renders_each_contact_as_its_own_vtk_sheet(real_vor):
+    """`grid(backend="vtk")` fuses the layers into one VOLUME, so you cannot look
+    at a contact on its own. This renders one actor per surface, which is what
+    lets a viewer hide the sheets above and see underneath."""
+
+    pytest.importorskip("pyvista")
+    from myflopy.viz import VtkScene
+
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("sand", thickness=20).add("clay", thickness=30))
+    scene = stack.plot.surface("all", backend="vtk", resolution=40)
+
+    assert isinstance(scene, VtkScene)
+    meshes = [a for a in scene.scene.renderer.actors.values()
+              if a.GetMapper() is not None and a.GetMapper().GetInput() is not None
+              and a.GetMapper().GetInput().GetNumberOfCells() > 1]
+    assert len(meshes) == 3, "one sheet per surface: top + two bottoms"
+
+
+@pytest.mark.slow
+def test_a_single_named_contact_can_be_drawn_alone(real_vor):
+    pytest.importorskip("pyvista")
+
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("sand", thickness=20).add("clay", thickness=30))
+    scene = stack.plot.surface("clay", backend="vtk", resolution=30)
+    meshes = [a for a in scene.scene.renderer.actors.values()
+              if a.GetMapper() is not None and a.GetMapper().GetInput() is not None
+              and a.GetMapper().GetInput().GetNumberOfCells() > 1]
+    assert len(meshes) == 1
+
+
+def test_surface_rejects_an_unknown_backend(real_vor):
+    stack = LayerStack(real_vor, top=Flat(100)).add("sand", thickness=20)
+    with pytest.raises(ValueError, match="backend must be 'plotly' or 'vtk'"):
+        stack.plot.surface(backend="opengl")
+
+
+@pytest.mark.slow
+def test_no_data_cells_do_not_become_a_sheet_at_zero(tmp_path):
+    """A NaN cell rendered as z=0 reads as a real contact at sea level, which is
+    exactly the failure `nodata=` was added to stop. Those cells are dropped.
+
+    Builds its own denser grid: `real_vor` has four cells, too few to interpolate
+    from once any are missing.
+    """
+
+    pytest.importorskip("pyvista")
+    import myflopy as mf
+
+    tri = mf.TriangleGrid(model_ws=str(tmp_path), angle=30)
+    tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0), max_area=800)
+    tri.build()
+    vor = mf.VoronoiGridPlus(tri, crs="EPSG:2927")
+
+    zs = np.full(vor.ncpl, 100.0)
+    zs[: vor.ncpl // 3] = np.nan            # a third of the domain has no data
+    stack = LayerStack(vor, top=Surface.from_array(zs)).add("a", thickness=10)
+    scene = stack.plot.surface("top", backend="vtk", resolution=40)
+
+    sheet = next(a.GetMapper().GetInput() for a in scene.scene.renderer.actors.values()
+                 if a.GetMapper() is not None and a.GetMapper().GetInput() is not None
+                 and a.GetMapper().GetInput().GetNumberOfCells() > 1)
+    bounds = sheet.GetBounds()          # (xmin, xmax, ymin, ymax, zmin, zmax)
+    assert bounds[4] > 0, "a sheet reaching z=0 means the NaN cells were drawn"

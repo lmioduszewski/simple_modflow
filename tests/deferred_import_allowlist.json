@@ -1,5 +1,5 @@
 {
- "myflopy.layers": 2,
+ "myflopy.layers": 1,
  "myflopy.modflow.mf6.budget": 1,
  "myflopy.modflow.mf6.canonical": 1,
  "myflopy.modflow.mf6.canonical_transport": 1,

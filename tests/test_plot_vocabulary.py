@@ -470,7 +470,10 @@ def test_a_narrower_scope_stays_a_subset_of_the_free_verb(scope):
         "grid": {"select"},
         "stack": {"basemap", "layers", "backend", "color_by", "scale", "cmap",
                   "width", "height", "x", "y", "line", "resolution", "colorscale",
-                  "opacity", "show_grid", "legend", "title"},
+                  "opacity", "show_grid", "legend", "title",
+                  # vtk sheet detail on `surface(backend="vtk")`; the same name
+                  # the free `grid` verb uses for its 3-D scene.
+                  "show_edges"},
     }[scope]
     namespace = _namespace(scope)
     strays = {}

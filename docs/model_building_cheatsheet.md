@@ -667,9 +667,23 @@ discovering it.
 ```python
 layers.plot.section(y=1000)          # filled, layer-coloured cross-section
 layers.plot.map("clay")              # per-layer thickness
-layers.plot.surface("all")           # every contact as 3-D height fields
+layers.plot.surface("all")           # every contact as 3-D height fields (plotly)
 layers.plot.grid(scale=12)           # the layered cell VOLUME (needs `viz3d` extra)
 ```
+
+**To look at contacts individually, render them as VTK sheets:**
+
+```python
+layers.plot.surface("all", backend="vtk")            # one actor per contact
+layers.plot.surface("clay", backend="vtk", scale=12) # just this one
+```
+
+`grid(backend="vtk")` fuses the layers into one volume, so a contact cannot be
+isolated in it. `surface(backend="vtk")` gives each surface its own actor, which
+is what lets a viewer hide the sheets above and see underneath — the same subject
+as the Plotly form, drawn by a different renderer, per the `backend=` rule.
+Cells with no data are dropped rather than drawn at z=0, where they would read as
+a real contact at sea level.
 
 Starting from an existing model instead? `mf.LayerStack.from_modflow(vor, source)`.
 
