@@ -28,13 +28,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import shapely.geometry as shp
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
-from myflopy.modflow.mf6.grid.plotting import GridPlots
+from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.surfaces import LayerSurfaces, Surface
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
@@ -55,6 +57,83 @@ Clamp = Surface.clamp
 Where = Surface.where
 
 _UNSET = object()
+
+#: What ``section(color_by=...)`` will actually key the fill to. Unknown values
+#: used to fall through to the layer-coloured branch and draw a picture that
+#: silently was not the one asked for.
+_SECTION_COLOR_BY = ("layer", "thickness")
+
+#: Per-cell scalars ``grid(backend="vtk")`` can colour by, each with the
+#: colormap that suits it. ``layer`` is discrete -- one flat colour per layer,
+#: named in the bar -- and the rest are continuous fields. ``elevation`` is the
+#: odd one out and stays for compatibility: it is a POINT array of vertex z, so
+#: it ramps smoothly within a cell, where ``top`` and ``botm`` are the flat
+#: per-cell contact elevations.
+_VTK_GRID_CMAPS = {
+    "layer": "tab10",
+    "thickness": "viridis",
+    "top": "terrain",
+    "botm": "terrain",
+    "cellid": "tab20",
+    "elevation": "terrain",
+}
+
+
+def _section_line_points(line) -> list[tuple[float, float]]:
+    """Coerce a section line to a list of ``(x, y)`` points.
+
+    Accepts everything the ``section`` docstrings advertise: a shapely
+    ``LineString`` / ``MultiLineString``, a path to a vector file (``.shp`` /
+    ``.gpkg``, read with the same reader ``vor.plot.section`` uses), or a plain
+    sequence of points.
+
+    Raises here, at the call, rather than deep inside FloPy: a section is a lazy
+    Picture, so an unusable line used to survive ``stack.plot.section(...)``
+    untouched and fail much later on ``.axes`` -- ``TypeError: 'LineString'
+    object is not iterable`` -- pointing nowhere near the argument that caused
+    it.
+    """
+
+    if isinstance(line, (str, Path)):
+        # Not wrapped in a try: a broad handler here would eat the argument
+        # validation below it, which is the exact bug already found twice in
+        # `read_gpkg` and `contour_line_segments`.
+        line = _as_linestring(read_shp_gpkg(Path(line)).union_all())
+    if isinstance(line, (shp.LineString, shp.MultiLineString)):
+        line = list(_as_linestring(line).coords)
+
+    try:
+        points = [tuple(float(v) for v in pt)[:2] for pt in line]
+    except TypeError:
+        raise TypeError(
+            f"a section line must be a LineString, a path to a vector file, or "
+            f"a sequence of (x, y) points; got {type(line).__name__}."
+        ) from None
+    if len(points) < 2 or any(len(pt) != 2 for pt in points):
+        raise ValueError(
+            f"a section line needs at least two (x, y) points; got {points!r}."
+        )
+    return points
+
+
+def _check_layer_name(name, layers) -> None:
+    """Reject a layer name that would collide with another surface.
+
+    Names have to be unique because they IDENTIFY things: a contact in
+    ``surface_names``, and -- since the 3-D volume draws one actor per layer --
+    an actor in the PyVista scene, where a repeat silently REPLACES its
+    predecessor rather than adding one. ``"top"`` is reserved for the model top
+    for the same reason; without this it failed much later, inside pandas, as
+    ``cannot reindex on an axis with duplicate labels``.
+    """
+
+    if name == "top":
+        raise ValueError(
+            "'top' is reserved for the model top surface; name the layer for "
+            "the material it is, e.g. 'topsoil' or 'upper_sand'."
+        )
+    if any(layer.name == name for layer in layers):
+        raise ValueError(f"layer {name!r} already exists.")
 
 
 def _coerce_surface(x) -> Surface:
@@ -407,10 +486,13 @@ class LayerBuildResult:
 
     # -- views (thin wrappers over flopy / the surface API) --------------- #
     def _resolve_line(self, line, x, y) -> dict:
-        """Build a flopy cross-section line from explicit points, x=, y=, or a
-        default West-East line through the grid centre."""
+        """Build a flopy cross-section line from an explicit line, x=, y=, or a
+        default West-East line through the grid centre.
+
+        ``line`` is anything :func:`_section_line_points` accepts -- geometry,
+        vector file, or points."""
         if line is not None:
-            return {"line": [tuple(pt) for pt in line]}
+            return {"line": _section_line_points(line)}
         minx, miny, maxx, maxy = (float(v) for v in self.vor.gdf_vorPolys.total_bounds)
         if x is not None:
             return {"line": [(float(x), miny), (float(x), maxy)]}
@@ -505,7 +587,10 @@ class LayerBuildResult:
         bad = [n for n in names if n not in valid]
         if bad:
             raise KeyError(f"no surface named {bad!r}; choose from {valid} or 'all'.")
-        return names
+        # Deduplicate, order preserved: drawing one contact twice means nothing,
+        # and in the VTK scene each name is an ACTOR name, where a repeat
+        # silently replaces the first rather than adding a second.
+        return list(dict.fromkeys(names))
 
     @staticmethod
     def _rgb(rgba) -> str:
@@ -659,6 +744,10 @@ class LayerBuildResult:
         Each surface is interpolated by the shared
         :class:`~myflopy.modflow.mf6.grid.interpolated_surface.InterpolatedSurface`,
         so a VTK sheet and its Plotly counterpart are the same numbers.
+
+        Returns the plotter and the sheet meshes, which the wrapping
+        :class:`~myflopy.viz.VtkScene` carries as ``.meshes`` -- the handle for
+        writing one out (``.save("contact.vtu")``) and opening it elsewhere.
         """
 
         pv = require("pyvista", feature="interactive 3-D scenes")
@@ -669,7 +758,11 @@ class LayerBuildResult:
         ys = np.asarray(self.vor.centroids[1])
         colors = mpl.colormaps[cmap]
 
-        plotter = pv.Plotter(window_size=(width, height))
+        # `off_screen`, matching `_vtk_plotter`: without it there is no render
+        # window outside Jupyter, and `.save("sheets.png")` fails with "Nothing
+        # to screenshot" in a plain script. A notebook forces it on anyway.
+        plotter = pv.Plotter(off_screen=True, window_size=(width, height))
+        sheets = []
         for i, name in enumerate(names):
             interp = InterpolatedSurface(
                 xs=xs, ys=ys, zs=np.asarray(self._surface_z(name)),
@@ -693,16 +786,22 @@ class LayerBuildResult:
                 opacity=opacity,
                 show_edges=show_edges,
                 label=str(name),
+                # `name=` as well as `label=`: the label is what the LEGEND
+                # says, the name is what `plotter.actors` is KEYED by. Without
+                # it the keys are addresses -- `UnstructuredGrid(Addr=0x...)` --
+                # so "hide the sheets above", which is the whole reason these
+                # are separate actors, has no way to say which sheet it means.
+                name=str(name),
                 smooth_shading=True,
             )
+            sheets.append(sheet)
         if len(names) > 1:
             plotter.add_legend(bcolor=None)
-        plotter.show_axes()
         plotter.add_axes()
-        return plotter
+        return plotter, sheets
 
     def _vtk_plotter(
-        self, layers=None, *, color_by="layer", scale=8, cmap="tab10",
+        self, layers=None, *, color_by="layer", scale=8, cmap=None,
         width=900, height=580,
     ):
         """Build the PyVista plotter for the layered grid volume.
@@ -715,7 +814,18 @@ class LayerBuildResult:
         every layer, a single layer name or index, or a list mixing them
         (e.g. ``["sand", "clay"]`` or ``[0, 2]``). Colors stay keyed to each
         layer's position, so a subset keeps the same colors it has in the full
-        stack."""
+        stack.
+
+        Every cell carries ``layer``, ``thickness``, ``top``, ``botm`` and
+        ``cellid`` whichever one ``color_by`` draws, so a picked cell can report
+        all of them and a written ``.vtu`` keeps them all. ``cmap=None`` takes
+        the default that suits the chosen scalar (:data:`_VTK_GRID_CMAPS`).
+
+        Returns the plotter and, as the one mesh, the ASSEMBLED volume -- not
+        the per-layer pieces the actors draw. Those are views of it, and it is
+        the whole selection with every array on it, which is what makes
+        ``scene.meshes[0].save("stack.vtu")`` the useful thing to hand to
+        ParaView."""
         import tempfile
         from pathlib import Path
 
@@ -724,6 +834,11 @@ class LayerBuildResult:
 
         pv = require("pyvista", feature="interactive 3-D scenes")
 
+        if color_by not in _VTK_GRID_CMAPS:
+            raise ValueError(
+                f"color_by must be one of {list(_VTK_GRID_CMAPS)}, not "
+                f"{color_by!r}."
+            )
         sel = self._resolve_layer_indices(layers)
         p = self.vor.get_disv_gridprops()
         ws = Path(tempfile.mkdtemp(prefix="layer_view_"))
@@ -739,19 +854,37 @@ class LayerBuildResult:
         vtk = Vtk(model=gwf, vertical_exageration=1, binary=True, smooth=False)
         vtk.add_model(gwf)
         # Always attach a per-cell layer index so a subset can be selected.
+        # Integer, so `add_array` leaves it alone -- see the float note below.
         vtk.add_array(np.repeat(np.arange(self.nlay)[:, None], p["ncpl"], axis=1), "layer")
         mesh = vtk.to_pyvista()
         if isinstance(mesh, pv.MultiBlock):
             mesh = mesh.combine()
+
+        # Per-cell fields, attached HERE rather than through `Vtk.add_array`,
+        # which NaN-masks FLOAT arrays wherever idomain == 0 -- i.e. on exactly
+        # the cells a pinched-out layer creates, which are the ones worth
+        # inspecting. (Measured: 138 of 843 cells on a stack with one pinching
+        # layer; integer arrays come through intact.) `top` and `botm` are
+        # already here from `add_model` and are OVERWRITTEN, not added: flopy's
+        # own `top` is NaN for every layer below 0, so a per-layer top has to be
+        # built from the contacts.
+        mesh.cell_data["thickness"] = self.thickness.ravel()
+        mesh.cell_data["top"] = np.vstack([self.top[None, :], self.botm[:-1]]).ravel()
+        mesh.cell_data["botm"] = self.botm.ravel()
+        mesh.cell_data["cellid"] = np.tile(np.arange(p["ncpl"]), self.nlay)
+
         if len(sel) != self.nlay:  # keep only the requested layers' cells
             layer_cell = np.asarray(mesh.cell_data["layer"]).astype(int)
             mesh = mesh.extract_cells(np.isin(layer_cell, sel))
-        if color_by == "layer":
-            scalars, use_cmap = "layer", cmap
-        else:
+        if color_by == "elevation":
+            # The one POINT array, and the odd one out: vertex z, so it ramps
+            # within a cell where `top`/`botm` are flat per-cell contacts.
             mesh["elevation"] = mesh.points[:, 2]
-            scalars, use_cmap = "elevation", "terrain"
-        mesh_kwargs = dict(show_edges=True, cmap=use_cmap)
+
+        mesh_kwargs = dict(
+            show_edges=True,
+            cmap=_VTK_GRID_CMAPS[color_by] if cmap is None else cmap,
+        )
         if color_by == "layer":
             # Discrete colors keyed to each layer's global index; label only the
             # layers actually shown.
@@ -761,12 +894,40 @@ class LayerBuildResult:
                 annotations={float(i): self.names[i] for i in sel},
                 scalar_bar_args=dict(title="layer", n_labels=0),
             )
+        else:
+            # An explicit clim over the whole selection, because each layer is
+            # its own actor below and PyVista would otherwise scale each one to
+            # its OWN range -- making a thin layer and a thick one look alike.
+            finite = np.asarray(mesh[color_by], dtype=float)
+            finite = finite[np.isfinite(finite)]
+            mesh_kwargs.update(
+                clim=[float(finite.min()), float(finite.max())] if finite.size else None,
+                scalar_bar_args=dict(title=color_by),
+            )
+
         plotter = pv.Plotter(off_screen=True, window_size=(width - 40, height - 40))
-        plotter.add_mesh(mesh, scalars=scalars, **mesh_kwargs)
+        # One actor per layer, named for it, rather than one fused volume. The
+        # fused mesh drew the same picture, but a viewer could not take it
+        # apart: `scene.scene.actors["clay"].visibility = False` needs a `clay`
+        # actor to exist. Costs nlay draw calls instead of one.
+        #
+        # Each actor asks for the colour bar and the scene still gets exactly
+        # one: PyVista keys bars by TITLE and reuses the existing one. That is
+        # only correct because every actor shares the clim and cmap set above --
+        # give them separate ranges and the single bar would describe one layer
+        # while colouring all of them.
+        layer_cell = np.asarray(mesh.cell_data["layer"]).astype(int)
+        for k in sel:
+            sheet = mesh.extract_cells(layer_cell == k)
+            if sheet.n_cells == 0:  # selected but wholly absent from the mesh
+                continue
+            plotter.add_mesh(
+                sheet, scalars=color_by, name=self.names[k], **mesh_kwargs,
+            )
         plotter.set_scale(zscale=scale)
         plotter.add_axes()
         plotter.camera_position = "yz"
-        return plotter
+        return plotter, [mesh]
 
     def _thickness_values(self, layer=None):
         """Per-cell thickness (total, or a single named layer) and its label."""
@@ -827,10 +988,22 @@ class LayerSection(MplPicture):
     """
 
     def __init__(self, result, line=None, *, x=None, y=None, **kwargs):
-        """Bind a section of ``result`` along ``line`` (or ``x=``/``y=``)."""
+        """Bind a section of ``result`` along ``line`` (or ``x=``/``y=``).
+
+        The line and ``color_by`` are checked HERE, not at draw time. A Picture
+        is lazy by design, but an argument that can never work is a caller
+        mistake, and reporting it from ``.axes`` puts the traceback in the wrong
+        place entirely."""
 
         self._result = result
-        self._line, self._x, self._y = line, x, y
+        self._line = None if line is None else _section_line_points(line)
+        self._x, self._y = x, y
+        color_by = kwargs.get("color_by", "layer")
+        if color_by not in _SECTION_COLOR_BY:
+            raise ValueError(
+                f"color_by must be one of {list(_SECTION_COLOR_BY)}, not "
+                f"{color_by!r}."
+            )
         self._kwargs = kwargs
         self.title = kwargs.get("title") or "Layer cross-section"
 
@@ -888,7 +1061,7 @@ class LayerSurface(Picture):
 #: the caller chose from one it merely inherited. Mirrored, not imported, because
 #: the signature is the public contract and a test pins the two equal.
 _VTK_GRID_DEFAULTS = {
-    "color_by": "layer", "scale": 8, "cmap": "tab10", "width": 900, "height": 580,
+    "color_by": "layer", "scale": 8, "cmap": None, "width": 900, "height": 580,
 }
 
 
@@ -976,13 +1149,16 @@ class StackPlots:
 
         Parameters
         ----------
-        line : LineString or Path, optional
-            The section line. Alternatively give ``x=`` or ``y=`` for an
-            axis-aligned slice.
+        line : LineString, MultiLineString, path, or sequence of points, optional
+            The section line: a shapely geometry, a path to a ``.shp``/``.gpkg``
+            to read it from, or the points themselves as ``[(x, y), ...]``.
+            Alternatively give ``x=`` or ``y=`` for an axis-aligned slice. With
+            none of them, a West-East line through the grid centre.
         x, y : float, optional
             Draw the section along a constant x or constant y.
-        color_by : str, default 'layer'
-            Cell scalar the fill is keyed to.
+        color_by : {'layer', 'thickness'}, default 'layer'
+            Cell scalar the fill is keyed to: discrete layer colours, or a
+            continuous viridis thickness field.
         cmap : str, default 'tab10'
             Colormap for that scalar.
         show_grid : bool, default True
@@ -999,6 +1175,15 @@ class StackPlots:
         LayerSection
             A Matplotlib :class:`~myflopy.viz.Picture`; ``.axes`` rather than
             ``.fig``.
+
+        Raises
+        ------
+        TypeError
+            If ``line`` is not a geometry, a path, or a sequence of points.
+        ValueError
+            If ``line`` resolves to fewer than two points, or ``color_by`` is
+            not one of the values above. Both are raised HERE, not later from
+            ``.axes``.
         """
 
         return LayerSection(
@@ -1072,15 +1257,13 @@ class StackPlots:
         """
 
         if backend == "vtk":
-            return VtkScene(
-                self.result._vtk_surface_plotter(
-                    layer, resolution=resolution, scale=scale, cmap=cmap,
-                    opacity=1.0 if opacity is None else opacity,
-                    width=width, height=height or 580, show_edges=show_edges,
-                    **kwargs,
-                ),
-                title="layer surfaces",
+            plotter, sheets = self.result._vtk_surface_plotter(
+                layer, resolution=resolution, scale=scale, cmap=cmap,
+                opacity=1.0 if opacity is None else opacity,
+                width=width, height=height or 580, show_edges=show_edges,
+                **kwargs,
             )
+            return VtkScene(plotter, meshes=sheets, title="layer surfaces")
         if backend != "plotly":
             raise ValueError(f"backend must be 'plotly' or 'vtk', not {backend!r}.")
         return LayerSurface(
@@ -1095,7 +1278,7 @@ class StackPlots:
         backend: str = "vtk",
         color_by: str = "layer",
         scale: float = 8,
-        cmap: str = "tab10",
+        cmap: str | None = None,
         width: int = 900,
         height: int = 580,
     ):
@@ -1120,12 +1303,20 @@ class StackPlots:
         backend : {'vtk', 'plotly'}, default 'vtk'
             ``'vtk'`` renders the 3-D volume and needs the ``viz3d`` extra;
             ``'plotly'`` draws the flat 2-D mesh.
-        color_by : str, default 'layer'
-            *(vtk only)* Cell scalar to colour by.
+        color_by : {'layer', 'thickness', 'top', 'botm', 'cellid', 'elevation'}, default 'layer'
+            *(vtk only)* Cell scalar to colour by. ``'layer'`` is discrete, with
+            each layer's name in the colour bar; the rest are continuous fields.
+            ``'top'`` and ``'botm'`` are the flat per-cell contacts, where
+            ``'elevation'`` is vertex z and so ramps within a cell.
+
+            Every one of these is attached to the mesh regardless of which is
+            drawn, so ``scene.meshes[0]`` carries them all into a ``.vtu``.
         scale : float, default 8
             *(vtk only)* Vertical exaggeration.
-        cmap : str, default 'tab10'
-            *(vtk only)* Colormap for ``color_by``.
+        cmap : str, optional
+            *(vtk only)* Colormap for ``color_by``. Defaults to the one that
+            suits the chosen scalar -- ``tab10`` for layers, ``viridis`` for
+            thickness, ``terrain`` for elevations.
         width, height : int, default 900, 580
             *(vtk only)* Scene size in pixels.
 
@@ -1138,8 +1329,9 @@ class StackPlots:
         Raises
         ------
         ValueError
-            If ``backend`` is neither value, or if a vtk-only argument is given
-            with ``backend="plotly"``.
+            If ``backend`` is neither value, if ``color_by`` is not one of the
+            values above, or if a vtk-only argument is given with
+            ``backend="plotly"``.
         """
 
         scene_args = {"color_by": color_by, "scale": scale, "cmap": cmap,
@@ -1158,10 +1350,8 @@ class StackPlots:
             raise ValueError(
                 f"backend must be 'vtk' or 'plotly', not {backend!r}."
             )
-        return VtkScene(
-            self.result._vtk_plotter(layers, **scene_args),
-            title="layered grid",
-        )
+        plotter, meshes = self.result._vtk_plotter(layers, **scene_args)
+        return VtkScene(plotter, meshes=meshes, title="layered grid")
 
 
 class LayerStack:
@@ -1495,8 +1685,7 @@ class LayerStack:
         >>> stack.add("clay", thickness=5, pinch="inactive")      # pinches out where thin
         >>> stack.add("bedrock", bottom=Contours("bedrock.shp"))  # bottom from contours
         """
-        if any(layer.name == name for layer in self._layers):
-            raise ValueError(f"layer {name!r} already exists.")
+        _check_layer_name(name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
         self._layers.append(_Layer(name, surface, min_thickness, pinch))
         return self
@@ -1506,8 +1695,7 @@ class LayerStack:
         min_thickness: float | None = None, pinch: str | None = None, fill: str | None = None,
     ) -> LayerStack:
         """Insert a new layer directly below the existing layer ``name``."""
-        if any(layer.name == new_name for layer in self._layers):
-            raise ValueError(f"layer {new_name!r} already exists.")
+        _check_layer_name(new_name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
         self._layers.insert(
             self._index(name) + 1, _Layer(new_name, surface, min_thickness, pinch)

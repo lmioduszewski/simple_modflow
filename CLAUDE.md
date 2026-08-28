@@ -62,6 +62,15 @@ the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means 
 height field; `surface(backend="vtk")` exists and draws those height fields as
 separate PyVista sheets, which is the rule holding rather than bending). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
 `.save(path)` / `.html(path)`, and never a trailing `.plot()`.
+**3-D scenes: build-time options on the verb, post-render handles on the Picture**
+(ledger 157, 2026-08-28). Both layer scenes draw ONE NAMED ACTOR PER LAYER —
+`scene.scene.actors["clay"].visibility = False` — and every cell carries
+`layer`/`thickness`/`top`/`botm`/`cellid` whichever `color_by` draws, so
+`scene.meshes[0].save("stack.vtu")` hands ParaView the lot. Two traps worth
+carrying: flopy's `Vtk.add_array` **NaN-masks FLOAT arrays at `idomain == 0`**
+(so attach floats after `to_pyvista()`, never through it), and its own `top`
+array is NaN for every layer below 0. What a WRITTEN page cannot do, measured:
+no widgets, no picker, no keyboard, and only the ACTIVE scalar is serialized.
 `tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
 the stray verb, so adding one in one place and forgetting another is caught.
 **Never give a picture verb a bare `**kwargs`** (8.8, 2026-08-24): PyCharm and
@@ -124,8 +133,8 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**1609 passed / 1 skipped**, 2026-08-24): `pytest -n 10` ≈ **75 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **4m30s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**1731 passed / 1 skipped**, 2026-08-28): `pytest -n 10` ≈ **67 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **4m55s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   Serial is ~3.7x the parallel run — that gap is the price of the `-n0`
   pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction

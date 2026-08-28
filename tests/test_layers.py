@@ -1027,3 +1027,267 @@ def test_a_grid_built_with_a_bare_number_can_sample_a_raster(tmp_path):
     assert vor.crs == "EPSG:2927"
     with rasterio.open(path) as src:                 # what the sampler does
         warp_transform(vor.crs, src.crs, [1.0], [1.0])
+
+
+# --- a section line can be what its docstring says it can be (2026-08-28) --- #
+
+@pytest.fixture(scope="module")
+def _line_stack(tmp_path_factory):
+    """A two-layer result to slice.
+
+    Builds its own grid rather than using `real_vor`: that one has four cells,
+    and a diagonal line across it crosses too few for FloPy to section.
+    """
+
+    import myflopy as mf
+
+    ws = tmp_path_factory.mktemp("line_stack")
+    tri = mf.TriangleGrid(model_ws=str(ws), angle=30)
+    tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0), max_area=1500)
+    tri.build()
+    vor = mf.VoronoiGridPlus(tri, crs="EPSG:2927")
+    return (LayerStack(vor, top=Flat(100))
+            .add("sand", thickness=20).add("clay", thickness=30).build())
+
+
+def test_a_section_accepts_every_line_form_it_advertises(_line_stack, tmp_path):
+    """Both docstrings promised a LineString or a Path, and `_resolve_line` did a
+    bare `[tuple(pt) for pt in line]` -- so the only form that actually worked was
+    the one form neither docstring mentioned."""
+
+    from shapely.geometry import LineString, MultiLineString
+
+    line = LineString([(10, 10), (390, 290)])
+    gpkg = tmp_path / "sec.gpkg"
+    gpd.GeoDataFrame(geometry=[line], crs="EPSG:2927").to_file(gpkg, driver="GPKG")
+
+    for spelling in (
+        line,
+        MultiLineString([[(10, 10), (200, 150)], [(200, 150), (390, 290)]]),
+        [(10, 10), (390, 290)],
+        gpkg,
+        str(gpkg),
+    ):
+        assert hasattr(_line_stack.plot.section(line=spelling).axes, "set_title")
+
+
+def test_an_unusable_section_line_is_rejected_at_the_call(_line_stack):
+    """A Picture is lazy, but a caller mistake should not be. These used to
+    survive `section(...)` untouched and fail later on `.axes`, with a traceback
+    pointing into FloPy rather than at the argument."""
+
+    with pytest.raises(TypeError, match="must be a LineString"):
+        _line_stack.plot.section(line=42)
+    with pytest.raises(ValueError, match="at least two"):
+        _line_stack.plot.section(line=[(1, 2)])
+
+
+def test_section_color_by_is_checked_rather_than_ignored(_line_stack):
+    """`color_by='banana'` silently fell through to the layer-coloured branch and
+    drew a picture that was not the one asked for."""
+
+    assert hasattr(_line_stack.plot.section(color_by="thickness").axes, "set_title")
+    with pytest.raises(ValueError, match="color_by must be one of"):
+        _line_stack.plot.section(color_by="banana")
+
+
+# --- the 3-D volume carries the numbers, not just a colour (2026-08-28) ----- #
+
+@pytest.fixture(scope="module")
+def _pinched(real_vor):
+    """A stack where the middle layer pinches out -- `idomain == 0` somewhere.
+
+    That is the case the arrays have to survive: FloPy's `Vtk.add_array` masks
+    FLOAT arrays to NaN wherever a cell is inactive, so a thickness attached
+    through it goes blank on exactly the cells a pinch-out creates.
+    """
+
+    xs = np.asarray(real_vor.centroids[0])
+    mid = float(np.median(xs))
+    return (LayerStack(real_vor, top=Flat(100))
+            .add("sand", bottom=Flat(80), pinch="inactive")
+            .add("clay", bottom=Surface.from_array(np.where(xs < mid, 85.0, 60.0)),
+                 pinch="inactive")
+            .add("bed", thickness=20).build())
+
+
+@pytest.mark.slow
+def test_every_cell_array_survives_a_pinch_out(_pinched):
+    pytest.importorskip("pyvista")
+
+    assert (_pinched.idomain == 0).any(), "fixture no longer pinches; test is vacuous"
+    mesh = _pinched.plot.grid().meshes[0]
+
+    ncpl = _pinched.vor.ncpl
+    expected = {
+        "thickness": _pinched.thickness.ravel(),
+        "top": np.vstack([_pinched.top[None, :], _pinched.botm[:-1]]).ravel(),
+        "botm": _pinched.botm.ravel(),
+        "cellid": np.tile(np.arange(ncpl), _pinched.nlay),
+    }
+    for name, want in expected.items():
+        got = np.asarray(mesh.cell_data[name])
+        assert not np.isnan(got).any(), f"{name} went NaN where the stack pinches out"
+        assert np.allclose(got, want), f"{name} does not match the built stack"
+
+
+@pytest.mark.slow
+def test_the_layer_top_array_is_built_rather_than_taken_from_flopy(_pinched):
+    """FloPy's own `top` cell array is NaN for every layer below 0, so the one
+    number you would most want under a cursor was missing everywhere but the
+    surface."""
+
+    pytest.importorskip("pyvista")
+
+    top = np.asarray(_pinched.plot.grid().meshes[0].cell_data["top"])
+    per_layer = top.reshape(_pinched.nlay, -1)
+    assert not np.isnan(per_layer).any()
+    assert np.allclose(per_layer[1], _pinched.botm[0]), "layer 1 tops at layer 0's base"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "scalar", ["layer", "thickness", "top", "botm", "cellid", "elevation"]
+)
+def test_the_volume_can_be_coloured_by_any_of_its_scalars(_pinched, scalar):
+    pytest.importorskip("pyvista")
+
+    scene = _pinched.plot.grid(color_by=scalar)
+    try:
+        assert scene.meshes[0].n_cells > 0
+    finally:
+        scene.scene.close()
+
+
+def test_the_volume_rejects_a_scalar_it_does_not_have(_pinched):
+    """Anything that was not 'layer' used to mean 'elevation', so a typo drew a
+    different picture without saying so."""
+
+    pytest.importorskip("pyvista")
+    with pytest.raises(ValueError, match="color_by must be one of"):
+        _pinched.plot.grid(color_by="banana")
+
+
+# --- actors you can name, and therefore hide (ledger 153) ------------------- #
+
+@pytest.mark.slow
+def test_each_layer_is_its_own_named_actor(_pinched):
+    """Ledger 153 justified separate actors by saying a viewer could "hide the
+    sheets above". The volume was still one fused actor, and the surface sheets
+    were keyed by address -- so there was no way to say WHICH one."""
+
+    pytest.importorskip("pyvista")
+
+    scene = _pinched.plot.grid()
+    try:
+        for name in _pinched.names:
+            assert name in scene.scene.actors
+        scene.scene.actors["clay"].visibility = False
+        assert scene.scene.actors["clay"].visibility is False
+    finally:
+        scene.scene.close()
+
+
+@pytest.mark.slow
+def test_each_contact_sheet_is_its_own_named_actor(_pinched):
+    pytest.importorskip("pyvista")
+
+    scene = _pinched.plot.surface("all", backend="vtk", resolution=30)
+    try:
+        assert set(_pinched.surface_names) <= set(scene.scene.actors)
+    finally:
+        scene.scene.close()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("scalar", ["layer", "thickness"])
+def test_splitting_the_volume_does_not_multiply_the_colour_bar(_pinched, scalar):
+    """One bar per scene, not one per layer.
+
+    PyVista keys bars by TITLE, so nlay actors each asking for a bar still yield
+    one. Splitting the volume would otherwise stack a bar per layer down the
+    side of every scene.
+
+    What this canNOT check is that the actors agree on a colour RANGE: PyVista
+    syncs every mapper to the shared bar's LUT, so `mapper.scalar_range` comes
+    back identical whether or not an explicit `clim` was passed. The clim is
+    kept because relying on that sync is relying on undocumented behaviour --
+    see ledger 156.
+    """
+
+    pytest.importorskip("pyvista")
+
+    scene = _pinched.plot.grid(color_by=scalar)
+    try:
+        bars = [k for k in scene.scene.renderer.actors if "ScalarBar" in k]
+        assert len(bars) == 1
+        assert len([n for n in scene.scene.actors if n in _pinched.names]) > 1, \
+            "fixture stopped splitting the volume; one bar proves nothing"
+    finally:
+        scene.scene.close()
+
+
+def test_a_layer_may_not_be_called_top_or_repeat_a_name(real_vor):
+    """Names identify a contact AND a PyVista actor, where `add_mesh(name=...)`
+    silently REPLACES rather than adding. 'top' used to fail much later, inside
+    pandas, as "cannot reindex on an axis with duplicate labels"."""
+
+    stack = LayerStack(real_vor, top=Flat(100)).add("sand", thickness=20)
+    with pytest.raises(ValueError, match="reserved for the model top"):
+        stack.add("top", thickness=5)
+    with pytest.raises(ValueError, match="already exists"):
+        stack.add("sand", thickness=5)
+
+
+def test_asking_for_a_contact_twice_draws_it_once(_pinched):
+    assert _pinched._resolve_surface_names(["top", "top", "clay"]) == ["top", "clay"]
+
+
+# --- the meshes are reachable, and the scene screenshots (2026-08-28) ------- #
+
+@pytest.mark.slow
+def test_the_scene_hands_back_its_meshes(_pinched, tmp_path):
+    """`scene.meshes` was documented on VtkScene and left empty by both layer
+    scenes, so the ParaView route -- the one place all four arrays and per-block
+    visibility exist at once -- had to reach through `renderer.actors`."""
+
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    volume = _pinched.plot.grid()
+    sheets = _pinched.plot.surface("all", backend="vtk", resolution=30)
+    try:
+        assert len(volume.meshes) == 1, "the volume is one mesh; actors are views of it"
+        assert len(sheets.meshes) == len(_pinched.surface_names)
+
+        out = tmp_path / "stack.vtu"
+        volume.meshes[0].save(out)
+        assert set(pv.read(out).cell_data) >= {"layer", "thickness", "top", "botm", "cellid"}
+    finally:
+        volume.scene.close()
+        sheets.scene.close()
+
+
+@pytest.mark.slow
+def test_a_contact_scene_screenshots_outside_a_notebook(_pinched, tmp_path, monkeypatch):
+    """The surface plotter omitted `off_screen`, so in a plain script `.save()`
+    raised "Nothing to screenshot" while the volume scene wrote a PNG. A notebook
+    forces `off_screen` on, which is why it never showed up interactively.
+
+    `conftest` sets `PYVISTA_OFF_SCREEN`, so under pytest EVERY plotter is
+    off-screen and the bug cannot reproduce -- which is exactly how it survived.
+    So neutralise the global first and pin the explicit argument: without it,
+    this asserts nothing at all.
+    """
+
+    pv = pytest.importorskip("pyvista")
+    monkeypatch.setattr(pv, "OFF_SCREEN", False)
+
+    for scene in (_pinched.plot.surface("all", backend="vtk", resolution=30),
+                  _pinched.plot.grid()):
+        try:
+            assert scene.scene.off_screen is True
+            out = scene.save(tmp_path / f"{scene.title}.png")
+            assert out.exists() and out.stat().st_size > 0
+        finally:
+            scene.scene.close()

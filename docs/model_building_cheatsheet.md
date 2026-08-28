@@ -671,6 +671,16 @@ layers.plot.surface("all")           # every contact as 3-D height fields (plotl
 layers.plot.grid(scale=12)           # the layered cell VOLUME (needs `viz3d` extra)
 ```
 
+`section` takes the line however you have it — a shapely geometry, a vector file
+to read it from, the points themselves, or `x=`/`y=` for an axis-aligned slice.
+With none of them you get a West–East line through the grid centre.
+
+```python
+layers.plot.section(line=LineString([(x0, y0), (x1, y1)]))
+layers.plot.section(line="sections/a_a_prime.gpkg")
+layers.plot.section(color_by="thickness")     # 'layer' (default) or 'thickness'
+```
+
 **To look at contacts individually, render them as VTK sheets:**
 
 ```python
@@ -700,12 +710,77 @@ vtk.js's *"Drop File / Explore Scene"* placeholder with
 rewrites that one marker on the way out; the bundle uses no module syntax, and a
 test fails if a future PyVista ships one that does.
 
-`grid(backend="vtk")` fuses the layers into one volume, so a contact cannot be
-isolated in it. `surface(backend="vtk")` gives each surface its own actor, which
-is what lets a viewer hide the sheets above and see underneath — the same subject
-as the Plotly form, drawn by a different renderer, per the `backend=` rule.
-Cells with no data are dropped rather than drawn at z=0, where they would read as
-a real contact at sea level.
+`grid(backend="vtk")` draws the cell VOLUME and `surface(backend="vtk")` draws
+the CONTACTS as height fields — the same subject as their Plotly forms, drawn by
+a different renderer, per the `backend=` rule. Cells with no data are dropped
+rather than drawn at z=0, where they would read as a real contact at sea level.
+
+##### Moving around in a 3-D scene
+
+VTK and vtk.js do not share an interactor style, so the widget and the written
+page answer to different gestures. **Shift + left-drag pans in both**; the
+middle-drag habit works only in the widget:
+
+| gesture | `.show()` widget | exported `.html` |
+|---|---|---|
+| left-drag | rotate | rotate |
+| shift + left-drag | pan | pan |
+| middle-drag | pan | *nothing* |
+| right-drag | dolly | *nothing* |
+| ctrl + left-drag | roll | roll |
+| wheel | zoom | zoom |
+| keys | *none* | `r` reset · `w` wireframe · `s` surface · `v` points |
+
+The written page has no UI at all; click the canvas once to give it focus before
+the keys respond. The widget has a toolbar at top-left (the dots button collapses
+it) with reset, isometric, **+X/+Y/+Z views** and **parallel projection** — that
+pair is how you get an orthographic slab view of the volume without writing code.
+Both of those buttons disappear if you flip the toolbar to local rendering, and
+parallel projection is *not* saved into an exported page: trame serializes camera
+position, focal point, view-up and clipping range, and nothing else.
+
+##### Showing, hiding, and reading the cells
+
+Every layer is its own named actor, so a scene can be taken apart after it is
+built:
+
+```python
+scene = layers.plot.grid()
+scene.scene.actors["clay"].visibility = False   # hide one layer
+scene.show()
+```
+
+Each cell carries `layer`, `thickness`, `top`, `botm` and `cellid` whichever one
+is drawn, so `color_by` picks the picture without rebuilding the data:
+
+```python
+layers.plot.grid(color_by="thickness")   # viridis, per-cell thickness
+layers.plot.grid(color_by="top")         # the layer's own top contact
+layers.plot.grid(color_by="cellid")      # which cell is which
+```
+
+`top`/`botm` are the flat per-cell contacts; `elevation` is vertex z, so it ramps
+*within* a cell. `cmap` defaults to whatever suits the chosen scalar.
+
+**A written page keeps only the scalar you drew** — vtk.js serializes the active
+array and drops the rest — and it has no picker, no keyboard and no widgets. For
+a scene you want to interrogate rather than look at, write the mesh instead and
+open it in ParaView, which gives per-block visibility, a cell inspector and
+interactive slicing:
+
+```python
+layers.plot.grid().meshes[0].save("stack.vtu")
+```
+
+For per-cell numbers on a map instead of in 3-D, the choropleth hover already
+reports **cell number, area, x, y, model top and every layer bottom** — but only
+if the result was attached to the grid. Without that the elevation rows silently
+vanish and nothing warns you:
+
+```python
+layers = stack.build(attach=True)     # or layers.attach_to_grid(vor) after the fact
+layers.plot.map(basemap=True)
+```
 
 Starting from an existing model instead? `mf.LayerStack.from_modflow(vor, source)`.
 

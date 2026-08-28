@@ -3523,6 +3523,12 @@ same day, which is the useful part of the result.
        allowlist entry is the reviewed answer, not a workaround.
      - The import ratchet rejected the new deferred import; hoisting it removed
        the duplicate in `_surface_fig` too, so the deferred total went 58 -> 57.
+     - **DEBT REPAID 2026-08-28 (see 157).** "Separate actors let a viewer hide
+       the sheets above" justified this entry and was not actually reachable:
+       `add_mesh` was called with `label=` but not `name=`, so `plotter.actors`
+       was keyed by address strings like `UnstructuredGrid(Addr=0x1f3bd750)` --
+       and on the volume path that dict also holds the scalar bar, so indexing
+       by position hit it. The sheets are now named for their contacts.
 
 154. **A bare EPSG number is normalized to `EPSG:<n>` (2026-08-27).**
      `crs="2927"` failed with `CRSError: The WKT could not be parsed`, nine frames
@@ -3561,3 +3567,86 @@ same day, which is the useful part of the result.
        and happened to win a `setTimeout(..., 0)` race.
      - Applied to `_repr_mimebundle_` too, since notebook output has the same
        constraint, and pinned as still self-contained (no network fetches).
+
+156. **A section line may be what its docstring said, and `color_by` is checked (2026-08-28).**
+     Both `StackPlots.section` and the free `plot.section` documented a
+     `LineString` or a `Path`, and `LayerBuildResult._resolve_line` did a bare
+     `[tuple(pt) for pt in line]` -- so the only form that worked was the one
+     form neither docstring mentioned.
+     - **It failed LAZILY**, which was worse than failing. A `LayerSection` is a
+       Picture, so `section(line=LineString(...))` returned fine and blew up
+       later on `.axes` with `TypeError: 'LineString' object is not iterable`,
+       pointing into FloPy rather than at the argument. The line is now coerced
+       in `LayerSection.__init__` -- at the call -- not at draw time.
+     - Reuses `_as_linestring` and `read_shp_gpkg`, the same pair
+       `GridPlots.section` already reads the same inputs with, rather than a
+       second reader that could drift from it.
+     - **No broad `except` around the reader**, per the standing rule: a broad
+       handler there would eat the point/length validation below it, which is
+       the exact bug already found twice in `read_gpkg` and
+       `contour_line_segments`.
+     - `color_by` is validated on `section` (`layer`/`thickness`) and on
+       `grid`. Both silently drew the wrong picture for an unknown value --
+       `section(color_by='banana')` fell through to the layer-coloured branch,
+       and on `grid` anything that was not `'layer'` MEANT `'elevation'`.
+
+157. **The 3-D volume carries its numbers, and comes apart by layer (2026-08-28).**
+     Asked for layer toggles, cell readouts and quick sections in the VTK scene.
+     Three of those four wants were already answered elsewhere (see the notes at
+     the end); what was genuinely missing was that the mesh carried no data and
+     the scene had no handles.
+     - **Float arrays must NOT go through flopy's `Vtk.add_array`.** It masks
+       float arrays to NaN wherever `idomain == 0` -- i.e. on exactly the cells
+       a `pinch="inactive"` layer creates, the ones worth inspecting. Measured:
+       138 of 843 cells on a stack with one pinching layer; integer arrays come
+       through intact. `thickness`/`top`/`botm`/`cellid` are attached to the
+       PyVista mesh after `to_pyvista()` instead.
+     - **`top` and `botm` are overwritten, not added.** FloPy's own `top` cell
+       array is NaN for EVERY layer below 0, so the per-layer top is rebuilt as
+       `vstack([top, botm[:-1]])`.
+     - `color_by` widens to `layer`/`thickness`/`top`/`botm`/`cellid`/
+       `elevation`. **`elevation` is kept although it overlaps `top`**: it is a
+       POINT array of vertex z, so it ramps within a cell where `top` is a flat
+       per-cell contact. Two names, genuinely two pictures -- but close enough
+       that the docstring says which is which.
+     - `cmap` defaults to `None` = "whatever suits this scalar" rather than
+       `tab10`, which is a qualitative map and wrong for a continuous field.
+       This makes `cmap` honest for every scalar for the first time; previously
+       the elevation branch hardcoded `terrain` and ignored the argument.
+       `_VTK_GRID_DEFAULTS` is mirrored, so it moves with the signature.
+     - **One actor per layer instead of one fused mesh.** Costs `nlay` draw
+       calls; buys the only thing that makes a toggle expressible. Actors on
+       both paths are now `name=`d, so `scene.scene.actors["clay"].visibility
+       = False` works.
+     - **The scalar bar is not deduplicated by hand.** Every actor asks for one
+       and PyVista keys bars by TITLE, so the scene gets exactly one. An
+       explicit `clim` is passed anyway: PyVista *also* syncs each mapper to the
+       shared bar's LUT, which would paper over a divergence, and relying on
+       that is relying on undocumented behaviour. **The consequence is that the
+       clim cannot be pinned by a test** -- `mapper.scalar_range` returns the
+       same value with or without it. The test says so rather than asserting
+       something that cannot fail.
+     - `scene.meshes` is populated at last (it was documented on `VtkScene` and
+       left `()` by both layer scenes). For the volume it is the ASSEMBLED mesh,
+       not the per-layer pieces the actors draw -- a deliberate looseness,
+       because `scene.meshes[0].save("stack.vtu")` for ParaView wants the whole
+       selection with every array on it.
+     - `_vtk_surface_plotter` omitted `off_screen`, so `surface(...).save(...)`
+       raised "Nothing to screenshot" in a plain script while `grid(...)` wrote
+       a PNG. **`tests/conftest.py` sets `PYVISTA_OFF_SCREEN`, so the suite
+       structurally could not reproduce it** -- which is how it survived. The
+       test neutralises the global and pins the constructor argument.
+     - A layer may no longer be named `top` (it collided with the model-top
+       contact and with the actor name, and used to fail much later inside
+       pandas as "cannot reindex on an axis with duplicate labels"), and asking
+       for the same contact twice draws it once.
+     - **NOT done, and deliberately.** Interactive toggling/picking/slicing on
+       the live scene, and visibility checkboxes injected into the exported
+       page, were both scoped and deferred pending which viewing path matters.
+       Measured constraints if they are ever picked up: the exported vtk.js page
+       has NO widget manager, NO picker and NO keyboard, and serializes ONLY the
+       active scalar (7 of 8 attached arrays appear zero times in its
+       `index.json`); trame has no keyboard channel at all; `vtkButtonWidget`
+       needs a hover event trame's client never sends; and `add_mesh_slice`
+       bakes eight dead actors into any export. Cross-sections stay
+       `stack.plot.section()`, which already answers the question.
