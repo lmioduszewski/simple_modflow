@@ -215,6 +215,18 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `for_grid(vor)` returns a bound copy (ledger 148). That is what lets the project-first
   order (declare layering → build grid) keep the per-layer `thickness=`/`min_thickness`/
   `pinch` control that only the facade has; `LayerSurfaces` has one global rule.
+  **A UNIT is not a LAYER as of 2026-08-28 (ledger 158).** `.add(name, ..., split=3)`
+  or `split=[0.3, 0.7]` cuts one geologic unit into N model layers `name_1..name_N`
+  WITHOUT moving its base; `res.units` maps unit → layer indices and
+  `res.per_layer({unit: value})` builds the positional lists `mf.npf`/`sto`/`ic`
+  want — never hand-write those, a stale list of the RIGHT length after a split is
+  accepted silently with new meaning. `min_thickness`/`pinch` stay UNIT-scoped (per
+  slice, a present unit comes back with holes in it). Engine side this is ONE new
+  primitive, `Surface.toward(target, f)` — general `Surface - Surface` stays
+  refused. There is deliberately no `.split()` verb: `replace(name, split=N)`.
+  Not splittable: an `Isopach` bottom (measured from above, so cuts would drift).
+  Also fixed there: `thickness=<Surface>` was silently an ELEVATION, and
+  `build`/`to_disv` disagreed on a split stack's idomain.
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
   **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
   `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a

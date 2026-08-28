@@ -1291,3 +1291,293 @@ def test_a_contact_scene_screenshots_outside_a_notebook(_pinched, tmp_path, monk
             assert out.exists() and out.stat().st_size > 0
         finally:
             scene.scene.close()
+
+
+# --- splitting a unit into model layers (2026-08-28) ------------------------ #
+
+@pytest.fixture(scope="module")
+def _wedge(real_vor):
+    """An absolute base that varies across the grid, so shares are worth checking."""
+
+    n = real_vor.ncpl
+    return Surface.from_array(np.linspace(40.0, 85.0, n))
+
+
+def test_a_unit_splits_into_equal_shares_without_moving_its_base(real_vor, _wedge):
+    """The point of a split: change the discretization, not the geometry."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("sand", bottom=_wedge, split=3).build(reconcile=False))
+
+    assert res.names == ["sand_1", "sand_2", "sand_3"]
+    assert res.units == {"sand": [0, 1, 2]}
+    thk = res.thickness
+    assert np.allclose(thk[0], thk[1]) and np.allclose(thk[1], thk[2])
+    # EXACTLY, not allclose: the last step is forced to 1.0 precisely so the
+    # final cut lands ON the declared base. Float residue in the running
+    # remainder would leave it fractionally short, and `allclose` would not
+    # notice -- so this assertion has to be the strict one to mean anything.
+    assert np.array_equal(res.botm[-1], _wedge.values(real_vor)), "the base moved"
+
+
+def test_explicit_shares_are_the_shares_you_asked_for(real_vor, _wedge):
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("till", bottom=_wedge, split=[0.3, 0.7]).build(reconcile=False))
+
+    total = res.top - res.botm[-1]
+    assert np.allclose(res.thickness[0] / total, 0.3)
+    assert np.allclose(res.thickness[1] / total, 0.7)
+
+
+def test_cumulative_shares_are_renormalised_into_per_step_ones(real_vor, _wedge):
+    """The trap `split=` exists to absorb.
+
+    `Surface.toward` resolves against the contact immediately ABOVE it, so
+    feeding it the cumulative fractions 1/3, 2/3, 1 gives [20, 26.67, 13.33] --
+    not thirds. Anyone composing surfaces by hand hits this; the facade must not.
+    """
+
+    naive = LayerSurfaces(
+        [Flat(100)] + [Surface.toward(_wedge, f) for f in (1 / 3, 2 / 3, 1.0)],
+        labels=["top", "a", "b", "c"],
+    )
+    top, botm = naive.top_botm(real_vor, reconcile=False)
+    naive_thk = np.vstack([top[None, :], botm])[:-1] - botm
+    assert not np.allclose(naive_thk[0], naive_thk[1]), "the trap stopped reproducing"
+
+    fixed = (LayerStack(real_vor, top=Flat(100))
+             .add("u", bottom=_wedge, split=3).build(reconcile=False))
+    assert np.allclose(fixed.thickness[0], fixed.thickness[1])
+
+
+def test_a_thickness_declared_unit_splits_without_a_target(real_vor):
+    """No interpolation needed, and nothing to interpolate toward: the declared
+    thickness is simply divided."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("till", thickness=60, split=[0.25, 0.75]).build(reconcile=False))
+    assert np.allclose(res.thickness[0], 15.0)
+    assert np.allclose(res.thickness[1], 45.0)
+
+
+def test_split_of_one_keeps_the_bare_name(real_vor):
+    """So `split=1` is a true no-op, and adding a split later never renames a
+    unit that was not split."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("a", thickness=10, split=1).build())
+    assert res.names == ["a"] and res.units == {"a": [0]}
+
+
+def test_a_unit_can_be_split_after_it_is_declared(real_vor, _wedge):
+    """`replace` already edits a declared unit by name and keeps what you do not
+    mention -- so there is deliberately no `.split()` verb."""
+
+    stack = LayerStack(real_vor, top=Flat(100)).add("sand", bottom=_wedge, pinch="inactive")
+    assert stack.replace("sand", split=2) is stack          # still fluent
+    res = stack.build(reconcile=False)
+    assert res.names == ["sand_1", "sand_2"]
+    assert res.pinch == ["inactive", "inactive"], "replace dropped an unmentioned field"
+
+    # ...and the split itself is one of the fields a later `replace` must keep.
+    stack.replace("sand", min_thickness=2.0)
+    assert stack.build(reconcile=False).names == ["sand_1", "sand_2"]
+
+    stack.replace("sand", split=None)                       # and can be undone
+    assert stack.build(reconcile=False).names == ["sand"]
+
+
+def test_a_split_can_be_declared_before_any_grid_exists(real_vor, _wedge):
+    """Splitting must not forfeit the gridless declaration order (ledger 148)."""
+
+    stack = LayerStack(top=Flat(100)).add("sand", bottom=_wedge, split=3)
+    res = stack.build(real_vor, reconcile=False)
+    assert np.allclose(res.thickness[0], res.thickness[2])
+
+
+@pytest.mark.parametrize(
+    "bad, exc, match",
+    [
+        ([0.3, 0.8], ValueError, "must sum to 1"),
+        ([30, 70], ValueError, "look like percentages"),
+        ([0.5, -0.1, 0.6], ValueError, "must be positive"),
+        ([], ValueError, "empty sequence"),
+        (0, ValueError, "at least 1"),
+        (True, TypeError, "not a bool"),
+        ("three", TypeError, "count .* or a sequence"),
+    ],
+)
+def test_a_bad_split_is_rejected_at_the_call(real_vor, bad, exc, match):
+    stack = LayerStack(real_vor, top=Flat(100))
+    with pytest.raises(exc, match=match):
+        stack.add("x", thickness=10, split=bad)
+
+
+def test_a_unit_measured_from_above_cannot_be_split(real_vor):
+    """An Isopach bottom is measured from the layer above, so each cut would
+    measure from the previous CUT and the contacts would drift downward instead
+    of dividing the unit."""
+
+    stack = LayerStack(real_vor, top=Flat(100)).add(
+        "x", bottom=Isopach(Flat(20)), split=2
+    )
+    with pytest.raises(TypeError, match="cannot be split"):
+        stack.build()
+
+
+def test_split_sub_names_may_not_collide_with_another_unit(real_vor):
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("sand", thickness=30, split=2).add("sand_1", thickness=5))
+    with pytest.raises(ValueError, match="already uses"):
+        stack.build()
+
+
+# --- a split changes discretization, never geometry ------------------------- #
+
+def _one_unit(vor, thickness, split=None, **kw):
+    """A stack whose single unit is `thickness` thick, over a thick spacer."""
+
+    return (LayerStack(vor, top=Flat(100))
+            .add("u", bottom=Flat(100 - thickness), split=split, **kw)
+            .add("below", thickness=20).build())
+
+
+def test_splitting_a_thin_unit_does_not_shrink_it(real_vor):
+    """Reconcile rewrites any layer thinner than `trigger_sep` to `min_sep`, and
+    the engine's 1.0 default is sized for UNITS. Applied to their slices it
+    destroys them: a 2.4 ft unit split three ways came back as 1.7 ft, with the
+    base moved and the layer below silently absorbing the difference."""
+
+    whole = _one_unit(real_vor, 2.4)
+    split = _one_unit(real_vor, 2.4, split=3)
+
+    assert np.allclose(split.thickness.sum(axis=0)[0], whole.thickness.sum(axis=0)[0])
+    assert np.allclose(split.thickness[:3, 0], 0.8)
+    assert np.allclose(split.botm[2], whole.botm[0]), "the unit base moved"
+
+
+def test_an_unsplit_stack_keeps_the_historical_trigger(real_vor):
+    """The trigger scales with the largest split, so a stack with no splits gets
+    exactly the 1.0 it always got. Nothing already built changes shape."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("a", thickness=0.4).add("b", thickness=20).build())
+    assert np.allclose(res.thickness[0], 0.1)      # 0.4 < 1.0 -> floored, as before
+
+
+def test_trigger_sep_can_be_overridden(real_vor):
+    loose = _one_unit(real_vor, 2.4, split=3, )
+    tight = (LayerStack(real_vor, top=Flat(100))
+             .add("u", bottom=Flat(97.6), split=3)
+             .add("below", thickness=20).build(trigger_sep=5.0))
+    assert np.allclose(loose.thickness[:3, 0], 0.8)
+    assert np.allclose(tight.thickness[:3, 0], 0.1)   # everything trips the trigger
+
+
+@pytest.mark.parametrize("split", [None, 3])
+def test_a_present_unit_never_pinches_into_holes(real_vor, split):
+    """Evaluated per slice, a 2.5 ft unit split three ways came back
+    `idomain [0, 1, 0]` -- inactive cells inside a unit that is fully present,
+    and idomain 0 BLOCKS vertical flow. The verdict belongs to the unit."""
+
+    res = _one_unit(real_vor, 2.5, split=split, pinch="inactive")
+    idx = res.units["u"]
+    assert set(np.unique(res.idomain[idx])) == {1}
+
+
+@pytest.mark.parametrize("split", [None, 3])
+def test_a_genuinely_thin_unit_still_pinches_whole(real_vor, split):
+    """The other half of the same rule: unit-scope must not mean never."""
+
+    res = _one_unit(real_vor, 0.5, split=split, pinch="inactive")
+    idx = res.units["u"]
+    assert set(np.unique(res.idomain[idx])) == {0}
+
+
+def test_qc_counts_thin_cells_against_the_unit(real_vor):
+    """A slice is thinner than its unit by construction, so counting per slice
+    would flag every split stack as thin."""
+
+    res = _one_unit(real_vor, 2.5, split=3, pinch="inactive")
+    assert sum(res.qc().thin) == 0
+    assert "4 layers from 2 units" in res.report()
+
+
+def test_to_disv_and_build_agree_on_a_split_stack(real_vor):
+    """`to_disv` used to let the engine judge each layer on its own thickness,
+    which for a split unit is a different question than `build` asks."""
+
+    for thickness in (2.5, 0.3):
+        stack = (LayerStack(real_vor, top=Flat(100))
+                 .add("u", bottom=Flat(100 - thickness), split=3, pinch="inactive")
+                 .add("below", thickness=20))
+        built = stack.build()
+        spec = stack.to_disv()
+        assert np.array_equal(built.idomain, np.asarray(spec.options["idomain"]))
+
+
+# --- addressing a unit after it becomes several layers ---------------------- #
+
+def test_per_layer_expands_a_unit_mapping(real_vor):
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("fill", thickness=5).add("sand", thickness=30, split=3)
+           .add("clay", thickness=10).build())
+
+    assert res.per_layer({"fill": 30.0, "sand": 25.0, "clay": 0.05}) == [
+        30.0, 25.0, 25.0, 25.0, 0.05
+    ]
+    # a layer name overrides its unit, so one slice can differ from its siblings
+    assert res.per_layer({"fill": 1.0, "sand": 25.0, "sand_2": 2.0, "clay": 3.0}) == [
+        1.0, 25.0, 2.0, 25.0, 3.0
+    ]
+    assert res.per_layer({"sand": 25.0}, default=9.9) == [9.9, 25.0, 25.0, 25.0, 9.9]
+
+
+def test_per_layer_refuses_to_guess(real_vor):
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("a", thickness=5).add("b", thickness=5).build())
+
+    with pytest.raises(KeyError, match="no value for"):
+        res.per_layer({"a": 1.0})
+    with pytest.raises(KeyError, match="neither a unit nor a layer"):
+        res.per_layer({"a": 1.0, "b": 2.0, "typo": 3.0})
+
+
+def test_a_unit_name_still_selects_its_layers(real_vor):
+    """`grid("sand")` has to keep working once sand is three layers."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("fill", thickness=5).add("sand", thickness=30, split=3).build())
+
+    assert res._resolve_layer_indices("sand") == [1, 2, 3]
+    assert res._resolve_layer_indices(["fill", "sand"]) == [0, 1, 2, 3]
+    assert res._resolve_layer_indices("sand_2") == [2]
+    with pytest.raises(KeyError, match="no layer or unit named"):
+        res._resolve_layer_indices("gravel")
+
+
+# --- thickness= is a thickness (2026-08-28) --------------------------------- #
+
+def test_an_elevation_surface_is_refused_as_a_thickness(real_vor):
+    """`thickness=Flat(20)` under a top of 100 used to set the BOTTOM to 20 -- an
+    80-thick layer -- silently, while the docstring promised a thickness. A raw
+    ndarray at least failed loudly."""
+
+    stack = LayerStack(real_vor, top=Flat(100))
+    with pytest.raises(TypeError, match="is an ELEVATION"):
+        stack.add("x", thickness=Flat(20))
+    with pytest.raises(TypeError, match="is an ELEVATION"):
+        stack.add("x", thickness=Raster("ground.tif"))
+
+
+@pytest.mark.parametrize(
+    "surface", [Isopach(Flat(20)), Surface.constant_thickness(20), Surface.offset_below(20)]
+)
+def test_surfaces_that_really_are_thicknesses_are_still_accepted(real_vor, surface):
+    """These three measure from the surface above, so they mean at `thickness=`
+    exactly what they say."""
+
+    res = LayerStack(real_vor, top=Flat(100)).add("x", thickness=surface).build(
+        reconcile=False
+    )
+    assert np.allclose(res.botm[0], 80.0)

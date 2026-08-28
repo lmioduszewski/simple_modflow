@@ -246,7 +246,14 @@ release-group boundnames; without them it names the fix and offers
 - `mf.ModelContext(grid=, domain=, surfaces=, dates=)` — attaches to the **model**
   (`mf.gwf(..., context=ctx)`); carries the grid/idomain/surfaces the GIS-aware helpers use.
 - `mf.LayerStack(vor, top=...).add(...).build()` — declarative layer top/botm/idomain
-  (compiles to `mf.LayerSurfaces` / `mf.Surface`).
+  (compiles to `mf.LayerSurfaces` / `mf.Surface`). `vor` is optional: the layering
+  can be declared before any grid exists and bound at `build(vor)`.
+  `.add(name, ..., split=3)` cuts one geologic **unit** into N model layers
+  (`name_1..name_N`) without moving its base; the result carries
+  `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
+  per-layer lists `mf.npf`/`sto`/`ic` take.
+- `mf.Toward(target, fraction)` — the contact a share of the way from the surface
+  above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`.
 - Grids: `mf.VoronoiGridPlus`, `mf.TriangleGrid`, `mf.GridSpec`; sources:
   `mf.GeoPackageSource`, `mf.read_gpkg`, `mf.read_shp_gpkg`.

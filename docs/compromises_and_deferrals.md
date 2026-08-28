@@ -3688,3 +3688,80 @@ same day, which is the useful part of the result.
        IBOUND from DISU alone and has no CLN awareness, so it under-reads the
        array on any model with CLN nodes -- reading idomain automatically would
        mean parsing the BAS ourselves.
+
+158. **A unit splits into model layers; geology and discretization separate (2026-08-28).**
+     Asked for "additional surface algebra" to split declared layers by amount or
+     percentage. Half the request already worked and half was inexpressible.
+     - **Fixed thickness always worked**; fractional splits did not, and could
+       not. `B - A`, `A * (1/3)`, `A / 3` and `-A` all raise, deliberately
+       (`test_subtracting_a_surface_from_a_surface_is_unsupported`), and the only
+       subtraction in the algebra is `isopach` with one operand hardwired to
+       `previous`. So the per-cell interval `top - bottom` had no spelling.
+     - **ONE new primitive, not general arithmetic.** `Surface.toward(target, f)`
+       = `previous + f*(target - previous)`. The recurrence form is what keeps it
+       lazy: `values` carries a single `previous` slot, so a cut measured from
+       the contact above needs no anchor plumbing and no grid. General
+       `Surface - Surface` was reconsidered and still refused -- it would widen
+       the elevation-vs-thickness ambiguity that this same pass had to fix
+       elsewhere (see below).
+     - **`split=` lives on `.add()`, and there is no `.split()` verb.** Not
+       ergonomics: `split` and `pinch`/`min_thickness` are ONE decision. Judged
+       per slice, a 2.5 ft unit split three ways returns `idomain [0, 1, 0]` --
+       inactive cells inside a unit that is fully present, and 0 blocks vertical
+       flow. Whoever expands the split must hold the unit's pinch policy, which
+       is `.add()`. `replace(name, split=N)` covers editing afterwards; it
+       already mutates by name, returns self, and keeps unmentioned fields.
+     - **The facade renormalises, because the naive form is silently wrong.**
+       Cumulative fractions 1/3, 2/3, 1 fed to `toward` give thicknesses
+       [20, 26.67, 13.33], not thirds -- each cut resolves against the previous
+       CUT. `g_i = share_i / (1 - sum(shares before i))`, with the last step
+       forced to exactly 1.0 so the base lands ON the declared bottom rather than
+       a float's width above it. That last line is the difference between
+       conservative and nearly-conservative, and the test asserts it with
+       `array_equal`, not `allclose`, or it would pass either way.
+     - **`trigger_sep` is now exposed and scales as `1.0 / max split`.** It was
+       accepted by `LayerSurfaces.sample` and never passed by `build`, so it was
+       always 1.0 -- sized for units and destructive to their slices: a 2.4 ft
+       unit split three ways came back `[0.1, 1.5, 0.1]` = 1.7 ft with the base
+       moved 0.7 ft and the layer below silently absorbing it. Scaled, it is
+       exactly `[0.8, 0.8, 0.8]`. An unsplit stack gets 1.0, so nothing already
+       built changes shape.
+     - **COMPROMISE, measured and not fixed:** a unit that pinches out ENTIRELY
+       grows by `(N-1) * min_sep` when split -- 0.1 ft at N=1 up to 0.5 ft at
+       N=5 -- because reconcile floors each sub-contact independently, and
+       everything below shifts down with it. Fixing it needs either a per-layer
+       `min_sep` (a signature change to `reconcile_surfaces`, which
+       `vor.reconcile_surfaces` also exposes) or collapsing a pinched unit's
+       sub-contacts before reconcile rather than after. Both are wider than this
+       change; the cells involved are `idomain = 0` by construction, and a
+       smaller `min_sep` shrinks the drift proportionally.
+     - **NOT a `split=` mode: fixed lifts.** "20 ft layers" on a unit of varying
+       thickness needs a varying number of layers, and `nlay` is global. A
+       `thickness=`-declared unit just divides (60 ft in 20 ft lifts is
+       `split=3`); a surface-bounded one repeats a constant cut, which is exact
+       today and is documented in the cheat sheet instead.
+     - **Not splittable: an `Isopach` bottom.** It is measured from the layer
+       above, so each cut would measure from the previous cut. Refused at build
+       with a message naming both fixes. The guard recurses into operands,
+       because a composite (`Flat(150).capped_at(Isopach(map))`) is a `min` node
+       that looks absolute over an operand that is not.
+     - **`LayerBuildResult.units` + `per_layer()` instead of full unit-first
+       plumbing.** Nothing downstream of `layers.py` reads layer NAMES -- npf/
+       sto/ic take positional lists, PEST takes `tuple[int,...]`, `.gpkg` reads a
+       1-based integer column -- so a split cannot break a consumer, but it does
+       silently RETARGET them. `per_layer()` closes that for the code-side cases
+       at the cost of one field and one method. **Deferred:** unit names accepted
+       directly by `mf.npf`/PEST `layers=`/`.gpkg` `layer_field`. The `.gpkg`
+       integer attribute is the one case the library cannot protect, because the
+       number lives in a GIS file outside the code.
+     - **Fixed in the same pass: `thickness=<Surface>` was silently an
+       ELEVATION.** `thickness=Flat(20)` under a top of 100 set the bottom to 20
+       -- an 80-thick layer -- while the docstring promised a thickness; a raw
+       ndarray at least failed loudly. Now refused, EXCEPT for the three kinds
+       that really do measure from above (`isopach`, `constant_thickness`,
+       `offset_below`), which mean there exactly what they say. The first attempt
+       rejected all Surfaces and broke `test_facade_isopach_layer`, which was
+       testing correct behaviour -- the narrower rule is the right one.
+     - `to_disv` now takes its idomain from `build()` rather than letting the
+       engine judge each layer alone; otherwise the two disagreed on any split
+       stack, which is a worse bug than either answer.

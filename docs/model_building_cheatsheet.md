@@ -594,8 +594,64 @@ layer-elevation hover rows.
 #### What `build()` returns
 
 `LayerBuildResult` — fields `top`, `botm`, `idomain`, `thickness`, `names`,
-`nlay`, `vor`; methods `qc()`, `report()`, `validate()`, `prune_isolated()`,
-`attach_to_grid()`, and the `plot` namespace.
+`units`, `nlay`, `vor`; methods `per_layer()`, `qc()`, `report()`, `validate()`,
+`prune_isolated()`, `attach_to_grid()`, and the `plot` namespace.
+
+#### `split=` — one geologic unit, several model layers
+
+Geology and discretization are different decisions. `.add()` states the geology;
+`split=` says how finely MODFLOW should slice it. The unit's **geometry does not
+change** — the last cut lands exactly on the declared bottom.
+
+```python
+stack.add("sand", bottom=Raster("sand_base.tif"), split=3)      # three equal slices
+stack.add("till", thickness=60, split=[0.25, 0.75])             # 15 ft, then 45 ft
+stack.replace("sand", split=4)                                  # or decide later
+```
+
+Shares must sum to 1 (`[30, 70]` is rejected, naming the fix). The layers are
+named `sand_1 … sand_N`; a unit with no split — or `split=1` — keeps its bare
+name, so adding a split later never renames anything else.
+
+**The unit stays addressable.** This is the part that matters, because splitting
+changes `nlay` and every per-layer argument downstream is a *positional list*:
+
+```python
+layers = stack.build(vor)
+layers.units                       # {'fill': [0], 'sand': [1,2,3], 'clay': [4]}
+mf.npf(k=layers.per_layer({"fill": 30.0, "sand": 25.0, "clay": 0.05}))
+layers.plot.grid(layers="sand")    # a unit name still selects its layers
+```
+
+Use `per_layer()` rather than writing `k=[30, 25, 25, 25, 0.05]` by hand. A list
+of the *wrong* length is at least rejected by FloPy; a stale list of the **right**
+length after a split is accepted silently with new meaning. A layer name as a key
+overrides its unit, so one slice can differ from its siblings.
+
+**`min_thickness` and `pinch` stay unit-scoped.** A unit pinches out whole or not
+at all. Judged per slice, a 2.5 ft unit split three ways came back
+`idomain [0, 1, 0]` — inactive cells inside a unit that is fully present, blocking
+vertical flow. Splitting is a numerical choice and must not change that verdict.
+
+Two limits worth knowing:
+
+- A unit whose bottom is an `Isopach` **cannot be split** — it is measured from
+  the layer above, so each cut would measure from the previous *cut* and the
+  contacts would drift downward instead of dividing the unit. Give it an absolute
+  bottom, or declare it with `thickness=` and split that.
+- Fixed lifts (*"20 ft layers"*) are not a `split=` mode, because a unit of
+  varying thickness would need a varying number of layers and `nlay` is global.
+  For a `thickness=`-declared unit just divide: a 60 ft unit in 20 ft lifts is
+  `split=3`. For a surface-bounded unit, repeat a constant cut instead:
+  ```python
+  lift = Surface.constant_thickness(20).floored_at(sand_base)
+  stack.add("sand_1", bottom=lift).add("sand_2", bottom=lift).add("sand_3", bottom=sand_base)
+  ```
+
+Underneath it is one new surface operation, `mf.Toward(target, fraction)` —
+the contact a share of the way down from the surface above to `target`. You rarely
+need it directly; `split=` also handles the renormalization that makes equal
+shares actually equal.
 
 #### `pinch=` — what happens where a layer goes thin
 

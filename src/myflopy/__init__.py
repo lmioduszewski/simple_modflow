@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         Min,
         Points,
         Raster,
+        Toward,
         Where,
         modflow_surfaces,
     )
@@ -302,6 +303,7 @@ _EXPORTS = {
     "Points": ("myflopy.layers", "Points"),
     "Array": ("myflopy.layers", "Array"),
     "Isopach": ("myflopy.layers", "Isopach"),
+    "Toward": ("myflopy.layers", "Toward"),
     "Min": ("myflopy.layers", "Min"),
     "Max": ("myflopy.layers", "Max"),
     "Clamp": ("myflopy.layers", "Clamp"),

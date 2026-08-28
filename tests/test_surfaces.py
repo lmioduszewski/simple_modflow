@@ -731,3 +731,84 @@ def test_the_correct_and_fluent_spellings_keep_both_operands():
     assert len(Surface.minimum(a, b, Surface.flat(30)).operands) == 3   # still variadic
     assert a.floored_at(b).operands == (a, b)
     assert a.capped_at(b).operands == (a, b)
+
+
+# --- Surface.toward: fractional subdivision (2026-08-28) -------------------- #
+
+def test_toward_divides_the_interval_it_is_given():
+    """`previous + f * (target - previous)`, per cell.
+
+    The one thing no composition of shift/envelope/isopach could express: the
+    interval is per-cell and unknown until both surfaces are sampled.
+    """
+
+    vor = _FakeVor(3)
+    ls = LayerSurfaces(
+        [Surface.flat(100), Surface.toward(Surface.flat(40), 0.5)],
+        labels=["top", "half"],
+    )
+    top, botm = ls.top_botm(vor, reconcile=False)
+    assert np.allclose(botm[0], 70.0)
+
+
+def test_toward_at_one_lands_exactly_on_the_target():
+    """What makes a split conservative: the last cut IS the declared base."""
+
+    vor = _FakeVor(3)
+    target = Surface.from_array([40.0, 55.0, 70.0])
+    ls = LayerSurfaces(
+        [Surface.flat(100), Surface.toward(target, 1.0)], labels=["top", "base"]
+    )
+    _, botm = ls.top_botm(vor, reconcile=False)
+    assert np.allclose(botm[0], [40.0, 55.0, 70.0])
+
+
+def test_toward_refuses_a_target_measured_from_above():
+    """The ledger-147 failure class: a plausible Surface built from the wrong
+    operand, surfacing much later as odd heads.
+
+    A relative target re-resolves against each cut rather than the unit top, so
+    the contacts drift downward -- thirds of a 60-thick unit come out as
+    [80, 50, -10] instead of [80, 60, 40].
+    """
+
+    for target in (
+        Surface.constant_thickness(60),
+        Surface.offset_below(60),
+        Surface.isopach(Surface.flat(60)),
+    ):
+        with pytest.raises(TypeError, match="does not depend on the surface above"):
+            Surface.toward(target, 0.5)
+
+
+def test_toward_refuses_a_target_that_hides_a_relative_operand():
+    """Composites carry the dependency upward: a `min` node looks absolute but
+    its operand is not, and the drift is the same."""
+
+    hidden = Surface.minimum(Surface.flat(50), Surface.constant_thickness(10))
+    with pytest.raises(TypeError, match="does not depend on the surface above"):
+        Surface.toward(hidden, 0.5)
+
+
+@pytest.mark.parametrize("fraction", [0.0, -0.5, 1.5])
+def test_toward_refuses_a_fraction_outside_its_range(fraction):
+    with pytest.raises(TypeError, match=r"fraction must be in \(0, 1\]"):
+        Surface.toward(Surface.flat(40), fraction)
+
+
+def test_toward_cannot_be_the_model_top():
+    vor = _FakeVor(3)
+    ls = LayerSurfaces([Surface.toward(Surface.flat(40), 0.5)], labels=["top"])
+    with pytest.raises(ValueError, match="cannot be the model top"):
+        ls.top_botm(vor, reconcile=False)
+
+
+def test_toward_did_not_smuggle_in_surface_arithmetic():
+    """`toward` exists INSTEAD of general `Surface - Surface` / `Surface * f`.
+    Those stay absent -- adding them would widen the elevation-vs-thickness
+    ambiguity this codebase already has to guard."""
+
+    a, b = Surface.flat(100), Surface.flat(40)
+    for op in (lambda: a - b, lambda: a * 0.5, lambda: a / 2, lambda: -a):
+        with pytest.raises(TypeError):
+            op()

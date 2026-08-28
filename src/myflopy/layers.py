@@ -22,7 +22,7 @@ the existing, tested `LayerSurfaces` engine.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import Any
@@ -37,7 +37,7 @@ from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-from myflopy.surfaces import LayerSurfaces, Surface
+from myflopy.surfaces import LayerSurfaces, Surface, _depends_on_previous
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
 logger = get_logger(__name__)
@@ -50,6 +50,8 @@ Contours = Surface.from_contours
 Points = Surface.from_points
 Array = Surface.from_array
 Isopach = Surface.isopach
+# Fractional subdivision: the contact a share of the way down to a target.
+Toward = Surface.toward
 # Surface algebra (lower/upper envelopes, clamping, zone selection).
 Min = Surface.minimum
 Max = Surface.maximum
@@ -154,16 +156,156 @@ def _make_surface(bottom, thickness, fill) -> Surface:
     if (bottom is None) == (thickness is None):
         raise ValueError("Provide exactly one of bottom= or thickness=.")
     if thickness is not None:
-        surface = (
-            thickness
-            if isinstance(thickness, Surface)
-            else Surface.constant_thickness(float(thickness))
-        )
+        if isinstance(thickness, Surface):
+            if thickness.kind not in _THICKNESS_KINDS:
+                # Any OTHER Surface was passed through verbatim, and a Surface
+                # is an ELEVATION -- so `thickness=Flat(20)` under a top of 100
+                # set the bottom to 20 (an 80-thick layer), silently, while the
+                # docstring promised a thickness. A raw ndarray at least failed
+                # loudly. The three kinds above really do measure from the
+                # surface above, so they mean here exactly what they say.
+                raise TypeError(
+                    f"thickness= got a {thickness.kind!r} surface, which is an "
+                    f"ELEVATION -- it would set the layer BOTTOM to those values "
+                    f"rather than cut that thickness below the surface above. "
+                    f"For a per-cell thickness map write "
+                    f"`bottom=Isopach(<map>)`; for a constant, `thickness=20.0`; "
+                    f"to place the contact itself, `bottom=<surface>`."
+                )
+            surface = thickness
+        else:
+            surface = Surface.constant_thickness(float(thickness))
     else:
         surface = _coerce_surface(bottom)
     if fill is not None:
         surface = _dc_replace(surface, fill=fill)
     return surface
+
+
+#: Surface kinds that genuinely express "this far below the surface above", and
+#: so mean what they say when handed to ``thickness=``. Every other kind is an
+#: elevation, and was silently used as the layer BOTTOM.
+_THICKNESS_KINDS = ("isopach", "constant_thickness", "offset_below")
+
+
+def _split_shares(split, name: str) -> list[float]:
+    """Normalize a ``split=`` argument to shares of the unit, summing to 1.
+
+    ``None`` -> one layer; an int ``N`` -> N equal shares; a sequence -> those
+    shares verbatim.
+    """
+
+    if split is None:
+        return [1.0]
+    if isinstance(split, bool):  # bool is an int; `split=True` means nothing
+        raise TypeError(
+            f"layer {name!r}: split= takes a count or a list of shares, not a bool."
+        )
+    if isinstance(split, (int, np.integer)):
+        n = int(split)
+        if n < 1:
+            raise ValueError(f"layer {name!r}: split= must be at least 1, got {n}.")
+        return [1.0 / n] * n
+    # `str` before the loop: it is iterable, so it would otherwise get as far as
+    # float('t') and report a confusing conversion error rather than the type.
+    if isinstance(split, str):
+        raise TypeError(
+            f"layer {name!r}: split= takes a count (split=3) or a sequence of "
+            f"shares (split=[0.3, 0.7]); got the string {split!r}."
+        )
+    try:
+        shares = [float(f) for f in split]
+    except TypeError:
+        raise TypeError(
+            f"layer {name!r}: split= takes a count (split=3) or a sequence of "
+            f"shares (split=[0.3, 0.7]); got {type(split).__name__}."
+        ) from None
+    if not shares:
+        raise ValueError(f"layer {name!r}: split= got an empty sequence.")
+    if any(s <= 0 for s in shares):
+        raise ValueError(
+            f"layer {name!r}: every split share must be positive, got {shares}."
+        )
+    total = sum(shares)
+    if abs(total - 100.0) < 1e-6:
+        raise ValueError(
+            f"layer {name!r}: split shares must sum to 1, not 100 -- these look "
+            f"like percentages. Write {[s / 100 for s in shares]} instead of "
+            f"{shares}."
+        )
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(
+            f"layer {name!r}: split shares must sum to 1, got {total:g} from "
+            f"{shares}."
+        )
+    return shares
+
+
+def _sub_surface(surface: Surface, share: float, step: float, unit: str) -> Surface:
+    """One sub-layer's bottom, for a unit being split.
+
+    Two cases, because a unit is declared in one of two ways. A unit given a
+    ``thickness=`` is RELATIVE, and splitting it just divides that thickness --
+    no interpolation, nothing to interpolate toward. A unit given an absolute
+    ``bottom=`` needs :meth:`~myflopy.surfaces.Surface.toward`, whose ``step``
+    is the share of the REMAINING interval (see :func:`_split_steps`).
+    """
+
+    if surface.is_relative:
+        return _dc_replace(surface, value=float(surface.value) * share)
+    if _depends_on_previous(surface):
+        raise TypeError(
+            f"layer {unit!r} cannot be split: its bottom is a {surface.kind!r} "
+            f"surface, which is measured from the layer above, so each cut "
+            f"would measure from the previous cut and the contacts would drift "
+            f"downward rather than divide the unit. Give the unit an absolute "
+            f"bottom (a raster, contours, or points), or declare it with "
+            f"thickness= and split that."
+        )
+    return Surface.toward(surface, step)
+
+
+def _unit_thickness(thickness: np.ndarray, units: dict[str, list[int]]) -> np.ndarray:
+    """Each layer's thickness replaced by its UNIT's total.
+
+    Pinch policy is a statement about a geologic unit -- "where this clay is
+    thinner than a foot, take it out" -- and a split is a numerical choice that
+    should not change the answer. Evaluated per slice it does: a 2.5 ft unit
+    split three ways comes back ``idomain [0, 1, 0]``, holes inside a unit that
+    is fully present, and the zeros BLOCK vertical flow. Feeding the unit total
+    in makes the verdict all-or-nothing.
+
+    Note dividing ``min_thickness`` by N instead does NOT work -- reconcile has
+    already crushed the outer slices by then, so the verdict is the same ragged
+    one, and it breaks the ``min_sep < min_thickness`` invariant past N ~ 9.
+    """
+
+    if all(len(idx) == 1 for idx in units.values()):
+        return thickness
+    totals = np.array(thickness, dtype=float)
+    for indices in units.values():
+        if len(indices) > 1:
+            totals[indices] = thickness[indices].sum(axis=0)
+    return totals
+
+
+def _split_steps(shares: list[float]) -> list[float]:
+    """Turn shares of the WHOLE unit into shares of what is left at each cut.
+
+    ``Surface.toward`` resolves against the contact immediately above it, not
+    the unit top -- so feeding it cumulative fractions 1/3, 2/3, 1 yields
+    thicknesses [20, 26.67, 13.33], not equal thirds. The conversion is
+    ``g_i = share_i / (1 - sum(shares before i))``. The last step is forced to
+    exactly 1.0: it must land ON the unit's base, and floating-point residue in
+    the running remainder would otherwise leave it fractionally short.
+    """
+
+    steps, remaining = [], 1.0
+    for share in shares:
+        steps.append(share / remaining)
+        remaining -= share
+    steps[-1] = 1.0
+    return steps
 
 
 def _reconcile_args(reconcile) -> tuple[bool, str]:
@@ -208,6 +350,11 @@ class _Layer:
     surface: Surface
     min_thickness: float | None = None
     pinch: str | None = None
+    #: How many model layers this geologic UNIT becomes. `None`/1 = itself; an
+    #: int = that many equal shares; a sequence = those shares. The unit stays
+    #: ONE record until `_expanded_layers` compiles it, so `min_thickness` and
+    #: `pinch` keep meaning "this unit", not "each slice of it".
+    split: Any = None
 
 
 @dataclass
@@ -314,6 +461,60 @@ class LayerBuildResult:
     length_units: str
     time_units: str
     vor: Any = None          # grid the result was built on (for views)
+    #: Declared unit name -> the model layers it became, e.g.
+    #: ``{"fill": [0], "sand": [1, 2, 3], "clay": [4]}``. Every unit appears,
+    #: split or not, so it is also the map from what you DECLARED to what MODFLOW
+    #: got. See :meth:`per_layer`.
+    units: dict[str, list[int]] = field(default_factory=dict)
+
+    def per_layer(self, mapping, *, default=_UNSET) -> list:
+        """Expand a ``{unit: value}`` mapping to one value per MODEL layer.
+
+        The bridge between geology and discretization. Splitting a unit changes
+        ``nlay``, and every per-layer argument downstream -- ``mf.npf(k=...)``,
+        ``sto``, ``ic`` -- is a POSITIONAL list, so a hand-written one silently
+        means something new the moment a split is added or removed::
+
+            mf.npf(k=layers.per_layer({"fill": 30.0, "sand": 25.0, "clay": 0.05}))
+
+        A list of the wrong length is at least rejected by FloPy; a stale list of
+        the RIGHT length is accepted with new meaning, which is the failure this
+        exists to prevent. Layer names work as keys too, so one slice of a unit
+        can differ from its siblings -- a later key wins.
+
+        Parameters
+        ----------
+        mapping : dict
+            Unit names (or individual layer names) to values.
+        default : optional
+            Value for units the mapping does not name. Without it, an unnamed
+            unit raises.
+        """
+
+        by_layer: list = [_UNSET] * self.nlay
+        for unit, indices in self.units.items():
+            if unit in mapping:
+                for i in indices:
+                    by_layer[i] = mapping[unit]
+        for i, name in enumerate(self.names):  # a layer name overrides its unit
+            if name in mapping:
+                by_layer[i] = mapping[name]
+
+        unknown = set(mapping) - set(self.units) - set(self.names)
+        if unknown:
+            raise KeyError(
+                f"{sorted(unknown)} name neither a unit nor a layer; have units "
+                f"{sorted(self.units)} and layers {self.names}."
+            )
+        missing = [self.names[i] for i, v in enumerate(by_layer) if v is _UNSET]
+        if missing:
+            if default is _UNSET:
+                raise KeyError(
+                    f"no value for {missing}; give one per unit, or pass "
+                    f"default= to fill the rest."
+                )
+            by_layer = [default if v is _UNSET else v for v in by_layer]
+        return by_layer
 
     @property
     def nlay(self) -> int:
@@ -328,13 +529,19 @@ class LayerBuildResult:
 
     def report(self) -> str:
         """Per-layer thickness + thin/pinched-cell summary."""
+        n_units = len(self.units) or self.nlay
+        split = "" if n_units == self.nlay else f" from {n_units} units"
         lines = [
-            f"LayerStack: {self.nlay} layers, {self.top.size} cells "
+            f"LayerStack: {self.nlay} layers{split}, {self.top.size} cells "
             f"[{self.length_units}/{self.time_units}], {self.n_pinched} pinched cells"
         ]
+        # `thin` counts against the UNIT total, matching the pinch verdict: a
+        # slice of a split unit is thinner than its unit by construction, and
+        # reporting each slice as thin would flag every split stack.
+        unit_thk = _unit_thickness(self.thickness, self.units)
         for i, name in enumerate(self.names):
             t = self.thickness[i]
-            thin = int((t < float(self.min_thickness[i])).sum())
+            thin = int((unit_thk[i] < float(self.min_thickness[i])).sum())
             pinched = int((self.idomain[i] != 1).sum())
             lines.append(
                 f"  [{i}] {name:<14} thk min={t.min():.2f} mean={t.mean():.2f} "
@@ -456,7 +663,11 @@ class LayerBuildResult:
             nan_active_cells=int((nan_bounded & active).sum()),
             nonpositive_active=[int(((self.thickness[k] <= 0) & active[k]).sum())
                                 for k in range(nlay)],
-            thin=[int((self.thickness[k] < float(self.min_thickness[k])).sum())
+            # Against the UNIT total, matching the pinch verdict: a slice of a
+            # split unit is thinner than its unit by construction, so counting
+            # per slice would flag every split stack as thin.
+            thin=[int((_unit_thickness(self.thickness, self.units)[k]
+                       < float(self.min_thickness[k])).sum())
                   for k in range(nlay)],
             pinched=[int((self.idomain[k] != 1).sum()) for k in range(nlay)],
             isolated_active=isolated,
@@ -708,7 +919,8 @@ class LayerBuildResult:
         """Normalize a layer selector to sorted, unique layer indices.
 
         Accepts ``None``/``"all"`` (every layer), a single layer name or integer
-        index, or a list mixing names and indices."""
+        index, a UNIT name (which expands to every layer it was split into), or a
+        list mixing them."""
         if layers is None or (isinstance(layers, str) and layers == "all"):
             return list(range(self.nlay))
         items = list(layers) if isinstance(layers, (list, tuple)) else [layers]
@@ -721,8 +933,15 @@ class LayerBuildResult:
                 idx.append(i)
             elif it in self.names:
                 idx.append(self.names.index(it))
+            elif it in self.units:
+                # A unit name selects every layer it became, so `grid("sand")`
+                # still works once `sand` is split into `sand_1..sand_3`.
+                idx.extend(self.units[it])
             else:
-                raise KeyError(f"no layer named {it!r}; choose from {self.names} or an index.")
+                choices = sorted(set(self.names) | set(self.units))
+                raise KeyError(
+                    f"no layer or unit named {it!r}; choose from {choices} or an index."
+                )
         return sorted(set(idx))
 
     def _vtk_surface_plotter(
@@ -1650,12 +1869,16 @@ class LayerStack:
         min_thickness: float | None = None,
         pinch: str | None = None,
         fill: str | None = None,
+        split=None,
     ) -> LayerStack:
-        """Append a named layer beneath the current bottom. Returns ``self`` (chainable).
+        """Append a named geologic unit beneath the current bottom. Returns ``self``.
 
-        Define the layer either by its **bottom** surface or its **thickness**
+        Define the unit either by its **bottom** surface or its **thickness**
         (exactly one). Thickness is measured down from the surface above, so layers
         compose naturally as you stack them.
+
+        ``split=`` discretizes the unit into several MODEL layers without
+        changing its geometry -- see below.
 
         Parameters
         ----------
@@ -1666,58 +1889,91 @@ class LayerStack:
             ``Contours("base.shp")``, ``Array(values)``, ``Flat(90.0)``). Mutually
             exclusive with ``thickness``.
         thickness
-            Constant or per-cell thickness below the surface above. Mutually
-            exclusive with ``bottom``.
+            Constant thickness below the surface above. Mutually exclusive with
+            ``bottom``. For a per-cell thickness MAP write ``bottom=Isopach(map)``
+            -- a bare Surface here is an elevation, not a thickness, and is
+            refused for that reason.
         min_thickness
-            Minimum layer thickness; thinner cells are handled per ``pinch``.
-            Defaults to the stack-wide value passed to :meth:`build`.
+            Minimum thickness for the UNIT; thinner cells are handled per
+            ``pinch``. Defaults to the stack-wide value passed to :meth:`build`.
+            Not divided among a split unit's layers -- see ``split``.
         pinch
-            What to do where a layer is thinner than ``min_thickness``:
+            What to do where the unit is thinner than ``min_thickness``:
             ``"passthrough"`` (keep the cell active, default), ``"inactive"``
             (idomain 0 -- a true pinch-out), or ``"floor"`` (clamp to the minimum).
         fill
             For raster/derived bottoms, how to fill cells with no source data
             (e.g. ``"propagate"`` to inherit the surface above -> pinch).
+        split
+            Discretize this unit into several model layers. ``split=3`` gives
+            three equal shares; ``split=[0.3, 0.7]`` gives those shares, which
+            must sum to 1. The layers are named ``<name>_1 .. <name>_N``, and
+            ``<name>`` remains addressable through
+            :attr:`LayerBuildResult.units`.
+
+            The unit's GEOMETRY is unchanged: the last cut lands exactly on the
+            declared bottom. ``min_thickness`` and ``pinch`` stay unit-scoped, so
+            a unit either pinches out whole or not at all -- evaluating them per
+            slice produces holes inside a unit that physically exists.
+
+            A unit whose bottom is measured from the layer above (an
+            ``Isopach``) cannot be split; give it an absolute bottom, or declare
+            it with ``thickness=`` and split that.
 
         Examples
         --------
         >>> stack.add("sand", thickness=20)                       # 20-ft layer
         >>> stack.add("clay", thickness=5, pinch="inactive")      # pinches out where thin
         >>> stack.add("bedrock", bottom=Contours("bedrock.shp"))  # bottom from contours
+        >>> stack.add("sand", bottom=Raster("base.tif"), split=3) # -> sand_1..sand_3
+        >>> stack.add("till", thickness=60, split=[0.25, 0.75])   # -> 15 ft, then 45 ft
         """
         _check_layer_name(name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
-        self._layers.append(_Layer(name, surface, min_thickness, pinch))
+        _split_shares(split, name)  # reject a bad split here, not at build
+        self._layers.append(_Layer(name, surface, min_thickness, pinch, split))
         return self
 
     def insert_below(
         self, name: str, new_name: str, *, bottom=None, thickness=None,
-        min_thickness: float | None = None, pinch: str | None = None, fill: str | None = None,
+        min_thickness: float | None = None, pinch: str | None = None,
+        fill: str | None = None, split=None,
     ) -> LayerStack:
-        """Insert a new layer directly below the existing layer ``name``."""
+        """Insert a new unit directly below the existing unit ``name``."""
         _check_layer_name(new_name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
+        _split_shares(split, new_name)
         self._layers.insert(
-            self._index(name) + 1, _Layer(new_name, surface, min_thickness, pinch)
+            self._index(name) + 1,
+            _Layer(new_name, surface, min_thickness, pinch, split),
         )
         return self
 
     def replace(
         self, name: str, *, bottom=None, thickness=None,
-        min_thickness=_UNSET, pinch=_UNSET, fill=None,
+        min_thickness=_UNSET, pinch=_UNSET, fill=None, split=_UNSET,
     ) -> LayerStack:
-        """Update an existing layer in place; unspecified fields are kept."""
+        """Update an existing unit in place; unspecified fields are kept.
+
+        This is also how a unit is split after the fact --
+        ``stack.replace("sand", split=3)``. There is deliberately no ``.split()``
+        verb: this method already edits a declared unit by name, already returns
+        ``self``, and already keeps what you do not mention.
+        """
         idx = self._index(name)
         layer = self._layers[idx]
         if bottom is not None or thickness is not None:
             surface = _make_surface(bottom, thickness, fill)
         else:
             surface = layer.surface if fill is None else _dc_replace(layer.surface, fill=fill)
+        if split is not _UNSET:
+            _split_shares(split, name)
         self._layers[idx] = _Layer(
             name,
             surface,
             layer.min_thickness if min_thickness is _UNSET else min_thickness,
             layer.pinch if pinch is _UNSET else pinch,
+            layer.split if split is _UNSET else split,
         )
         return self
 
@@ -1741,25 +1997,103 @@ class LayerStack:
         raise KeyError(f"no layer named {name!r} (have {self.names}).")
 
     # -- compilation ------------------------------------------------------ #
+    def _expanded_layers(self) -> tuple[list[_Layer], dict[str, list[int]]]:
+        """Expand each declared UNIT into the model layers it becomes.
+
+        Returns the flat layer list and the ``unit name -> layer indices`` map
+        that :attr:`LayerBuildResult.units` carries forward. A unit with no
+        ``split`` passes through unchanged and keeps its own name, so declaring
+        ``split=1`` -- or adding a split later -- never renames anything.
+        """
+
+        out: list[_Layer] = []
+        units: dict[str, list[int]] = {}
+        for layer in self._layers:
+            shares = _split_shares(layer.split, layer.name)
+            first = len(out)
+            if len(shares) == 1:
+                out.append(_dc_replace(layer, split=None))
+            else:
+                steps = _split_steps(shares)
+                for i, (share, step) in enumerate(zip(shares, steps, strict=True), 1):
+                    out.append(_dc_replace(
+                        layer,
+                        name=f"{layer.name}_{i}",
+                        surface=_sub_surface(layer.surface, share, step, layer.name),
+                        split=None,
+                    ))
+            units[layer.name] = list(range(first, len(out)))
+
+        seen: dict[str, str] = {}
+        for unit, indices in units.items():
+            for i in indices:
+                clash = seen.get(out[i].name)
+                if clash is not None:
+                    raise ValueError(
+                        f"splitting {unit!r} produces the layer name "
+                        f"{out[i].name!r}, which unit {clash!r} already uses. "
+                        f"Layer names identify a contact, a DataFrame column and "
+                        f"a 3-D scene actor, so they have to be distinct -- "
+                        f"rename one of the two units."
+                    )
+                seen[out[i].name] = unit
+        return out, units
+
     def _layer_surfaces(self) -> LayerSurfaces:
         """Compile to the :class:`LayerSurfaces` engine: the top plus each layer bottom, labeled."""
 
-        surfaces = [self._top] + [layer.surface for layer in self._layers]
-        labels = ["top"] + self.names
+        layers, _ = self._expanded_layers()
+        surfaces = [self._top] + [layer.surface for layer in layers]
+        labels = ["top"] + [layer.name for layer in layers]
         return LayerSurfaces(surfaces, labels=labels)
 
     def _per_layer_config(self, default_min_thickness, default_pinch):
-        """Resolve each layer's ``(min_thickness, pinch)``, filling unset ones with the defaults."""
+        """Resolve each layer's ``(min_thickness, pinch)``, filling unset ones with the defaults.
 
+        Per MODEL layer, but the values come from the UNIT: every slice of a
+        split unit inherits the unit's policy undivided, which is what makes the
+        pinch verdict a property of the unit rather than of an arbitrary
+        discretization choice.
+        """
+
+        layers, _ = self._expanded_layers()
         min_thk = [
             default_min_thickness if layer.min_thickness is None else layer.min_thickness
-            for layer in self._layers
+            for layer in layers
         ]
         pinch = [
             default_pinch if layer.pinch is None else layer.pinch
-            for layer in self._layers
+            for layer in layers
         ]
         return min_thk, pinch
+
+    def _max_split(self) -> int:
+        """The largest number of model layers any one unit becomes."""
+
+        return max(
+            (len(_split_shares(layer.split, layer.name)) for layer in self._layers),
+            default=1,
+        )
+
+    def _trigger_sep(self, trigger_sep):
+        """Resolve ``trigger_sep=None`` to a value that suits the discretization.
+
+        Reconcile rewrites any layer thinner than ``trigger_sep`` to exactly
+        ``min_sep``. The engine's default of 1.0 length unit is sized for
+        geologic units, and applying it unchanged to their SLICES is destructive:
+        a 2.4 ft unit split three ways comes back ``[0.1, 1.5, 0.1]`` -- 1.7 ft
+        of 2.4, with the base moved and the layer below silently absorbing the
+        difference. Dividing by the largest split restores it to an exact
+        ``[0.8, 0.8, 0.8]``, because the trigger then means the same fraction of
+        a slice that 1.0 meant of a unit.
+
+        Pass a number to override. An unsplit stack is unaffected: the maximum
+        split is 1, so this returns the historical 1.0.
+        """
+
+        if trigger_sep is not None:
+            return float(trigger_sep)
+        return 1.0 / self._max_split()
 
     def refresh(self) -> LayerStack:
         """Rebuild the cached raster of every derived (contour) surface now."""
@@ -1785,6 +2119,7 @@ class LayerStack:
         default_pinch: str = "passthrough",
         reconcile="bottom",
         min_sep: float = 0.1,
+        trigger_sep: float | None = None,
         method: str = "area",
         refresh: bool = False,
         attach: bool = False,
@@ -1838,10 +2173,15 @@ class LayerStack:
             to move and the largest move, which is how you tell "tidied two
             cells" from "rebuilt the geometry".
         min_sep : float, default 0.1
-            The vertical separation reconcile enforces where it acts. The
-            *trigger* is separate and fixed at 1 length unit -- surfaces closer
-            than that are treated as conflicting even if they never actually
-            cross -- and is not exposed on this facade.
+            The vertical separation reconcile enforces where it acts.
+        trigger_sep : float, optional
+            The separation below which reconcile ACTS -- surfaces closer than
+            this are treated as conflicting even if they never actually cross,
+            and the thinner layer is rewritten to ``min_sep``. Defaults to
+            ``1.0 / <largest split>``: the historical 1 length unit for an
+            unsplit stack, and proportionally smaller once a unit is cut into
+            slices, so that splitting a unit does not shrink it. Pass a number to
+            override.
         method : str, default "area"
             Raster sampling method: ``"area"`` (area-weighted) or ``"centroid"``.
         refresh : bool, default False
@@ -1875,10 +2215,12 @@ class LayerStack:
         if not self._layers:
             raise ValueError("Add at least one layer with .add(...) before build().")
         vor = self._require_grid(vor, "build")
+        layers, units = self._expanded_layers()
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
         gdf = ls.sample(
             vor, reconcile=rec_on, which=which, min_sep=min_sep,
+            trigger_sep=self._trigger_sep(trigger_sep),
             method=method, length_units=self.length_units, refresh=refresh,
         )
         top, botm = ls._split_top_botm(gdf)
@@ -1888,12 +2230,15 @@ class LayerStack:
             min_thk, pinch, thickness.shape[0],
             {"reconcile": rec_on, "min_sep": min_sep},
         )
-        idomain = ls._idomain_from_thickness(thickness, min_thk, pinch)
+        idomain = ls._idomain_from_thickness(
+            _unit_thickness(thickness, units), min_thk, pinch
+        )
         result = LayerBuildResult(
             top=top, botm=botm, idomain=idomain, thickness=thickness,
-            names=self.names, min_thickness=min_thk, pinch=pinch,
+            names=[layer.name for layer in layers],
+            min_thickness=min_thk, pinch=pinch,
             length_units=self.length_units, time_units=self.time_units,
-            vor=vor,
+            vor=vor, units=units,
         )
         if attach:
             result.attach_to_grid(vor)
@@ -1907,6 +2252,7 @@ class LayerStack:
         default_pinch: str = "passthrough",
         reconcile="bottom",
         min_sep: float = 0.1,
+        trigger_sep: float | None = None,
         method: str = "area",
         refresh: bool = False,
     ) -> LayerQCReport:
@@ -1925,7 +2271,7 @@ class LayerStack:
         ----------
         vor : VoronoiGridPlus, optional
             Required only if the stack was declared without a grid.
-        default_min_thickness, default_pinch, reconcile, min_sep, method, refresh
+        default_min_thickness, default_pinch, reconcile, min_sep, trigger_sep, method, refresh
             Passed straight through to :meth:`build`, so QC reports on the
             geometry you are actually going to build. Documented there -- in
             particular the ``reconcile`` options, which are what this report is
@@ -1939,7 +2285,8 @@ class LayerStack:
         result = self.build(
             vor,
             default_min_thickness=default_min_thickness, default_pinch=default_pinch,
-            reconcile=reconcile, min_sep=min_sep, method=method, refresh=refresh,
+            reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
+            method=method, refresh=refresh,
         )
         report = result.qc()
         ls = self._layer_surfaces()
@@ -2004,6 +2351,7 @@ class LayerStack:
         default_pinch: str = "passthrough",
         reconcile="bottom",
         min_sep: float = 0.1,
+        trigger_sep: float | None = None,
         method: str = "area",
         refresh: bool = False,
     ):
@@ -2041,9 +2389,19 @@ class LayerStack:
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
         min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
+        # `idomain=` explicitly, rather than `pinch_out=True`: the engine would
+        # judge each layer on its own thickness, and a split unit has to be
+        # judged whole (see `_unit_thickness`). Letting it decide would give a
+        # DIFFERENT idomain here than `build()` produces from the same stack.
+        result = self.build(
+            vor,
+            default_min_thickness=default_min_thickness, default_pinch=default_pinch,
+            reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
+            method=method, refresh=refresh,
+        )
         return ls.to_disv(
             vor,
-            pinch_out=True,
+            idomain=result.idomain,
             minimum_thickness=min_thk,
             pinch=pinch,
             length_units=self.length_units,
@@ -2052,6 +2410,7 @@ class LayerStack:
             reconcile=rec_on,
             which=which,
             min_sep=min_sep,
+            trigger_sep=self._trigger_sep(trigger_sep),
             method=method,
             refresh=refresh,
         )
@@ -2068,6 +2427,7 @@ __all__ = [
     "Points",
     "Array",
     "Isopach",
+    "Toward",
     "Min",
     "Max",
     "Clamp",

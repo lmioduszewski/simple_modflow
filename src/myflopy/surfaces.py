@@ -28,6 +28,26 @@ from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 # Surfaces defined relative to the surface immediately above them.
 _RELATIVE_KINDS = ("offset_below", "constant_thickness")
 
+# Kinds that need `previous` but are NOT a fixed offset from it, so `values`
+# handles them before the `is_relative` branch.
+_PREVIOUS_KINDS = ("isopach", "toward")
+
+
+def _depends_on_previous(surface) -> bool:
+    """True if sampling ``surface`` consults the surface above it, at any depth.
+
+    Composites carry it upward: ``Flat(150).capped_at(Isopach(map))`` is a `min`
+    node, which looks absolute, over an operand that is not. `toward` needs this
+    because a target measured from `previous` re-resolves against each cut it
+    makes, drifting instead of dividing.
+    """
+
+    if surface.kind in _RELATIVE_KINDS or surface.kind in _PREVIOUS_KINDS:
+        return True
+    return any(
+        _depends_on_previous(op) for op in surface.operands if op is not None
+    )
+
 # Pinch-out policies for thin cells (thickness < minimum_thickness):
 #   passthrough -> idomain = -1 (cell removed, vertical flow passes through)
 #   inactive    -> idomain = 0  (cell removed, blocks vertical flow)
@@ -456,6 +476,61 @@ class Surface:
         """``source`` displaced vertically by ``distance`` (negative = downward)."""
         return cls(kind="shift", value=float(distance), operands=(cls._coerce(source),))
 
+    @classmethod
+    def toward(cls, target, fraction: float) -> Surface:
+        """A surface ``fraction`` of the way from the one above down to ``target``.
+
+        ``previous + fraction * (target - previous)``, per cell. This is the one
+        primitive vertical subdivision needs: ``fraction=1/3`` of the way from a
+        unit's top to its base is a contact that no amount of ``shift``/envelope
+        composition can express, because the interval is per-cell and unknown
+        until the surfaces are sampled.
+
+        It exists INSTEAD of general ``Surface - Surface`` and ``Surface *
+        scalar``. Those are deliberately absent (see
+        ``test_subtracting_a_surface_from_a_surface_is_unsupported``) and adding
+        them would widen the elevation-vs-thickness ambiguity that already makes
+        a thickness map easy to confuse with a contact. The recurrence form also
+        dodges the fact that :meth:`values` carries only ONE ``previous`` slot:
+        each cut resolves against the contact immediately above it, so a caller
+        subdividing a unit must renormalise cumulative fractions into per-step
+        ones. :meth:`myflopy.layers.LayerStack.add`'s ``split=`` does that for
+        you, and is the spelling to reach for.
+
+        ``target`` must be ABSOLUTE. A relative target (``offset_below`` /
+        ``constant_thickness``) re-resolves against each sub-contact rather than
+        the unit top, which yields plausible, wrong, monotonically drifting
+        elevations -- ``toward(constant_thickness(60), f)`` at thirds gives
+        ``[80, 50, -10]`` where the answer is ``[80, 60, 40]``.
+
+        Raises
+        ------
+        TypeError
+            If ``target`` is a relative surface, or ``fraction`` is outside
+            ``(0, 1]``.
+        """
+
+        target = cls._coerce(target)
+        if _depends_on_previous(target):
+            raise TypeError(
+                f"Surface.toward() needs a target that does not depend on the "
+                f"surface above it; {target.kind!r} does. Such a target measures "
+                f"from each cut rather than from the unit top, so the contacts "
+                f"drift downward instead of dividing the unit. Give the unit's "
+                f"actual base surface -- e.g. Raster('sand_base.tif') -- or, for "
+                f"a unit declared by thickness, split it with "
+                f"`.add(name, thickness=T, split=N)`, which needs no target."
+            )
+        fraction = float(fraction)
+        if not 0.0 < fraction <= 1.0:
+            raise TypeError(
+                f"Surface.toward() fraction must be in (0, 1], got {fraction}. "
+                f"It is the share of the REMAINING interval to descend, so 1.0 "
+                f"lands exactly on the target and 0 would be a zero-thickness "
+                f"layer."
+            )
+        return cls(kind="toward", value=fraction, operands=(target,))
+
     # -- fluent surface algebra ------------------------------------------- #
     # Read base-surface-first, left to right: ``Raster(bedrock).capped_at(ground - 5)``.
     # These are thin wrappers over the constructors above (same engine), so
@@ -639,6 +714,18 @@ class Surface:
             if previous is None:
                 raise ValueError("Surface.isopach cannot be the model top.")
             return previous - _op(self.operands[0])
+
+        if self.kind == "toward":
+            # Handled here rather than via `is_relative`, matching `isopach`
+            # above: both NEED `previous`, but neither is a fixed offset from
+            # it, so `_RELATIVE_KINDS` (which `values` reads as
+            # `previous - value`) would be exactly wrong for them.
+            if previous is None:
+                raise ValueError(
+                    "Surface.toward cannot be the model top -- there is no "
+                    "surface above to descend from."
+                )
+            return previous + float(self.value) * (_op(self.operands[0]) - previous)
 
         if self.is_relative:
             if previous is None:
