@@ -674,14 +674,50 @@ class VtkScene(Picture):
                 "`pip install trame trame-vtk trame-vuetify`)."
             ) from error
 
+    #: PyVista emits its vtk.js bundle as `<script type="module">`, which makes the
+    #: written page unopenable from disk. See `_make_file_url_safe`.
+    _MODULE_SCRIPT = '<script type="module">'
+
+    @staticmethod
+    def _make_file_url_safe(html: str) -> str:
+        """Turn the exported page into one that also works from ``file://``.
+
+        PyVista writes the vtk.js bundle as ``<script type="module">``, and a
+        module script is not executed when the page is opened from disk. The
+        bundle ends with ``window.OfflineLocalView = {...}``; a following CLASSIC
+        script calls ``OfflineLocalView.load(...)``. So over ``file://`` the
+        viewer shell runs, the loader never does, and vtk.js falls back to its
+        "Drop File / Explore Scene" placeholder -- with
+        ``ReferenceError: OfflineLocalView is not defined`` in the console.
+        Served over HTTP the same file is fine, which is what makes this look
+        like a browser bug rather than a packaging one.
+
+        Dropping the marker is safe for this bundle and checked before use: it
+        contains no ``import``/``export``/``import.meta`` and no top-level
+        ``await``, so it is valid as a classic script. Ordering survives too --
+        a classic script runs at parse time, i.e. BEFORE the consumer below it,
+        where the module was merely deferred and happened to win a
+        ``setTimeout(..., 0)`` race.
+        """
+
+        return html.replace(VtkScene._MODULE_SCRIPT, "<script>", 1)
+
     def html(self, path, **kwargs):
-        """Write a self-contained interactive vtk.js page and return its path."""
+        """Write a self-contained interactive vtk.js page and return its path.
+
+        The page opens from disk as well as over HTTP -- see
+        :meth:`_make_file_url_safe` for why that needs help.
+        """
 
         from pathlib import Path as _Path
 
         path = _Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._export_html(str(path))
+        path.write_text(
+            self._make_file_url_safe(path.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
         return path
 
     def save(self, path, **kwargs):
@@ -709,7 +745,7 @@ class VtkScene(Picture):
         dropping an HTML file into the working directory on every call.
         """
 
-        return {"text/html": self._export_html(None).getvalue()}
+        return {"text/html": self._make_file_url_safe(self._export_html(None).getvalue())}
 
 
 def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:

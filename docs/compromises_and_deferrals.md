@@ -3538,3 +3538,26 @@ same day, which is the useful part of the result.
      - NOT done: no general CRS validation at construction. Only the unambiguous
        case is handled; anything else still passes through to pyproj/rasterio to
        interpret and to complain about in their own words.
+
+155. **`VtkScene.html()` rewrites PyVista's module script so the page opens from disk (2026-08-27).**
+     Reported as "grid.html doesn't display correctly in Firefox" -- it showed
+     vtk.js's "Drop File / Explore Scene" placeholder.
+     - **Not a Firefox bug and not a rendering bug.** PyVista emits its bundle as
+       `<script type="module">`; a module script is not executed from `file://`.
+       The bundle's last act is `window.OfflineLocalView = {...}` and a following
+       CLASSIC script calls `OfflineLocalView.load(...)`, so the shell runs, the
+       loader does not, and the console says
+       `ReferenceError: OfflineLocalView is not defined`. Served over HTTP the
+       identical file is fine -- which is exactly why it looked browser-specific,
+       and why my first investigation (served over localhost) found nothing.
+     - **Post-processing someone else's bundle is the compromise.** It is one
+       string replacement of a marker myflopy does not own, so
+       `test_vtk_html_export.py` asserts the assumption it rests on: no
+       `import`/`export`/`import.meta`/dynamic import and no top-level `await`
+       anywhere in the emitted scripts. If a future PyVista ships module syntax,
+       that test fails rather than writing a page that silently throws.
+     - Ordering improves rather than degrades: a classic script runs at parse
+       time, BEFORE the consumer below it, where the module was merely deferred
+       and happened to win a `setTimeout(..., 0)` race.
+     - Applied to `_repr_mimebundle_` too, since notebook output has the same
+       constraint, and pinned as still self-contained (no network fetches).

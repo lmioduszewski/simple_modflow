@@ -692,6 +692,14 @@ For a file to keep or send, ask for one explicitly:
 layers.plot.surface("all", backend="vtk").html("surfaces.html")
 ```
 
+That page opens by double-clicking it, not only over a web server. PyVista emits
+its vtk.js bundle as `<script type="module">`, which a browser will not execute
+from `file://` — the viewer shell loads, its loader never runs, and you get
+vtk.js's *"Drop File / Explore Scene"* placeholder with
+`ReferenceError: OfflineLocalView is not defined` in the console. `.html()`
+rewrites that one marker on the way out; the bundle uses no module syntax, and a
+test fails if a future PyVista ships one that does.
+
 `grid(backend="vtk")` fuses the layers into one volume, so a contact cannot be
 isolated in it. `surface(backend="vtk")` gives each surface its own actor, which
 is what lets a viewer hide the sheets above and see underneath — the same subject
