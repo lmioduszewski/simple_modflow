@@ -3650,3 +3650,41 @@ same day, which is the useful part of the result.
        needs a hover event trame's client never sends; and `add_mesh_slice`
        bakes eight dead actors into any export. Cross-sections stay
        `stack.plot.section()`, which already answers the question.
+
+158. **`VoronoiGridPlus.from_gsf` reads the `.gsf` itself rather than reusing
+     flopy's `UnstructuredGrid.from_gridspec` (2026-08-28).**
+     A MODFLOW-USG `DISU` stores connectivity and geometric measures but no
+     coordinates, so the `.gsf` is the only file that knows where the cells are.
+     - **Why not delegate.** flopy's reader rejects the standard
+       `UNSTRUCTURED GWF` header outright -- `not (A) or (B)` where `not (A or B)`
+       was meant, so the two-word form always raises "Invalid GSF file, no
+       header" -- and it returns all layers stacked with the raw 3-D vertex
+       lists, which is precisely what must not reach a plan grid. Wrapping it
+       would mean patching a third-party parser and then undoing its output.
+       ~90 lines of our own parser buys the header tolerance, the layer
+       selection, and clear errors that name the offending file and node.
+     - **Why the collapse matters.** A `.gsf` cell is a hexahedron: 8 vertices,
+       the bottom four under the top four. Passed through as-is, every polygon
+       traces its outline twice -- `is_valid` False, DOUBLE the true area -- and
+       the map still *draws correctly*, so the only visible symptom is that
+       hover stops working, because maplibre abandons hit-testing on a
+       self-overlapping ring. Measured in headless Chromium: 0/5 hover probes on
+       the degenerate grid, 5/5 on the collapsed one, with the two renderings
+       within 0.4% of each other on colored pixel count.
+     - **`from_gsf`, not `vor_from_gsf`.** Its neighbour is `vor_from_disu`, so
+       the two constructors on this class now disagree about the `vor_` prefix.
+       `from_gsf` matches the `from_*` convention used everywhere else in the
+       codebase (`Surface.from_contours`, `LayerStack.from_modflow`,
+       `GridSpec.from_object`); renaming `vor_from_disu` to match would break the
+       two Cumberland notebooks that call it, so the inconsistency stays until
+       something else touches that method.
+     - **NOT done: layer elevations.** A `.gsf` carries z per vertex, which is
+       enough to populate `gdf_topbtm` and light up the layer-elevation rows in
+       the map hover. `from_gsf` drops z entirely and returns a plan view only.
+       A USG model's tops and bottoms are also in its DISU, so the better home
+       for that is a reader that takes both files, not this one.
+     - **NOT done: idomain from the USG BAS.** `from_gsf` takes `idomain` by
+       hand like every other constructor here. Note flopy's `MfUsgBas.load` sizes
+       IBOUND from DISU alone and has no CLN awareness, so it under-reads the
+       array on any model with CLN nodes -- reading idomain automatically would
+       mean parsing the BAS ourselves.

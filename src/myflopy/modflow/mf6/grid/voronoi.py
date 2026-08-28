@@ -85,7 +85,10 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.grid.geometry import (
     voronoi_refine_by_point as geometry_voronoi_refine_by_point,
 )
-from myflopy.modflow.mf6.grid.helpers import get_griddata_from_disu
+from myflopy.modflow.mf6.grid.helpers import (
+    get_griddata_from_disu,
+    get_griddata_from_gsf,
+)
 from myflopy.modflow.mf6.grid.plotting import GridPlots
 from myflopy.modflow.mf6.grid.selection import (
     get_grid_edge_cells,
@@ -914,6 +917,67 @@ class VoronoiGridPlus(VoronoiGrid):
     ):
         """Reconstruct a Voronoi-style grid view from a DISU input file."""
         verts, iverts, xcyc = get_griddata_from_disu(disu_path)
+        return cls(
+            verts=verts,
+            iverts=iverts,
+            xcyc=xcyc,
+            crs=crs,
+            name=name,
+            rasters=rasters,
+            idomain=idomain,
+            idomain_path=idomain_path,
+            qhull_options=qhull_options,
+        )
+
+    @classmethod
+    def from_gsf(
+        cls,
+        gsf_path: Path,
+        layer: int = 0,
+        crs: str = 'EPSG:2927',
+        rasters: list | Path = None,
+        name: str = 'voronoi_grid',
+        qhull_options: str = None,
+        idomain: list = None,
+        idomain_path: Path = None,
+    ):
+        """Build a grid view from a MODFLOW-USG ``.gsf`` grid specification file.
+
+        MODFLOW-USG's ``DISU`` carries no coordinates -- only connectivity and
+        geometric measures -- so the ``.gsf`` is where a USG model's cell
+        outlines actually live. Use this for a USG model;
+        :meth:`vor_from_disu` reads an **MF6** ``DISU``, whose ``VERTICES`` and
+        ``CELL2D`` blocks a USG ``DISU`` does not have.
+
+        A ``.gsf`` describes 3-D cells and lists every layer separately, so this
+        collapses each cell to its distinct plan corners and takes one layer.
+        Passing the file's raw records to :class:`VoronoiGridPlus` instead builds
+        polygons that trace their outline twice -- invalid geometry with double
+        the true area, which still *renders* but silently loses map hover -- and
+        one stacked copy of the grid per layer.
+
+        Parameters
+        ----------
+        gsf_path
+            Path to the ``.gsf`` file.
+        layer
+            Zero-based layer to take the plan view from. Every layer shares one
+            plan geometry, so this selects the cell centers and the node numbers
+            the cells correspond to.
+        crs, rasters, name, qhull_options, idomain, idomain_path
+            As for :class:`VoronoiGridPlus`.
+
+        Returns
+        -------
+        VoronoiGridPlus
+            A grid whose cells are the plan polygons of the chosen layer.
+
+        Examples
+        --------
+        >>> vor = mf.VoronoiGridPlus.from_gsf("flow-tt01.gsf", crs="EPSG:2927")
+        >>> vor.plot.map().show()
+        """
+        verts, iverts, xcyc = get_griddata_from_gsf(gsf_path, layer=layer)
         return cls(
             verts=verts,
             iverts=iverts,

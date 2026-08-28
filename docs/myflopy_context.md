@@ -40,6 +40,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | Voronoi / unstructured grids (DISV, DISU) | ✅ | `grid/voronoi.py` (`VoronoiGridPlus`), `grid/triangle.py` (`TriangleGrid`), `simulation/discretization.py` |
+| Import a MODFLOW-USG grid from its `.gsf` | ✅ | `grid/voronoi.py` `VoronoiGridPlus.from_gsf`, `grid/helpers.py` `get_griddata_from_gsf` (added 2026-08-28); USG's DISU carries no coordinates, so the `.gsf` is the geometry. MF6 DISU stays on `vor_from_disu` |
 | Programmatic refinement regions | ✅ | `TriangleGrid`, `MeshBuildProfile`, `grid/seed_optimization.py`, `grid/mesh_quality.py` |
 | Layer surfaces from raster / flat / points / contours(GRASS) | ✅ | `surfaces.py` (`Surface`, `LayerSurfaces`) |
 | Relative surfaces (`offset_below`, `constant_thickness`) | ✅ | `surfaces.py` (added 2026-06) |
