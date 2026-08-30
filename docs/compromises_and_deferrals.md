@@ -3696,7 +3696,8 @@ same day, which is the useful part of the result.
        `vor.reconcile_surfaces` also exposes) or collapsing a pinched unit's
        sub-contacts before reconcile rather than after. Both are wider than this
        change; the cells involved are `idomain = 0` by construction, and a
-       smaller `min_sep` shrinks the drift proportionally.
+       smaller `min_sep` shrinks the drift proportionally. **Promoted to its own
+       deferral as 165**, with the measurements and both candidate fixes.
      - **NOT a `split=` mode: fixed lifts.** "20 ft layers" on a unit of varying
        thickness needs a varying number of layers, and `nlay` is global. A
        `thickness=`-declared unit just divides (60 ft in 20 ft lifts is
@@ -4062,3 +4063,41 @@ same day, which is the useful part of the result.
        IBOUND from DISU alone and has no CLN awareness, so it under-reads the
        array on any model with CLN nodes -- reading idomain automatically would
        mean parsing the BAS ourselves.
+
+165. **Splitting a pinched-out unit inflates it by `(N-1) * min_sep` — fix DEFERRED
+     (2026-08-30, from 158).**
+     Splitting is supposed to change discretization, not geometry, and for a unit
+     with real thickness it does (158 scaled `trigger_sep` to make it exact).
+     A unit that pinches out **entirely** is the one case left: reconcile floors
+     each sub-contact at `min_sep` independently, so the unit's total grows
+     linearly with the number of slices and everything below it shifts down.
+     - Re-measured 2026-08-30, still live, on a zero-thickness unit with
+       `pinch="inactive"` and the default `min_sep=0.1`:
+
+       | split | unit total | base |
+       |---|---|---|
+       | none | 0.100 | 99.900 |
+       | 2 | 0.200 | 99.800 |
+       | 3 | 0.300 | 99.700 |
+       | 5 | 0.500 | 99.500 |
+
+     - **Why it is tolerable:** the cells are `idomain = 0` by construction, so
+       nothing is solved in them; the drift is bounded and known; and it scales
+       with `min_sep`, so a caller who cares can shrink it. It cannot silently
+       grow — the unit either pinches whole or not at all (158).
+     - **Why it is not fixed:** both routes are wider than the change that
+       surfaced it.
+       1. **Per-layer `min_sep`.** `reconcile_surfaces` (`grid/geometry.py:332`)
+          takes a scalar and applies it column by column; it is also exposed as
+          `vor.reconcile_surfaces`, so widening the parameter is a public
+          signature change with its own snapshot review.
+       2. **Collapse a pinched unit's sub-contacts before reconcile.** Cleaner in
+          principle — the split provably could not move geometry — but reconcile
+          is single-pass by design, and the pinch verdict is currently computed
+          *after* it, so this reorders the engine and re-opens
+          `_validate_pinch_invariant`.
+     - **If picked up:** route 2 is the better answer and subsumes route 1 for
+       this case. Do it with the two-pass shape the 158 design discussion
+       rejected on scope grounds (reconcile the units as declared, then cut each
+       unit's interval), not by special-casing zero thickness. Test it against
+       the table above: every row should read `0.100 / 99.900`.
