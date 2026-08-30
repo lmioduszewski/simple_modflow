@@ -432,9 +432,14 @@ def build_cell_input_map_payload(
         Aggregation name passed to ``groupby().agg(...)`` for duplicate cells.
     """
 
-    if value_column not in frame.columns:
-        raise KeyError(f"Value column {value_column!r} was not found.")
-
+    # Emptiness FIRST. A selection that matched no records comes back WITHOUT
+    # its value column -- `wel.inputs.get(per=0, layer=0)` on a model whose
+    # wells are in layers 1 and 3 returns
+    # `['model', 'package', 'per', 'layer', 'cell']` -- so guarding the column
+    # first turned "no records for this period/layer" into
+    # `KeyError: Value column 'q' was not found`, naming a column the package
+    # certainly has and blaming the wrong thing. It also made the empty branch
+    # below, which exists precisely to draw an all-fill map, unreachable.
     full_index = pd.Index(range(int(ncpl)), name="cell")
     if frame.empty:
         values = pd.Series(float(fill_value), index=full_index, name=value_column)
@@ -447,6 +452,12 @@ def build_cell_input_map_payload(
             value_column: values.astype(float).tolist(),
         }
         return values.astype(float).tolist(), hover
+
+    if value_column not in frame.columns:
+        raise KeyError(
+            f"Value column {value_column!r} was not found; the selection has "
+            f"{sorted(frame.columns)}."
+        )
 
     selected = frame.copy()
     grouped = selected.groupby("cell", dropna=False)
@@ -535,11 +546,14 @@ def build_group_input_compare_map_payload(
         range suggested for diverging diff maps.
     """
 
-    if diff_column not in frame.columns:
-        raise KeyError(f"Difference column {diff_column!r} was not found.")
-    if value_column not in frame.columns:
-        raise KeyError(f"Value column {value_column!r} was not found.")
-
+    # Emptiness FIRST. A selection that matched no records comes back WITHOUT
+    # its value column -- `wel.inputs.get(per=0, layer=0)` on a model whose
+    # wells are in layers 1 and 3 returns
+    # `['model', 'package', 'per', 'layer', 'cell']` -- so guarding the column
+    # first turned "no records for this period/layer" into
+    # `KeyError: Value column 'q' was not found`, naming a column the package
+    # certainly has and blaming the wrong thing. It also made the empty branch
+    # below, which exists precisely to draw an all-fill map, unreachable.
     full_index = pd.Index(range(int(ncpl)), name="cell")
     if frame.empty:
         values = pd.Series(float(fill_value), index=full_index, name=diff_column)
@@ -553,6 +567,13 @@ def build_group_input_compare_map_payload(
             diff_column: values.astype(float).tolist(),
         }
         return values.astype(float).tolist(), hover, float(abs(fill_value))
+
+    for column, label in ((diff_column, "Difference"), (value_column, "Value")):
+        if column not in frame.columns:
+            raise KeyError(
+                f"{label} column {column!r} was not found; the selection has "
+                f"{sorted(frame.columns)}."
+            )
 
     grouped = frame.groupby("cell", dropna=False)
     diff_values = grouped[diff_column].agg(agg).reindex(

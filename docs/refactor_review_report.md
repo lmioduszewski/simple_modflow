@@ -754,7 +754,7 @@ Core lifecycle and summary:
 - `model.workspace`
 - `model.summary()`
 - `model.file_summary()`
-- `model.package_summary()`
+- `model.packages.summary()` *(was `model.package_summary()`, deleted 2026-08-30)*
 - `model.output_summary()`
 - `model.grid_summary()`
 - `model.result_summary()`

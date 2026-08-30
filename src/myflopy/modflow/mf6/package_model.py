@@ -12,6 +12,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy._logging import get_logger
+from myflopy.viz import mosaic as _mosaic
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
@@ -69,6 +70,17 @@ class StaticArrayPackageExplorer:
         self.model = model
         self.package_name = str(package_name).lower()
         self._fields = dict(fields)
+
+    @property
+    def declared_fields(self) -> list[str]:
+        """The array fields this package DECLARES, without opening the package.
+
+        :attr:`fields` reports what is actually present, which needs the package
+        loaded; this is the cheap answer, for callers that only need to know
+        what could be drawn (``model.packages.summary()``).
+        """
+
+        return list(self._fields)
 
     def _available_field_items(self) -> list[tuple[str, dict[str, str]]]:
         """The declared ``(field_name, metadata)`` pairs that actually exist on the package."""
@@ -566,6 +578,214 @@ class ModelPackages:
         """Bind the preferred ``model.packages`` exploration namespace to ``model``."""
 
         self.model = model
+
+    #: Packages whose fields are static ARRAYS rather than stress-period
+    #: records. They answer `model.packages.npf.k.map()` -- one level shallower
+    #: than the record packages' `.inputs.<field>.map()` -- so `summary` has to
+    #: ask them for their fields differently.
+    _STATIC_ARRAY_PACKAGES = ("npf", "ic", "sto")
+
+    def _explorer_or_none(self, package_name: str):
+        """The explorer for ``package_name``, or ``None`` if it has none."""
+
+        try:
+            return getattr(self, package_name)
+        except AttributeError:
+            return None
+
+    def summary(self, *, detail: str = "fields") -> pd.DataFrame:
+        """One row per package: what it is, and what can be drawn from it.
+
+        The map from "what is in this model" to "what can I look at", which
+        otherwise means knowing that record packages answer
+        ``.inputs.<field>.map()`` while array packages answer ``.<field>.map()``,
+        and that several packages have no explorer at all.
+
+        Parameters
+        ----------
+        detail : {'fields', 'data'}, default 'fields'
+            ``'fields'`` is CHEAP: the registry and the package list only, no
+            package data read, so it stays usable on a lazily loaded run.
+            ``'data'`` additionally reports ``records``, ``periods`` and
+            ``layers`` per package, which requires reading each package's
+            records -- and is what tells you that ``wel`` has nothing in layer 0
+            before you draw an empty map of it.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``package``, ``kind``, ``mappable``, ``fields``, ``results``
+            (plus ``records``, ``periods``, ``layers`` when ``detail='data'``).
+
+        Raises
+        ------
+        ValueError
+            If ``detail`` is neither value.
+        """
+
+        if detail not in ("fields", "data"):
+            raise ValueError(
+                f"detail must be 'fields' or 'data', not {detail!r}."
+            )
+
+        rows = []
+        for raw in self.model.package_names:
+            name = str(raw).lower()
+            spec = get_package_explorer_spec(name)
+            explorer = self._explorer_or_none(name)
+
+            if spec is not None:
+                kind = spec.kind
+                fields = list(spec.inputs)
+                results = list(spec.results)
+            elif name in self._STATIC_ARRAY_PACKAGES and explorer is not None:
+                kind = "static_array"
+                fields = explorer.declared_fields
+                results = []
+            else:
+                kind = ""
+                fields = []
+                results = []
+
+            rows.append({
+                "package": str(raw).upper(),
+                "kind": kind,
+                "mappable": self._is_mappable(explorer, kind, fields),
+                "fields": ", ".join(fields),
+                "results": ", ".join(results),
+            })
+
+        frame = pd.DataFrame(rows).reindex(
+            columns=["package", "kind", "mappable", "fields", "results"]
+        )
+        if detail == "fields":
+            return frame
+        counts = pd.DataFrame([self._package_data_counts(row) for row in rows])
+        # Nullable Int64: a package with no readable records must stay blank
+        # rather than turning the whole column into floats and printing "504.0".
+        counts["records"] = counts["records"].astype("Int64")
+        return frame.join(counts)
+
+    @staticmethod
+    def _is_mappable(explorer, kind: str, fields: list) -> bool:
+        """Whether this package can actually be drawn.
+
+        PROBED, not inferred from the registry. HFB is deliberately absent from
+        `package_registry` -- it is face-indexed, so it has no cellid, and MF6
+        writes it no budget record (ledger 162) -- yet
+        `model.packages.hfb.inputs.map()` exists and works. Keying off registry
+        fields alone would report the one package whose entry is entirely
+        hand-written as undrawable, which is exactly backwards.
+        """
+
+        if explorer is None:
+            return False
+        if callable(getattr(getattr(explorer, "inputs", None), "map", None)):
+            return True
+        if kind == "static_array" and fields:
+            return True
+        return callable(getattr(getattr(explorer, "results", None), "map", None))
+
+    def _package_data_counts(self, row: dict) -> dict:
+        """``records``/``periods``/``layers`` for one package row (reads data)."""
+
+        blank = {"records": None, "periods": "", "layers": ""}
+        if not row["mappable"] or row["kind"] == "static_array":
+            return blank
+        explorer = self._explorer_or_none(str(row["package"]).lower())
+        inputs = getattr(explorer, "inputs", None)
+        if inputs is None:
+            return blank
+        # UZF (and any other per-field namespace) has no whole-package `get()`;
+        # its records hang off each field. Counting the first declared field is
+        # right for a summary: every UZF field carries one row per cell-period.
+        source = inputs
+        if not hasattr(source, "get"):
+            first = (row["fields"].split(", ") or [""])[0]
+            source = getattr(inputs, first, None)
+            if source is None or not hasattr(source, "get"):
+                return blank
+        try:
+            frame = source.get()
+        except (KeyError, ValueError, AttributeError, OSError):
+            # A package whose records cannot be read is reported as blank rather
+            # than failing the whole table: `summary` is the thing you reach for
+            # WHEN something is off, so it must survive one bad package.
+            logger.debug("summary: %r records unreadable", row["package"])
+            return blank
+
+        def _uniq(column):
+            if column not in frame.columns:
+                return ""
+            return ", ".join(str(v) for v in sorted(frame[column].dropna().unique()))
+
+        return {
+            "records": int(len(frame)),
+            "periods": _uniq("per"),
+            "layers": _uniq("layer"),
+        }
+
+    def mosaic(self, *, packages=None, ncols: int = 3, title: str | None = None,
+               sync_views: bool = True, **kwargs):
+        """Every mappable package, drawn as one grid of small multiples.
+
+        The combinator over :meth:`summary` -- it draws what that table says is
+        mappable. Record packages contribute their default input field; array
+        packages contribute their first declared array.
+
+        Parameters
+        ----------
+        packages : list of str, optional
+            Restrict to these packages. Default: everything ``summary()`` marks
+            mappable.
+        ncols : int, default 3
+            Grid width.
+        title : str, optional
+            Overall figure title.
+        sync_views : bool, default True
+            Pan and zoom the panels together.
+        **kwargs
+            Forwarded to each package's ``map()`` (e.g. ``per=``, ``layer=``).
+
+        Returns
+        -------
+        viz.Fig
+            One figure. A package that cannot be drawn is skipped with a DEBUG
+            log rather than failing the grid.
+        """
+
+        table = self.summary()
+        wanted = (
+            [str(p).lower() for p in packages]
+            if packages is not None
+            else [str(p).lower() for p in table.loc[table["mappable"], "package"]]
+        )
+
+        panels = []
+        for name in wanted:
+            explorer = self._explorer_or_none(name)
+            if explorer is None:
+                logger.debug("mosaic: no explorer for %r, skipping", name)
+                continue
+            drawer = getattr(getattr(explorer, "inputs", None), "map", None)
+            if drawer is None and name in self._STATIC_ARRAY_PACKAGES:
+                declared = explorer.declared_fields
+                drawer = getattr(getattr(explorer, declared[0], None), "map", None) \
+                    if declared else None
+            if drawer is None:
+                logger.debug("mosaic: %r has no map(), skipping", name)
+                continue
+            try:
+                panels.append((name, drawer(**kwargs)))
+            except (KeyError, ValueError, AttributeError, OSError) as error:
+                # One unmappable package must not lose the other nineteen.
+                logger.debug("mosaic: %r could not be drawn (%s)", name, error)
+
+        if not panels:
+            raise ValueError(
+                "no package could be drawn; `summary()` shows what is mappable."
+            )
+        return _mosaic(panels, ncols=ncols, title=title, sync_views=sync_views)
 
     def __getattr__(self, package_name: str) -> PackageExplorer:
         """Return a registry-backed generic package explorer."""

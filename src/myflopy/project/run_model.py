@@ -492,22 +492,6 @@ class LoadedMf6Run(SimulationBase):
 
         return self.nper
 
-    def package_summary(self) -> pd.DataFrame:
-        """Return a lightweight package table discovered from package filenames."""
-
-        rows = []
-        for package_type in self.package_names:
-            suffix = _PACKAGE_TYPE_TO_SUFFIX.get(package_type, package_type.lower())
-            path = self.workspace / f"{self.name}.{suffix}"
-            rows.append(
-                {
-                    "package": package_type,
-                    "package_type": package_type.lower(),
-                    "filename": path.name if path.exists() else None,
-                }
-            )
-        return pd.DataFrame(rows)
-
     @property
     def modelgrid(self):
         """Underlying FloPy modelgrid object, loaded only when needed."""

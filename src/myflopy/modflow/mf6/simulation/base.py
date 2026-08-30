@@ -1197,24 +1197,6 @@ class SimulationBase:
             )
         return pd.DataFrame(rows)
 
-    def package_summary(self) -> pd.DataFrame:
-        """Return a table describing currently attached FloPy package objects."""
-
-        rows = []
-        for package in self.gwf.packagelist:
-            package_name = getattr(package, "package_name", None)
-            if isinstance(package_name, (list, tuple)):
-                package_name = ",".join(str(value) for value in package_name)
-            package_label = package_name or getattr(package, "pname", None) or package.__class__.__name__
-            rows.append(
-                {
-                    "package": str(package_label).upper(),
-                    "package_type": getattr(package, "package_type", package.__class__.__name__),
-                    "filename": getattr(package, "filename", None),
-                }
-            )
-        return pd.DataFrame(rows)
-
     def output_summary(self) -> pd.DataFrame:
         """Return a lightweight summary of key MF6 output files for this run."""
 

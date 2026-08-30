@@ -2,6 +2,8 @@ import os
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
+import pytest
+
 import myflopy.modflow.mf6.package_budget as package_budget
 import myflopy.modflow.mf6.package_explorer as package_explorer
 import myflopy.modflow.mf6.package_explorer_utils as package_explorer_utils
@@ -178,3 +180,224 @@ def test_model_group_exposes_wel_package_accessor_without_full_initialization():
     packages = GroupPackages(group)
 
     assert packages.wel.inputs == "wel-inputs"
+
+
+# --- model.packages.summary() / .mosaic() (2026-08-30) ---------------------- #
+
+def test_summary_names_every_package_and_marks_what_can_be_drawn(canonical_model):
+    """The map from "what is in this model" to "what can I look at".
+
+    Without it you have to know that record packages answer
+    `.inputs.<field>.map()` while array packages answer `.<field>.map()`, and
+    that several packages have no explorer at all.
+    """
+
+    frame = canonical_model.packages.summary()
+
+    assert list(frame.columns) == [
+        "package", "kind", "mappable", "fields", "results",
+    ]
+    assert list(frame["package"]) == list(canonical_model.package_names), \
+        "every package in the model gets a row, in model order"
+
+    by_name = frame.set_index("package")
+    assert by_name.loc["CHD", "mappable"]
+    assert by_name.loc["CHD", "fields"] == "head"
+    assert by_name.loc["NPF", "kind"] == "static_array"
+    assert by_name.loc["NPF", "fields"] == "k, k22, k33"
+    # OC has no explorer and nothing to draw; saying so is the point.
+    assert not by_name.loc["OC", "mappable"]
+
+
+def test_summary_is_cheap_by_default(canonical_model, monkeypatch):
+    """`LoadedMf6Run` overrides package discovery precisely to avoid a full
+    load, so the default must not read package records. `detail='data'` is where
+    that cost is opted into."""
+
+    calls = []
+    namespace = type(canonical_model.packages)
+    original = namespace._package_data_counts
+    monkeypatch.setattr(
+        namespace, "_package_data_counts",
+        lambda self, row: calls.append(row["package"]) or original(self, row),
+    )
+
+    canonical_model.packages.summary()
+    assert calls == [], "the cheap path read package data"
+
+    canonical_model.packages.summary(detail="data")
+    assert calls, "detail='data' did not read package data"
+
+
+def test_summary_data_reports_the_layers_a_package_actually_occupies(canonical_model):
+    """The column that explains an empty map before you draw one.
+
+    `wel.inputs.map()` defaults to layer 0, and the canonical wells are in
+    layers 1 and 3 -- which used to surface as a `KeyError` naming a column the
+    package certainly has.
+    """
+
+    frame = canonical_model.packages.summary(detail="data").set_index("package")
+
+    assert frame.loc["WEL", "layers"] == "1, 3"
+    assert int(frame.loc["WEL", "records"]) == 12
+    # UZF keeps its records per FIELD, with no whole-package get(); counting the
+    # first declared field is still the right answer for a summary.
+    assert int(frame.loc["UZF", "records"]) > 0
+    # A package with no readable records stays blank rather than turning the
+    # whole column into floats.
+    assert str(frame["records"].dtype) == "Int64"
+
+
+def test_summary_rejects_an_unknown_detail(canonical_model):
+    with pytest.raises(ValueError, match="detail must be 'fields' or 'data'"):
+        canonical_model.packages.summary(detail="everything")
+
+
+def test_mosaic_draws_every_mappable_package(canonical_model):
+    """The combinator over `summary()`: it draws what that table says is
+    mappable, rather than making you name them."""
+
+    table = canonical_model.packages.summary()
+    expected = int(table["mappable"].sum())
+
+    fig = canonical_model.packages.mosaic()
+    assert len(fig.data) == expected
+
+    subset = canonical_model.packages.mosaic(packages=["chd", "drn", "rch"])
+    assert len(subset.data) == 3
+
+
+def test_package_summary_is_gone(canonical_model):
+    """Deleted rather than deprecated: zero callers, and not in the api
+    snapshot, `__all__` or `__compatibility__`. `model.packages.summary()`
+    replaces it, in the grammar the rest of the namespace already uses."""
+
+    assert not hasattr(canonical_model, "package_summary")
+    assert not hasattr(type(canonical_model), "package_summary")
+
+
+# --- input maps must not need results (2026-08-30) -------------------------- #
+
+def test_an_input_map_does_not_need_the_model_to_have_run(tmp_path):
+    """Drawing INPUTS needs no results, and used to demand them anyway.
+
+    `_grid_of` probes `hasattr(source, "hds")` to decide whether a source can
+    serve a results field. `hasattr` swallows only `AttributeError`, so on an
+    unrun model FloPy's `FileNotFoundError` escaped the CAPABILITY PROBE and
+    killed every `map()` -- including the input maps that need no results file
+    at all.
+    """
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        build_canonical_model,
+    )
+
+    model = build_canonical_model(tmp_path / "unrun", config=CanonicalModelConfig.testing())
+    assert not (tmp_path / "unrun" / model.name / f"{model.name}.hds").exists(), \
+        "fixture ran the model; the regression cannot reproduce"
+
+    for package in ("chd", "drn", "rch"):
+        picture = getattr(model.packages, package).inputs.map()
+        assert picture.__class__.__name__ == "Choro"
+
+    # And the whole namespace still answers, which is what makes summary/mosaic
+    # usable while building a model rather than only after running one.
+    assert len(model.packages.summary()) == len(model.package_names)
+    assert model.packages.mosaic() is not None
+
+
+def test_a_period_or_layer_with_no_records_draws_an_empty_map(canonical_model):
+    """`wel` sits in layers 1 and 3, so the default `layer=0` selects nothing.
+
+    An empty selection comes back WITHOUT its value column, so guarding the
+    column before the emptiness turned "no records here" into
+    `KeyError: Value column 'q' was not found` -- naming a column the package
+    certainly has, and making the all-fill branch below it unreachable.
+    """
+
+    empty = canonical_model.packages.wel.inputs.get(per=0, layer=0)
+    assert empty.empty and "q" not in empty.columns, "the trap stopped reproducing"
+
+    picture = canonical_model.packages.wel.inputs.map()          # layer 0
+    assert picture.__class__.__name__ == "Choro"
+    assert canonical_model.packages.wel.inputs.map(layer=3) is not None
+
+
+def test_a_genuinely_missing_value_column_still_raises(canonical_model):
+    """Reordering the guards must not lose the guard: a NON-empty frame missing
+    the column is still a caller error, and now says what the frame does have."""
+
+    from myflopy.modflow.mf6.package_plotting import build_cell_input_map_payload
+
+    frame = canonical_model.packages.drn.inputs.get().drop(columns=["elev"])
+    with pytest.raises(KeyError, match="the selection has"):
+        build_cell_input_map_payload(
+            frame, ncpl=canonical_model.vor.ncpl, value_column="elev",
+            per=0, layer=0,
+        )
+
+def test_mappable_is_probed_not_inferred_from_the_registry():
+    """HFB is deliberately NOT in `package_registry` -- it is face-indexed, so it
+    has no cellid, and MF6 writes it no budget record (ledger 162). Its explorer
+    is hand-written and it DRAWS: `model.packages.hfb.inputs.map()`.
+
+    Inferring `mappable` from registry fields reported exactly that package --
+    the one whose entry is entirely hand-written -- as undrawable. So the column
+    probes for a real `map()` instead.
+    """
+
+    is_mappable = package_model.ModelPackages._is_mappable
+
+    class HfbShaped:
+        """The shape HFB actually has: `.inputs` is self, and self maps."""
+
+        @property
+        def inputs(self):
+            return self
+
+        def map(self):
+            return object()
+
+    # No registry fields, no results, no static arrays -- and still mappable.
+    assert is_mappable(HfbShaped(), "", [])
+
+    class ResultsOnly:
+        """LAK/SFR: nothing to pick on the inputs side, but results draw."""
+
+        class _R:
+            def map(self):
+                return object()
+
+        results = _R()
+
+    assert is_mappable(ResultsOnly(), "surface_water", [])
+
+    class Inert:
+        """An explorer that cannot draw anything."""
+
+    assert not is_mappable(Inert(), "", [])
+    assert not is_mappable(None, "cell_stress", ["head"])
+    # Static arrays draw through `<field>.map()`, one level shallower.
+    assert is_mappable(Inert(), "static_array", ["k"])
+    assert not is_mappable(Inert(), "static_array", [])
+
+
+def test_summary_uses_the_probe_for_a_registry_absent_package(canonical_model, monkeypatch):
+    """The predicate above, reached through real `summary()` output.
+
+    `ModelPackages.hfb` binds an explorer to any model, so naming HFB in the
+    package list is enough to get its row -- no barrier needs to exist. That
+    keeps this pinned to the summary path rather than to `_is_mappable` alone.
+    """
+
+    monkeypatch.setattr(
+        type(canonical_model), "package_names",
+        property(lambda self: ["NPF", "HFB"]),
+    )
+    row = canonical_model.packages.summary().set_index("package").loc["HFB"]
+
+    assert row["mappable"], "the one hand-written package was reported undrawable"
+    assert row["fields"] == "", "HFB maps as a whole; there is no field to pick"
+    assert row["results"] == "", "MF6 writes HFB no budget record at all"

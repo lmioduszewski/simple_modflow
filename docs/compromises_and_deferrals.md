@@ -4101,3 +4101,130 @@ same day, which is the useful part of the result.
        rejected on scope grounds (reconcile the units as declared, then cut each
        unit's interval), not by special-casing zero thickness. Test it against
        the table above: every row should read `0.100 / 99.900`.
+
+166. **`model.packages.summary()` / `.mosaic()`, and three bugs found by asking
+     for them (2026-08-30).**
+     Asked for a quick way to see every mappable package and its key facts.
+     There was none: `model.package_names` gives names, `model.summary()` is one
+     model-level row, and `ModelPackages` had no `__iter__`, `__dir__` or
+     `__repr__`. The registry already knew every package's mappable fields;
+     nothing exposed them together.
+     - **`summary()` is CHEAP by default** -- registry plus the package list, no
+       package data read -- because `LoadedMf6Run` overrides package discovery
+       precisely to avoid `_ensure_core_loaded()`, and a rich default would have
+       thrown that away. `detail="data"` opts into `records`/`periods`/`layers`.
+       The `layers` column is the one that pays for itself: it reports `WEL` as
+       `1, 3`, which is exactly why `wel.inputs.map()` drew nothing at the
+       default `layer=0`.
+     - **`mosaic()` is a verb, not a flag on `summary()`.** A `summary(mosaic=True)`
+       would be the table-and-picture conflation `view_layer_conventions` exists
+       to prevent. `ModelPackages` is not a policed scope in
+       `test_plot_vocabulary` (only module/model/grid/stack are), so neither
+       method has a vocabulary cost.
+     - **`mappable` is PROBED, not inferred from the registry.** Mutation testing
+       caught this: HFB is deliberately absent from `package_registry` (ledger
+       162) yet `packages.hfb.inputs.map()` works, so a registry-derived
+       predicate reported the one hand-written package as undrawable -- exactly
+       backwards. The column now looks for a callable `map()`.
+     - **Bug: every map died on an unrun model.** `_grid_of` probes
+       `hasattr(source, "hds")`; `hasattr` swallows only `AttributeError`, so
+       FloPy's `FileNotFoundError` escaped a CAPABILITY PROBE and killed even
+       INPUT maps, which need no results at all. Now `_has_results` catches the
+       closed set (`OSError`/`ValueError`/`KeyError`) and logs the degradation.
+     - **Bug: `Choro.per` dereferenced a model it does not always have.** With
+       the probe fixed, input maps arrived with `model=None` and died in the
+       `per` setter. For a model-less choropleth `per` is a LABEL -- which
+       period's records were selected is already baked into the values -- so it
+       is stored rather than resolved to a `kstpkper`.
+     - **Bug: an empty selection reported the wrong thing.** A selection matching
+       no records comes back WITHOUT its value column, so guarding the column
+       before the emptiness turned "no records for this period/layer" into
+       `KeyError: Value column 'q' was not found`, naming a column the package
+       certainly has -- and made the all-fill branch below it unreachable. Found
+       in BOTH `build_cell_input_map_payload` and
+       `build_group_input_compare_map_payload`; fixed in both.
+     - **`package_summary()` deleted outright, not deprecated.** Both bodies
+       (`SimulationBase` and the `LoadedMf6Run` override). It is absent from
+       `tests/api_snapshot.json` -- which DOES cover this class, so the absence
+       is meaningful -- absent from `__all__` and `__compatibility__`, and had
+       zero callers anywhere. `docs/deprecation_policy.md` exists to retire a
+       name "without breaking existing scripts"; there were none, so the
+       machinery would have cost an alias, a compatibility entry, a policy row
+       and a guard test to protect nobody. Recorded as a deliberate departure
+       from the two-release rule, and as the precedent 167 relies on.
+
+167. **The rest of the `*_summary()` family, and `model.outputs` -- both DEFERRED
+     (2026-08-30).**
+     `package_summary` (166) was one of six. The other five are the last
+     surviving instance of the prefix shape `view_layer_conventions.md:272`
+     forbids, and the intended end state is nouns:
+     `model.results.summary()`, `model.files.summary()`, `model.vor.summary()`.
+     - **Measured cost of finishing it: three lines in two notebooks.**
+       `output_summary` and `result_summary` have ZERO callers anywhere;
+       `grid_summary` has one (`usg_import_workbook.ipynb:620`); `file_summary`
+       has two (`usg_import_workbook.ipynb:610`, `usg_mf6_model.ipynb:443`).
+       None is in `api_snapshot.json`; none has a test. Both notebooks are the
+       user's live USG workbooks, so they are edited surgically, never
+       regenerated.
+     - **Why not now: the destinations do not exist.** `model.results` and
+       `model.files` are both absent (`hasattr` False; the names are free).
+       `model.vor` exists as a plot scope but has no `summary()`. And a
+       recursive `model.results.summary()` has a hole today --
+       `lak.results.summary()`, `sfr.results.summary()` and
+       `surface_water.results.summary()` are all `AttributeError`, where the
+       eight registry-backed namespaces have it.
+     - **Three defects the replacements must not inherit.** `_OUTPUT_SUFFIXES`
+       lists `".obs.csv"` but the test is `path.suffix`, and
+       `Path("a.obs.csv").suffix == ".csv"` -- so that member has never matched,
+       and all 12 output CSVs on the canonical model are labelled
+       `category="input"` (the honest split is 35/12, not 41/6);
+       `list_input_files()`/`list_output_files()` share it. `output_summary` and
+       `result_summary` both hardcode `f"{self.name}.hds"`, so on a GWT/GWE model
+       they silently return `has_heads=False`, where `model._field_reader`
+       already dispatches correctly. And `result_summary` reads the LAST time
+       step only, so its head range disagrees with `model.hds.summary()` over all
+       periods for reasons no column explains.
+     - **`model.outputs` is NOT what it was assumed to be.** The belief that it
+       was being replicated under `model.packages.<pkg>.results` is half right in
+       a misleading way: the `.stage` half was superseded by `.results` (and is
+       richer there -- tidy frames rather than raw ndarrays), but the `.bud` half
+       went to the SIBLING namespace `packages.<pkg>.budget.<term>`.
+       `packages.lak.results.bud` is an `AttributeError`. A cleanup driven by the
+       `.results` framing would conclude the raw budget accessor has no
+       replacement and either keep `outputs` or duplicate `.budget` under
+       `.results`.
+     - **Nothing in the repo records that intent.** Searched all of `docs/`,
+       CLAUDE.md, the ledger, the plan, every docstring and the full git log:
+       no entry, commit or docstring says `model.outputs` was to be superseded.
+       What IS written points the other way -- `budget.py:312` and `:426` both
+       call `model.outputs.lak.stage` "the canonical home for this behavior",
+       and those two shims (`LakStage`, `SFRStage`) are themselves dead.
+     - **It cannot be deleted, only demoted.** 18 call sites inside `src/`, and
+       the load-bearing ones BUILD the tier that replaced it --
+       `package_budget.py` constructs `packages.<lak|sfr>.results.stage/q`
+       through `outputs.<pkg>.stage`, and `package_surface_water.py` calls
+       `model.outputs.lak.bud.types` from inside `LakResultsNamespace` itself.
+       It is also pinned live in `api_snapshot.json` and `test_typing_surface.py`
+       and taught without a deprecation marker in
+       `docs/package_api_reference.md`.
+     - **One capability has no replacement at all:**
+       `outputs.uzf.ifno_to_cellid`. It is the only member that works on an
+       UNRUN model -- it reads `uzf.packagedata` plus the modelgrid -- so it is
+       an INPUT index map misfiled under "outputs", and its home is
+       `packages.uzf.inputs`. It is also the only part of the namespace any test
+       asserts on.
+     - **Free wins found alongside, not taken here:** `model.lak_output`,
+       `model.sfr_output`, `model.uzf_output` and `group.outputs` have zero
+       readers and exist in the snapshot only because the derive script sweeps
+       every public property. And `calibration.py:740` calls
+       `model.outputs.lak.stage.nlakes`, which already raises -- `nlakes` lives
+       only on the dead `LakStage` shim.
+     - **When picked up:** the two zero-caller summaries first (free, and it
+       removes the GWF-only trap), then `vor.summary()` -- deciding on the way
+       whether `nlay`/`node_count` belong on it at all, since a 2-D grid cannot
+       know them and the narrower-scope rule says fewer members, never other
+       ones. Then `model.files`, name-based rather than suffix-based. For
+       `outputs`: delete the four zero-caller names, rehome `ifno_to_cellid`,
+       correct the live doc, and only then demote the property behind
+       `__compatibility__` -- do NOT reuse the word `outputs` for the file
+       namespace.

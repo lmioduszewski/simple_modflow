@@ -407,6 +407,16 @@ class Choro(Picture):
         MODFLOW timestep, or a positional index into that period's saved steps.
         """
 
+        if per is not None and self.model is None:
+            # A model-less choropleth -- an INPUT map -- carries `per` only as a
+            # label: which stress period's records were selected is already
+            # baked into the values, and there is no results file to pick a
+            # timestep from. Resolving a kstpkper here dereferenced a model that
+            # is legitimately absent, so every input map on a model whose
+            # results were unreadable died with
+            # `AttributeError: 'NoneType' object has no attribute 'kstpkper'`.
+            self._per = per
+            return
         if per is not None:
             matches = [tuple(value) for value in self.model.kstpkper if int(value[1]) == int(per)]
             if not matches:

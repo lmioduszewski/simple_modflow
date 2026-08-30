@@ -243,6 +243,14 @@ release-group boundnames; without them it names the fix and offers
 
 ### Geometry, layers, context
 
+- `model.packages.summary()` — one row per package: `kind`, `mappable`, the input
+  `fields` and `results` you can draw. Cheap by default (registry + package list,
+  no package data read); `summary(detail="data")` adds `records`, `periods` and
+  `layers` — the last of which tells you a package occupies no layer 0 *before*
+  you draw an empty map of it.
+- `model.packages.mosaic()` — every mappable package drawn as one grid;
+  `packages=[...]` to restrict it.
+
 - `mf.ModelContext(grid=, domain=, surfaces=, dates=)` — attaches to the **model**
   (`mf.gwf(..., context=ctx)`); carries the grid/idomain/surfaces the GIS-aware helpers use.
 - `mf.LayerStack(vor, top=...).add(...).build()` — declarative layer top/botm/idomain

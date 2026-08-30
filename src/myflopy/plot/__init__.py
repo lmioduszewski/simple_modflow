@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import inspect
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import (
     GridMesh,
@@ -77,6 +78,8 @@ from myflopy.modflow.mf6.interactive_plotting import (
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
 from myflopy.viz import FrameAnimation, Picture, mosaic
+
+logger = get_logger(__name__)
 
 __all__ = [
     "map",
@@ -127,8 +130,33 @@ def _grid_of(source):
         # purpose (see above), so a stand-in that answers the grid protocol is
         # legitimate and no type check belongs here.
         return source, False
-    has_results = any(hasattr(source, attr) for attr in ("hds", "conc", "temp"))
-    return grid, has_results
+    return grid, _has_results(source)
+
+
+def _has_results(source) -> bool:
+    """Whether ``source`` can serve a results field, without insisting it can.
+
+    This is a CAPABILITY PROBE, so it must not raise. `hasattr` alone is not
+    enough: it swallows only `AttributeError`, while `model.hds` on a model that
+    has not been run reaches flopy's binary reader and raises `FileNotFoundError`
+    -- which escaped this probe and killed every `map()` on an unrun model,
+    INCLUDING inputs maps that need no results at all.
+    """
+
+    for attr in ("hds", "conc", "temp"):
+        try:
+            if getattr(source, attr, None) is not None:
+                return True
+        except (OSError, ValueError, KeyError):  # noqa: BLE001 is not needed --
+            # the set IS closed: a missing/short/unreadable output file surfaces
+            # as OSError (FileNotFoundError) from flopy's reader, and a present
+            # but unparseable one as ValueError/KeyError. Anything else is a real
+            # bug and should not be swallowed by a probe.
+            logger.debug(
+                "results probe: %r is unreadable, treating the source as "
+                "input-only", attr,
+            )
+    return False
 
 
 def map(      # noqa: A001 - the verb IS `map`
