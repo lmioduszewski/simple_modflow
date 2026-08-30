@@ -690,15 +690,40 @@ def sfr_hover() -> HoverSpec:
     )
 
 
-def cell_input_hover(value_column: str, *, extra_fields: Sequence[str] = ()) -> HoverSpec:
-    """Default input-map hover (DRN/CHD/GHB/RCH): the input value + its fields."""
+def cell_input_hover(
+    value_column: str,
+    *,
+    extra_fields: Sequence[str] = (),
+    context_fields: Sequence[str] = ("Layer", "Record Count"),
+) -> HoverSpec:
+    """Default input-map hover (DRN/CHD/GHB/RCH): the input value + its fields.
 
+    ``extra_fields`` are the package's OTHER record fields -- reading a GHB map
+    means asking "what head, against what conductance", and a hover carrying only
+    the coloured one answers half the question. Callers pass the siblings of
+    ``value_column``; the untitled block matches :func:`lak_hover` / :func:`sfr_hover`,
+    which list a feature's fields the same way.
+
+    ``context_fields`` are cell facts rather than package fields, so they render
+    as one muted inline row: which LAYER you are looking at (the commonest reason
+    a boundary map comes back empty is that the package is not in the default
+    layer 0), and how many records were aggregated into the cell, which is the
+    only thing that explains a summed value. Both are skipped when the payload
+    does not carry them.
+    """
+
+    blocks: list[HoverBlock] = []
+    if extra_fields:
+        blocks.append(Fields(title=None, fields=tuple(extra_fields)))
+    if context_fields:
+        blocks.append(Fields(title=None, fields=tuple(context_fields), inline=True))
     return HoverSpec(
         primary=value_column,
         title=value_column,
-        blocks=(Fields(title="Fields", fields=tuple(extra_fields)),) if extra_fields else (),
+        blocks=tuple(blocks),
         footer=("period", "date"),
         style=HoverStyle().input(),
+        labels={"Record Count": "records", "Layer": "layer"},
     )
 
 

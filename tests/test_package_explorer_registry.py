@@ -431,3 +431,89 @@ def test_the_noun_that_replaces_result_summary_is_strictly_better(canonical_run)
 
     columns = set(canonical_run.hds.summary().columns)
     assert {"records", "periods", "layers", "cells", "min", "max", "mean"} <= columns
+
+
+# --- an input map's hover shows the whole record (2026-08-30) --------------- #
+
+def _hover_text(picture) -> str:
+    """The hovertemplate with its markup stripped, for readable assertions."""
+
+    import re
+
+    template = picture.fig.data[0].hovertemplate
+    return re.sub(r"<span[^>]*>|</span>|</?b>|<extra></extra>", "", template)
+
+
+@pytest.mark.parametrize(
+    ("package", "coloured", "siblings"),
+    [
+        ("ghb", "bhead", ["cond"]),
+        ("drn", "elev", ["cond"]),
+        ("riv", "stage", ["cond", "rbot"]),
+        ("evt", "rate", ["surface", "depth"]),
+    ],
+)
+def test_an_input_hover_carries_the_packages_other_fields(
+    canonical_model, package, coloured, siblings
+):
+    """Reading a GHB map means asking "what head, against what conductance".
+
+    The payload already aggregated every field; only the hover spec was leaving
+    them on the floor, so the hover showed the coloured field and nothing else.
+    """
+
+    text = _hover_text(getattr(canonical_model.packages, package).inputs.map())
+
+    for sibling in siblings:
+        assert sibling in text, f"{package} hover dropped {sibling}"
+    # Twice and no more: once as the hover title, once as the primary value.
+    # A third would mean the coloured field was also listed among its siblings.
+    assert text.count(coloured) == 2, f"{package}: {coloured!r} is duplicated"
+
+
+def test_the_hover_says_which_layer_you_are_looking_at(canonical_model):
+    """The commonest reason a boundary map comes back empty is that the package
+    has no records in the default layer 0 -- so the map should say which layer it
+    is drawing."""
+
+    assert "layer" in _hover_text(canonical_model.packages.ghb.inputs.map())
+
+
+def test_field_selects_what_is_coloured_and_the_rest_ride_along(canonical_model):
+    """`field=` drives the colour; the siblings stay in the hover either way."""
+
+    default = _hover_text(canonical_model.packages.riv.inputs.map())
+    by_cond = _hover_text(canonical_model.packages.riv.inputs.map(field="cond"))
+
+    # The title is the coloured field -- `stage` by default (the registry's
+    # default_input), `cond` when asked for.
+    assert default.strip().startswith("stage")
+    assert by_cond.strip().startswith("cond")
+    for field in ("stage", "cond", "rbot"):
+        assert field in default and field in by_cond
+
+
+def test_record_count_appears_only_when_records_actually_merged():
+    """`records 1` on every cell of every map is noise; the count earns its line
+    only when aggregation happened, which is the one thing that explains a
+    summed value."""
+
+    from myflopy.modflow.mf6.package_inputs import _input_context_fields
+
+    assert _input_context_fields({"Record Count": [1, 1, 1]}) == ("Layer",)
+    assert _input_context_fields({"Record Count": [1, 3, 1]}) == ("Layer", "Record Count")
+    assert _input_context_fields({}) == ("Layer",)
+
+
+def test_a_single_field_package_gets_no_empty_sibling_block(canonical_model):
+    """RCH has one field, and UZF/NPF payloads carry one array -- `Fields` skips
+    names the payload lacks, so nothing renders an empty block."""
+
+    for picture in (
+        canonical_model.packages.rch.inputs.map(),
+        canonical_model.packages.uzf.inputs.finf.map(),
+        canonical_model.packages.npf.k.map(),
+    ):
+        text = _hover_text(picture)
+        assert "layer" in text
+        assert "%{customdata[2]}" in text     # layer is the 3rd column, not the 4th

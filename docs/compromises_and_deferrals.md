@@ -4242,3 +4242,36 @@ same day, which is the useful part of the result.
        correct the live doc, and only then demote the property behind
        `__compatibility__` -- do NOT reuse the word `outputs` for the file
        namespace.
+
+168. **An input map's hover shows the whole record, not just the coloured field
+     (2026-08-30).**
+     Reported against `ghb.inputs.map()` and `drn.inputs.map()`: the hover gave
+     the cell number, the one coloured field, and the period. Reading a GHB map
+     means asking "what head, against what conductance", and that answered half
+     of it.
+     - **The data was already there.** `build_cell_input_map_payload` aggregates
+       every field in the selection -- the payload for a GHB map already carried
+       `bhead`, `cond`, `Layer`, `Record Count` and `Package`. `cell_input_hover`
+       already took an `extra_fields` argument and built a `Fields` block from
+       it. The three call sites in `package_inputs.py` simply passed
+       `cell_input_hover(self.field_name)` and nothing else, so the rest was
+       computed and dropped.
+     - The sibling fields render as an untitled block, matching `lak_hover` /
+       `sfr_hover`, which list a feature's fields the same way.
+     - **`Layer` is always shown; `Record Count` only when records merged.** The
+       layer is worth saying on every map -- the commonest reason a boundary map
+       comes back empty is that the package has no records in the default layer 0
+       (see 166). The record count is only informative when some cell aggregated
+       more than one record, which is the one thing that explains a summed value;
+       measured on the canonical model every package is 1 per cell, so showing it
+       unconditionally would read "records 1" forever. The call site inspects the
+       payload and asks for it only when `max > 1` -- data-dependent composition
+       at the CALL site, not in the spec.
+     - **No change to what drives the colour**, which was already right:
+       `field=` selects it and the default comes from the registry's
+       `default_input` (`bhead` for GHB, `elev` for DRN, `stage` for RIV). Only
+       the hover was wrong.
+     - Wired at all three input explorers -- cell-stress, UZF and static-array.
+       `UzfFieldInputsExplorer` had no `package_name`, so it gained one as a class
+       attribute. UZF and NPF payloads carry a single array, and `Fields.build`
+       skips names the payload lacks, so no empty block renders there.

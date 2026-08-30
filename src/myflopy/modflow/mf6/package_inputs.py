@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -124,6 +124,41 @@ class CellPackageInputsExplorer(FieldMappable):
     # (default) field node, so ``inputs.map()`` == ``inputs.<default>.map()``.
 
 
+
+def _sibling_input_fields(package_name: str, field_name: str) -> tuple[str, ...]:
+    """The package's OTHER input fields, for an input map's hover.
+
+    Reading a GHB map means asking "what head, against what conductance", and a
+    hover carrying only the coloured field answers half of it. The payload
+    already has them -- `build_cell_input_map_payload` aggregates every field in
+    the selection -- so this only tells the hover spec to render them.
+
+    Names the payload does not carry are dropped by `Fields.build`, so this is
+    safe on the explorers whose payload holds one array.
+    """
+
+    return tuple(
+        name for name in get_package_input_field_names(package_name)
+        if name != field_name
+    )
+
+
+def _input_context_fields(hover: Mapping[str, Sequence[Any]]) -> tuple[str, ...]:
+    """Cell context worth showing for THIS map: always the layer, records if they merged.
+
+    Which layer you are looking at is always worth saying -- the commonest reason
+    a boundary map comes back empty is that the package has no records in the
+    default layer 0. The record count only earns its line when some cell actually
+    aggregated more than one record, which is the only thing that explains a
+    summed value; on a model with one record per cell it would read "records 1"
+    on every cell forever.
+    """
+
+    counts = hover.get("Record Count") or ()
+    merged = any(int(count) > 1 for count in counts)
+    return ("Layer", "Record Count") if merged else ("Layer",)
+
+
 class CellPackageInputFieldExplorer(SpatialView):
     """Field-specific view over a cell package's normalized input table."""
 
@@ -200,7 +235,14 @@ class CellPackageInputFieldExplorer(SpatialView):
             fill_value=self.field_spec.fill_value if fill_value is None else fill_value,
             agg=self.field_spec.agg if agg is None else agg,
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        kwargs.setdefault(
+            "hover_spec",
+            cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(hover),
+            ),
+        )
         choro = self.model.plot.map(
             per=per,
             layer=layer,
@@ -227,6 +269,10 @@ class UzfFieldInputsExplorer(SpatialView):
 
         self.model = model
         self.field_name = str(field_name)
+
+    #: This explorer is UZF-only by construction, but the hover helper asks every
+    #: explorer the same question, so it answers it the same way.
+    package_name = "uzf"
 
     def get(
         self,
@@ -296,7 +342,14 @@ class UzfFieldInputsExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        kwargs.setdefault(
+            "hover_spec",
+            cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(hover),
+            ),
+        )
         choro = self.model.plot.map(
             per=per,
             layer=layer,
@@ -571,7 +624,14 @@ class StaticArrayFieldExplorer(SpatialView):
             layer=layer,
             agg="first",
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
+        kwargs.setdefault(
+            "hover_spec",
+            cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(hover),
+            ),
+        )
         choro = self.model.plot.map(
             per=0,
             layer=layer,
