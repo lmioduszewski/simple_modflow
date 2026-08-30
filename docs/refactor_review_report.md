@@ -755,9 +755,9 @@ Core lifecycle and summary:
 - `model.summary()`
 - `model.file_summary()`
 - `model.packages.summary()` *(was `model.package_summary()`, deleted 2026-08-30)*
-- `model.output_summary()`
+- ~~`model.output_summary()`~~ *(deleted 2026-08-30, no replacement needed)*
 - `model.grid_summary()`
-- `model.result_summary()`
+- `model.hds.summary()` *(was `model.result_summary()`, deleted 2026-08-30)*
 - `model.list_input_files()`
 - `model.list_output_files()`
 - `model.run_simulation()`

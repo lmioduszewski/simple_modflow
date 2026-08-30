@@ -1197,49 +1197,6 @@ class SimulationBase:
             )
         return pd.DataFrame(rows)
 
-    def output_summary(self) -> pd.DataFrame:
-        """Return a lightweight summary of key MF6 output files for this run."""
-
-        heads_path = self.workspace / f"{self.name}.hds"
-        budget_path = self.workspace / f"{self.name}.cbc"
-        listing_path = self.workspace / "mfsim.lst"
-
-        kstpkper_count = None
-        final_time = None
-        if heads_path.exists():
-            try:
-                hds = flopy.utils.HeadFile(heads_path)
-                kstpkpers = hds.get_kstpkper()
-                kstpkper_count = len(kstpkpers)
-                times = hds.get_times()
-                if times:
-                    final_time = float(times[-1])
-            except (OSError, ValueError, EOFError):
-                # The file EXISTS (checked above), so this is a heads file that
-                # cannot be read: zero-byte or truncated by a killed run
-                # (ValueError/EOFError from flopy's HeadFile), or unreadable
-                # (OSError). The summary row still lists the file; it just
-                # cannot say how many time steps are in it.
-                logger.debug(
-                    "could not read time steps from %s", heads_path, exc_info=True,
-                )
-
-        return pd.DataFrame(
-            [
-                {
-                    "name": self.name,
-                    "heads_file": heads_path.name if heads_path.exists() else None,
-                    "budget_file": budget_path.name if budget_path.exists() else None,
-                    "listing_file": listing_path.name if listing_path.exists() else None,
-                    "has_heads": heads_path.exists(),
-                    "has_budget": budget_path.exists(),
-                    "has_listing": listing_path.exists(),
-                    "kstpkper_count": kstpkper_count,
-                    "final_time": final_time,
-                }
-            ]
-        )
-
     def grid_summary(self) -> pd.DataFrame:
         """Return a lightweight summary of the current model grid."""
 
@@ -1270,40 +1227,6 @@ class SimulationBase:
                     "miny": miny,
                     "maxy": maxy,
                     "crs": getattr(self.vor, "crs", None) if hasattr(self, "_vor") and self._vor is not None else getattr(self, "_crs", None),
-                }
-            ]
-        )
-
-    def result_summary(self) -> pd.DataFrame:
-        """Return a simple statistical summary of the final heads output."""
-
-        heads_path = self.workspace / f"{self.name}.hds"
-        if not heads_path.exists():
-            return pd.DataFrame(
-                [
-                    {
-                        "name": self.name,
-                        "has_heads": False,
-                        "cell_count": None,
-                        "head_min": None,
-                        "head_max": None,
-                        "head_mean": None,
-                    }
-                ]
-            )
-
-        hds = flopy.utils.HeadFile(heads_path)
-        data = np.asarray(hds.get_data()).astype(float).reshape(-1)
-        finite = data[np.isfinite(data)]
-        return pd.DataFrame(
-            [
-                {
-                    "name": self.name,
-                    "has_heads": True,
-                    "cell_count": int(data.size),
-                    "head_min": float(np.min(finite)) if finite.size else None,
-                    "head_max": float(np.max(finite)) if finite.size else None,
-                    "head_mean": float(np.mean(finite)) if finite.size else None,
                 }
             ]
         )

@@ -401,3 +401,33 @@ def test_summary_uses_the_probe_for_a_registry_absent_package(canonical_model, m
     assert row["mappable"], "the one hand-written package was reported undrawable"
     assert row["fields"] == "", "HFB maps as a whole; there is no field to pick"
     assert row["results"] == "", "MF6 writes HFB no budget record at all"
+
+
+# --- the *_summary() family, retired onto nouns (2026-08-30) ---------------- #
+
+@pytest.mark.parametrize("retired", ["package_summary", "output_summary", "result_summary"])
+def test_the_zero_caller_summary_methods_are_gone(canonical_model, retired):
+    """Deleted outright rather than warned: zero callers anywhere, absent from
+    `tests/api_snapshot.json`, `__all__` and `__compatibility__`.
+
+    `output_summary` and `result_summary` also hardcoded `f"{self.name}.hds"`,
+    so on a GWT or GWE model they reported `has_heads=False` and null statistics
+    silently -- where `model._field_reader` already dispatches
+    HeadsPlus/ConcResults/TempResults correctly.
+    """
+
+    assert not hasattr(canonical_model, retired)
+    assert not hasattr(type(canonical_model), retired)
+
+
+def test_the_noun_that_replaces_result_summary_is_strictly_better(canonical_run):
+    """`result_summary` is a pure delete, not a migration: `model.hds.summary()`
+    already existed, is already tested, is kind-dispatched, and reports MORE.
+
+    It also disagreed on the numbers -- `result_summary` read `get_data()` with
+    no `kstpkper`, i.e. the LAST time step only -- for reasons no column
+    explained.
+    """
+
+    columns = set(canonical_run.hds.summary().columns)
+    assert {"records", "periods", "layers", "cells", "min", "max", "mean"} <= columns

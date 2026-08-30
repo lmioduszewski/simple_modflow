@@ -4153,14 +4153,28 @@ same day, which is the useful part of the result.
        and a guard test to protect nobody. Recorded as a deliberate departure
        from the two-release rule, and as the precedent 167 relies on.
 
-167. **The rest of the `*_summary()` family, and `model.outputs` -- both DEFERRED
-     (2026-08-30).**
+167. **The rest of the `*_summary()` family, and `model.outputs` -- PART DONE,
+     rest DEFERRED (2026-08-30).**
+     **Update, same day:** `output_summary` and `result_summary` are now DELETED
+     too -- the zero-caller half of the family, taken because it cost nothing and
+     removed a GWF-only trap (both hardcoded `f"{self.name}.hds"`, so on a
+     GWT/GWE model they reported `has_heads=False` and null statistics in
+     silence). `result_summary` needed no replacement built:
+     `model.hds.summary()` already existed, is already tested, is kind-dispatched
+     through `model._field_reader`, and reports MORE (`records`, `periods`,
+     `layers` on top of the same statistics). `output_summary` needed none at
+     all -- it welded "which output files exist" to "how far did the run get",
+     which is why it had no single natural home.
+     **Still open: `file_summary` and `grid_summary`**, because those two are the
+     ones whose destinations do not exist. Everything below still stands for
+     them.
+
      `package_summary` (166) was one of six. The other five are the last
      surviving instance of the prefix shape `view_layer_conventions.md:272`
      forbids, and the intended end state is nouns:
      `model.results.summary()`, `model.files.summary()`, `model.vor.summary()`.
      - **Measured cost of finishing it: three lines in two notebooks.**
-       `output_summary` and `result_summary` have ZERO callers anywhere;
+       `output_summary` and `result_summary` had ZERO callers anywhere (DONE);
        `grid_summary` has one (`usg_import_workbook.ipynb:620`); `file_summary`
        has two (`usg_import_workbook.ipynb:610`, `usg_mf6_model.ipynb:443`).
        None is in `api_snapshot.json`; none has a test. Both notebooks are the
