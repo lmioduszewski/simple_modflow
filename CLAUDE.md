@@ -73,6 +73,15 @@ array is NaN for every layer below 0. What a WRITTEN page cannot do, measured:
 no widgets, no picker, no keyboard, and only the ACTIVE scalar is serialized.
 `tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
 the stray verb, so adding one in one place and forgetting another is caught.
+**Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
+2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
+file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
+Plotly's `selectedpoints`: selection styling on a choropleth exposes only
+`opacity`, so it can only dim the rest, which measured a **6.9x loss of readable
+contrast** across the unselected cells on a real head field. `select_style="dim"`
+restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
+verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
+clobber it.
 **Never give a picture verb a bare `**kwargs`** (8.8, 2026-08-24): PyCharm and
 Pylance are STATIC — they read the `def` line and never run the module, so
 `__doc__`, `__signature__` and `functools.wraps` reach `help()` and reach no
@@ -249,6 +258,65 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   with disv + simple BCs, not with `mf.uzf/sfr/lak`.
 
 Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
+
+## Recharge/ET in ARRAY form? `mf.rch.array` / `mf.evt.array` (2026-08-30, ledger 163)
+Same physics as `mf.rch(...)`, one array per period instead of one record per cell
+— **6.1x faster end to end** on a 72-period 9405-cell model. A fourth method on the
+existing helper, NOT `mf.rcha`: MF6 has one recharge package and `READASARRAYS` is
+an option inside its file; FloPy's two classes are a FloPy artifact.
+**`irch="top_active"` is the default and must stay one.** MF6 with no IRCH applies
+recharge to layer 1 unconditionally and SILENTLY skips any column whose layer 1 is
+inactive — measured 40% loss under "Normal termination". `irch` is **zero-based**
+(FloPy adds one on write; passing 1-based gives `Invalid layer number`).
+`nseg > 1` and `boundnames` RAISE rather than being silently dropped — segmented ET
+has no array form, because NSEG lives in DIMENSIONS which MF6 never reads under
+READASARRAYS. Arrays are opt-in: for a sparse BC they are a pessimization.
+
+## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
+`mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE
+between two cells, so MF6 wants a cell PAIR — and FloPy validates each cellid
+against idomain but **never checks the two are connected**, so a bad pair kills the
+run mid-way. `.line`/`.gpkg` resolve a fault trace to the faces it crosses
+(`vor.barrier_faces`), and every route validates first.
+**Deliberately not a `package_registry` entry**: HFB is face-indexed (no cellid, so
+`record_fields` is undefinable) and MF6 writes **no HFB budget record** at all. A
+registry entry would have to lie in the one file whose premise is that it cannot. It
+rides `run_model._NON_REGISTRY_SUFFIXES` instead, one line, like `mvr`.
+**But the FLOW is still queryable** — `model.packages.hfb.results.q.get()`. A barrier
+sits ON a connection and `FLOW-JA-FACE` carries every connection's flow, looked up via
+the model's own `IA`/`JA` from the `.grb` (NOT reconstructed — idomain makes MF6
+renumber). Inputs side: `get`/`summary`/`segments`/`map`, all hand-written, because
+the registry view is cell-keyed and a barrier is an EDGE.
+Three measured traps: a **duplicated face** is applied TWICE by MF6 and left
+permanently wrong (`condsat_reset` restores the already-modified value); a closed
+wall is **not** the faces its ring crosses (a ring goes through cells — measured 53
+crossed faces left all 441 cells connected, where the cut is 83 and seals 105);
+and `hydchr` is K/thickness, 1/T, not K.
+
+## Importing a MODFLOW-USG model? `mf.read_usg` (2026-08-28, ledger 159)
+`mf.read_usg(nam, gsf=)` -> `UsgModel` -> `.to_mf6()` -> `SimulationSpec` on **DISV**.
+Module `src/myflopy/modflow/usg/`; tests `tests/test_usg_import.py` build their own
+synthetic 2-layer USG model, so CI never needs a real one.
+**Read the report, not just the spec:** `usg.report()` states every approximation and
+omission with counts, and `usg.validate()` names what MODFLOW 6 will REJECT before you
+run (USG accepts a head boundary below its cell bottom; MF6 refuses to start).
+Three traps that cost a day and will cost it again:
+- **Coordinates must be LOCAL.** MF6 builds DISV conductances from raw vertex
+  coordinates; on State Plane (~1.34e6 ft) it loses the precision and returns a **NaN
+  budget while printing "Normal termination"**. Measured: 0/9405 cells finite as-is,
+  9405/9405 shifted. `to_mf6(local_origin=True)` is the default -- do not turn it off.
+- **`complexity="MODERATE"` kills MF6 with SIGFPE** on a converted USG model; the
+  default is `COMPLEX`. And SMS's delta-bar-delta/backtracking tuning IS carried over
+  (it maps field-for-field) -- it is what made the original converge.
+- **An empty period dict is not an absent one.** `steady_state={}` makes FloPy write
+  empty period blocks, dropping every TRANSIENT flag; MF6 then solves steady and
+  returns NaN. Pass `or None`.
+**CLN has no MF6 counterpart and is NOT converted** -- read, segmented into waterbodies
+vs streams, and reported (`model.cln_polygons()` gives them as polygons for a later
+LAK/SFR rebuild). On the Ten Trails model that costs no pumping (the whole WEL package
+is CLN-local P-ET) but removes the lake/stream stage feedback.
+`ETS` becomes a **list-based** EVT because MF6 cannot combine segments with
+READASARRAYS -- 72 x 9,090 records, 61 MB. That is the physics, not a format choice.
 
 ## Legacy OO API (the engine; avoid for new model assembly)
 `src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`, `lakes`, `recharge`, and the

@@ -27,7 +27,7 @@ from rasterio.warp import transform_bounds
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.utils.animations import Animation
-from myflopy.viz import Fig, Picture
+from myflopy.viz import HIGHLIGHT_DIM_OPACITY, HIGHLIGHT_WIDTH, PALETTE, Fig, Picture
 
 logger = get_logger(__name__)
 
@@ -141,6 +141,79 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
 
+
+def _resolve_cells(select, *, vor, model=None):
+    """Turn any accepted ``select=`` spelling into ``(cells, label)``.
+
+    One resolver for every scope, because the alternative is each caller
+    re-deriving the same rules and diverging -- which is what happened to the
+    geometry branch this replaces.
+
+    Accepts cell indices, a boolean mask of length ``ncpl``, a registered model
+    region name, a path to a vector file, or a shapely/GeoPandas geometry.
+    Returns a flat, sorted, de-duplicated ``list[int]`` and a legend label.
+
+    Three bugs are deliberately NOT inherited from the code this supersedes:
+    ``get_vor_cells_as_series(...).to_list()`` is a list *of lists*, one per
+    feature, so it must be flattened; a geometry matching nothing comes back as
+    an empty ``GeoDataFrame`` rather than a Series; and a bare ``str`` path hits
+    a helper that RETURNS a ``ValueError`` instead of raising it, so paths are
+    coerced to ``Path`` first.
+    """
+
+    if select is None:
+        return [], None
+
+    label = "selection"
+
+    # A registered model region ("all_streams"), else a vector file path.
+    if isinstance(select, str):
+        if model is not None:
+            try:
+                cells = model.get_region_cells(select)
+            except (KeyError, ValueError, AttributeError):
+                cells = None
+            if cells is not None:
+                return sorted({int(c) for c in cells}), select
+        select = Path(select)
+
+    if isinstance(select, Path):
+        label = select.stem
+        select = vor.get_vor_cells_as_series(select)
+
+    elif hasattr(select, "geom_type") or hasattr(select, "geometry"):
+        select = vor.get_vor_cells_as_series(select)
+
+    # `get_vor_cells_as_series` yields one entry PER FEATURE, each a list of
+    # cells; an empty match yields an empty frame with no such entries.
+    if hasattr(select, "to_list"):
+        select = select.to_list()
+
+    flat = []
+    for item in np.atleast_1d(np.asarray(select, dtype=object)).ravel():
+        if isinstance(item, (list, tuple, set, np.ndarray, pd.Series)):
+            flat.extend(int(c) for c in np.asarray(item).ravel())
+        elif item is not None:
+            flat.append(item)
+
+    values = np.asarray(flat)
+    if values.size and values.dtype == bool:
+        values = np.flatnonzero(values)
+
+    cells = sorted({int(c) for c in np.asarray(values, dtype=float).astype(int)}) if values.size else []
+
+    ncpl = len(vor.gdf_vorPolys)
+    bad = [c for c in cells if not 0 <= c < ncpl]
+    if bad:
+        raise ValueError(
+            f"select= names cell(s) outside the grid (0..{ncpl - 1}): {bad[:5]}"
+            + (f" and {len(bad) - 5} more" if len(bad) > 5 else "")
+        )
+    if not cells:
+        logger.warning("select= matched no cells; nothing is highlighted")
+    return cells, label
+
+
 class Choro(Picture):
 
     #: Whether `.fig` has already assembled its traces. A CLASS attribute, not
@@ -191,6 +264,9 @@ class Choro(Picture):
             hover_layers=None,
             hover_surfaces=None,
             hover_fields=None,
+            select=None,
+            select_style: str = "outline",
+            select_color: str = None,
             **kwargs
 
     ):
@@ -259,6 +335,12 @@ class Choro(Picture):
         self.rch_scale = rch_scale
         self.bgs = bgs
         self._show_mounding_above_ground = False
+        if show_mounding and self.layer == -1:
+            # `layer=-1` means "mound above ground". Resolved here rather than on
+            # first use, so the label and the numbers cannot disagree about the
+            # datum depending on which is asked for first.
+            self._show_mounding_above_ground = True
+            self.layer = 0
         self._colorscale = None
         self.logscale = logscale
         self.contours = contours
@@ -282,6 +364,18 @@ class Choro(Picture):
         self._hover_surfaces = hover_surfaces
         self._hover_fields = hover_fields
         self.kwargs = kwargs
+
+        if select_style not in ("outline", "dim", "both"):
+            raise ValueError(
+                f"select_style must be 'outline', 'dim' or 'both', not {select_style!r}"
+            )
+        self.select_style = select_style
+        self.select_color = select_color
+        # Resolved HERE, not lazily, so a bad `select=` raises at the call rather
+        # than from a notebook's display hook cells later.
+        self._select_cells, self._select_label = _resolve_cells(
+            select, vor=self.vor, model=self.model
+        )
 
         self._fig = Fig()
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -575,7 +669,12 @@ class Choro(Picture):
                 self._hover_dict['Recharge'] = self.output_rch_zs
 
         if self.show_layer_elevs:
-            layer_nums = self.vor.gdf_topbtm.columns[2:].to_list()
+            # NOTE: this used to open by reading `self.vor.gdf_topbtm.columns`,
+            # which crashed with `'NoneType' has no attribute 'columns'` on any
+            # grid without a layer frame -- a `.gsf`-built one, for instance.
+            # The value was assigned to `layer_nums`, immediately overwritten
+            # below, and never read: the model branch takes its elevations from
+            # the MODEL, which necessarily has them or it could not have run.
             if self.model is not None:
                 botms = [
                     self._bottom_vector(lyr)
@@ -586,7 +685,6 @@ class Choro(Picture):
                 botms = self.vor.gdf_topbtm.iloc[:, 2:].to_numpy().reshape(-1, self.vor.nlay).transpose()
                 top = self.vor.gdf_topbtm.iloc[:, 1].to_numpy().reshape(-1, 1).transpose()[
                     0]  # TODO why do i have to add [0]
-            layer_nums = list(range(len(botms)))
             self._hover_dict.update(
                 {'Top of Model': np.round(top, 2).tolist()})
             self._hover_dict.update(
@@ -595,20 +693,9 @@ class Choro(Picture):
                 }
             )
         if self.show_mounding:
-            if self.layer == -1:
-                self._show_mounding_above_ground = True
-                self.layer = 0
-            if self._show_mounding_above_ground is True:
-                layer_bottom = self._top_vector()
-            else:
-                layer_bottom = self._bottom_vector(self.layer)
-            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-            zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
-            # remove negative mounding values
-            zs = zs.mask(zs < 0, 0)
             self._hover_dict.update(
                 {
-                    f'Layer {self.layer + 1} Mounding': zs
+                    self._mounding_label: self._mounding_series()
                 }
             )
         else:
@@ -950,6 +1037,49 @@ class Choro(Picture):
         self._overlays.extend(traces)
         return self
 
+    def _highlight_traces(self):
+        """Build -- without adding -- the ``select=`` highlight outline.
+
+        One ``go.Scattermap`` tracing the dissolved boundary of the selected
+        cells, so the field underneath keeps its full opacity. That is the whole
+        argument for an outline over Plotly's own ``selectedpoints``: selection
+        styling on a choropleth exposes *only* ``opacity``, so "highlight" there
+        can only mean dimming everything else -- which costs a measured 6.9x of
+        readable contrast across the cells you did not select.
+
+        ``mode="lines"`` is load-bearing. Plotly treats a scatter-like trace as
+        selectable only when it has markers or text, so a lines-only overlay is
+        immune to the user's own box/lasso gesture. Do not add markers.
+        """
+
+        if not self._select_cells or self.select_style == "dim":
+            return []
+
+        selected = self.vor.gdf_latlon.iloc[self._select_cells]
+        merged = selected.geometry.union_all()
+        parts = list(merged.geoms) if merged.geom_type.startswith("Multi") else [merged]
+
+        lon, lat = [], []
+        for part in parts:
+            # Interiors too: a selection wrapped around an inactive island draws
+            # wrong from the exterior alone.
+            for ring in (part.exterior, *part.interiors):
+                x, y = ring.xy
+                lon.extend([*x, None])
+                lat.extend([*y, None])
+
+        return [
+            go.Scattermap(
+                mode="lines",
+                lon=lon,
+                lat=lat,
+                line={"color": self.select_color or PALETTE.highlight, "width": HIGHLIGHT_WIDTH},
+                name=self._select_label or "selection",
+                hoverinfo="skip",
+                showlegend=True,
+            )
+        ]
+
     def overlay_traces(self):
         """Every non-cell trace this map carries: contours, locations, overlays.
 
@@ -957,7 +1087,40 @@ class Choro(Picture):
         its own subplot cell without disturbing this map.
         """
 
-        return [*self._contour_traces(), *self._locs_traces(), *self._overlays]
+        return [
+            *self._contour_traces(),
+            *self._locs_traces(),
+            *self._highlight_traces(),
+            *self._overlays,
+        ]
+
+    @property
+    def _mounding_label(self):
+        """What the mounding is measured FROM, said in the hover's own words.
+
+        "Layer 1 Mounding" was ambiguous and, above ground, wrong: `layer=-1`
+        measures from the model top but sets `self.layer = 0`, so the label
+        claimed layer 1's bottom as the datum when it was not.
+        """
+
+        if self._show_mounding_above_ground:
+            return "Mounding above ground surface"
+        return f"Mounding above layer {self.layer + 1} bottom"
+
+    def _mounding_series(self):
+        """Head above the mounding datum, clipped at zero, one value per cell.
+
+        Shared by the legacy content-aware hover and the sectioned `hover_spec`
+        hover; they are two renderers of one number, and computing it twice is
+        how they drift.
+        """
+
+        datum = self._top_vector() if self._show_mounding_above_ground else self._bottom_vector(self.layer)
+        heads = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
+        values = pd.Series(
+            pd.to_numeric(heads, errors="coerce").to_numpy() - datum, index=heads.index
+        )
+        return values.mask(values < 0, 0)
 
     def _build_hover_context(self):
         """Assemble a :class:`HoverContext` from this map's data for ``hover_spec``."""
@@ -982,6 +1145,14 @@ class Choro(Picture):
                 date = None
 
         payload = dict(self._custom_hover) if self._custom_hover else {}
+        if self.show_mounding:
+            # `hover_spec` renders from this payload and never reads
+            # `hover_dict`, so a mounding map showed no mounding in its hover --
+            # on a model map, which is the only place mounding is meaningful,
+            # the spec path is always the one taken.
+            payload[self._mounding_label] = np.round(
+                self._mounding_series().to_numpy(), 2
+            ).tolist()
         layer_fields: dict[str, list] = {}
         top = botm = None
         if self.model is not None and (self._depvar_attr is not None or self.hover_heads):
@@ -1038,6 +1209,10 @@ class Choro(Picture):
             spec = replace(spec, surfaces=self._hover_surfaces)
         if self._hover_fields:
             spec = spec.with_fields(*self._hover_fields)
+        if self.show_mounding:
+            # The payload carries the numbers, but a spec only renders fields it
+            # names -- so without this a `show_mounding=True` map showed none.
+            spec = spec.with_fields(self._mounding_label)
         return spec
 
     def get_choropleth(self):
@@ -1056,6 +1231,12 @@ class Choro(Picture):
             extra["hoverlabel"] = hoverlabel
         else:
             custom_data, hover_template = _content_aware_hover(self.hover_dict)
+        # Set at CONSTRUCTION rather than on the finished figure, so the dim
+        # survives `mosaic`, `plot.animate` and `.ani` -- all of which rebuild
+        # the cell trace from this method and would drop a post-render value.
+        if self._select_cells and self.select_style in ("dim", "both"):
+            extra["selectedpoints"] = tuple(self._select_cells)
+            extra["unselected"] = {"marker": {"opacity": HIGHLIGHT_DIM_OPACITY}}
         choropleth = go.Choroplethmap(
             geojson=self.vor.latlon,
             featureidkey="id",
@@ -1137,6 +1318,10 @@ class Choro(Picture):
             self.add_contours()
             if self.locs is not None:
                 self.add_locs()
+            # Above the cells and contours, below caller-supplied overlays, so a
+            # PRT pathline still draws on top of the highlight.
+            for trace in self._highlight_traces():
+                self._fig.add_trace(trace)
             for trace in self._overlays:
                 self._fig.add_trace(trace)
             if self.hillshade_path is not None:
@@ -1304,12 +1489,24 @@ class Choro(Picture):
         gdf.plot(column="_choro", ax=ax, cmap=cmap, legend=colorbar,
                  vmin=vmin, vmax=vmax, edgecolor=edgecolor, **plot_kwargs)
 
+        # `outline_regions` and `select=` draw the same picture, so they go
+        # through the same resolver -- otherwise the two backends of one map
+        # object disagree about what a highlight is, which is what happened
+        # before ledger 160 and is what sent `canonical_02` out of the
+        # interactive map into `plot_mpl` to get cell outlines at all.
         for name in outline_regions:
-            if self.model is None:
-                continue
-            cells = list(self.model.get_region_cells(name))
+            cells, _ = _resolve_cells(name, vor=self.vor, model=self.model)
             if cells:
-                gdf.iloc[cells].boundary.plot(ax=ax, color="black", linewidth=0.5)
+                gdf.iloc[cells].boundary.plot(
+                    ax=ax, color=PALETTE.mpl_highlight, linewidth=0.5
+                )
+
+        if self._select_cells and self.select_style in ("outline", "both"):
+            gdf.iloc[self._select_cells].boundary.plot(
+                ax=ax,
+                color=self.select_color or PALETTE.mpl_highlight,
+                linewidth=HIGHLIGHT_WIDTH / 2,
+            )
 
         ax.set_aspect("equal")
         ax.set_axis_off()

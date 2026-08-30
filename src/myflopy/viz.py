@@ -73,6 +73,8 @@ __all__ = [
     "report_axes",
     "Theme",
     "REPORT",
+    "HIGHLIGHT_DIM_OPACITY",
+    "HIGHLIGHT_WIDTH",
     "PALETTE",
     "category_colors",
     "plot_cross_section",
@@ -1054,6 +1056,17 @@ def report_axes(**kwargs):
     return get_mplfig(**kwargs)
 
 
+#: Line width of a `map(select=...)` highlight outline. One constant rather than a
+#: `select_width` parameter: a contour SET has variable density and earns
+#: `contour_width`, a highlight boundary has one job.
+HIGHLIGHT_WIDTH = 2.0
+
+#: Opacity applied to unselected cells by `select_style="dim"`. This is Plotly's
+#: own implicit `DESELECTDIM`; setting it explicitly is what makes the number
+#: findable and tunable in one place, at zero visual cost.
+HIGHLIGHT_DIM_OPACITY = 0.2
+
+
 class PALETTE:
     """Shared plot colors -- the one findable place to change the project palette.
 
@@ -1094,6 +1107,13 @@ class PALETTE:
         "#4D4D4D",  # dark grey
     )
 
+    # The cell-highlight outline drawn by `map(select=...)`. Red because it is the
+    # most separable colour in this palette against the default `earth` colorscale
+    # (min dE76 48.6, vs 33.3 for the vermillion and 20.8 for white) -- but it
+    # collides head-on with a red-blue diverging scale, which is why `select_color`
+    # exists on the verb rather than this being the only answer.
+    highlight = "rgb(214,39,40)"
+
     # Matplotlib equivalents
     mpl_prior = "0.6"
     mpl_posterior = "#1f77b4"
@@ -1101,6 +1121,7 @@ class PALETTE:
     mpl_truth = "crimson"
     mpl_conflict = "darkorange"
     mpl_ensemble = "0.5"
+    mpl_highlight = "crimson"
     mpl_categorical = categorical
 
 

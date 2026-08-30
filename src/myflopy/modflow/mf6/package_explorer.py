@@ -43,6 +43,8 @@ from myflopy.modflow.mf6.package_inputs import (
     UzfInputsNamespace,
 )
 from myflopy.modflow.mf6.package_model import (
+    HfbPackageExplorer,
+    HfbResultsExplorer,
     ModelPackages,
     PackageExplorer,
     StaticArrayPackageExplorer,
@@ -212,6 +214,8 @@ __all__ = [
     "SfrPackageExplorer",
     "SurfaceWaterPackageExplorer",
     "PackageExplorer",
+    "HfbPackageExplorer",
+    "HfbResultsExplorer",
     "StaticArrayPackageExplorer",
     "UzfPackageExplorer",
     "ModelPackages",

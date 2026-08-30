@@ -467,7 +467,9 @@ def test_a_narrower_scope_stays_a_subset_of_the_free_verb(scope):
 
     #: Genuinely local to the scope: not forwarded to the free verb at all.
     local = {
-        "grid": {"select"},
+        # `select`/`select_style`/`select_color` were grid-only until ledger 160
+        # promoted them to every scope; the grid entry is deliberately empty now.
+        "grid": set(),
         "stack": {"basemap", "layers", "backend", "color_by", "scale", "cmap",
                   "width", "height", "x", "y", "line", "resolution", "colorscale",
                   "opacity", "show_grid", "legend", "title",

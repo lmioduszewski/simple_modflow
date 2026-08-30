@@ -54,6 +54,25 @@ def _factory(constructor):
     return functools.partial(_build_named, constructor)
 
 
+
+def _array_bc_spec(constructor, *, name: str, options) -> PackageSpec:
+    """Build one array-form (``READASARRAYS``) boundary spec.
+
+    Sibling of :func:`_list_bc_spec`, for the packages MODFLOW 6 offers in both
+    shapes. The list form addresses cells one record at a time; the array form
+    supplies one value per column per period and lets MODFLOW 6 resolve which
+    layer receives it. Same physics, different input.
+
+    ``readasarrays`` is FloPy's default on ``ModflowGwfrcha``/``ModflowGwfevta``
+    and is deliberately not passed -- the class IS the choice.
+
+    Goes through ``_factory``/``_named_options`` like everything else here, so
+    ``pname``/``filename`` templating and picklability come for free.
+    """
+
+    return PackageSpec(name, _factory(constructor), _named_options(name, dict(options)))
+
+
 def _list_bc_spec(
     package: str,
     stress_period_data,
@@ -285,9 +304,10 @@ def rch_spec(
     form of :class:`flopy.mf6.ModflowGwfrch`. ``maxbound`` is left to FloPy,
     which computes it from ``stress_period_data`` at write time -- so every
     native input shape (a dict of record lists, a bare list, periods set to
-    ``None``) passes through verbatim. (For the array form, or recharge derived
-    from GIS/PRISM rasters, use the ``mf.rch(...)`` / ``RCHBuilder`` high-level
-    path.)
+    ``None``) passes through verbatim. For the ARRAY form use
+    ``mf.rch.array(...)``; for recharge derived from GIS/PRISM rasters use the
+    ``mf.rch(...)`` / ``RCHBuilder`` high-level path, which also produces the
+    list form.
 
     Parameters
     ----------

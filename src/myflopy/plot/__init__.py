@@ -113,6 +113,19 @@ def _grid_of(source):
 
     grid = getattr(source, "vor", None)
     if grid is None:
+        # Objects that carry a grid under a different name: an imported
+        # `UsgModel` holds `.grid`, and a `BuiltModel` holds it on its context.
+        # Without this they were returned AS IF they were grids and died later
+        # with `AttributeError: no attribute 'gdf_vorPolys'`, several frames from
+        # the call that was actually wrong.
+        for owner, attr in ((source, "grid"), (getattr(source, "context", None), "grid")):
+            candidate = getattr(owner, attr, None)
+            if candidate is not None and hasattr(candidate, "gdf_vorPolys"):
+                return candidate, False
+    if grid is None:
+        # Anything else is taken AS the grid -- this dispatch is duck-typed on
+        # purpose (see above), so a stand-in that answers the grid protocol is
+        # legitimate and no type check belongs here.
         return source, False
     has_results = any(hasattr(source, attr) for attr in ("hds", "conc", "temp"))
     return grid, has_results
@@ -144,6 +157,10 @@ def map(      # noqa: A001 - the verb IS `map`
     contour_clip: bool = True,
     contour_resolution: int = 150,
     contour_method: str = "linear",
+    # -- selection -----------------------------------------------------------
+    select=None,
+    select_style: str = "outline",
+    select_color: str | None = None,
     # -- overlays and framing ------------------------------------------------
     locs=None,
     hillshade_path=None,
@@ -234,6 +251,21 @@ def map(      # noqa: A001 - the verb IS `map`
         and slower.
     contour_method : {'linear', 'cubic', 'nearest'}, default 'linear'
         Interpolation method for that grid.
+    select : sequence of int, ndarray, str, Path or geometry, optional
+        Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+        name of a registered model region (``"all_streams"``), a path to a
+        vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+        nothing (with a warning) when the selection is empty.
+    select_style : {'outline', 'dim', 'both'}, default 'outline'
+        How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+        of the selection and leaves every cell at full opacity. ``'dim'`` fades
+        the *unselected* cells to 20% instead, which suits a bare grid where the
+        selection is the subject, but on a field it costs a measured 6.9x of
+        readable contrast everywhere you did not select -- and one box/lasso
+        gesture in the browser overwrites it. ``'both'`` draws each.
+    select_color : str, optional
+        Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+        when the default red collides with a red-blue diverging colorscale.
     locs : Path or GeoDataFrame, optional
         Point locations to mark -- wells, observations, samples. A path is read
         as a vector file.
@@ -321,6 +353,9 @@ def map(      # noqa: A001 - the verb IS `map`
         logscale=logscale,
         zoom=zoom,
         locs=locs,
+        select=select,
+        select_style=select_style,
+        select_color=select_color,
         custom_hover=custom_hover,
         show_layer_elevs=show_layer_elevs,
         show_mounding=show_mounding,
@@ -949,6 +984,9 @@ class ModelPlots:
         contour_clip: bool = True,
         contour_resolution: int = 150,
         contour_method: str = "linear",
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
         locs=None,
         hillshade_path=None,
         bgs: bool = False,

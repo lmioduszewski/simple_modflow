@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     # the omission looks like the export is missing.
     # `tests/test_lazy_exports.py` fails naming any name that drifts out.
     from myflopy import modflow, plot, project
+    from myflopy.modflow.usg import UsgModel, read_usg
     from myflopy.advanced import (
         chd_spec,
         drn_spec,
@@ -175,6 +176,7 @@ if TYPE_CHECKING:
         gwe,
         gwf,
         gwt,
+        hfb,
         ic,
         ims,
         ist,
@@ -343,6 +345,7 @@ _EXPORTS = {
     "oc": ("myflopy.package_api", "oc"),
     "chd": ("myflopy.package_api", "chd"),
     "ghb": ("myflopy.package_api", "ghb"),
+    "hfb": ("myflopy.package_api", "hfb"),
     "gwe": ("myflopy.package_api", "gwe"),
     "gwf": ("myflopy.package_api", "gwf"),
     "gwt": ("myflopy.package_api", "gwt"),
@@ -459,6 +462,8 @@ _EXPORTS = {
     "find_pest_runs": ("myflopy.modflow.mf6.pest", "find_pest_runs"),
     "open_prt_run": ("myflopy.modflow.mf6.prt", "open_prt_run"),
     "VoronoiGridPlus": ("myflopy.modflow.mf6.grid.voronoi", "VoronoiGridPlus"),
+    "UsgModel": ("myflopy.modflow.usg", "UsgModel"),
+    "read_usg": ("myflopy.modflow.usg", "read_usg"),
     "simple_model_spec": ("myflopy.modflow.mf6.simplemodel", "simple_model_spec"),
     "build_canonical_model": (
         "myflopy.modflow.mf6.canonical_example",

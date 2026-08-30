@@ -28,20 +28,33 @@ def get_vor_cells_as_series(
     """
     names = None
 
-    if isinstance(overlapping_geometry, (shp.Polygon, shp.Point, shp.LineString, shp.MultiPolygon)):
+    # Any shapely geometry, tested on the base class rather than a list of
+    # concrete types -- the list left out MultiLineString, so a multi-part fault
+    # trace fell through to the error branch below.
+    if isinstance(overlapping_geometry, shp.geometry.base.BaseGeometry):
         geometries = gpd.GeoSeries([overlapping_geometry])
-        names = geometries.name
-    elif isinstance(overlapping_geometry, (gpd.GeoDataFrame, gpd.GeoSeries)):
+    elif isinstance(overlapping_geometry, gpd.GeoDataFrame):
         geometries = overlapping_geometry.geometry
         if name_field in overlapping_geometry.columns:
             names = overlapping_geometry[name_field]
-    elif isinstance(overlapping_geometry, Path):
-        geoms = gpd.read_file(overlapping_geometry)
+    elif isinstance(overlapping_geometry, gpd.GeoSeries):
+        # Separately from GeoDataFrame: a GeoSeries has no `.columns`, so the
+        # shared branch raised AttributeError on every bare series.
+        geometries = overlapping_geometry
+    elif isinstance(overlapping_geometry, (str, Path)):
+        geoms = gpd.read_file(Path(overlapping_geometry))
         geometries = geoms.geometry
         if name_field in geoms.columns:
             names = geoms[name_field]
     else:
-        return ValueError('Unsupported data type for overlapping_geometry.')
+        # RAISE, not return. This returned the exception as DATA, so every caller
+        # got a ValueError object where it expected a Series and failed one line
+        # later with something unrelated -- `TypeError: 'ValueError' object is not
+        # iterable` being the usual disguise.
+        raise ValueError(
+            "overlapping_geometry must be a shapely geometry, a GeoDataFrame, a "
+            f"GeoSeries, or a path to a vector file -- got {type(overlapping_geometry).__name__}."
+        )
 
     if names is None:
         names = list(range(len(geometries)))

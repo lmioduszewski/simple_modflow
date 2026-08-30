@@ -59,6 +59,10 @@ def _infer_model_name(workspace: Path) -> str:
 # with per-package *behaviour* (fields, results, capabilities), and discretization
 # or output control has none of that to describe.
 _NON_REGISTRY_SUFFIXES = {
+    # HFB describes a property of the CONNECTION between two cells rather than
+    # either cell's own stress, so it has no registry descriptor -- but a reopened
+    # run still has to recognise the file.
+    "hfb": "HFB",
     "dis": "DIS",
     "disu": "DISU",
     "disv": "DISV",

@@ -14,6 +14,11 @@ def test_choro_plot_returns_figure_without_calling_show():
     choro._locs = None
     choro._overlays = []
     choro.hillshade_path = None
+    # `.fig` also draws the `select=` highlight (ledger 160). Stubbed rather than
+    # defended against with getattr: a half-built Choro should fail loudly here,
+    # not silently draw a map with its highlight missing.
+    choro._select_cells = []
+    choro.select_style = "outline"
 
     assert choro.fig is figure
 

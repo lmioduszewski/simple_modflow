@@ -186,6 +186,21 @@
         "boundnames:KEYWORD_ONLY=False",
         "options:VAR_KEYWORD=<required>"
       ],
+      "array": [
+        "rate:KEYWORD_ONLY=<required>",
+        "depth:KEYWORD_ONLY=<required>",
+        "surface:KEYWORD_ONLY=None",
+        "context:KEYWORD_ONLY=None",
+        "ievt:KEYWORD_ONLY='top_active'",
+        "fixed_cell:KEYWORD_ONLY=False",
+        "auxiliary:KEYWORD_ONLY=None",
+        "auxmultname:KEYWORD_ONLY=None",
+        "observations:KEYWORD_ONLY=None",
+        "print_input:KEYWORD_ONLY=False",
+        "save_flows:KEYWORD_ONLY=True",
+        "name:KEYWORD_ONLY='evt'",
+        "options:VAR_KEYWORD=<required>"
+      ],
       "flopy": [
         "stress_period_data:KEYWORD_ONLY=<required>",
         "name:KEYWORD_ONLY='evt'",
@@ -309,6 +324,57 @@
         "nc_structured_filerecord:KEYWORD_ONLY=None",
         "nc_filerecord:KEYWORD_ONLY=None",
         "kwargs:VAR_KEYWORD=<required>"
+      ]
+    },
+    "hfb": {
+      "__call__": [
+        "pairs:KEYWORD_ONLY=<required>",
+        "hydchr:KEYWORD_ONLY=<required>",
+        "layers:KEYWORD_ONLY=None",
+        "context:KEYWORD_ONLY=None",
+        "first_period:KEYWORD_ONLY=0",
+        "name:KEYWORD_ONLY='hfb'",
+        "print_input:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
+      ],
+      "enclose": [
+        "polygon:POSITIONAL_OR_KEYWORD=<required>",
+        "context:KEYWORD_ONLY=<required>",
+        "hydchr:KEYWORD_ONLY=<required>",
+        "layers:KEYWORD_ONLY=None",
+        "first_period:KEYWORD_ONLY=0",
+        "name:KEYWORD_ONLY='hfb'",
+        "print_input:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
+      ],
+      "flopy": [
+        "stress_period_data:KEYWORD_ONLY=<required>",
+        "name:KEYWORD_ONLY='hfb'",
+        "print_input:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
+      ],
+      "gpkg": [
+        "path:POSITIONAL_OR_KEYWORD=<required>",
+        "context:KEYWORD_ONLY=<required>",
+        "hydchr:KEYWORD_ONLY='hydchr'",
+        "layer:KEYWORD_ONLY=None",
+        "layers:KEYWORD_ONLY=None",
+        "strict:KEYWORD_ONLY=True",
+        "first_period:KEYWORD_ONLY=0",
+        "name:KEYWORD_ONLY='hfb'",
+        "print_input:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
+      ],
+      "line": [
+        "barrier:POSITIONAL_OR_KEYWORD=<required>",
+        "context:KEYWORD_ONLY=<required>",
+        "hydchr:KEYWORD_ONLY=<required>",
+        "layers:KEYWORD_ONLY=None",
+        "strict:KEYWORD_ONLY=True",
+        "first_period:KEYWORD_ONLY=0",
+        "name:KEYWORD_ONLY='hfb'",
+        "print_input:KEYWORD_ONLY=False",
+        "options:VAR_KEYWORD=<required>"
       ]
     },
     "ic": {
@@ -505,6 +571,19 @@
         "layer:KEYWORD_ONLY=0",
         "name_by_cell:KEYWORD_ONLY=None",
         "boundnames:KEYWORD_ONLY=False",
+        "name:KEYWORD_ONLY='rch'",
+        "options:VAR_KEYWORD=<required>"
+      ],
+      "array": [
+        "recharge:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
+        "irch:KEYWORD_ONLY='top_active'",
+        "fixed_cell:KEYWORD_ONLY=False",
+        "auxiliary:KEYWORD_ONLY=None",
+        "auxmultname:KEYWORD_ONLY=None",
+        "observations:KEYWORD_ONLY=None",
+        "print_input:KEYWORD_ONLY=False",
+        "save_flows:KEYWORD_ONLY=True",
         "name:KEYWORD_ONLY='rch'",
         "options:VAR_KEYWORD=<required>"
       ],
@@ -929,6 +1008,7 @@
       "drn",
       "evt",
       "ghb",
+      "hfb",
       "ic",
       "lak",
       "npf",
@@ -1185,6 +1265,7 @@
       "TableSource",
       "Toward",
       "TriangleGrid",
+      "UsgModel",
       "VectorParameterSource",
       "VoronoiGridPlus",
       "Where",
@@ -1219,6 +1300,7 @@
       "gwe",
       "gwf",
       "gwt",
+      "hfb",
       "ic",
       "ims",
       "ist",
@@ -1244,6 +1326,7 @@
       "rch",
       "read_gpkg",
       "read_shp_gpkg",
+      "read_usg",
       "ref",
       "riv",
       "run_particle_tracking",
@@ -1278,6 +1361,7 @@
       "gwe",
       "gwf",
       "gwt",
+      "hfb",
       "ic",
       "ims",
       "ist",
@@ -1349,6 +1433,7 @@
       "drn",
       "evt",
       "ghb",
+      "hfb",
       "ic",
       "lak",
       "mvr",

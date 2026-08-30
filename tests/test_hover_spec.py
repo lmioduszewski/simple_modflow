@@ -385,6 +385,11 @@ def _bare_choro(**attrs):
     choro._hover_layers = None
     choro._hover_surfaces = None
     choro._hover_fields = None
+    # `_resolved_hover_spec` also appends the mounding field when it is on
+    # (ledger 161); stubbed rather than defended against, so a half-built Choro
+    # fails loudly here instead of silently rendering a hover without it.
+    choro.show_mounding = False
+    choro.show_layer_elevs = False
     for key, value in attrs.items():
         setattr(choro, key, value)
     return choro

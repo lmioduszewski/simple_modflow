@@ -75,6 +75,21 @@ def build_cell_package_input_table(
         if cached is not None:
             return cached.copy()
     frames: list[pd.DataFrame] = []
+    if not hasattr(package, "stress_period_data"):
+        # An array-form (READASARRAYS) package -- `mf.rch.array` / `mf.evt.array`,
+        # or one loaded from a model that used them. It has no
+        # `stress_period_data` at all; its fields are transient ARRAYS, one value
+        # per column per period. Expanding them into the same tidy frame is what
+        # lets the inputs tier, the diff tier and the group tier read an array
+        # package at all -- without it they raise AttributeError.
+        return _array_package_input_table(
+            model,
+            package,
+            package_name,
+            per=per,
+            layer_values=layer_values,
+            cell_values=cell_values,
+        )
     if per is not None:
         period_items = [(int(per), package.stress_period_data.get_data(key=int(per)))]
     else:
@@ -107,6 +122,88 @@ def build_cell_package_input_table(
         _get_package_explorer_cache(model)[
             ("cell_package_input_table", str(package_name).lower())
         ] = combined.copy()
+    return combined
+
+
+
+def _array_package_input_table(
+    model,
+    package,
+    package_name,
+    *,
+    per,
+    layer_values,
+    cell_values,
+) -> pd.DataFrame:
+    """Tidy an array-form (``READASARRAYS``) package into the cell-wise frame.
+
+    Each transient array yields one value per column per period. The layer a
+    column's flux lands in comes from the package's own ``irch``/``ievt`` index
+    where it has one, and is layer 0 otherwise -- which is exactly MODFLOW 6's
+    own rule for an array package without an index array.
+    """
+
+    index_array = None
+    for candidate in ("irch", "ievt"):
+        entry = getattr(package, candidate, None)
+        if entry is not None and hasattr(entry, "get_data"):
+            index_array = entry
+            break
+
+    fields = {
+        field: getattr(package, field)
+        for field in ("recharge", "rate", "depth", "surface")
+        if getattr(package, field, None) is not None
+        and hasattr(getattr(package, field), "get_data")
+    }
+    if not fields:
+        return pd.DataFrame(columns=["model", "package", "per", "layer", "cell"])
+
+    periods: dict[int, dict[str, np.ndarray]] = {}
+    for field, entry in fields.items():
+        data = entry.get_data()
+        if not isinstance(data, dict):
+            data = {0: data}
+        for period, values in data.items():
+            if values is None:
+                continue
+            periods.setdefault(int(period), {})[field] = np.asarray(values).ravel()
+
+    frames: list[pd.DataFrame] = []
+    for period in sorted(periods):
+        if per is not None and int(period) != int(per):
+            continue
+        columns = periods[period]
+        length = max(len(v) for v in columns.values())
+        frame = pd.DataFrame({name: np.resize(values, length) for name, values in columns.items()})
+        frame["cell"] = np.arange(length)
+
+        layers = np.zeros(length, dtype=int)
+        if index_array is not None:
+            raw = index_array.get_data()
+            entry = raw.get(period) if isinstance(raw, dict) else raw
+            if entry is None and isinstance(raw, dict) and raw:
+                entry = raw[max(k for k in raw if k <= period)] if any(k <= period for k in raw) else None
+            if entry is not None:
+                layers = np.resize(np.asarray(entry).ravel().astype(int), length)
+        frame["layer"] = layers
+
+        if layer_values is not None:
+            frame = frame[frame["layer"].isin(layer_values)]
+        if cell_values is not None:
+            frame = frame[frame["cell"].isin(cell_values)]
+        if frame.empty:
+            continue
+        frame["package"] = str(package_name).lower()
+        frame["per"] = int(period)
+        frame["model"] = model.name
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(columns=["model", "package", "per", "layer", "cell"])
+    combined = pd.concat(frames, ignore_index=True)
+    for column in ("layer", "cell", "per"):
+        combined[column] = combined[column].astype(int)
     return combined
 
 

@@ -556,6 +556,39 @@ class VoronoiGridPlus(VoronoiGrid):
         """Return the length of the shared face between two polygons."""
         return geometry_shared_face_length(poly1, poly2)
 
+    def shared_face(self, cell_a: int, cell_b: int):
+        """The ``LineString`` two cells share, or ``None`` when they only touch.
+
+        The segment itself, where :meth:`shared_face_length` gives only its
+        length -- a horizontal flow barrier needs the geometry.
+        """
+
+        from myflopy.modflow.mf6.grid.barriers import shared_face_segment
+
+        return shared_face_segment(self, cell_a, cell_b)
+
+    def barrier_faces(self, barrier, *, strict: bool = True):
+        """The cell-pair faces a barrier line crosses.
+
+        See :func:`myflopy.modflow.mf6.grid.barriers.barrier_faces`. This is what
+        turns a digitised fault trace into the pairs MODFLOW 6's HFB wants.
+        """
+
+        from myflopy.modflow.mf6.grid.barriers import barrier_faces
+
+        return barrier_faces(self, barrier, strict=strict)
+
+    def enclosed_faces(self, polygon):
+        """The watertight cut sealing the cells inside ``polygon`` from the rest.
+
+        See :func:`myflopy.modflow.mf6.grid.barriers.enclosed_faces` -- and note
+        this is NOT the faces the polygon's ring crosses, which is not watertight.
+        """
+
+        from myflopy.modflow.mf6.grid.barriers import enclosed_faces
+
+        return enclosed_faces(self, polygon)
+
     def get_gdf_vorPolys(self, crs=None):
         """Build a GeoDataFrame of Voronoi polygons."""
         return geometry_get_gdf_vor_polys(self, crs=crs)

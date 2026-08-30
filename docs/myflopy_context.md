@@ -154,13 +154,33 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 
 ---
 
+### MODFLOW-USG import (2026-08-28, ledger 159)
+`mf.read_usg(nam, gsf=)` -> `UsgModel` -> `.to_mf6()` -> `SimulationSpec` (DISV).
+Module `src/myflopy/modflow/usg/`. Reads DISU (via FloPy), BAS6/LPF (hand-rolled --
+FloPy cannot load a BAS whose STRT is a binary unit), SMS, OC, the list BCs
+(CHD/DRN/GHB/WEL/RIV, honouring `ITMP < 0` reuse), RCH, ETS, HFB6, and CLN.
+
+Grid-independent views, which are what a re-grid starts from: `surfaces()` (layer
+contacts as `Surface` objects), `boundary_frame(ftype)` (a BC as a GeoDataFrame with
+real geometry), `cln_polygons()` (CLN features dissolved to polygons).
+
+Not converted: **CLN** (no MF6 counterpart -- read and reported, never written) and
+DRAWDOWN output. Approximated: CHD's within-period ramp, SMS's inner solver. Exact
+despite having no direct MF6 equivalent: ETS `NETSOP = 3` (resolved once from the
+static IBOUND). `validate()` lists what MF6 will reject before you run.
+
 ## The genuinely short gap list (verify each before building)
 
 > The sequenced roadmap for all of these is `docs/implementation_plan_2026-07.md` (rev. 4,
 > 2026-07-14 — every claim re-verified against the code; read its "Resolved decisions"
 > D8–D11 before starting).
 
-1. **MAW / HFB packages** — no support yet (plan §5.4). DONE 2026-07-17: D8
+1. **MAW package** — no support yet (plan §5.4). **HFB DONE 2026-08-29 (ledger 162)**:
+   `mf.hfb` with `()`/`.line`/`.gpkg`/`.enclose`/`.flopy`, plus
+   `vor.barrier_faces`/`enclosed_faces`/`shared_face` in
+   `modflow/mf6/grid/barriers.py`. Deliberately NOT a `package_registry` entry —
+   HFB is face-indexed (cell PAIRS, no cellid) and MODFLOW 6 writes no HFB budget
+   record, so a descriptor could not be honestly filled. DONE 2026-07-17: D8
    (`mf.chd/ghb/drn/wel` each carry a real `.flopy(...)` escape hatch,
    `test_simple_list_bcs_have_a_real_flopy_escape_hatch`), §5.1 `mf.riv`, and §5.2
    `mf.evt` (each with all four pieces: helper + `GeoPackageSource` resolver +

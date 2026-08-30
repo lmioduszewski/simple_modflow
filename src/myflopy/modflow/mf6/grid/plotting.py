@@ -13,10 +13,10 @@ from flopy.discretization.vertexgrid import VertexGrid
 from flopy.plot.crosssection import PlotCrossSection
 
 from myflopy import viz as f
-from myflopy.viz import Picture
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.hover import conc_hover, head_hover, temp_hover
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.viz import Picture
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
@@ -92,6 +92,18 @@ def _choropleth_factory(
         # only the animated head map. An inverted range renders an all-one-colour
         # picture with no error, which reads as a broken model.
         raise ValueError(f"zmin must be less than zmax; got zmin={zmin}, zmax={zmax}.")
+    if show_layer_elevs is True:
+        # An EXPLICIT request also turns on the sectioned hover's surfaces, which
+        # decides from the spec's own flag and so ignored this one entirely.
+        # Only when explicit: `None` resolves to True merely because the grid HAS
+        # a layer frame, which means "we could", not "you asked" -- and defaulting
+        # every head map to the full stacked table is exactly what
+        # `test_head_map_active_strip_is_default_and_compact` forbids.
+        # `setdefault` is not enough: the free verb forwards `hover_surfaces=None`
+        # explicitly, so the key is already present. Test the VALUE, which also
+        # leaves an explicit `hover_surfaces=False` winning.
+        if choro_kwargs.get("hover_surfaces") is None:
+            choro_kwargs["hover_surfaces"] = True
     if show_layer_elevs is None:
         show_layer_elevs = getattr(vor, "gdf_topbtm", None) is not None
     return Choro(
@@ -370,6 +382,8 @@ class GridPlots:
         values=None,
         *,
         select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
         zmin: float | None = None,
         zmax: float | None = None,
         colorscale: str | list | tuple | None = None,
@@ -397,9 +411,21 @@ class GridPlots:
         """A plan-view map of this grid, on a basemap.
 
         ``values`` is any per-cell array; with none, cells are keyed by node id
-        -- which is what the old ``map_nodes()`` drew. ``select`` highlights a
-        subset, either as cell indices or as a vector file/geometry to intersect,
-        replacing ``show_selected_cells()`` and ``show_overlapping_geometry()``.
+        -- which is what the old ``map_nodes()`` drew.
+
+        Parameters
+        ----------
+        select
+            Cells to highlight: indices, a boolean mask, a registered region
+            name, a vector file, or a geometry to intersect. Replaces
+            ``show_selected_cells()`` and ``show_overlapping_geometry()``.
+        select_style
+            ``"outline"`` (default) draws the dissolved boundary of the
+            selection and leaves the cells at full opacity; ``"dim"`` fades
+            everything else instead, which reads well on a bare node-id grid and
+            badly on a field; ``"both"`` does each.
+        select_color
+            Highlight colour; defaults to the palette's.
 
         Requires a CRS, because the basemap does. Use :meth:`grid` for a grid
         that does not have one yet.
@@ -436,13 +462,12 @@ class GridPlots:
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
             hover=hover,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
             **({"custom_zs": list(values)} if values is not None else {}),
             **trace_kwargs,
         )
-        if select is not None:
-            if isinstance(select, (str, Path)) or hasattr(select, "geom_type"):
-                select = self.vor.get_vor_cells_as_series(select).to_list()
-            picture.fig.data[0].selectedpoints = tuple(select)
         return picture
 
     def section(self, line) -> GridSection:

@@ -323,6 +323,56 @@ and the `<pkg>_spec` factories (`chd_spec`, `rch_spec`, `evt_spec`, …). E.g.
 
 ---
 
+### Recharge and ET, array form — `mf.rch.array` / `mf.evt.array`
+
+| call | writes |
+|---|---|
+| `mf.rch(...)` / `.flopy(...)` / `.gpkg(...)` | list form, one record per cell |
+| `mf.rch.array(recharge=…, context=…)` | `READASARRAYS`, one array per period |
+| `mf.evt.array(rate=…, depth=…, surface=…, context=…)` | the same for ET |
+
+Array when the boundary covers the model; list when it is sparse or needs
+boundnames. `irch`/`ievt` default to `"top_active"`, derived from `context.domain`
+— without one MODFLOW 6 applies the flux to layer 1 and silently skips any column
+whose layer 1 is inactive. Segmented ET has no array form and `nseg` raises.
+
+### Horizontal flow barriers — `mf.hfb`
+
+A barrier sits on the **face between two cells**, so MODFLOW 6 addresses it as a
+cell *pair*. FloPy takes any pair at all and never checks it is a real connection;
+the run aborts instead. These resolve geometry and validate first.
+
+| call | from |
+|---|---|
+| `mf.hfb(pairs=…, hydchr=…, layers=…, context=…)` | explicit cell pairs |
+| `mf.hfb.line(trace, context=…, hydchr=…)` | a fault trace → the faces it crosses |
+| `mf.hfb.gpkg(path, context=…, hydchr="hydchr")` | a GeoPackage line layer |
+| `mf.hfb.enclose(polygon, context=…, hydchr=…)` | a watertight cutoff wall around a region |
+| `mf.hfb.flopy(stress_period_data=…)` | the FloPy-native form, unvalidated |
+
+`hydchr` is a hydraulic **characteristic**, 1/T — barrier K divided by barrier
+thickness, not K. `0` is impermeable; a negative value is a conductance multiplier.
+
+`.enclose` is separate from `.line` on purpose: a ring passes *through* cells, so
+the faces it crosses are **not** watertight. The cut between the enclosed cells and
+their neighbours is.
+
+Grid verbs underneath: `vor.barrier_faces(geom)`, `vor.enclosed_faces(polygon)`,
+`vor.shared_face(a, b)`.
+
+### Importing an existing MODFLOW-USG model
+
+| call | returns | notes |
+|---|---|---|
+| `mf.read_usg(nam, gsf=, crs=, nper=, require_layered=, read_boundaries=)` | `UsgModel` | A USG `DISU` has no coordinates, so the `.gsf` is required for anything but inspection. |
+| `usg.report()` | `str` | What converted, what was approximated, what was omitted — with counts. |
+| `usg.validate()` | `list[Finding]` | What MODFLOW 6 will **reject**, before running. `finding.blocks_run`. |
+| `usg.to_mf6(name, crs=, newton=, start_date_time=, complexity=, include=, fix_for_mf6=, local_origin=)` | `SimulationSpec` | DISV. Keep `local_origin=True`. |
+| `usg.surfaces()` / `usg.boundary_frame(ftype)` / `usg.cln_polygons()` | `Surface`s / GeoDataFrame / GeoDataFrame | Grid-independent — these survive a change of grid, node numbers do not. |
+
+`UsgModel` also exposes the model reshaped to `(nlay, ncpl)`: `top`, `botm`, `idomain`,
+`strt`, `k`, `k33`, `ss`, `sy`, `icelltype`, `thickness`, `uppermost_active`.
+
 ## B · Read side — the `noun.verb` grammar
 
 ```
@@ -458,6 +508,19 @@ of `dir()`/completion; they return exactly what they used to. Prefer the noun fo
 ---
 
 ## C · Drawing — the plotting verbs
+
+**Highlighting a subset of cells** — `select=` is an option on `map` at every
+scope (free `mf.plot.map`, `model.plot.map`, `vor.plot.map`, and every
+`…inputs/results.map` leaf):
+
+```python
+model.plot.map(layer=0, select=cells)                    # outline (default)
+vor.plot.map(select="all_streams")                       # a registered region
+model.plot.map(select="wetland.gpkg")                    # a vector file
+vor.plot.map(values, select=cells, select_style="dim")   # fade the rest instead
+vor.plot.map(select=cells, select_color="#0072B2")       # avoid a red colorscale
+```
+
 
 Six verbs cover every picture. They exist as free functions and bound to the
 objects, and the bound form calls the free one, so the two cannot diverge.

@@ -163,7 +163,27 @@ def build_budget_result_table(
     reader = model._get_budget_reader()
     frames: list[pd.DataFrame] = []
     for kstpkper in model._get_budget_kstpkper():
-        records = reader.get_data(text=budget_text, kstpkper=kstpkper)
+        # `paknam=` as well as `text=`. FloPy resolves `text` by FIRST-HIT
+        # SUBSTRING match, and "RCH" is a substring of both "RCHA" and
+        # "UZF-GWRCH" -- so a model declaring UZF before RCH would have
+        # `packages.rch.results.q` silently return UZF's recharge term. Naming
+        # the package makes the match deliberate rather than lucky.
+        try:
+            records = reader.get_data(
+                text=budget_text, paknam=package_name, kstpkper=kstpkper
+            )
+        except ValueError as error:
+            # FloPy RAISES when the package name is absent rather than returning
+            # nothing, and a budget file legitimately may not carry one (an older
+            # run, or a package whose record is named for the term rather than the
+            # package). Fall back to the text-only match, which is what this did
+            # before -- less precise, never worse.
+            logger.debug(
+                "budget record for %r carries no package name; matching on text alone: %s",
+                package_name,
+                error,
+            )
+            records = reader.get_data(text=budget_text, kstpkper=kstpkper)
         if not records:
             continue
         frame = _model_budget_record_frame(

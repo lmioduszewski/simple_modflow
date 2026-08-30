@@ -355,9 +355,16 @@ def test_the_grid_verbs_draw_on_the_canonical_grid(canonical_run):
     assert vor.plot.grid().plot_mpl() is not None
     assert len(vor.plot.map().fig.data) >= 1
 
-    # `select=` absorbs show_selected_cells / show_overlapping_geometry.
+    # `select=` absorbs show_selected_cells / show_overlapping_geometry. Since
+    # ledger 160 it draws an OUTLINE by default rather than dimming the rest --
+    # the dim is still reachable, and it is the right picture on a bare grid.
     picked = vor.plot.map(select=[0, 1, 2])
-    assert tuple(picked.fig.data[0].selectedpoints) == (0, 1, 2)
+    assert [trace.type for trace in picked.fig.data] == ["choroplethmap", "scattermap"]
+    assert picked.fig.data[0].selectedpoints is None
+
+    dimmed = vor.plot.map(select=[0, 1, 2], select_style="dim")
+    assert tuple(dimmed.fig.data[0].selectedpoints) == (0, 1, 2)
+    assert [trace.type for trace in dimmed.fig.data] == ["choroplethmap"]
 
 
 def test_the_cell_selector_is_still_reachable_from_a_grid():

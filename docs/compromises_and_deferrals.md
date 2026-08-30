@@ -3651,44 +3651,6 @@ same day, which is the useful part of the result.
        bakes eight dead actors into any export. Cross-sections stay
        `stack.plot.section()`, which already answers the question.
 
-158. **`VoronoiGridPlus.from_gsf` reads the `.gsf` itself rather than reusing
-     flopy's `UnstructuredGrid.from_gridspec` (2026-08-28).**
-     A MODFLOW-USG `DISU` stores connectivity and geometric measures but no
-     coordinates, so the `.gsf` is the only file that knows where the cells are.
-     - **Why not delegate.** flopy's reader rejects the standard
-       `UNSTRUCTURED GWF` header outright -- `not (A) or (B)` where `not (A or B)`
-       was meant, so the two-word form always raises "Invalid GSF file, no
-       header" -- and it returns all layers stacked with the raw 3-D vertex
-       lists, which is precisely what must not reach a plan grid. Wrapping it
-       would mean patching a third-party parser and then undoing its output.
-       ~90 lines of our own parser buys the header tolerance, the layer
-       selection, and clear errors that name the offending file and node.
-     - **Why the collapse matters.** A `.gsf` cell is a hexahedron: 8 vertices,
-       the bottom four under the top four. Passed through as-is, every polygon
-       traces its outline twice -- `is_valid` False, DOUBLE the true area -- and
-       the map still *draws correctly*, so the only visible symptom is that
-       hover stops working, because maplibre abandons hit-testing on a
-       self-overlapping ring. Measured in headless Chromium: 0/5 hover probes on
-       the degenerate grid, 5/5 on the collapsed one, with the two renderings
-       within 0.4% of each other on colored pixel count.
-     - **`from_gsf`, not `vor_from_gsf`.** Its neighbour is `vor_from_disu`, so
-       the two constructors on this class now disagree about the `vor_` prefix.
-       `from_gsf` matches the `from_*` convention used everywhere else in the
-       codebase (`Surface.from_contours`, `LayerStack.from_modflow`,
-       `GridSpec.from_object`); renaming `vor_from_disu` to match would break the
-       two Cumberland notebooks that call it, so the inconsistency stays until
-       something else touches that method.
-     - **NOT done: layer elevations.** A `.gsf` carries z per vertex, which is
-       enough to populate `gdf_topbtm` and light up the layer-elevation rows in
-       the map hover. `from_gsf` drops z entirely and returns a plan view only.
-       A USG model's tops and bottoms are also in its DISU, so the better home
-       for that is a reader that takes both files, not this one.
-     - **NOT done: idomain from the USG BAS.** `from_gsf` takes `idomain` by
-       hand like every other constructor here. Note flopy's `MfUsgBas.load` sizes
-       IBOUND from DISU alone and has no CLN awareness, so it under-reads the
-       array on any model with CLN nodes -- reading idomain automatically would
-       mean parsing the BAS ourselves.
-
 158. **A unit splits into model layers; geology and discretization separate (2026-08-28).**
      Asked for "additional surface algebra" to split declared layers by amount or
      percentage. Half the request already worked and half was inexpressible.
@@ -3765,3 +3727,338 @@ same day, which is the useful part of the result.
      - `to_disv` now takes its idomain from `build()` rather than letting the
        engine judge each layer alone; otherwise the two disagreed on any split
        stack, which is a worse bug than either answer.
+
+159. **A MODFLOW-USG model imports, and says what it could not bring (2026-08-28).**
+     `mf.read_usg(nam, gsf=)` reads a MODFLOW-USG model into a `UsgModel` and
+     `.to_mf6()` converts it to a `SimulationSpec` on a DISV grid. The reference
+     model is the Ten Trails valley model (47,025 nodes = 5 x 9,405, 72 stress
+     periods). Everything below is deliberate; `report()` and `validate()` state
+     each one at runtime so no omission is silent.
+     - **CLN is NOT converted.** MODFLOW 6 has no Connected Linear Network. The
+       804 CLN nodes are read, segmented by graph shape into 4 waterbodies (707
+       nodes, 2-D meshes) and 2 streams (97 nodes, chains), and reported with the
+       layer-1 cells each touches -- but nothing is written. Dropping them costs
+       no pumping at all (the entire WEL package is CLN-local P-ET, `ITMP = 0`
+       GWF wells in every period) but does remove the lake/stream stage feedback
+       and ~15,000 ft3/d of net surface-water flux. `model.cln_polygons()` returns
+       the features as polygons, which is what a later LAK/SFR rebuild starts from.
+     - **ETS becomes a LIST-based EVT, and it is large.** `NETSEG = 2` and
+       MODFLOW 6 cannot combine segments with `READASARRAYS`, so the array
+       package becomes one record per active column per period: 72 x 9,090 =
+       654,480 records, a 61 MB EVT file. Using `EVTA` instead would silently
+       drop the segment shape, which is a change to the physics, not the format.
+     - **`NETSOP = 3` is resolved once, and that is exact.** USG applies ET to
+       the highest ACTIVE cell; MODFLOW 6 needs an explicit cell. IBOUND is
+       static for the whole run, so resolving it at conversion is exact rather
+       than an approximation.
+     - **CHD loses its within-period ramp.** USG interpolates `shead` -> `ehead`
+       across a stress period; MODFLOW 6 holds one value. The end-of-period head
+       is taken (max |ehead - shead| here is 1.40 ft).
+     - **SMS -> IMS is partial, by necessity, but keeps the tuning.** The
+       delta-bar-delta under-relaxation and backtracking controls map field for
+       field and ARE carried -- they are how the original model was made to
+       converge, and discarding them leaves MODFLOW 6 taking Newton steps of
+       100,000+ ft on a model whose heads span 400. What does NOT carry: SMS's
+       `HICLOSE` is not MODFLOW 6's `INNER_DVCLOSE` (different inner solvers), and
+       `IACL`/`NORDER`/`LEVEL`/`NORTH`/`RCLOSEPCGU` have no counterpart, so the
+       complexity preset owns the inner solve outright. Mixing half of SMS's
+       numbers into half a preset produces a solver that is neither.
+     - **`COMPLEX` is the default preset, not `MODERATE`.** On this model
+       `MODERATE` does not converge slowly -- MODFLOW 6 dies with SIGFPE during
+       the first solve. Measured; `COMPLEX` runs the same model.
+     - **The mesh is written to a LOCAL origin.** MODFLOW 6 builds DISV
+       conductances from raw vertex coordinates, and on a State Plane grid
+       (~1.34 million ft here) that arithmetic loses enough precision to return a
+       NaN budget while still reporting "Normal termination". Measured on identical
+       input differing only in the shift: **0 of 9,405 cells finite as-is,
+       9,405 of 9,405 shifted**. `to_mf6(local_origin=True)` (the default) writes
+       the mesh relative to its own corner and declares that corner as
+       `xorigin`/`yorigin`, so the model stays georeferenced.
+     - **`fix_for_mf6` is OFF by default.** MODFLOW-USG accepts a head boundary
+       below its cell bottom and MODFLOW 6 refuses to run. The opt-in raises GHB
+       heads to just above the bottom (a relative nudge -- exact equality still
+       trips MODFLOW 6 once the written text rounds) and omits CHD records in the
+       periods where they sit below, which is inert in USG anyway. Off by default
+       because a boundary head is not something to change unasked.
+     - **No DRAWDOWN output.** The USG OC asks for it; MODFLOW 6 does not produce
+       drawdown.
+     - **Boundary files are truncated to `NPER`.** They routinely carry more
+       period blocks than the model runs (this WEL holds 612 and its CHD 792 for a
+       72-period run) and MODFLOW reads the first `NPER`, so the reader does too.
+     - **A start date is refused rather than invented.** This DISU parks a date on
+       each stress-period line whose year is the literal constant 2023 on all 612
+       lines, so the sequence jumps backwards every January. Dates are used only
+       when strictly increasing; otherwise `to_mf6(start_date_time=)` must supply one.
+     - **DISU is read through FloPy; BAS6 and LPF are not.** FloPy 3.10 cannot load
+       a BAS whose `STRT` comes from a binary unit (`EXTERNAL -61`): it routes the
+       record to `Util2d.load_txt`, which tests `"," in line` against `bytes`. LPF
+       then fails too because it reaches for the BAS that never loaded. Both are
+       read here instead; DISU, which FloPy handles correctly, is delegated.
+     - **Non-layered USG grids are refused, not approximated.** A nested or
+       ghost-node-refined DISU has no DISV equivalent, so `require_layered=True`
+       raises rather than misplacing cells. The test is on the connectivity, not
+       on `IVSD`, because `IVSD` states intent while the connections state fact.
+
+160. **A highlight is a drawing, not a dimming; and it works on every map (2026-08-29).**
+     `map(select=...)` moved from grid-only to every scope, and changed mechanism.
+     Asked for: "add selections to any map... is there a better way to highlight
+     certain cells?" Both halves were answered by measurement.
+     - **`selectedpoints` is the wrong mechanism for a field.** Plotly's selection
+       styling on a choroplethmap exposes exactly one property --
+       `go.choroplethmap.selected.Marker()` is `['opacity']` -- so "highlight"
+       there can only mean *erase everything else*; unselected cells render at
+       `0.2 x opacity` (plotly's `DESELECTDIM`). Measured on a real head field,
+       200,000 random pairs of UNSELECTED cells in CIE Lab: perceptually
+       distinguishable pairs fall from **67.2% to 9.7%**, a 6.9x loss of contrast
+       across the cells you did not select, while the colorbar still advertises
+       the full range. Six of ten adjacent `earth` deciles become
+       indistinguishable.
+     - **The default is now a dissolved-boundary outline** drawn as one
+       `go.Scattermap`. The field keeps full opacity, and 804 contiguous cells
+       dissolve in 17 ms for +0.034 MB on a 5.3 MB page. A scattered 800-cell
+       selection costs 30 ms and +0.197 MB, which is why the surveys' proposed
+       per-cell-`marker.line` fallback was NOT built: one geometry route, no
+       heuristic threshold.
+     - **`select_style="dim"` reproduces the old picture verbatim** (the 0.2 is
+       now the named constant `viz.HIGHLIGHT_DIM_OPACITY` rather than plotly's
+       implicit default). `"both"` draws each. **The grid-scope default DID
+       change** -- a deliberate call, approved: three call sites in the repo
+       (`utils/inputs.py:156`, one test, the USG workbook) and all three read
+       better as outlines.
+     - **`mode="lines"` is load-bearing.** Plotly treats a scatter-like trace as
+       selectable only when it has markers or text, so the outline is immune to
+       the user's own box/lasso -- which writes the very `selectedpoints` the dim
+       uses, and which `Choro.dash_selector()` reads back. A programmatic dim and
+       a genuine interactive selection cannot coexist on one trace; an outline
+       and a selection can.
+     - **Applied on `Choro`, not in the verb.** `mosaic` and `plot.animate`
+       rebuild from `overlay_traces()` and `get_choropleth()`, never from `.fig`,
+       so the old post-render patch was silently dropped by both -- a user got
+       four unhighlighted maps and no warning. Both now carry it.
+     - **Three inherited bugs fixed rather than preserved.** `select=[]` dimmed
+       the whole map (an empty tuple serialises to `[]`, truthy in JS, so the
+       branch fired with nothing selected); `select=<geometry>` highlighted
+       nothing while dimming everything (`get_vor_cells_as_series(...).to_list()`
+       is a list *of lists*, one per feature); out-of-range and negative indices
+       were accepted silently. One `_resolve_cells` now serves the plotly and
+       matplotlib backends and `plot_mpl(outline_regions=)`.
+     - **Resolved eagerly in `__init__`**, so a bad `select=` raises at the call
+       rather than from a notebook's display hook cells later.
+     - **`select_width` is a module constant, not a 41st parameter.** A contour
+       SET has variable density and earns `contour_width`; a highlight boundary
+       has one job. `select_name` is derived (region name, file stem, else
+       "selection"), which labels the legend correctly for free.
+     - **Deferred, and purely additive later:** `select={"streams": [...]}` for
+       named groups with per-group colour. `get_vor_cells_as_series` already
+       returns that shape, but per-group legend/colour multiplies the surface and
+       cannot collide with any v1 spelling.
+     - **NOT given to the other picture verbs.** `surface` draws an interpolated
+       height field with no cells, `grid` is one trace per cell, and `section`
+       already has a `cells=` parameter meaning something else. Recorded because
+       the outline mechanism *would* generalise where `selectedpoints` never could.
+     - **Also fixed here:** `plot._grid_of` returned a `UsgModel` (`.grid`) and a
+       `BuiltModel` (`.context.grid`) *as if they were grids*, so `plot.map(usg)`
+       died with `AttributeError: no attribute 'gdf_vorPolys'` several frames from
+       the call -- reachable the moment `mf.read_usg` shipped. Non-drawable
+       sources now raise `TypeError` naming what was expected.
+     - **Left alone, deliberately:** `grid/selection.py:44` *returns* a
+       `ValueError` instead of raising it, shared by 20+ call sites across
+       readers/geometry/boundaries/particles. `_resolve_cells` sidesteps it by
+       coercing `str` to `Path` first. Its blast radius is far wider than this
+       change and it is not made worse by shipping the highlight.
+
+161. **Mounding reaches the hover, and says what it is measured from (2026-08-29).**
+     `show_mounding=True` coloured the map by mounding but showed no mounding
+     number in the hover, and where a number did appear its label did not say
+     above WHAT.
+     - **Two hover renderers, one of them unfed.** `Choro.hover_dict` carried the
+       mounding, but a model map renders through `hover_spec`, which builds from
+       the context PAYLOAD and never reads `hover_dict`. And a spec only renders
+       fields it NAMES, so feeding the payload was necessary and not sufficient --
+       `_resolved_hover_spec` now appends the field with `with_fields`, the same
+       mechanism `hover_fields=` uses.
+     - **The label now names the datum.** `"Layer 1 Mounding"` became
+       `"Mounding above layer 1 bottom"`, and above ground
+       `"Mounding above ground surface"`. The old label was not merely vague: at
+       `layer=-1` the code measures from the model top but sets `self.layer = 0`,
+       so it claimed layer 1's bottom as the datum when the top was used.
+     - **`layer=-1` is resolved at construction**, not as a side effect of
+       computing the series. Reading the label before the numbers used to report
+       the wrong datum, because the above-ground flag was set inside
+       `_mounding_series`.
+     - **One `_mounding_series` serves both renderers.** They are two renderings
+       of one number; computing it in each is how they drift.
+     - Adjacent dead code removed while here: `hover_dict`'s layer-elevation
+       branch opened by reading `self.vor.gdf_topbtm.columns` into `layer_nums`,
+       which was immediately overwritten and never read -- so
+       `show_layer_elevs=True` crashed with `'NoneType' has no attribute
+       'columns'` on any grid without a layer frame, for a value that was thrown
+       away. The model branch takes its elevations from the model, which
+       necessarily has them or it could not have run.
+     - Related: `read_usg` now publishes the imported layer elevations onto
+       `grid.gdf_topbtm` (`UsgModel.attach_layers_to_grid`), so an imported grid
+       also feeds the layer hover, the mounding colorscale and the surface-aware
+       SFR/LAK builders -- a `.gsf` carries geometry and nothing else.
+
+162. **Horizontal flow barriers, resolved from geometry and validated first (2026-08-29).**
+     `mf.hfb` with five entry points. A barrier sits on the FACE between two cells,
+     so MODFLOW 6 addresses it as a cell pair — and that is the whole difficulty.
+     - **NOT a `package_registry` entry, deliberately.** The registry describes
+       cell-indexed boundary conditions; HFB is face-indexed. `record_fields` is
+       documented as "the fields AFTER the cellid" and HFB has no cellid — measured,
+       `_record_fields_from_dfn("hfb")` raises `ValueError`. `results` would be
+       empty because **MODFLOW 6 writes no HFB budget record**: a run with HFB
+       produced cbc texts `['CHD','EVTA','FLOW-JA-FACE','RCHA']`, and HFB's only
+       trace is a correction to `FLOW-JA-FACE`. A registry entry would have to
+       state falsehoods in the one file whose entire premise is that it cannot
+       drift. Measured cost of registering it anyway: **12 test failures across 7
+       files**; and a *consistent lie* passes the descriptor suite and then dies
+       three layers down (`KeyError: 'cell'`, a budget-text `ValueError`, and
+       silent `cellid2` corruption in the artifact tier).
+     - **The one thing registry membership would have bought** — package discovery
+       on reopen — costs ONE line in `run_model._NON_REGISTRY_SUFFIXES`, the same
+       route `mvr` takes for the same reason (it describes a relationship rather
+       than a cell).
+     - **A results tier DOES exist, and this entry's first draft was wrong to say
+       otherwise.** MODFLOW 6 writes no HFB *budget record* -- that part holds --
+       but the flow across a barrier is not lost: a barrier sits ON a
+       cell-to-cell connection, and `FLOW-JA-FACE` carries the flow on every
+       connection, so a barrier's flow is simply that entry.
+       `packages.hfb.results.q.{get,summary,map}` looks each pair up via the
+       model's own `IA`/`JA`, read from the binary grid file MODFLOW 6 writes
+       beside its output -- NOT reconstructed from the grid, because `idomain`
+       removal makes MODFLOW 6 renumber and a reconstruction would silently index
+       the wrong connection. The column is `q_cell1_to_cell2`: MODFLOW 6's own
+       sign, with the frame named rather than negated.
+     - **The view layer is bespoke, not registry-backed.** The registry view is
+       cell-keyed (`split_cellid_columns` knows exactly one cellid) and a
+       barrier's geometry is a shared EDGE, so `HfbPackageExplorer` and
+       `HfbResultsExplorer` are hand-written, in the same spirit as the
+       `StaticArrayPackageExplorer` that serves `ic`/`npf`/`sto`. `map` draws
+       barriers as LINES over the cell field rather than filling cells, riding
+       the same `add_overlay` path as the `select=` outline of ledger 160, and
+       `segments()` returns the faces as a GeoDataFrame -- the shape that
+       survives a change of grid, where a cell-pair index does not.
+     - **No artifact tier.** The `LIST_BC` branch is measured fatal on HFB twice
+       over. Deferred with this entry.
+     - **`.enclose` is a separate entry point, not `closed=True` on `.line`.** A
+       ring passes THROUGH cells, so the crossed-face set has a gap wherever it
+       enters and leaves one: measured on the canonical grid, a square ring crossed
+       53 faces and left all 441 cells hydraulically connected, where the cut
+       between the enclosed set and its neighbours is 83 faces and seals 105.
+       Buffering does not fix it; it is structural, not a tolerance.
+     - **Duplicate faces are collapsed, with a warning.** The most dangerous input
+       found: MODFLOW 6 accepts a repeated face silently, applies its series
+       formula twice (conductance 14.4727 -> 0.8418 once -> 0.4335 twice), and
+       `condsat_reset` then restores the ALREADY-MODIFIED value — so the face stays
+       wrong for the rest of the run even after an empty period removes the barrier.
+     - **`maxhfb` is not exposed.** FloPy computes it from the data at write time;
+       a hand-set value that disagrees is the `maxbound` defect class again.
+     - **`hydchr` accepted raw only.** A `k=` + `thickness=` convenience pair is a
+       natural addition and is deliberately not in v1 — one number, one meaning.
+     - **Vertical barriers are accepted, not generated.** Legal on DISV since
+       MODFLOW 6 6.7.0; FloPy 3.10's embedded dfn still asserts the old same-layer
+       rule and is out of date. The validator accepts an adjacent-layer pair and
+       rejects one that skips a layer; the geometry helpers only ever produce
+       lateral pairs, because a line is lateral.
+     - **Amends ledger 159**: the USG importer's `_hfb_spec` no longer hand-rolls a
+       bare `PackageSpec` and no longer drops cross-layer pairs on sight — it calls
+       `mf.hfb`, so the Ten Trails model's 28 barriers all convert and are validated.
+     - **Left alone**: `grid/selection.py`'s `MultiLineString` gap and its
+       `return ValueError`. `barrier_faces` reaches the grid through `sindex.query`
+       rather than `get_vor_cells_as_series`, so it never touches them; they remain
+       the separate task already filed.
+
+163. **Array-form recharge and ET: `mf.rch.array` / `mf.evt.array` (2026-08-30).**
+     MODFLOW 6 offers RCH and EVT in two input shapes and myflopy exposed only the
+     list one, so a whole-grid recharge field was written one record per cell.
+     Measured on the Ten Trails model (72 periods, 9405 columns): the array form
+     is **6.1x faster end to end** (0.88 s vs 5.35 s) and the FloPy constructor
+     alone **413x**.
+     - **A fourth method on the existing helper, not `mf.rcha`.** The registry's
+       one-FloPy-class-per-package assumption does not bind: `flopy_class` has a
+       single production consumer, inside `_list_bc_spec`, which `.array()` does
+       not route through. An RCHA written as `pname="rch"` runs, reloads and is
+       discovered identically -- MODFLOW 6 has ONE recharge package and
+       `READASARRAYS` is an option inside its file; FloPy's two classes are a
+       FloPy artifact. Siblings would have forced four hand-written namespace
+       properties each plus an incoherent `GeoPackageSource.rcha`.
+     - **`irch="top_active"` is the default, and that is the whole safety story.**
+       MODFLOW 6 with no IRCH array applies recharge to layer 1 unconditionally,
+       and a column whose layer 1 is inactive is outside the reduced node
+       numbering and skipped SILENTLY. Measured on a 10-column model with 4 such
+       holes: list 1000.0, array without IRCH **600.0**, array with IRCH 1000.0 --
+       a 40% loss under "Normal termination". `irch=None` is the explicit opt-out.
+     - **`irch` is ZERO-based.** FloPy adds one on write. Found the hard way:
+       passing a 1-based layer produced `2` in the file and MODFLOW 6 died with
+       `Invalid layer number: 3`. The design brief had this backwards.
+     - **`nseg > 1` raises rather than silently flattening.** NSEG lives in the
+       DIMENSIONS block, which MODFLOW 6 never reads under `READASARRAYS`, so
+       segmented ET has no array form at all. Dropping the segments is a change to
+       the physics, not the format -- ledger 159 already says so about the Ten
+       Trails ETS, which is why it remains a 61 MB list EVT.
+     - **`boundnames` raises**: MODFLOW 6 refuses them under `READASARRAYS`.
+     - **The inputs tier now reads array packages.** It raised `AttributeError`
+       before, because an array package has no `stress_period_data` at all. One
+       branch in `build_cell_package_input_table` expands `{per: ncpl-array}` into
+       the same tidy frame, which closes the inputs, diff and group tiers together
+       -- so **the existing entry at `:2397`** (the array diff asymmetry, accepted
+       when RCHA could only arrive from an externally loaded model) is now closed.
+     - **The budget record is matched by package NAME, not by substring.** FloPy
+       resolves `text=` by first-hit substring and `"RCH"` is inside both `"RCHA"`
+       and `"UZF-GWRCH"`, so a model declaring UZF before RCH would have had
+       `packages.rch.results.q` quietly return UZF's recharge term. `paknam=` now
+       leads, with the text-only match kept as a fallback because FloPy RAISES
+       rather than returning empty when a name is absent. Pre-existing hazard;
+       arrays made the namespace dense enough to be worth closing.
+     - **Deliberately absent**: no `.gpkg` sibling (feature-to-cell mapping is
+       inherently list-shaped), no artifact tier (`components.py` raises
+       `NotImplementedError` on `package_type == "rcha"` -- deferred), and DISU is
+       excluded by MODFLOW 6 itself.
+     - **Not a default, and never should be.** The array form needs a value for
+       every column including inactive ones; for a sparse boundary (40 cells of
+       9405) it is a pessimization -- ~1 kB as a list against ~160 kB as an array.
+     - **Amends ledger 159**: the USG importer's `_recharge_spec` calls
+       `mf.rch.array` instead of hand-rolling a bare `PackageSpec`, and resolves
+       `irch` from the model's own idomain, so `NRCHOP = 1` and `NRCHOP = 3` are
+       both honoured rather than approximated by MODFLOW 6's layer-1 default.
+     - **Still open**: the PEST `_ALIASES["rcha"] -> "recharge"` entry is stale and
+       an array recipe for `parameterize("recharge")` is not written.
+
+164. **`VoronoiGridPlus.from_gsf` reads the `.gsf` itself rather than reusing
+     flopy's `UnstructuredGrid.from_gridspec` (2026-08-28).**
+     A MODFLOW-USG `DISU` stores connectivity and geometric measures but no
+     coordinates, so the `.gsf` is the only file that knows where the cells are.
+     - **Why not delegate.** flopy's reader rejects the standard
+       `UNSTRUCTURED GWF` header outright -- `not (A) or (B)` where `not (A or B)`
+       was meant, so the two-word form always raises "Invalid GSF file, no
+       header" -- and it returns all layers stacked with the raw 3-D vertex
+       lists, which is precisely what must not reach a plan grid. Wrapping it
+       would mean patching a third-party parser and then undoing its output.
+       ~90 lines of our own parser buys the header tolerance, the layer
+       selection, and clear errors that name the offending file and node.
+     - **Why the collapse matters.** A `.gsf` cell is a hexahedron: 8 vertices,
+       the bottom four under the top four. Passed through as-is, every polygon
+       traces its outline twice -- `is_valid` False, DOUBLE the true area -- and
+       the map still *draws correctly*, so the only visible symptom is that
+       hover stops working, because maplibre abandons hit-testing on a
+       self-overlapping ring. Measured in headless Chromium: 0/5 hover probes on
+       the degenerate grid, 5/5 on the collapsed one, with the two renderings
+       within 0.4% of each other on colored pixel count.
+     - **`from_gsf`, not `vor_from_gsf`.** Its neighbour is `vor_from_disu`, so
+       the two constructors on this class now disagree about the `vor_` prefix.
+       `from_gsf` matches the `from_*` convention used everywhere else in the
+       codebase (`Surface.from_contours`, `LayerStack.from_modflow`,
+       `GridSpec.from_object`); renaming `vor_from_disu` to match would break the
+       two Cumberland notebooks that call it, so the inconsistency stays until
+       something else touches that method.
+     - **NOT done: layer elevations.** A `.gsf` carries z per vertex, which is
+       enough to populate `gdf_topbtm` and light up the layer-elevation rows in
+       the map hover. `from_gsf` drops z entirely and returns a plan view only.
+       A USG model's tops and bottoms are also in its DISU, so the better home
+       for that is a reader that takes both files, not this one.
+     - **NOT done: idomain from the USG BAS.** `from_gsf` takes `idomain` by
+       hand like every other constructor here. Note flopy's `MfUsgBas.load` sizes
+       IBOUND from DISU alone and has no CLN awareness, so it under-reads the
+       array on any model with CLN nodes -- reading idomain automatically would
+       mean parsing the BAS ourselves.
