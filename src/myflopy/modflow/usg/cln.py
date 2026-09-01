@@ -7,11 +7,14 @@ so a user can see exactly what a CLN-deferred conversion left behind, and can
 later rebuild those features as ``LAK`` / ``SFR`` on whatever grid they end up
 with.
 
-The segmentation is by graph shape, because that is what actually distinguishes
-the two things CLN is used for. A stream is a chain: interior nodes have two
-neighbours. A water body discretized as a 2-D CLN mesh has five or six. Taking
-connected components and looking at mean degree separates them without needing
-to be told which is which.
+Features are split by **name** when the file labels its nodes, and by graph
+shape otherwise. The names are authoritative and the graph is not: on the Ten
+Trails network, connected components merge ``CrispCreek`` with its tributary
+``Wlnd217`` into one feature, because they meet -- so the graph finds six
+features where the file names seven. Where names are absent the shape still
+separates the two things CLN is used for: a stream is a chain, whose interior
+nodes have two neighbours, while a water body discretized as a 2-D mesh has
+five or six.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from myflopy._logging import get_logger
-from myflopy.modflow.usg._io import ArrayCursor, NameFile, free_floats, free_ints
+from myflopy.modflow.usg._io import ArrayCursor, NameFile, free_ints, free_row
 
 logger = get_logger(__name__)
 
@@ -36,7 +39,7 @@ _MESH_DEGREE = 3.5
 
 @dataclass(slots=True)
 class ClnFeature:
-    """One connected component of a CLN network."""
+    """One feature of a CLN network -- a named waterbody or stream."""
 
     index: int
     kind: str
@@ -47,6 +50,15 @@ class ClnFeature:
     elevations: np.ndarray
     lengths: np.ndarray
     mean_degree: float
+    name: str | None = None
+    fskin: np.ndarray | None = None
+    conduit_types: np.ndarray | None = None
+
+    @property
+    def label(self) -> str:
+        """The feature's name, or a positional stand-in when the file names none."""
+
+        return self.name or f"{self.kind}_{self.index}"
 
     @property
     def n_nodes(self) -> int:
@@ -89,6 +101,22 @@ class ClnData:
     lengths: np.ndarray
     elevations: np.ndarray
     features: tuple[ClnFeature, ...] = ()
+    #: ``FSKIN`` per CLN-GWF connection -- the bed hydraulic conductivity the
+    #: connection conductance is built from, and the only calibrated quantity
+    #: the network carries. MODFLOW 6's ``bedleak`` is a *leakance* (K over a
+    #: bed thickness, 1/T); this is a K, so converting needs a thickness.
+    fskin: np.ndarray | None = None
+    #: ``FLENGW`` per connection -- the length the connection acts over.
+    conn_lengths: np.ndarray | None = None
+    #: ``IFTYP`` per node: which row of the conduit table the node uses.
+    conduit_types: np.ndarray | None = None
+    #: ``FRAD`` per conduit type. A stream's SFR width is twice this.
+    radii: np.ndarray | None = None
+    #: ``CONDUITK`` per conduit type -- in-pipe conductivity. MODFLOW 6 has no
+    #: counterpart: LAK is well mixed and SFR routes by Manning's equation.
+    conductivities: np.ndarray | None = None
+    #: The trailing label on each node's row, when the file writes one.
+    names: np.ndarray | None = None
 
     @property
     def waterbodies(self) -> tuple[ClnFeature, ...]:
@@ -138,21 +166,41 @@ def read_cln(name_file: NameFile, *, ncpl: int) -> ClnData | None:
     iac = cursor.read_array(nclnnds, int)
     ja = cursor.read_array(njacln, int)
 
-    # Node properties: IFNO IFTYP IFDIR FLENG FELEV FANGLE IFLIN ICCWADI
+    # Node properties: IFNO IFTYP IFDIR FLENG FELEV FANGLE IFLIN ICCWADI [label]
     lengths = np.zeros(nclnnds)
     elevations = np.zeros(nclnnds)
+    conduit_types = np.zeros(nclnnds, dtype=np.int64)
+    labels: list[str | None] = []
     for i in range(nclnnds):
-        values = free_floats(cursor.next_line())
+        values, label = free_row(cursor.next_line())
+        conduit_types[i] = int(values[1])
         lengths[i] = values[3]
         elevations[i] = values[4]
+        labels.append(label)
 
-    # CLN-GWF connections: IFNO IGWNOD IFCON FSKIN FLENG FANISO ICGWADI
+    # CLN-GWF connections: IFNO IGWNOD IFCON FSKIN FLENGW FANISO ICGWADI [label]
     gwf_nodes = np.zeros(nclngwc, dtype=np.int64)
+    fskin = np.zeros(nclngwc)
+    conn_lengths = np.zeros(nclngwc)
     for i in range(nclngwc):
-        values = free_floats(cursor.next_line())
+        values, _ = free_row(cursor.next_line())
         gwf_nodes[i] = int(values[1])
+        fskin[i] = values[3] if len(values) > 3 else np.nan
+        conn_lengths[i] = values[4] if len(values) > 4 else np.nan
 
-    features = _segment(iac, ja, gwf_nodes, elevations, lengths, ncpl=ncpl)
+    radii, conductivities = _read_conduit_types(cursor, nconduityp)
+    names = np.array(labels, dtype=object) if any(x is not None for x in labels) else None
+    features = _segment(
+        iac,
+        ja,
+        gwf_nodes,
+        elevations,
+        lengths,
+        ncpl=ncpl,
+        names=names,
+        fskin=fskin,
+        conduit_types=conduit_types,
+    )
     logger.debug(
         "CLN: %d nodes, %d features (%d waterbody, %d stream)",
         nclnnds,
@@ -171,7 +219,44 @@ def read_cln(name_file: NameFile, *, ncpl: int) -> ClnData | None:
         lengths=lengths,
         elevations=elevations,
         features=features,
+        fskin=fskin,
+        conn_lengths=conn_lengths,
+        conduit_types=conduit_types,
+        radii=radii,
+        conductivities=conductivities,
+        names=names,
     )
+
+
+def _read_conduit_types(cursor: ArrayCursor, nconduityp: int):
+    """Read the circular-conduit table: ``ICONDUITYP FRAD CONDUITK`` per type.
+
+    Returns ``(None, None)`` when the network declares no conduit types, or when
+    the table is not where it should be -- the geometry it carries is a CLN
+    idealization with no MODFLOW 6 counterpart, so failing to find it must not
+    cost the caller the rest of the network.
+    """
+
+    if nconduityp <= 0:
+        return None, None
+    radii = np.full(nconduityp, np.nan)
+    conductivities = np.full(nconduityp, np.nan)
+    for i in range(nconduityp):
+        try:
+            values, _ = free_row(cursor.next_line())
+        except (StopIteration, ValueError, OSError) as error:
+            logger.debug(
+                "CLN conduit table stops after %d of %d types; radii and in-pipe K "
+                "will be missing (neither converts to MF6): %s",
+                i,
+                nconduityp,
+                error,
+            )
+            break
+        if len(values) >= 3:
+            radii[i] = values[1]
+            conductivities[i] = values[2]
+    return radii, conductivities
 
 
 def _segment(
@@ -182,8 +267,16 @@ def _segment(
     lengths: np.ndarray,
     *,
     ncpl: int,
+    names: np.ndarray | None = None,
+    fskin: np.ndarray | None = None,
+    conduit_types: np.ndarray | None = None,
 ) -> tuple[ClnFeature, ...]:
-    """Split the CLN graph into connected components and classify each."""
+    """Split the CLN network into features and classify each.
+
+    Groups by the file's own node labels when it writes them, and by connected
+    component otherwise. The distinction matters: components merge features that
+    touch, so a tributary is swallowed by the stream it joins.
+    """
 
     n = iac.size
     pointer = np.concatenate([[0], np.cumsum(iac)])
@@ -212,9 +305,22 @@ def _segment(
         components.append(sorted(component))
 
     components.sort(key=len, reverse=True)
+
+    if names is not None:
+        # One group per distinct label, ordered largest first to match the
+        # component ordering a nameless file would produce.
+        groups = [(str(label), np.flatnonzero(names == label)) for label in dict.fromkeys(names)]
+        groups.sort(key=lambda item: item[1].size, reverse=True)
+        logger.debug(
+            "CLN: %d named feature(s) vs %d connected component(s)", len(groups), len(components)
+        )
+    else:
+        groups = [(None, np.asarray(component)) for component in components]
+
     features: list[ClnFeature] = []
-    for index, component in enumerate(components):
-        members = np.asarray(component)
+    for index, (label, members) in enumerate(groups):
+        if members.size == 0:
+            continue
         mean_degree = float(degree[members].mean())
         connected = gwf_nodes[members] if members.max() < gwf_nodes.size else np.array([], int)
         features.append(
@@ -228,6 +334,9 @@ def _segment(
                 elevations=elevations[members],
                 lengths=lengths[members],
                 mean_degree=mean_degree,
+                name=label,
+                fskin=None if fskin is None or members.max() >= fskin.size else fskin[members],
+                conduit_types=None if conduit_types is None else conduit_types[members],
             )
         )
     return tuple(features)

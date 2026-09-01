@@ -146,21 +146,39 @@ class ShapeSource(DataSourceSpec):
     condition. For a multi-layer GeoPackage, use :class:`GeoPackageSourceSpec`
     instead (it can name a layer and carry a field mapping).
 
+    Pass everything after ``path`` **by keyword**: the inherited fields come
+    first in positional order -- ``(path, external, metadata, crs)`` -- so a
+    second positional argument sets ``external``, not ``crs``.
+
     Parameters
     ----------
-    path
-        Path to the ``.shp`` / ``.geojson`` file.
-    crs
-        Optional coordinate reference system override (e.g. ``"EPSG:2927"``).
-        When omitted, the file's own CRS is used.
+    path : Path or str
+        Path to the ``.shp`` / ``.geojson`` file. Relative paths are anchored at
+        resolve time to the caller's ``project_root`` unless ``external`` is set.
+    crs : str or int, optional
+        A CRS to **assume when the file declares none** -- a fallback, not an
+        override, and not a reprojection target. A file carrying its own CRS
+        keeps it and this is ignored; grid sources are reprojected to the CRS on
+        the :class:`~myflopy.specs.GridSpec`. Either spelling works:
+        ``"EPSG:2927"`` or ``2927``.
+    external : bool, default False
+        ``True`` marks the file as outside the project tree: referenced in
+        place, and its relative path is not anchored to ``project_root``.
+    metadata : dict, optional
+        Free-form JSON-serializable annotations. ``metadata["crs"]`` doubles as
+        a last-resort CRS fallback.
 
     Examples
     --------
     >>> ShapeSource("domain_boundary.shp")
-    >>> ShapeSource("streams.geojson", crs="EPSG:2927")
+    >>> ShapeSource("streams.geojson", crs="EPSG:2927")   # .geojson has no CRS block
+
+    See Also
+    --------
+    GeoPackageSourceSpec : Multi-layer GeoPackage, with a layer name and field map.
     """
 
-    crs: str | None = None
+    crs: str | int | None = None
     kind: ClassVar[str] = "ShapeSource"
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,40 +203,136 @@ class ShapeSource(DataSourceSpec):
 
 @dataclass(frozen=True, slots=True)
 class GeoPackageSourceSpec(DataSourceSpec):
-    """Serializable reference to one layer/table inside a GeoPackage (``.gpkg``).
+    """Serializable reference to one layer inside a GeoPackage (``.gpkg``).
 
-    The durable, recipe-friendly counterpart to the runtime
-    :class:`~myflopy.geopackage.GeoPackageSource`. It pins which ``layer`` to
-    read, an optional attribute ``query`` to subset features, a ``crs``
-    override, and a ``fields`` mapping that renames source columns to the names
-    a package builder expects (e.g. ``{"stage": "BHEAD", "cond": "COND"}``).
-    This is what the ``mf.ghb.gpkg(...)`` / ``mf.drn.gpkg(...)`` forms record so
-    a GIS-driven boundary condition can be rebuilt from the saved spec.
+    A ``.gpkg`` can hold many layers, so a bare path is ambiguous in a way a
+    shapefile path is not. This spec pins **which** layer, **which** of its
+    columns carry the values a reader needs, and optionally a subset of its
+    rows -- all as plain data, so a recipe can be written to JSON/YAML and
+    resolved again later.
+
+    Use it wherever a source may be a multi-layer GeoPackage or needs a column
+    mapping; use :class:`ShapeSource` for a single-layer vector file that needs
+    neither. Today the only reader is **grid resolution** -- the ``boundary`` /
+    ``refinement`` / ``breaklines`` / ``points`` sources of
+    :meth:`~myflopy.specs.GridSpec.voronoi`. The runtime
+    :class:`~myflopy.geopackage.GeoPackageSource` behind ``mf.ghb.gpkg(...)``
+    is a separate class and does not read any of these fields; it names its
+    columns with ``name_field`` / ``layer_field`` / ``period_field``.
+
+    .. warning::
+       Pass everything after ``path`` **by keyword**. This is a dataclass
+       extending :class:`DataSourceSpec`, so the inherited fields come first in
+       positional order -- ``(path, external, metadata, layer, query, crs,
+       fields)``. ``GeoPackageSourceSpec("x.gpkg", "areas")`` therefore sets
+       ``external="areas"``, which is truthy, rather than naming a layer.
 
     Parameters
     ----------
-    path
-        Path to the ``.gpkg`` file.
-    layer
-        Layer/table name within the GeoPackage. ``None`` uses the first/default
-        layer.
-    query
-        Optional attribute filter (an OGR/SQL ``WHERE`` expression) applied when
-        reading features.
-    crs
-        Optional CRS override; defaults to the layer's stored CRS.
-    fields
-        Mapping of source column name -> target field name expected downstream.
+    path : Path or str
+        Path to the ``.gpkg`` file. Relative paths are anchored at resolve time
+        to the ``project_root`` given to
+        :meth:`~myflopy.specs.GridSpec.resolve`, unless ``external`` is set.
+        Coerced to a :class:`~pathlib.Path`.
+    layer : str, optional
+        Which layer to read. ``None`` reads the file's first/default layer,
+        which is fine for a single-layer GeoPackage and a silent source of
+        surprise in a multi-layer one -- name it explicitly when the file has
+        more than one. The same file may be referenced by several specs with
+        different ``layer`` values, which is how one GeoPackage supplies both
+        refinement polygons and breakline centerlines.
+    query : str, optional
+        Row filter, applied **after** the layer is read. This is a
+        :meth:`pandas.DataFrame.query` expression, **not** SQL: write
+        ``"active == 1"``, not ``"active = 1"`` (the latter raises
+        ``ValueError: cannot assign without a target object``). Column names
+        are bare identifiers; quote strings, e.g. ``"kind == 'stream'"``.
+        Because it filters after reading, it subsets features but does not
+        reduce IO.
+    crs : str or int, optional
+        A CRS to **assume when the file declares none** -- a fallback, not an
+        override. A GeoPackage that carries its own CRS keeps it, and passing
+        something different here does nothing rather than reinterpreting the
+        coordinates. Accepts either spelling: ``"EPSG:2927"`` or ``2927``.
+
+        This is not the reprojection target either. Grid sources are reprojected
+        to the CRS declared on the :class:`~myflopy.specs.GridSpec`, so a layer
+        in EPSG:4326 inside a spec built with ``crs=2927`` is converted for you
+        and ``crs=`` on this spec is not what does it. ``metadata["crs"]`` is
+        consulted as a further fallback.
+    fields : dict of str to str, optional
+        Mapping of **logical key -> the column in this layer that holds it**.
+        The KEY is the name myflopy looks up; the VALUE is your column. So
+        ``{"area": "max_area"}`` reads each feature's target cell area from a
+        column called ``max_area``.
+
+        Grid sources understand exactly three keys, all optional:
+
+        ``"area"``
+            Target cell area for that feature, in CRS units squared. Falls back
+            to ``refinement_max_area`` / ``breakline_max_area``; one of the two
+            is required or resolution raises naming both.
+        ``"label"``
+            Region name used in diagnostics and in
+            ``tri._prepared_regions``. Defaults to ``refinement_<i>`` /
+            ``breakline_<i>``.
+        ``"priority"``
+            Who claims the overlap where regions cross. Defaults to
+            ``refinement_priority`` (0) or ``breakline_priority`` (1).
+
+        An unrecognised key is **ignored silently**, so a typo degrades to the
+        global default rather than raising -- check the spelling here first when
+        a per-feature value seems not to apply. A row whose mapped column is
+        null or missing also falls back.
+    external : bool, default False
+        ``True`` marks the file as living outside the project tree: it is
+        referenced in place and its relative path is **not** anchored to
+        ``project_root``.
+    metadata : dict, optional
+        Free-form JSON-serializable annotations carried with the reference.
+        ``metadata["crs"]`` doubles as a last-resort CRS fallback.
+
+    Notes
+    -----
+    Serialization writes ``kind`` as ``"GeoPackageSource"`` -- the tag, not the
+    class name -- and omits ``layer`` / ``query`` / ``crs`` / ``fields`` when
+    unset, so ``to_dict``/``from_dict`` round-trip a minimal payload.
+
+    Frozen and slotted: build a modified copy with
+    :func:`dataclasses.replace`, not by assignment.
 
     Examples
     --------
-    >>> GeoPackageSourceSpec("bcs.gpkg", layer="ghb_cells",
-    ...                      fields={"head": "bhead", "k": "cond"})
+    Refinement polygons carrying their own cell sizes:
+
+    >>> GeoPackageSourceSpec("grid_refinement.gpkg", layer="areas",
+    ...                      fields={"area": "max_area", "label": "name"})
+
+    Two layers of one file feeding two different grid channels:
+
+    >>> refine = GeoPackageSourceSpec("refine.gpkg", layer="areas",
+    ...                               fields={"area": "max_area"})
+    >>> creeks = GeoPackageSourceSpec("refine.gpkg", layer="centerlines")
+
+    A subset of one layer, filtered with pandas syntax:
+
+    >>> GeoPackageSourceSpec("bcs.gpkg", layer="boundaries",
+    ...                      query="kind == 'ghb' and active == 1")
+
+    A layer written without a CRS, told what it is:
+
+    >>> GeoPackageSourceSpec("no_crs.gpkg", crs=2927)
+
+    See Also
+    --------
+    ShapeSource : Single-layer vector file; no layer name, no field map.
+    DataSourceSpec : The shared ``path``/``external``/``metadata`` base.
+    myflopy.specs.GridSpec.voronoi : Where these sources are consumed.
     """
 
     layer: str | None = None
     query: str | None = None
-    crs: str | None = None
+    crs: str | int | None = None
     fields: dict[str, str] = field(default_factory=dict)
     kind: ClassVar[str] = "GeoPackageSource"
 
@@ -283,7 +397,7 @@ class RasterSource(DataSourceSpec):
     band: int | None = None
     map_to: str | None = None
     method: str | None = None
-    crs: str | None = None
+    crs: str | int | None = None
     kind: ClassVar[str] = "RasterSource"
 
     def to_dict(self) -> dict[str, Any]:

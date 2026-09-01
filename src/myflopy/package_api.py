@@ -496,6 +496,12 @@ def tdis(
     perioddata: Any = ((1.0, 1, 1.0),),
     time_units: str | None = None,
     start_date_time: str | None = None,
+    ats: bool | Iterable[int] | Mapping[int, Mapping[str, Any]] | None = None,
+    ats_dt0: float | None = None,
+    ats_dtmin: float | None = None,
+    ats_dtmax: float | None = None,
+    ats_dtadj: float = 2.0,
+    ats_dtfailadj: float = 5.0,
     ats_perioddata: Any = None,
     filename: str | None = None,
     pname: str | None = None,
@@ -519,8 +525,35 @@ def tdis(
         Time unit label, e.g. ``"days"`` / ``"seconds"``.
     start_date_time : str, optional
         ISO start datetime for the simulation.
+    ats : bool, iterable of int, or mapping, optional
+        Turn on adaptive time stepping. MODFLOW 6 then chooses its own step
+        within each ATS period, shrinking it where the solver struggles and
+        growing it back where it does not -- and, crucially, **retrying a failed
+        step at a smaller step instead of ending the run**.
+
+        ``True`` applies it to every period; an iterable selects periods by
+        **zero-based** index (``ats=[7, 9]``); a mapping additionally overrides
+        the settings for a period (``ats={7: {"dtmin": 1e-4}}``, keys
+        ``dt0``/``dtmin``/``dtmax``/``dtadj``/``dtfailadj``).
+    ats_dt0 : float, optional
+        Initial step for ATS periods. ``None`` (default) uses the first sub-step
+        the equivalent fixed-step period would have taken.
+    ats_dtmin : float, optional
+        Smallest step allowed. ``None`` -> ``perlen * 1e-5``.
+    ats_dtmax : float, optional
+        Largest step allowed. ``None`` -> ``perlen``, i.e. a whole period in one
+        step when nothing is straining the solver.
+    ats_dtadj : float, default 2.0
+        Factor the step grows or shrinks by according to solver effort. Must be
+        ``0``, ``1``, or greater than 1; ``0``/``1`` disable growth.
+    ats_dtfailadj : float, default 5.0
+        Divisor used to retry a step that FAILED to converge. Must be ``0`` or
+        greater than 1. **``0`` means a failed step ends the run** -- which is
+        MODFLOW's behaviour without ATS, and rarely what you want if you enabled
+        ATS in the first place.
     ats_perioddata : optional
-        Adaptive-time-step (ATS) records passed through to FloPy.
+        Raw FloPy ATS records, for full control -- the escape hatch, like
+        ``.flopy(...)`` on the boundary helpers. Mutually exclusive with ``ats``.
     filename, pname : str, optional
         FloPy file name / package name overrides.
     name : str, default "tdis"
@@ -536,7 +569,27 @@ def tdis(
     --------
     >>> mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])                    # one steady period
     >>> mf.tdis(nper=12, perioddata=[(30.0, 3, 1.1)] * 12, time_units="days")
+    >>> mf.tdis(nper=72, perioddata=monthly, time_units="days",
+    ...         ats=True, ats_dtfailadj=5.0)      # retry a failed step at dt/5
     """
+
+    from myflopy.modflow.mf6.simulation.discretization import (
+        _build_ats_records,
+        _resolve_ats_periods,
+    )
+
+    if ats is not None and ats is not False and ats_perioddata is not None:
+        raise ValueError(
+            "tdis: pass either ats= (built for you) or ats_perioddata= (raw FloPy "
+            "records), not both."
+        )
+    if ats is not None and ats is not False:
+        periods = _resolve_ats_periods(ats, nper)
+        if periods:
+            ats_perioddata = _build_ats_records(
+                list(perioddata), periods,
+                ats_dt0, ats_dtmin, ats_dtmax, ats_dtadj, ats_dtfailadj,
+            )
 
     values = {"nper": nper, "perioddata": perioddata, **kwargs}
     for key, value in {
@@ -1679,9 +1732,12 @@ class _CHDPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods the boundary spans.
-        head : str or CellSurfaceOffset, default "head"
-            Specified head -- a feature attribute column name, a constant, or a
-            :class:`CellSurfaceOffset` (relative to a cell surface).
+        head : str, float, list of str, or CellSurfaceOffset, default "head"
+            The specified head. A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+            Two CHD records in one cell is an MF6 error, not a sum -- if features
+            share a cell after mapping, the run fails at read time.
         layer : str, optional
             GeoPackage layer/table name (defaults to the first/only layer).
         name_field : str, optional, default "name"
@@ -1862,13 +1918,38 @@ class _GHBPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods the boundary spans.
-        head : str or CellSurfaceOffset, default "head"
-            Boundary head -- an attribute column, a constant, or a
-            :class:`CellSurfaceOffset`.
-        conductance : str or CellSurfaceOffset, default "conductance"
-            Boundary conductance -- an attribute column or a constant.
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        head : str, float, list of str, or CellSurfaceOffset, default "head"
+            The external head the cells are connected to. A value spec: an attribute column
+            name, a numeric constant, a *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`. MF6 rejects a head below its cell
+            bottom.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            Conductance of the connection, L^2/T. Wrap it in :class:`~myflopy.geopackage.Spread`
+            when the feature spans more than one cell -- a bare column copies the SAME value
+            into every cell the feature covers, which is right for an elevation and multiplies a
+            conductance by the cell count.
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. Cells inactive in that layer are
+            skipped, as are vertical-passthrough cells (``idomain < 0``). ``None`` puts every
+            feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "ghb"
             Package name.
         edges_only : bool, default False
@@ -2019,13 +2100,40 @@ class _DRNPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods.
-        elevation : str or CellSurfaceOffset, default "elevation"
-            Drain elevation -- an attribute column, a constant, or a
-            :class:`CellSurfaceOffset` (e.g. cell-top minus an offset for a seepage face).
-        conductance : str or CellSurfaceOffset, default "conductance"
-            Drain conductance -- an attribute column or a constant.
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        elevation : str, float, list of str, or CellSurfaceOffset, default "elevation"
+            The drain invert. A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+            ``CellSurfaceOffset("cell_bottom", offset=2.0)`` puts it 2 ft above each
+            cell's own floor; ``("model_top", offset=-2.0)`` puts it 2 ft below ground.
+            MF6 rejects an invert below its cell bottom.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            Drain conductance, L^2/T. Wrap it in :class:`~myflopy.geopackage.Spread` when the
+            feature spans more than one cell -- a bare column copies the SAME value into every
+            cell the feature covers, which is right for an elevation and multiplies a
+            conductance by the cell count.
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. Cells inactive in that layer are
+            skipped, as are vertical-passthrough cells (``idomain < 0``). ``None`` puts every
+            feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "drn"
             Package name.
         edges_only : bool, default False
@@ -2198,16 +2306,42 @@ class _RIVPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods.
-        stage : str or CellSurfaceOffset, default "stage"
-            River stage -- an attribute column, a constant, or a
-            :class:`CellSurfaceOffset` (relative to a cell surface).
-        conductance : str or CellSurfaceOffset, default "conductance"
-            Riverbed conductance -- an attribute column or a constant.
-        rbot : str or CellSurfaceOffset, default "rbot"
-            River-bottom elevation -- an attribute column, a constant, or a
-            :class:`CellSurfaceOffset` (e.g. stage minus a channel depth).
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        stage : str, float, list of str, or CellSurfaceOffset, default "stage"
+            Water-surface elevation in the river. A value spec: an attribute column name, a
+            numeric constant, a *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            Riverbed conductance, L^2/T. Wrap it in :class:`~myflopy.geopackage.Spread` when the
+            feature spans more than one cell -- a bare column copies the SAME value into every
+            cell the feature covers, which is right for an elevation and multiplies a
+            conductance by the cell count.
+        rbot : str, float, list of str, or CellSurfaceOffset, default "rbot"
+            Elevation of the riverbed bottom, which must sit below ``stage`` and
+            above the cell bottom. A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. Cells inactive in that layer are
+            skipped, as are vertical-passthrough cells (``idomain < 0``). ``None`` puts every
+            feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "riv"
             Package name.
         edges_only : bool, default False
@@ -2375,11 +2509,37 @@ class _WELPackage:
             Carries the grid/domain the wells are mapped onto.
         nper : int
             Number of stress periods.
-        rate : str or CellSurfaceOffset, default "rate"
-            Pumping/injection rate -- an attribute column or a constant (negative =
-            pumping). Use ``period_field`` for per-period rates.
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        rate : str, float, list of str, or Spread, default "rate"
+            Volumetric rate, L^3/T, **negative for withdrawal**. A value spec: an attribute
+            column name, a numeric constant, a *list* of column names (indexed by stress
+            period), or a :class:`~myflopy.geopackage.CellSurfaceOffset`. A list of column names
+            gives one rate per stress period; ``period_field`` is the alternative when the file
+            holds one row per feature per period. Wrap it in :class:`~myflopy.geopackage.Spread`
+            when the feature spans more than one cell -- a bare column copies the SAME value
+            into every cell the feature covers, which is right for an elevation and multiplies a
+            conductance by the cell count.
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. Cells inactive in that layer are
+            skipped, as are vertical-passthrough cells (``idomain < 0``). ``None`` puts every
+            feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "wel"
             Package name.
         boundnames : bool, default True
@@ -2673,10 +2833,36 @@ class _RCHPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods.
-        recharge : str or CellSurfaceOffset, default "recharge"
-            Recharge rate (L/T) -- an attribute column or a constant.
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        recharge : str, float, list of str, or Spread, default "recharge"
+            Recharge rate, L/T. A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+            A rate is intensive, so it is copied to every cell a feature covers --
+            which is correct. Wrap it in :class:`~myflopy.geopackage.Spread` only if
+            the column actually holds a total volume to divide up.
+            For grid-wide recharge prefer :meth:`array`, which is much faster.
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. Recharge normally belongs in the
+            uppermost active layer; ``mf.rch.array`` resolves that per column with ``irch=``
+            instead. ``None`` puts every feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "rch"
             Package name.
         boundnames : bool, default True
@@ -3003,16 +3189,42 @@ class _EVTPackage:
             Carries the grid/domain the features are mapped onto.
         nper : int
             Number of stress periods.
-        surface : str or CellSurfaceOffset, default "surface"
-            ET surface elevation -- an attribute column, a constant, or a
-            :class:`CellSurfaceOffset` (e.g. the cell top).
-        rate : str or CellSurfaceOffset, default "rate"
-            Maximum ET rate (L/T) -- an attribute column or a constant.
+        surface : str, float, list of str, or CellSurfaceOffset, default "surface"
+            Elevation ET is measured down from, usually land surface.
+            A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`. ``CellSurfaceOffset("model_top")``
+            is the common choice.
+        rate : str, float, list of str, default "rate"
+            Maximum ET rate, L/T, applied when the head is at ``surface``.
+            A value spec: an attribute column name, a numeric constant, a
+            *list* of column names (indexed by stress period), or a
+            :class:`~myflopy.geopackage.CellSurfaceOffset`.
         depth : str or CellSurfaceOffset, default "depth"
             Extinction depth below the ET surface -- an attribute column or a
             constant.
-        layer, name_field, layer_field, period_field, layer_base, period_base :
-            Feature-to-cell mapping controls (see :meth:`_CHDPackage.gpkg`).
+        layer : str, optional
+            Name of the layer/table inside the file. Defaults to the first, which is
+            the only one in a single-layer GeoPackage or a shapefile.
+        name_field : str, optional, default "name"
+            Attribute column used for boundnames. Set ``boundnames=False`` if the
+            file has no such column, or the build raises for the missing field.
+        layer_field : str, optional, default "layer"
+            Attribute column giving each feature's model layer. ET normally belongs in the
+            uppermost active layer; ``mf.evt.array`` resolves that per column with ``ievt=``
+            instead. ``None`` puts every feature in layer 1.
+        period_field : str, optional
+            Attribute column giving the stress period a feature belongs to. ``None``
+            (the default) applies every feature to all ``nper`` periods. Use it when
+            the file holds one row per feature per period; for values that change in
+            time on a fixed set of features, pass a *list* of column names as the
+            value instead -- it is indexed by period.
+        layer_base : int, default 1
+            Index base of ``layer_field``. ``1`` matches the usual GIS convention of
+            numbering layers from one; pass ``0`` for a zero-based column.
+        period_base : int, default 0
+            Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
+            periods as myflopy counts them.
         name : str, default "evt"
             Package name.
         boundnames : bool, default True
@@ -3254,6 +3466,7 @@ class _SFRPackage:
         roughness: Any = 0.03,
         streambed_k: Any = 1.0,
         streambed_thickness: Any = 1.0,
+        min_reach_length: float = 0.0,
         inflow: Any = None,
         rainfall: Any = None,
         evaporation: Any = None,
@@ -3274,6 +3487,11 @@ class _SFRPackage:
         ="automatic"`` infers the topology from geometry. When tributaries meet
         ambiguously, disambiguate with explicit ``connections`` (and ``diversions``).
         Reach properties (``width``/``gradient``/``roughness``/``streambed_k``/
+        ``min_reach_length`` drops reaches shorter than it. A stream clipping the
+        corner of a cell yields a sliver; MF6 divides by reach length and a 0.005 ft
+        reach crashes it while reading the package. The stream stays connected --
+        topology is rebuilt from the surviving order.
+
         ``streambed_thickness``) accept a scalar, one value per reach, or one per
         stream; ``reach_top`` defaults from the grid surface when available.
 
@@ -3329,6 +3547,7 @@ class _SFRPackage:
             roughness=roughness,
             streambed_k=streambed_k,
             streambed_thickness=streambed_thickness,
+            min_reach_length=min_reach_length,
             inflow=inflow,
             rainfall=rainfall,
             evaporation=evaporation,
@@ -4239,7 +4458,9 @@ def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream"
         key = {"downstream": "outlets", "outlet": "outlets", "end": "outlets",
                "upstream": "heads", "head": "heads", "start": "heads"}.get(at.lower())
         if key is None:
-            raise ValueError(f"Unknown reach location {at!r}; use 'downstream'/'upstream' or an (x, y) point.")
+            raise ValueError(
+                f"Unknown reach location {at!r}; use 'downstream'/'upstream' or an (x, y) point."
+            )
         if sid not in index[key]:
             raise KeyError(f"No stream {sid!r}; have {sorted(index['outlets'])}.")
         rno = index[key][sid]

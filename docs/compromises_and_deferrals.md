@@ -3698,6 +3698,29 @@ same day, which is the useful part of the result.
        change; the cells involved are `idomain = 0` by construction, and a
        smaller `min_sep` shrinks the drift proportionally. **Promoted to its own
        deferral as 165**, with the measurements and both candidate fixes.
+     - **FOLLOW-UP 2026-08-31: `names=` added, generated names kept as the
+       default.** Asked for on the grounds that `bottom layer 1_1` reads badly.
+       Three judgment calls, all in the direction of refusing rather than
+       guessing:
+       - **All or nothing.** A partial list (name slices 1 and 3, generate 2)
+         was considered and refused: which model layer a given name refers to
+         would then depend on where the caller stopped counting, and a layer
+         name is a DataFrame column and a 3-D actor, not a comment.
+       - **`names=` requires a split of 2+.** `names=["x"]` on an unsplit unit
+         is a rename of the unit, and the unit already has a name; accepting it
+         would give two spellings for one thing and quietly break the `units`
+         key. `split=1` is a documented no-op, so it is refused there too.
+       - **`replace` validates `split` and `names` as a pair.** Changing one
+         without the other raises rather than dropping or recycling names the
+         caller wrote — dropping a split from a named unit is
+         `replace(name, split=None, names=None)`. Slightly more typing, and the
+         alternative is exactly the silent renaming the rest of this entry
+         exists to prevent.
+       The UNIT key is untouched by naming, so `units` / `per_layer` /
+       `plot.grid(layers=<unit>)` behave identically either way — asserted by
+       building the same stack twice and comparing `botm`/`thickness` with
+       `array_equal`. Not pinned in `api_snapshot.json`: it covers the `mf.*`
+       helpers and export lists, and `LayerStack` methods were never in it.
      - **NOT a `split=` mode: fixed lifts.** "20 ft layers" on a unit of varying
        thickness needs a varying number of layers, and `nlay` is global. A
        `thickness=`-declared unit just divides (60 ft in 20 ft lifts is
@@ -4275,3 +4298,476 @@ same day, which is the useful part of the result.
        `UzfFieldInputsExplorer` had no `package_name`, so it gained one as a class
        attribute. UZF and NPF payloads carry a single array, and `Fields.build`
        skips names the payload lacks, so no empty block renders there.
+
+169. **`usg.export_gis` — the USG model as grid-independent GIS (2026-08-30).**
+     `to_mf6()` binds an imported model to the grid it converted on, which is the
+     wrong unit of reuse: the reason to import a USG model is usually to rebuild it
+     on a better mesh, and the mesh changes again. `export_gis` writes the content
+     instead. The scope cuts, and the judgment calls, in order:
+     - **It builds no packages.** It writes files whose columns are the builders'
+       parameter names and stops. An earlier scope (a `CellOverlay` primitive plus
+       per-field reducers, ~7 days) was designed and then dropped in favour of this
+       on the user's direction, and the direction was right: a transfer has to be
+       re-run and re-argued on every re-grid, an extract does not. The overlay work
+       is NOT deferred-with-intent — it is unnecessary unless someone wants an
+       automatic grid-to-grid path later.
+     - **Conductance conserves the feature total, not a leakance.** Measured over
+       205 DRN records `corr(cond, cell area) ~ 0`, and GHB is a single constant per
+       family (172,357.9 in layer 3, 0.15 in layer 5) across cells spanning 2.8 to
+       697,010 ft2 — a 249,000x range. These are calibrated numbers with no geometry
+       in them, so `sum C` is the only thing worth preserving. The `*_per_ft` twin
+       does that and nothing more; it is deliberately NOT presented as a leakance.
+     - **Rasters lose the smallest cells, and the loss is measured rather than
+       warned about.** Default resolution is a quarter of the median cell width
+       (17.2 ft on Ten Trails); cells below ~295 ft2 are absorbed. Sampling `top.tif`
+       back at the cell centres — the same operation a consumer performs — costs at
+       most 5.04 ft and typically 0.240 ft. `cell_values.gpkg` carries every array
+       exactly, and the manifest says so with the numbers.
+     - **`bedleak = FSKIN / 1.0 ft` is a choice, not a conversion.** MF6's `bedleak`
+       is a leakance (1/T); `FSKIN` is a conductivity (L/T). CLN has a *skin*, not a
+       bed, so no thickness exists to divide by. `fskin` is written unmodified beside
+       the derived column and `bed_thickness=` is a parameter.
+     - **`mf.lak` takes one `bed_leakance` per lake**, and `FSKIN` varies 9x within
+       Horseshoe Lake (0.054–0.498). The median is written to `lakes`, the variation
+       to `lake_nodes`, and the manifest names every lake whose spread exceeds 2x.
+       Teaching `LAKBuilder._leakance` to accept a cell-indexed Series — which
+       `_bottom` right beside it already does — is a real asymmetry, NOT fixed here.
+     - **SFR `rbth` and `man` are invented** (1.0 ft, 0.03). CLN routes with a pipe
+       conductivity, which has no MF6 counterpart at all. Written as documented
+       defaults rather than omitted, so a missing column never becomes a silent zero.
+     - **`mf.sfr`'s `reach_top` still cannot take a raster or a line's own Z**, so a
+       streambed profile cannot cross a re-grid through the builder. `_reach_values`
+       accepts a scalar, a column, or a mapping keyed by reach number — and reach
+       numbers change with the grid. `mf.lak`'s `lake_bottom` already samples a
+       raster. The export routes around it (Z on the line, plus `station` on the
+       nodes for `np.interp`) but the asymmetry is real and NOT closed. Note the
+       fallback is actively wrong here: `reach_top=None` samples the *model top*,
+       which on Ten Trails' CrispCreek is up to 160 ft above the bed.
+     - **A single-cell stream gets no line.** Its node still reaches `stream_nodes`
+       with its real bed elevation and `FSKIN`; inventing a centerline through one
+       cell would put a reach somewhere nobody chose. Named in the manifest notes.
+     - **The stream profile is nearly redundant, and is written anyway.** Measured,
+       the CLN bed IS the old model top to 0.00003 ft on all three creeks — so it
+       carries no independent elevation data. But that top was *conditioned* monotonic
+       along the channels (0 rises in 97 nodes, where the raw new DEM has 17% at
+       300 ft sampling and 38% at 50 ft; p ~ 0.001 that 0/38 is chance). So the
+       profile's value is as the conditioned shape to aim at, not as bed elevations.
+       No conditioning helper ships — that is the user's workflow, and a swath search
+       confirmed there is nothing to snap to (a 200 ft-wide minimum finds ground only
+       0.24–0.45 ft lower, so the rises are DEM roughness, not misplacement).
+     - **Features are grouped by name, breaking the old behaviour on purpose.**
+       `cln_polygons()` previously grouped by connected component, which merges a
+       tributary into its trunk — 6 features where the file names 7. Names win when
+       present; shape is the fallback. `ClnFeature.kind` still comes from mean degree,
+       so a 2-node "lake" is correctly classified as a chain.
+     - **`free_row` replaces positional number-scanning for labelled rows.**
+       `Wlnd217` contributes a phantom `217.0` to `free_floats`, giving that row one
+       more number than its neighbours. Harmless while only indices 1/3/4 were read;
+       fatal the moment anything indexes from the end. Same class as the
+       `IPRN`-as-multiplier bug that once negated an entire ET surface.
+     - **The CLN carries no bathymetry, and saying so is the deliverable.** Measured,
+       EVERY feature's bed is the model top -- lakes as well as streams, to 0.00003 ft
+       (Keevie 313/313 nodes at top, Black Diamond 150/150, Horseshoe 140/140,
+       Marjorie 104/104). So a LAK built from these bottoms has zero depth, and worse,
+       312 of Keevie's nodes round to just ABOVE their cell top, which `mf.lak` rejects
+       as "bottom does not intersect active cell". This is reported in the manifest
+       rather than papered over: inventing a depth is the user's call, not the
+       exporter's. Found by round-tripping the export back through `mf.lak`, which is
+       why that round trip is worth doing on any future exporter.
+     - **A dissolved footprint touches cells the CLN never had.** `LAKBuilder` resolves
+       lake cells from the polygon, so a lakebed raster covering only the CLN's own
+       cells leaves it asking for a bottom that is not there (measured: 249 fringe
+       cells over four lakes). They are filled from the nearest node. The alternative
+       -- shrinking the polygon -- would drop real lake area.
+     - **Three of RockCreek's 39 cells are inactive in every layer.** MODFLOW-USG
+       accepted the CLN-GWF connection; MF6's SFR refuses to place a reach there. The
+       `cell_active` column on `stream_nodes`/`lake_nodes` and a manifest note carry
+       it. NOT filtered automatically -- which reaches to drop is a modelling choice.
+     - **The workflow notebook builds no model, on instruction.**
+       `examples/mf6/notebooks/usg_export_to_new_model.ipynb` shows the call that
+       consumes each written file and stops there. It defaults to `USE_DEMO_GRID =
+       True`, loading the OLD USG mesh, so it runs end to end out of the box and the
+       shapes are visible before a real grid is committed; the `mf.sfr`/`mf.lak`
+       calls are left commented because they need an `nper` and a layer decision the
+       notebook must not make. Its `line_bc_records` helper PRINTS what the layer map
+       drops -- with old layer 5 out, the whole Qpon GHB family (67 records, the
+       model's only deep boundary) goes with it, and a silent drop there is exactly
+       the failure this export exists to prevent.
+     - **`mf.Spread` (2026-08-31), because the canonical path was wrong for a
+       conductance.** `GeoPackageSource._boundary_data` writes a feature's value to
+       EVERY cell it intersects. Right for an elevation or a head; for an extensive
+       field it multiplies by the cell count. Measured through `mf.drn.gpkg` on the
+       grid the values came from -- not a regrid -- 205 line features became 424
+       records and 66,007.43 ft2/d became 133,631.25, **a factor of 2.02**. Wrapping
+       the field (`conductance=mf.Spread("conductance")`) hands each cell its share of
+       the feature, by length for a line and area for a polygon. On the user's real
+       18,107-cell grid: 864 records over 209 cells, 65,997.5 ft2/d -- 99.98% of
+       source, continuous coverage where the original had 68 cells.
+       **Opt-in, deliberately**: the default is unchanged, so no existing `.gpkg`
+       caller's results move. `mode="clip"` (default) lets the part outside the grid
+       go, `"retained"` renormalizes; `min_share=0.01` drops corner clips (measured
+       11 of 79 cells holding 0.90% between them). A point keeps its whole value --
+       nothing to divide -- so the point layers stay exact without it.
+     - **Boundaries are written twice, as points AND lines.** The lines are the build
+       path (continuous cells, needs `Spread`); the points resolve to one cell each so
+       an unwrapped conductance is already exact there. Keeping both is ~40 KB and
+       removes a footgun; naming one "BUILD FROM THIS" in the manifest is what makes
+       the choice visible rather than a coin flip.
+     - **Column names are the package registry's, not USG's** -- `elevation`,
+       `conductance`, `head`, so `mf.drn.gpkg(path, layer="drn_lines", ...)` needs no
+       field arguments. CHD's `ehead` has no MF6 counterpart and is written as
+       `ehead_usg_only` rather than dropped.
+     - **Three defects found by actually writing and running the rebuilt model
+       (2026-08-31), each of which produced input MF6 rejects or mis-solves:**
+       (a) `Spread` had no `_metadata_value` branch, so `prepare_run` died with
+       `TypeError: Object of type Spread is not JSON serializable` -- long after the
+       package built cleanly. Every dataclass in the `RowValue` union needs one, and
+       a test now asserts the whole union round-trips.
+       (b) `GeoPackageSource._active` used `bool(idomain[layer, cell])`, and
+       **`bool(-1)` is True**. MF6 idomain is three-valued -- `>0` active, `0`
+       inactive, `<0` vertical passthrough -- and a passthrough cell holds no
+       boundary. Measured: 347 of 864 DRN records landed in passthrough cells on a
+       stack using `pinch="passthrough"`, failing the run at read time. Now `> 0`.
+       (c) `SFRBuilder` kept any reach with `length > 0`, so a stream clipping a cell
+       corner produced a 0.005 ft reach; MF6 divides by reach length. `mf.sfr` gains
+       `min_reach_length` (default 0.0, no behaviour change). NOTE: this did NOT fix
+       the SIGFPE it was suspected of -- that remains open, see below.
+     - **`mf.tdis(nper=)` does not infer `nper` from `perioddata`** and defaults to 1.
+       A 72-row perioddata with the default wrote `NPER 1`; MF6 would have solved one
+       31-day period and terminated normally. Not changed -- a mismatch is arguably a
+       caller error -- but it is the single easiest way to silently get a steady
+       answer from a transient model, and it deserves a guard.
+     - **A raster export does not cover a larger new domain.** 2,287 of 18,107 cells
+       fell outside the old model, and `Surface.raster(...).values(vor)` returns NaN
+       there; one NaN makes every budget term NaN with no warning. The consuming
+       notebook fills gaps explicitly rather than the export inventing values.
+     - **OPEN: the rebuilt model SIGFPEs at the first timestep.** All 12 packages
+       read; the crash is arithmetic during the solve, after LAK setup. Ruled out by
+       measurement: coordinate magnitude (shifting DISV to a local origin changed
+       nothing), NaN in K/K33/Ss/Sy, zero or negative layer thickness (min 0.100 ft),
+       and sliver SFR reaches. Not diagnosed further -- it is model physics, not the
+       transfer.
+     - **`min_thickness` now sets geometry, and `pinch` defaults to `"floor"`
+       (2026-09-01, approved by the user, who confirmed no existing models are
+       affected).** Before this, `min_thickness` only ever decided an idomain value;
+       the built thickness came from the global `min_sep`. So
+       `.add(name, min_thickness=5)` produced a 0.1 ft layer, and `LayerStack.add`'s
+       own docstring described a clamp the code never performed (`layers.py:2000`
+       and `:2268` said `"floor"` clamps; `_idomain_from_thickness` left the
+       geometry untouched and only skipped the idomain change).
+       Now reconcile takes a **per-layer** separation: a `"floor"` layer is spaced at
+       its own `min_thickness`, and `min_sep` is the fallback for layers that pinch,
+       which must still be allowed to come out thin -- being thin is the signal that
+       they pinch out. `reconcile_surfaces` accepts a scalar or one value per bottom
+       contact.
+       Three consequences worth carrying: the split-aware division (a unit's minimum
+       is divided among its slices, or a 3 ft unit split three ways builds 9 ft --
+       the geometry twin of the ledger-158 pinch bug); the guard on
+       `min_sep < min_thickness` still stands for pinching layers and now names all
+       three ways out; and the default flip means thin cells stay ACTIVE, which on
+       the Ten Trails rebuild took 76,738 active / 13,797 passthrough to 90,535 / 0.
+       That matters beyond tidiness -- a passthrough cell carries no boundary, and
+       it had silently swallowed 347 DRN records.
+       Five tests were updated to the new default and five added for the new
+       behaviour; `test_per_layer_min_thickness_override` now passes
+       `pinch="passthrough"` explicitly, because a threshold only reaches idomain
+       under a pinching policy.
+     - **`to_disv` resolved the geometry a SECOND time and disagreed with `build`
+       by 8.5 ft** -- found by the user, whose drains landed below their cell
+       bottoms. `to_disv` already called `build()` for the idomain (the ledger-158
+       fix) but then passed the SCALAR `min_sep` to `ls.to_disv`, so the per-layer
+       separations reached one resolution and not the other. The failure is
+       maximally quiet: `attach_to_grid()` publishes `build`'s surfaces, so
+       `mf.CellSurfaceOffset("cell_bottom", offset=2)` placed boundaries two feet
+       above bottoms **MODFLOW never saw**, and MF6 then rejected them against the
+       bottoms it did. Same class as ledger 158, one field over -- the lesson is
+       that ANY resolution argument `to_disv` does not share with `build` writes a
+       different model than the one you inspected.
+       `test_to_disv_and_build_resolve_identical_geometry` pins top, botm AND
+       idomain; `test_cell_surface_offset_sees_the_reconciled_bottoms` pins the
+       consequence end to end.
+     - **`mf.tdis(ats=...)` (2026-09-01)** -- adaptive time stepping reached the
+       package-first path. The engine (`_resolve_ats_periods`, `_build_ats_records`
+       in `mf6/simulation/discretization.py`) and its tests already existed; only
+       the legacy `TemporalDiscretization` could reach them, so the canonical
+       `mf.tdis` accepted raw FloPy `ats_perioddata` and nothing else. Same shape of
+       gap CLAUDE.md records for other packages: engine complete, facade missing.
+       `ats=` takes `True`, an iterable of **zero-based** period indices, or a
+       mapping of per-period overrides; `ats_perioddata=` stays as the escape hatch
+       and passing both raises rather than silently choosing.
+       **It also fixes a live defect for existing `ats_perioddata` users:** FloPy
+       does not size `MAXATS` from the record list, so the written file declared
+       `MAXATS 1` however many records were supplied and MF6 read only the first.
+       Measured: 4 records in, `MAXATS 1` out. The legacy path corrected this via
+       `_set_maxats`; the spec path did not. `SimulationSpec.build_flopy` now sizes
+       it for every tdis carrying records, whichever way they were built.
+       **The two ATS helpers stay function-level imports.** Hoisting them to module
+       level in `package_api`/`specs` imports cleanly but leaves a partially
+       initialised graph -- 10 unrelated tests fail, including the noun-signature
+       suite. The deferred-import ratchet was regenerated instead (`package_api`
+       2 -> 3, `specs` 2 -> 3), which is the correct call when hoisting is what
+       breaks rather than what fixes.
+     - **Not exported:** HFB (face-indexed, no line yet), the `pxdp`/`petm` ET segment
+       arrays (uniform scalars on this model — 0.3 and 1.0 — so they belong in the
+       call, not a file), and observation/PEST scaffolding. `icelltype` is constant so
+       it is not written as a raster.
+
+170. **`GridSpec.resolve` documented rather than repaired; the CRS fallback left in
+     place (2026-08-31).**
+     Asked for thorough docs on `resolve()` -- "it's not clear what the args are".
+     The four arguments are now a full numpydoc block on the method, plus a short
+     section in `model_building_cheatsheet.md` and a line in
+     `package_api_reference.md`. Two findings surfaced while tracing them, and
+     both were documented rather than changed:
+     - **`_voronoi_options` falls back to `crs="EPSG:2927"`** when neither the
+       spec nor its options name one -- Washington State Plane South, feet, a
+       silent regional default for every user everywhere else. Changing it now
+       (to `None`, or to raising) would break any existing spec relying on it,
+       and this pass was scoped to documentation. It is called out as a trap in
+       all three places instead. **A real fix is a candidate deferral**: require
+       `crs=` on `GridSpec.voronoi`, with a deprecation cycle for the default.
+     - **`resolve()` is not cached** and re-runs Triangle on every call,
+       overwriting `workspace`. Fixed file names (`_triangle.0.poly` and
+       friends) mean two grids sharing a workspace clobber each other's meshes.
+       Documented as "one directory per grid" rather than fixed, because
+       namespacing the files is a `TriangleGrid` change with its own blast
+       radius and the failure is loud, not silent.
+     - **`return_triangle` is silently ignored** by the `object` and `pickle`
+       methods (they return before the check that raises for `python` specs).
+       Left as-is: the argument is meaningless there and raising would make
+       `from_object` specs harder to swap in as a drop-in replacement, which is
+       their whole point.
+
+171. **`Project.grids` typed so an editor can find `resolve`; `resolve() -> Any` left
+     alone (2026-08-31).**
+     Reported as "PyCharm shows me `async def _resolve_with_query(...)` when I hover
+     over `resolve`" -- aiohttp's DNS resolver. Not a myflopy method at all: with
+     `self.grids: dict[str, Any]`, the receiver has no type, so an editor falls back
+     to guessing among every `resolve` in its index. Now
+     `dict[str, GridSpec | GridRef]`; `add_grid` and `_load_grid` were `-> Any` too.
+     Verified with `mypy`, which now reveals `GridSpec | GridRef` where it revealed
+     `Any`.
+     - **The union forced a decision about `GridRef`.** `GridRef` had no `resolve`,
+       so the honest union produced a *new* warning on the user's working line
+       (`Item "GridRef" ... has no attribute "resolve"`). Three options: annotate
+       `dict[str, GridSpec]` (a lie -- `_save_grid`/`_load_grid` both handle a
+       `GridRef` entry and it round-trips); leave the warning; or give `GridRef` a
+       `resolve` that raises. Took the third. A method that always raises is
+       unusual, but a reference genuinely cannot build anything, and the message
+       now names the entry to look up instead of arriving as a bare
+       `AttributeError`. Its signature is asserted equal to `GridSpec.resolve`'s,
+       or narrowing the union would buy nothing.
+     - **`crs: str | None` widened to `str | int | None`** (5 sites in `specs.py`,
+       3 in `sources.py`). `crs=2927` is the natural spelling for an EPSG code and
+       works at runtime everywhere it is used -- it was simply a type error nobody
+       saw, because the `Any` above meant no checker ever reached the call.
+     - **REFUSED: `@overload`s to narrow `resolve() -> Any`.** The return depends on
+       the spec's *method* -- `object` hands back its grid, `pickle` unpickles one,
+       `python` returns whatever a user's builder made, `voronoi` returns a
+       `VoronoiGridPlus` (or a `TriangleGrid` under `build=False`, or a tuple under
+       `return_triangle=True`). Method is runtime state, not in the type, so
+       overloads on `build`/`return_triangle` would be accurate for `voronoi` specs
+       and would LIE for the other three. `Any` is the honest annotation; the
+       docstring's Returns section carries all five shapes instead. A real fix means
+       splitting `GridSpec` by method, or a separate `resolve_voronoi()` narrow
+       enough to promise a type -- both wider than this change.
+
+172. **Grid refinement documented across three channels; `GeoPackageSourceSpec.fields`
+     was documented backwards (2026-08-31).**
+     Asked twice in one session how refinement works with several geopackages and
+     with mixed polygon/line layers -- the behaviour was correct and entirely
+     undocumented. Now a table + section in `model_building_cheatsheet.md` and a
+     rewritten `GridSpec.voronoi` docstring. Every claim was measured on synthetic
+     fixtures, not read off the source.
+     - **The `fields` docstring described a class that does not exist.** It claimed
+       a "source column name -> target field name" mapping recorded by
+       `mf.ghb.gpkg(...)`, with the example `{"head": "bhead", "k": "cond"}`.
+       Grepped: `DataSourceSpec.fields` is consumed ONLY by
+       `grid_spec_resolver._source_value`, and only as `{logical_key: column}` --
+       the opposite direction. The runtime `GeoPackageSource` behind `mf.ghb.gpkg`
+       has no `fields` at all; it uses `name_field`/`layer_field`/`period_field`.
+       Corrected, with the direction called out explicitly, because the refinement
+       docs tell users to write `fields={"area": "max_area"}` and the class doc
+       said to write it the other way round.
+     - **The three channels are asymmetric and stay that way.** `refinement=` takes
+       ONE source, `breaklines=` a LIST, `points=` a LIST; buffers default 0 / 10 /
+       n-a and priorities 0 / 1 / n-a. Documented rather than harmonized: the
+       asymmetry is load-bearing (a line has no area, so it MUST be buffered; a
+       polygon must not be), and `breaklines` with `breakline_buffer=0` is already
+       a working multi-source polygon channel. Measured: a polygon routed that way
+       arrives at its exact area with its own `max_area`.
+     - **DOCUMENTED, NOT FIXED: `refinement=[a, b]` fails as
+       `AttributeError: 'list' object has no attribute 'path'`.** A type check
+       naming the two real options (merge the layers, or use `breaklines` with
+       buffer 0) would be three lines and strictly better. Left out because this
+       pass was scoped to documentation and the user asked for docs; the cheatsheet
+       quotes the raw error so it is at least searchable. **Worth doing.**
+     - **Two silent behaviours worth knowing, both now documented:** an unrecognised
+       `fields` key is ignored (a typo'd `"aera"` silently falls back to the global
+       option -- verified), and `refinement_buffer` applies to every feature in the
+       source, not only the lines that need it (a 400x400 polygon came out 67%
+       larger). Neither is a bug; both are invisible without being told.
+
+173. **`GeoPackageSourceSpec` given a full docstring; two more descriptions were wrong
+     (2026-08-31).**
+     Follow-on from 172 -- the class the refinement docs point at listed its
+     arguments thinly and defined none of them. Now a complete numpydoc block
+     (every field including the inherited `external`/`metadata`, a keys table for
+     `fields`, Notes, See Also, four runnable Examples). Verified by constructing
+     and reading every Example and round-tripping each through `to_dict`.
+     - **`query` is `pandas.DataFrame.query`, not SQL.** Documented as "an OGR/SQL
+       `WHERE` expression"; `_read_source` reads the whole layer then calls
+       `gdf.query(...)`. Measured: `"active = 1"` raises `ValueError: cannot assign
+       without a target object`, `"active == 1"` returns 1 of 2 features. The old
+       docstring's own example was the broken spelling -- so was the replacement
+       example added earlier in this same session, which is a good argument for
+       running docstring examples rather than eyeballing them. Also noted that it
+       filters after reading, so it does not reduce IO.
+     - **`crs` is a FALLBACK, not an override.** Both this class and `ShapeSource`
+       said "override"; `_read_source` applies it only `if gdf.crs is None`. A file
+       carrying its own CRS keeps it and the argument silently does nothing -- which
+       is correct behaviour (it cannot reinterpret coordinates by accident) and the
+       opposite of what the word "override" promises. This bit the user earlier in
+       the session on a 4326 refinement layer passed `crs=2927`. The reprojection
+       target is the CRS on the `GridSpec`, which is now said explicitly in both.
+     - **Positional order is a trap, documented rather than changed.** These are
+       dataclasses extending `DataSourceSpec`, so the real order is
+       `(path, external, metadata, layer, query, crs, fields)`:
+       `GeoPackageSourceSpec("x.gpkg", "areas")` sets `external="areas"`, truthy,
+       and names no layer. Making the subclass fields keyword-only (`kw_only`) would
+       fix it properly but changes the signature of every source class and their
+       `_from_dict` callers; a `.. warning::` in each docstring was the proportionate
+       call for a documentation pass. **Candidate deferral.**
+
+174. **`GridSpec.voronoi` stops swallowing unknown keywords, and names its sizing
+     options (2026-08-31).**
+     Noticed that `breakline_buffer` worked but was not in the signature. It was
+     reaching `**engine_options` and landing in a bucket nothing validates.
+     Measured before changing anything: `breakline_buffer=40` gives corridors of
+     239,869 ft2, the typo `breakline_bufer=40` gives 59,967 ft2 -- the default 10,
+     silently, under a clean run and a "Normal termination". `compleletly_made_up=123`
+     was accepted, stored in `options`, and never read. This is CLAUDE.md 8.8's
+     bare-`**kwargs` rule (written for picture verbs) biting a module the rule had
+     never been applied to.
+     - **17 options are now named parameters**, grouped `boundary_*` / `refinement_*`
+       / `breakline_*` plus `region_point_tolerance`. Static analysers read the `def`
+       line and nothing else, so this is the only thing that makes them complete.
+     - **DEVIATION FROM 8.8, deliberate: the named parameters default to `None`, not
+       to the resolver's real default.** 8.8 says mirror the owning link's default.
+       Mirroring here would mean always inserting a value, and a present-but-`None`
+       `boundary_max_area` SHADOWS its own `default_cell_area`/`max_area` aliases in
+       `_option`, which returns the first key PRESENT rather than the first non-None.
+       So `None` means "not given" and the effective defaults live in the docstring's
+       `Other Parameters` block instead. This also removes the default-drift risk
+       that 8.8's mirroring requires a test to police.
+     - **The allowlist is derived, and ratchets both ways.** `_VORONOI_OPTION_KEYS`
+       admits the 5 legacy aliases and the two dict-read keys as well as the 17;
+       `test_the_option_allowlist_matches_what_the_resolver_reads` re-greps
+       `grid_spec_resolver.py` for every `_option(options, ...)` and `options.get(...)`
+       and fails if the sets differ in EITHER direction -- a new resolver read the
+       allowlist would reject, or an allowlist entry nothing reads (which would
+       silently accept a typo again).
+     - **Source shape is validated at the call too.** `refinement=[a, b]`, a single
+       source in `breaklines=`, and a live `GeoDataFrame` all used to die inside the
+       resolver as `AttributeError: 'X' object has no attribute 'path'`, naming
+       neither the argument nor the fix. Each now raises naming both; the
+       GeoDataFrame message explains that a `GridSpec` is a serializable recipe and
+       gives the one-line `to_file` fix. Closes the deferral recorded in 172.
+     - **Technically breaking, knowingly.** Any caller passing a keyword that was
+       silently ignored now gets a `TypeError` at construction. That is a bug being
+       surfaced rather than behaviour removed -- the option never did anything -- and
+       the full suite (1968 tests) passes unchanged, so nothing in-repo relied on the
+       silence.
+
+175. **A NaN stack refuses to draw, instead of failing inside Matplotlib (2026-08-31).**
+     `stack.plot.section(...)` on a stack with a NaN top or bottom died eight frames
+     deep as `ValueError: Axis limits cannot be NaN or Inf`, from flopy's
+     `PlotCrossSection._set_axes_limits` -- naming neither the layer at fault nor the
+     cause. `LayerBuildResult.qc()` had detected the condition since it was written
+     (`nan_top`, `nan_botm`, `nan_active_cells`); nothing on the picture path
+     consulted it.
+     - `_require_finite_geometry(verb)` now runs before the renderer, names each
+       layer with its NaN count, gives the three real causes (a raster not covering
+       the grid, contours interpolated inside a smaller hull, a nodata value read as
+       elevation) and the three fixes (extend the source, `fill='propagate'`,
+       idomain).
+     - **Scoped to the section verb**, the one that failed. `vertex_grid()` is public
+       and returns a flopy grid; raising there would break inspecting a
+       partially-built stack, which is a legitimate thing to do while debugging
+       exactly this. The helper is on `LayerBuildResult` so `map`/`surface` can adopt
+       it if they turn out to fail the same way -- **not yet verified that they do**,
+       and it was not worth building a NaN fixture for each on a report of one.
+     - Worth carrying: the NaN **propagates downward**. A hole in one unit's bottom
+       makes every `thickness=`-declared unit beneath it NaN too, so the report names
+       several layers when one source is at fault. The measured fixture shows
+       `sand` 3 cells and `clay` 3 cells from a single 3-cell hole.
+
+
+169. **The 8.8 no-bare-kwargs rule reaches the NOUN tier -- one method converted,
+     17 recorded as debt (2026-08-30).**
+     Reported as "`model.hds.map()` docstring doesn't show all arguments...
+     `show_layer_elevs`, `show_mounding` aren't even mentioned". Measured: 29 of
+     its 39 reachable parameters were invisible, and `show_mounding` does not
+     decorate the map -- it REWRITES it, z going
+     `153.76, 147.67, 144.27` to `22.00, 16.28, 15.79`.
+     - **It is 18 methods, not one.** An AST sweep finds 18 classes defining a
+       picture verb that takes a bare `**kwargs` and forwards to a plot function;
+       13 have no `Parameters` section at all and 8 have a one-line docstring.
+       Across the family that is 516 invisible parameter-slots and 110 named
+       parameters an editor autocompletes and nothing explains.
+     - **Why no test saw it.** Every enumeration in `test_plot_vocabulary.py` is a
+       hand-written four-entry whitelist -- `SCOPES` is
+       `{module, model, grid, stack}`, `_namespace` a four-entry dict. There is no
+       discovery step, so the noun tier was unreachable by construction, in both
+       directions. All 64 of its tests pass over this defect.
+     - **It had been excused once already.** Ledger 145 recorded the leaf verbs as
+       "assumed bare and measured otherwise". That check asked ONE question -- is
+       the signature `(*args, **kwargs)`? -- where 8.8 states four requirements.
+       Pointing the six tests at `DependentVariableFile.map` today, four fail.
+       That is why the new test DISCOVERS its subjects instead of listing them.
+     - **The contract is signature-static, docstring-runtime**, matching the verb
+       tier rather than inventing a stricter rule for nouns: the reference is
+       written once on the free verb and spliced at import
+       (`_inherit_verb_docs`), so no bound method repeats it in source either.
+       What a purely static reader gets is the SIGNATURE, which is the
+       load-bearing assertion.
+     - **The tiers are MEASURED, not stylistic.** Every Tier 1 name changes the
+       figure on both a results noun and a record noun. Tier 2
+       (`kstpkper`/`per_timestep`/`bgs`/`hover_layers`/`hover_surfaces`/
+       `show_layer_elevs`/`show_mounding`) changes it only on a per-layer field;
+       on a record noun those produce a byte-identical figure, and `show_mounding`
+       is worse than inert -- it injects a head-derived row into an elevation
+       tooltip on every cell. Naming a parameter that provably cannot act is the
+       same defect as hiding one that can. Four more (`hover_fields`, `zoom`,
+       `rch_scale`, `animation_kstpkpers`) were measured inert on nouns and are
+       recorded in `NOUN_INERT_PARAMS` rather than silently omitted.
+     - **Five parameters now RAISE from the noun** rather than being accepted.
+       `values=` was the reason: measured on three classes, it repainted every
+       cell from the supplied array while the hover, title and colorscale went on
+       reporting the noun's real field -- `hds.map(values=[1.0]*ncpl)` drew
+       all-1.0 cells whose tooltips read 131.5 ft. That is a wrong picture, not a
+       missing docstring, and the report would never have surfaced it. **This is a
+       breaking change** for any notebook passing `values=`/`type=`/the legacy
+       hover trio to a noun -- every such call was producing a mislabelled figure.
+     - **Prerequisite fixes to the splice machinery**, all measured first:
+       `_drop_parameter` walked the whole sectioned remainder, so dropping a
+       parameter named `grid` or `section` also deleted the See Also entry sharing
+       its name; it could not split a grouped head (`zmin, zmax :` was a no-op for
+       both names); and `_inherit_verb_docs` was not idempotent -- a second call
+       took `ModelPlots.map` from 149 lines to 297. `GridPlots.map` carried two
+       `Parameters` headings, which is malformed NumPy: a reader stops at the
+       first block.
+     - **DEFERRED: the other 17**, listed exactly in
+       `tests/test_noun_signatures.py::UNCONVERTED` and xfailed there. The list is
+       exact in both directions, so a class fixed without being removed fails as
+       loudly as a new one added -- it can only shrink. That shape is deliberate:
+       ledger 145 is the precedent for what an unchecked "measured clean" note
+       becomes. The remaining work is 17 signature rewrites (~30 named parameters
+       each, from ~7) plus their `refuse_noun_parameters` call; the docstrings
+       splice from `plot.map` and need no authorship.
+     - Also deferred, found while measuring and NOT fixed here: `logscale=True`
+       raises on heads (an object-dtype `zs` path, a numeric bug rather than a
+       signature one); `contour_method='nearest'` is documented on `plot.map` and
+       rejected by it; `contour_resolution` is inert under the default linear
+       method. The last two are "a parameter you document must be one you accept"
+       failing one level down, at the value set.

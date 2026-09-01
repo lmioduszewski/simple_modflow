@@ -151,3 +151,30 @@ def test_pickled_grid_version_mismatch_warns(tmp_path):
 
     with pytest.warns(UserWarning, match="different library"):
         mf.Project.load(project.root)
+
+
+def test_a_grid_ref_refuses_to_resolve_and_names_the_fix():
+    """`project.grids[key]` is typed `GridSpec | GridRef`, so an editor resolves
+    `.resolve` on it -- which means the attribute has to EXIST on both members.
+    A reference has no sources, so it raises, and the message points at the entry
+    it refers to rather than arriving as a bare AttributeError."""
+
+    reference = mf.grid_ref("base")
+    with pytest.raises(TypeError, match=r"by-key reference.*project\.grids\['base'\]"):
+        reference.resolve()
+
+
+def test_a_grid_ref_resolve_accepts_the_same_arguments_as_a_spec():
+    """Otherwise narrowing the union buys nothing: a call written against
+    GridSpec.resolve would be a signature error on the GridRef branch."""
+
+    import inspect
+
+    from myflopy.specs import GridSpec
+
+    spec_params = inspect.signature(GridSpec.resolve).parameters
+    ref_params = inspect.signature(GridRef.resolve).parameters
+    assert set(spec_params) == set(ref_params)
+    for name, parameter in spec_params.items():
+        assert ref_params[name].kind == parameter.kind, name
+        assert ref_params[name].default == parameter.default, name

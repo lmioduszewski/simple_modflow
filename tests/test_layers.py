@@ -121,21 +121,29 @@ def test_duplicate_layer_name_raises():
 
 
 def test_per_layer_pinch_policy_override():
+    """The default keeps thin cells ACTIVE; a per-layer policy overrides it."""
+
     vor = _fake_vor(3)
     base = LayerStack(vor, top=Flat(10)).add("a", bottom=Surface.from_points(**_PLANE))
-    assert base.build(default_min_thickness=1.0, reconcile=False).idomain[0].tolist() == [-1, 1, 1]
+    # default pinch is "floor": a thin cell stays active rather than becoming -1
+    assert base.build(default_min_thickness=1.0, reconcile=False).idomain[0].tolist() == [1, 1, 1]
 
-    override = LayerStack(vor, top=Flat(10)).add(
-        "a", bottom=Surface.from_points(**_PLANE), pinch="inactive"
-    )
-    assert override.build(default_min_thickness=1.0, reconcile=False).idomain[0].tolist() == [0, 1, 1]
+    for policy, thin_value in (("inactive", 0), ("passthrough", -1)):
+        override = LayerStack(vor, top=Flat(10)).add(
+            "a", bottom=Surface.from_points(**_PLANE), pinch=policy
+        )
+        assert override.build(
+            default_min_thickness=1.0, reconcile=False
+        ).idomain[0].tolist() == [thin_value, 1, 1]
 
 
 def test_per_layer_min_thickness_override():
     vor = _fake_vor(3)  # thickness [0, 5, 10]
-    # default threshold 1.0 -> only cell0 thin; raise threshold for this layer to 6
+    # default threshold 1.0 -> only cell0 thin; raise threshold for this layer to 6.
+    # pinch must be a PINCHING policy for the threshold to reach idomain at all --
+    # under the default "floor" a thin cell is held open and stays active.
     stack = LayerStack(vor, top=Flat(10)).add(
-        "a", bottom=Surface.from_points(**_PLANE), min_thickness=6.0
+        "a", bottom=Surface.from_points(**_PLANE), min_thickness=6.0, pinch="passthrough"
     )
     idom = stack.build(reconcile=False).idomain[0]
     assert idom.tolist() == [-1, -1, 1]  # 0 and 5 are < 6, 10 is not
@@ -185,7 +193,7 @@ def test_to_disv_sets_length_units_and_idomain():
     )
     spec = stack.to_disv(reconcile=False, default_min_thickness=1.0)
     assert spec.options["length_units"] == "FEET"
-    assert spec.options["idomain"][0].tolist() == [-1, 1, 1]
+    assert spec.options["idomain"][0].tolist() == [1, 1, 1]  # default pinch="floor"
 
 
 def test_report_is_a_string():
@@ -1432,6 +1440,101 @@ def test_split_sub_names_may_not_collide_with_another_unit(real_vor):
         stack.build()
 
 
+# --- naming a split unit's layers ------------------------------------------ #
+
+def test_split_layers_can_be_named_without_touching_the_geometry(real_vor, _wedge):
+    """`names=` is a labelling choice, so the arrays must come back identical to
+    the generated-name build -- same base, same thicknesses, same unit map."""
+
+    def build(**kw):
+        return (LayerStack(real_vor, top=Flat(100))
+                .add("sand", bottom=_wedge, split=3, **kw).build(reconcile=False))
+
+    generated = build()
+    named = build(names=["upper sand", "mid sand", "lower sand"])
+
+    assert named.names == ["upper sand", "mid sand", "lower sand"]
+    assert generated.names == ["sand_1", "sand_2", "sand_3"]
+    # The UNIT is still "sand", which is what keeps `per_layer` addressable by
+    # the name the caller declared rather than by whatever they called slice 2.
+    assert named.units == generated.units == {"sand": [0, 1, 2]}
+    assert named.per_layer({"sand": 12.0}) == [12.0, 12.0, 12.0]
+    assert np.array_equal(named.botm, generated.botm), "naming moved a contact"
+    assert np.array_equal(named.thickness, generated.thickness)
+
+
+def test_explicit_names_survive_a_qc_and_a_report(real_vor, _wedge):
+    """The names identify contacts downstream, so they have to reach the places
+    a layer name is read -- not just `res.names`."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("sand", bottom=_wedge, split=2, names=["upper", "lower"])
+           .build(reconcile=False))
+    assert res.qc().names == ["upper", "lower"]
+    assert "upper" in res.report() and "sand_1" not in res.report()
+
+
+def test_a_named_split_can_be_declared_out_of_order_and_after_the_fact(real_vor, _wedge):
+    """`replace` is the editing verb, so it has to reach `names` too."""
+
+    stack = LayerStack(real_vor, top=Flat(100)).add("sand", bottom=_wedge)
+    stack.replace("sand", split=2, names=["upper", "lower"])
+    assert stack.build(reconcile=False).names == ["upper", "lower"]
+
+    # ...and `names` is one of the fields an unrelated `replace` must keep.
+    stack.replace("sand", min_thickness=2.0)
+    assert stack.build(reconcile=False).names == ["upper", "lower"]
+
+
+def test_changing_a_split_without_its_names_is_refused(real_vor, _wedge):
+    """Silently dropping or recycling names the caller wrote is the quiet
+    renaming this module exists to prevent -- so the pair is validated together."""
+
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("sand", bottom=_wedge, split=2, names=["upper", "lower"]))
+
+    with pytest.raises(ValueError, match="one name per split layer"):
+        stack.replace("sand", split=3)
+    with pytest.raises(ValueError, match="2 or more"):
+        stack.replace("sand", split=None)
+
+    # The unit is untouched by a refused edit, and undoing is explicit.
+    assert stack.build(reconcile=False).names == ["upper", "lower"]
+    stack.replace("sand", split=None, names=None)
+    assert stack.build(reconcile=False).names == ["sand"]
+
+
+def test_custom_split_names_may_not_collide_with_another_unit(real_vor):
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("sand", thickness=30, split=2, names=["upper", "lower"])
+             .add("upper", thickness=5))
+    with pytest.raises(ValueError, match="already uses"):
+        stack.build()
+
+
+@pytest.mark.parametrize(
+    "split, names, exc, match",
+    [
+        (3, ["a", "b"], ValueError, "one name per split layer"),
+        (2, ["a", "b", "c"], ValueError, "one name per split layer"),
+        (None, ["a", "b"], ValueError, "2 or more"),
+        (1, ["a"], ValueError, "2 or more"),
+        (2, ["a", "a"], ValueError, "distinct"),
+        (2, ["a", ""], ValueError, "non-empty"),
+        (2, ["a", 3], ValueError, "non-empty"),
+        (2, ["a", "top"], ValueError, "reserved"),
+        (2, "ab", TypeError, "the string"),
+        (2, 5, TypeError, "sequence of names"),
+    ],
+)
+def test_a_bad_names_list_is_rejected_at_the_call(real_vor, split, names, exc, match):
+    """At the `add()` that wrote it, not at build -- same contract as `split=`."""
+
+    stack = LayerStack(real_vor, top=Flat(100))
+    with pytest.raises(exc, match=match):
+        stack.add("x", thickness=10, split=split, names=names)
+
+
 # --- a split changes discretization, never geometry ------------------------- #
 
 def _one_unit(vor, thickness, split=None, **kw):
@@ -1462,7 +1565,14 @@ def test_an_unsplit_stack_keeps_the_historical_trigger(real_vor):
 
     res = (LayerStack(real_vor, top=Flat(100))
            .add("a", thickness=0.4).add("b", thickness=20).build())
-    assert np.allclose(res.thickness[0], 0.1)      # 0.4 < 1.0 -> floored, as before
+    # 0.4 < the 1.0 minimum, and pinch="floor" holds it OPEN at 1.0 rather than
+    # squashing it to the fallback min_sep as the old passthrough default did
+    assert np.allclose(res.thickness[0], 1.0)
+
+    squashed = (LayerStack(real_vor, top=Flat(100))
+                .add("a", thickness=0.4, pinch="passthrough")
+                .add("b", thickness=20).build())
+    assert np.allclose(squashed.thickness[0], 0.1)   # the historical shape
 
 
 def test_trigger_sep_can_be_overridden(real_vor):
@@ -1471,7 +1581,9 @@ def test_trigger_sep_can_be_overridden(real_vor):
              .add("u", bottom=Flat(97.6), split=3)
              .add("below", thickness=20).build(trigger_sep=5.0))
     assert np.allclose(loose.thickness[:3, 0], 0.8)
-    assert np.allclose(tight.thickness[:3, 0], 0.1)   # everything trips the trigger
+    # everything trips the raised trigger; each slice is then held at its share of
+    # the unit minimum (1.0 / 3) rather than collapsed to the fallback min_sep
+    assert np.allclose(tight.thickness[:3, 0], 1.0 / 3)
 
 
 @pytest.mark.parametrize("split", [None, 3])
@@ -1581,3 +1693,200 @@ def test_surfaces_that_really_are_thicknesses_are_still_accepted(real_vor, surfa
         reconcile=False
     )
     assert np.allclose(res.botm[0], 80.0)
+
+
+def test_a_nan_stack_refuses_to_draw_a_section_and_says_why(real_vor):
+    """A NaN elevation used to surface eight frames deep inside Matplotlib as
+    `Axis limits cannot be NaN or Inf`, naming neither the layer nor the cause."""
+
+    base = np.full(real_vor.ncpl, 60.0)
+    base[3:6] = np.nan                      # a source that does not cover the grid
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("sand", bottom=Surface.from_array(base))
+           .add("clay", thickness=20).build(reconcile=False))
+
+    assert res.qc().nan_active_cells, "fixture stopped producing NaN cells"
+
+    with pytest.raises(ValueError) as excinfo:
+        res.plot.section(y=150).show()
+    message = str(excinfo.value)
+    assert "cannot draw a cross-section" in message
+    assert "'sand'" in message, "the failing layer must be named"
+    assert ".qc()" in message, "the message must point at the report that counts them"
+
+
+def test_a_finite_stack_still_draws(real_vor):
+    """The guard must not stand between a healthy stack and its picture."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("sand", thickness=20).add("clay", thickness=20).build())
+    assert res.plot.section(y=150).axes is not None
+
+
+
+def test_min_thickness_sets_geometry_under_the_floor_policy(real_vor):
+    """``min_thickness`` is a real minimum, not only an idomain threshold.
+
+    Before this, ``min_thickness`` only ever decided whether a cell was marked
+    thin; the built thickness came from ``min_sep``, so declaring 5 ft and getting
+    0.1 ft was the documented-but-wrong behaviour.
+    """
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("thin", thickness=0.4, min_thickness=5.0)
+           .add("below", thickness=50).build())
+    assert np.allclose(res.thickness[0], 5.0)
+
+
+def test_each_layer_gets_its_own_declared_minimum(real_vor):
+    """Two units, two different minima, both honoured in the same build."""
+
+    res = (LayerStack(real_vor, top=Flat(200))
+           .add("a", thickness=0.4, min_thickness=5.0)
+           .add("b", thickness=0.4, min_thickness=12.0)
+           .add("deep", thickness=50).build())
+    assert np.allclose(res.thickness[0], 5.0)
+    assert np.allclose(res.thickness[1], 12.0)
+
+
+def test_min_sep_is_only_a_fallback_for_pinching_layers(real_vor):
+    """A floor layer ignores ``min_sep``; a pinching layer still uses it."""
+
+    floored = (LayerStack(real_vor, top=Flat(100))
+               .add("a", thickness=0.4, min_thickness=5.0)
+               .add("b", thickness=50).build(min_sep=0.1))
+    assert np.allclose(floored.thickness[0], 5.0), "min_sep must not cap a floor layer"
+
+    pinching = (LayerStack(real_vor, top=Flat(100))
+                .add("a", thickness=0.4, min_thickness=5.0, pinch="passthrough")
+                .add("b", thickness=50).build(min_sep=0.1))
+    assert np.allclose(pinching.thickness[0], 0.1)
+    assert (pinching.idomain[0] == -1).all()
+
+
+def test_a_split_unit_keeps_its_declared_minimum_undivided(real_vor):
+    """A 3 ft minimum split three ways is 1 ft per slice, not 3 ft per slice.
+
+    The separation is per MODEL layer but ``min_thickness`` is declared for the
+    UNIT, so handing each slice the unit's figure would inflate the unit by its
+    split factor -- the geometry twin of the ledger-158 pinch bug.
+    """
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("u", thickness=0.4, min_thickness=3.0, split=3)
+           .add("below", thickness=50).build())
+    assert np.allclose(res.thickness[:3, 0], 1.0)
+    assert np.allclose(res.thickness[:3, 0].sum(), 3.0)
+
+
+def test_the_pinch_guard_names_the_way_out(real_vor):
+    """A pinching layer whose threshold is under the fallback is still refused,
+    and the message says which of the three fixes applies."""
+
+    stack = (LayerStack(real_vor, top=Flat(100))
+             .add("a", thickness=0.4, min_thickness=1.0, pinch="passthrough")
+             .add("b", thickness=50))
+    with pytest.raises(ValueError, match="pinch='floor'"):
+        stack.build(min_sep=2.0)
+
+
+def test_to_disv_and_build_resolve_identical_geometry(real_vor):
+    """The DISV written to MODFLOW must match the arrays ``build()`` hands back.
+
+    ``to_disv`` samples the stack a second time, so any resolution argument it does
+    not share with ``build`` silently writes a different model than the one you
+    inspected. Measured at 8.5 ft of bottom disagreement when per-layer separations
+    reached ``build`` but not ``to_disv`` -- and because ``attach_to_grid`` publishes
+    ``build``'s surfaces, ``mf.CellSurfaceOffset("cell_bottom", ...)`` then placed
+    drains against bottoms MODFLOW never saw, below the real cell floor.
+    """
+
+    stack = (LayerStack(real_vor, top=Flat(200))
+             .add("a", thickness=0.4, min_thickness=5.0)
+             .add("b", thickness=0.4, min_thickness=12.0)
+             .add("c", thickness=0.4, min_thickness=3.0, split=3)
+             .add("deep", thickness=50))
+    spec = stack.to_disv(real_vor)
+    res = stack.build(real_vor)
+
+    assert np.allclose(spec.options["botm"], res.botm), "DISV bottoms differ from build()"
+    assert np.allclose(spec.options["top"], res.top)
+    assert (np.asarray(spec.options["idomain"]) == np.asarray(res.idomain)).all()
+
+
+def test_cell_surface_offset_sees_the_reconciled_bottoms(real_vor, tmp_path):
+    """A boundary placed off ``cell_bottom`` lands relative to the SHIPPED geometry."""
+
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    import myflopy as mf
+
+    stack = (LayerStack(real_vor, top=Flat(200))
+             .add("a", thickness=0.4, min_thickness=5.0)
+             .add("deep", thickness=50))
+    spec = stack.to_disv(real_vor)
+    res = stack.build(real_vor)
+    res.attach_to_grid()
+
+    cell = 0
+    point = real_vor.gdf_vorPolys.geometry.iloc[cell].centroid
+    path = tmp_path / "drn.gpkg"
+    gpd.GeoDataFrame(
+        {"layer": [1], "name": ["d"], "conductance": [1.0],
+         "geometry": [LineString([(point.x - 0.5, point.y), (point.x + 0.5, point.y)])]},
+        crs=real_vor.gdf_vorPolys.crs,
+    ).to_file(path, layer="bc", driver="GPKG")
+
+    ctx = mf.ModelContext(grid=real_vor, domain=res.idomain)
+    built = mf.drn.gpkg(path, layer="bc", context=ctx, nper=1, boundnames=False,
+                        layer_field="layer", layer_base=1, conductance="conductance",
+                        elevation=mf.CellSurfaceOffset("cell_bottom", offset=2.0))
+    shipped = np.asarray(spec.options["botm"])
+    for (layer, cell_id), elevation, *_ in built.options["stress_period_data"][0]:
+        assert elevation > shipped[layer][cell_id], "boundary below the shipped cell bottom"
+        assert elevation == pytest.approx(shipped[layer][cell_id] + 2.0)
+
+
+def test_build_result_to_disv_uses_the_arrays_it_already_holds(real_vor):
+    """``res.to_disv()`` ships the geometry you inspected -- byte for byte.
+
+    ``LayerStack.to_disv`` resolves the stack a SECOND time, so it can differ from
+    the result in hand; that drifted 8.5 ft on a real stack and put drains below
+    their cell bottoms. Building the spec from the result's own arrays makes the
+    two impossible to disagree.
+    """
+
+    stack = (LayerStack(real_vor, top=Flat(200), length_units="feet")
+             .add("a", thickness=0.4, min_thickness=5.0)
+             .add("b", thickness=0.4, min_thickness=12.0, split=2)
+             .add("deep", thickness=50))
+    res = stack.build(real_vor)
+    spec = res.to_disv(real_vor)
+
+    assert np.array_equal(np.asarray(spec.options["botm"]), np.asarray(res.botm))
+    assert np.array_equal(np.asarray(spec.options["top"]), np.asarray(res.top))
+    assert np.array_equal(np.asarray(spec.options["idomain"]), np.asarray(res.idomain))
+    assert spec.options["nlay"] == res.nlay
+    assert spec.options["length_units"] == "FEET"
+
+
+def test_build_result_to_disv_defaults_to_its_own_grid(real_vor):
+    """The result remembers the grid it was built against, so vor= is optional."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("a", thickness=10).build(real_vor))
+    assert np.array_equal(
+        np.asarray(res.to_disv().options["botm"]),
+        np.asarray(res.to_disv(real_vor).options["botm"]),
+    )
+
+
+def test_build_result_to_disv_needs_a_grid(real_vor):
+    """Without a grid it refuses rather than returning a spec with no geometry."""
+
+    res = (LayerStack(real_vor, top=Flat(100))
+           .add("a", thickness=10).build(real_vor))
+    res.vor = None
+    with pytest.raises(ValueError, match="No grid"):
+        res.to_disv()

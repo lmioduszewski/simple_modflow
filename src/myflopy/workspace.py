@@ -458,13 +458,14 @@ class Run:
         self._record_status("built")
         return self
 
-    def write(self) -> Path:
-        """Write MF6 input files, building first when necessary."""
+    def write(self, silent=False) -> Path:
+        """Write MF6 input files, building first when necessary.
+        silent defaults to False, so info will print to console"""
 
         if self.simulation is None:
             self.build()
         assert self.simulation is not None  # build() populates it
-        self.simulation.write_simulation(silent=True)
+        self.simulation.write_simulation(silent=silent)
         self._record_status("written")
         return self.workspace
 
@@ -754,7 +755,7 @@ class Project:
         self.root = self.layout.root
         self.name = name or self.root.name
         self.packages: dict[str, PackageSpec] = {}
-        self.grids: dict[str, Any] = {}
+        self.grids: dict[str, GridSpec | GridRef] = {}
         self.simulations: dict[str, SimulationSpec] = {}
 
     @property
@@ -782,13 +783,21 @@ class Project:
         self.packages[key] = package
         return package
 
-    def add_grid(self, key: str, grid: Any) -> Any:
+    def add_grid(self, key: str, grid: Any) -> GridSpec | GridRef:
         """Add or replace a reusable grid under a project ``key``.
 
         The grid may be a ``GridSpec`` recipe or an already-built grid object
         (such as a ``VoronoiGridPlus``). Models reference it with
         ``mf.grid_ref(key)``. The grid is normalized to a ``GridSpec`` and
         resolved into a model only when a run is built.
+
+        The return -- and ``project.grids[key]`` -- is annotated
+        ``GridSpec | GridRef`` rather than ``Any`` so an editor can actually
+        resolve ``project.grids[key].resolve(...)``; with ``Any`` it falls back
+        to guessing among every ``resolve`` it has indexed. In practice a
+        library entry is a ``GridSpec``: a ``GridRef`` points INTO this library,
+        so storing one here is accepted by ``add_grid`` and rejected later by
+        the build (:func:`_library_grid_spec`).
         """
 
         grid = _grid_entry(grid)
@@ -1182,7 +1191,7 @@ class Project:
             project.grids[key] = project._load_grid(key, _read_json(grid_path))
         return project
 
-    def _load_grid(self, key: str, doc: dict[str, Any]) -> Any:
+    def _load_grid(self, key: str, doc: dict[str, Any]) -> GridSpec | GridRef:
         """Reconstruct one project-library grid from its document."""
 
         if doc.get("kind") == "GridRef":

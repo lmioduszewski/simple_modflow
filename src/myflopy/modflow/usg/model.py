@@ -10,6 +10,7 @@ import numpy as np
 from myflopy._logging import get_logger
 from myflopy.modflow.usg._io import NameFile
 from myflopy.modflow.usg.cln import ClnData
+from myflopy.modflow.usg.export import ExportManifest, export_gis
 from myflopy.modflow.usg.packages import (
     BasData,
     DisuData,
@@ -319,6 +320,46 @@ class UsgModel:
                 crs=getattr(cells, "crs", None),
             )
         return gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=getattr(cells, "crs", None))
+
+    def export_gis(
+        self,
+        directory,
+        *,
+        crs: str | None = None,
+        stream_lines: dict | None = None,
+        clip_to=None,
+        resolution: float | None = None,
+        bed_thickness: float = 1.0,
+        overwrite: bool = False,
+    ) -> ExportManifest:
+        """Write this model's inputs as grid-independent vector and raster files.
+
+        A converted model is bound to the grid it was converted on; this is the
+        form that survives changing it. See
+        :func:`~myflopy.modflow.usg.export.export_gis` for the parameters and for
+        what each written file means.
+
+        Returns
+        -------
+        ExportManifest
+
+        Examples
+        --------
+        >>> usg = mf.read_usg("flow.nam", gsf="flow.gsf", crs="EPSG:2926")
+        >>> written = usg.export_gis("from_usg", crs="EPSG:2927")
+        >>> print(written.describe())
+        """
+
+        return export_gis(
+            self,
+            directory,
+            crs=crs,
+            stream_lines=stream_lines,
+            clip_to=clip_to,
+            resolution=resolution,
+            bed_thickness=bed_thickness,
+            overwrite=overwrite,
+        )
 
     def cln_polygons(self):
         """Return the CLN features dissolved to polygons on the groundwater grid."""

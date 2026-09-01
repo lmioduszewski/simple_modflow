@@ -35,7 +35,11 @@ from myflopy.modflow.mf6.heads_observations import (
 from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
-from myflopy.modflow.mf6.package_plotting import SpatialView, _apply_backend
+from myflopy.modflow.mf6.package_plotting import (
+    SpatialView,
+    _apply_backend,
+    refuse_noun_parameters,
+)
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
 
@@ -464,43 +468,111 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
     def map(
         self,
         *,
+        # -- which numbers ---------------------------------------------------
         per: int | None = None,
         kstpkper: tuple[int, int] | None = None,
+        per_timestep: str | int = "last",
         layer: int = 0,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
         contours: bool | str = False,
-        contour_levels: int | float | list[float] = 10,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
         contour_resolution: int = 150,
         contour_method: str = "linear",
-        backend: str = "plotly",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays --------------------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        bgs: bool = False,
+        # -- framing ---------------------------------------------------------
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
         hover=None,
         hover_layers: str = "active+strip",
         hover_surfaces: bool = False,
-        **kwargs,
+        show_layer_elevs: bool | None = None,
+        show_mounding: bool = False,
+        # -- renderer --------------------------------------------------------
+        backend: str = "plotly",
+        **trace_kwargs,
     ):
-        """Return a choropleth map of the field, optionally with contour overlays.
+        """This field as a choropleth, optionally with contours and overlays.
+
+        Every parameter is named rather than forwarded through ``**kwargs``:
+        PyCharm and Pylance read the ``def`` line and never run the module, so a
+        parameter that arrives through a tail is one an editor can never offer
+        (plan 8.8). ``show_mounding`` is the reason it matters here -- it does not
+        decorate the map, it rewrites every value on it.
 
         ``hover`` accepts a :class:`~myflopy.modflow.utils.datatypes.hover.HoverSpec`
         for full control of the sectioned, styled hover; otherwise this field's
         default spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
         ``"all"``) sets how the vertical profile shows, and ``hover_surfaces=True``
         adds the model-top/layer-bottom column (merged on ``"all"``).
+
+        Parameters
+        ----------
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Renderer. ``'mpl'`` returns a Matplotlib figure instead of a Picture.
+
+        Raises
+        ------
+        TypeError
+            If given ``values=`` or ``type=`` -- this noun draws its own field, so
+            an override would repaint the cells while the hover, title and
+            colorscale went on describing the real one -- or one of the legacy
+            hover arguments, which a noun's own ``hover_spec`` supersedes.
         """
 
         if self.model is None:
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
+        refuse_noun_parameters(f"model.{self._choro_type}", self._choro_type, trace_kwargs)
         if hover is None:
             hover = self._default_hover(layers=hover_layers, surfaces=hover_surfaces)
         choro = self.model.plot.map(
             per=per,
             kstpkper=kstpkper,
+            per_timestep=per_timestep,
             layer=layer,
             type=self._choro_type,
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=colorscale,
+            logscale=logscale,
             contours=contours,
+            contour_values=contour_values,
             contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
             contour_resolution=contour_resolution,
             contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            bgs=bgs,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            show_layer_elevs=show_layer_elevs,
+            show_mounding=show_mounding,
             hover_spec=hover,
-            **kwargs,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 

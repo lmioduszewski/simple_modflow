@@ -257,12 +257,30 @@ release-group boundnames; without them it names the fix and offers
   (compiles to `mf.LayerSurfaces` / `mf.Surface`). `vor` is optional: the layering
   can be declared before any grid exists and bound at `build(vor)`.
   `.add(name, ..., split=3)` cuts one geologic **unit** into N model layers
-  (`name_1..name_N`) without moving its base; the result carries
+  (`name_1..name_N`, or `names=[...]` for your own, one per layer) without moving
+  its base; the result carries
   `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
   per-layer lists `mf.npf`/`sto`/`ic` take.
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`.
+- `GridSpec.voronoi(boundary=, refinement=, breaklines=, points=, ...)` — refinement
+  arrives on **three asymmetric channels**: `refinement=` takes ONE polygon source
+  (every feature = one region, sized by `fields={"area": "<column>"}` or
+  `refinement_max_area`), `breaklines=` takes a LIST of line sources buffered into
+  corridors (`breakline_buffer`, default 10; priority **1**, vs 0 for refinement),
+  `points=` takes a LIST of point sources pinned as vertices. Mixing polygons and
+  lines in one `refinement=` layer raises. Every sizing option is a **named
+  parameter** (`boundary_*`/`refinement_*`/`breakline_*`), and an unknown keyword
+  raises with the nearest match rather than being silently ignored. Sources must be
+  file-backed specs — a GeoDataFrame, a bare path, or a list is refused by name.
+  Full table + traps in `docs/model_building_cheatsheet.md`.
+- `GridSpec.resolve(project_root=, workspace=, build=, return_triangle=)` — turns a
+  grid *recipe* into a grid *object*. `project_root` anchors relative source paths;
+  `workspace` is where Triangle's `_triangle.*` files land (one directory per grid);
+  `build=False` returns the prepared-but-unmeshed `TriangleGrid` for inspection;
+  `return_triangle=True` returns `(vor, tri)`. Full reference in the docstring.
+  Note the CRS falls back to `"EPSG:2927"` when the spec names none.
 - Grids: `mf.VoronoiGridPlus`, `mf.TriangleGrid`, `mf.GridSpec`; sources:
   `mf.GeoPackageSource`, `mf.read_gpkg`, `mf.read_shp_gpkg`.
 
@@ -377,9 +395,68 @@ Grid verbs underneath: `vor.barrier_faces(geom)`, `vor.enclosed_faces(polygon)`,
 | `usg.validate()` | `list[Finding]` | What MODFLOW 6 will **reject**, before running. `finding.blocks_run`. |
 | `usg.to_mf6(name, crs=, newton=, start_date_time=, complexity=, include=, fix_for_mf6=, local_origin=)` | `SimulationSpec` | DISV. Keep `local_origin=True`. |
 | `usg.surfaces()` / `usg.boundary_frame(ftype)` / `usg.cln_polygons()` | `Surface`s / GeoDataFrame / GeoDataFrame | Grid-independent — these survive a change of grid, node numbers do not. |
+| `usg.export_gis(dir, crs=, stream_lines=, clip_to=, resolution=, bed_thickness=, overwrite=)` | `ExportManifest` | Writes the whole model as GIS files that outlive **any** grid. See below. |
 
 `UsgModel` also exposes the model reshaped to `(nlay, ncpl)`: `top`, `botm`, `idomain`,
 `strt`, `k`, `k33`, `ss`, `sy`, `icelltype`, `thickness`, `uppermost_active`.
+
+#### `export_gis` — the form that survives re-gridding
+
+`to_mf6()` gives a simulation on the grid it was converted on. `export_gis()` gives the
+model's *content*, so you can rebuild it on whatever mesh you end up with — which is
+usually why a USG model is imported at all.
+
+| written | what it is | feeds |
+|---|---|---|
+| `boundaries.gpkg:<pkg>_segments` | each list BC as **one line per source cell** | `mf.drn/ghb/chd/riv` |
+| `boundaries.gpkg:source_cells`, `:domain` | the old mesh and its outline, so values stay auditable | — |
+| `streams.gpkg:streams` | one `LineString Z` per CLN stream, Z = bed elevation | `mf.sfr` |
+| `streams.gpkg:stream_nodes` | a point per old cell, with `station` for interpolation | `mf.sfr` |
+| `lakes.gpkg:lakes` / `:lake_nodes` | a polygon per CLN waterbody, and its per-node bed | `mf.lak` |
+| `arrays/lakebed_bottom.tif` | per-cell lakebed — pass this as `lake_bottom=`, not the column | `mf.lak` |
+| `lake_forcing.csv` | the CLN P−ET wells as a rate over each lake | `mf.lak(rainfall=, evaporation=)` |
+| `arrays/*.tif` | every per-cell array, **one file per distinct array** | `mf.Raster` |
+| `cell_values.gpkg` | the same arrays at the cell centres — exact, unlike the rasters | `Surface.from_points` |
+| `periods.csv` | timing, and which array each package uses in each period | — |
+| `manifest.json`, `README.md` | every column, its units, and every assumption made | — |
+
+**A model that fails to converge mid-run? `mf.tdis(ats=True)`.** Adaptive time
+stepping lets MODFLOW 6 choose its own step within a period -- and, crucially,
+**retry a failed step at a smaller one instead of ending the run**
+(`ats_dtfailadj`, default 5.0; `0` restores the stop-on-failure behaviour). Periods
+are selected zero-based: `ats=True`, `ats=[7, 9]`, or `ats={7: {"dtmin": 1e-4}}`.
+
+**Building from a line BC? Wrap the conductance in `mf.Spread`.** A feature's value is
+otherwise written to every cell it intersects, which is right for an elevation and
+multiplies a conductance by the cell count (measured: 2.02x, on an unchanged grid).
+`conductance=mf.Spread("conductance")` gives each cell its share — by length for a
+line, area for a polygon, and the whole value for a point, which has nothing to divide.
+
+Runnable walkthrough: **`examples/mf6/notebooks/usg_export_to_new_model.ipynb`** —
+each written file, and the call that consumes it. It builds no model; it lays out the
+workflow, and runs end to end against a demo grid so the shapes are visible first.
+
+Three things worth knowing, each measured rather than assumed:
+
+- **Column names are the builders' parameter names.** `streams` carries `rwid`/`rhk`/
+  `rgrd`/`rbth`/`man`; `lakes` carries `strt`/`lake_bottom`/`bedleak`. So
+  `mf.sfr(streams=..., width="rwid", streambed_k="rhk", ...)` works with no renaming. The one
+exception is `lake_bottom`: pass `arrays/lakebed_bottom.tif`, since the per-lake column is a
+single number for a bed that varies and `mf.lak` then rejects the cells it misses.
+- **Every conductance has a `*_per_ft` twin.** A list BC here is a *line* (measured: mean
+  in-set neighbour counts of 1.87–2.52, against 4–6 for anything areal), and splitting a
+  cell in two leaves the elevation alone while doubling the conductance. Rebuild it as
+  `cond_per_ft × length in the new cell` and the feature total is preserved. Do **not**
+  treat it as a leakance — `corr(cond, cell area) ≈ 0` over 205 DRN records.
+- **A repeated period is written once.** Ten Trails is 72 periods and a strict 12-month
+  cycle, so recharge is 11 distinct arrays, not 72; `periods.csv` is the index.
+
+What CLN cannot supply is written as a documented default rather than omitted, so a
+missing column never becomes a silent zero: SFR's `rbth` and `man` (CLN routes with a pipe
+conductivity, which has no MF6 counterpart), and `bedleak`, which is `FSKIN / bed_thickness`
+— CLN has a *skin*, not a bed, so the thickness is a choice. `fskin` is written unmodified
+beside it, and `mf.lak` takes one `bed_leakance` per lake while `lake_nodes` keeps the
+per-node variation.
 
 ## B · Read side — the `noun.verb` grammar
 

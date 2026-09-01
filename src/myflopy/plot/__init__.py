@@ -71,9 +71,20 @@ from myflopy.modflow.mf6.grid.plotting import (
     GridSection,
     _choropleth_factory,
 )
+from myflopy.modflow.mf6.headsplus import DependentVariableFile
 from myflopy.modflow.mf6.interactive_plotting import (
     SliderAnimation,
     build_particle_tracking_scene,
+)
+
+# The noun tiers live one layer DOWN (package_plotting, L1) so the nouns
+# themselves can import them without pointing upward; re-exported here
+# because they are a statement about `plot.map`.
+from myflopy.modflow.mf6.package_plotting import (
+    LAYER_FIELD_MAP_PARAMS,
+    NOUN_INERT_PARAMS,
+    NOUN_MAP_PARAMS,
+    NOUN_REFUSED_PARAMS,
 )
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
@@ -82,6 +93,10 @@ from myflopy.viz import FrameAnimation, Picture, mosaic
 logger = get_logger(__name__)
 
 __all__ = [
+    "LAYER_FIELD_MAP_PARAMS",
+    "NOUN_INERT_PARAMS",
+    "NOUN_MAP_PARAMS",
+    "NOUN_REFUSED_PARAMS",
     "map",
     "section",
     "surface",
@@ -1182,29 +1197,137 @@ def _split_sections(doc: str) -> tuple[str, str]:
     return doc.rstrip(), ""
 
 
-def _drop_parameter(sections: str, name: str) -> str:
-    """Remove one entry from a Parameters block -- its head line and its body.
+#: Sections whose entries are parameter names, and so may be filtered by name.
+#: Everything else in a NumPy docstring (See Also, Notes, Examples) is prose and
+#: must be carried across untouched -- the previous filter walked the WHOLE
+#: sectioned remainder, so dropping a parameter called `grid` or `section` also
+#: deleted the See Also entry that happened to share its name.
+_PARAMETER_SECTIONS = ("Parameters", "Other Parameters")
 
-    A bound verb already supplies ``source``; leaving it documented tells the
-    reader to pass an argument the signature does not have.
+
+def _parameter_name(line: str) -> tuple[str, ...]:
+    """The names a Parameters entry head declares, or ``()`` if it is not one.
+
+    An entry head sits at column 0 and reads ``name : type``. NumPy allows a
+    GROUPED head -- ``zmin, zmax : float, optional`` -- which documents two
+    parameters in one entry, so this returns a tuple rather than a name.
     """
 
-    lines = sections.splitlines()
-    kept, skipping = [], False
-    for line in lines:
-        head = line.split(":")[0].strip()
-        starts_entry = line[:1].strip() != "" and not line.startswith(" ")
-        if starts_entry and (head == name or head.startswith(f"{name} ")):
-            skipping = True
-            continue
-        if skipping:
-            # Continuation lines of the dropped entry are indented; anything at
-            # column 0 begins the next entry (or the next section) and ends it.
-            if line.startswith(" ") or not line.strip():
+    if not line[:1].strip() or ":" not in line:
+        return ()
+    head = line.split(":", 1)[0]
+    return tuple(part.strip() for part in head.split(",") if part.strip())
+
+
+def _filter_parameters(sections: str, *, keep=None, drop=()) -> str:
+    """Filter a docstring's Parameters entries by name, leaving prose alone.
+
+    ``keep`` (when given) is the allowed set; ``drop`` is removed either way. A
+    grouped head survives if any of its names does, and is rewritten to just
+    those -- dropping ``zmin`` from ``zmin, zmax : float`` has to leave ``zmax``
+    documented, where a name-match filter would either keep both or lose both.
+
+    Only :data:`_PARAMETER_SECTIONS` are filtered. This is what makes the
+    function safe to point at a whole docstring: a noun that does not accept
+    ``values`` still wants the free verb's See Also and Examples.
+    """
+
+    kept: list[str] = []
+    in_params = False
+    skipping = False
+    previous = ""
+    for line in sections.splitlines():
+        stripped = line.strip()
+        if stripped and set(stripped) == {"-"} and previous.strip() in _SECTION_HEADS:
+            in_params = previous.strip() in _PARAMETER_SECTIONS
+            skipping = False
+        names = _parameter_name(line) if in_params else ()
+        if names:
+            wanted = [
+                n for n in names
+                if n not in drop and (keep is None or n in keep)
+            ]
+            skipping = not wanted
+            if not skipping and len(wanted) != len(names):
+                # A grouped head lost some of its names; re-head it with the rest.
+                line = f"{', '.join(wanted)} :{line.split(':', 1)[1]}"
+        elif skipping and in_params:
+            # Continuation lines are indented; column 0 ends the entry.
+            if line.startswith(" ") or not stripped:
+                previous = line
                 continue
             skipping = False
-        kept.append(line)
+        if not skipping:
+            kept.append(line)
+        previous = line
     return "\n".join(kept)
+
+
+def _drop_parameter(sections: str, name: str) -> str:
+    """Remove one entry from a Parameters block (see :func:`_filter_parameters`)."""
+
+    return _filter_parameters(sections, drop=(name,))
+
+
+def inherit_map_docs(method, *, keep, extra: str = "") -> None:
+    """Give a noun's ``map()`` the free verb's entries for the names it accepts.
+
+    The noun's own summary and prose stay; the Parameters block is spliced from
+    ``myflopy.plot.map`` and trimmed to ``keep``, so one edit to the verb's
+    reference reaches every noun. ``extra`` is appended for parameters the verb
+    has no notion of (``backend``, ``multiplier``, ``agg``, ...), which are
+    genuine noun-local names -- a record noun reduces a table to one value per
+    cell, work the verb never does because it is handed ``values`` directly.
+    """
+
+    own_doc = getattr(method, "_myflopy_own_doc", None)
+    if own_doc is None:
+        own_doc = method.__doc__ or ""
+        method._myflopy_own_doc = own_doc
+    own_prose, own_sections = _split_sections(inspect.cleandoc(own_doc).strip())
+    _, sections = _split_sections(inspect.cleandoc(map.__doc__))
+    sections = _filter_parameters(sections, keep=set(keep))
+    if extra:
+        sections = _merge_parameter_sections(
+            "Parameters\n----------\n" + inspect.cleandoc(extra), sections
+        )
+    if own_sections:
+        sections = _merge_parameter_sections(own_sections, sections)
+    method.__doc__ = "\n\n".join(p for p in (own_prose, sections) if p)
+
+
+def _merge_parameter_sections(own: str, inherited: str) -> str:
+    """Fold an inherited Parameters block into one the method already has.
+
+    Emits ONE `Parameters` heading: the method's own entries first, then the
+    inherited ones, then whatever other sections each side carried. Two headings
+    is malformed NumPy -- a reader stops at the first block and never sees the
+    rest.
+    """
+
+    def _split_param_block(text: str) -> tuple[str, str]:
+        lines, start, end = text.splitlines(), None, None
+        for i, line in enumerate(lines[:-1]):
+            if line.strip() in _PARAMETER_SECTIONS and set(lines[i + 1].strip()) == {"-"}:
+                start = i + 2
+                break
+        if start is None:
+            return "", text
+        for j in range(start, len(lines) - 1):
+            if lines[j].strip() in _SECTION_HEADS and set(lines[j + 1].strip()) == {"-"}:
+                end = j
+                break
+        end = len(lines) if end is None else end
+        body = "\n".join(lines[start:end]).rstrip()
+        rest = "\n".join(lines[:start - 2] + lines[end:]).strip()
+        return body, rest
+
+    own_body, own_rest = _split_param_block(own)
+    inh_body, inh_rest = _split_param_block(inherited)
+    merged = "\n".join(part for part in (own_body, inh_body) if part.strip())
+    parts = ["Parameters\n----------\n" + merged] if merged else []
+    parts += [p for p in (own_rest, inh_rest) if p.strip()]
+    return "\n\n".join(parts)
 
 
 def _inherit_verb_docs(namespace) -> None:
@@ -1234,7 +1357,16 @@ def _inherit_verb_docs(namespace) -> None:
         free = globals().get(verb)
         if method is None or free is None or not free.__doc__:
             continue
-        own = inspect.cleandoc(method.__doc__ or "").strip()
+        # Splice from the method's ORIGINAL docstring, cached on first pass.
+        # Without this the function is not idempotent -- it re-splices its own
+        # output, and a second call took `ModelPlots.map` from 149 lines to 297,
+        # with every section duplicated. Nothing calls it twice today; a module
+        # reloaded in a notebook does.
+        own_doc = getattr(method, "_myflopy_own_doc", None)
+        if own_doc is None:
+            own_doc = method.__doc__ or ""
+            method._myflopy_own_doc = own_doc
+        own_prose, own_sections = _split_sections(inspect.cleandoc(own_doc).strip())
         prose, sections = _split_sections(inspect.cleandoc(free.__doc__))
         if not sections:
             continue
@@ -1242,8 +1374,35 @@ def _inherit_verb_docs(namespace) -> None:
         # method's own summary says what binding this subject means.
         extended = "\n".join(prose.splitlines()[1:]).strip()
         sections = _drop_parameter(sections, "source")
-        parts = [own, extended, sections, f"Bound form of :func:`myflopy.plot.{verb}`."]
+        if own_sections:
+            # The bound method documents some of its own parameters (GridPlots.map
+            # does). Appending the inherited block wholesale gave it TWO
+            # `Parameters` headings, which is malformed NumPy -- so the method's
+            # own entries win and the inherited block contributes only the names
+            # it does not already cover.
+            own_names = {
+                name
+                for line in own_sections.splitlines()
+                for name in _parameter_name(line)
+            }
+            sections = _filter_parameters(sections, drop=own_names)
+            sections = _merge_parameter_sections(own_sections, sections)
+        parts = [own_prose, extended, sections,
+                 f"Bound form of :func:`myflopy.plot.{verb}`."]
         method.__doc__ = "\n\n".join(p for p in parts if p)
+
+
+def _inherit_noun_docs() -> None:
+    """Splice `plot.map`'s reference onto the NOUN verbs, trimmed to what each takes.
+
+    Reaches DOWN from `myflopy.plot` (layer 7) into the explorer modules, exactly
+    as `_inherit_verb_docs` already does for the bound namespaces -- the nouns
+    cannot import upward to fetch it themselves.
+    """
+
+    tier1 = set(NOUN_MAP_PARAMS)
+    layer_field = tier1 | set(LAYER_FIELD_MAP_PARAMS) | {"per", "layer"}
+    inherit_map_docs(DependentVariableFile.map, keep=layer_field)
 
 
 _inherit_verb_docs(ModelPlots)
@@ -1254,3 +1413,4 @@ _inherit_verb_docs(GridPlots)
 from myflopy.layers import StackPlots as _StackPlots  # noqa: E402
 
 _inherit_verb_docs(_StackPlots)
+_inherit_noun_docs()

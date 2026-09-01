@@ -8,7 +8,9 @@ replace without introducing a framework around FloPy.
 
 from __future__ import annotations
 
+import difflib
 import functools
+import inspect
 import pickle
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
@@ -153,6 +155,31 @@ class GridRef:
         """Recreate a grid reference from :meth:`to_dict` output."""
 
         return cls(data["key"])
+
+    def resolve(
+        self,
+        *,
+        project_root: Path | str | None = None,
+        workspace: Path | str | None = None,
+        build: bool = True,
+        return_triangle: bool = False,
+    ) -> Any:
+        """Always raises: a reference has nothing to resolve without its project.
+
+        Present so that ``project.grids[key]`` -- typed ``GridSpec | GridRef``
+        -- offers ``.resolve`` on both members, and so the failure names the fix
+        instead of arriving as a bare ``AttributeError`` on a union an editor
+        already flagged. A ``GridRef`` points INTO a project's grid library, so
+        it cannot build anything on its own; look the key up, or let
+        ``prepare_run`` resolve it.
+        """
+
+        raise TypeError(
+            f"GridRef({self.key!r}) is a by-key reference, not a recipe -- it "
+            f"has no sources to build from. Resolve the entry it points at "
+            f"(project.grids[{self.key!r}] holds the GridSpec), or let "
+            f"project.prepare_run(...) resolve it into the model."
+        )
 
 
 def grid_ref(key: str) -> GridRef:
@@ -425,6 +452,119 @@ def _require_model_type(model: Any, model_type: type[_ModelT], label: str) -> _M
     return cast(_ModelT, model)
 
 
+def _accepted_options(builder) -> set[str] | None:
+    """Every keyword ``builder`` accepts, or ``None`` when that cannot be known.
+
+    A ``PackageSpec``'s builder is one of three things: a FloPy package class
+    (inspect it), a wrapper declaring its target via ``mf6_targets`` (inspect
+    those, plus the wrapper's own named parameters), or a ``functools.partial``
+    over one of those (unwrap and recurse).
+
+    **A FloPy package class's own ``**kwargs`` tail is not permission.**
+    ``MFPackage.__init__`` raises ``FlopyException: Extraneous kwargs`` for
+    anything it does not consume, so the NAMED parameters are the accepted set.
+    Treating the tail as "accepts anything" is what made the first version of
+    this check pass everything through.
+
+    A dispatching wrapper such as ``build_oc`` may construct any of four classes
+    depending on a model kind not known until build time, so the accepted set is
+    their UNION -- deliberately permissive. This catches a name that belongs to
+    no MODFLOW 6 package of that type at all, not the wrong kind of one.
+    """
+
+    import functools
+
+    if isinstance(builder, functools.partial):
+        accepted: set[str] = set()
+        for value in builder.args:
+            nested = _accepted_options(value)
+            if nested:
+                accepted |= nested
+        for value in builder.keywords.values():
+            nested = _accepted_options(value)
+            if nested:
+                accepted |= nested
+        return accepted or None
+
+    targets = getattr(builder, "mf6_targets", None)
+    if targets is None:
+        if not inspect.isclass(builder):
+            # A plain function with no declared target: nothing to check against.
+            return None
+        targets = (builder,)
+
+    accepted = set()
+    for target in targets:
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            # Unintrospectable callable; without a signature there is no check.
+            return None
+        accepted |= {
+            name
+            for name, parameter in parameters.items()
+            if parameter.kind not in (parameter.VAR_KEYWORD, parameter.VAR_POSITIONAL)
+        }
+    if not inspect.isclass(builder):
+        try:
+            accepted |= set(inspect.signature(builder).parameters)
+        except (TypeError, ValueError):
+            pass
+    return accepted - {"self", "model", "simulation", "parent", "loading_package", "options"}
+
+
+def _builder_label_for_error(builder) -> str:
+    """A name a reader recognises: the FloPy class, not ``functools.partial``."""
+
+    import functools
+
+    if isinstance(builder, functools.partial):
+        for value in (*builder.args, *builder.keywords.values()):
+            if inspect.isclass(value):
+                return value.__name__
+        return _builder_label_for_error(builder.func)
+    targets = getattr(builder, "mf6_targets", None)
+    if targets:
+        return " / ".join(target.__name__ for target in targets)
+    return getattr(builder, "__name__", type(builder).__name__)
+
+
+def _check_options(name: str, builder, options: dict[str, Any]) -> None:
+    """Raise if ``options`` names something the builder cannot accept.
+
+    Every ``mf.*`` helper ends in a ``**kwargs`` tail so that any FloPy option
+    stays reachable without myflopy having to mirror hundreds of signatures.
+    The cost, unchecked, is that a MISSPELLED or MISPLACED option is swallowed
+    silently and surfaces much later from inside FloPy -- ``model_nam_file=``
+    passed to ``mf.ims`` produced ``FlopyException: Extraneous kwargs`` at
+    ``prepare_run``, five frames down and twenty lines from the mistake.
+
+    So the tail stays open, and the names are checked here instead: at the call,
+    against the target's real signature, with the closest valid name suggested.
+    """
+
+    accepted = _accepted_options(builder)
+    if accepted is None:
+        return
+    unknown = sorted(set(options) - accepted)
+    if not unknown:
+        return
+
+    import difflib
+
+    label = _builder_label_for_error(builder)
+    problems = []
+    for key in unknown:
+        close = difflib.get_close_matches(key, sorted(accepted), n=1, cutoff=0.7)
+        problems.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+    raise TypeError(
+        f"{name}: {label} does not accept " + ", ".join(problems) + ". "
+        "Every myflopy package helper forwards unknown keywords to its MODFLOW 6 "
+        "package, so a name that package does not have is almost always a typo or "
+        "an argument meant for a different one."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PackageSpec:
     """Reusable instructions for building one package on a model or simulation.
@@ -444,6 +584,7 @@ class PackageSpec:
 
     def __post_init__(self) -> None:
         """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
+        _check_options(self.name, self.builder, self.options)
 
         object.__setattr__(self, "requires", tuple(self.requires))
 
@@ -688,7 +829,7 @@ class GridSpec:
     breaklines: tuple[DataSourceSpec, ...] = ()
     points: tuple[DataSourceSpec, ...] = ()
     inputs: tuple[Any, ...] = ()
-    crs: str | None = None
+    crs: str | int | None = None
     engine: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
     triangle_options: dict[str, Any] = field(default_factory=dict)
@@ -749,7 +890,7 @@ class GridSpec:
         name: str = "grid",
         grid_type: str = "disv",
         inputs: Iterable[Any] = (),
-        crs: str | None = None,
+        crs: str | int | None = None,
         options: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> GridSpec:
@@ -811,7 +952,7 @@ class GridSpec:
         layer: str | None = None,
         id_column: str | None = None,
         grid_type: str = "disv",
-        crs: str | None = None,
+        crs: str | int | None = None,
         **options: Any,
     ) -> GridSpec:
         """Load an existing grid from a GeoPackage. **Not implemented yet.**
@@ -844,7 +985,7 @@ class GridSpec:
         delc: float,
         top: Any,
         botm: Any,
-        crs: str | None = None,
+        crs: str | int | None = None,
         **options: Any,
     ) -> GridSpec:
         """Build a simple structured DIS grid. **Not implemented yet.**
@@ -875,7 +1016,24 @@ class GridSpec:
         refinement: DataSourceSpec | None = None,
         breaklines: Iterable[DataSourceSpec] = (),
         points: Iterable[DataSourceSpec] = (),
-        crs: str | None = None,
+        crs: str | int | None = None,
+        boundary_max_area: float | None = None,
+        boundary_label: str | None = None,
+        boundary_buffer: float | None = None,
+        boundary_simplify_tolerance: float | None = None,
+        boundary_densify_dist: float | None = None,
+        refinement_max_area: float | None = None,
+        refinement_priority: int | None = None,
+        refinement_buffer: float | None = None,
+        refinement_simplify_tolerance: float | None = None,
+        refinement_densify_dist: float | None = None,
+        breakline_max_area: float | None = None,
+        breakline_priority: int | None = None,
+        breakline_buffer: float | None = None,
+        breakline_negative_buffer_after_clipping: float | None = None,
+        breakline_simplify_tolerance: float | None = None,
+        breakline_densify_dist: float | None = None,
+        region_point_tolerance: float | None = None,
         engine: str = "triangle_voronoi_plus",
         options: dict[str, Any] | None = None,
         triangle_options: dict[str, Any] | None = None,
@@ -898,21 +1056,95 @@ class GridSpec:
         name : str, default "grid"
             Grid name.
         refinement : DataSourceSpec, optional
-            Polygon source whose features refine the mesh (smaller cells inside).
+            **One** polygon source. Every polygon in it becomes its own region
+            with its own target cell area -- so "several refinement areas" means
+            several features in one layer, not several sources. Passing a list
+            here does not work.
+
+            Size each one with ``fields={"area": "<column>"}`` on a
+            :class:`~myflopy.sources.GeoPackageSourceSpec`; features with no
+            value fall back to ``refinement_max_area``. One of the two is
+            required. ``"label"`` and ``"priority"`` are mappable the same way.
+
+            Polygons only, unless you set ``refinement_buffer``. A line in this
+            source raises *"A LineString region has no area"*, and the buffer
+            that would fix it applies to **every** feature in the source --
+            measured, a 400x400 polygon in a buffered layer came out 67% larger.
+            Send lines through ``breaklines`` instead.
         breaklines : Iterable[DataSourceSpec], optional
-            Line sources buffered into refinement regions (e.g. streams, faults).
+            Line sources buffered into refinement regions -- streams, faults,
+            any corridor you want meshed finely along its length. Each line
+            becomes one region, buffered by ``breakline_buffer`` (default 10,
+            i.e. a corridor 20 units wide) and sized by its ``"area"`` field or
+            ``breakline_max_area``.
+
+            Unlike ``refinement`` this takes a LIST, which makes it the channel
+            for several sources. Polygon sources are legal here too: with
+            ``breakline_buffer=0`` a polygon passes through unbuffered, so N
+            polygon geopackages can be one ``refinement`` plus the rest as
+            breaklines. Mind the priority default below if you do that.
         points : Iterable[DataSourceSpec], optional
-            Point sources pinned as fixed mesh vertices.
+            Point sources pinned as fixed mesh vertices -- a well that must sit
+            on a node, a gauge, a boundary corner. These are LOCATIONS, not
+            sizes: a point contributes no cell-area target and no region. A
+            non-point geometry contributes its ``representative_point()``.
         crs : str, optional
             Target CRS for the grid (sources are reprojected to it).
         engine : str, default "triangle_voronoi_plus"
             Meshing engine identifier.
         options, triangle_options, mesh_options, voronoi_options : dict, optional
             Advanced per-stage option dicts forwarded to the Triangle / mesh /
-            Voronoi stages.
+            Voronoi stages, for anything not named below.
         **engine_options
-            Convenience options routed to the right stage by name (e.g.
-            ``min_angle``, ``maximum_area``, ``profile``, ``idomain``).
+            Stage options routed by name -- ``min_angle``, ``maximum_area``,
+            ``profile``, ``idomain``, ``optimize`` and friends. **An unknown
+            keyword raises**, with the nearest match suggested; before that,
+            a misspelled option was accepted, never read, and silently meshed at
+            the default.
+
+        Other Parameters
+        ----------------
+        boundary_max_area : float, optional
+            Target cell area for the background region, i.e. everywhere no
+            refinement applies. In CRS units squared. Aliases
+            ``default_cell_area`` / ``max_area`` reach the same option.
+        boundary_label : str, default "domain"
+            Name for the background region in diagnostics.
+        boundary_buffer : float, default 0
+            Buffer applied to the domain polygon before meshing.
+        refinement_max_area : float, optional
+            Target cell area for every ``refinement`` feature that does not
+            carry its own via ``fields={"area": ...}``. One of the two is
+            required, or resolution raises naming both. Alias
+            ``default_refinement_area``.
+        refinement_priority : int, default 0
+            Who claims the overlap where refinement regions cross others.
+            Higher wins; a per-feature ``"priority"`` field beats this.
+        refinement_buffer : float, default 0
+            Buffer applied to **every** feature in the refinement source -- not
+            only lines that need width. A polygon layer buffered to admit one
+            line grows too; send lines through ``breaklines`` instead.
+        breakline_max_area : float, optional
+            Target cell area inside every breakline corridor. Alias
+            ``default_breakline_area``.
+        breakline_priority : int, default 1
+            Note this differs from ``refinement_priority`` (0), so a corridor
+            takes the overlap from a refinement polygon by default.
+        breakline_buffer : float, default 10
+            Half-width of the corridor a line is buffered into, in CRS units --
+            so the default corridor is 20 wide. ``0`` leaves a polygon source
+            unbuffered, which is how ``breaklines`` doubles as the multi-source
+            polygon channel. Alias ``line_buffer``.
+        breakline_negative_buffer_after_clipping : float, default 0
+            Post-clip shrink; must be <= 0.
+        boundary_simplify_tolerance, refinement_simplify_tolerance, breakline_simplify_tolerance : float, optional
+            Douglas-Peucker tolerance applied per channel before meshing.
+            Breaklines default to 10; the others to none.
+        boundary_densify_dist, refinement_densify_dist, breakline_densify_dist : float, optional
+            Maximum spacing to densify region outlines to, per channel.
+        region_point_tolerance : float, optional
+            Minimum spacing between the interior marker points Triangle needs,
+            one per region. Auto-scaled from the extent when omitted.
 
         Returns
         -------
@@ -926,9 +1158,74 @@ class GridSpec:
         ...                            refinement=mf.ShapeSource("wellfield.shp"),
         ...                            maximum_area=1.0e5, min_angle=30)
         >>> vor = spec.resolve(workspace="runs/_grid")
+
+        Polygons and lines from one GeoPackage, each channel to its own layer,
+        with a per-feature cell size on the polygons:
+
+        >>> spec = mf.GridSpec.voronoi(
+        ...     boundary=mf.ShapeSource("domain.gpkg", crs=2927),
+        ...     refinement=mf.GeoPackageSourceSpec(
+        ...         "refine.gpkg", layer="areas",
+        ...         fields={"area": "max_area", "label": "name"}),
+        ...     breaklines=[mf.GeoPackageSourceSpec("refine.gpkg", layer="creeks")],
+        ...     breakline_max_area=800.0, breakline_buffer=40,
+        ...     crs=2927, boundary_max_area=20_000.0,
+        ... )
+
+        Notes
+        -----
+        **Overlaps are resolved before meshing, by priority then size.** Regions
+        sort by ``(-priority, area)``, and each claims only what higher-priority
+        regions left it. So at equal priority a small polygon inside a big one
+        claims first and the big one gets the donut -- nesting works. But the
+        defaults are NOT equal: breaklines are priority 1 and refinement is 0,
+        so a breakline corridor takes the overlap from a refinement polygon.
+        Usually right for a stream; wrong if you used ``breaklines`` merely to
+        pass a second polygon file, so set ``priority`` explicitly there.
+
+        A region left with no unique area raises *"does not have any unique
+        interior area left after resolving overlaps"* -- that is what a
+        duplicated polygon gets you.
+
+        **Inspect before meshing** with ``spec.resolve(build=False)``: each
+        entry of ``tri._prepared_regions`` carries the ``label``, ``max_area``,
+        ``source`` (``refinement`` / ``line`` / ``domain``) and both
+        ``geometry`` and ``claim_geometry``, so the difference between the two
+        is exactly what overlap resolution took away.
         """
 
+        boundary = _grid_source(boundary, "boundary")
+        if refinement is not None:
+            refinement = _grid_source(refinement, "refinement")
+        breaklines = _grid_sources(breaklines, "breaklines")
+        points = _grid_sources(points, "points")
+
         merged_options = {**({} if options is None else options)}
+        # `None` means "not given" so the resolver's own default still applies --
+        # inserting a mirrored default here would shadow the alias fallbacks
+        # (`boundary_max_area` present-as-None would beat `default_cell_area`).
+        for key, value in (
+            ("boundary_max_area", boundary_max_area),
+            ("boundary_label", boundary_label),
+            ("boundary_buffer", boundary_buffer),
+            ("boundary_simplify_tolerance", boundary_simplify_tolerance),
+            ("boundary_densify_dist", boundary_densify_dist),
+            ("refinement_max_area", refinement_max_area),
+            ("refinement_priority", refinement_priority),
+            ("refinement_buffer", refinement_buffer),
+            ("refinement_simplify_tolerance", refinement_simplify_tolerance),
+            ("refinement_densify_dist", refinement_densify_dist),
+            ("breakline_max_area", breakline_max_area),
+            ("breakline_priority", breakline_priority),
+            ("breakline_buffer", breakline_buffer),
+            ("breakline_negative_buffer_after_clipping",
+             breakline_negative_buffer_after_clipping),
+            ("breakline_simplify_tolerance", breakline_simplify_tolerance),
+            ("breakline_densify_dist", breakline_densify_dist),
+            ("region_point_tolerance", region_point_tolerance),
+        ):
+            if value is not None:
+                merged_options[key] = value
         merged_mesh_options = {**({} if mesh_options is None else mesh_options)}
         merged_triangle_options = {
             **({} if triangle_options is None else triangle_options)
@@ -969,16 +1266,26 @@ class GridSpec:
                 merged_mesh_options[key] = value
             elif key in {"idomain", "idomain_path", "name", "qhull_options", "rasters"}:
                 merged_voronoi_options[key] = value
-            else:
+            elif key in _VORONOI_OPTION_KEYS:
                 merged_options[key] = value
+            else:
+                near = difflib.get_close_matches(
+                    key, sorted(_VORONOI_OPTION_KEYS), n=1, cutoff=0.6
+                )
+                hint = f" Did you mean {near[0]!r}?" if near else ""
+                raise TypeError(
+                    f"GridSpec.voronoi() got an unknown option {key!r}.{hint} An "
+                    f"unrecognised option used to be accepted and never read, so a "
+                    f"typo silently meshed at the default."
+                )
         return cls(
             name=name,
             grid_type="disv",
             method="voronoi",
             boundary=boundary,
             refinement=refinement,
-            breaklines=tuple(breaklines),
-            points=tuple(points),
+            breaklines=breaklines,
+            points=points,
             crs=crs,
             engine=engine,
             options=merged_options,
@@ -1081,13 +1388,137 @@ class GridSpec:
         build: bool = True,
         return_triangle: bool = False,
     ) -> Any:
-        """Resolve this grid recipe into the configured grid implementation.
+        """Build the grid this recipe describes, and return it.
 
-        Generated Voronoi specs currently resolve through the existing
-        ``TriangleGrid`` plus ``VoronoiGridPlus`` workflow. Set ``build=False``
-        to prepare and inspect the Triangle setup without running Triangle.
-        A spec created with :meth:`from_object` returns its held grid directly,
-        and one created with :meth:`from_pickle` unpickles it from disk.
+        A :class:`GridSpec` is a durable *recipe*: it records where the geometry
+        comes from and how to mesh it, but holds no grid. ``resolve`` is what
+        turns it into an object you can hand to ``ModelContext(grid=...)``.
+        Calling it yourself is the **eager** path; a :class:`Project` calls it
+        for you at run-build time, which is why deferred specs exist.
+
+        What comes back depends on how the spec was made. A
+        :meth:`voronoi` spec builds a :class:`~myflopy.modflow.mf6.grid.triangle.TriangleGrid`
+        from its boundary / refinement / breakline / point sources, meshes it,
+        and wraps it in a ``VoronoiGridPlus``. :meth:`from_object` hands back the
+        grid it already holds and :meth:`from_pickle` unpickles one, both
+        ignoring every argument below except ``project_root`` (which anchors the
+        pickle path). :meth:`python` imports the builder script and calls it.
+
+        Parameters
+        ----------
+        project_root : Path or str, optional
+            The directory that **relative paths in the recipe are anchored to**
+            -- every source path (``boundary``, ``refinement``, ``breaklines``,
+            ``points``), the ``idomain_path`` and ``rasters`` options, a
+            :meth:`from_pickle` path, and a :meth:`python` spec's script and
+            declared inputs. Absolute paths are used unchanged, and a source
+            marked ``external=True`` is never anchored -- that flag exists for
+            data that legitimately lives outside the project.
+
+            Pass ``project_root=project.root`` so a spec written with paths
+            relative to the project stays portable. Omitting it leaves relative
+            source paths to resolve against the **current working directory**,
+            which is fine for a script that never changes directory and a
+            silent source of "file does not exist" the moment one does. (A
+            :meth:`python` spec differs: it falls back to the CWD explicitly and
+            passes the result to the builder as ``project_root=``.)
+        workspace : Path or str, optional
+            Where **Triangle's working files** are written -- the generated
+            ``_triangle.0.poly`` / ``.node`` it is given, and the
+            ``_triangle.1.node`` / ``.ele`` / ``.edge`` / ``.neigh`` / ``.poly``
+            it produces. The directory is created if it does not exist. Reading
+            ``_triangle.0.poly`` is the honest way to check what Triangle was
+            actually asked for: its region section lists each refinement point
+            and the maximum area attached to it.
+
+            Resolution order, first hit wins: this argument, then
+            ``triangle_options['model_ws'|'workspace']``, then
+            ``options['model_ws'|'workspace']``, then ``<cwd>/_triangle``. Give
+            each grid its own directory -- the file names are fixed, so two
+            grids sharing a workspace overwrite each other's meshes.
+
+            For a :meth:`python` spec this is instead the directory handed to
+            the builder as ``workspace=``, defaulting to
+            ``<project_root>/_grid/<name>``.
+        build : bool, default True
+            Whether to actually mesh. ``True`` runs Triangle and returns the
+            finished ``VoronoiGridPlus``.
+
+            ``False`` returns the **prepared but unmeshed** ``TriangleGrid``
+            instead -- sources read, regions resolved against one another,
+            interior points chosen, :meth:`~TriangleGrid.prepare` called, but
+            Triangle never run. That is the cheap way to inspect what the
+            recipe compiled to before paying for a mesh: ``tri.region_specs``
+            is what you declared and ``tri._prepared_regions`` is what survived
+            overlap resolution, each carrying the ``max_area``, ``priority`` and
+            interior ``point`` Triangle will be given. Voronoi specs only; a
+            :meth:`python` spec ignores it.
+        return_triangle : bool, default False
+            Return ``(vor, tri)`` rather than just ``vor``, keeping the
+            ``TriangleGrid`` that produced the mesh -- useful for region
+            diagnostics after the fact, since the ``VoronoiGridPlus`` does not
+            carry them. Has no effect when ``build=False`` (the ``TriangleGrid``
+            is already what you get), and raises for a :meth:`python` spec.
+
+        Returns
+        -------
+        VoronoiGridPlus
+            For a :meth:`voronoi` spec with ``build=True``. Tagged with
+            ``grid.myflopy_grid_spec = spec``, so a built grid remembers the
+            recipe it came from.
+        tuple of (VoronoiGridPlus, TriangleGrid)
+            The same, with ``return_triangle=True``.
+        TriangleGrid
+            For a :meth:`voronoi` spec with ``build=False`` -- prepared, unmeshed.
+        Any
+            For :meth:`from_object` (the held grid), :meth:`from_pickle` (the
+            unpickled grid), or :meth:`python` (whatever the builder returned).
+
+        Raises
+        ------
+        ValueError
+            An ``object`` spec holding no grid, a ``pickle`` spec with no path,
+            or ``return_triangle=True`` on a :meth:`python` spec.
+        NotImplementedError
+            A method this does not wire. ``GridSpec.structured`` and
+            ``GridSpec.from_geopackage`` construct but do not resolve -- wrap an
+            already-built grid with :meth:`from_object` instead. Also raised for
+            an ``engine`` other than ``'triangle_voronoi_plus'``.
+        FileNotFoundError
+            A :meth:`python` spec whose builder script does not exist.
+
+        Notes
+        -----
+        **The CRS has a hardcoded fallback.** If neither the spec nor its
+        options name one, the returned grid is built as ``"EPSG:2927"``
+        (Washington State Plane South, feet). Pass ``crs=`` to
+        :meth:`voronoi` rather than relying on it.
+
+        Resolving is not cached -- each call re-reads the sources and re-runs
+        Triangle, overwriting the files in ``workspace``. Hold the returned grid
+        in a variable rather than calling ``resolve()`` twice.
+
+        Examples
+        --------
+        >>> spec = mf.GridSpec.voronoi(
+        ...     name="tentrails1",
+        ...     boundary=mf.ShapeSource("domain.gpkg", crs=2927),
+        ...     crs=2927,
+        ...     boundary_max_area=20_000.0,
+        ... )
+        >>> vor = spec.resolve(project_root=proj.root,
+        ...                    workspace=proj.root / "grids" / "base")
+
+        Check the refinement before meshing:
+
+        >>> tri = spec.resolve(project_root=proj.root, build=False)
+        >>> [(r.label, r.max_area) for r in tri._prepared_regions]
+        [('halfmoon', 400.0), ('domain_size', 20000.0)]
+
+        Keep the ``TriangleGrid`` alongside the built grid:
+
+        >>> vor, tri = spec.resolve(project_root=proj.root,
+        ...                         workspace=ws, return_triangle=True)
         """
 
         if self.method == "object":
@@ -1113,6 +1544,74 @@ class GridSpec:
             build=build,
             return_triangle=return_triangle,
         )
+
+
+#: Every key :mod:`myflopy.grid_spec_resolver` reads out of ``GridSpec.options``.
+#: ``GridSpec.voronoi`` rejects anything else, so a misspelled option raises at the
+#: call instead of silently falling back to a default. Kept in lockstep with the
+#: resolver by ``test_gridspec_fail_fast.py``, which fails in BOTH directions.
+_VORONOI_OPTION_KEYS: frozenset[str] = frozenset({
+    "boundary_max_area", "default_cell_area", "max_area", "boundary_label",
+    "boundary_buffer", "boundary_simplify_tolerance", "boundary_densify_dist",
+    "refinement_max_area", "default_refinement_area", "refinement_priority",
+    "refinement_buffer", "refinement_simplify_tolerance", "refinement_densify_dist",
+    "breakline_max_area", "default_breakline_area", "breakline_priority",
+    "breakline_buffer", "line_buffer", "breakline_negative_buffer_after_clipping",
+    "breakline_simplify_tolerance", "breakline_densify_dist",
+    "region_point_tolerance", "model_ws", "workspace", "crs", "profile",
+})
+
+
+def _grid_source(value: Any, argument: str) -> DataSourceSpec:
+    """One grid source, or a ``TypeError`` naming what to do instead.
+
+    Every rejected form here used to reach the resolver and die as
+    ``AttributeError: 'X' object has no attribute 'path'``, which names neither
+    the argument at fault nor the fix.
+    """
+
+    if isinstance(value, DataSourceSpec):
+        return value
+    if isinstance(value, (list, tuple, set, frozenset)):
+        raise TypeError(
+            f"{argument}= takes ONE source, not a {type(value).__name__}. Every "
+            f"FEATURE in that one source becomes its own region, so several "
+            f"refinement areas belong in one layer. For several FILES: merge "
+            f"them into one layer carrying an 'area' column, or pass the extras "
+            f"through breaklines=[...] with breakline_buffer=0 (which leaves a "
+            f"polygon unbuffered)."
+        )
+    extra = ""
+    if type(value).__name__ in {"GeoDataFrame", "DataFrame", "GeoSeries"}:
+        extra = (
+            f" A {type(value).__name__} is not file-backed, and a GridSpec is a "
+            f"serializable recipe -- it has to survive to_dict()/from_yaml(). "
+            f"Write it out first, e.g. "
+            f"gdf.to_file(path, layer='areas', driver='GPKG'), then point a "
+            f"GeoPackageSourceSpec at it."
+        )
+    raise TypeError(
+        f"{argument}= takes a file-backed source spec (ShapeSource, "
+        f"GeoPackageSourceSpec or TableSource), got {type(value).__name__}.{extra}"
+    )
+
+
+def _grid_sources(value: Any, argument: str) -> tuple[DataSourceSpec, ...]:
+    """A tuple of grid sources from an iterable argument (``breaklines``/``points``)."""
+
+    if isinstance(value, DataSourceSpec):
+        raise TypeError(
+            f"{argument}= takes a SEQUENCE of sources, not one source -- write "
+            f"{argument}=[source]. (Unlike refinement=, this one is a list.)"
+        )
+    try:
+        items = list(value)
+    except TypeError:
+        raise TypeError(
+            f"{argument}= takes a sequence of source specs, got "
+            f"{type(value).__name__}."
+        ) from None
+    return tuple(_grid_source(item, argument) for item in items)
 
 
 def _grid_data_source(data: dict[str, Any]) -> DataSourceSpec:
@@ -1924,6 +2423,23 @@ class BuiltSimulation:
             ) from error
 
 
+def _size_ats(simulation, records) -> None:
+    """Set ``MAXATS`` on the ATS package FloPy creates from ``ats_perioddata``.
+
+    FloPy does not size the ``MAXATS`` dimension from the record list, so the
+    written file declares ``MAXATS 1`` however many periods were supplied and MF6
+    reads only the first. Measured on a 4-period stack: 4 records in, ``MAXATS 1``
+    out. The legacy ``TemporalDiscretization`` path already corrected this; the
+    spec path did not, so ``ats_perioddata=`` was quietly broken here.
+    """
+
+    if not records:
+        return
+    from myflopy.modflow.mf6.simulation.discretization import _set_maxats
+
+    _set_maxats(simulation, len(records))
+
+
 @dataclass(frozen=True, slots=True)
 class SimulationSpec:
     """One complete MF6 simulation: timing, solver(s), and the model(s).
@@ -2228,6 +2744,7 @@ class SimulationSpec:
         for package in timing:
             if (built := package.build(simulation)) is not None:
                 simulation_packages[package.name] = built
+            _size_ats(simulation, package.options.get("ats_perioddata"))
         built_models = {
             model.name: model.build(simulation, build_context=build_context)
             for model in self.models

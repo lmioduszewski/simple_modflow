@@ -129,3 +129,11 @@ tools/mp3du/*
 # binary on every run, so tracking it made every doc edit a binary diff and
 # made the generator unrunnable in a clean tree (plan 7.4).
 docs/*.pdf
+
+# Model runs and scratch sites: MF6 inputs/outputs regenerate from the scripts
+# beside them, and a run directory is tens of MB of .hds/.cbb/.grb.
+examples/mf6/demo_site/
+
+# Notebooks that carry large saved outputs. Track them stripped
+# (`jupyter nbconvert --clear-output --inplace`) if they should be in git.
+examples/mf6/notebooks/bearcreek_uncertainty.ipynb

@@ -37,7 +37,13 @@ from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-from myflopy.surfaces import LayerSurfaces, Surface, _depends_on_previous
+from myflopy.package_api import disv as disv_spec
+from myflopy.surfaces import (
+    _MF6_LENGTH_UNITS,
+    LayerSurfaces,
+    Surface,
+    _depends_on_previous,
+)
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
 logger = get_logger(__name__)
@@ -241,6 +247,64 @@ def _split_shares(split, name: str) -> list[float]:
     return shares
 
 
+def _split_names(names, shares: list[float], unit: str) -> list[str] | None:
+    """Validate an explicit ``names=`` list for a split unit, else ``None``.
+
+    ``None`` keeps the generated ``<unit>_1 .. <unit>_N``. An explicit list has
+    to name EVERY slice: a partial list would leave the rest generated, so which
+    MODFLOW layer a given name refers to would depend on where the caller
+    stopped counting. Validated at declaration rather than at build, so a bad
+    list is reported at the ``add()`` that wrote it.
+    """
+
+    if names is None:
+        return None
+    # `str` before the coercion: it is iterable, so a bare name would otherwise
+    # be silently accepted as a list of one-character names.
+    if isinstance(names, str):
+        raise TypeError(
+            f"layer {unit!r}: names= takes a sequence of names, one per split "
+            f"layer; got the string {names!r}."
+        )
+    try:
+        given = list(names)
+    except TypeError:
+        raise TypeError(
+            f"layer {unit!r}: names= takes a sequence of names, one per split "
+            f"layer; got {type(names).__name__}."
+        ) from None
+    if len(shares) == 1:
+        raise ValueError(
+            f"layer {unit!r}: names= needs a split of 2 or more to name -- an "
+            f"unsplit unit is already called {unit!r}. Pass split= as well, or "
+            f"rename the unit itself."
+        )
+    if len(given) != len(shares):
+        raise ValueError(
+            f"layer {unit!r}: names= must have one name per split layer, got "
+            f"{len(given)} name(s) for {len(shares)} layers."
+        )
+    for candidate in given:
+        if not isinstance(candidate, str) or not candidate.strip():
+            raise ValueError(
+                f"layer {unit!r}: every split name must be a non-empty string, "
+                f"got {given!r}."
+            )
+        if candidate == "top":
+            raise ValueError(
+                f"layer {unit!r}: 'top' is reserved for the model top surface; "
+                f"name the layer for the material it is."
+            )
+    repeats = sorted({n for n in given if given.count(n) > 1})
+    if repeats:
+        raise ValueError(
+            f"layer {unit!r}: split names must be distinct -- a name identifies "
+            f"a contact, a DataFrame column and a 3-D scene actor -- got "
+            f"repeats {repeats}."
+        )
+    return given
+
+
 def _sub_surface(surface: Surface, share: float, step: float, unit: str) -> Surface:
     """One sub-layer's bottom, for a unit being split.
 
@@ -355,6 +419,10 @@ class _Layer:
     #: ONE record until `_expanded_layers` compiles it, so `min_thickness` and
     #: `pinch` keep meaning "this unit", not "each slice of it".
     split: Any = None
+    #: Explicit names for a split unit's layers, one per share. `None` keeps the
+    #: generated `<name>_1 .. <name>_N`. Validated where it is declared, so a
+    #: stack never reaches `_expanded_layers` with a names/split length mismatch.
+    names: Any = None
 
 
 @dataclass
@@ -550,6 +618,61 @@ class LayerBuildResult:
             )
         return "\n".join(lines)
 
+    def to_disv(self, vor=None, *, name: str = "disv"):
+        """Return the ``mf.disv`` spec for **this** build -- no second resolution.
+
+        ``LayerStack.to_disv`` samples the stack again, so it is a different
+        resolution from the one you are holding, and any argument the two calls do
+        not share writes a model that is not the one you inspected. That drifted
+        8.5 ft on a real stack, and because :meth:`attach_to_grid` publishes *this*
+        build's surfaces, ``mf.CellSurfaceOffset("cell_bottom", ...)`` then placed
+        drains against bottoms MODFLOW never received.
+
+        Building the spec from the arrays already on this result removes the
+        possibility by construction: there is one geometry, and it is the one you
+        checked with :meth:`qc`.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus, optional
+            The grid to take cell geometry from; defaults to the one built against.
+        name : str, default "disv"
+            Package name.
+
+        Returns
+        -------
+        PackageSpec
+
+        Examples
+        --------
+        >>> res = layer_stack.build(vor)
+        >>> res.attach_to_grid()
+        >>> disv = res.to_disv(vor)
+        """
+
+
+        grid = self.vor if vor is None else vor
+        if grid is None:
+            raise ValueError("No grid; pass vor= or build the stack with a grid.")
+        props = grid.get_disv_gridprops()
+        options = {}
+        if self.length_units is not None:
+            options["length_units"] = _MF6_LENGTH_UNITS.get(
+                self.length_units.lower(), self.length_units.upper()
+            )
+        return disv_spec(
+            nlay=self.nlay,
+            ncpl=props["ncpl"],
+            nvert=len(props["vertices"]),
+            vertices=props["vertices"],
+            cell2d=props["cell2d"],
+            top=np.asarray(self.top, dtype=float),
+            botm=np.asarray(self.botm, dtype=float),
+            idomain=np.asarray(self.idomain),
+            name=name,
+            **options,
+        )
+
     def attach_to_grid(self, vor=None):
         """Publish ``top``/``botm`` onto ``vor.gdf_topbtm`` for grid-aware builders.
 
@@ -723,6 +846,39 @@ class LayerBuildResult:
             nlay=self.nlay, ncpl=p["ncpl"], crs=str(getattr(self.vor, "crs", None)),
         )
 
+    def _require_finite_geometry(self, verb: str) -> None:
+        """Refuse to draw a stack whose elevations contain ``NaN``.
+
+        A NaN top or bottom propagates into the renderer's axis limits, where
+        Matplotlib rejects it as ``Axis limits cannot be NaN or Inf`` -- eight
+        frames deep, naming neither the layer nor the cause. The cause is always
+        the same: a source surface had no data over some cells. :meth:`qc`
+        already counts them per layer, so point at it.
+        """
+
+        nan_top = int(np.isnan(self.top).sum())
+        nan_botm = [int(np.isnan(self.botm[k]).sum()) for k in range(self.nlay)]
+        if not nan_top and not any(nan_botm):
+            return
+        worst = [
+            f"{self.names[k]!r} ({n} cell{'s' if n != 1 else ''})"
+            for k, n in enumerate(nan_botm) if n
+        ]
+        detail = ""
+        if nan_top:
+            detail += f"the model top ({nan_top} cells)"
+        if worst:
+            detail += (", " if detail else "") + ", ".join(worst)
+        raise ValueError(
+            f"cannot draw {verb}: the stack has NaN elevations in {detail}. A "
+            f"surface had no source data over those cells -- a raster that does "
+            f"not cover the whole grid, contours interpolated inside a smaller "
+            f"hull, or a nodata value read as elevation. Run .qc() for the "
+            f"per-layer counts, then either extend the source, pass "
+            f"fill='propagate' on that layer to inherit the surface above, or "
+            f"deactivate the cells with idomain."
+        )
+
     def _draw_cross_section(
         self, line=None, *, x=None, y=None, color_by="layer", ax=None,
         cmap="tab10", show_grid=True, legend=True, title=None,
@@ -744,6 +900,7 @@ class LayerBuildResult:
             plot_layered_cross_section,
         )
 
+        self._require_finite_geometry("a cross-section")
         vg = self.vertex_grid()
         line_spec = self._resolve_line(line, x, y)
 
@@ -1870,6 +2027,7 @@ class LayerStack:
         pinch: str | None = None,
         fill: str | None = None,
         split=None,
+        names=None,
     ) -> LayerStack:
         """Append a named geologic unit beneath the current bottom. Returns ``self``.
 
@@ -1919,6 +2077,14 @@ class LayerStack:
             A unit whose bottom is measured from the layer above (an
             ``Isopach``) cannot be split; give it an absolute bottom, or declare
             it with ``thickness=`` and split that.
+        names
+            Names for the split layers, top to bottom, replacing the generated
+            ``<name>_1 .. <name>_N``. Requires ``split`` of 2 or more, and must
+            give one name per layer -- naming only some of them would leave
+            which layer a name refers to depending on where you stopped
+            counting. The UNIT keeps ``name``, so
+            :attr:`LayerBuildResult.units` and
+            :meth:`LayerBuildResult.per_layer` are unaffected by the choice.
 
         Examples
         --------
@@ -1927,31 +2093,34 @@ class LayerStack:
         >>> stack.add("bedrock", bottom=Contours("bedrock.shp"))  # bottom from contours
         >>> stack.add("sand", bottom=Raster("base.tif"), split=3) # -> sand_1..sand_3
         >>> stack.add("till", thickness=60, split=[0.25, 0.75])   # -> 15 ft, then 45 ft
+        >>> stack.add("sand", bottom=Raster("base.tif"), split=3,  # -> your names,
+        ...           names=["upper sand", "mid sand", "lower sand"])  # unit stays "sand"
         """
         _check_layer_name(name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
-        _split_shares(split, name)  # reject a bad split here, not at build
-        self._layers.append(_Layer(name, surface, min_thickness, pinch, split))
+        shares = _split_shares(split, name)  # reject a bad split here, not at build
+        _split_names(names, shares, name)    # ...and a bad names= list with it
+        self._layers.append(_Layer(name, surface, min_thickness, pinch, split, names))
         return self
 
     def insert_below(
         self, name: str, new_name: str, *, bottom=None, thickness=None,
         min_thickness: float | None = None, pinch: str | None = None,
-        fill: str | None = None, split=None,
+        fill: str | None = None, split=None, names=None,
     ) -> LayerStack:
         """Insert a new unit directly below the existing unit ``name``."""
         _check_layer_name(new_name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
-        _split_shares(split, new_name)
+        _split_names(names, _split_shares(split, new_name), new_name)
         self._layers.insert(
             self._index(name) + 1,
-            _Layer(new_name, surface, min_thickness, pinch, split),
+            _Layer(new_name, surface, min_thickness, pinch, split, names),
         )
         return self
 
     def replace(
         self, name: str, *, bottom=None, thickness=None,
-        min_thickness=_UNSET, pinch=_UNSET, fill=None, split=_UNSET,
+        min_thickness=_UNSET, pinch=_UNSET, fill=None, split=_UNSET, names=_UNSET,
     ) -> LayerStack:
         """Update an existing unit in place; unspecified fields are kept.
 
@@ -1959,6 +2128,13 @@ class LayerStack:
         ``stack.replace("sand", split=3)``. There is deliberately no ``.split()``
         verb: this method already edits a declared unit by name, already returns
         ``self``, and already keeps what you do not mention.
+
+        ``split`` and ``names`` are kept independently but validated TOGETHER,
+        so changing one to a length the other cannot match raises here rather
+        than at build. Dropping a split from a named unit therefore reads
+        ``replace(name, split=None, names=None)`` -- the alternative, silently
+        discarding names the caller wrote, is the kind of quiet renaming this
+        module exists to prevent.
         """
         idx = self._index(name)
         layer = self._layers[idx]
@@ -1966,14 +2142,19 @@ class LayerStack:
             surface = _make_surface(bottom, thickness, fill)
         else:
             surface = layer.surface if fill is None else _dc_replace(layer.surface, fill=fill)
-        if split is not _UNSET:
-            _split_shares(split, name)
+        resolved_split = layer.split if split is _UNSET else split
+        resolved_names = layer.names if names is _UNSET else names
+        if split is not _UNSET or names is not _UNSET:
+            _split_names(
+                resolved_names, _split_shares(resolved_split, name), name
+            )
         self._layers[idx] = _Layer(
             name,
             surface,
             layer.min_thickness if min_thickness is _UNSET else min_thickness,
             layer.pinch if pinch is _UNSET else pinch,
-            layer.split if split is _UNSET else split,
+            resolved_split,
+            resolved_names,
         )
         return self
 
@@ -2003,24 +2184,28 @@ class LayerStack:
         Returns the flat layer list and the ``unit name -> layer indices`` map
         that :attr:`LayerBuildResult.units` carries forward. A unit with no
         ``split`` passes through unchanged and keeps its own name, so declaring
-        ``split=1`` -- or adding a split later -- never renames anything.
+        ``split=1`` -- or adding a split later -- never renames anything. A unit
+        carrying ``names`` uses those instead of the generated ones; either way
+        the UNIT key in the returned map is the declared ``name``.
         """
 
         out: list[_Layer] = []
         units: dict[str, list[int]] = {}
         for layer in self._layers:
             shares = _split_shares(layer.split, layer.name)
+            sub_names = _split_names(layer.names, shares, layer.name)
             first = len(out)
             if len(shares) == 1:
-                out.append(_dc_replace(layer, split=None))
+                out.append(_dc_replace(layer, split=None, names=None))
             else:
                 steps = _split_steps(shares)
                 for i, (share, step) in enumerate(zip(shares, steps, strict=True), 1):
                     out.append(_dc_replace(
                         layer,
-                        name=f"{layer.name}_{i}",
+                        name=sub_names[i - 1] if sub_names else f"{layer.name}_{i}",
                         surface=_sub_surface(layer.surface, share, step, layer.name),
                         split=None,
+                        names=None,
                     ))
             units[layer.name] = list(range(first, len(out)))
 
@@ -2066,6 +2251,42 @@ class LayerStack:
             for layer in layers
         ]
         return min_thk, pinch
+
+    @staticmethod
+    def _reconcile_separations(min_thk, pinch, fallback: float, units=None):
+        """Per-layer ``(min_sep, trigger_sep)`` for reconcile, from each layer's policy.
+
+        A ``"floor"`` layer declares a real minimum thickness, so reconcile enforces
+        **its own** ``min_thickness`` -- that is what makes ``min_thickness`` set
+        geometry rather than only decide an idomain value.
+
+        A ``"passthrough"`` or ``"inactive"`` layer must be allowed to come out too
+        thin, because being too thin is the signal that it pinches out. Reconcile
+        gives those only the ``fallback`` separation, just enough to keep the stack
+        ordered, and ``min_thickness`` stays a pure threshold for them.
+
+        ``min_thickness`` is declared for the UNIT, so a split unit's separation is
+        divided among its slices: three slices of a 3 ft minimum get 1 ft each and the
+        unit still comes out 3 ft. Handing every slice the unit's own figure would
+        inflate the unit by its split factor -- the same failure ledger 158 records
+        for the pinch threshold, which bites the geometry just as hard.
+        """
+
+        shares = [1] * len(min_thk)
+        for indices in (units or {}).values():
+            for index in indices:
+                if 0 <= index < len(shares):
+                    shares[index] = len(indices)
+
+        seps, triggers = [], []
+        for thickness, policy, n in zip(min_thk, pinch, shares, strict=False):
+            if policy == "floor":
+                seps.append(float(thickness) / n)
+                triggers.append(float(thickness) / n)
+            else:
+                seps.append(float(fallback))
+                triggers.append(None)      # caller fills the stack-wide trigger
+        return seps, triggers
 
     def _max_split(self) -> int:
         """The largest number of model layers any one unit becomes."""
@@ -2116,7 +2337,7 @@ class LayerStack:
         vor=None,
         *,
         default_min_thickness: float = 1.0,
-        default_pinch: str = "passthrough",
+        default_pinch: str = "floor",
         reconcile="bottom",
         min_sep: float = 0.1,
         trigger_sep: float | None = None,
@@ -2138,11 +2359,13 @@ class LayerStack:
             without one (``LayerStack(top=...)``); an explicit grid here wins
             over the stack's own. See :meth:`for_grid` to bind one instead.
         default_min_thickness : float, default 1.0
-            Minimum layer thickness used where a layer does not set its own.
-        default_pinch : str, default "passthrough"
-            Default thin-layer policy: ``"passthrough"`` (idomain -1),
-            ``"inactive"`` (idomain 0, a true pinch-out), or ``"floor"`` (clamp to
-            the minimum).
+            Minimum layer thickness for layers that do not declare their own with
+            ``.add(..., min_thickness=)``.
+        default_pinch : str, default "floor"
+            Thin-layer policy for layers that do not declare their own: ``"floor"``
+            (hold the cell open at its minimum thickness), ``"inactive"`` (idomain
+            0, a true pinch-out), or ``"passthrough"`` (idomain -1, flow passes
+            vertically through and the cell can carry NO boundary condition).
         reconcile : {'bottom', 'top', True, False, None}, default 'bottom'
             What to do where two surfaces cross or come closer than 1 length unit
             of each other -- interpolated contacts routinely do, and a crossing
@@ -2173,7 +2396,11 @@ class LayerStack:
             to move and the largest move, which is how you tell "tidied two
             cells" from "rebuilt the geometry".
         min_sep : float, default 0.1
-            The vertical separation reconcile enforces where it acts.
+            **Fallback** separation, used only for layers that pinch
+            (``"passthrough"`` / ``"inactive"``) -- enough to keep the stack ordered
+            while still letting them come out thin enough to pinch. A ``"floor"``
+            layer ignores it and uses its own ``min_thickness`` instead, which is
+            how ``min_thickness`` comes to set geometry.
         trigger_sep : float, optional
             The separation below which reconcile ACTS -- surfaces closer than
             this are treated as conflicting even if they never actually cross,
@@ -2218,14 +2445,20 @@ class LayerStack:
         layers, units = self._expanded_layers()
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
+        min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
+        seps, triggers = self._reconcile_separations(min_thk, pinch, min_sep, units)
+        stack_trigger = self._trigger_sep(trigger_sep)
+        if trigger_sep is not None:
+            triggers = [stack_trigger] * len(triggers)
+        else:
+            triggers = [stack_trigger if v is None else v for v in triggers]
         gdf = ls.sample(
-            vor, reconcile=rec_on, which=which, min_sep=min_sep,
-            trigger_sep=self._trigger_sep(trigger_sep),
+            vor, reconcile=rec_on, which=which, min_sep=seps,
+            trigger_sep=triggers,
             method=method, length_units=self.length_units, refresh=refresh,
         )
         top, botm = ls._split_top_botm(gdf)
         thickness = ls._thickness(gdf)
-        min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
         ls._validate_pinch_invariant(
             min_thk, pinch, thickness.shape[0],
             {"reconcile": rec_on, "min_sep": min_sep},
@@ -2249,7 +2482,7 @@ class LayerStack:
         vor=None,
         *,
         default_min_thickness: float = 1.0,
-        default_pinch: str = "passthrough",
+        default_pinch: str = "floor",
         reconcile="bottom",
         min_sep: float = 0.1,
         trigger_sep: float | None = None,
@@ -2348,7 +2581,7 @@ class LayerStack:
         name: str = "disv",
         attach: bool = True,
         default_min_thickness: float = 1.0,
-        default_pinch: str = "passthrough",
+        default_pinch: str = "floor",
         reconcile="bottom",
         min_sep: float = 0.1,
         trigger_sep: float | None = None,
@@ -2399,6 +2632,20 @@ class LayerStack:
             reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
             method=method, refresh=refresh,
         )
+        # ...and the GEOMETRY has to be resolved the same way for the same reason.
+        # `ls.to_disv` samples the stack a second time, so handing it the scalar
+        # `min_sep` while `build()` used per-layer separations writes a DISV whose
+        # bottoms disagree with `result.botm` -- measured at 8.5 ft on a real stack.
+        # That is silent and dangerous: `attach_to_grid()` publishes `result`'s
+        # surfaces, so `mf.CellSurfaceOffset("cell_bottom", ...)` places boundaries
+        # against bottoms MF6 never sees, and drains land below their cell.
+        _, units = self._expanded_layers()
+        seps, triggers = self._reconcile_separations(min_thk, pinch, min_sep, units)
+        stack_trigger = self._trigger_sep(trigger_sep)
+        if trigger_sep is not None:
+            triggers = [stack_trigger] * len(triggers)
+        else:
+            triggers = [stack_trigger if v is None else v for v in triggers]
         return ls.to_disv(
             vor,
             idomain=result.idomain,
@@ -2409,8 +2656,8 @@ class LayerStack:
             attach=attach,
             reconcile=rec_on,
             which=which,
-            min_sep=min_sep,
-            trigger_sep=self._trigger_sep(trigger_sep),
+            min_sep=seps,
+            trigger_sep=triggers,
             method=method,
             refresh=refresh,
         )

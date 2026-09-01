@@ -40,7 +40,7 @@ from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ["ArrayCursor", "NameFile", "free_floats", "free_ints"]
+__all__ = ["ArrayCursor", "NameFile", "free_floats", "free_ints", "free_row"]
 
 #: Matches one free-format number, including Fortran ``D`` exponents and the
 #: bare-exponent form (``-9.99000e+002``) that Groundwater Vistas writes.
@@ -66,6 +66,36 @@ def free_ints(text: str) -> list[int]:
     """Return every free-format number on ``text`` as an int (truncating)."""
 
     return [int(_to_float(t)) for t in _NUMBER.findall(text)]
+
+
+def free_row(text: str) -> tuple[list[float], str | None]:
+    """Split a free-format data row into its leading numbers and a trailing label.
+
+    MODFLOW ignores anything past the fields it expects, so writers park labels
+    there -- the Ten Trails ``CLN`` names every node (``Lake_Marjorie``,
+    ``CrispCreek``). Those labels are the only place a USG file says what a
+    feature *is*, so they are worth keeping.
+
+    They cannot be recovered with :func:`free_floats`, which finds numbers by
+    regex anywhere in the line: ``Wlnd217`` contributes a phantom ``217.0``,
+    giving that row eight numbers where its neighbours have seven. Indexing
+    positionally into such a list is the bug that once read ``IPRN = -1`` as an
+    array multiplier and negated an entire ET surface -- so split on whitespace
+    and stop at the first token that is not a number, which is unambiguous.
+
+    Returns
+    -------
+    tuple
+        ``(numbers, label)``; ``label`` is ``None`` when the row is all numeric.
+    """
+
+    numbers: list[float] = []
+    tokens = text.split()
+    for index, token in enumerate(tokens):
+        if not _NUMBER.fullmatch(token):
+            return numbers, " ".join(tokens[index:])
+        numbers.append(_to_float(token))
+    return numbers, None
 
 
 def _is_comment(line: str) -> bool:

@@ -14,7 +14,8 @@ Start with :func:`~myflopy.modflow.usg.reader.read_usg`::
 
 from __future__ import annotations
 
+from myflopy.modflow.usg.export import ExportManifest, export_gis
 from myflopy.modflow.usg.model import UsgModel
 from myflopy.modflow.usg.reader import read_usg
 
-__all__ = ["UsgModel", "read_usg"]
+__all__ = ["ExportManifest", "UsgModel", "export_gis", "read_usg"]

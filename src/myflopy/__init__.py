@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     # the omission looks like the export is missing.
     # `tests/test_lazy_exports.py` fails naming any name that drifts out.
     from myflopy import modflow, plot, project
-    from myflopy.modflow.usg import UsgModel, read_usg
     from myflopy.advanced import (
         chd_spec,
         drn_spec,
@@ -45,7 +44,7 @@ if TYPE_CHECKING:
         build_gwf_prt_exchange,
         build_ims,
     )
-    from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource
+    from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, Spread
     from myflopy.layers import (
         Array,
         Clamp,
@@ -155,6 +154,7 @@ if TYPE_CHECKING:
         prepare_particle_tracking,
         run_particle_tracking,
     )
+    from myflopy.modflow.usg import UsgModel, read_usg
     from myflopy.modflow.utils.datatypes.hover import HoverSpec, HoverStyle
     from myflopy.modflow.utils.datatypes.readers import read_gpkg, read_shp_gpkg
     from myflopy.package_api import (
@@ -288,6 +288,7 @@ _EXPORTS = {
     "ShapeSource": ("myflopy.sources", "ShapeSource"),
     "TableSource": ("myflopy.sources", "TableSource"),
     "CellSurfaceOffset": ("myflopy.geopackage", "CellSurfaceOffset"),
+    "Spread": ("myflopy.geopackage", "Spread"),
     "GeoPackageSource": ("myflopy.geopackage", "GeoPackageSource"),
     "Surface": ("myflopy.surfaces", "Surface"),
     "LayerSurfaces": ("myflopy.surfaces", "LayerSurfaces"),

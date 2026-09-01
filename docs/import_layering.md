@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **69** function-level `myflopy` imports) counts those and
+currently **71** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -49,6 +49,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.surface_water_validation`
 - `myflopy.modflow.mp3du`
 - `myflopy.modflow.usg._io`
+- `myflopy.modflow.usg.export`
 - `myflopy.modflow.utils`
 - `myflopy.modflow.utils.animations`
 - `myflopy.modflow.utils.contour_interp`
@@ -96,7 +97,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
 - `myflopy.project.components`
-- `myflopy.specs` *(deferred imports: 2)*
+- `myflopy.specs` *(deferred imports: 3)*
 
 ## Layer 2
 
@@ -153,27 +154,27 @@ review the diff, commit the regenerated files together.
 ## Layer 5
 
 - `myflopy.grid_spec_resolver`
-- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.package_model` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.modflow.utils.outputs`
-- `myflopy.package_api` *(deferred imports: 2)*
+- `myflopy.package_api` *(deferred imports: 3)*
 
 ## Layer 6
 
+- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.package_explorer`
 - `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.gis`
 - `myflopy.modflow.mf6.pest.observations` *(deferred imports: 1)*
 - `myflopy.modflow.usg.convert`
-- `myflopy.plot`
 
 ## Layer 7
 
 - `myflopy.modflow.mf6.pest.project` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.accessors`
+- `myflopy.plot`
 - `myflopy.project.group.spatial` *(deferred imports: 1)*
 
 ## Layer 8

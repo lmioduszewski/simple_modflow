@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import geopandas as gpd
 import numpy as np
 
+from myflopy._logging import get_logger
 from myflopy.advanced import (
     chd_spec,
     drn_spec,
@@ -21,7 +22,18 @@ from myflopy.advanced import (
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import ModelContext, PackageSpec
 
+logger = get_logger(__name__)
+
 SurfaceReference = str
+
+
+def _extent(geometry) -> float:
+    """A geometry's own measure: area for a polygon, length for a line, 0 for a point."""
+
+    if geometry is None or geometry.is_empty:
+        return 0.0
+    area = float(getattr(geometry, "area", 0.0) or 0.0)
+    return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
 
 
 def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):
@@ -36,11 +48,57 @@ def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):
 
 @dataclass(frozen=True, slots=True)
 class CellSurfaceOffset:
-    """Resolve a value from a cell surface plus a scalar or row-field offset.
+    """An elevation or head placed relative to a model surface, per cell.
 
-    ``offset`` and ``minimum`` may be numeric constants or GeoPackage field
-    names. A positive offset raises the surface-derived value; a negative offset
-    lowers it.
+    Use it wherever a ``.gpkg`` helper takes an elevation-like value -- a drain
+    invert, a river stage, a GHB head -- when what you mean is "so far below the
+    ground" or "just above the cell floor" rather than a fixed number. Each cell the
+    feature covers resolves its own value::
+
+        value = surface(reference) + offset          # then floored at `minimum`
+
+    Parameters
+    ----------
+    reference : {"model_top", "cell_top", "cell_bottom"}
+        Which surface to measure from. **There is no default -- name it.**
+
+        ``"model_top"``
+            The ground surface. The same elevation for every layer, so a record's
+            ``layer_field`` does not change it.
+        ``"cell_top"``
+            Top of the cell in *that record's* layer. Layer 1's cell top is the
+            model top; layer 2's is layer 1's bottom, and so on.
+        ``"cell_bottom"``
+            Bottom of the cell in that record's layer.
+    offset : float or str, default 0.0
+        **Added** to the surface, so below it is NEGATIVE and above it is positive.
+        A drain 2 ft below ground is ``offset=-2.0``; a drain 2 ft above the cell
+        floor is ``CellSurfaceOffset("cell_bottom", offset=2.0)``. A ``str`` names a
+        GeoPackage column, read per feature, so each row carries its own depth.
+    minimum : float or str, optional
+        A floor applied afterwards (``max(value, minimum)``), as a constant or a
+        column name. It is a plain number, not a surface -- it cannot express "keep
+        this inside its cell", because it never sees the cell bottom.
+
+    Examples
+    --------
+    Every cell a drain line crosses, 2 ft above that cell's own floor::
+
+        mf.drn.gpkg(path, layer="drains", context=ctx, nper=nper,
+                    elevation=mf.CellSurfaceOffset("cell_bottom", offset=2.0),
+                    conductance=mf.Spread("conductance"))
+
+    A per-feature depth below ground, carried in a ``depth`` column::
+
+        elevation=mf.CellSurfaceOffset("model_top", offset="depth")
+
+    Notes
+    -----
+    ``"cell_top"`` and ``"cell_bottom"`` below layer 1 read ``grid.gdf_topbtm`` by
+    integer column, which is the layout ``LayerBuildResult.attach_to_grid()``
+    publishes. ``LayerStack.to_disv()`` publishes *named* columns instead, and with
+    only those in place these two raise a ``KeyError``; call ``attach_to_grid()``
+    last. ``"model_top"`` works with either, since it also matches ``"top"``.
     """
 
     reference: SurfaceReference
@@ -176,7 +234,62 @@ class SurfaceResolver:
         )
 
 
-RowValue = str | int | float | list[str] | tuple[str, ...] | CellSurfaceOffset
+@dataclass(frozen=True, slots=True)
+class Spread:
+    """Split an EXTENSIVE field across the cells a feature covers.
+
+    A conductance or a flux belongs to the *feature*, not to each cell the feature
+    happens to touch. The default resolution writes a row's value to every
+    intersected cell, which is correct for an elevation or a head and multiplies an
+    extensive value by the cell count: measured on a real DRN drawn as one line per
+    source cell, ``mf.drn.gpkg`` on the grid the values came from turned 205 records
+    into 424 and 66,007.43 ft2/d into 133,631.25 -- a factor of 2.02, on an
+    unchanged mesh. Wrap the field to split it instead::
+
+        mf.drn.gpkg(path, layer="drn_lines", context=ctx, nper=1,
+                    conductance=mf.Spread("conductance"))
+
+    Each cell receives ``value * share``, where ``share`` is the cell's fraction of
+    the feature -- length for a line, area for a polygon. A point has no extent to
+    split, so it keeps the whole value and one cell, which is already correct.
+
+    ``mode`` decides what happens to the part of a feature that falls outside the
+    active grid:
+
+    ``"clip"`` (default)
+        Shares are fractions of the WHOLE feature, so the part outside is simply not
+        applied and the total drops. Honest: that length is not in the model.
+    ``"retained"``
+        Shares are renormalized over the cells actually used, preserving the total by
+        concentrating it on the part that remains. A different model -- choose it
+        deliberately.
+
+    Either way the resolved fraction is logged at DEBUG, and a feature losing more
+    than ``warn_below`` of itself is logged at WARNING.
+
+    ``min_share`` drops cells a feature barely grazes. A line drawn between cell
+    centres clips the corners of its neighbours, which adds cells the feature does
+    not meaningfully occupy: measured on a real DRN, 11 of 79 cells were corner
+    clips holding 0.90% of the conductance between them, none above 0.37%
+    individually. Dropped shares are removed before ``mode`` is applied, so
+    ``"retained"`` still preserves the total exactly.
+    """
+
+    field: str
+    mode: str = "clip"
+    min_share: float = 0.01
+    warn_below: float = 0.99
+
+    def __post_init__(self) -> None:
+        """Validate ``mode``."""
+
+        if self.mode not in {"clip", "retained"}:
+            raise ValueError(f"Spread mode must be 'clip' or 'retained', not {self.mode!r}.")
+        if not 0.0 <= self.min_share < 1.0:
+            raise ValueError(f"Spread min_share must be in [0, 1), not {self.min_share!r}.")
+
+
+RowValue = str | int | float | list[str] | tuple[str, ...] | CellSurfaceOffset | Spread
 
 
 def _required_value_fields(value: RowValue) -> set[str]:
@@ -201,7 +314,13 @@ _SPEC_FACTORIES = {
 
 
 def _metadata_value(value: RowValue):
-    """Return a manifest-friendly representation of one value specification."""
+    """Return a manifest-friendly representation of one value specification.
+
+    Every dataclass in :data:`RowValue` needs a branch here. A run manifest is
+    written with :func:`json.dumps` and no ``default=``, so a spec that reaches it
+    unconverted fails at ``prepare_run`` -- long after the package built cleanly.
+    ``tests/test_geopackage_spread.py`` asserts the whole union round-trips.
+    """
 
     if isinstance(value, CellSurfaceOffset):
         return {
@@ -209,6 +328,13 @@ def _metadata_value(value: RowValue):
             "reference": value.reference,
             "offset": value.offset,
             "minimum": value.minimum,
+        }
+    if isinstance(value, Spread):
+        return {
+            "type": "Spread",
+            "field": value.field,
+            "mode": value.mode,
+            "min_share": value.min_share,
         }
     return value
 
@@ -264,19 +390,30 @@ class GeoPackageSource:
         return self._gdf
 
     def _active(self, layer: int, cell: int) -> bool:
-        """Whether ``(layer, cell)`` is active in the context's idomain (True if none set)."""
+        """Whether ``(layer, cell)`` can carry a boundary, per the context's idomain.
+
+        MF6 idomain is three-valued, not a flag: ``> 0`` active, ``0`` inactive, and
+        ``< 0`` **vertical passthrough** -- the cell is removed and flow passes
+        straight through it. A passthrough cell holds no boundary; MF6 refuses one
+        with ``Cell is outside active grid domain``.
+
+        So the test is ``> 0``, not truthiness. ``bool(-1)`` is ``True``, which put
+        347 DRN records into passthrough cells on a real model and failed the run at
+        read time -- a `LayerStack` using ``pinch="passthrough"`` produces these in
+        quantity (13,797 on the model in question).
+        """
 
         domain = self.context.domain
         if domain is None:
             return True
         values = np.asarray(domain)
         if values.ndim == 1:
-            return bool(values[cell])
+            return bool(values[cell] > 0)
         if layer >= values.shape[0]:
             raise ValueError(
                 f"GeoPackage layer {layer} is outside domain with {values.shape[0]} layers."
             )
-        return bool(values[layer, cell])
+        return bool(values[layer, cell] > 0)
 
     def _layer(self, row) -> int:
         """The zero-based grid layer for a feature (from ``layer_field`` minus ``layer_base``)."""
@@ -301,13 +438,42 @@ class GeoPackageSource:
     def _cells(self, geometry, *, layer: int, edges_only: bool = False) -> list[int]:
         """The active grid cells a feature's ``geometry`` intersects (optionally edge cells only)."""
 
-        cells = self.grid.gdf_vorPolys.index[
-            self.grid.gdf_vorPolys.intersects(geometry)
-        ].tolist()
+        return [cell for cell, _ in self._cell_shares(geometry, layer=layer, edges_only=edges_only)]
+
+    def _cell_shares(
+        self, geometry, *, layer: int, edges_only: bool = False
+    ) -> list[tuple[int, float]]:
+        """Active cells a feature covers, each with its fraction of the whole feature.
+
+        The fraction is by length for a line, by area for a polygon, and 1.0 for a
+        point or anything with no extent -- there is nothing to divide. Fractions are
+        of the WHOLE feature, so they sum to less than one where part of it lies
+        outside the active grid; :class:`Spread` decides what that means.
+
+        Candidates come from the spatial index rather than an elementwise
+        ``intersects`` over every cell, which was O(features x ncpl).
+        """
+
+        polys = self.grid.gdf_vorPolys
+        candidates = polys.index[polys.sindex.query(geometry, predicate="intersects")]
         if edges_only:
             edge_cells = set(self.grid.get_grid_edge())
-            cells = [cell for cell in cells if cell in edge_cells]
-        return [int(cell) for cell in cells if self._active(layer, int(cell))]
+            candidates = [cell for cell in candidates if cell in edge_cells]
+
+        measure = _extent(geometry)
+        shares: list[tuple[int, float]] = []
+        for cell in candidates:
+            cell = int(cell)
+            if not self._active(layer, cell):
+                continue
+            if measure <= 0:
+                shares.append((cell, 1.0))
+                continue
+            piece = _extent(geometry.intersection(polys.geometry.loc[cell]))
+            if piece <= 0:
+                continue
+            shares.append((cell, piece / measure))
+        return shares
 
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
         """Return a model/cell surface value for a mapped boundary cell.
@@ -318,11 +484,18 @@ class GeoPackageSource:
 
         return SurfaceResolver(self.context).surface_value(reference, layer=layer, cell=cell)
 
-    def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int):
-        """Resolve one value spec for a cell: surface offset, numeric constant, or (per-period) field."""
+    def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int, share: float = 1.0):
+        """Resolve one value spec for a cell.
+
+        ``share`` is the cell's fraction of the feature and is used only by
+        :class:`Spread`; everything else resolves the same value for every cell,
+        which is what an elevation or a head should do.
+        """
 
         if isinstance(value, CellSurfaceOffset):
             return value.resolve(self, row, layer=layer, cell=cell)
+        if isinstance(value, Spread):
+            return float(_period_value(row, value.field, period)) * share
         if isinstance(value, (int, float)):
             return value
         return _period_value(row, value, period)
@@ -340,6 +513,7 @@ class GeoPackageSource:
         intersected cell, keyed by stress period.
         """
 
+        spreads = tuple(f for f in fields if isinstance(f, Spread))
         required = {
             field_name
             for field in fields
@@ -360,16 +534,18 @@ class GeoPackageSource:
         data = {period: [] for period in range(self.nper)}
         for index, row in self.gdf.iterrows():
             layer = self._layer(row)
-            cells = self._cells(row.geometry, layer=layer, edges_only=edges_only)
+            shares = self._cell_shares(row.geometry, layer=layer, edges_only=edges_only)
+            if spreads:
+                shares = self._resolved_shares(shares, spreads, index)
             name = (
                 str(row[self.name_field])
                 if boundnames and self.name_field is not None
                 else str(index)
             )
             for period in self._periods(row):
-                for cell in cells:
+                for cell, share in shares:
                     values = [
-                        self._value(row, field, period=period, layer=layer, cell=cell)
+                        self._value(row, field, period=period, layer=layer, cell=cell, share=share)
                         for field in fields
                     ]
                     record = [(layer, cell), *values]
@@ -377,6 +553,41 @@ class GeoPackageSource:
                         record.append(name)
                     data[period].append(record)
         return data
+
+    def _resolved_shares(self, shares, spreads: tuple[Spread, ...], index: Any):
+        """Apply the :class:`Spread` mode to one feature's cell shares, and say what was lost."""
+
+        floor = max(spread.min_share for spread in spreads)
+        if floor > 0:
+            kept = [(cell, share) for cell, share in shares if share >= floor]
+            if len(kept) < len(shares):
+                logger.debug(
+                    "feature %s: dropped %d cell(s) below min_share=%.3g",
+                    index, len(shares) - len(kept), floor,
+                )
+            shares = kept or shares
+        covered = sum(share for _, share in shares)
+        mode = spreads[0].mode
+        warn_below = min(spread.warn_below for spread in spreads)
+        if covered <= 0:
+            logger.warning(
+                "feature %s covers no active cell; its spread fields contribute nothing", index
+            )
+            return shares
+        if covered < warn_below:
+            logger.warning(
+                "feature %s lies %.1f%% inside the active grid; with mode=%r its spread "
+                "fields %s",
+                index,
+                covered * 100.0,
+                mode,
+                "lose the remainder" if mode == "clip" else "keep their total anyway",
+            )
+        else:
+            logger.debug("feature %s covered %.4f of itself over %d cell(s)", index, covered, len(shares))
+        if mode == "retained":
+            return [(cell, share / covered) for cell, share in shares]
+        return shares
 
     def _metadata(self, method: str, **fields: Any) -> dict[str, Any]:
         """Return serializable provenance for a generated model input."""

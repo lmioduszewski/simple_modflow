@@ -29,11 +29,11 @@
  "myflopy.modflow.usg.reader": 1,
  "myflopy.modflow.utils.datatypes.choros": 1,
  "myflopy.modflow.utils.datatypes.xsections": 2,
- "myflopy.package_api": 2,
+ "myflopy.package_api": 3,
  "myflopy.project.group._shared": 1,
  "myflopy.project.group.core": 1,
  "myflopy.project.group.spatial": 1,
- "myflopy.specs": 2,
+ "myflopy.specs": 3,
  "myflopy.specs_io": 1,
  "myflopy.surfaces": 4,
  "myflopy.workspace": 1

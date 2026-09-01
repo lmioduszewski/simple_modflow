@@ -442,6 +442,126 @@ project.add_grid("base", grid_spec)
 
 `boundary=` takes a **`DataSourceSpec`/`ShapeSource`, not a bare path string.**
 
+#### Refinement: three channels, split by geometry type
+
+Refinement is declared on the **spec**, not at resolve time, and there are three
+separate inputs — they are *not* symmetric, which is the part that trips people up:
+
+| | how many sources | geometry | default buffer | default priority | sizing option |
+|---|---|---|---|---|---|
+| `refinement=` | **one** | polygons | `0` | `0` | `refinement_max_area` |
+| `breaklines=` | **a list** | lines → buffered into corridors | `10` | `1` | `breakline_max_area` |
+| `points=` | **a list** | points | — | — | none — locations only |
+
+Within any source, **every feature becomes its own region.** So "several refinement
+areas" means several polygons in one layer, not several files. Give each its own
+cell size with a column:
+
+```python
+refinement=mf.GeoPackageSourceSpec(
+    refine, layer="areas",
+    fields={"area": "max_area", "label": "name", "priority": "rank"},
+),
+refinement_max_area=5_000.0,     # fallback for rows with no max_area
+```
+
+`fields` reads **`{logical_key: your_column}`** — the key is what myflopy looks up,
+the value is the column in your layer. Only `area`, `label` and `priority` are
+understood, and an unrecognised key is ignored silently, so check the spelling
+first if a per-feature size seems not to apply. Only `GeoPackageSourceSpec` carries
+`fields`; a `ShapeSource` has no field map, so a shapefile can only take one size
+for all its polygons via `refinement_max_area`.
+
+**Polygons and lines in the same layer will not work.** A line reaching
+`refinement=` raises `A LineString region has no area; pass buffer>0 to give it
+width`. Setting `refinement_buffer` fixes it but buffers *every* feature in the
+source — measured, a 400×400 ft polygon in a buffered layer came out 67% larger.
+Split by geometry type instead, which can still be one file:
+
+```python
+mf.GridSpec.voronoi(
+    boundary=mf.ShapeSource(domain, crs=CRS),
+    refinement=mf.GeoPackageSourceSpec(refine, layer="areas",
+                                       fields={"area": "max_area", "label": "name"}),
+    breaklines=[mf.GeoPackageSourceSpec(refine, layer="creeks")],
+    breakline_max_area=800.0,
+    breakline_buffer=40,          # half-width of the corridor, CRS units
+    crs=CRS, boundary_max_area=20_000.0,
+)
+```
+
+**Several polygon geopackages.** `refinement=` is singular — a list fails with
+`AttributeError: 'list' object has no attribute 'path'`. Either merge them into one
+layer with an `area` column, or use `breaklines=` as the multi-source channel with
+the buffer off, since `buffer(0)` leaves a polygon unchanged:
+
+```python
+refinement=mf.GeoPackageSourceSpec(polys_a, fields={"area": "max_area"}),
+breaklines=[mf.GeoPackageSourceSpec(polys_b, fields={"area": "max_area"}),
+            mf.GeoPackageSourceSpec(polys_c, fields={"area": "max_area"})],
+breakline_buffer=0,
+```
+
+Buffer and the priority *default* are global per channel, so all breakline sources
+share them; per-feature `area`/`priority` columns still override.
+
+**All of these are named parameters**, so your editor completes them — `boundary_*`,
+`refinement_*`, `breakline_*` and `region_point_tolerance`. An unrecognised keyword
+now raises with the nearest match:
+
+```
+GridSpec.voronoi() got an unknown option 'breakline_bufer'.
+Did you mean 'breakline_buffer'?
+```
+
+That used to be accepted and never read, so the typo silently meshed at the default
+— measured, `breakline_bufer=40` gave corridors a quarter of the intended width
+under a clean run. The wrong *shape* of source is refused the same way: a list in
+`refinement=`, a single source in `breaklines=`, or a live GeoDataFrame anywhere all
+name the fix instead of failing later as `'X' object has no attribute 'path'`.
+
+**Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
+survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.
+If you built your refinement polygons programmatically, write them out first:
+
+```python
+gdf.to_file(proj.root / "inputs" / "refine.gpkg", layer="areas", driver="GPKG")
+```
+
+Writing under the project root also means the relative path anchors via
+`project_root`. If you truly want no file, drop to `TriangleGrid.add_region_polygon`
+in a loop over the frame and give up the durable spec.
+
+**Trap: overlapping regions resolve by priority, and the defaults differ.** Regions
+sort by `(-priority, area)` and each claims only what higher-priority regions left.
+At equal priority the smaller claims first, so nesting works — inner polygon takes
+its area, outer gets the donut. But breaklines default to priority `1` and
+refinement to `0`, so a corridor takes the overlap from a refinement polygon:
+
+```
+('wellfield', 150.0, 'line',       geom 160000, claim 160000)   # took the whole overlap
+('a',         400.0, 'refinement', geom 250000, claim 209995)   # ceded 40005 ft²
+```
+
+That is usually right for a stream and wrong when you used `breaklines=` only to
+pass a second polygon file — set `priority` explicitly there. A region left with no
+unique area raises `does not have any unique interior area left after resolving
+overlaps`, which is what a duplicated polygon gets you.
+
+**Check it before meshing.** `build=False` reads the sources and resolves regions
+without running Triangle:
+
+```python
+tri = grid_spec.resolve(project_root=project.root, build=False)
+[(r.label, r.max_area, r.source, round(r.claim_geometry.area))
+ for r in tri._prepared_regions]
+```
+
+`source` says which channel each region came from (`refinement` / `line` /
+`domain`), and `geometry` vs `claim_geometry` is exactly what overlap resolution
+removed. After a real build, `_triangle.0.poly` in the workspace is the file
+Triangle was actually given — its region section lists each point and its max area.
+
 Then get a real grid object out of it — **still declared in the project**:
 
 ```python
@@ -450,6 +570,31 @@ vor = project.grids["base"].resolve(
     workspace=project.root / "grids" / "base",     # where Triangle's files land
 )
 ```
+
+`project_root` anchors **every relative path in the recipe** — source paths,
+`idomain_path`, `rasters` — so a spec written with project-relative paths stays
+portable. Omit it and they resolve against the current working directory instead.
+`workspace` is where Triangle's `_triangle.*` files are written; give each grid
+its own directory, because the file names are fixed and two grids sharing one
+overwrite each other's meshes. Reading `_triangle.0.poly` there is the honest way
+to see what Triangle was actually asked for — its region section lists every
+refinement point and the maximum area attached to it.
+
+Two more arguments, both for inspection:
+
+```python
+tri = grid_spec.resolve(project_root=project.root, build=False)   # no meshing
+[(r.label, r.max_area) for r in tri._prepared_regions]            # what Triangle will get
+vor, tri = grid_spec.resolve(..., return_triangle=True)           # keep both
+```
+
+`build=False` reads the sources, resolves regions against one another and picks
+their interior points, then stops — the cheap way to check a recipe before paying
+for a mesh. Full argument-by-argument reference is in `GridSpec.resolve.__doc__`.
+
+**Trap: the CRS has a hardcoded fallback.** If neither the spec nor its options
+name one, the grid is built as `"EPSG:2927"` (Washington State Plane South, feet).
+Always pass `crs=` to `GridSpec.voronoi`.
 
 **Why resolve now rather than defer?** Because a `LayerStack` and the GIS package
 helpers (`mf.uzf/sfr/lak`, `mf.X.gpkg`) resolve cells the moment you call them —
@@ -613,6 +758,24 @@ Shares must sum to 1 (`[30, 70]` is rejected, naming the fix). The layers are
 named `sand_1 … sand_N`; a unit with no split — or `split=1` — keeps its bare
 name, so adding a split later never renames anything else.
 
+**`names=` if the generated ones don't read well.** One name per split layer,
+top to bottom:
+
+```python
+stack.add("sand", bottom=Raster("sand_base.tif"), split=3,
+          names=["upper sand", "mid sand", "lower sand"])
+```
+
+It is a labelling choice and nothing else: same contacts, same thicknesses, same
+`units` map — the UNIT is still `"sand"`, so `per_layer({"sand": …})` and
+`plot.grid(layers="sand")` are unaffected by what you called the slices. The list
+must cover **every** layer, because naming only some of them would leave which
+layer a name refers to depending on where you stopped counting. `names=` without
+a `split=` of 2 or more is refused (an unsplit unit already has a name — rename
+the unit). `split` and `names` are validated as a pair, including inside
+`replace`, so re-splitting a named unit means restating the names and dropping
+the split reads `replace("sand", split=None, names=None)`.
+
 **The unit stays addressable.** This is the part that matters, because splitting
 changes `nlay` and every per-layer argument downstream is a *positional list*:
 
@@ -657,7 +820,8 @@ shares actually equal.
 
 | value | effect |
 |---|---|
-| `"passthrough"` *(default)* | `idomain = -1` — cell inactive but vertically transmissive |
+| `"floor"` *(default)* | cell stays active, held open at its `min_thickness` |
+| `"passthrough"` | `idomain = -1` — cell inactive but vertically transmissive, and it can carry **no boundary condition** |
 | `"inactive"` | `idomain = 0` — a true pinch-out, no flow through |
 | `"floor"` | clamp thickness to `min_thickness`, cell stays active |
 
@@ -685,6 +849,11 @@ stack = (mf.LayerStack(top=ground, length_units="feet")
   clay              0.10                  0    ← cut out
   till             54.80                  1    ← now directly under the channel floor
 ```
+
+`min_thickness` is a real minimum under the default `pinch="floor"`: reconcile holds
+the layer open at it, so `.add("sand", thickness=0.4, min_thickness=5)` builds 5 ft,
+not 0.4. `min_sep` is only the fallback for layers that pinch. A split unit divides
+its minimum among its slices, so the unit keeps the thickness you declared.
 
 with `pinch="passthrough"` the cut-out layers read `idomain = -1` instead — same
 geometry, but flow still passes vertically through the gap. **That is usually the

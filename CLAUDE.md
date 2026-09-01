@@ -226,7 +226,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `pinch` control that only the facade has; `LayerSurfaces` has one global rule.
   **A UNIT is not a LAYER as of 2026-08-28 (ledger 158).** `.add(name, ..., split=3)`
   or `split=[0.3, 0.7]` cuts one geologic unit into N model layers `name_1..name_N`
-  WITHOUT moving its base; `res.units` maps unit → layer indices and
+  WITHOUT moving its base (`names=[...]` names them yourself -- one per layer, needs
+  a split of 2+, and `replace` validates `split`/`names` as a PAIR rather than
+  dropping names silently; the UNIT key is unaffected either way); `res.units` maps unit → layer indices and
   `res.per_layer({unit: value})` builds the positional lists `mf.npf`/`sto`/`ic`
   want — never hand-write those, a stale list of the RIGHT length after a split is
   accepted silently with new meaning. `min_thickness`/`pinch` stay UNIT-scoped (per
@@ -317,6 +319,44 @@ LAK/SFR rebuild). On the Ten Trails model that costs no pumping (the whole WEL p
 is CLN-local P-ET) but removes the lake/stream stage feedback.
 `ETS` becomes a **list-based** EVT because MF6 cannot combine segments with
 READASARRAYS -- 72 x 9,090 records, 61 MB. That is the physics, not a format choice.
+
+## Re-gridding an imported USG model? `usg.export_gis` (2026-08-30, ledger 169)
+`to_mf6()` binds the model to the grid it converted on. `usg.export_gis(dir)` writes
+its **content** -- vectors, rasters, tables -- so it can be rebuilt on any later mesh,
+which is usually the reason a USG model was imported. Column names ARE the builders'
+parameter names (`streams` carries `rwid`/`rhk`/`rgrd`/`rbth`/`man`, `lakes` carries
+`strt`/`lake_bottom`/`bedleak`), so `mf.sfr(streams=..., width="rwid", ...)` needs no
+renaming. Full file-by-file map in `docs/package_api_reference.md`; runnable
+workflow (export -> new model, one package at a time) in
+`examples/mf6/notebooks/usg_export_to_new_model.ipynb`.
+Four measured facts drive the design, and each is a trap if forgotten:
+- **A list BC is a LINE, not a patch** -- mean in-set neighbour counts 1.87 (DRN) /
+  1.94 (GHB) / 2.52 (CHD), against 4-6 for anything areal. So they are written as one
+  segment per source cell, and every conductance gets a **`*_per_ft` twin**: rebuild as
+  `cond_per_ft x new length`. It is NOT a leakance -- `corr(cond, cell area) ~ 0` over
+  205 DRN records, and GHB is one constant per family across a 249,000x area spread.
+- **A repeated period is written once** -- 72 periods, 12-month cycle, 11 distinct
+  recharge arrays. `periods.csv` is the index.
+- **A CLN stream bed IS the old model top** (max |diff| 0.00003 ft on all three creeks),
+  and that top was CONDITIONED monotonic along the channels: 0 rises in 97 CLN nodes
+  where the raw new DEM has 17% at 300 ft sampling and 38% at 50 ft. Clamping a new
+  model's streams to its top reproduces the old model, but needs the same conditioning
+  -- and finer grids make it worse, not better.
+- **A centerline drawn independently runs mouth-first.** Both Ten Trails creeks do, so
+  projecting nodes onto them raw gives a station that DECREASES downstream and a profile
+  that reads as climbing. `_oriented_station` flips on the sign of `corr(order, station)`.
+- **The CLN carries NO bathymetry.** Every feature's bed is the model top, lakes
+  included (Keevie 313/313 nodes, Marjorie 104/104, to 0.00003 ft). So a LAK built
+  from the exported bottoms has zero depth, and 312 of Keevie's round just ABOVE
+  their cell top -- which `mf.lak` rejects as "bottom does not intersect active
+  cell". Supply your own depth. Also: 3 of RockCreek's 39 cells are inactive in
+  every layer (USG allowed the connection, MF6's SFR will not) -- see `cell_active`.
+**`free_row` (`usg/_io.py`), not `free_floats`, for any row with a trailing label** --
+`Wlnd217` contributes a phantom `217.0` to a regex number scan. Same class of bug as the
+`IPRN`-as-multiplier one that negated an ET surface.
+CLN features are now grouped by **name**, not by connected component: components merge a
+tributary into its trunk (6 features found where the file names 7). `FSKIN`, the conduit
+table and the node labels are kept -- `FSKIN` was read and discarded before.
 
 ## Legacy OO API (the engine; avoid for new model assembly)
 `src/myflopy/modflow/mf6/*.py` — `simplemodel`, `boundaries`, `sfr`, `lakes`, `recharge`, and the

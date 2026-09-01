@@ -272,3 +272,23 @@ def build_gwf_prt_exchange(simulation, models: tuple[Any, ...], **options):
     """
 
     return _build_two_model_exchange(flopy.mf6.ModflowGwfprt, simulation, models, **options)
+
+
+# --- what each wrapper builder ultimately constructs ---------------------------
+#
+# A `PackageSpec` whose builder is a raw FloPy class can be inspected directly;
+# a wrapper cannot, so it says here what it targets. `specs._accepted_options`
+# reads this to reject a misspelled or misplaced option AT THE CALL rather than
+# five frames into FloPy at build time -- which is how `model_nam_file=` reached
+# `mf.ims` and surfaced only as `FlopyException: Extraneous kwargs`.
+#
+# A dispatching builder lists every kind it may construct; the accepted set is
+# their union, because the model's kind is not known until build time.
+
+build_ims.mf6_targets = (flopy.mf6.ModflowIms,)
+build_ems.mf6_targets = (flopy.mf6.ModflowEms,)
+build_ic.mf6_targets = tuple(_IC_CLASSES.values())
+build_oc.mf6_targets = tuple(_OC_CLASSES.values())
+build_disv.mf6_targets = tuple(_DISV_CLASSES.values())
+build_dis.mf6_targets = tuple(_DIS_CLASSES.values())
+build_disu.mf6_targets = tuple(_DISU_CLASSES.values())

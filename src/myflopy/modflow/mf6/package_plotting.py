@@ -399,6 +399,82 @@ def build_surface_water_q_map_payload(
     return values.tolist(), hover
 
 
+# --- what a NOUN's picture verb offers (plan 8.8, extended to the noun tier) ----
+#
+# `model.hds.map()` and `model.packages.drn.inputs.elev.map()` are NOUNS: narrower
+# than the verb, because the noun already fixes WHAT is drawn. The 8.8 rule --
+# name every parameter, because editors read the `def` line and never run the
+# module -- applies to them too, and until 2026-08-30 reached none of them.
+#
+# The split below is MEASURED, not stylistic. Every Tier 1 name changes the
+# figure on both a results noun (`model.hds`) and a record noun
+# (`packages.drn.inputs.elev`). Every Tier 2 name changes it only on a per-layer
+# field: on a record noun the rows are period-indexed with one value per cell, so
+# `kstpkper`/`bgs`/`hover_layers`/`hover_surfaces`/`show_layer_elevs` produce a
+# byte-identical figure, and `show_mounding` is worse than inert -- it injects a
+# head-derived row into an elevation tooltip on every cell. Naming a parameter
+# that provably cannot act is the same defect as hiding one that can.
+
+#: Drawing parameters every spatial noun offers, on top of its own selectors.
+NOUN_MAP_PARAMS = (
+    "zmin", "zmax", "colorscale", "logscale",
+    "contours", "contour_values", "contour_levels", "contour_color",
+    "contour_width", "contour_name", "contour_clip", "contour_resolution",
+    "contour_method",
+    "select", "select_style", "select_color",
+    "locs", "hillshade_path",
+    "fit_bounds", "bounds_padding",
+    "hover",
+)
+
+#: Extra parameters only a PER-LAYER field (heads, concentration, temperature)
+#: can honour. Measured inert on record nouns -- see the note above.
+LAYER_FIELD_MAP_PARAMS = (
+    "kstpkper", "per_timestep", "bgs",
+    "hover_layers", "hover_surfaces", "show_layer_elevs", "show_mounding",
+)
+
+#: Parameters a noun must REFUSE rather than forward. Each contradicts what a
+#: noun IS, and each was reachable and silently wrong:
+#:   `values`/`type` -- the noun's whole premise is that it fixes the field.
+#:     Measured: `hds.map(values=[1.0]*ncpl)` repainted every cell while the
+#:     hover, title and colorscale went on reporting real heads.
+#:   `custom_hover`/`hover_heads`/`hover_ks` -- the legacy hover path. A noun
+#:     always passes `hover_spec=`, which beats them, so they were dead.
+NOUN_REFUSED_PARAMS = ("values", "type", "custom_hover", "hover_heads", "hover_ks")
+
+#: Reachable on a noun but measured NOT to act, so deliberately not offered:
+#:   `hover_fields` -- the noun sets `hover_spec`, which supersedes it.
+#:   `zoom` -- needs a basemap the noun's choropleth does not draw.
+#:   `rch_scale` / `animation_kstpkpers` -- recharge- and animate-specific.
+NOUN_INERT_PARAMS = ("hover_fields", "zoom", "rch_scale", "animation_kstpkpers")
+
+
+def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
+    """Raise if a noun was handed a parameter that contradicts what it draws.
+
+    Called from a noun's ``map()`` before forwarding. Without it these arrive in
+    the ``**trace_kwargs`` tail: `type=` collided with a `TypeError` naming
+    `ModelPlots.map`, a class the caller never typed, and `values=` won outright,
+    producing a figure whose cells and whose tooltips disagreed.
+    """
+
+    for name in NOUN_REFUSED_PARAMS:
+        if name not in kwargs:
+            continue
+        if name in ("values", "type"):
+            raise TypeError(
+                f"{noun}.map() draws {field}; it has no {name}= to override it. "
+                f"To draw an arbitrary array on this grid use "
+                f"`myflopy.plot.map(model, values=...)`."
+            )
+        raise TypeError(
+            f"{noun}.map() does not accept {name}=: it always supplies its own "
+            f"hover, so the legacy hover arguments have no effect here. Pass "
+            f"`hover=` a HoverSpec instead."
+        )
+
+
 def build_cell_input_map_payload(
     frame: pd.DataFrame,
     *,

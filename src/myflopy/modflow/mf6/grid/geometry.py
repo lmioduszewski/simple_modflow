@@ -330,8 +330,18 @@ def voronoi_refine_by_point(point: shp.Point, spacing: int, tri) -> gpd.GeoDataF
 
 
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
-    """
-    Adjust stacked surface elevations to preserve layer ordering.
+    """Adjust stacked surface elevations to preserve layer ordering.
+
+    ``min_sep`` is the separation opened where two surfaces conflict, and
+    ``trigger_sep`` the separation below which they count as conflicting. Both accept
+    a scalar applied to every contact, or **one value per layer** -- which is what
+    lets a stack declare a per-unit minimum thickness rather than one number for the
+    whole model. A per-layer sequence has one entry per BOTTOM surface, so it is one
+    shorter than the frame's column count (the model top is never moved by
+    ``which="bottom"``).
+
+    Corrections cascade downward because each contact is compared against the
+    already-adjusted surface above it.
     """
     df = vor.gdf_topbtm.copy() if df is None else df
     if isinstance(df, gpd.GeoDataFrame):
@@ -341,19 +351,37 @@ def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1,
 
     labels = list(df.columns)
     df = df.loc[:, labels]
+    n_bottoms = max(len(labels) - 1, 0)
+    seps = _per_contact(min_sep, n_bottoms, 'min_sep')
+    triggers = _per_contact(trigger_sep, n_bottoms, 'trigger_sep')
     for i, label in enumerate(labels):
         if i == 0:
             continue
+        sep, trigger = seps[i - 1], triggers[i - 1]
         diffs = df.diff(axis=1)
-        diff_list = list(diffs[diffs[label] >= -trigger_sep].index)
+        diff_list = list(diffs[diffs[label] >= -trigger].index)
         if which == 'bottom':
-            df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - min_sep
+            df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - sep
         elif which == 'top':
-            df.iloc[diff_list, (i - 1)] = df.iloc[diff_list, i] + min_sep
+            df.iloc[diff_list, (i - 1)] = df.iloc[diff_list, i] + sep
         else:
             raise ValueError(f'which arg {which} is not valid. Must be "top" or "bottom"')
 
     return df
+
+
+def _per_contact(value, n: int, name: str) -> list[float]:
+    """Normalize a scalar or per-layer separation to one value per bottom contact."""
+
+    if np.isscalar(value) or value is None:
+        return [0.1 if value is None else float(value)] * n
+    values = [float(v) for v in value]
+    if len(values) != n:
+        raise ValueError(
+            f"{name} has {len(values)} value(s) but the stack has {n} bottom "
+            "surface(s); pass a scalar or one value per layer."
+        )
+    return values
 
 
 def adjust_cells_by_id(

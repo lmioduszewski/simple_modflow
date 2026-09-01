@@ -160,6 +160,7 @@ class SFRBuilder:
     mover: bool = False
     length_conversion: float | None = None  # None -> derive from context.length_units
     time_conversion: float | None = None     # None -> derive from context.time_units
+    min_reach_length: float = 0.0
     maximum_picard_iterations: int = 1
     maximum_iterations: int = 1000
     maximum_depth_change: float = 0.01
@@ -437,7 +438,13 @@ class SFRBuilder:
             segments = []
             for cell, grid_row in intersecting.iterrows():
                 segment = grid_row.geometry.intersection(line)
-                if segment.length <= 0:
+                # A stream clipping the corner of a cell yields a sliver reach. MF6
+                # divides by reach length, and a reach of 0.005 ft crashed it outright
+                # (SIGFPE while reading the package) on a real 652-reach model, where
+                # 36 reaches were under 5 ft. Dropping one leaves the stream connected
+                # through its neighbours, because the topology is rebuilt from the
+                # ordering below rather than from the discarded cell.
+                if segment.length <= max(0.0, self.min_reach_length):
                     continue
                 midpoint = segment.interpolate(0.5, normalized=True)
                 segments.append((line.project(midpoint), int(cell), segment))

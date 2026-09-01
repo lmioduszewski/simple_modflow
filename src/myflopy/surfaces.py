@@ -940,11 +940,16 @@ class LayerSurfaces:
     def _validate_pinch_invariant(
         minimum_thickness, pinch, nlay: int, sample_kwargs: dict
     ) -> None:
-        """Guard ``min_sep < minimum_thickness`` for each *pinching* layer.
+        """Guard the fallback separation against each *pinching* layer's threshold.
 
-        Reconcile spaces layers ``min_sep`` apart, so if a pinching layer's
-        threshold is <= ``min_sep`` nothing would ever pinch -- a silent no-op.
-        ``"floor"`` layers do not pinch and are exempt.
+        A ``"floor"`` layer has reconcile enforce its own ``min_thickness``, so it is
+        exempt -- that is the whole mechanism by which ``min_thickness`` sets geometry.
+
+        A ``"passthrough"`` or ``"inactive"`` layer is different: it must be allowed to
+        come out thinner than its threshold, because that is the signal it pinches out.
+        Reconcile gives it only the fallback ``min_sep``, so if the fallback is not
+        below the threshold nothing can ever be thin enough to pinch and the policy is
+        a silent no-op.
         """
 
         if not sample_kwargs.get("reconcile", True):
@@ -957,9 +962,12 @@ class LayerSurfaces:
                 min_sep < float(min_thk[i])
             ):
                 raise ValueError(
-                    f"layer {i}: min_sep ({min_sep}) must be < its minimum_thickness "
-                    f"({min_thk[i]}) for pinch policy {policy[i]!r} to take effect; "
-                    "reconcile would otherwise inflate thin cells above the threshold."
+                    f"layer {i}: the fallback min_sep ({min_sep}) must be below its "
+                    f"min_thickness ({min_thk[i]}) for pinch={policy[i]!r} to ever "
+                    "fire -- reconcile would otherwise inflate every thin cell past "
+                    "the threshold. Either lower min_sep, raise this layer's "
+                    "min_thickness, or use pinch='floor' if you want the layer kept "
+                    "at min_thickness rather than pinched out."
                 )
 
     def top_botm(self, vor, **kwargs) -> tuple[np.ndarray, np.ndarray]:
