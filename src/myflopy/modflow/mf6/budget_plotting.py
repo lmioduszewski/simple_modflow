@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from pandas import IndexSlice as idxx
 from plotly.colors import DEFAULT_PLOTLY_COLORS as colors
 
 from myflopy.modflow.mf6.budget_tables import budget_obs_df, coerce_plot_times

@@ -30,13 +30,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_explorer import (
     DiffSpatialView,
     LeafFieldSugar,
     get_default_package_value_column,
     get_package_input_field_names,
 )
-from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.package_tables import (
     PACKAGE_TABLE_UNAVAILABLE,

@@ -8,13 +8,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from myflopy.modflow.mf6.interactive_plotting import export_head_map_slider_html
-
 from examples.mf6.visualization_prt_master_support import (
     MasterExampleConfig,
     build_transient_model,
 )
-from myflopy.modflow.mf6.interactive_plotting import ModelMapStyle
+from myflopy.modflow.mf6.interactive_plotting import ModelMapStyle, export_head_map_slider_html
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.canonical

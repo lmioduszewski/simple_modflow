@@ -10,9 +10,8 @@ from pathlib import Path
 from shapely import Point
 
 from myflopy import read_shp_gpkg
-from myflopy.modflow.utils.raster import RasterData
-
 from myflopy._logging import get_logger
+from myflopy.modflow.utils.raster import RasterData
 
 logger = get_logger(__name__)
 

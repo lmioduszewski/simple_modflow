@@ -16,10 +16,9 @@ import geopandas as gpd
 import pandas as pd
 import shapely as shp
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.boundary_support import filter_inactive_cells
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-
-from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
 

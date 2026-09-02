@@ -7,9 +7,8 @@ if TYPE_CHECKING:
 
 import pandas as pd
 
-from myflopy.modflow.utils.datatypes.choros import Choro
-
 from myflopy._logging import get_logger
+from myflopy.modflow.utils.datatypes.choros import Choro
 
 logger = get_logger(__name__)
 

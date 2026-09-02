@@ -35,8 +35,6 @@ from .plotting import (
     GridMesh,
     GridPlots,
     GridSection,
-    _choropleth_factory,
-    _grid_section_factory,
 )
 from .selection import (
     get_grid_edge_cells,

@@ -12,7 +12,6 @@ import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
 from myflopy._logging import get_logger
-from myflopy.plot import ModelPlots
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
     get_all_conc,
@@ -54,6 +53,7 @@ from myflopy.modflow.mf6.surface_water_validation import (
     SurfaceWaterValidationReport,
     validate_surface_water_configuration,
 )
+from myflopy.plot import ModelPlots
 
 if TYPE_CHECKING:
     import numpy as np

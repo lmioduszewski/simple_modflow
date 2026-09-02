@@ -42,29 +42,31 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from myflopy.modflow.mf6.grid.plotting import _choropleth_factory  # noqa: E402
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.interactive_plotting import (  # noqa: E402
     FrameExportProgress,
     ModelMapStyle,
     StandaloneHtmlSlider,
+    _select_plotly_frames,
     build_particle_tracking_scene,
     export_cross_section_slider_html,
     export_head_layer_mosaic_slider_html,
     export_head_map_slider_html,
-    _select_plotly_frames,
     export_matplotlib_slider_html,
     plot_model_head_map,
 )
 from myflopy.modflow.mf6.simulation.base import SimulationBase  # noqa: E402
-from myflopy.modflow.mf6.grid.plotting import _choropleth_factory  # noqa: E402
-from myflopy.plot import ModelPlots  # noqa: E402
-from myflopy.viz import _write_plotly_choropleth_restyle_html  # noqa: E402
-from myflopy.viz import VtkScene  # noqa: E402
 from myflopy.modflow.mf6.simulation.discretization import (  # noqa: E402
     DisvGrid,
     TemporalDiscretization,
 )
 from myflopy.modflow.mf6.simulation.packages import KFlow  # noqa: E402
+from myflopy.plot import ModelPlots  # noqa: E402
+from myflopy.viz import (
+    VtkScene,  # noqa: E402
+    _write_plotly_choropleth_restyle_html,  # noqa: E402
+)
 
 
 def _workspace(name: str) -> Path:

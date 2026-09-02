@@ -12,7 +12,6 @@ from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
-
 logger = get_logger(__name__)
 
 

@@ -13,7 +13,6 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import pytest
 from shapely.geometry import LineString, Point, Polygon, box
 
@@ -23,7 +22,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import myflopy  # noqa: E402
-from myflopy.viz import Picture  # noqa: E402
 from myflopy import (  # noqa: E402
     ModelContext,
     Project,
@@ -135,6 +133,7 @@ from myflopy.modflow.mf6.simulation.regions import (  # noqa: E402
 from myflopy.modflow.mf6.voronoiplus import TriangleGrid, VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mp3du.particles import ParticleTrackingInput  # noqa: E402
 from myflopy.modflow.utils.datatypes.xsections import XSection  # noqa: E402
+from myflopy.viz import Picture  # noqa: E402
 
 
 def _model_context(model, vor):

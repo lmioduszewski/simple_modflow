@@ -9,12 +9,11 @@ to the supported alternatives.
 
 from __future__ import annotations
 
-import pytest
-
 import geopandas as gpd
+import pytest
 import shapely as shp
 
-from myflopy.sources import GeoPackageSourceSpec, ShapeSource
+from myflopy.sources import ShapeSource
 from myflopy.specs import _VORONOI_OPTION_KEYS, GridSpec
 
 

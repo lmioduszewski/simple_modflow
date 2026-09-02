@@ -418,8 +418,9 @@ def test_grid_says_what_went_wrong(kwargs, match):
     """Three ways to ask for a picture that does not exist, each answered with
     the spelling that does."""
 
-    import pytest as _pytest
     from types import SimpleNamespace
+
+    import pytest as _pytest
 
     with _pytest.raises(ValueError, match=match):
         plot.grid(SimpleNamespace(ncpl=2), **kwargs)

@@ -16,7 +16,6 @@ import pandas as pd
 from pandas import IndexSlice as idxx
 
 from myflopy import viz as f
-
 from myflopy._logging import get_logger
 
 logger = get_logger(__name__)

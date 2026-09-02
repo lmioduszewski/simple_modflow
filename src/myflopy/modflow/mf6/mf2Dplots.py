@@ -6,10 +6,9 @@ import pandas.core.indexes.datetimes
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.paths import *
 from myflopy.viz import Fig, Template
-
-from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
 

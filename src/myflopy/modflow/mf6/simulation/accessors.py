@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from myflopy.modflow.mf6.budget import Budget
@@ -11,8 +9,6 @@ from myflopy.modflow.mf6.headsplus import ConcResults, TempResults
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.mf6.package_explorer import ModelPackages
 from myflopy.modflow.mf6.package_results import ModelBudgetNamespace
-from myflopy.modflow.utils.datatypes.choros import Choro
-from myflopy.modflow.utils.datatypes.xsections import XSection
 from myflopy.modflow.utils.inputs import Inputs
 from myflopy.modflow.utils.outputs import LakOutputData, SFROutputData, UzfOutputData
 

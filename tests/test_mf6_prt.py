@@ -20,7 +20,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from myflopy.modflow.mf6.canonical_example import representative_cells  # noqa: E402
-from myflopy.viz import VtkScene
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus  # noqa: E402
 from myflopy.modflow.mf6.prt import (  # noqa: E402
     PRTProject,
@@ -40,6 +39,7 @@ from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     OutputControl,
     Storage,
 )
+from myflopy.viz import VtkScene
 
 
 def _workspace(name: str) -> Path:
