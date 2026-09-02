@@ -820,7 +820,16 @@ class Choro(Picture):
             zs = self.vor.gdf_vorPolys.index.to_list()
 
         if self.logscale:
-            zs = np.log10(zs)
+            # `_logscaled`, not a bare `np.log10`: this branch reads heads (or a
+            # package field) whose series can arrive object-dtype, and the raw
+            # ufunc then raises "loop of ufunc does not support argument 0 of
+            # type float which has no callable log10 method" -- so
+            # `model.hds.map(logscale=True)` failed outright while the
+            # `custom_zs` branch beside it, which already used the helper,
+            # worked. The helper also blanks non-positive values to NaN instead
+            # of letting -inf drag the shared colour range to negative infinity
+            # and blank the whole map.
+            zs = self._logscaled(zs)
 
         return zs
 

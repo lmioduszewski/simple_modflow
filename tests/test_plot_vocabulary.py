@@ -15,6 +15,7 @@ declared here on purpose.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -643,4 +644,83 @@ def test_the_mpl_backend_returns_one_bare_figure_everywhere(scope, verb, canonic
             drawn = getattr(namespace, verb)(backend="mpl")
     assert isinstance(drawn, Figure), (
         f"{scope}.{verb}(backend='mpl') returned {type(drawn).__name__}, not a Figure"
+    )
+
+
+# --- documented VALUES, not just documented names -----------------------------
+def _documented_choices(func, parameter: str) -> list[str]:
+    """The `{'a', 'b'}` set a NumPy Parameters entry declares for `parameter`."""
+
+    doc = inspect.getdoc(func) or ""
+    match = re.search(rf"^{parameter} : \{{(.+?)\}}", doc, re.M)
+    assert match, f"{func.__name__} does not document a value set for {parameter}"
+    return [v.strip().strip("'\"") for v in match.group(1).split(",")]
+
+
+#: What each documented value set needs alongside it to be exercised, and why
+#: `type` is not here: `'conc'`/`'temp'` need a GWT/GWE model, which the GWF
+#: canonical fixture is not, so the set cannot be swept from this test.
+_VALUE_SET_EXTRAS = {
+    "contour_method": {"contours": True},
+    "select_style": {"select": [0, 1]},
+    "per_timestep": {},
+    "hover_layers": {},
+    "backend": {},
+}
+
+
+@pytest.mark.parametrize("parameter", sorted(_VALUE_SET_EXTRAS))
+def test_every_documented_value_is_one_the_code_accepts(parameter, canonical_run):
+    """`test_every_signature_parameter_is_documented` checks NAMES. This checks
+    the values inside them, which is where the same defect hid one level down.
+
+    Measured on 2026-09-02: `contour_method` documented
+    `{'linear', 'cubic', 'nearest'}` and `'nearest'` raised
+    "contour method must be 'linear' or 'cubic'" -- it has never been
+    implemented. The docstring is spliced onto all eighteen noun verbs, so one
+    wrong value in one entry became eighteen wrong entries.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    rejected = []
+    for value in _documented_choices(plot.map, parameter):
+        kwargs = {parameter: value, **_VALUE_SET_EXTRAS[parameter]}
+        try:
+            picture = plot.map(canonical_run, layer=0, **kwargs)
+            # Choro is lazy; the validation lives in the render.
+            if hasattr(picture, "fig"):
+                picture.fig
+        except (ValueError, TypeError) as error:
+            rejected.append(f"{value!r}: {error}")
+    assert not rejected, (
+        f"plot.map documents {parameter} values it rejects: {rejected}"
+    )
+
+
+def test_contour_resolution_is_documented_as_cubic_only(canonical_run):
+    """It is inert under the DEFAULT method, and the docstring has to say so.
+
+    `_linear_contour_segments` triangulates the cell centres and does not take a
+    resolution at all; only `_cubic_contour_segments` interpolates onto a
+    resolution-square grid. Measured: 338 contour points at 40, 150 and 400
+    under `linear`, and a count that actually moves under `cubic`.
+    """
+
+    def points(**kwargs):
+        picture = plot.map(canonical_run, layer=0, contours=True, **kwargs)
+        return sum(
+            len(getattr(trace, "lon", []) or [])
+            for trace in picture.fig.data
+            if trace.type == "scattermap"
+        )
+
+    assert points(contour_resolution=40) == points(contour_resolution=400), (
+        "contour_resolution now acts under the linear method -- update the "
+        "docstring, which says it does not"
+    )
+    assert "Only acts under" in (inspect.getdoc(plot.map) or ""), (
+        "contour_resolution's entry must say which method it applies to"
     )

@@ -535,6 +535,22 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             an override would repaint the cells while the hover, title and
             colorscale went on describing the real one -- or one of the legacy
             hover arguments, which a noun's own ``hover_spec`` supersedes.
+
+        See Also
+        --------
+        section : the same field as a vertical slice.
+        array : the values behind the picture, as a plain array.
+        myflopy.plot.map : the free verb, which DOES take ``values=``.
+
+        Examples
+        --------
+        >>> model.hds.map()                                  # last time, layer 0
+        >>> model.hds.map(per=3, layer=1)
+        >>> model.hds.map(kstpkper=(0, 5), contours=True, contour_levels=10)
+        >>> model.hds.map(zmin=100, zmax=125)                # a scale held steady
+        >>> model.hds.map(show_mounding=True)                # head above initial
+        >>> model.hds.map(select="all_streams", select_style="both")
+        >>> model.hds.map(backend="mpl").savefig("heads.png")
         """
 
         if self.model is None:

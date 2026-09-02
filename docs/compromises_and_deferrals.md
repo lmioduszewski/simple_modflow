@@ -4893,10 +4893,37 @@ same day, which is the useful part of the result.
         prevent. `GroupLakConnections.map` comes out at 210 lines and 28
         documented entries (38 before the review below removed a spliced entry
         for a parameter it does not have, and a duplicate one).
-      - **STILL DEFERRED from 169b, untouched here**: `logscale=True` raises on
-        heads (an object-dtype `zs` path -- a numeric bug, not a signature one);
-        `contour_method='nearest'` is documented on `plot.map` and rejected by
-        it; `contour_resolution` is inert under the default linear method.
+      - **The three items 169b deferred are now CLOSED, and two of them this
+        pass had made worse.** Splicing `plot.map`'s reference onto eighteen
+        nouns propagates its errors as well as its text, so a single wrong entry
+        became eighteen wrong entries -- which is the cost side of the splice and
+        is worth stating plainly.
+        - `logscale=True` raised on heads:
+          `TypeError: loop of ufunc does not support argument 0 of type float
+          which has no callable log10 method`. Two branches of `Choro.zs` offer
+          it; the `custom_zs` one routed through `_logscaled` (which coerces to
+          float and blanks non-positive values to NaN) while the head branch
+          called `np.log10` raw. So every RECORD noun honoured `logscale=` and
+          the one field people actually log-scale did not. Fixed by using the
+          helper that was written for this and already sat beside it. Guarded by
+          comparing the log render against the map's OWN linear render -- not
+          against `hds.array(...)`, which resolves its default output time
+          separately and differs in one cell.
+        - `contour_method='nearest'` was documented and has never been
+          implemented; the accepted set is `linear`/`tri`/`tricontour` and
+          `cubic`/`clough`/`clough_tocher`/`cloughtocher`. Documentation
+          corrected to what the code accepts, aliases named.
+        - `contour_resolution` is not inert in general -- it is inert under the
+          DEFAULT method. `_linear_contour_segments` triangulates the cell
+          centres and does not take a resolution at all; only
+          `_cubic_contour_segments` interpolates onto a resolution-square grid.
+          Measured 338 contour points at 40, 150 and 400 alike under `linear`.
+          The entry now says which method it applies to.
+        - **A new guard for the whole class**: `test_plot_vocabulary` already
+          asserted that every documented NAME is accepted. It now asserts the
+          same of the VALUES inside a documented `{...}` set, which is where this
+          defect hid one level down. Mutation-checked -- putting `'nearest'` back
+          in the docstring fails naming the value and the error it raises.
       - **An Examples block is prose to every other check, and two of them
         lied.** `LakConnectionsExplorer` was documented at
         `model.packages.lak.inputs.connections` -- the explorer hangs off the

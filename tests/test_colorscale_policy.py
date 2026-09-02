@@ -670,3 +670,32 @@ def test_a_non_field_map_borrows_its_own_models_dependent_variable():
         choro = Choro.__new__(Choro)
         choro.model, choro._depvar_attr = model, None
         assert choro._timing_reader.kstpkper == [(0, 0)]
+
+
+def test_logscale_renders_on_a_head_field_and_not_only_on_a_custom_array(canonical_run):
+    """`model.hds.map(logscale=True)` must draw, and draw the right numbers.
+
+    Two branches of `Choro.zs` offer `logscale`. The `custom_zs` one routed
+    through `_logscaled`, which coerces to float and blanks non-positive values;
+    the head branch called `np.log10` raw and died on an object-dtype series --
+    "loop of ufunc does not support argument 0 of type float which has no
+    callable log10 method". So every record noun honoured `logscale=` while the
+    one field people actually log-scale raised, and the 8.8 pass then named the
+    parameter on all eighteen nouns. Fixed 2026-09-02 by using the same helper.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    logged = np.asarray(canonical_run.hds.map(logscale=True).fig.data[0].z, dtype=float)
+    linear = np.asarray(canonical_run.hds.map().fig.data[0].z, dtype=float)
+
+    # Compared against the map's OWN linear render, not `hds.array(...)`: the two
+    # resolve their default output time separately, so one cell differs and the
+    # comparison would be measuring that instead of the log.
+    assert np.isfinite(logged).all(), "log-scaled heads came back with gaps"
+    assert logged.shape == linear.shape
+    assert np.allclose(logged, np.log10(linear), atol=1e-9)
+    # and the static backend takes the same path
+    assert canonical_run.hds.map(logscale=True, backend="mpl") is not None

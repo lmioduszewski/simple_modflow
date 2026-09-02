@@ -315,10 +315,22 @@ def map(      # noqa: A001 - the verb IS `map`
     contour_clip : bool, default True
         Clip contours to the active domain instead of the full grid extent.
     contour_resolution : int, default 150
-        Interpolation grid size used to build the contours. Higher is smoother
-        and slower.
-    contour_method : {'linear', 'cubic', 'nearest'}, default 'linear'
-        Interpolation method for that grid.
+        Grid size used to build the contours, per axis. Higher is smoother and
+        slower. **Only acts under ``contour_method="cubic"``**, which is the one
+        that interpolates onto a square grid before contouring; the default
+        linear method triangulates the cell centres directly, so there is no
+        grid for this to size and passing it changes nothing (measured: 338
+        contour points at 40, 150 and 400 alike).
+    contour_method : {'linear', 'cubic'}, default 'linear'
+        How the scattered cell values become contours. ``'linear'``
+        triangulates the cell centres and contours the triangulation --
+        fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+        a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+        that -- smoother, slower, and able to overshoot between cells.
+        ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+        ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+        both; ``'nearest'`` in particular was documented here for a while and
+        has never been implemented.
     select : sequence of int, ndarray, str, Path or geometry, optional
         Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
         name of a registered model region (``"all_streams"``), a path to a
@@ -1453,8 +1465,43 @@ def _merge_parameter_sections(own: str, inherited: str) -> str:
     inh_body, inh_rest = _split_param_block(inherited)
     merged = "\n".join(part for part in (own_body, inh_body) if part.strip())
     parts = ["Parameters\n----------\n" + merged] if merged else []
-    parts += [p for p in (own_rest, inh_rest) if p.strip()]
+    # The method's OWN Returns/See Also/Examples win outright; the inherited copy
+    # of a section it already has is dropped rather than appended. Concatenating
+    # both is the same malformation this function was written to end for
+    # `Parameters`, one section along: measured on 7 of 8 spliced nouns, the LAST
+    # Examples block a reader saw was the free verb's, so `help()` on a noun
+    # ended with `>>> vor.plot.map(values=node_ids)` -- a grid map, and a call
+    # the noun itself REFUSES.
+    #
+    # Emitted in canonical NumPy ORDER rather than own-then-inherited. Appending
+    # blindly put an inherited `Returns` after the method's own `Examples`, which
+    # is a docstring no renderer lays out the way its author meant.
+    sections = dict(_split_named_sections(inh_rest))
+    sections.update(dict(_split_named_sections(own_rest)))     # own wins
+    parts += [sections[head] for head in _SECTION_HEADS if head in sections]
     return "\n\n".join(parts)
+
+
+def _split_named_sections(text: str) -> list[tuple[str, str]]:
+    """``[(head, block)]`` for a sectioned docstring remainder, in order.
+
+    A block runs from its own heading to the next one, so it carries its
+    underline and its body. Text before the first heading is not a section and is
+    dropped -- callers pass a remainder that starts at one.
+    """
+
+    lines = text.splitlines()
+    starts = [
+        i for i, line in enumerate(lines[:-1])
+        if line.strip() in _SECTION_HEADS
+        and lines[i + 1].strip()
+        and set(lines[i + 1].strip()) == {"-"}
+    ]
+    return [
+        (lines[start].strip(),
+         "\n".join(lines[start:starts[n + 1] if n + 1 < len(starts) else len(lines)]).rstrip())
+        for n, start in enumerate(starts)
+    ]
 
 
 def _inherit_verb_docs(namespace) -> None:

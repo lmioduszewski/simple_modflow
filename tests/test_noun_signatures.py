@@ -299,3 +299,89 @@ def test_a_noun_verbs_examples_name_paths_that_exist(name, rel, line, fn, source
         f"{rel}:{line} {name} shows examples addressed to paths that do not "
         f"exist: {broken}"
     )
+
+
+#: NumPy's section order. A docstring that lists them out of order still parses,
+#: but no renderer lays it out the way its author meant.
+_CANONICAL_ORDER = (
+    "Parameters", "Other Parameters", "Returns", "Yields", "Raises", "Warns",
+    "See Also", "Notes", "References", "Examples",
+)
+
+
+def _sections(doc: str) -> list[str]:
+    """Section headings in the order they appear (a title with a dashed rule)."""
+
+    lines = doc.splitlines()
+    return [
+        line.strip()
+        for i, line in enumerate(lines[:-1])
+        if line.strip() in _CANONICAL_ORDER
+        and lines[i + 1].strip()
+        and set(lines[i + 1].strip()) == {"-"}
+    ]
+
+
+@pytest.mark.parametrize(("name", "rel", "line", "fn", "source"), DISCOVERED, ids=IDS)
+def test_a_spliced_docstring_is_one_well_formed_document(name, rel, line, fn, source):
+    """The splice must MERGE the two docstrings, not concatenate them.
+
+    `_merge_parameter_sections` folded the `Parameters` blocks and then appended
+    everything else from both sides, so 7 of 8 nouns carried two `Returns`, two
+    `See Also` and two `Examples`. Worse than untidy: the LAST examples a reader
+    reaches were the free verb's, so `help(model.packages.ghb.inputs.cond.map)`
+    ended on `>>> vor.plot.map(values=node_ids)` -- a different subject, and a
+    call this noun REFUSES. The fix also has to order the result, because
+    own-then-inherited put an inherited `Returns` after the method's own
+    `Examples`.
+    """
+
+    method = _resolve(name, rel)
+    if method is None:                                        # pragma: no cover
+        pytest.skip(f"{name} is not importable from {rel}")
+    heads = _sections(method.__doc__ or "")
+
+    repeated = sorted({h for h in heads if heads.count(h) > 1})
+    assert not repeated, f"{rel}:{line} {name} has duplicate sections: {repeated}"
+
+    ranks = [_CANONICAL_ORDER.index(h) for h in heads]
+    assert ranks == sorted(ranks), (
+        f"{rel}:{line} {name} sections are out of NumPy order: {heads}"
+    )
+
+
+@pytest.mark.parametrize(("name", "rel", "line", "fn", "source"), NOUNS, ids=NOUN_IDS)
+def test_a_noun_shows_examples_of_ITSELF(name, rel, line, fn, source):
+    """The last thing a reader sees must be a call to THIS noun.
+
+    A noun that writes no `Examples` of its own inherits `plot.map`'s, which are
+    verb-scope calls (`model.plot.map(values=...)`, `vor.plot.map(...)`) -- and
+    `values=` is a parameter every noun raises on. Documenting a call that
+    raises is worse than documenting nothing.
+    """
+
+    method = _resolve(name, rel)
+    if method is None:                                        # pragma: no cover
+        pytest.skip(f"{name} is not importable from {rel}")
+    doc = method.__doc__ or ""
+    assert "Examples" in _sections(doc), f"{rel}:{line} {name} shows no examples"
+
+    examples = [ln.strip() for ln in doc.splitlines() if ln.strip().startswith(">>> ")]
+    assert examples, f"{rel}:{line} {name} has an empty Examples block"
+    verb_scope = [e for e in examples if ".plot.map(" in e or ".plot.section(" in e]
+    assert not verb_scope, (
+        f"{rel}:{line} {name} shows VERB-scope examples, which belong to "
+        f"`myflopy.plot`, not to this noun: {verb_scope}"
+    )
+    # A WORD boundary, not a substring: `connection_type=` and
+    # `lak_connection_type=` are real parameters of two of these nouns and both
+    # end in `type=`. And a refused name the method actually ACCEPTS is not
+    # refused -- `HfbPackageExplorer.map` takes `values` positionally on purpose,
+    # because its subject is the barriers and the cells are a backdrop.
+    accepted = set(inspect.signature(method).parameters)
+    refusable = [p for p in NOUN_REFUSED_PARAMS if p not in accepted]
+    pattern = re.compile(r"(?<![\w.])(" + "|".join(refusable) + r")\s*=") if refusable else None
+    refused = [e for e in examples if pattern and pattern.search(e)]
+    assert not refused, (
+        f"{rel}:{line} {name} documents a call it would raise on: {refused}"
+    )
