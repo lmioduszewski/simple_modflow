@@ -17,6 +17,13 @@ from myflopy.modflow.mf6.package_inputs import (
     StaticArrayFieldExplorer,
     UzfInputsNamespace,
 )
+from myflopy.modflow.mf6.package_plotting import (
+    _apply_backend,
+    as_mpl_figure,
+    normalize_backend,
+    refuse_noun_parameters,
+    resolve_noun_hover,
+)
 from myflopy.modflow.mf6.package_registry import (
     get_package_explorer_spec,
 )
@@ -308,32 +315,144 @@ class HfbResultsExplorer:
             )
         return pd.DataFrame(rows)
 
-    def map(self, *, kstpkper=None, per: int | None = None, layer: int = 0, **kwargs):
+    def map(
+        self,
+        *,
+        # -- which records ---------------------------------------------------
+        kstpkper=None,
+        per: int | None = None,
+        layer: int = 0,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
+        backend: str = "plotly",
+        **trace_kwargs,
+    ):
         """Draw the barriers coloured by the flow crossing them.
 
         Each barrier is drawn on the face it occupies, thickness fixed and colour
-        carrying |q| -- a barrier is a line, so it is drawn as one.
+        carrying |q| -- a barrier is a line, so it is drawn as one. The cells
+        beneath are the plain grid; the drawing parameters below style THAT
+        backdrop, which is what makes a barrier legible against it.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        HFB is edge-indexed and MODFLOW 6 writes no HFB budget record, so this
+        noun reads ``FLOW-JA-FACE`` through the model's own ``IA``/``JA`` (ledger
+        162). There is no ``values=``: the flow across the barrier IS the subject,
+        and an override would repaint it while the hover went on reporting q.
+
+        Parameters
+        ----------
+        kstpkper : tuple of (int, int), optional
+            Exact ``(timestep, period)`` to read, as MODFLOW reports it. With
+            neither this nor ``per``, the last saved time is drawn -- the LAST
+            ``(per, kstp)`` pair, not the largest ``kstp``, because a model whose
+            periods each hold one time step has ``kstp == 0`` throughout.
+        per : int, optional
+            Stress period to read, zero-based. Mutually exclusive with
+            ``kstpkper``.
+        layer : int, default 0
+            Zero-based layer. A barrier sits in one layer, so this selects which
+            set of faces is drawn; barriers in other layers are not shown.
 
         Returns
         -------
-        Choro
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend, or a bare
+            Matplotlib figure with ``backend="mpl"``. The Matplotlib branch draws
+            the barrier lines itself rather than deferring to ``Choro.plot_mpl``,
+            which reads cell values only and would drop them.
+
+        See Also
+        --------
+        get : the per-barrier flows behind the picture, as a DataFrame.
+        myflopy.plot.map : the same grid with no barriers on it.
+
+        Examples
+        --------
+        >>> model.packages.hfb.results.q.map()
+        >>> model.packages.hfb.results.q.map(per=5, layer=1)
+        >>> model.packages.hfb.results.q.map(kstpkper=(0, 5))
+        >>> model.packages.hfb.results.q.map(contours=True, contour_levels=6)
+        >>> model.packages.hfb.results.q.map(select="all_streams")
+        >>> model.packages.hfb.results.q.map(backend="mpl").savefig("hfb_q.png")
         """
 
         import plotly.graph_objects as go
 
+        refuse_noun_parameters("hfb.results.q", "barrier flow", trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         grid = self.model.vor
         table = self.get(kstpkper=kstpkper, per=per)
         table = table[table["layer"] == int(layer)]
-        picture = grid.plot.map(**kwargs)
+        picture = grid.plot.map(
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=colorscale,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            hover=hover,
+            **trace_kwargs,
+        )
         if table.empty:
             logger.warning("no barrier flow to draw for layer %d", layer)
-            return picture
+            return _apply_backend(picture, backend)
 
         # The LAST (per, kstp) pair, not the largest kstp: a model whose periods
         # each hold one time step has kstp == 0 throughout, so filtering on kstp
         # alone keeps every period and draws each barrier once per period.
         last = table.sort_values(["per", "kstp"]).iloc[-1]
         latest = table[(table["per"] == last["per"]) & (table["kstp"] == last["kstp"])]
+        if normalize_backend(backend) == "mpl":
+            faces = [
+                face for face in
+                (grid.shared_face(r.cell1, r.cell2) for r in latest.itertuples())
+                if face is not None
+            ]
+            return _barriers_on_mpl(picture, faces, color="black", width=4,
+                                    name="hfb flow")
         for record in latest.itertuples():
             segment = grid.shared_face(record.cell1, record.cell2)
             if segment is None:
@@ -357,6 +476,31 @@ class HfbResultsExplorer:
                 )
             )
         return picture
+
+
+def _barriers_on_mpl(picture, geometries, *, color, width, name=None):
+    """Render an HFB map on Matplotlib with the barrier lines actually on it.
+
+    Not a plain :func:`_apply_backend` call, and the difference matters:
+    ``Choro.plot_mpl`` reads the cell values and NOTHING else -- overlays are a
+    Plotly-side concept and it has never drawn them. Handing an HFB map to it
+    unchanged returns a picture of the cells with the barriers silently missing,
+    which is the one thing the picture is of.
+
+    Both backends end up in the same frame, which is what makes this a second
+    renderer rather than a second drawing: ``plot_mpl`` draws in MODEL
+    coordinates (measured -- x limits -105..2205 against grid bounds 0..2100 on
+    EPSG:2927), so the segments go on unprojected, where the Plotly overlay needs
+    them reprojected to EPSG:4326 like every other ``Scattermap`` trace.
+    """
+
+    figure = as_mpl_figure(picture.plot_mpl())
+    axes = figure.axes[0]
+    for geometry in geometries:
+        xs, ys = geometry.xy
+        axes.plot(list(xs), list(ys), color=color, linewidth=width, zorder=5,
+                  label=name)
+    return figure
 
 
 class HfbPackageExplorer:
@@ -496,58 +640,163 @@ class HfbPackageExplorer:
             geoms.append(segment)
         return gpd.GeoDataFrame(rows, geometry=geoms, crs=getattr(grid.gdf_vorPolys, "crs", None))
 
-    def map(self, values=None, *, per: int | None = None, layer: int = 0, **kwargs):
+    def map(
+        self,
+        values=None,
+        *,
+        # -- which barriers --------------------------------------------------
+        per: int | None = None,
+        layer: int = 0,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
+        backend: str = "plotly",
+        **trace_kwargs,
+    ):
         """Draw the barriers on the grid, as lines over whatever the cells show.
 
         A barrier is an edge, so it is drawn as an edge -- over the cell field
         rather than instead of it. ``values`` colours the cells as any other map
         would; without one the grid is drawn plain beneath the barriers.
 
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        ``values`` survives here where the other nouns REFUSE it, and the
+        difference is real rather than an oversight: those nouns fix a field, so
+        an override would repaint the cells while the hover and colorbar went on
+        describing the real one. This noun's subject is the BARRIERS. The cells
+        are a backdrop, and choosing what the backdrop shows contradicts nothing
+        -- exactly as on ``vor.plot.map``, which this delegates to.
+
         Parameters
         ----------
         values : array-like, optional
-            Per-cell values to colour the cells by.
+            Per-cell values to colour the cells by -- heads, K, a zone id, any
+            array of length ``vor.ncpl``. With none, the grid is drawn plain and
+            the barriers are the only thing carrying colour.
         per : int, optional
-            Which period's barriers to draw. The first defined period by default.
+            Which period's barriers to draw, zero-based. The first defined period
+            by default. Barriers are usually time-invariant, so this matters only
+            for a model that redefines them.
         layer : int, default 0
-            Which layer's barriers to draw.
-        **kwargs
-            Forwarded to ``vor.plot.map``.
+            Which layer's barriers to draw, zero-based. A barrier sits on the
+            faces of one layer; those in other layers are not shown.
 
         Returns
         -------
-        Choro
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend, or a bare
+            Matplotlib figure with ``backend="mpl"``. The Matplotlib branch draws
+            the barrier lines itself rather than deferring to ``Choro.plot_mpl``,
+            which reads cell values only and would drop them.
+
+        See Also
+        --------
+        segments : the barrier geometries behind the picture, as a GeoDataFrame.
+        myflopy.plot.map : the same grid with no barriers on it.
+
+        Examples
+        --------
+        >>> model.packages.hfb.inputs.map()
+        >>> model.packages.hfb.inputs.map(values=model.hds.array(layer=0))
+        >>> model.packages.hfb.inputs.map(layer=1, per=0)
+        >>> model.packages.hfb.inputs.map(values=k, logscale=True)
+        >>> model.packages.hfb.inputs.map(select="all_streams", select_style="both")
+        >>> model.packages.hfb.inputs.map(backend="mpl").savefig("barriers.png")
         """
 
         import plotly.graph_objects as go
 
         from myflopy.viz import HIGHLIGHT_WIDTH, PALETTE
 
+        refuse_noun_parameters("hfb.inputs", "the barriers", trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         grid = self.model.vor
-        picture = grid.plot.map(values, **kwargs)
+        picture = grid.plot.map(
+            values,
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=colorscale,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            hover=hover,
+            **trace_kwargs,
+        )
 
         frame = self.segments(per=per)
         if len(frame):
             frame = frame[frame["layer"] == int(layer)]
-        if len(frame):
-            if frame.crs is not None and str(frame.crs).upper() != "EPSG:4326":
-                frame = frame.to_crs("EPSG:4326")
-            lon, lat = [], []
-            for geom in frame.geometry:
-                x, y = geom.xy
-                lon.extend([*x, None])
-                lat.extend([*y, None])
-            picture.add_overlay(
-                go.Scattermap(
-                        mode="lines",
-                        lon=lon,
-                        lat=lat,
-                        line={"color": PALETTE.highlight, "width": HIGHLIGHT_WIDTH},
-                        name=f"hfb (layer {int(layer) + 1})",
-                        hoverinfo="skip",
-                    showlegend=True,
-                )
+        if not len(frame):
+            return _apply_backend(picture, backend)
+        if normalize_backend(backend) == "mpl":
+            # `PALETTE.mpl_highlight`, not `.highlight`: the palette carries a
+            # matplotlib twin of each colour precisely because Plotly's
+            # `rgb(214,39,40)` spelling is not one matplotlib accepts, and
+            # passing it raises rather than drawing the wrong colour.
+            return _barriers_on_mpl(
+                picture, list(frame.geometry),
+                color=PALETTE.mpl_highlight, width=HIGHLIGHT_WIDTH,
+                name=f"hfb (layer {int(layer) + 1})",
             )
+        if frame.crs is not None and str(frame.crs).upper() != "EPSG:4326":
+            frame = frame.to_crs("EPSG:4326")
+        lon, lat = [], []
+        for geom in frame.geometry:
+            x, y = geom.xy
+            lon.extend([*x, None])
+            lat.extend([*y, None])
+        picture.add_overlay(
+            go.Scattermap(
+                mode="lines",
+                lon=lon,
+                lat=lat,
+                line={"color": PALETTE.highlight, "width": HIGHLIGHT_WIDTH},
+                name=f"hfb (layer {int(layer) + 1})",
+                hoverinfo="skip",
+                showlegend=True,
+            )
+        )
         return picture
 
     def __repr__(self) -> str:

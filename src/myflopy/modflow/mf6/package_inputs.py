@@ -19,6 +19,8 @@ from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     _as_layer_cell_property,
     build_cell_input_map_payload,
+    refuse_noun_parameters,
+    resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_registry import (
     FieldSpec,
@@ -213,19 +215,116 @@ class CellPackageInputFieldExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float | None = None,
         agg: str | None = None,
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a choropleth for this specific input field."""
+        """This input field as a choropleth: one colour per cell.
 
+        A RECORD noun. The package's period table is reduced to one value per
+        cell (``agg``), cells the package does not touch take ``fill_value``, and
+        the result is drawn like any other per-cell array. That reduction is why
+        this signature carries ``multiplier``/``fill_value``/``agg`` on top of
+        the shared drawing parameters -- the free verb never does it, because it
+        is handed the values directly.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        an elevation tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to read, zero-based. A package whose records do not
+            change with time has them all under period 0.
+        layer : int, default 0
+            Zero-based layer. Records in other layers are not drawn; pass the
+            layer the boundary actually sits in, which
+            ``.get()`` will show you in its ``layer`` column.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, or a sign flip
+            to draw an outflow as positive. Applied before ``agg``.
+        fill_value : float, optional
+            Value given to cells this package has no record for. Defaults to the
+            field's own declared fill (usually ``0.0``); pass ``float("nan")`` to
+            leave untouched cells uncoloured instead of colouring them zero.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, optional
+            How several records landing in ONE cell are reduced to one number.
+            Defaults to the field's declared aggregation -- ``sum`` for an
+            extensive quantity such as a conductance or a flow, ``mean`` for an
+            intensive one such as an elevation or a head. Worth setting
+            explicitly when a vector source put many features in one cell.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the records behind the picture, as a DataFrame.
+        summary : the same records reduced to one row.
+
+        Examples
+        --------
+        >>> model.packages.drn.inputs.elev.map()
+        >>> model.packages.ghb.inputs.cond.map(per=3, agg="sum")
+        >>> model.packages.drn.inputs.cond.map(logscale=True, colorscale="Viridis")
+        >>> model.packages.ghb.inputs.bhead.map(fill_value=float("nan"))
+        >>> model.packages.drn.inputs.elev.map(select="all_streams")
+        >>> model.packages.ghb.inputs.cond.map(backend="mpl").savefig("cond.png")
+        """
+
+        refuse_noun_parameters(
+            f"{self.package_name}.inputs.{self.field_name}",
+            self.field_name,
+            trace_kwargs,
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.inputs.get(per=per, layer=layer)
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=self.field_name,
@@ -235,28 +334,50 @@ class CellPackageInputFieldExplorer(SpatialView):
             fill_value=self.field_spec.fill_value if fill_value is None else fill_value,
             agg=self.field_spec.agg if agg is None else agg,
         )
-        kwargs.setdefault(
-            "hover_spec",
-            cell_input_hover(
-                self.field_name,
-                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
-                context_fields=_input_context_fields(hover),
-            ),
-        )
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(cell_hover),
+            ),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=(
                 colorscale
                 or self.field_spec.colorscale
                 or get_default_package_colorscale(self.package_name)
             ),
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -320,19 +441,132 @@ class UzfFieldInputsExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a choropleth for the selected UZF field."""
+        """This UZF perioddata field as a choropleth: one colour per cell.
 
+        A RECORD noun. UZF perioddata is one row per UZF cell per stress period
+        -- ``finf``, ``pet``, ``extdp``, ``extwc``, ``ha``, ``hroot``,
+        ``rootact`` -- so one period is selected (``per``), the rows landing in a
+        single grid cell are reduced to one number (``agg``), and cells with no
+        UZF object at all take ``fill_value``. That reduction is why this
+        signature carries ``multiplier``/``fill_value``/``agg`` on top of the
+        shared drawing parameters: the free verb never does it, because it is
+        handed the values directly.
+
+        Worth knowing about UZF specifically: a vertical column of UZF objects
+        stacked under one cell all share that cell, so ``agg`` is doing real work
+        on a multi-layer unsaturated column even when ``layer`` is pinned --
+        ``sum`` is right for a flux such as ``finf``, ``mean`` for a property
+        such as ``extdp``.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        an infiltration tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to read, zero-based. UZF perioddata is genuinely
+            time-varying -- an infiltration series is the usual reason the
+            package exists -- so this is the selector you will reach for most.
+            ``.wide()`` shows one column per period if you are not sure which one
+            you want.
+        layer : int, default 0
+            Zero-based layer. UZF objects below this layer are not drawn; layer 0
+            holds the land-surface objects that receive ``finf``, which is why it
+            is the default. ``.get()`` shows the ``layer`` column if the package
+            was built with a deeper unsaturated column.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion is the common
+            case, e.g. ``multiplier=365.25`` to read a ft/day infiltration rate
+            as ft/year. Applied before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells with no UZF object. Zero reads naturally for a
+            flux ("no infiltration here"); pass ``float("nan")`` to leave the
+            non-UZF part of the grid uncoloured instead, which is the honest
+            choice for a property such as ``extdp`` where zero is a real and
+            different statement.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
+            How several UZF records landing in ONE grid cell are reduced to one
+            number. ``sum`` is right for an extensive quantity (a rate applied
+            over the cell); switch to ``mean`` for an intensive one such as
+            ``extdp``, ``extwc`` or ``rootact``, where summing a stacked column
+            produces a number with no physical meaning.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the records behind the picture, as a DataFrame.
+        wide : one row per UZF record, one column per period.
+        summary : the same records reduced to one row.
+
+        Examples
+        --------
+        >>> model.packages.uzf.inputs.finf.map()
+        >>> model.packages.uzf.inputs.finf.map(per=5, multiplier=365.25)
+        >>> model.packages.uzf.inputs.pet.map(per=3, agg="mean")
+        >>> model.packages.uzf.inputs.extdp.map(agg="mean", fill_value=float("nan"))
+        >>> model.packages.uzf.inputs.finf.map(logscale=True, colorscale="Blues")
+        >>> model.packages.uzf.inputs.pet.map(backend="mpl").savefig("pet.png")
+        """
+
+        refuse_noun_parameters(
+            f"uzf.inputs.{self.field_name}",
+            self.field_name,
+            trace_kwargs,
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(per=per, layer=layer)
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=self.field_name,
@@ -342,26 +576,50 @@ class UzfFieldInputsExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault(
-            "hover_spec",
-            cell_input_hover(
-                self.field_name,
-                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
-                context_fields=_input_context_fields(hover),
-            ),
-        )
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
-            colorscale=colorscale
-            or get_default_package_colorscale(f"uzf_{self.field_name}")
-            or "earth",
-            **kwargs,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(cell_hover),
+            ),
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=(
+                colorscale
+                or get_default_package_colorscale(f"uzf_{self.field_name}")
+                or "earth"
+            ),
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -606,17 +864,115 @@ class StaticArrayFieldExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which slice of the array ----------------------------------------
         per: int = 0,
         layer: int = 0,
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a choropleth for one layer of this static array field."""
+        """One layer of this static array as a choropleth: one colour per cell.
 
+        A STATIC ARRAY noun -- ``npf.k``, ``npf.k33``, ``ic.strt``, ``sto.sy``.
+        The package already stores exactly one value per cell per layer, so
+        unlike a record noun there is nothing to reduce: no ``multiplier``, no
+        ``fill_value``, no ``agg``. Pick a ``layer`` and the array is drawn as it
+        stands.
+
+        **There is no time axis here, and ``per`` therefore does nothing.** A
+        static array is written once in the model's input file and never varies
+        by stress period; ``per`` is accepted only so that a caller sweeping the
+        same keyword across a row of mixed nouns -- an input record map beside a
+        ``k`` map -- does not have to special-case this one. It is documented
+        below and then discarded.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. They
+        describe a simulated per-layer FIELD read from an output file; this
+        picture is model input, drawn one layer at a time, and each was measured
+        to leave it byte-identical. ``show_mounding`` is worse than inert: it
+        injects a head-derived row into the tooltip of every cell, on a picture
+        that is not a head.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Accepted and ignored. A static array has no stress-period dimension,
+            so every value of ``per`` draws the same picture. Present for
+            uniformity with the record nouns (``ghb.inputs.cond.map(per=3)``),
+            where it selects; if you want a quantity that varies with time, you
+            want a ``.inputs`` or ``.results`` noun instead of an array field.
+        layer : int, default 0
+            Zero-based model layer to draw. This is the ONLY selector that acts
+            here: a static array is ``(nlay, ncpl)``, and a constant supplied for
+            the whole model is broadcast across layers, so layer 0 and layer 3
+            look identical for a uniform ``k`` and quite different for one built
+            from a per-unit list. Use ``.wide()`` to see every layer side by side
+            before choosing.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : this array as a normalized layer/cell table.
+        wide : the same values pivoted to one column per layer.
+        summary : the array reduced to one row (count, range, layers).
+
+        Examples
+        --------
+        >>> model.packages.npf.k.map()
+        >>> model.packages.npf.k33.map(layer=2, logscale=True)
+        >>> model.packages.ic.strt.map(contours=True, contour_levels=20)
+        >>> model.packages.sto.sy.map(zmin=0.0, zmax=0.3, colorscale="Blues")
+        >>> model.packages.npf.k.map(select="all_streams", select_color="red")
+        >>> model.packages.sto.ss.map(backend="mpl").savefig("ss.png")
+        """
+
+        refuse_noun_parameters(
+            f"{self.package_name}.{self.field_name}",
+            self.field_name,
+            trace_kwargs,
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
         del per
         selected = self.get(layer=layer)
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=self.field_name,
@@ -624,24 +980,46 @@ class StaticArrayFieldExplorer(SpatialView):
             layer=layer,
             agg="first",
         )
-        kwargs.setdefault(
-            "hover_spec",
-            cell_input_hover(
-                self.field_name,
-                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
-                context_fields=_input_context_fields(hover),
-            ),
-        )
         choro = self.model.plot.map(
             per=0,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(
+                self.field_name,
+                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                context_fields=_input_context_fields(cell_hover),
+            ),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=colorscale or self.colorscale,
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 

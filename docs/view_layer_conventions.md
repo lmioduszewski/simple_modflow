@@ -44,6 +44,32 @@ particle scene draws **polyline tubes**. Three shapes, not one shape three ways.
 Hence `grid(backend="vtk")`: `grid` already means "the mesh itself", so the
 3-D layered mesh is that same subject, redrawn. See ledger 133.
 
+**`backend="mpl"` is the static renderer, at every scope that has one** — the
+free verbs, the bound namespaces, and the nouns. `plot.map`, `plot.section` and
+`plot.grid` take it; `model.hds.map`, `packages.<pkg>.inputs.<field>.map` and
+the rest take it. The NOUN-tier `mosaic`/`animate` take it too, which is where it
+earns its keep, because a composer has no intermediate picture to call
+`.plot_mpl()` on. It returns a bare `matplotlib.figure.Figure` everywhere.
+
+Measured, so the sentence above stays honest: the FREE `mosaic` has no `backend`
+parameter at all, and the free `animate`'s is `{"plotly", "png"}` — see below. Aliases `"matplotlib"`/`"static"`
+and `"interactive"` resolve through one function, `normalize_backend`.
+
+`surface` deliberately does NOT take it: there is no matplotlib rendering of a
+3-D height field here, and a parameter that cannot act is the same defect as one
+that is hidden. `animate`'s `backend={"plotly", "png"}` is a different axis — a
+rasteriser over frames, not a second renderer of one subject.
+
+**`.plot_mpl()` on the returned picture is the same renderer reached a second
+way, and is not the spelling to teach.** It still exists, still works, and is
+what `backend="mpl"` calls underneath. But it only exists once a picture has been
+built, which is why it cannot serve `mosaic`/`animate`, and reaching for it was
+how `canonical_02` ended up dropping out of the grammar to get cell outlines.
+Prefer the parameter. Until 2026-09-02 the verb tier had no `backend` at all
+while the noun tier had had one since 8.2, so `model.plot.section(backend="mpl")`
+was accepted, stored on the section object, and ignored — a Plotly figure back,
+no error (ledger 176).
+
 ### Three renderers, one contract
 
 Most pictures are Plotly, and `Picture` is written in terms of `.fig`. That is a
@@ -250,6 +276,14 @@ Rules that hold for all of them:
   draws in **model coordinates**, while the Plotly path needs
   `vor.points_to_latlon`. Supporting both is ~10 lines; dropping the static one
   leaves a figure that silently shows the base map and none of its data.
+  **A picture whose subject IS an overlay must therefore draw it itself under
+  `backend="mpl"`**, not defer to `_apply_backend`. The two HFB verbs are the
+  worked example: a barrier is an edge drawn over the cells, so a `plot_mpl`
+  passthrough returns a perfectly valid figure of the grid with every barrier
+  missing. Measured on the canonical wall — 32 barriers, 32 `Line2D` artists —
+  which is the assertion, because a type check passes over the defect.
+  Use `PALETTE.mpl_highlight`, not `PALETTE.highlight`: Plotly's
+  `rgb(214,39,40)` spelling raises in matplotlib.
 - **Period selection is `per=`** on the verb, and a noun may also be *called*
   to bind a period once: `results.profile(per=3).plot()` ==
   `results.profile.plot(per=3)`. Calling a noun returns a new bound view; it

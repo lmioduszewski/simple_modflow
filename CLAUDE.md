@@ -62,6 +62,21 @@ the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means 
 height field; `surface(backend="vtk")` exists and draws those height fields as
 separate PyVista sheets, which is the rule holding rather than bending). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
 `.save(path)` / `.html(path)`, and never a trailing `.plot()`.
+**Want it static? `backend="mpl"`, on `map` / `section` / `grid`, at EVERY scope**
+(ledger 176, 2026-09-02) — free verb, bound namespace, and noun. The NOUN-tier
+`mosaic`/`animate` take it too, which is where it earns its keep because there is
+no intermediate picture to call `.plot_mpl()` on; the free `mosaic` has no
+`backend` at all and the free `animate`'s is `{"plotly", "png"}`, a rasteriser
+over frames rather than this switch. It returns a bare `matplotlib.figure.Figure`
+everywhere (`normalize_backend` resolves the aliases, `as_mpl_figure` the three
+renderers that each returned something different). **`.plot_mpl()` still works
+and is NOT the spelling to teach** — it is what `backend=` calls underneath.
+`surface` deliberately has none: no matplotlib rendering of a 3-D height field
+exists here, and a parameter that cannot act is the same defect as a hidden one.
+Two traps: `Choro.plot_mpl` **ignores overlays**, so a picture whose subject IS
+an overlay (both HFB verbs) must draw it onto the axes itself or return a valid
+figure with its subject missing; and `PALETTE.highlight` is Plotly's
+`rgb(...)`, which matplotlib rejects — use `PALETTE.mpl_highlight`.
 **3-D scenes: build-time options on the verb, post-render handles on the Picture**
 (ledger 157, 2026-08-28). Both layer scenes draw ONE NAMED ACTOR PER LAYER —
 `scene.scene.actors["clay"].visibility = False` — and every cell carries
@@ -93,6 +108,22 @@ behind, or a parameter is documented-but-unaccepted (or the reverse). A narrower
 scope may offer FEWER parameters, never other ones. The one exemption is the
 namespace-level `field=` sugar, which dispatches to accessors with incompatible
 signatures — it stays `*args, **kwargs` and points at the leaf.
+**This reaches the NOUN tier too, and as of 2026-09-02 all 15 are converted**
+(`tests/test_noun_signatures.py`, which DISCOVERS its subjects by AST sweep
+rather than listing them; its `UNCONVERTED` set is now empty and asserted empty).
+A noun names Tier 1 (`NOUN_MAP_PARAMS`, 22 including `backend`) plus its own
+selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
+per-layer names that were measured byte-identical on a record noun. The docstring
+contract is **signature-static, docstring-runtime**: the source carries the
+noun's own parameters plus real Examples, and the ~22 shared entries splice from
+`plot.map` at import (`inherit_map_docs`), so every parameter appears in both the
+`def` line and `help()` without being hand-copied fifteen times.
+**Converting one? The hazard is a `**kwargs` tail something READ.** PRT's `map`
+consulted `base_kwargs` for three separate refusals; naming the parameters
+emptied it and would have disabled all three silently (`_explicit_options`
+reconstructs it from the signature's own defaults). And `GridPlots.map` /
+`StackPlots.section` are NOT nouns — they are verb scopes, where `values=` and
+`custom_hover=` are legitimate; `VERB_SCOPES` splits them out.
 Runnable tour: `examples/mf6/notebooks/plotting_vocabulary_tour.ipynb`.
 RETIRED, do not reintroduce: `model.cor`, `model.srf`, `model.visualize`, the
 eleven `vor.*` plotting aliases, `stack.preview/views/vtk_3d/surface_3d`.

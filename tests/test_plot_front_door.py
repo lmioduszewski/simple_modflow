@@ -409,7 +409,7 @@ def test_grid_takes_a_backend_not_a_different_verb():
 @pytest.mark.parametrize(
     ("kwargs", "match"),
     [
-        ({"backend": "opengl"}, "'plotly' or 'vtk'"),
+        ({"backend": "opengl"}, "'plotly', 'mpl' or 'vtk'"),
         ({"backend": "plotly", "pathlines": object()}, "map\\(pathlines"),
         ({"backend": "vtk"}, "pathlines="),
     ],

@@ -20,6 +20,11 @@ from myflopy.modflow.mf6.package_explorer import (
     build_lak_q_map_payload,
     get_default_group_compare_colorscale,
 )
+from myflopy.modflow.mf6.package_plotting import (
+    _apply_backend,
+    refuse_noun_parameters,
+    resolve_noun_hover,
+)
 from myflopy.modflow.mf6.package_surface_water import join_lak_stage
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover, lak_hover
 from myflopy.project.group._shared import (
@@ -422,18 +427,157 @@ class GroupLakConnections:
     def map(
         self,
         *,
+        # -- which model, which connections -----------------------------------
         model_name: str | None = None,
         lake: int | None = None,
         layer: int = 0,
+        # -- table to cells ---------------------------------------------------
         value_column: str = "connection_area",
         agg: str = "sum",
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        colorscale: str | None = None,
-        **kwargs,
+        # -- colour -----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours ---------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting -----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing ---------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover ------------------------------------------------------------
+        hover=None,
+        # -- renderer ---------------------------------------------------------
+        backend: str = "plotly",
+        **trace_kwargs,
     ):
-        """Build a grouped LAK connection-geometry map for one selected model."""
+        """LAK connection geometry for ONE member model, as a choropleth.
 
+        A GROUP noun drawing a single picture. The group's axis is the model
+        list, but a choropleth has one grid, so ``model_name`` picks the member
+        and everything else describes that member's map. The rows come from
+        :meth:`get` -- one per LAK connection -- and are reduced to one value
+        per cell by ``agg``, which is why this signature carries
+        ``value_column``/``agg``/``multiplier``/``fill_value`` on top of the
+        shared drawing parameters. Use ``mosaic`` on a results noun when you
+        want every member side by side; connection geometry is static input, so
+        the useful comparison is one member at a time against another.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm
+        and Pylance read the ``def`` line and never run the module, so a
+        parameter that arrives through a tail is one no editor can ever offer
+        (plan 8.8). ``backend`` in particular used to reach the renderer only
+        through that tail.
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent.
+        Connection geometry has no time axis and no per-layer profile behind
+        it, so each was measured to leave the figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row
+        into a geometry tooltip on every cell.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            Which member of the group to draw. Defaults to the group's
+            reference model (``group.reference``). Pass a member name to draw
+            that model's connections instead -- the usual reason is to look at
+            the same lake on a refined grid. A name that is not in the group
+            raises ``KeyError`` rather than silently falling back.
+        lake : int, optional
+            Draw only one lake's connections, by zero-based lake number
+            (``ifno``). Defaults to ``None``, meaning every lake in the
+            package, which on a multi-lake model paints them all into one
+            colour range. Set it when one lake's geometry is the question, or
+            when a large lake's areas are flattening a small one.
+        layer : int, default 0
+            Zero-based layer whose connections are drawn. A lake connects
+            downward through several layers; only the rows in this layer are
+            mapped, so pass the layer the connections you care about actually
+            sit in -- ``get()``'s ``layer`` column lists them.
+        value_column : str, default 'connection_area'
+            Which connection column to colour by. ``connection_area`` is the
+            physical interface area (plan-view cell area for a vertical
+            connection, ``connwidth * (telev - belev)`` for a horizontal one).
+            Any other numeric column of :meth:`get` works -- ``belev``,
+            ``telev``, ``connlen``, ``connwidth`` -- and a name that is not in
+            the table raises ``KeyError`` naming it.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
+            How several connections landing in ONE cell are reduced to one
+            number. ``sum`` is right for ``connection_area``, which is
+            extensive -- a cell touched by two lakes offers both areas. Switch
+            to ``mean`` for an intensive column such as ``belev`` or
+            ``connlen``, where adding two elevations produces a meaningless
+            number.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion (``0.3048`` for
+            feet to metres on an elevation column), or a sign flip. Applied
+            before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells with no LAK connection in this layer. The
+            default colours them zero, which reads as "no lake here" on an
+            area map; pass ``float("nan")`` to leave them uncoloured instead,
+            which is what you want on an elevation column where zero is a real
+            elevation and would distort the colour range.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the connection rows behind the picture, as a DataFrame, aligned
+            across every model in the group.
+
+        Examples
+        --------
+        >>> group.packages.lak.connections.map()
+        >>> group.packages.lak.connections.map(model_name="refined")
+        >>> group.packages.lak.connections.map(lake=0, layer=1)
+        >>> group.packages.lak.connections.map(
+        ...     value_column="belev", agg="mean", fill_value=float("nan")
+        ... )
+        >>> group.packages.lak.connections.map(logscale=True, colorscale="Viridis")
+        >>> group.packages.lak.connections.map(backend="mpl").savefig("lak_conn.png")
+        """
+
+        refuse_noun_parameters(
+            "group.packages.lak.connections",
+            value_column,
+            trace_kwargs,
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
+        if "per" in trace_kwargs:
+            # Every SIBLING noun takes `per`, so reaching for it here is the
+            # natural mistake -- but connection geometry is static and the
+            # forward hardcodes `per=0`, so the name collides in the tail and
+            # dies as "ModelPlots.map() got multiple values for keyword
+            # argument 'per'", naming a class the caller never typed.
+            raise TypeError(
+                "group.packages.lak.connections.map() has no per=: LAK "
+                "connection geometry does not change with time, so there is "
+                "one picture for every stress period. Use "
+                "`group.packages.lak.results.<noun>` for a quantity that does."
+            )
         target_name = self.group.reference if model_name is None else str(model_name)
         if target_name not in self.group.models:
             raise KeyError(f"Model {target_name!r} is not in the group.")
@@ -441,7 +585,7 @@ class GroupLakConnections:
         selected = self.get(model_name=target_name, lake=lake, layer=layer)
         if value_column not in selected.columns:
             raise KeyError(f"LAK connection column {value_column!r} was not found.")
-        values, hover = build_cell_input_map_payload(
+        values, hover_table = build_cell_input_map_payload(
             selected,
             ncpl=target_model.vor.ncpl,
             value_column=value_column,
@@ -451,18 +595,44 @@ class GroupLakConnections:
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(value_column))
-        return target_model.plot.map(
+        choro = target_model.plot.map(
             per=0,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=hover_table,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(value_column),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=colorscale or "earth",
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
+        return _apply_backend(choro, backend)
 
 
 class GroupLakResultsNamespace(GroupCellPackageResultsNamespace):
@@ -508,3 +678,37 @@ class GroupLakPackageAccessor:
         return self._results_namespace
 
 
+
+
+from myflopy.modflow.mf6.package_plotting import NOUN_MAP_PARAMS  # noqa: E402
+from myflopy.plot import inherit_map_docs  # noqa: E402
+
+
+# --- the shared map reference, spliced onto this module's noun ----------------
+#
+# `myflopy.plot` (layer 7) splices every noun BELOW it at import. This module is
+# layer 9, so reaching down for the reference is this module's job: doing it from
+# `plot` pulls in `myflopy.project` (layer 13) while `simulation.base` is still
+# half-built, and the import fails outright. So the reference is fetched HERE
+# instead, at the bottom of the module -- module-level (this file is layer 9 and
+# both targets are below it, so the ratchet stays where it was) but placed after
+# the class, which must exist before it can be spliced.
+def _inherit_group_lak_docs() -> None:
+    """Give ``GroupLakConnections.map`` the free verb's entries for what it takes."""
+
+    # `keep` is exactly the shared drawing set. Deliberately NOT `| {"per",
+    # "layer"}`:
+    #   `per`   -- this noun has no `per` parameter (connection geometry is
+    #              static, so the forward hardcodes `per=0`). Inheriting its
+    #              entry documented a knob that does not exist, and
+    #              `map(per=3)` reached the tail and died as
+    #              `ModelPlots.map() got multiple values for keyword argument
+    #              'per'` -- a TypeError naming a class the caller never typed,
+    #              the exact defect `refuse_noun_parameters` was written against.
+    #   `layer` -- documented locally above, with what it means for a LAK
+    #              connection. Inheriting it too put two `layer` entries in one
+    #              Parameters block.
+    inherit_map_docs(GroupLakConnections.map, keep=set(NOUN_MAP_PARAMS))
+
+
+_inherit_group_lak_docs()

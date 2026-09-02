@@ -18,6 +18,87 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
 )
 
+#: Spellings each renderer answers to. One tuple pair, because the alias set was
+#: written out three times (here, `SpatialView._normalize_backend`, and
+#: `render_xsections`) and a fourth spelling added to one of them would have
+#: reached only the surfaces that happened to share that copy.
+PLOTLY_BACKENDS = ("plotly", "interactive")
+MPL_BACKENDS = ("mpl", "matplotlib", "static")
+
+
+def normalize_backend(backend: str) -> str:
+    """Canonicalize a backend alias to ``"plotly"`` or ``"mpl"``.
+
+    The single resolver for the renderer switch, at every scope: the free verbs
+    in :mod:`myflopy.plot`, the bound namespaces, and the noun grammar all route
+    through it, so ``backend="matplotlib"`` means the same thing everywhere and
+    an unknown spelling raises the same message.
+
+    Raises
+    ------
+    ValueError
+        Naming both accepted values. A backend that is silently ignored is the
+        defect this replaces -- ``plot.section(..., backend="mpl")`` used to
+        vanish into a ``**kwargs`` tail and return a Plotly picture.
+    """
+
+    value = str(backend).lower()
+    if value in PLOTLY_BACKENDS:
+        return "plotly"
+    if value in MPL_BACKENDS:
+        return "mpl"
+    raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+
+
+def as_mpl_figure(drawn):
+    """Normalize whatever a Matplotlib renderer returned to a bare ``Figure``.
+
+    The renderers behind ``backend="mpl"`` disagree about what they hand back:
+    ``Choro.plot_mpl`` returns a ``Figure``, the ``figs`` cross-section helper a
+    ``(fig, ax)`` tuple, and FloPy's patch renderer (``GridMesh.plot_mpl``) an
+    ``Axes``. The grammar contract is one figure at every scope, so the
+    normalization lives here once instead of at each of the five call sites that
+    were each about to grow their own copy.
+
+    ``.plot_mpl()`` on the picture is left alone: it keeps returning what it
+    always returned, so nothing that already calls it moves.
+    """
+
+    if isinstance(drawn, tuple):
+        drawn = drawn[0]
+    figure = getattr(drawn, "figure", None)
+    # An `Axes` carries `.figure`; a `Figure` is its own, and matplotlib >= 3.10
+    # answers `Figure.figure` with self, so this covers both without isinstance.
+    return figure if figure is not None else drawn
+
+
+def resolve_noun_hover(hover, trace_kwargs: dict):
+    """The caller's hover spec, honouring the legacy ``hover_spec=`` spelling.
+
+    ``hover_spec`` is what every noun's ``map()`` forwarded before plan 8.8 named
+    ``hover``: the body ended in ``kwargs.setdefault("hover_spec", <default>)``,
+    so a caller who passed ``hover_spec=`` kept it and everyone else got the
+    default. Undocumented, but reachable, used, and asserted by
+    ``test_package_map_hover_spec_is_overridable``.
+
+    Naming ``hover=`` broke it SILENTLY rather than loudly. :class:`Choro` accepts
+    both, stores ``hover=`` as the override, and prefers the override -- so the
+    noun's own default, now arriving as an explicit ``hover=``, outranked the
+    caller's ``hover_spec=``, which still rode the tail and still reached the
+    constructor. No error, and no visible difference except the tooltip.
+
+    ``hover_spec`` cannot simply join :data:`NOUN_REFUSED_PARAMS`:
+    ``test_the_tiers_partition_the_free_verb`` asserts every declared name is a
+    real ``plot.map`` parameter, and ``plot.map`` has only ``hover``. So it stays
+    an unnamed legacy alias, resolved here and POPPED off the tail so it cannot
+    reach the constructor and lose a second time.
+
+    ``hover=`` wins when both are given -- it is the named, current spelling.
+    """
+
+    legacy = trace_kwargs.pop("hover_spec", None)
+    return legacy if hover is None else hover
+
 
 def _apply_backend(choro, backend: str = "plotly"):
     """Return a ``Choro`` as an interactive Plotly figure or a static mpl one.
@@ -27,11 +108,7 @@ def _apply_backend(choro, backend: str = "plotly"):
     without the map having to inherit the engine.
     """
 
-    if str(backend).lower() in ("mpl", "matplotlib", "static"):
-        return choro.plot_mpl()
-    if str(backend).lower() in ("plotly", "interactive"):
-        return choro
-    raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+    return choro if normalize_backend(backend) == "plotly" else choro.plot_mpl()
 
 
 def _symmetric_color_limit(values: Iterable[float]) -> float:
@@ -416,6 +493,13 @@ def build_surface_water_q_map_payload(
 # that provably cannot act is the same defect as hiding one that can.
 
 #: Drawing parameters every spatial noun offers, on top of its own selectors.
+#:
+#: `backend` is in this tier deliberately, and it is the one name here that is
+#: not a drawing option: it chooses the RENDERER. It has always worked on the
+#: nouns -- through their `**kwargs` tail -- so a conversion that named the other
+#: twenty and forgot this one would DELETE the matplotlib backend from that noun,
+#: silently, and no other test would notice. Listing it here makes
+#: `test_noun_signatures` refuse the conversion instead.
 NOUN_MAP_PARAMS = (
     "zmin", "zmax", "colorscale", "logscale",
     "contours", "contour_values", "contour_levels", "contour_color",
@@ -425,6 +509,7 @@ NOUN_MAP_PARAMS = (
     "locs", "hillshade_path",
     "fit_bounds", "bounds_padding",
     "hover",
+    "backend",
 )
 
 #: Extra parameters only a PER-LAYER field (heads, concentration, temperature)
@@ -473,6 +558,7 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
             f"hover, so the legacy hover arguments have no effect here. Pass "
             f"`hover=` a HoverSpec instead."
         )
+
 
 
 def build_cell_input_map_payload(
@@ -921,8 +1007,8 @@ class SpatialView:
     maps raw values.
     """
 
-    _PLOTLY_BACKENDS = ("plotly", "interactive")
-    _MPL_BACKENDS = ("mpl", "matplotlib", "static")
+    _PLOTLY_BACKENDS = PLOTLY_BACKENDS
+    _MPL_BACKENDS = MPL_BACKENDS
 
     # -- hooks the host provides ------------------------------------------
     def _spatial_map(self, *, per, layer, model=None, **kwargs):
@@ -1082,12 +1168,7 @@ class SpatialView:
     def _normalize_backend(cls, backend: str) -> str:
         """Canonicalize a backend alias to ``"plotly"`` or ``"mpl"`` (raises if unknown)."""
 
-        value = str(backend).lower()
-        if value in cls._PLOTLY_BACKENDS:
-            return "plotly"
-        if value in cls._MPL_BACKENDS:
-            return "mpl"
-        raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+        return normalize_backend(backend)
 
     def map(
         self,

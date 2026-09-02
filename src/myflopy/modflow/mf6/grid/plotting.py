@@ -13,6 +13,11 @@ from flopy.discretization.vertexgrid import VertexGrid
 from flopy.plot.crosssection import PlotCrossSection
 
 from myflopy import viz as f
+from myflopy.modflow.mf6.package_plotting import (
+    _apply_backend,
+    as_mpl_figure,
+    normalize_backend,
+)
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.hover import conc_hover, head_hover, temp_hover
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
@@ -406,8 +411,9 @@ class GridPlots:
         show_layer_elevs: bool | None = None,
         custom_hover: dict | None = None,
         hover=None,
+        backend: str = "plotly",
         **trace_kwargs,
-    ) -> Choro:
+    ):
         """A plan-view map of this grid, on a basemap.
 
         ``values`` is any per-cell array; with none, cells are keyed by node id
@@ -426,6 +432,13 @@ class GridPlots:
             badly on a field; ``"both"`` does each.
         select_color
             Highlight colour; defaults to the palette's.
+        backend
+            ``"plotly"`` (default) returns the interactive ``Choro`` picture;
+            ``"mpl"`` returns a static :class:`matplotlib.figure.Figure`. The
+            same switch every other picture verb takes, so the spelling does not
+            change with the scope. Note the Matplotlib branch draws in model
+            coordinates with no basemap, which makes ``bgs`` and ``zoom`` inert
+            there.
 
         Requires a CRS, because the basemap does. Use :meth:`grid` for a grid
         that does not have one yet.
@@ -468,23 +481,72 @@ class GridPlots:
             **({"custom_zs": list(values)} if values is not None else {}),
             **trace_kwargs,
         )
-        return picture
+        return _apply_backend(picture, backend)
 
-    def section(self, line) -> GridSection:
+    def section(self, line, *, backend: str = "plotly"):
         """A vertical slice of the grid geometry along ``line``.
 
         Layers and cell edges, no results -- for a section through a model's
         results use ``model.plot.section(...)``.
+
+        Parameters
+        ----------
+        line : LineString, MultiLineString, or Path
+            The section line, as a geometry or a vector file to read it from.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``"plotly"`` returns the interactive :class:`GridSection` picture;
+            ``"mpl"`` returns a static :class:`matplotlib.figure.Figure` drawn
+            by the ``figs`` cross-section helper. Passing this used to raise a
+            ``TypeError`` naming a parameter the docs advertised at every other
+            scope (fixed 2026-09-02).
+
+        Returns
+        -------
+        GridSection or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend; a bare
+            Matplotlib figure under ``"mpl"``.
+
+        Examples
+        --------
+        >>> vor.plot.section(line)
+        >>> vor.plot.section(line, backend="mpl").savefig("section.png")
         """
 
-        return _grid_section_factory(self.vor, line=line)
+        picture = _grid_section_factory(self.vor, line=line)
+        if normalize_backend(backend) == "plotly":
+            return picture
+        return as_mpl_figure(picture.plot_mpl())
 
-    def grid(self) -> GridMesh:
+    def grid(self, *, backend: str = "plotly"):
         """The bare mesh: cell edges, no values, no basemap, no CRS needed.
 
-        Takes nothing: the mesh is fully determined by the grid. The ``**kwargs``
-        that used to sit here reached ``GridMesh(vor)``, which accepts no other
-        argument, so every one of them raised.
+        The mesh is fully determined by the grid, so the only argument is which
+        renderer draws it. The ``**kwargs`` that used to sit here reached
+        ``GridMesh(vor)``, which accepts no other argument, so every one of them
+        raised.
+
+        Parameters
+        ----------
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``"plotly"`` returns the :class:`GridMesh` picture; ``"mpl"``
+            returns FloPy's own patch rendering as a Matplotlib figure -- the
+            same thing ``.plot_mpl()`` on the picture gives you, spelled the way
+            every other verb spells it. The 3-D volume is
+            ``myflopy.plot.grid(stack, backend="vtk")``, which needs a layer
+            stack this scope does not have.
+
+        Returns
+        -------
+        GridMesh or matplotlib.figure.Figure
+
+        Examples
+        --------
+        >>> vor.plot.grid()
+        >>> vor.plot.grid(backend="mpl")
         """
 
-        return GridMesh(self.vor)
+        mesh = GridMesh(self.vor)
+        if normalize_backend(backend) == "plotly":
+            return mesh
+        # FloPy's patch renderer hands back an `Axes`, not a figure.
+        return as_mpl_figure(mesh.plot_mpl())

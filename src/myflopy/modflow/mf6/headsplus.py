@@ -38,6 +38,7 @@ from myflopy.modflow.mf6.package_plotting import (
     SpatialView,
     _apply_backend,
     refuse_noun_parameters,
+    resolve_noun_hover,
 )
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
@@ -539,6 +540,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         if self.model is None:
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
         refuse_noun_parameters(f"model.{self._choro_type}", self._choro_type, trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         if hover is None:
             hover = self._default_hover(layers=hover_layers, surfaces=hover_surfaces)
         choro = self.model.plot.map(

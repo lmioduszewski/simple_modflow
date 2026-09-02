@@ -76,18 +76,41 @@ from myflopy.modflow.mf6.interactive_plotting import (
     SliderAnimation,
     build_particle_tracking_scene,
 )
+from myflopy.modflow.mf6.package_inputs import (
+    CellPackageInputFieldExplorer,
+    StaticArrayFieldExplorer,
+    UzfFieldInputsExplorer,
+)
+from myflopy.modflow.mf6.package_model import HfbPackageExplorer, HfbResultsExplorer
 
 # The noun tiers live one layer DOWN (package_plotting, L1) so the nouns
 # themselves can import them without pointing upward; re-exported here
 # because they are a statement about `plot.map`.
 from myflopy.modflow.mf6.package_plotting import (
     LAYER_FIELD_MAP_PARAMS,
+    MPL_BACKENDS,
     NOUN_INERT_PARAMS,
     NOUN_MAP_PARAMS,
     NOUN_REFUSED_PARAMS,
+    _apply_backend,
+    as_mpl_figure,
+    normalize_backend,
 )
+from myflopy.modflow.mf6.package_results import (
+    CellBudgetResultsExplorer,
+    StageResultsExplorer,
+)
+from myflopy.modflow.mf6.package_surface_water import (
+    LakBudgetResultsExplorer,
+    LakConnectionsExplorer,
+    SfrBudgetResultsExplorer,
+    SurfaceWaterExchangeResultsExplorer,
+    SurfaceWaterInputFieldExplorer,
+)
+from myflopy.modflow.mf6.prt_maps import PRTPathlineView
 from myflopy.modflow.utils.datatypes.choros import Choro
-from myflopy.modflow.utils.datatypes.xsections import XSection
+from myflopy.modflow.utils.datatypes.xsections import XSection, render_xsections
+from myflopy.modflow.utils.inputs import UzfInput
 from myflopy.viz import FrameAnimation, Picture, mosaic
 
 logger = get_logger(__name__)
@@ -224,8 +247,10 @@ def map(      # noqa: A001 - the verb IS `map`
     # -- niche ---------------------------------------------------------------
     rch_scale: float | None = None,
     animation_kstpkpers=None,
+    # -- renderer ------------------------------------------------------------
+    backend: str = "plotly",
     **trace_kwargs,
-) -> Choro:
+):
     """Draw a plan-view map of one value per grid cell.
 
     The single map verb. Contours, observation markers, a hillshade and particle
@@ -349,6 +374,29 @@ def map(      # noqa: A001 - the verb IS `map`
     animation_kstpkpers : sequence of tuple, optional
         The output times ``.ani`` steps through. Defaults to every time the model
         wrote.
+    backend : {'plotly', 'mpl'}, default 'plotly'
+        Which renderer draws the map. ``'plotly'`` returns the interactive
+        ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
+        static :class:`matplotlib.figure.Figure` instead, for a report, a
+        multi-panel figure of your own, or anywhere a live figure is not wanted.
+        Accepts ``'interactive'`` and ``'matplotlib'``/``'static'`` as aliases;
+        anything else raises rather than being ignored.
+
+        The switch changes the RENDERER, never the subject: both backends draw
+        this same map. Two differences are worth knowing before you rely on
+        one. The Matplotlib branch draws in **model coordinates** with no
+        basemap, so ``bgs`` and ``zoom`` have nothing to act on there; and a
+        NAMED diverging colorscale renders mirrored between the two, because the
+        name round-trips through a plotly-to-matplotlib table that maps
+        ``'rdbu'`` to the reversed colormap -- pass explicit stops when the
+        direction carries meaning (ledger 69/70).
+
+        ``backend='mpl'`` and ``.plot_mpl()`` on the returned picture are the
+        same renderer reached two ways. Prefer the parameter: it is the spelling
+        the whole grammar shares, so it also works on the nouns
+        (``model.hds.map(backend='mpl')``) and on the composers
+        (``mosaic``/``animate``), where there is no intermediate picture to call
+        a method on.
     **trace_kwargs
         Anything else rides through to the ``go.Choroplethmap`` trace --
         ``zmid``, ``colorbar``, ``reversescale``, ``showscale``. These are
@@ -357,11 +405,15 @@ def map(      # noqa: A001 - the verb IS `map`
 
     Returns
     -------
-    Choro
-        A :class:`~myflopy.viz.Picture`: renders itself in Jupyter, and answers
-        ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. Also carries
-        ``.plot_mpl()`` for a static Matplotlib rendering and ``.ani`` for the
+    Choro or matplotlib.figure.Figure
+        With ``backend='plotly'`` (the default), a
+        :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
+        ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
+        carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
         animation over periods.
+
+        With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
+        use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
 
     See Also
     --------
@@ -384,7 +436,10 @@ def map(      # noqa: A001 - the verb IS `map`
         trace_kwargs.setdefault("model", source)
     if values is not None:
         trace_kwargs["custom_zs"] = list(values)
-    return _choropleth_factory(
+    # Resolved BEFORE the picture is built, so a misspelled backend raises
+    # instead of costing a full render first.
+    kind = normalize_backend(backend)
+    choro = _choropleth_factory(
         vor,
         per=per,
         kstpkper=kstpkper,
@@ -427,6 +482,7 @@ def map(      # noqa: A001 - the verb IS `map`
         animation_kstpkpers=animation_kstpkpers,
         **trace_kwargs,
     )
+    return _apply_backend(choro, kind)
 
 
 #: Section arguments that only mean something with results behind them. A bare
@@ -495,6 +551,7 @@ def section(
     section_name: str | None = None,
     clip=None,
     animation_kstpkpers=None,
+    backend: str = "plotly",
     **kwargs,
 ):
     """Draw a vertical slice through a model's results, or a grid's geometry.
@@ -551,14 +608,34 @@ def section(
     animation_kstpkpers : sequence of tuple, optional
         *(model only)* The periods ``.ani`` steps through; defaults to every
         output time.
+    backend : {'plotly', 'mpl'}, default 'plotly'
+        Which renderer draws the section. ``'plotly'`` returns the interactive
+        picture; ``'mpl'`` returns a static
+        :class:`matplotlib.figure.Figure`. Accepts ``'interactive'`` and
+        ``'matplotlib'``/``'static'`` as aliases; anything else raises.
+
+        Applies to both branches: a model section renders through the same
+        overlay builder the noun grammar uses
+        (``model.hds.section(line=..., backend='mpl')``), and a grid section
+        through ``GridSection``'s own cell-outline renderer. Until 2026-09-02
+        this parameter did not exist on the verb and a caller who passed it got
+        a Plotly figure back with no error at all -- it vanished into the
+        ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
+        to ``.plot_mpl()`` on the result, which is the same renderer reached a
+        second way.
     **kwargs
         Forwarded to the underlying section class.
 
     Returns
     -------
-    XSection or GridSection
-        A :class:`~myflopy.viz.Picture`. ``XSection`` (model) also carries
-        ``.ani``; both answer ``.plot_mpl()``.
+    XSection or GridSection or matplotlib.figure.Figure
+        With ``backend='plotly'`` (the default) a
+        :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
+        carries ``.ani``, or ``GridSection`` for a bare grid. Both answer
+        ``.plot_mpl()``.
+
+        With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
+        ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.
 
     Raises
     ------
@@ -578,11 +655,14 @@ def section(
     >>> model.plot.section(line=line, layer=[0, 1], interpolate=True)
     >>> model.plot.section(cells=cells).save("section.png")
     >>> vor.plot.section(line)                       # geometry, no results
+    >>> model.plot.section(line=line, backend="mpl") # a static mpl Figure
+    >>> vor.plot.section(line, backend="mpl").savefig("grid_section.png")
     """
 
     vor, is_model = _grid_of(source)
+    kind = normalize_backend(backend)
     if is_model:
-        return XSection(
+        picture = XSection(
             model=source,
             line=line,
             cells=cells,
@@ -603,6 +683,14 @@ def section(
             clip=clip,
             animation_kstpkpers=animation_kstpkpers,
             **kwargs,
+        )
+        if kind == "plotly":
+            return picture
+        # The SAME renderer the noun grammar uses (`model.hds.section(...)`),
+        # not a second matplotlib path -- one overlay builder, so the two
+        # spellings cannot drift into drawing different pictures.
+        return render_xsections(
+            {picture.section_name: picture}, backend="mpl", title=section_name,
         )
 
     asked = {
@@ -625,7 +713,10 @@ def section(
             f"draws geometry only. Pass a model as the first argument, or drop "
             f"these and give just the line."
         )
-    return GridSection(vor=vor, line=line, **kwargs)
+    geometry = GridSection(vor=vor, line=line, **kwargs)
+    if kind == "plotly":
+        return geometry
+    return as_mpl_figure(geometry.plot_mpl())
 
 
 def surface(
@@ -763,11 +854,18 @@ def grid(
     ----------
     source : SimulationBase or VoronoiGridPlus or LayerBuildResult
         Positional only. Anything that carries a grid.
-    backend : {'plotly', 'vtk'}, default 'plotly'
+    backend : {'plotly', 'mpl', 'vtk'}, default 'plotly'
         ``'plotly'`` draws cell edges in 2-D -- fast, CRS-free, no basemap.
-        ``'vtk'`` renders the cell VOLUME in 3-D as an interactive PyVista
-        scene, and needs the ``viz3d`` extra
-        (``pip install 'myflopy[viz3d]'``).
+        ``'mpl'`` draws the same 2-D mesh through FloPy's own patch renderer and
+        returns a static :class:`matplotlib.figure.Figure`; it is the same
+        renderer as ``.plot_mpl()`` on the returned picture, offered here so the
+        switch is spelled the same way on every verb. ``'vtk'`` renders the cell
+        VOLUME in 3-D as an interactive PyVista scene, and needs the ``viz3d``
+        extra (``pip install 'myflopy[viz3d]'``).
+
+        All three draw the same subject -- this grid -- which is the rule the
+        parameter follows everywhere: ``backend=`` changes the renderer, never
+        what is being drawn.
     pathlines : DataFrame, optional
         Particle track records, drawn as time-coloured tubes over the 3-D mesh.
         Requires ``backend="vtk"``; in plan view the equivalent is
@@ -801,7 +899,7 @@ def grid(
     Raises
     ------
     ValueError
-        If ``backend`` is neither ``'plotly'`` nor ``'vtk'``, if ``pathlines``
+        If ``backend`` is none of ``'plotly'``, ``'mpl'`` or ``'vtk'``, if ``pathlines``
         or any ``vtk only`` argument above is given with the plotly backend, or
         if the VTK backend is asked for without either pathlines or a layer
         stack.
@@ -833,6 +931,15 @@ def grid(
         "off_screen": off_screen,
     }
 
+    if str(backend).lower() in MPL_BACKENDS:
+        if pathlines is not None:
+            raise ValueError(
+                "pathlines are only drawn by the 3-D scene; pass backend='vtk' "
+                "for tubes over the grid, or use map(pathlines=...) in plan view."
+            )
+        vor, _ = _grid_of(source)
+        # FloPy's patch renderer returns an `Axes`; the contract is a figure.
+        return as_mpl_figure(GridMesh(vor, **kwargs).plot_mpl())
     if backend == "plotly":
         if pathlines is not None:
             raise ValueError(
@@ -850,7 +957,9 @@ def grid(
         vor, _ = _grid_of(source)
         return GridMesh(vor, **kwargs)
     if backend != "vtk":
-        raise ValueError(f"backend must be 'plotly' or 'vtk', not {backend!r}.")
+        raise ValueError(
+            f"backend must be 'plotly', 'mpl' or 'vtk', not {backend!r}."
+        )
 
     if pathlines is None:
         raise ValueError(
@@ -1047,8 +1156,9 @@ class ModelPlots:
         custom_hover: dict | None = None,
         rch_scale: float | None = None,
         animation_kstpkpers=None,
+        backend: str = "plotly",
         **trace_kwargs,
-    ) -> Choro:
+    ):
         """This model's plan-view map. See :func:`myflopy.plot.map`."""
 
         return map(self.model, **_bound_args(locals(), "trace_kwargs"), **trace_kwargs)
@@ -1074,8 +1184,9 @@ class ModelPlots:
         section_name: str | None = None,
         clip=None,
         animation_kstpkpers=None,
+        backend: str = "plotly",
         **kwargs,
-    ) -> XSection:
+    ):
         """A vertical slice through this model. See :func:`myflopy.plot.section`."""
 
         return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -1292,6 +1403,22 @@ def inherit_map_docs(method, *, keep, extra: str = "") -> None:
             "Parameters\n----------\n" + inspect.cleandoc(extra), sections
         )
     if own_sections:
+        # The noun documents some of its own parameters -- `per`/`multiplier`
+        # on `inputs.uzf`, `fill_value`/`agg` on a record field. Merging the
+        # inherited block wholesale left the SAME name documented TWICE, the
+        # generic copy last and therefore the one a reader ends on: measured on
+        # `UzfInput.map`, the noun's "``'all'`` is not accepted here" entry was
+        # followed by `plot.map`'s "Mutually exclusive with ``kstpkper``",
+        # naming a parameter this noun deliberately does not accept. The
+        # method's own entry wins and the inherited block contributes only the
+        # names it does not already cover -- the same rule
+        # `_inherit_verb_docs` already applies to the bound namespaces.
+        own_names = {
+            name
+            for line in own_sections.splitlines()
+            for name in _parameter_name(line)
+        }
+        sections = _filter_parameters(sections, drop=own_names)
         sections = _merge_parameter_sections(own_sections, sections)
     method.__doc__ = "\n\n".join(p for p in (own_prose, sections) if p)
 
@@ -1402,7 +1529,49 @@ def _inherit_noun_docs() -> None:
 
     tier1 = set(NOUN_MAP_PARAMS)
     layer_field = tier1 | set(LAYER_FIELD_MAP_PARAMS) | {"per", "layer"}
+    record = tier1 | {"per", "layer"}
+
+    #: Per-layer FIELD nouns: heads, concentration, temperature. They honour the
+    #: Tier 2 names as well, because they genuinely have a time axis and a
+    #: per-layer profile behind them.
     inherit_map_docs(DependentVariableFile.map, keep=layer_field)
+
+    #: RECORD nouns: a package's period table reduced to one value per cell.
+    #: Tier 1 only -- Tier 2 was measured byte-identical on these.
+    #:
+    #: Only nouns BELOW this module (layer 7) are listed. `GroupLakConnections`
+    #: is layer 9, and reaching up to it here pulls in `myflopy.project`
+    #: (layer 13) mid-import, which fails on a partially initialised
+    #: `simulation.base`. It splices itself instead, at the bottom of its own
+    #: module -- the mirror of what `StackPlots` needs, which is below this
+    #: module and so cannot fetch the reference itself.
+    for method in (
+        CellBudgetResultsExplorer.map,
+        CellPackageInputFieldExplorer.map,
+        HfbPackageExplorer.map,
+        HfbResultsExplorer.map,
+        LakBudgetResultsExplorer.map,
+        LakConnectionsExplorer.map,
+        PRTPathlineView.map,
+        SfrBudgetResultsExplorer.map,
+        StageResultsExplorer.map,
+        StaticArrayFieldExplorer.map,
+        SurfaceWaterExchangeResultsExplorer.map,
+        SurfaceWaterInputFieldExplorer.map,
+        UzfFieldInputsExplorer.map,
+    ):
+        inherit_map_docs(method, keep=record)
+
+    #: `model.inputs.uzf` is a record noun with NO layer axis, so it takes the
+    #: `record` set MINUS `layer`. `finf()` reindexes to `ncpl` -- UZF is keyed
+    #: by `ifno` and joined back through `packagedata.cellid[1]` -- which makes
+    #: infiltration a per-COLUMN quantity, and `map()` has never named `layer`.
+    #: Splicing the shared set documented a `layer` the signature does not
+    #: accept, and one a reader would then pass: it lands in `**trace_kwargs`,
+    #: reaches `plot.map(layer=...)`, and moves the HEAD tooltip while leaving
+    #: every colour exactly where it was (measured: `custom_zs` identical,
+    #: figure not).
+    inherit_map_docs(UzfInput.map, keep=tier1 | {"per"})
 
 
 _inherit_verb_docs(ModelPlots)

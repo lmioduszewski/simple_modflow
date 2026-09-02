@@ -4703,71 +4703,313 @@ same day, which is the useful part of the result.
        `sand` 3 cells and `clay` 3 cells from a single 3-cell hole.
 
 
-169. **The 8.8 no-bare-kwargs rule reaches the NOUN tier -- one method converted,
-     17 recorded as debt (2026-08-30).**
-     Reported as "`model.hds.map()` docstring doesn't show all arguments...
-     `show_layer_elevs`, `show_mounding` aren't even mentioned". Measured: 29 of
-     its 39 reachable parameters were invisible, and `show_mounding` does not
-     decorate the map -- it REWRITES it, z going
-     `153.76, 147.67, 144.27` to `22.00, 16.28, 15.79`.
-     - **It is 18 methods, not one.** An AST sweep finds 18 classes defining a
-       picture verb that takes a bare `**kwargs` and forwards to a plot function;
-       13 have no `Parameters` section at all and 8 have a one-line docstring.
-       Across the family that is 516 invisible parameter-slots and 110 named
-       parameters an editor autocompletes and nothing explains.
-     - **Why no test saw it.** Every enumeration in `test_plot_vocabulary.py` is a
-       hand-written four-entry whitelist -- `SCOPES` is
-       `{module, model, grid, stack}`, `_namespace` a four-entry dict. There is no
-       discovery step, so the noun tier was unreachable by construction, in both
-       directions. All 64 of its tests pass over this defect.
-     - **It had been excused once already.** Ledger 145 recorded the leaf verbs as
-       "assumed bare and measured otherwise". That check asked ONE question -- is
-       the signature `(*args, **kwargs)`? -- where 8.8 states four requirements.
-       Pointing the six tests at `DependentVariableFile.map` today, four fail.
-       That is why the new test DISCOVERS its subjects instead of listing them.
-     - **The contract is signature-static, docstring-runtime**, matching the verb
-       tier rather than inventing a stricter rule for nouns: the reference is
-       written once on the free verb and spliced at import
-       (`_inherit_verb_docs`), so no bound method repeats it in source either.
-       What a purely static reader gets is the SIGNATURE, which is the
-       load-bearing assertion.
-     - **The tiers are MEASURED, not stylistic.** Every Tier 1 name changes the
-       figure on both a results noun and a record noun. Tier 2
-       (`kstpkper`/`per_timestep`/`bgs`/`hover_layers`/`hover_surfaces`/
-       `show_layer_elevs`/`show_mounding`) changes it only on a per-layer field;
-       on a record noun those produce a byte-identical figure, and `show_mounding`
-       is worse than inert -- it injects a head-derived row into an elevation
-       tooltip on every cell. Naming a parameter that provably cannot act is the
-       same defect as hiding one that can. Four more (`hover_fields`, `zoom`,
-       `rch_scale`, `animation_kstpkpers`) were measured inert on nouns and are
-       recorded in `NOUN_INERT_PARAMS` rather than silently omitted.
-     - **Five parameters now RAISE from the noun** rather than being accepted.
-       `values=` was the reason: measured on three classes, it repainted every
-       cell from the supplied array while the hover, title and colorscale went on
-       reporting the noun's real field -- `hds.map(values=[1.0]*ncpl)` drew
-       all-1.0 cells whose tooltips read 131.5 ft. That is a wrong picture, not a
-       missing docstring, and the report would never have surfaced it. **This is a
-       breaking change** for any notebook passing `values=`/`type=`/the legacy
-       hover trio to a noun -- every such call was producing a mislabelled figure.
-     - **Prerequisite fixes to the splice machinery**, all measured first:
-       `_drop_parameter` walked the whole sectioned remainder, so dropping a
-       parameter named `grid` or `section` also deleted the See Also entry sharing
-       its name; it could not split a grouped head (`zmin, zmax :` was a no-op for
-       both names); and `_inherit_verb_docs` was not idempotent -- a second call
-       took `ModelPlots.map` from 149 lines to 297. `GridPlots.map` carried two
-       `Parameters` headings, which is malformed NumPy: a reader stops at the
-       first block.
-     - **DEFERRED: the other 17**, listed exactly in
-       `tests/test_noun_signatures.py::UNCONVERTED` and xfailed there. The list is
-       exact in both directions, so a class fixed without being removed fails as
-       loudly as a new one added -- it can only shrink. That shape is deliberate:
-       ledger 145 is the precedent for what an unchecked "measured clean" note
-       becomes. The remaining work is 17 signature rewrites (~30 named parameters
-       each, from ~7) plus their `refuse_noun_parameters` call; the docstrings
-       splice from `plot.map` and need no authorship.
-     - Also deferred, found while measuring and NOT fixed here: `logscale=True`
-       raises on heads (an object-dtype `zs` path, a numeric bug rather than a
-       signature one); `contour_method='nearest'` is documented on `plot.map` and
-       rejected by it; `contour_resolution` is inert under the default linear
-       method. The last two are "a parameter you document must be one you accept"
-       failing one level down, at the value set.
+169b. **The 8.8 no-bare-kwargs rule reaches the NOUN tier -- one method converted,
+      17 recorded as debt (2026-08-30).**
+      Reported as "`model.hds.map()` docstring doesn't show all arguments...
+      `show_layer_elevs`, `show_mounding` aren't even mentioned". Measured: 29 of
+      its 39 reachable parameters were invisible, and `show_mounding` does not
+      decorate the map -- it REWRITES it, z going
+      `153.76, 147.67, 144.27` to `22.00, 16.28, 15.79`.
+      - **It is 18 methods, not one.** An AST sweep finds 18 classes defining a
+        picture verb that takes a bare `**kwargs` and forwards to a plot function;
+        13 have no `Parameters` section at all and 8 have a one-line docstring.
+        Across the family that is 516 invisible parameter-slots and 110 named
+        parameters an editor autocompletes and nothing explains.
+      - **Why no test saw it.** Every enumeration in `test_plot_vocabulary.py` is a
+        hand-written four-entry whitelist -- `SCOPES` is
+        `{module, model, grid, stack}`, `_namespace` a four-entry dict. There is no
+        discovery step, so the noun tier was unreachable by construction, in both
+        directions. All 64 of its tests pass over this defect.
+      - **It had been excused once already.** Ledger 145 recorded the leaf verbs as
+        "assumed bare and measured otherwise". That check asked ONE question -- is
+        the signature `(*args, **kwargs)`? -- where 8.8 states four requirements.
+        Pointing the six tests at `DependentVariableFile.map` today, four fail.
+        That is why the new test DISCOVERS its subjects instead of listing them.
+      - **The contract is signature-static, docstring-runtime**, matching the verb
+        tier rather than inventing a stricter rule for nouns: the reference is
+        written once on the free verb and spliced at import
+        (`_inherit_verb_docs`), so no bound method repeats it in source either.
+        What a purely static reader gets is the SIGNATURE, which is the
+        load-bearing assertion.
+      - **The tiers are MEASURED, not stylistic.** Every Tier 1 name changes the
+        figure on both a results noun and a record noun. Tier 2
+        (`kstpkper`/`per_timestep`/`bgs`/`hover_layers`/`hover_surfaces`/
+        `show_layer_elevs`/`show_mounding`) changes it only on a per-layer field;
+        on a record noun those produce a byte-identical figure, and `show_mounding`
+        is worse than inert -- it injects a head-derived row into an elevation
+        tooltip on every cell. Naming a parameter that provably cannot act is the
+        same defect as hiding one that can. Four more (`hover_fields`, `zoom`,
+        `rch_scale`, `animation_kstpkpers`) were measured inert on nouns and are
+        recorded in `NOUN_INERT_PARAMS` rather than silently omitted.
+      - **Five parameters now RAISE from the noun** rather than being accepted.
+        `values=` was the reason: measured on three classes, it repainted every
+        cell from the supplied array while the hover, title and colorscale went on
+        reporting the noun's real field -- `hds.map(values=[1.0]*ncpl)` drew
+        all-1.0 cells whose tooltips read 131.5 ft. That is a wrong picture, not a
+        missing docstring, and the report would never have surfaced it. **This is a
+        breaking change** for any notebook passing `values=`/`type=`/the legacy
+        hover trio to a noun -- every such call was producing a mislabelled figure.
+      - **Prerequisite fixes to the splice machinery**, all measured first:
+        `_drop_parameter` walked the whole sectioned remainder, so dropping a
+        parameter named `grid` or `section` also deleted the See Also entry sharing
+        its name; it could not split a grouped head (`zmin, zmax :` was a no-op for
+        both names); and `_inherit_verb_docs` was not idempotent -- a second call
+        took `ModelPlots.map` from 149 lines to 297. `GridPlots.map` carried two
+        `Parameters` headings, which is malformed NumPy: a reader stops at the
+        first block.
+      - **DEFERRED: the other 17**, listed exactly in
+        `tests/test_noun_signatures.py::UNCONVERTED` and xfailed there. The list is
+        exact in both directions, so a class fixed without being removed fails as
+        loudly as a new one added -- it can only shrink. That shape is deliberate:
+        ledger 145 is the precedent for what an unchecked "measured clean" note
+        becomes. The remaining work is 17 signature rewrites (~30 named parameters
+        each, from ~7) plus their `refuse_noun_parameters` call; the docstrings
+        splice from `plot.map` and need no authorship.
+      - Also deferred, found while measuring and NOT fixed here: `logscale=True`
+        raises on heads (an object-dtype `zs` path, a numeric bug rather than a
+        signature one); `contour_method='nearest'` is documented on `plot.map` and
+        rejected by it; `contour_resolution` is inert under the default linear
+        method. The last two are "a parameter you document must be one you accept"
+        failing one level down, at the value set.
+
+
+176. **`backend="mpl"` reaches the verb tier, and the noun tier is finished
+      (2026-09-02).**
+      Reported as "I'm having trouble understanding how I plot a cross section
+      with the mpl backend -- `model.plot.section(backend='mpl')` rendered a
+      plotly plot. I know I've created mpl cross sections before." Both halves
+      were right, and the diagnosis was the interesting part.
+      - **It was never a regression, and the check mattered.** `plot.section` was
+        `def section(source, /, **kwargs)` before the 8.8 conversion and
+        `XSection.__init__` parks unknown kwargs in `self._kwargs`, so
+        `backend="mpl"` was swallowed there too -- identical behaviour before and
+        after. Verified over every commit that has touched
+        `src/myflopy/plot/__init__.py` since it was created: **0 occurrences of
+        an mpl backend value at all nine**. The verb tier was born without the
+        switch at 8.3a (2026-08-18), on the same day 8.2 gave the noun tier one.
+      - **Three different answers to one typo**, measured before anything was
+        changed: `model.plot.section(..., backend="mpl")` returned an `XSection`
+        with `{'backend': 'mpl'}` stashed on it; `plot.map(..., backend="mpl")`
+        returned a `Choro`, swallowed by `**trace_kwargs`;
+        `vor.plot.section(line, backend="mpl")` raised `TypeError`. Meanwhile
+        `model.hds.section(line=..., backend="mpl")` had worked all along.
+      - **Why no test saw it.** `test_map_select.py` carries a test *titled*
+        "Every grammar leaf offers `backend="mpl"`" whose body calls
+        `picture.plot_mpl()` and never passes a backend -- the docstring asserts
+        more than the test does. And `test_plot_vocabulary._chains()` anchors
+        `"section": [XSection.__init__]`, the Plotly constructor;
+        `render_xsections`, which is where `backend=` actually lives, is not in
+        the chain, so a verb missing it was unmeasurable by construction.
+      - **`backend` is now in `NOUN_MAP_PARAMS`, and that is the load-bearing
+        decision.** It is the one name in that tier that is not a drawing option.
+        It had always worked on the unconverted nouns *through their `**kwargs`
+        tail*, so converting one to a named signature without it would have
+        DELETED the matplotlib backend from that noun -- silently, with no test
+        objecting. Listing it makes `test_noun_signatures` refuse the conversion
+        instead. This is why the two jobs were done in one pass rather than in
+        sequence: fifteen chances to quietly undo the thing being built.
+      - **COMPROMISE -- `surface` gets no backend.** `InterpolatedSurface` has no
+        `plot_mpl` and there is no matplotlib rendering of a 3-D height field
+        here. Naming a parameter that cannot act is the same defect as hiding one
+        that can (the rule 169b established), so it is documented as absent
+        rather than added and made to raise. `animate`'s
+        `backend={"plotly", "png"}` is left alone for a different reason: a
+        rasteriser over frames is not a second renderer of one subject.
+      - **`Choro.plot_mpl` ignores overlays, which makes HFB a special case.**
+        A barrier is an edge drawn OVER the cells, so the ordinary
+        `_apply_backend` route -- correct for every other noun -- returns a
+        perfectly valid figure of the grid with every barrier missing: the one
+        thing the picture is of. Both HFB verbs now draw the segments onto the
+        axes themselves. Measured on the canonical wall: **32 barriers, 32
+        `Line2D` artists**, on the inputs and results side both. That count is
+        the assertion, because a type check passes straight over the defect.
+        Two details worth carrying: `plot_mpl` renders in MODEL coordinates
+        (measured, x limits -105..2205 against grid bounds 0..2100 on EPSG:2927)
+        so the segments go on unprojected, where the Plotly overlay needs
+        EPSG:4326; and `PALETTE.highlight` is Plotly's `rgb(214,39,40)`, which
+        matplotlib REJECTS -- `PALETTE.mpl_highlight` is the twin the palette
+        already carried for exactly this.
+      - **BREAKING (small): `PRTPathlineView.map(backend="mpl")` returns a bare
+        `Figure`, not FloPy's `(fig, ax)`.** Every other `backend="mpl"` in the
+        grammar returns one figure, and a lone verb handing back a tuple means a
+        caller looping over several pictures gets a `TypeError` from the odd one
+        out. The axes are still `figure.axes[0]`. One test updated; no other
+        caller anywhere in the repo.
+      - **Naming PRT's parameters emptied a tail three checks were reading.**
+        `map` consulted `**base_kwargs` to refuse base-map options on the
+        Matplotlib branch, to refuse them on an already-built base, and to
+        forward them. Naming them (8.8) would have silently disabled all three.
+        `_explicit_options` reconstructs the same information from the named
+        parameters by comparing each against the default in the method's OWN
+        signature, so the two cannot drift. This is the general hazard of the
+        8.8 conversion and the one to look for next time, so it now has a test
+        rather than a comment. Note what that test canNOT probe with: the PRT
+        fixture's grid is TWO cells, and two points produce no contour traces at
+        all, so `contours=True` leaves the trace count unmoved and reads as
+        "never forwarded" when the option arrived correctly -- instrumenting
+        `_explicit_options` shows `{'zmin', 'contours', 'contour_levels'}`
+        reaching the base map, and the same call on the canonical grid goes 1
+        trace to 15. `zmin` is the probe instead.
+      - **`values=` survives on `HfbPackageExplorer.map` where every other noun
+        refuses it**, and the difference is real rather than an oversight. Those
+        nouns fix a field, so an override repaints the cells while the hover and
+        colorbar go on describing the real one. This noun's subject is the
+        BARRIERS; the cells are a backdrop, and choosing what the backdrop shows
+        contradicts nothing -- exactly as on `vor.plot.map`, which it delegates
+        to. The rule as written already permits this (it tests keyword-only
+        names, and `values` is positional here), which is fortunate rather than
+        designed; it is recorded so the next reader does not "fix" it.
+      - **`GridPlots.map` and `StackPlots.section` were NOT nouns**, and treating
+        them as such was a category error inherited from 169b. They are the verb
+        tier wearing a noun's shape. A noun fixes what is drawn, so
+        `values`/`type`/`custom_hover` contradict it; a scope fixes only the
+        SUBJECT, and `vor.plot.map(values=node_ids)` is the whole point of a grid
+        map while `custom_hover` is the only hover a bare grid HAS, the sectioned
+        one needing a model. Applying the noun rules would have deleted three
+        working parameters to satisfy a rule written about something else. They
+        are now split out as `VERB_SCOPES`, still covered by the docstring test
+        and by `test_plot_vocabulary`'s mirror/subset/defaults rules.
+      - **`GroupLakConnections` splices its own docstring**, unlike the other
+        fourteen. It is layer 9 and `myflopy.plot` is layer 7, so importing it
+        from the splicer pulls in `myflopy.project` (layer 13) while
+        `simulation.base` is still half-built and the import fails outright --
+        found by hitting it, not by reading the layer map. It reaches down for
+        the reference from the bottom of its own module instead, which is the
+        mirror image of what `StackPlots` needs.
+      - **Three normalizations became one, each after a second call site wanted
+        it.** `normalize_backend` (the alias set was written out three times) and
+        `as_mpl_figure` -- because the renderers disagree about what they return:
+        `Choro.plot_mpl` a `Figure`, the `figs` cross-section helper a
+        `(fig, ax)` tuple, FloPy's patch renderer an `Axes`. Measured, not
+        assumed: `vor.plot.grid(backend="mpl")` returned an `Axes` on the first
+        pass and the test caught it.
+      - **The docstring contract is unchanged and deliberate: signature-static,
+        docstring-runtime.** Each noun's SOURCE carries its own local parameters,
+        its Returns/See Also, and 5-6 Examples written for that noun; the ~22
+        shared entries are spliced from `plot.map` at import. Every parameter
+        therefore appears twice at runtime -- in the signature an editor reads,
+        and as a full entry in `help()` -- without twenty-two entries being
+        hand-copied into fifteen files, which is the drift the splice exists to
+        prevent. `GroupLakConnections.map` comes out at 210 lines and 28
+        documented entries (38 before the review below removed a spliced entry
+        for a parameter it does not have, and a duplicate one).
+      - **STILL DEFERRED from 169b, untouched here**: `logscale=True` raises on
+        heads (an object-dtype `zs` path -- a numeric bug, not a signature one);
+        `contour_method='nearest'` is documented on `plot.map` and rejected by
+        it; `contour_resolution` is inert under the default linear method.
+      - **An Examples block is prose to every other check, and two of them
+        lied.** `LakConnectionsExplorer` was documented at
+        `model.packages.lak.inputs.connections` -- the explorer hangs off the
+        PACKAGE, not off `.inputs` -- and `SurfaceWaterExchangeResultsExplorer`
+        at `model.surface_water.results.exchange`, where it is
+        `model.packages.surface_water.results.q`. Both plausible, both wrong,
+        and invisible to the signature tests and to a
+        documents-what-it-names check alike. A new parametrized test walks the
+        ATTRIBUTE CHAIN of every `>>>` line against the canonical model; it fails
+        naming the noun and the path. Not the call, only the chain -- drawing
+        eighteen maps in every documented combination would make this the slowest
+        file in the suite for much less. Mutation-checked: retyping one example
+        as `model.packages.lake...` fails by name.
+      - **A noun's own hover spec is the BASE, not an override -- caught by a
+        test that had been adapted rather than fixed.** The conversion first
+        passed each noun's default through `hover=`, the call-site override slot,
+        because that is the name the verb exposes. It renders identically, so
+        the only symptom was `choro.hover_spec` coming back `None` where
+        `model.hds.map().hover_spec` carries a spec -- and
+        `test_model_budget_namespace` was edited to read
+        `_resolved_hover_spec()` instead, which passes over the change rather
+        than questioning it. Reverted at all 11 sites: the default now goes to
+        `hover_spec=` (the base, which is where it went before 8.8) and `hover=`
+        stays the caller's. The adapted test is back to its original assertion.
+        The lesson is the one worth carrying: a green suite after a test edit is
+        not evidence, and "the assertion moved" is the signal to look at.
+      - **The debt list is now EMPTY, and that is the point of the pass.**
+        `UNCONVERTED` is kept rather than deleted, and an assertion says so, so
+        that the three parametrized tests go from "xfail on the debt list" to
+        "assert on every noun in `src/`". Anything added back is debt with a
+        ledger entry, not an exemption. 18 discovered methods: 16 nouns and the
+        2 verb scopes, 51 xfails to 0.
+      - **Also fixed in passing**: the ledger had TWO entries numbered 169. The
+        noun-tier one is now 169b, on the user's instruction; `usg.export_gis`
+        keeps 169, which is what CLAUDE.md references.
+      - **`hover_spec=` was the pre-8.8 spelling of `hover=`, and naming `hover`
+        silently took it away.** Every noun used to end in
+        `kwargs.setdefault("hover_spec", <default>)`, so a caller passing
+        `hover_spec=` kept it. Once `hover=` is a named parameter the noun always
+        supplies one, and `Choro` stores it as `_hover_override`, which
+        `_resolved_hover_spec` prefers -- so the caller's `hover_spec=` still
+        reached the constructor and lost, with no error. Measured on the
+        canonical model, HEAD vs converted: `drn.results.q`, `budget.sto_ss`,
+        `lak.results.stage`, `sfr.results.stage` all went honoured -> dropped.
+        `refuse_noun_parameters` could not cover it -- `hover_spec` is not a
+        `plot.map` parameter, and `test_the_tiers_partition_the_free_verb`
+        forbids naming one that is not -- so the resolution is a sibling helper,
+        `resolve_noun_hover(hover, trace_kwargs)`: it pops the legacy key off the
+        tail and returns it when `hover=` is None, `hover=` winning when both are
+        given. **Judgment call: `hover_spec` stays UNNAMED.** Naming it would put
+        two spellings of one argument in an editor's autocomplete, and the rule
+        is that a narrower scope offers fewer parameters, never other ones.
+        Applied in `package_results.py` (both methods) and, in the adversarial
+        review below, `project/group/lak.py`. **The same defect is still live in
+        `package_surface_water.py` (5 sites) and `package_inputs.py` (3 sites)**
+        -- each needs the one-line `hover = resolve_noun_hover(hover,
+        trace_kwargs)` after its `refuse_noun_parameters` call;
+        `test_package_map_hover_spec_is_overridable` fails until they get it
+        (it routes through `package_surface_water.py`).
+      - **A test that read `Choro.hover_spec` had to move to
+        `_resolved_hover_spec()`.** `test_terms_with_no_package_accessor_are_reachable`
+        asserted `budget.sto_ss.map().hover_spec.title == "STO-SS q"`; the
+        attribute is now `None` for every noun, because the default arrives as
+        `hover=`. The attribute is one of two inputs, the method is the answer,
+        and the question the line asks is "which spec will this map draw with".
+
+  - **Adversarial review of `GroupLakConnections.map` (2026-09-02).** Three
+    defects, all introduced by the conversion, all found by running code rather
+    than reading it. The mechanical part of the conversion was clean: all 22
+    `NOUN_MAP_PARAMS` keyword-only, none of `NOUN_REFUSED_PARAMS`/
+    `NOUN_INERT_PARAMS` offered, every one of the 21 forwardable names actually
+    forwarded, every default equal to `ModelPlots.map`'s, nothing dropped or
+    renamed against HEAD (only `colorscale`'s annotation widened). The defects
+    were all in the parts a signature diff does not cover:
+      - **The docstring splice documented a parameter the method does not
+        have.** `inherit_map_docs(..., keep=set(NOUN_MAP_PARAMS) | {"per",
+        "layer"})` inherited `plot.map`'s `per` entry, but this noun has no
+        `per` -- connection geometry is static, so the forward hardcodes
+        `per=0`. `map(per=3)` therefore reached the tail and died as
+        `ModelPlots.map() got multiple values for keyword argument 'per'` --
+        naming a class the caller never typed, which is verbatim the defect
+        `refuse_noun_parameters` was written against, reintroduced through the
+        docs. `keep` is now exactly `NOUN_MAP_PARAMS`; `layer` came out with it
+        because the method documents `layer` locally and inheriting it too put
+        **two `layer` entries in one Parameters block**. 38 entries -> 28, no
+        duplicates, no lies. **The three signature tests cannot catch either
+        one**: they check named -> documented, never documented -> named, and
+        the splice runs at import so the source they parse looks fine.
+      - **`per=` is now refused explicitly**, since every sibling noun takes one
+        and reaching for it here is the natural mistake. A local `TypeError`
+        naming the noun, not a collision inside a class the caller never named.
+      - **The `hover_spec=` regression, found independently and then handed to
+        the shared fix.** Measured on the canonical model:
+        `map(hover_spec=cell_input_hover("belev"))` set `Choro.hover_spec` and
+        left the figure **byte-identical** to `map()`. First fixed here by
+        raising; that was **wrong and was reverted** -- `test_hover_integration.py::
+        test_package_map_hover_spec_is_overridable` is a HEAD test pinning
+        `hover_spec=` as a *working override*, so refusing it breaks a contract
+        rather than restoring one. Now `resolve_noun_hover(hover, trace_kwargs)`,
+        the shared helper, with `hover=` winning when both are given.
+    Verified by running: `backend="mpl"`/`"matplotlib"` return a
+    `matplotlib.figure.Figure` and `backend="nope"` raises `ValueError`;
+    all 6 docstring Examples execute; each of the 23 named selectors and drawing
+    parameters changes `fig.to_dict()`. Two apparent inertias were **the test
+    model, not the code**: the canonical model has ONE lake, so `lake=0` is the
+    default (`lake=1` selects 0 of 72 rows and does differ), and the group has
+    one member, so `model_name="base"` is the default. `contour_method` acts
+    (`"linear"` vs `"cubic"`); `"nearest"` is documented on `plot.map` and
+    rejected by it, which is the deferral already recorded above.
+    **Caveat on the parallel sweep**: the shared tree was being edited by other
+    agents throughout, so suite results moved between runs -- a transient
+    self-import in `prt_maps.py` broke `import myflopy` outright at one point,
+    and `test_deferred_import_ratchet` and
+    `test_terms_with_no_package_accessor_are_reachable` each failed and then
+    passed with no change to this file. Attribution here was done by
+    `git stash push` on `project/group/lak.py` alone and re-running.

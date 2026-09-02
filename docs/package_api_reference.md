@@ -621,10 +621,10 @@ plot.grid(vor)                # or  vor.plot.grid()   -- or just vor.plot()
 
 | verb | draws | notes |
 |---|---|---|
-| `map(source, values=, ...)` | plan view | contours, locations, hillshade, pathlines are **options**, not verbs |
-| `section(source, ...)` | vertical slice | results through a model, geometry through a grid |
-| `surface(source, ...)` | 3-D height field `z(x, y)` | Plotly |
-| `grid(source, backend=)` | the mesh itself | `"plotly"` flat 2-D (no CRS needed), `"vtk"` the 3-D volume |
+| `map(source, values=, backend=)` | plan view | contours, locations, hillshade, pathlines are **options**, not verbs; `"plotly"` or `"mpl"` |
+| `section(source, backend=)` | vertical slice | results through a model, geometry through a grid; `"plotly"` or `"mpl"` |
+| `surface(source, ...)` | 3-D height field `z(x, y)` | Plotly only — there is no matplotlib rendering of a height field here |
+| `grid(source, backend=)` | the mesh itself | `"plotly"` flat 2-D (no CRS needed), `"mpl"` FloPy's patch renderer, `"vtk"` the 3-D volume |
 | `mosaic(panels, ncols=)` | many pictures, one figure | **combinator** — takes pictures, not a subject |
 | `animate(frames, backend=)` | frames in sequence | **combinator**; `"plotly"` live, `"png"` rasterized |
 

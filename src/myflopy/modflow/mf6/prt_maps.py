@@ -22,6 +22,7 @@ run's normalized record table.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -34,9 +35,13 @@ from flopy.mf6.mfbase import MFDataException
 from myflopy import viz
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_plotting import (
+    NOUN_MAP_PARAMS,
     SpatialView,
     _apply_backend,
+    as_mpl_figure,
     build_cell_input_map_payload,
+    refuse_noun_parameters,
+    resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_tables import summarize_input_table
 from myflopy.modflow.utils.datatypes.hover import (
@@ -486,6 +491,39 @@ class PRTTravelTimeView(_PRTDerivedView):
         return fig
 
 
+def _explicit_options(local_vars: dict, method, names) -> dict:
+    """The named parameters in ``names`` a caller actually SET, by value.
+
+    ``PRTPathlineView.map`` used to read its ``**base_kwargs`` tail three times
+    -- to refuse base-map options on the Matplotlib branch, to refuse them on an
+    already-built base, and to forward them -- so naming those parameters (plan
+    8.8) would have emptied the tail and silently disabled all three checks. This
+    reconstructs the same information from the named parameters instead, by
+    comparing each against the default in the method's OWN signature, so the two
+    cannot drift.
+
+    A numpy array compared against ``None`` returns an elementwise array whose
+    truth value raises; an array is never a default, so that is "supplied".
+    """
+
+    defaults = {
+        name: parameter.default
+        for name, parameter in inspect.signature(method).parameters.items()
+    }
+    supplied = {}
+    for name in names:
+        if name not in local_vars:
+            continue
+        value, default = local_vars[name], defaults.get(name, inspect.Parameter.empty)
+        try:
+            differs = value is not default and bool(value != default)
+        except ValueError:
+            differs = True
+        if differs:
+            supplied[name] = value
+    return supplied
+
+
 class PRTPathlineView(_PRTDerivedView):
     """The trajectories themselves: particle tracks drawn over the model map.
 
@@ -686,63 +724,125 @@ class PRTPathlineView(_PRTDerivedView):
         color: str = "release_group",
         width: float = 2.0,
         max_particles: int | None = DEFAULT_MAX_PARTICLES,
-        backend: str = "plotly",
         title: str | None = None,
+        # -- colour of the base map ------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours on the base map ----------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
+        backend: str = "plotly",
         **base_kwargs,
     ):
         """Draw the particle tracks over a plan-view map of the flow model.
 
+        Every parameter is named rather than swept into ``**base_kwargs``:
+        PyCharm and Pylance read the ``def`` line and never run the module, so a
+        parameter that arrives through a tail is one no editor can ever offer
+        (plan 8.8). The shared drawing parameters below style the BASE MAP the
+        paths ride on -- the paths themselves are styled by ``color`` and
+        ``width``.
+
         Parameters
         ----------
-        base
+        base : {'heads', None} or Choro, default 'heads'
             What to draw beneath the paths: ``"heads"`` (the flow model's head
             choropleth at ``per``/``layer``), ``None`` (the grid framed on the
             basemap, no cell values), or an existing ``Choro`` -- so paths can
             ride on any map you have already built, including
-            ``capture.map(group=...)`` or ``travel_time.map()``.
-        per, layer
-            Stress period and layer **of the base map**. The paths themselves are
-            never filtered by layer: a particle's plan-view track is the whole
-            three-dimensional trajectory, and hiding the parts that left one
-            layer would draw a broken line.
-        group
-            Restrict to one release group (raises naming the available groups if
-            it is not one of them).
-        color
-            ``"release_group"`` (default) or ``"particle"``. Colors come from
+            ``capture.map(group=...)`` or ``travel_time.map()``. Passing a built
+            map ADDS to it and returns it, so the base-map parameters cannot
+            apply and naming one raises.
+        per, layer : int, optional
+            Stress period and layer **of the base map**, zero-based. The paths
+            themselves are never filtered by layer: a particle's plan-view track
+            is the whole three-dimensional trajectory, and hiding the parts that
+            left one layer would draw a broken line.
+        group : str, optional
+            Restrict to one release group. Raises naming the available groups if
+            it is not one of them, rather than drawing an empty map.
+        color : {'release_group', 'particle'}, default 'release_group'
+            What the track colours encode. Colours come from
             :func:`myflopy.viz.category_colors`, so a group matches its arrival
-            curve and capture bars.
-        width
+            curve and capture bars. Use ``"particle"`` on a handful of tracks
+            you want to tell apart individually.
+        width : float, default 2.0
             Line width of each track, in pixels.
-        max_particles
+        max_particles : int or None, default 250
             Draw at most this many particles, sampled **stratified by release
-            group** (a round-robin quota, then evenly spaced inside each group) so
-            a cap at or above the group count cannot drop a whole capture zone;
-            ``None`` draws every one. The
-            cap is announced in the title and by a warning. One trace per particle
-            is what makes per-particle hover and legend toggling work, so a run
-            with thousands of them is capped rather than silently slow.
-        backend
-            ``"plotly"`` returns the ``Choro`` carrying the path overlays;
-            ``"mpl"`` returns the matplotlib ``(fig, ax)`` plan view. The mpl path
-            is the older FloPy plan view and honors only ``group``/``title``:
-            ``base``, ``per``, ``layer``, ``color``, ``width`` and
-            ``max_particles`` are plotly-side concerns and are ignored.
-        title
+            group** (a round-robin quota, then evenly spaced inside each group)
+            so a cap at or above the group count cannot drop a whole capture
+            zone; ``None`` draws every one. The cap is announced in the title and
+            by a warning. One trace per particle is what makes per-particle hover
+            and legend toggling work, so a run with thousands of them is capped
+            rather than silently slow.
+        title : str, optional
             Figure title. On a caller-supplied ``base`` the existing title is left
             alone unless this is given.
         **base_kwargs
-            Forwarded to the base map (``model.plot.map(...)``) -- e.g. ``contours=``,
-            ``zmin=``/``zmax=``, ``locs=``.
+            Anything else rides through to the base map's Plotly trace. The
+            base-map options that used to live here are named above.
 
         Returns
         -------
-        Choro or tuple
+        Choro or matplotlib.figure.Figure
             The ``Choro`` carrying one polyline overlay per particle (plotly), or
-            matplotlib's ``(fig, ax)``. Passing a ``Choro`` as ``base`` **adds the
-            overlays to that map** and returns it, so calling twice with the same
-            base draws the paths twice.
+            a bare Matplotlib figure with ``backend="mpl"``. Passing a ``Choro``
+            as ``base`` **adds the overlays to that map** and returns it, so
+            calling twice with the same base draws the paths twice.
+
+            The Matplotlib branch is FloPy's own plan view and honours only
+            ``group``/``title``: ``base``, ``per``, ``layer``, ``color``,
+            ``width``, ``max_particles`` and every base-map option are
+            Plotly-side concerns. Setting one of them and asking for ``"mpl"``
+            raises rather than quietly dropping it.
+
+        See Also
+        --------
+        get : the pathline records behind the picture, as a DataFrame.
+        myflopy.plot.grid : the same tracks as 3-D tubes, via ``backend="vtk"``.
+
+        Examples
+        --------
+        >>> run.pathlines.map()
+        >>> run.pathlines.map(group="WEST", color="particle")
+        >>> run.pathlines.map(base=None, max_particles=None)
+        >>> run.pathlines.map(per=5, layer=0, contours=True, contour_levels=8)
+        >>> run.pathlines.map(base=run.capture.map(group="WEST"))
+        >>> run.pathlines.map(backend="mpl").savefig("tracks.png")
         """
+
+        refuse_noun_parameters("prt.pathlines", "particle tracks", base_kwargs)
+        hover = resolve_noun_hover(hover, base_kwargs)
+        # The base-map options a caller actually set. Reconstructed from the
+        # NAMED parameters, because naming them (8.8) emptied the `**base_kwargs`
+        # tail the three checks below used to read.
+        base_options = _explicit_options(
+            locals(), type(self).map,
+            [name for name in NOUN_MAP_PARAMS if name != "backend"],
+        )
+        base_options.update(base_kwargs)
 
         self._trace_color_key(color)  # validate up front, not only if rows survive
         frame = self.get(group=group)
@@ -755,17 +855,17 @@ class PRTPathlineView(_PRTDerivedView):
         if self._normalize_backend(backend) == "mpl":
             from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
 
-            if base_kwargs:
+            if base_options:
                 raise TypeError(
                     f"backend='mpl' draws FloPy's plan view, which takes no base-map "
-                    f"options: {sorted(base_kwargs)}. Drop them, or use the default "
+                    f"options: {sorted(base_options)}. Drop them, or use the default "
                     "plotly backend."
                 )
-            return plot_particle_pathlines(
+            return as_mpl_figure(plot_particle_pathlines(
                 self.model,
                 frame,
                 title=title or "Particle pathlines",
-            )
+            ))
 
         kept, dropped = self._selected_particles(frame, max_particles)
         if dropped:
@@ -782,7 +882,7 @@ class PRTPathlineView(_PRTDerivedView):
         if base is not None and not isinstance(base, str) and hasattr(base, "add_overlay"):
             # The map is already built; anything that would have shaped it is a
             # selector this call cannot honor, so say so rather than drop it.
-            ignored = sorted(base_kwargs) + [
+            ignored = sorted(base_options) + [
                 name for name, value in (("per", per), ("layer", layer)) if value is not None
             ]
             if ignored:
@@ -794,15 +894,17 @@ class PRTPathlineView(_PRTDerivedView):
         elif base is None or base == "heads":
             layer_index = 0 if layer is None else int(layer)
             if base is None:
-                clashes = sorted(base_kwargs.keys() & _BLANK_BASE_KWARGS)
+                clashes = sorted(base_options.keys() & _BLANK_BASE_KWARGS)
                 if clashes:
                     raise TypeError(
                         f"base=None draws the grid with no cell values, so it sets "
                         f"{clashes} itself. Pass base='heads' (or a Choro) to control them."
                     )
-                choro = self._blank_base(per=per, layer=layer_index, **base_kwargs)
+                choro = self._blank_base(per=per, layer=layer_index, **base_options)
             else:
-                choro = self.model.plot.map(per=per, layer=layer_index, **base_kwargs)
+                choro = self.model.plot.map(
+                    per=per, layer=layer_index, **base_options
+                )
         elif isinstance(base, str):
             raise ValueError(
                 f"base={base!r} is not a pathline base map; use 'heads', None, "

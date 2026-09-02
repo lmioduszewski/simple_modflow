@@ -27,6 +27,8 @@ from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     _symmetric_color_limit,
     build_cell_input_map_payload,
+    refuse_noun_parameters,
+    resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_registry import (
     get_default_package_colorscale,
@@ -189,19 +191,131 @@ class CellBudgetResultsExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a choropleth for this cell-based result field."""
+        """This budget term as a choropleth: one colour per cell.
 
+        A RESULTS noun over a cell-based budget term. The simulated flows for one
+        stress period are reduced to one value per cell (``agg``), cells this
+        term never touches take ``fill_value``, and the result is drawn like any
+        other per-cell array. That reduction is why this signature carries
+        ``multiplier``/``fill_value``/``agg`` on top of the shared drawing
+        parameters -- the free verb never does it, because it is handed the
+        values directly.
+
+        **The signs are MODFLOW 6's own, and they are not negated here.** A
+        positive ``q`` is flow INTO the groundwater cell from the boundary and a
+        negative one is flow out of it, exactly as the budget file records it, so
+        a number read off the tooltip matches the number in ``get()``. Because
+        the quantity is signed, the exchange term ``q`` is drawn on a diverging
+        colorscale centred on zero: ``zmin``/``zmax`` default to
+        ``-max|q|``/``+max|q|`` and the trace gets ``zmid=0``, which is what
+        makes "gaining" and "losing" different colours rather than two shades of
+        the same one. Pass ``zmin``/``zmax`` yourself to pin a scale across
+        several periods; that also disables the symmetric default, so pass both.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to draw, zero-based. One period per picture; use
+            :meth:`animate` to flip through them, or :meth:`wide` to see every
+            period side by side as numbers.
+        layer : int, default 0
+            Zero-based layer. Records in other layers are not drawn, so pass the
+            layer the boundary actually sits in -- ``.get()`` shows it in the
+            ``layer`` column, and ``.summary()`` counts how many layers this
+            term reaches at all.
+        multiplier : float, default 1.0
+            Scale every value before drawing. Unit conversion (ft³/d to gpm),
+            or ``-1.0`` to draw outflow as positive -- which changes the PICTURE
+            only: the table keeps MF6's convention, and the colorbar will then
+            read backwards from ``.get()``, so say so in the caption if you use
+            it. Applied before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells this term has no record for. Zero is the honest
+            default for a flow -- a cell with no boundary exchanges nothing --
+            but pass ``float("nan")`` to leave untouched cells uncoloured, which
+            is usually clearer for a sparse package such as WEL.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
+            How several records landing in ONE cell are reduced to one number.
+            ``sum`` is right for a flow: two drains in one cell remove the sum of
+            what each removes. Change it only when you want a per-feature
+            statistic rather than the cell's net exchange.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the records behind the picture, as a DataFrame.
+        summary : the same records reduced to one row.
+        wide : one column per stress period, for reading the time axis.
+        plot : this term as a series by stress period rather than in plan view.
+
+        Examples
+        --------
+        >>> model.packages.drn.results.q.map()
+        >>> model.packages.ghb.results.q.map(per=5, contours=True)
+        >>> model.packages.riv.results.q.map(zmin=-25, zmax=25)
+        >>> model.packages.wel.results.q.map(fill_value=float("nan"))
+        >>> model.packages.uzf.results.gwrch.map(per=3, colorscale="Blues")
+        >>> model.budget.sto_ss.map(per=2, backend="mpl").savefig("storage.png")
+        """
+
+        refuse_noun_parameters(self.label, self.value_name, trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(per=per, layer=layer)
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=self.value_name,
@@ -212,14 +326,32 @@ class CellBudgetResultsExplorer(SpatialView):
             agg=agg,
         )
         if self.result_name == "q":
+            # A signed exchange: centre the scale on zero so the sign is the
+            # thing the colour reports. MF6's own signs are kept -- only the
+            # LIMITS are made symmetric.
             absmax = _symmetric_color_limit(values)
-            kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
-            kwargs.setdefault("zmax", absmax if absmax > 0 else None)
-            kwargs.setdefault("zmid", 0.0)
+            if absmax > 0:
+                zmin = -absmax if zmin is None else zmin
+                zmax = absmax if zmax is None else zmax
+            # `zmid` is a Plotly trace property, not a verb parameter, so it
+            # rides the open tail the way `colorbar`/`reversescale` do.
+            trace_kwargs.setdefault("zmid", 0.0)
         result_spec = get_package_result_spec(self.package_name, self.result_name)
-        kwargs.setdefault(
-            "hover_spec",
-            result_hover(
+        choro = self.model.plot.map(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=cell_hover,
+            hover_heads=False,
+            hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=result_hover(
                 self.value_name,
                 title=f"{self.package_name.upper()} {self.value_name}",
                 units=(
@@ -228,15 +360,8 @@ class CellBudgetResultsExplorer(SpatialView):
                     else None
                 ),
             ),
-        )
-        choro = self.model.plot.map(
-            per=per,
-            layer=layer,
-            type="custom",
-            custom_zs=values,
-            custom_hover=hover,
-            hover_heads=False,
-            hover_ks=False,
+            zmin=zmin,
+            zmax=zmax,
             colorscale=(
                 colorscale
                 or (result_spec.colorscale if result_spec is not None else None)
@@ -244,7 +369,24 @@ class CellBudgetResultsExplorer(SpatialView):
                 or get_default_package_colorscale(self.package_name)
                 or "earth"
             ),
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -292,19 +434,119 @@ class StageResultsExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "first",
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a stage choropleth mapped to cells."""
+        """Simulated stage as a choropleth: one colour per connected cell.
 
+        A RESULTS noun over a surface-water feature's stage. Stage belongs to the
+        FEATURE -- a lake or a reach -- not to a cell, so it is painted onto every
+        cell that feature connects to; cells with no connection take
+        ``fill_value``. That mapping is why this signature carries
+        ``multiplier``/``fill_value``/``agg`` on top of the shared drawing
+        parameters: the free verb never does it, because it is handed the values
+        directly.
+
+        The default ``agg="first"`` is the honest one HERE, where the budget
+        nouns default to ``"sum"``: stage is an elevation, so two connections in
+        one cell share one water level and adding them would invent a number.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to draw, zero-based. One period per picture; use
+            :meth:`animate` to flip through them.
+        layer : int, default 0
+            Zero-based layer. Connections in other layers are not drawn -- for a
+            lake that occupies several layers this is how you pick the one you
+            mean, and ``.get()`` shows which layers exist in its ``layer``
+            column.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, or a datum
+            shift. Applied before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells this package does not connect to. Pass
+            ``float("nan")`` to leave them uncoloured, which is almost always
+            clearer for stage: zero is a real elevation, and a plain 0.0 backdrop
+            will dominate the colour scale.
+        agg : {'first', 'mean', 'min', 'max', 'last', 'sum'}, default 'first'
+            How several connections landing in ONE cell are reduced to one
+            number. ``first`` suits a shared water level; use ``mean`` when two
+            different features overlap a cell and you want the average of their
+            stages rather than whichever was read first.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the per-connection stages behind the picture, as a DataFrame.
+        summary : the same records reduced to one row.
+        plot : stage as a series by stress period rather than in plan view.
+
+        Examples
+        --------
+        >>> model.packages.lak.results.stage.map()
+        >>> model.packages.lak.results.stage.map(per=5, fill_value=float("nan"))
+        >>> model.packages.sfr.results.stage.map(layer=1, colorscale="Blues")
+        >>> model.packages.lak.results.stage.map(contours=True, contour_levels=6)
+        >>> model.packages.lak.results.stage.map(zmin=95, zmax=105)
+        >>> model.packages.sfr.results.stage.map(backend="mpl").savefig("stage.png")
+        """
+
+        refuse_noun_parameters(f"{self.package_name}.results.stage", "stage", trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(per=per, layer=layer)
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column="stage",
@@ -314,24 +556,46 @@ class StageResultsExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault(
-            "hover_spec",
-            result_hover(
-                "stage",
-                title=f"{self.package_name.upper()} stage",
-                units={"stage": "ft"},
-            ),
-        )
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=result_hover(
+                "stage",
+                title=f"{self.package_name.upper()} stage",
+                units={"stage": "ft"},
+            ),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=colorscale or "earth",
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 

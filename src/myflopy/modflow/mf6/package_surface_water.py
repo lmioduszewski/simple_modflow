@@ -42,6 +42,8 @@ from myflopy.modflow.mf6.package_plotting import (
     build_lak_q_map_payload,
     build_sfr_q_map_payload,
     build_surface_water_q_map_payload,
+    refuse_noun_parameters,
+    resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_registry import (
     get_default_budget_term,
@@ -304,36 +306,127 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build an SFR exchange choropleth normalized by total reach length.
+        """Stream-aquifer exchange as a choropleth, per unit of reach length.
 
-        Notes
-        -----
-        The mapped value is ``sum(q) / sum(rlen)`` within each cell. This makes
-        SFR exchange maps less sensitive to cells that only appear larger
-        because they contain longer stream reaches. The ``agg`` argument is
-        accepted for API compatibility but is not used because the
-        normalization is computed explicitly from total exchange and total
-        length per cell.
+        A RESULTS noun over the SFR ``GWF`` budget term. The mapped value is
+        ``sum(q) / sum(rlen)`` within each cell, which is what keeps the picture
+        about the physics: a raw volumetric exchange makes a cell look busy
+        merely for containing a longer piece of stream.
 
-        MF6 reports the SFR ``GWF`` budget term as flow from the stream reach
-        to the groundwater cell. Positive values therefore indicate losing
-        reaches, while negative values indicate gaining reaches. The default
-        diverging colorscale is defined explicitly so gaining reaches plot blue
-        and losing reaches plot red.
+        **The signs are MODFLOW 6's own.** SFR's cell record is flow FROM the
+        reach TO the groundwater cell, so a POSITIVE value is a LOSING reach and
+        a negative one is gaining. The diverging colorscale is derived from the
+        package registry's frame rather than written as a literal, so it cannot
+        drift from the data -- the same defect once shipped inverted on the LAK
+        map because a frame literal had been copied across.
+
+        Because the quantity is SIGNED, the scale is centred on zero:
+        ``zmin``/``zmax`` default to ``-max|q|``/``+max|q|`` and the trace gets
+        ``zmid=0``, which is what makes gaining and losing different colours
+        rather than two shades of one. Pass ``zmin``/``zmax`` yourself to pin a
+        scale across several periods -- that also disables the symmetric
+        default, so pass both.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to draw, zero-based. One period per picture; use
+            :meth:`animate` to flip through them.
+        layer : int, default 0
+            Zero-based layer. Reaches connected in other layers are not drawn.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, or ``-1.0`` to
+            read gaining as positive. That changes the PICTURE only: ``.get()``
+            keeps MF6's convention, so the colorbar will then disagree with the
+            table, and the caption should say so.
+        fill_value : float, default 0.0
+            Value given to cells with no stream reach in them. Zero is honest for
+            an exchange -- no reach, no exchange -- but ``float("nan")`` leaves
+            them uncoloured, which reads better on a sparse network.
+        agg : str, default 'sum'
+            **Accepted and not used.** The normalization is computed explicitly
+            from total exchange over total length per cell, so there is no
+            free choice of reducer left to make. Kept in the signature because
+            removing it would break callers that pass it; it is a no-op, not a
+            silent alternative.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the per-reach exchanges behind the picture, as a DataFrame.
+        profile : the same term along the stream rather than in plan view.
+        myflopy.modflow.mf6.package_surface_water.SurfaceWaterExchangeResultsExplorer.map :
+            SFR and LAK together on one shared scale.
+
+        Examples
+        --------
+        >>> model.packages.sfr.results.q.map()
+        >>> model.packages.sfr.results.q.map(per=5)
+        >>> model.packages.sfr.results.q.map(zmin=-0.5, zmax=0.5)
+        >>> model.packages.sfr.results.q.map(fill_value=float("nan"))
+        >>> model.packages.sfr.results.q.map(select="all_streams", select_style="both")
+        >>> model.packages.sfr.results.q.map(backend="mpl").savefig("sfr_q.png")
         """
 
         del agg
+        refuse_noun_parameters(self.label, self.value_name, trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = join_sfr_stage(self.model, self.get(per=per, layer=layer), per=per)
-        values, hover = build_sfr_q_map_payload(
+        values, cell_hover = build_sfr_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             per=per,
@@ -343,23 +436,51 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
-        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
-        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
-        kwargs.setdefault("zmid", 0.0)
-        kwargs.setdefault("hover_spec", sfr_hover())
+        if absmax > 0:
+            zmin = -absmax if zmin is None else zmin
+            zmax = absmax if zmax is None else zmax
+        # `zmid` is a Plotly trace property, not a verb parameter, so it rides
+        # the open tail the way `colorbar`/`reversescale` do.
+        trace_kwargs.setdefault("zmid", 0.0)
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=sfr_hover(),
+            zmin=zmin,
+            zmax=zmax,
             # SFR's cell record is flow FROM reach TO cell (the "gwf" frame), so
             # gaining is negative. The orientation is derived from the registry,
             # not assumed, so it cannot drift from the data.
             colorscale=colorscale or _exchange_colorscale(_exchange_frame("sfr")),
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -566,33 +687,138 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
         connection_type: str | Iterable[str] | None = None,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str = "sum",
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a LAK exchange choropleth normalized by flow-surface area.
+        """Lake-aquifer exchange as a choropleth, per unit of connection area.
 
-        Notes
-        -----
-        The mapped value is ``sum(q) / sum(flow_area)`` within each cell. This
-        yields a signed exchange intensity in length-per-time units instead of
-        raw volumetric exchange, which would otherwise scale with lake
-        connection area.
+        A RESULTS noun over the LAK ``GWF`` budget term. The mapped value is
+        ``sum(q) / sum(flow_area)`` within each cell, giving a signed exchange
+        INTENSITY in length-per-time rather than a raw volumetric exchange that
+        would scale with how much lakebed a cell happens to hold.
+
+        **The signs are MODFLOW 6's own, and they are NOT the SFR frame.** LAK's
+        ``GWF`` record comes from the LAK package budget, written from the LAKE's
+        perspective, so a POSITIVE value means the lake GAINS from the aquifer --
+        the opposite of SFR's cell-side record. This map once shipped inverted,
+        losing lakes drawing blue, because a frame literal had been copied across
+        from SFR; the orientation is now derived from the package registry, which
+        removes that failure mode rather than fixing one instance of it.
+
+        Because the quantity is SIGNED, the scale is centred on zero:
+        ``zmin``/``zmax`` default to ``-max|q|``/``+max|q|`` and the trace gets
+        ``zmid=0``, which is what makes gaining and losing different colours
+        rather than two shades of one. Pass ``zmin``/``zmax`` yourself to pin a
+        scale across several periods -- that also disables the symmetric
+        default, so pass both.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to draw, zero-based. One period per picture; use
+            :meth:`animate` to flip through them.
+        layer : int, default 0
+            Zero-based layer. A lake usually connects across several, so this is
+            how you pick the one you mean -- ``.get()`` shows which exist.
+        connection_type : str or iterable of str, optional
+            Restrict to particular LAK connection types (``"vertical"``,
+            ``"horizontal"``, ``"embeddedh"``, ``"embeddedv"``). With none, every
+            connection in the layer contributes. Worth setting when a lake's
+            vertical lakebed leakage and its horizontal shoreline exchange are
+            physically different things you do not want summed into one colour.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, or ``-1.0`` to
+            flip the sign convention. That changes the PICTURE only: ``.get()``
+            keeps MF6's convention, so say so in the caption if you use it.
+        fill_value : float, default 0.0
+            Value given to cells with no lake connection. Zero is honest for an
+            exchange, but ``float("nan")`` leaves them uncoloured, which reads
+            better when the lakes cover a small part of the grid.
+        agg : str, default 'sum'
+            **Accepted and not used.** The normalization is computed explicitly
+            from total exchange over total flow area per cell, so no free choice
+            of reducer remains. Kept in the signature because removing it would
+            break callers that pass it; it is a no-op, not a silent alternative.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the per-connection exchanges behind the picture, as a DataFrame.
+        budget : the lake's whole water balance, term by term.
+        myflopy.modflow.mf6.package_surface_water.SurfaceWaterExchangeResultsExplorer.map :
+            SFR and LAK together on one shared scale and one sign convention.
+
+        Examples
+        --------
+        >>> model.packages.lak.results.q.map()
+        >>> model.packages.lak.results.q.map(per=5, connection_type="vertical")
+        >>> model.packages.lak.results.q.map(layer=1, fill_value=float("nan"))
+        >>> model.packages.lak.results.q.map(zmin=-0.2, zmax=0.2)
+        >>> model.packages.lak.results.q.map(contours=True, contour_levels=6)
+        >>> model.packages.lak.results.q.map(backend="mpl").savefig("lak_q.png")
         """
 
         del agg
+        refuse_noun_parameters(self.label, self.value_name, trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = join_lak_stage(
             self.model,
             self.get(per=per, layer=layer, connection_type=connection_type),
             per=per,
         )
-        values, hover = build_lak_q_map_payload(
+        values, cell_hover = build_lak_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             per=per,
@@ -602,25 +828,53 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             value_column=self.value_name,
         )
         absmax = _symmetric_color_limit(values)
-        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
-        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
-        kwargs.setdefault("zmid", 0.0)
-        kwargs.setdefault("hover_spec", lak_hover())
+        if absmax > 0:
+            zmin = -absmax if zmin is None else zmin
+            zmax = absmax if zmax is None else zmax
+        # `zmid` is a Plotly trace property, not a verb parameter, so it rides
+        # the open tail the way `colorbar`/`reversescale` do.
+        trace_kwargs.setdefault("zmid", 0.0)
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=lak_hover(),
+            zmin=zmin,
+            zmax=zmax,
             # NOT the SFR frame: LAK's GWF record comes from the LAK package
             # budget, written from the LAKE's perspective (the "feature" frame),
             # so gaining is POSITIVE. This map once shipped inverted -- losing
             # lakes drew blue -- because a frame literal was copied from SFR;
             # deriving it from the registry removes that whole failure mode.
             colorscale=colorscale or _exchange_colorscale(_exchange_frame("lak")),
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -906,41 +1160,122 @@ class LakConnectionsExplorer:
     def map(
         self,
         *,
+        # -- which connections -----------------------------------------------
         lake: int | None = None,
         layer: int = 0,
         value_column: str = "connection_area",
+        # -- table to cells --------------------------------------------------
         agg: str = "sum",
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a choropleth of LAK connection geometry by cell.
+        """LAK connection GEOMETRY as a choropleth: one colour per cell.
+
+        An INPUTS noun. It draws how a lake is wired to the aquifer -- the area
+        or width of each connection -- not what flows through it. For the flow,
+        see ``model.packages.lak.results.q.map()``.
+
+        Connection geometry has no time axis, so there is no ``per``: a lake's
+        connections are declared once and do not change with the stress period.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
 
         Parameters
         ----------
-        lake
-            Optional zero-based lake id filter.
-        layer
-            Zero-based model layer to render.
-        value_column
-            Connection field to map. Common choices are ``"connection_area"``
-            and ``"connwidth"``.
-        agg
-            Aggregation passed through to the generic cell-input map builder.
-        multiplier
-            Optional scalar multiplier applied to the mapped values.
-        fill_value
-            Fill value for cells without lake connections.
-        colorscale
-            Optional choropleth colorscale override.
+        lake : int, optional
+            Restrict to one lake, by zero-based lake id. With none, every lake's
+            connections are drawn together -- fine for seeing the whole lake
+            system, misleading if two lakes share a cell and you meant one.
+        layer : int, default 0
+            Zero-based layer to render. A lake usually connects across several;
+            ``.get()`` shows which, in its ``layer`` column.
+        value_column : str, default 'connection_area'
+            Which connection field carries the colour. ``"connection_area"`` and
+            ``"connwidth"`` are the usual choices; anything present in
+            ``.get()`` works, and a name that is not raises ``KeyError`` naming
+            it rather than drawing an empty map.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
+            How several connections landing in ONE cell are reduced to one
+            number. ``sum`` is right for an area -- two connections in a cell
+            wet the sum of their areas. Use ``mean`` for a width, where adding
+            them would invent a wider connection than any that exists.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, most often.
+            Applied before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells with no lake connection. Pass ``float("nan")``
+            to leave them uncoloured, which is usually clearer here: a lake
+            covers a small part of the grid, and a 0.0 backdrop takes over the
+            colour scale.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the connection records behind the picture, as a DataFrame.
+        summary : the same records reduced to one row per lake.
+        myflopy.modflow.mf6.package_surface_water.LakBudgetResultsExplorer.map :
+            what actually flows through these connections.
+
+        Examples
+        --------
+        >>> model.packages.lak.connections.map()
+        >>> model.packages.lak.connections.map(lake=0, layer=1)
+        >>> model.packages.lak.connections.map(value_column="connwidth", agg="mean")
+        >>> model.packages.lak.connections.map(fill_value=float("nan"))
+        >>> model.packages.lak.connections.map(logscale=True)
+        >>> model.packages.lak.connections.map(backend="mpl").savefig("conn.png")
         """
 
+        refuse_noun_parameters("lak.connections", value_column, trace_kwargs)
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(lake=lake, layer=layer)
         if value_column not in selected.columns:
             raise KeyError(f"LAK connection column {value_column!r} was not found.")
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=value_column,
@@ -950,17 +1285,42 @@ class LakConnectionsExplorer:
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(value_column))
         choro = self.model.plot.map(
             per=0,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(value_column),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=colorscale or "earth",
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -1892,34 +2252,139 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
         include: str | Iterable[str] | None = None,
         lak_connection_type: str | Iterable[str] | None = None,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build one combined SFR/LAK exchange map with a shared L/T scale.
+        """SFR and LAK exchange on ONE map, one scale, one sign convention.
 
-        Notes
-        -----
-        The mapped value uses a unified physical sign convention across SFR and
-        LAK:
+        A RESULTS noun over both surface-water packages at once. The two write
+        their budgets in OPPOSITE frames -- SFR's record is cell-side, LAK's is
+        lake-side -- so drawing them on one map means normalizing first. This
+        draws ``exchange_intensity``, myflopy's own unified field, in which:
 
-        - positive = groundwater gaining into the surface-water feature
-        - negative = surface-water losing to groundwater
+        - **positive** = groundwater gaining INTO the surface-water feature
+        - **negative** = the surface-water feature LOSING to groundwater
+
+        and both packages are expressed per unit of contact (reach length for
+        SFR, flow area for LAK) so a stream and a lakebed are comparable numbers
+        rather than two different quantities sharing a colourbar.
+
+        Because the quantity is SIGNED, the scale is centred on zero:
+        ``zmin``/``zmax`` default to ``-max|q|``/``+max|q|`` and the trace gets
+        ``zmid=0``, which is what makes gaining and losing different colours
+        rather than two shades of one. Pass ``zmin``/``zmax`` yourself to pin a
+        scale across several periods -- that also disables the symmetric
+        default, so pass both.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to draw, zero-based. One period per picture; use
+            :meth:`animate` to flip through them.
+        layer : int, default 0
+            Zero-based layer. Connections in other layers are not drawn.
+        include : str or iterable of str, optional
+            Which packages contribute -- ``"sfr"``, ``"lak"``, or both. With
+            none, every surface-water package the model has. Narrow it when one
+            package's exchange is an order of magnitude larger and is flattening
+            the other's colours.
+        lak_connection_type : str or iterable of str, optional
+            Restrict the LAK side to particular connection types
+            (``"vertical"``, ``"horizontal"``, ``"embeddedh"``,
+            ``"embeddedv"``). Has no effect on the SFR side, which has no such
+            distinction.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, most often.
+            Note the sign convention here is already myflopy's unified one, so
+            there is rarely a reason to pass ``-1.0``.
+        fill_value : float, default 0.0
+            Value given to cells with neither a reach nor a lake connection.
+            ``float("nan")`` leaves them uncoloured, which usually reads better:
+            surface water touches a small fraction of most grids.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the combined per-cell exchange table behind the picture.
+        summary : the same records reduced to one row per package.
+        myflopy.modflow.mf6.package_surface_water.SfrBudgetResultsExplorer.map :
+            SFR alone, in MODFLOW 6's own cell-side sign convention.
+        myflopy.modflow.mf6.package_surface_water.LakBudgetResultsExplorer.map :
+            LAK alone, in MODFLOW 6's own lake-side sign convention.
+
+        Examples
+        --------
+        >>> model.packages.surface_water.results.q.map()
+        >>> model.packages.surface_water.results.q.map(per=5)
+        >>> model.packages.surface_water.results.q.map(include="sfr")
+        >>> model.packages.surface_water.results.q.map(lak_connection_type="vertical")
+        >>> model.packages.surface_water.results.q.map(fill_value=float("nan"))
+        >>> model.packages.surface_water.results.q.map(backend="mpl").savefig("sw.png")
         """
 
+        refuse_noun_parameters(
+            "surface_water.results.q", "exchange_intensity", trace_kwargs
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(
             per=per,
             layer=layer,
             include=include,
             lak_connection_type=lak_connection_type,
         )
-        values, hover = build_surface_water_q_map_payload(
+        values, cell_hover = build_surface_water_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             per=per,
@@ -1928,25 +2393,53 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             fill_value=fill_value,
         )
         absmax = _symmetric_color_limit(values)
-        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
-        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
-        kwargs.setdefault("zmid", 0.0)
-        kwargs.setdefault("hover_spec", surface_water_hover())
+        if absmax > 0:
+            zmin = -absmax if zmin is None else zmin
+            zmax = absmax if zmax is None else zmax
+        # `zmid` is a Plotly trace property, not a verb parameter, so it rides
+        # the open tail the way `colorbar`/`reversescale` do.
+        trace_kwargs.setdefault("zmid", 0.0)
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=surface_water_hover(),
+            zmin=zmin,
+            zmax=zmax,
             # This map draws ``exchange_intensity``, myflopy's OWN unified field,
             # which is normalized so POSITIVE = the feature gains (see
             # build_surface_water_exchange_cell_table). That matches the
             # "feature" orientation -- blue at the positive end -- regardless of
             # each source package's own raw frame.
             colorscale=colorscale or _exchange_colorscale("feature"),
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 
@@ -2013,17 +2506,115 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
     def map(
         self,
         *,
+        # -- which records ---------------------------------------------------
         per: int = 0,
         layer: int = 0,
+        # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
         agg: str | None = None,
-        colorscale: str | None = None,
+        # -- colour ----------------------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours --------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting ----------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing --------------------------------------------
+        locs=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover -----------------------------------------------------------
+        hover=None,
+        # -- renderer --------------------------------------------------------
         backend: str = "plotly",
-        **kwargs,
+        **trace_kwargs,
     ):
-        """Build a Plotly choropleth for this LAK or SFR input field."""
+        """This LAK or SFR input field as a choropleth: one colour per cell.
 
+        A RECORD noun over one declared field of a surface-water package -- a
+        reach length, a lakebed leakance, an inflow. The package's table is
+        reduced to one value per cell (``agg``), cells the package does not
+        touch take ``fill_value``, and the result is drawn like any other
+        per-cell array.
+
+        Every parameter is named rather than swept into ``**kwargs``: PyCharm and
+        Pylance read the ``def`` line and never run the module, so a parameter
+        that arrives through a tail is one no editor can ever offer (plan 8.8).
+
+        The per-layer arguments the free verb has -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
+        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
+        was measured to leave a record noun's figure byte-identical, and
+        ``show_mounding`` is worse than inert: it injects a head-derived row into
+        the tooltip on every cell.
+
+        Parameters
+        ----------
+        per : int, default 0
+            Stress period to read, zero-based. A field that does not vary with
+            time has all its records under period 0.
+        layer : int, default 0
+            Zero-based layer. Records in other layers are not drawn -- for a
+            lake spanning several layers this is how you choose.
+        multiplier : float, default 1.0
+            Scale every value before drawing -- unit conversion, most often.
+            Applied before ``agg``.
+        fill_value : float, default 0.0
+            Value given to cells this package has no record for. Pass
+            ``float("nan")`` to leave them uncoloured, which is usually clearer
+            here: surface water touches a small fraction of most grids, so a 0.0
+            backdrop takes over the colour scale.
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, optional
+            How several records landing in ONE cell are reduced to one number.
+            The default is chosen per field rather than fixed: ``sum`` for the
+            extensive ones (``connection_area``, ``rlen``, ``inflow``,
+            ``runoff``), ``first`` for everything else, which is what keeps an
+            elevation or a leakance from being added to itself. Set it
+            explicitly when a cell holds several reaches and you want a
+            per-reach statistic rather than the cell total.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend --
+            ``.show()``, ``.save(path)``, ``.html(path)`` -- or a bare
+            Matplotlib figure with ``backend="mpl"``.
+
+        See Also
+        --------
+        get : the records behind the picture, as a DataFrame.
+        summary : the same records reduced to one row.
+
+        Examples
+        --------
+        >>> model.packages.sfr.inputs.rlen.map()
+        >>> model.packages.sfr.inputs.rhk.map(agg="mean", logscale=True)
+        >>> model.packages.lak.inputs.bedleak.map(fill_value=float("nan"))
+        >>> model.packages.sfr.inputs.inflow.map(per=3)
+        >>> model.packages.sfr.inputs.rwid.map(select="all_streams")
+        >>> model.packages.lak.inputs.strt.map(backend="mpl").savefig("strt.png")
+        """
+
+        refuse_noun_parameters(
+            f"{self.package_name}.inputs.{self.field_name}",
+            self.field_name,
+            trace_kwargs,
+        )
+        hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(per=per, layer=layer)
         if agg is None:
             agg = (
@@ -2031,7 +2622,7 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
                 if self.field_name in {"connection_area", "rlen", "inflow", "runoff"}
                 else "first"
             )
-        values, hover = build_cell_input_map_payload(
+        values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
             value_column=self.field_name,
@@ -2041,17 +2632,42 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             fill_value=fill_value,
             agg=agg,
         )
-        kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
         choro = self.model.plot.map(
             per=per,
             layer=layer,
             type="custom",
             custom_zs=values,
-            custom_hover=hover,
+            custom_hover=cell_hover,
             hover_heads=False,
             hover_ks=False,
+            # The noun's OWN spec is the picture's BASE hover, so it goes in
+            # `hover_spec=`; `hover=` is the call-site override slot and stays the
+            # caller's. Putting the default in the override slot renders the same
+            # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
+            # and with what this noun did before the 8.8 conversion.
+            hover=hover,
+            hover_spec=cell_input_hover(self.field_name),
+            zmin=zmin,
+            zmax=zmax,
             colorscale=colorscale or "earth",
-            **kwargs,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            locs=locs,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            **trace_kwargs,
         )
         return _apply_backend(choro, backend)
 

@@ -681,13 +681,20 @@ def test_pathline_plot_draws_elevation_against_travel_time(prt_run):
 
 
 def test_pathline_map_and_plot_render_through_matplotlib(prt_run):
-    """``backend="mpl"`` reuses the existing FloPy plan view rather than a blank map."""
+    """``backend="mpl"`` reuses the existing FloPy plan view rather than a blank map.
+
+    Returns a bare ``Figure``, not FloPy's ``(fig, ax)``. Every other
+    ``backend="mpl"`` in the grammar returns one figure, and a lone verb handing
+    back a tuple means a caller who writes one loop over several pictures gets a
+    ``TypeError`` from the odd one out (changed 2026-09-02 with the noun-tier
+    signature pass; the axes are still reachable as ``figure.axes[0]``).
+    """
 
     from matplotlib.figure import Figure
 
-    figure, axis = prt_run.pathlines.map(backend="mpl")
+    figure = prt_run.pathlines.map(backend="mpl")
     assert isinstance(figure, Figure)
-    assert axis.get_title() == "Particle pathlines"
+    assert figure.axes[0].get_title() == "Particle pathlines"
     assert isinstance(prt_run.pathlines.plot(backend="mpl"), Figure)
 
 
@@ -991,3 +998,44 @@ def test_pathline_mosaic_refuses_a_shared_base_and_the_mpl_backend(two_group_run
         view.mosaic(base=prt_run.travel_time.map())
     with pytest.raises(ValueError, match="Plotly composition"):
         view.mosaic(backend="mpl")
+
+
+def test_naming_the_base_map_options_did_not_empty_the_checks_that_read_them(prt_run):
+    """`_explicit_options` must reconstruct what the `**base_kwargs` tail carried.
+
+    The 8.8 conversion named ~21 base-map parameters that used to arrive through
+    `**base_kwargs`, and `map` READ that tail three times: to refuse base-map
+    options on the Matplotlib branch, to refuse them on an already-built base,
+    and to forward them. Naming them emptied it, so all three would have gone on
+    passing silently -- the general hazard of this conversion (ledger 176), and
+    the reason it gets a test rather than a comment.
+
+    `zmin` is the forwarding probe, NOT `contours`: this fixture's grid is two
+    cells, and two points produce no contour traces at all, so a trace count
+    would read as "never forwarded" when the option had arrived correctly.
+    (Measured against the canonical grid the same call goes 1 trace to 15, and
+    instrumenting `_explicit_options` here shows
+    `{'zmin': 1.0, 'contours': True, 'contour_levels': 5}` reaching the base map.)
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.figure import Figure
+
+    view = prt_run.pathlines
+
+    # forwarded: the option must reach the base map's choropleth trace
+    pinned = view.map(zmin=100.0, zmax=125.0)
+    limits = [getattr(trace, "zmin", None) for trace in pinned.fig.data]
+    assert 100.0 in limits, f"zmin= never reached the base map (saw {limits})"
+
+    # refused: FloPy's plan view takes no base-map options, and an already-built
+    # base cannot be reshaped after the fact
+    with pytest.raises(TypeError, match="no base-map options"):
+        view.map(backend="mpl", contours=True)
+    with pytest.raises(TypeError, match="already-built map"):
+        view.map(base=view.map(), zmin=1.0)
+
+    # and the plain Matplotlib branch still returns ONE bare figure
+    assert isinstance(view.map(backend="mpl"), Figure)

@@ -549,3 +549,98 @@ def test_the_verbs_a_user_calls_are_not_bare_kwargs_forwarders():
         if is_bare(getattr(plot, verb) if verb != "mosaic" else viz.mosaic)
     ]
     assert not bare, f"these verbs still tell an editor nothing: {bare}"
+
+
+# --- the renderer switch, at every scope that has one -------------------------
+#: Verbs whose `backend=` chooses between Plotly and Matplotlib, and the scopes
+#: that offer them. `surface` is deliberately absent: it draws a 3-D height
+#: field, `InterpolatedSurface` has no `plot_mpl`, and matplotlib has no
+#: equivalent picture -- offering the parameter there would be a name that
+#: cannot act. `animate`'s `backend` is `{'plotly', 'png'}`, a rasteriser over
+#: frames rather than a second renderer of one subject, so it is not this switch.
+_MPL_BACKEND_VERBS = ("map", "section", "grid")
+
+
+def _mpl_capable(scope: str, verb: str) -> bool:
+    """Whether this scope draws `verb` through a Matplotlib renderer."""
+
+    if verb not in _MPL_BACKEND_VERBS or verb not in SCOPES[scope]:
+        return False
+    # The layer stack's pictures are Matplotlib NATIVELY (`MplPicture`), so there
+    # is no Plotly renderer to switch away from and no `backend=` to offer.
+    return scope != "stack"
+
+
+@pytest.mark.parametrize("scope", sorted(SCOPES))
+@pytest.mark.parametrize("verb", _MPL_BACKEND_VERBS)
+def test_the_renderer_switch_is_spelled_the_same_at_every_scope(scope, verb):
+    """`backend=` must be a NAMED parameter wherever the renderer can switch.
+
+    The bug this pins was silent, which is why a type check is not enough:
+    `plot.section` had no `backend` parameter and a `**kwargs` tail, so
+    `model.plot.section(line=line, backend="mpl")` stored the argument on the
+    section object and returned a Plotly picture with no error at all. The noun
+    tier had offered the switch since 8.2; the verb tier never had it.
+    """
+
+    if not _mpl_capable(scope, verb):
+        pytest.skip(f"{scope}.{verb} has no Plotly/Matplotlib pair")
+    function = getattr(_namespace(scope), verb, None) or getattr(plot, verb)
+    assert "backend" in inspect.signature(function).parameters, (
+        f"{scope}.{verb} can render both ways but does not name `backend`"
+    )
+
+
+@pytest.mark.parametrize("verb", _MPL_BACKEND_VERBS)
+def test_an_unknown_backend_raises_rather_than_being_ignored(verb, canonical_run):
+    """A misspelled renderer must fail loudly.
+
+    The whole defect was a swallowed argument, so the guard that matters is not
+    "does 'mpl' work" but "does anything else refuse to be ignored".
+    """
+
+    subject = canonical_run if verb != "grid" else canonical_run.vor
+    kwargs = {"cells": [0, 1, 2]} if verb == "section" else {}
+    with pytest.raises(ValueError, match="backend must be"):
+        getattr(plot, verb)(subject, backend="not-a-renderer", **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("scope", "verb"),
+    [("module", "map"), ("module", "section"), ("model", "map"), ("model", "section"),
+     ("grid", "map"), ("grid", "section"), ("grid", "grid")],
+)
+def test_the_mpl_backend_returns_one_bare_figure_everywhere(scope, verb, canonical_run):
+    """One return type across the family, so a loop over pictures cannot trip.
+
+    The three Matplotlib renderers behind this switch disagree about what they
+    hand back -- `Choro.plot_mpl` a `Figure`, the `figs` cross-section helper a
+    `(fig, ax)` tuple, FloPy's patch renderer an `Axes` -- and normalising at
+    each call site was how the family ended up with three answers.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import shapely as shp
+    from matplotlib.figure import Figure
+
+    xmin, ymin, xmax, ymax = canonical_run.vor.gdf_vorPolys.total_bounds
+    line = shp.LineString([(xmin + 1, (ymin + ymax) / 2), (xmax - 1, (ymin + ymax) / 2)])
+
+    if scope == "module":
+        subject = canonical_run if verb != "grid" else canonical_run.vor
+        extra = {"line": line} if verb == "section" else {}
+        drawn = getattr(plot, verb)(subject, backend="mpl", **extra)
+    else:
+        namespace = _namespace(scope)(
+            canonical_run if scope == "model" else canonical_run.vor
+        )
+        if verb == "section":
+            drawn = (namespace.section(line, backend="mpl") if scope == "grid"
+                     else namespace.section(line=line, backend="mpl"))
+        else:
+            drawn = getattr(namespace, verb)(backend="mpl")
+    assert isinstance(drawn, Figure), (
+        f"{scope}.{verb}(backend='mpl') returned {type(drawn).__name__}, not a Figure"
+    )

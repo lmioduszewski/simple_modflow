@@ -400,3 +400,57 @@ def test_the_results_map_draws_one_line_per_barrier(barrier_run):
     picture = barrier_run.packages.hfb.results.q.map()
     scatter = [t for t in picture.fig.data if t.type == "scattermap"]
     assert len(scatter) == len(barrier_run.packages.hfb.get())
+
+
+@pytest.mark.slow
+def test_the_matplotlib_backend_draws_the_barriers_rather_than_dropping_them(barrier_run):
+    """`backend="mpl"` on an HFB map must carry the barriers, not just the cells.
+
+    `Choro.plot_mpl` reads the cell values and NOTHING else -- overlays are a
+    Plotly-side concept it has never drawn. So the ordinary `_apply_backend`
+    route, which is right for every other noun, would have returned a picture of
+    the grid with the barriers silently missing: the one thing the picture is of.
+    Both HFB verbs draw the segments onto the axes themselves instead.
+
+    Counting Line2D artists is the falsifiable form. A `plot_mpl` passthrough
+    gives zero of them while still returning a perfectly valid Figure, so
+    asserting only on the type would pass over the defect.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.figure import Figure
+
+    expected = len(barrier_run.packages.hfb.segments())
+    assert expected, "the fixture built no barriers, so this proves nothing"
+
+    for picture in (
+        barrier_run.packages.hfb.inputs.map(backend="mpl"),
+        barrier_run.packages.hfb.results.q.map(backend="mpl"),
+    ):
+        assert isinstance(picture, Figure)
+        assert len(picture.axes[0].lines) == expected
+
+
+@pytest.mark.slow
+def test_an_hfb_map_refuses_a_field_override_and_an_unknown_backend(barrier_run):
+    """The noun rules reach HFB too, with one deliberate exception.
+
+    `hfb.results.q` draws the flow ACROSS the barrier, so `values=` would repaint
+    it while the hover went on reporting q -- refused, like every other noun.
+    `hfb.inputs` is the exception: its subject is the barriers and the cells are
+    a backdrop, so choosing what the backdrop shows contradicts nothing, exactly
+    as on `vor.plot.map`.
+    """
+
+    with pytest.raises(TypeError, match="values"):
+        barrier_run.packages.hfb.results.q.map(values=[1.0] * barrier_run.vor.ncpl)
+
+    # ... but the input map's `values` is its documented backdrop, and works.
+    assert barrier_run.packages.hfb.inputs.map(values=[1.0] * barrier_run.vor.ncpl)
+
+    for verb in (barrier_run.packages.hfb.inputs.map,
+                 barrier_run.packages.hfb.results.q.map):
+        with pytest.raises(ValueError, match="backend must be"):
+            verb(backend="nope")
