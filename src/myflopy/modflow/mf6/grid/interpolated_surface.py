@@ -29,9 +29,9 @@ from shapely.geometry import Polygon, mapping
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
-from myflopy.viz import Picture
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.viz import Picture
 
 logger = get_logger(__name__)
 
@@ -433,9 +433,14 @@ class InterpolatedSurface(Picture):
             elif self.interpolator == 'cloughTocher2D':
                 return self.cloughTocher2D_interp
             else:
+                # `self.interpolator`, not `val`: this is the `interp` property,
+                # not the setter that has a `val` parameter. The name survived a
+                # print -> logger conversion (017a69a) and would raise NameError
+                # if a caller set `_interpolator` directly, past the setter's
+                # own check.
                 logger.warning(
                     'interpolator %r is not one of %s; ignoring it',
-                    val, self._interpolators,
+                    self.interpolator, self._interpolators,
                 )
         if self.use_rbf is False:
             try:

@@ -12,7 +12,6 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy._logging import get_logger
-from myflopy.viz import mosaic as _mosaic
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
@@ -30,6 +29,7 @@ from myflopy.modflow.mf6.package_surface_water import (
     SfrPackageExplorer,
     SurfaceWaterPackageExplorer,
 )
+from myflopy.viz import mosaic as _mosaic
 
 logger = get_logger(__name__)
 

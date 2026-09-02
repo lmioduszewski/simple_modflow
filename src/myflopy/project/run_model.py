@@ -9,7 +9,6 @@ from types import MethodType
 import flopy
 import geopandas as gpd
 import numpy as np
-import pandas as pd
 
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
