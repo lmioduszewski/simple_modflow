@@ -821,7 +821,7 @@
   },
   "specs": {
     "chd_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfchd",
       "builder_target": "ModflowGwfchd",
       "name": "chd",
       "options": {
@@ -834,7 +834,7 @@
       "requires": []
     },
     "drn_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfdrn",
       "builder_target": "ModflowGwfdrn",
       "name": "drn",
       "options": {
@@ -847,7 +847,7 @@
       "requires": []
     },
     "evt_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfevt",
       "builder_target": "ModflowGwfevt",
       "name": "evt",
       "options": {
@@ -862,7 +862,7 @@
       "requires": []
     },
     "ghb_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfghb",
       "builder_target": "ModflowGwfghb",
       "name": "ghb",
       "options": {
@@ -876,7 +876,7 @@
       "requires": []
     },
     "lak_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwflak",
       "builder_target": "ModflowGwflak",
       "name": "lak",
       "options": {
@@ -898,7 +898,7 @@
       "requires": []
     },
     "mvr_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfmvr",
       "builder_target": "ModflowGwfmvr",
       "name": "mvr",
       "options": {
@@ -917,7 +917,7 @@
       ]
     },
     "rch_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfrch",
       "builder_target": "ModflowGwfrch",
       "name": "rch",
       "options": {
@@ -930,7 +930,7 @@
       "requires": []
     },
     "riv_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfriv",
       "builder_target": "ModflowGwfriv",
       "name": "riv",
       "options": {
@@ -944,7 +944,7 @@
       "requires": []
     },
     "sfr_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfsfr",
       "builder_target": "ModflowGwfsfr",
       "name": "sfr",
       "options": {
@@ -963,7 +963,7 @@
       "requires": []
     },
     "uzf_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfuzf",
       "builder_target": "ModflowGwfuzf",
       "name": "uzf",
       "options": {
@@ -982,7 +982,7 @@
       "requires": []
     },
     "wel_spec": {
-      "builder": "partial",
+      "builder": "flopy.ModflowGwfwel",
       "builder_target": "ModflowGwfwel",
       "name": "wel",
       "options": {

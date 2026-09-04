@@ -230,6 +230,9 @@ participate in `==`, so that assertion must be rewritten. Recorded in §7.
 
 ## 5. Step 3 — discovery and inspection
 
+**BUILT 2026-09-04** (ledger 182), except `RunLibrary` — see the note at the end
+of this section.
+
 One base, four subclasses, one override point. Four hand-written near-identical
 classes is the cost CLAUDE.md §4.7.6 measured and rejected.
 
@@ -358,6 +361,12 @@ and `OSError` caught by name, so the broad-catch allowlist does not grow.
 
 Scan cost measured: `rglob("mfsim.nam")` is 0 ms on the real project (4 hits), 2 ms on
 `examples/` (39 hits). Cached, with an explicit `refresh()`.
+
+**`RunLibrary` is NOT built yet.** Its two columns worth having — `outcome` and
+`manifest` — both come from `read_listing_outcome`, the other half of Step 1 that
+has not landed. A runs table whose only column is the `status` field that already
+reads `written` for every one of your runs would add a surface without adding an
+answer. It follows the outcome reader.
 
 ---
 

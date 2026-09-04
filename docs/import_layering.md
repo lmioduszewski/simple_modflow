@@ -103,6 +103,7 @@ review the diff, commit the regenerated files together.
 
 - `myflopy.advanced`
 - `myflopy.builders`
+- `myflopy.library`
 - `myflopy.modflow.mf6.areal`
 - `myflopy.modflow.mf6.budget_tables`
 - `myflopy.modflow.mf6.chd`

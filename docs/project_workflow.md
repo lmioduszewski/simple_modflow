@@ -115,6 +115,43 @@ reproducible, version-robust path. `Project.load()` warns if a pickle's recorded
 `flopy` / `geopandas` / `shapely` / `numpy` versions differ from the current
 stack.
 
+## Seeing what a project holds
+
+`project.packages`, `.grids` and `.simulations` are **`dict` subclasses** — every
+dict operation works exactly as before, and each also answers the same three
+questions:
+
+```python
+project                                  # Project('tentrails', root='…',
+                                         #         packages=14, grids=1, simulations=3)
+project.packages.names()                 # ['chd/base', 'crisp/base', 'dis/base', …]
+project.packages.summary()               # key | package | builder | enabled | options | …
+project.package("npf/base")              # == project.packages["npf/base"]
+project.summary()                        # all three libraries, one frame
+```
+
+A missing key names the near miss and everything defined, on the spelling you
+already type:
+
+```python
+project.packages["npf/bass"]
+# KeyError: Project 'tentrails' has no package 'npf/bass'. Did you mean: 'npf/base'?
+#           14 packages: chd/base, crisp/base, dis/base, …
+```
+
+`project.packages.persistence()` reports how each package *would* be persisted
+(`json` or `pickle`, with the reason). It is a method rather than a `summary()`
+column because deciding it means attempting `to_dict()` — 119 ms on a
+100 000-record list BC — and Jupyter calls `_repr_html_` on every bare `project`.
+
+**Library keys are not attribute-completable and never will be**: they contain
+`/`, so they are not Python identifiers. They are answered at runtime instead —
+by `names()`, `summary()`, the repr, and that `KeyError`.
+
+`repr(project)` touches no disk and counts no runs: runs live on the filesystem,
+and PyCharm calls `__repr__` on every debugger step. Use `project.discover_runs()`
+for those.
+
 ## Persistence is opt-in
 
 In memory, everything works immediately — including raw arrays and coupled

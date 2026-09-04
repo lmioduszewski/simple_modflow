@@ -5486,3 +5486,43 @@ same day, which is the useful part of the result.
       - **Fixed in passing:** `docs/core_specs.md` claimed "Python builder
         callables are intentionally not serialized" (false since §5.6A) and used
         `Project.reopen(...)`, which has never existed.
+
+182. **The three project spec libraries became `dict` subclasses (2026-09-04).**
+      Step 3 of `docs/project_libraries_design.md`, and the original report:
+      "`Project` doesn't seem to have a way to discover and inspect saved
+      packages. At least nothing exposed and discoverable to Pycharm."
+      `src/myflopy/library.py` (import layer 2) holds one `SpecLibrary` base and
+      three subclasses that override exactly `_row` and declare `_kind`/`_columns`
+      -- four hand-written near-identical classes is the cost §4.7.6 measured.
+      - **`Project.package(key)` restores what the fold dropped.** git `10d7a87`
+        (2026-06-17) folded `ProjectSpec` into `Project`, kept `simulation(name)`
+        and dropped `package_spec(key)`. This was a regression, not a missing
+        feature, and nothing caught it because `tests/api_snapshot.json` does not
+        cover `Project` at all (it iterates `package_api.__all__`).
+      - **`_project_name` is a CLASS-level default, never a constructor
+        argument.** Measured: `dict.copy()` and `dict.__or__` return a plain
+        `dict`, so a library holding required instance state would silently
+        degrade to a bare dict -- losing every verb -- through either.
+        `copy`/`__or__`/`__ror__` are overridden to preserve the type.
+      - **`persists` is NOT a summary column.** It was, in the first draft.
+        Deciding it means attempting `to_dict()`, measured at **119 ms** for one
+        100,000-record list BC (an array-bearing package short-circuits at 0 ms,
+        so the cost lands exactly on the packages that do not). Jupyter calls
+        `_repr_html_` on every bare `project`, and the user's USG-derived list
+        EVT is ~650,000 records. It is `packages.persistence()` instead.
+      - **`repr(project)` touches no disk and does not count runs.** PyCharm
+        calls `__repr__` on every debugger step and `Run.reopen` does an
+        unguarded `json.loads(...)["run"]`, so counting runs would let one
+        truncated manifest make `repr` raise. Pinned by a test that monkeypatches
+        `Path.glob`/`rglob`/`iterdir` to raise.
+      - **Keys are deliberately NOT attribute-completable.** They contain `/`
+        (`npf/base`), so they are not identifiers; a `__getattr__` tier would
+        reach only the minority without one, which is worse than a clean absence.
+        Answered at runtime by `names()`, `summary()`, the repr, and a
+        did-you-mean `KeyError` raised from `__missing__` -- chosen over a new
+        `require()`/`fetch()` verb so the message lands on the spelling people
+        already type, and so `.get(key, default)` keeps `dict.get`'s meaning.
+      - **Fixed in passing, and it moved the API snapshot:** `_builder_label` did
+        not unwrap `functools.partial`, so all seven list BCs plus lak/sfr/uzf/mvr
+        labelled themselves `'partial'` in every repr, summary and snapshot
+        entry -- 11 lines of `tests/api_snapshot.json` now name the FloPy class.

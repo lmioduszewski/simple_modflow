@@ -9,13 +9,18 @@ import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from html import escape
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import flopy
 
 from myflopy._logging import get_logger
+from myflopy.library import GridLibrary, PackageLibrary, SimulationLibrary
+
+if TYPE_CHECKING:
+    import pandas as pd
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
@@ -874,9 +879,14 @@ class Project:
         self.layout = layout or ProjectLayout(Path(root))
         self.root = self.layout.root
         self.name = name or self.root.name
-        self.packages: dict[str, PackageSpec] = {}
-        self.grids: dict[str, GridSpec | GridRef] = {}
-        self.simulations: dict[str, SimulationSpec] = {}
+        # dict SUBCLASSES: every dict operation still works and the entry type is
+        # still inferred, but each also answers names()/summary() and gives a
+        # did-you-mean on a missing key. See myflopy.library.
+        self.packages: PackageLibrary = PackageLibrary()
+        self.grids: GridLibrary = GridLibrary()
+        self.simulations: SimulationLibrary = SimulationLibrary()
+        for library in (self.packages, self.grids, self.simulations):
+            library._project_name = self.name
 
     @property
     def runs_dir(self) -> Path:
@@ -938,6 +948,77 @@ class Project:
         """
 
         return self.add_simulation(SimulationSpec.from_yaml(source))
+
+    def package(self, key: str) -> PackageSpec:
+        """Return one registered package specification by library key.
+
+        The symmetric partner of :meth:`simulation` and :meth:`grid`.
+        Equivalent to ``project.packages[key]``, which raises the same
+        did-you-mean ``KeyError``; this spelling exists because the retired
+        ``ProjectSpec`` had ``package_spec(key)`` and the 2026-06-17 fold into
+        ``Project`` kept ``simulation(name)`` while dropping it.
+        """
+
+        return self.packages[key]
+
+    def grid(self, key: str) -> GridSpec | GridRef:
+        """Return one registered grid by library key.
+
+        Equivalent to ``project.grids[key]``. The union return is deliberate: a
+        ``GridRef`` points INTO this library and is rejected at build time, so
+        narrowing it is worth something (ledger 171).
+        """
+
+        return self.grids[key]
+
+    def summary(self) -> pd.DataFrame:
+        """Return one table covering all three spec libraries.
+
+        A ``library`` column distinguishes them; per-library columns are collapsed
+        into ``detail`` so the three shapes can share one frame. Use
+        ``project.packages.summary()`` for the full per-tier columns.
+        """
+
+        import pandas as pd
+
+        rows: list[dict[str, Any]] = []
+        for library in (self.packages, self.grids, self.simulations):
+            for key in library.names():
+                row = library._row(key, library[key])
+                identity = row.get("key") or row.get("name")
+                detail = ", ".join(
+                    f"{name}={value}"
+                    for name, value in row.items()
+                    if name not in {"key", "name"}
+                )
+                rows.append(
+                    {"library": library._kind, "key": identity, "detail": detail}
+                )
+        return pd.DataFrame(rows, columns=["library", "key", "detail"])
+
+    def __repr__(self) -> str:
+        """Counts only -- no disk, no validate(), no build.
+
+        ``len()`` on three in-memory dicts. Runs are deliberately NOT counted:
+        they live on disk, and PyCharm calls ``__repr__`` on every debugger step.
+        """
+
+        return (
+            f"Project({self.name!r}, root={str(self.root)!r}, "
+            f"packages={len(self.packages)}, grids={len(self.grids)}, "
+            f"simulations={len(self.simulations)})"
+        )
+
+    def _repr_html_(self) -> str:
+        """Return the three library tables. Still no disk, still no validate()."""
+
+        blocks = [
+            f"<h4>Project: <code>{escape(self.name)}</code></h4>",
+            f"<p><code>{escape(str(self.root))}</code></p>",
+        ]
+        for library in (self.packages, self.grids, self.simulations):
+            blocks.append(library._repr_html_())
+        return "<div>" + "".join(blocks) + "</div>"
 
     def simulation(self, name: str) -> SimulationSpec:
         """Return one registered simulation specification by name."""

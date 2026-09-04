@@ -240,10 +240,22 @@ def _require_unique_names(items: Iterable[Any], *, item_type: str) -> None:
 
 
 def _builder_label(builder: Builder | None) -> str:
-    """Return a short readable label for a builder callable."""
+    """Return a short readable label for a builder callable.
+
+    A ``functools.partial`` is unwrapped to the FloPy class it binds -- the seven
+    list BCs all build through ``partial(_build_named, ModflowGwfchd)`` and so
+    every one of them otherwise labelled itself ``'partial'``, in every repr and
+    summary.
+    """
 
     if builder is None:
         return "default"
+    if isinstance(builder, functools.partial):
+        bound = next(
+            (arg for arg in builder.args if isinstance(arg, type)),
+            None,
+        )
+        return _builder_label(bound) if bound is not None else _builder_label(builder.func)
     module = getattr(builder, "__module__", "")
     name = getattr(builder, "__name__", builder.__class__.__name__)
     if module.startswith("flopy."):
