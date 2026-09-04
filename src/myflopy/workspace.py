@@ -369,6 +369,32 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     }
 
 
+def _spec_from_recipe(
+    recipe: dict[str, Any] | None, *, name: str
+) -> SimulationSpec | None:
+    """Rebuild a run's :class:`SimulationSpec` from its manifest recipe.
+
+    Returns ``None`` when the manifest has no recipe (written before recipes
+    existed, or by a run whose spec embedded raw arrays) or when the recipe
+    cannot be revived -- a builder whose module moved, a source kind this version
+    no longer knows. A run that cannot be rebuilt is the status quo, so this
+    degrades to summary-only rather than making the run unopenable.
+    """
+
+    if not recipe:
+        return None
+    try:
+        return SimulationSpec.from_dict(recipe)
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError) as error:
+        logger.warning(
+            "Run '%s': stored spec could not be revived (%s); "
+            "the run opens read-only and cannot be rebuilt.",
+            name,
+            error,
+        )
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class SaveReport:
     """What :meth:`Project.save` actually persisted, and what it could not.
@@ -445,6 +471,11 @@ class Run:
     # next ``save_manifest`` -- which ``_record_status`` fires on every state
     # change -- would overwrite the record of what the run contained with null.
     spec_block: dict[str, Any] | None = field(default=None, repr=False)
+    # The full ``SimulationSpec.to_dict()`` recipe, when the spec could be
+    # serialized. ``spec_block`` above is a READABLE SUMMARY -- names only -- so
+    # it can say what a run contained but never rebuild it. This is what lets a
+    # run reopened in a later session be rebuilt, re-run, or forked.
+    spec_recipe: dict[str, Any] | None = field(default=None, repr=False)
     built: BuiltSimulation | None = field(default=None, repr=False)
     simulation: Any | None = field(default=None, repr=False)
     build_context: SpecBuildContext | None = field(default=None, repr=False)
@@ -707,8 +738,32 @@ class Run:
             "spec": _spec_summary(self.spec)
             if self.spec is not None
             else self.spec_block,
+            "spec_recipe": self._spec_recipe_block(),
             "metadata": self.metadata,
         }
+
+    def _spec_recipe_block(self) -> dict[str, Any] | None:
+        """The rebuildable recipe for this run, or the one already on disk.
+
+        A spec whose options embed raw arrays cannot be JSON-encoded; that is not
+        an error here, it just means this run is summary-only and stays as
+        rebuildable as it was before. Everything expressed as ``mf.ref`` into the
+        package library serializes, which is the shape that matters -- the arrays
+        live in the library and are persisted there.
+        """
+
+        if self.spec is None:
+            return self.spec_recipe
+        try:
+            return self.spec.to_dict()
+        except ValueError as error:  # not JSON-encodable -- an embedded array
+            logger.debug(
+                "Run '%s': spec not stored as a rebuildable recipe (%s); "
+                "the manifest keeps its readable summary only.",
+                self.name,
+                error,
+            )
+            return self.spec_recipe
 
     def save_manifest(self) -> Path:
         """Persist the current lifecycle state."""
@@ -744,7 +799,9 @@ class Run:
             success=run_data.get("success"),
             metadata=dict(data.get("metadata", {})),
             spec_block=data.get("spec"),
+            spec_recipe=data.get("spec_recipe"),
         )
+        run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
         if load:
             run.open()
         return run
@@ -997,9 +1054,19 @@ class Project:
         return run
 
     def reopen_run(self, name: str, *, load: bool = True) -> Run:
-        """Reopen one project-owned run by name."""
+        """Reopen one project-owned run by name.
 
-        return Run.reopen(self.runs_dir / name, load=load)
+        The run is given this project's build context, so a spec revived from the
+        manifest can resolve its ``mf.ref`` package references against the
+        library and be rebuilt or re-run. Reopening through :func:`load_run` or
+        :meth:`Run.reopen` instead yields a run whose refs are unresolved --
+        there is no library in scope to resolve them against.
+        """
+
+        run = Run.reopen(self.runs_dir / name, load=load)
+        if run.spec is not None:
+            run.build_context = self._build_context(run.workspace)
+        return run
 
     def discover_runs(self, *, load: bool = False) -> list[Run]:
         """Discover project-owned runs that have lifecycle manifests."""

@@ -8,7 +8,15 @@ import numpy as np
 import pytest
 
 import myflopy as mf
-from myflopy import ModelSpec, PackageSpec, Project, Run, SimulationSpec, build_ims
+from myflopy import (
+    ModelSpec,
+    PackageRef,
+    PackageSpec,
+    Project,
+    Run,
+    SimulationSpec,
+    build_ims,
+)
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.workspace import ModelView
 
@@ -309,8 +317,12 @@ def test_run_builds_writes_executes_and_reopens_with_flopy_310(tmp_path):
 
     reopened = project.reopen_run("baseline")
 
-    assert reopened.spec is None
-    # ...but the manifest's own spec block is retained, so saving does not erase it.
+    # The manifest stores the full recipe, so a reopened run gets a real spec back.
+    assert reopened.spec is not None
+    # the SPEC's name is the simulation's; "baseline" is the RUN's
+    assert reopened.spec.name == manifest["spec"]["name"]
+    assert reopened.spec.model_names == ("flow",)
+    # ...and the readable summary block is retained too, so saving cannot erase it.
     assert reopened.spec_block == manifest["spec"]
     assert reopened.status == "completed"
     assert reopened.success is True
@@ -371,11 +383,21 @@ def test_run_model_method_is_typed_for_ide_completion():
     assert Run.model.__annotations__["return"] == "SimulationBase"
 
 
-def test_reopened_run_without_spec_cannot_be_rebuilt(tmp_path):
+def test_a_run_whose_manifest_has_no_recipe_cannot_be_rebuilt(tmp_path):
+    """Manifests written before recipes existed -- and runs whose spec embedded a
+    raw array -- carry a readable summary only. Those stay summary-only: openable
+    and inspectable, but not rebuildable, which is the pre-recipe status quo."""
+
     project = Project(tmp_path / "demo")
     run = project.prepare_run("baseline", _tiny_flow_spec())
+    manifest = json.loads(run.manifest_path.read_text())
+    manifest.pop("spec_recipe")
+    run.manifest_path.write_text(json.dumps(manifest))
+
     reopened = project.reopen_run("baseline", load=False)
 
+    assert reopened.spec is None
+    assert reopened.spec_block is not None       # it still knows what it WAS
     with pytest.raises(ValueError, match="without a spec cannot be rebuilt"):
         reopened.build()
 
@@ -657,3 +679,98 @@ def test_a_dangling_reference_still_raises_but_after_the_write(tmp_path):
 
     # ...and the library is on disk anyway.
     assert sorted(mf.Project.load(project.root).packages) == ["ic/steady"]
+
+
+def test_a_reopened_run_can_be_rebuilt_and_forked_in_a_later_session(tmp_path):
+    """The manifest stores the rebuildable recipe, not just a readable summary.
+
+    Before this, ``Run.reopen`` had no ``SimulationSpec`` at all, so a run could
+    be read but never re-run or varied without its original build script. The
+    summary block records package NAMES; the recipe records what builds them.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/base", mf.npf(k=1.0))
+    simulation = mf.SimulationSpec(
+        "baseline",
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.ic(strt=1.0),
+                    mf.ref("npf/base"),
+                    mf.oc(head_filerecord="flow.hds", saverecord=[("HEAD", "ALL")]),
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+    )
+    project.add_simulation(simulation)
+    project.save()
+    project.prepare_run("baseline", simulation)
+
+    # A genuinely fresh session: nothing but the directory.
+    later = mf.Project.load(tmp_path / "proj")
+    reopened = later.reopen_run("baseline", load=False)
+
+    assert reopened.spec is not None
+    # The library reference survives as a reference -- not flattened into a copy.
+    assert [p.key for p in reopened.spec.models[0].packages if isinstance(p, PackageRef)] == [
+        "npf/base"
+    ]
+
+    reopened.build()
+    assert reopened.built.simulation.get_model("flow").npf.k.array[0][0][0] == 1.0
+
+    # ...and it can be varied, which is what the recipe really buys.
+    variant = reopened.spec.derive("high_k").replace_package("flow", mf.npf(k=99.0))
+    forked = later.prepare_run("high_k", variant)
+    assert forked.built.simulation.get_model("flow").npf.k.array[0][0][0] == 99.0
+    assert variant.derived_from == "baseline"
+
+
+def test_a_spec_that_cannot_be_json_encoded_stays_summary_only(tmp_path):
+    """An embedded array is not an error here -- the run just stays as
+    rebuildable as it was before, with its readable summary intact."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    simulation = mf.SimulationSpec(
+        "inline",
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.npf(k=np.arange(4.0)),
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+    )
+    run = project.prepare_run("inline", simulation, build=False)
+    manifest = json.loads(run.manifest_path.read_text())
+
+    assert manifest["spec_recipe"] is None
+    assert manifest["spec"]["models"][0]["packages"] == ["dis", "npf"]
+
+    reopened = project.reopen_run("inline", load=False)
+    assert reopened.spec is None
+    assert reopened.spec_block == manifest["spec"]
+
+
+def test_an_unrevivable_recipe_degrades_instead_of_failing_to_open(tmp_path):
+    """A recipe naming a builder this version cannot import must not make the
+    run unopenable -- it degrades to summary-only and warns."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run("baseline", _tiny_flow_spec())
+    manifest = json.loads(run.manifest_path.read_text())
+    manifest["spec_recipe"]["packages"][0]["builder"] = "no.such.module:Gone"
+    run.manifest_path.write_text(json.dumps(manifest))
+
+    reopened = project.reopen_run("baseline", load=False)
+
+    assert reopened.spec is None
+    assert reopened.status == manifest["run"]["status"]
+    assert reopened.spec_block is not None

@@ -164,7 +164,7 @@ Throughout, two example models recur so the code stays concrete:
 - 12.4 `run.execute()` — write + run MF6; `success`, `report`, `workspace`
 - 12.5 Scenarios: copy-on-write spec edits, registering and running variants
 - 12.6 The on-disk layout (`runs/<name>/`, `_grid/`, manifests) and customizing it
-- 12.7 Persistence: `Project.save` / `load`, `Run.reopen`
+- 12.7 Persistence: `Project.save` / `load`, `Run.reopen` (manifests carry the rebuildable recipe)
 - 12.8 Importing existing MF6 runs: `load_run` / `Run.load`, `LoadedMf6Run`, `discover_native_runs`
 
 **13. Reading Results** — *[13_results.md](13_results.md)*

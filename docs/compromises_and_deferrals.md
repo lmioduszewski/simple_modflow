@@ -5450,3 +5450,39 @@ same day, which is the useful part of the result.
         was considered and refused for this pass -- it would flood
         `Project.validate()` for every real GIS model and silently break
         `SimulationSpec.to_yaml`, which goes through the same `to_dict`.
+
+181. **The run manifest stores the rebuildable recipe, not just a readable
+      summary (2026-09-04).**
+      Step 1 of `docs/project_libraries_design.md`, revised after the user said
+      "I don't care if you break old runs/projects ... as long as you don't do
+      anything to my saved modflow files." That permission is what made this the
+      right shape rather than the carry-forward workaround shipped in `265b897`.
+      - **What was wrong:** `_spec_summary` records package *names*, so a
+        reopened run had `spec is None` and could be read but never re-run or
+        varied without its original build script. `265b897` stopped `to_dict`
+        from erasing that summary; this stores what actually rebuilds.
+      - **Measured cost: 348 bytes -> 3,277 bytes** on a Ten Trails-shaped
+        simulation. Cheap because the packages are `mf.ref(...)` into the library
+        and the arrays live there, pickled by `_save_package`. A simulation that
+        embeds arrays inline gets no recipe -- `to_dict()` raises -- and stays
+        summary-only, which is the pre-change status quo, not a regression.
+      - **Both blocks are kept.** `spec` stays the readable summary (it carries
+        model types, `package_metadata`, `context_metadata` and hook names that
+        `to_dict` does not); `spec_recipe` is the recipe. Neither is ever
+        overwritten with null by a run that did not author it.
+      - **`Project.reopen_run` attaches the build context**, so a revived spec
+        resolves its `mf.ref` packages against the library. `mf.load_run` and
+        `Run.reopen` deliberately do NOT -- there is no library in scope, and
+        silently resolving against some other project would be worse than
+        leaving the refs unresolved.
+      - **An unrevivable recipe degrades rather than failing to open.** A builder
+        whose module moved is caught by name (`ValueError`/`TypeError`/`KeyError`/
+        `AttributeError`/`ImportError`), logged at WARNING, and the run opens
+        summary-only. A run you cannot open is worse than one you cannot rebuild.
+      - **Test contract changed:** `test_reopened_run_without_spec_cannot_be_rebuilt`
+        became `test_a_run_whose_manifest_has_no_recipe_cannot_be_rebuilt` -- the
+        limitation it pinned is the thing being removed, and it now pins the
+        legacy/array fallback instead.
+      - **Fixed in passing:** `docs/core_specs.md` claimed "Python builder
+        callables are intentionally not serialized" (false since §5.6A) and used
+        `Project.reopen(...)`, which has never existed.

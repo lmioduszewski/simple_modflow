@@ -150,17 +150,21 @@ def read_listing_outcome(workspace: Path) -> ListingOutcome: ...
 
 **Three changes in `workspace.py`:**
 
-1. **`Run.to_dict` must stop destroying blocks it did not author.** Today it writes
+1. **`Run.to_dict` must stop destroying blocks it did not author.** **BUILT — `265b897`.** Today it writes
    `"spec": None if self.spec is None`, which is how D1 erases provenance. It must
    carry forward *every* block it did not compute this call — `spec`, and any block a
    later step adds. This is the fix that must land first and alone; it is a live
    data-loss bug reachable with the code as it stands.
 
-2. **`Run.reopen(..., project=None)` resolves the parent spec by name.** The manifest
-   already records `spec.name`, and `Project.load` restores `project.simulations`, so
-   the parent is resolvable with **no new file format**. When no project is supplied,
-   or the name is not registered, `run.spec` stays `None` and `run.record` still
-   answers — the record is the fallback authority, which is the point of having it.
+2. **The manifest stores the rebuildable recipe.** *(Revised 2026-09-04 — the
+   original plan resolved the parent spec by name to avoid a format change; that
+   constraint was lifted, and storing the recipe is strictly better.)* `run.json`
+   gains `spec_recipe` = `SimulationSpec.to_dict()` beside the readable `spec`
+   summary. **348 → 3,277 bytes** on a Ten Trails-shaped simulation, because the
+   packages are `mf.ref(...)` and the arrays live in the library. `reopen_run`
+   attaches the project's build context so those refs resolve; `Run.reopen` and
+   `mf.load_run` do not, having no library in scope. A spec embedding raw arrays
+   gets no recipe and stays summary-only. **BUILT — ledger 181.**
 
 3. **`Run.outcome` reads `mfsim.lst`, view-only by default.** Not written back:
    `_record_status` already rewrites the manifest on every transition, and a verdict

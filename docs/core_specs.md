@@ -441,14 +441,28 @@ reopened = project.reopen_run("baseline")
 ```
 
 A `Run` owns one concrete workspace and provides `build()`, `write()`,
-`execute()`, and `open()`. Its `run.json` manifest records lifecycle status and
-a readable summary of the simulation spec. Reopening uses FloPy 3.10's native
-`MFSimulation.load`; Python builder callables are intentionally not serialized.
+`execute()`, and `open()`. Its `run.json` manifest records lifecycle status, a
+readable summary of the simulation spec, and — since 2026-09-04 — the
+**rebuildable recipe** (`SimulationSpec.to_dict()`) alongside it. Reopening the
+MF6 files uses FloPy 3.10's native `MFSimulation.load`.
 
-Project spec registries are therefore in-memory configuration. Project and run
-manifests, MF6 input files, and results are durable and can be reopened later:
+That recipe is what lets a run be re-run or varied in a later session:
 
 ```python
-project = Project.reopen("modeling/my_project")
+project = Project.load("modeling/my_project")     # not Project.reopen
 baseline = project.reopen_run("baseline")
+
+baseline.spec                       # a real SimulationSpec, revived from the manifest
+baseline.build()                    # rebuildable without the original script
+variant = baseline.spec.derive("high_k").replace_package("flow", mf.npf(k=35.0))
+project.prepare_run("high_k", variant)
 ```
+
+`reopen_run` attaches the project's build context, so a spec built from
+`mf.ref(...)` resolves its references against the package library. `mf.load_run`
+and `Run.reopen` have no library in scope, so their refs stay unresolved.
+
+Two cases stay **summary-only** — openable and inspectable, but not rebuildable:
+a manifest written before recipes existed, and a spec whose options embed a raw
+array (which cannot be JSON-encoded). Both keep the readable summary, so the run
+still says what it contained.
