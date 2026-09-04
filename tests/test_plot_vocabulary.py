@@ -940,3 +940,184 @@ def test_the_filled_only_arguments_are_refused_on_the_profile(canonical_run):
     for kwargs in ({"layers": [0]}, {"layer_labels": ["a"]}, {"head_layers": [0, 1]}):
         with pytest.raises(ValueError, match="filled section draws"):
             canonical_run.plot.section(line=_mid_line(canonical_run), **kwargs)
+
+
+def test_layers_hides_the_excluded_cells_outlines_too(canonical_run):
+    """Excluding a layer must remove its CELLS, not just its fill.
+
+    Reported as "only the layers I list are filled, but cells for all layers
+    still draw". FloPy's `plot_grid` outlines every cell and takes no layer
+    filter, so the first cut masked the fill and left the outlines behind.
+
+    Cropping the y-axis cannot cover for it, which is why this is a separate
+    test from the cropping one: a layer's elevation range overlaps its
+    neighbours'. Measured on the canonical model, the bottom layer spans
+    -1.3..59.8 while the retained band is 28.5..166.0 -- so it is drawn straight
+    through the middle of the picture no matter where the limits sit.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+    nlay = canonical_run.gwf.modelgrid.nlay
+    section = functools.partial(
+        canonical_run.plot.section, line=line, fill="layer", backend="mpl"
+    )
+
+    def _patches(figure):
+        return sum(len(c.get_paths()) for c in figure.axes[0].collections)
+
+    everything = _patches(section())
+    without_bottom = _patches(section(layers=list(range(nlay - 1))))
+    # Every cell of the excluded layer is gone -- outline included. The full
+    # picture draws each cell twice (grid + fill), the subset once with edges.
+    assert without_bottom < everything / 2, (
+        f"{without_bottom} patches for {nlay - 1} of {nlay} layers, against "
+        f"{everything} for all of them -- the excluded cells are still drawn"
+    )
+
+    one_layer = _patches(section(layers=[1]))
+    assert one_layer * (nlay - 1) == pytest.approx(without_bottom, rel=0.05)
+
+
+def test_show_grid_is_named_and_leftover_arguments_are_refused(canonical_run):
+    """`show_grid=False` used to vanish into the `**kwargs` tail.
+
+    The filled branch builds no class that takes an open tail -- that is the
+    profile branch's `XSection` -- so anything left in it was accepted and
+    dropped. Found by a probe passing `show_grid=False` and getting edges
+    anyway.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import numpy as np
+
+    line = _mid_line(canonical_run)
+    section = functools.partial(
+        canonical_run.plot.section, line=line, fill="layer", backend="mpl",
+        layers=[0, 1],
+    )
+
+    def _edge_width(figure):
+        filled = [c for c in figure.axes[0].collections if c.get_array() is not None][-1]
+        return float(np.atleast_1d(filled.get_linewidth())[0])
+
+    # Asserted on the LINE WIDTH the code sets, read off the style rather than
+    # written as a literal. The obvious check -- does the collection carry an
+    # edge colour -- measures rcParams, not this code: seaborn's theme (applied
+    # by `mpl_axes`, so by whichever test ran first) forces one on regardless,
+    # and the assertion passed alone and failed in the full suite.
+    from myflopy.modflow.mf6.cross_section_plotting import ModelCrossSectionStyle
+
+    styled = ModelCrossSectionStyle().grid_linewidth
+    assert _edge_width(section()) == pytest.approx(styled), "cell edges were not drawn"
+    assert _edge_width(section(show_grid=False)) != pytest.approx(styled), (
+        "show_grid=False still styled the cell edges"
+    )
+
+    with pytest.raises(ValueError, match="not arguments of a filled section"):
+        section(interpolate_me=True)
+
+
+def test_a_subset_section_fits_its_axis_to_what_is_drawn(canonical_run):
+    """"The axes need to adjust to the new extent" -- and from the DRAWING.
+
+    The first cut cropped using the grid's own `top`/`botm`, which are
+    whole-grid statistics: the limits came from cells the section line never
+    crosses. Measured on the canonical model, `layers=[0]` gave an axis of
+    66.3..164.2 for content spanning 72.0..146.2 -- a quarter of the height
+    empty, which reads as "the axis still thinks the other layers are there".
+
+    Water surfaces count as drawn content: they are `Line2D`, not collections,
+    and leaving them out cropped `layers=[3]` with the default `head_layers=0`
+    to an axis that excluded the very line its legend advertised.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import numpy as np
+
+    line = _mid_line(canonical_run)
+    nlay = canonical_run.gwf.modelgrid.nlay
+
+    def _fit(**kwargs):
+        """(fraction of the axis that is empty, everything fits) for one figure."""
+
+        figure = canonical_run.plot.section(
+            line=line, fill="layer", backend="mpl", **kwargs
+        )
+        axes = figure.axes[0]
+        drawn = [p.vertices[:, 1] for c in axes.collections for p in c.get_paths()]
+        drawn += [np.asarray(ln.get_ydata(), dtype=float) for ln in axes.lines]
+        values = np.concatenate(drawn)
+        values = values[np.isfinite(values)]
+        low, high = axes.get_ylim()
+        return 1 - (values.max() - values.min()) / (high - low), (
+            low <= values.min() and values.max() <= high
+        )
+
+    for kwargs in ({"layers": [0]}, {"layers": list(range(nlay - 1))},
+                   {"layers": [nlay - 1]},
+                   {"layers": [nlay - 1], "head_layers": None}):
+        empty, fits = _fit(**kwargs)
+        assert fits, f"{kwargs} clipped part of what it drew"
+        # The 5% pad on each side and nothing more.
+        assert empty == pytest.approx(0.09, abs=0.02), (
+            f"{kwargs} left {empty:.0%} of the axis empty"
+        )
+
+
+def test_legend_placement_actually_moves_the_legend(canonical_run):
+    """`legend=` must place it, not merely be accepted.
+
+    Positions are compared against each other rather than to fixed pixels: the
+    figure size and the theme both come from elsewhere, so an absolute
+    coordinate would pin the wrong thing. What must hold is that "bottom" is
+    below "top", "left" is left of "right", and "outside right" leaves the axes
+    entirely -- which is the placement a section actually needs, since a layer
+    legend anywhere inside sits on top of the geology it describes.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+
+    def _centre(legend):
+        figure = canonical_run.plot.section(
+            line=line, fill="layer", backend="mpl", legend=legend
+        )
+        figure.canvas.draw()
+        drawn = figure.axes[0].get_legend()
+        assert drawn is not None, f"legend={legend!r} drew none"
+        box = drawn.get_window_extent()
+        axes_box = figure.axes[0].get_window_extent()
+        return box, axes_box
+
+    top, _ = _centre("top")
+    bottom, _ = _centre("bottom")
+    assert bottom.y0 < top.y0, "'bottom' was not below 'top'"
+
+    left, _ = _centre("left")
+    right, _ = _centre("right")
+    assert left.x0 < right.x0, "'left' was not left of 'right'"
+
+    outside, axes_box = _centre("outside right")
+    assert outside.x0 >= axes_box.x1 - 1, "'outside right' stayed inside the axes"
+
+    below, axes_box = _centre("outside bottom")
+    assert below.y1 <= axes_box.y0 + 1, "'outside bottom' stayed inside the axes"
+
+    assert canonical_run.plot.section(
+        line=line, fill="layer", backend="mpl", legend=False
+    ).axes[0].get_legend() is None
+
+    for bad in ("nowhere", "outside sideways"):
+        with pytest.raises(ValueError):
+            canonical_run.plot.section(
+                line=line, fill="layer", backend="mpl", legend=bad
+            )

@@ -569,7 +569,8 @@ _PROFILE_ONLY_SECTION_ARGS = {
 
 def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
                     fill, fill_cmap, fill_label, layers, head_layers,
-                    layer_labels, title, backend, asked):
+                    layer_labels, show_grid, legend, title, backend, asked,
+                    extra):
     """Draw the section as CELLS -- the grid, its layers, and a field on them.
 
     The picture `section()` could not draw before 2026-09-02: its line profile
@@ -602,6 +603,15 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
             "draw. Use layers= to choose which layers' cells to draw, and "
             "head_layers= to choose whose water levels go on top."
         )
+    if extra:
+        # The profile branch forwards its tail to `XSection`; this branch builds
+        # no such class, so anything left over would be accepted and dropped --
+        # which is how `show_grid=False` did nothing before it was named.
+        raise ValueError(
+            f"{', '.join(sorted(extra))} are not arguments of a filled section. "
+            f"The **kwargs tail reaches the line-profile class, which this "
+            f"branch does not build."
+        )
     if line is None and cells is None:
         raise ValueError("fill= needs a section line: pass line= or cells=.")
     if line is not None and cells is not None:
@@ -625,7 +635,8 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
         grid, path,
         model=source if is_model else None,
         fill=fill, layers=layers, head_layers=head_layers,
-        layer_labels=layer_labels, per=per, kstpkper=kstpkper,
+        layer_labels=layer_labels, show_grid=show_grid, legend=legend,
+        per=per, kstpkper=kstpkper,
         cmap=fill_cmap, label=fill_label, title=title,
     )
 
@@ -666,6 +677,8 @@ def section(
     layers=None,
     head_layers: int | list[int] | None = 0,
     layer_labels=None,
+    show_grid: bool = True,
+    legend=True,
     backend: str = "plotly",
     **kwargs,
 ):
@@ -773,6 +786,24 @@ def section(
 
         Ignored with ``fill='results'`` or an array fill: those paint the field
         onto the cells, so a line of the same quantity on top would say it twice.
+    legend : bool or str, default True
+        *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
+        ``True`` uses the house default (upper right); ``"auto"`` lets
+        matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
+        ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
+        ``"upper right"``) places it inside the axes.
+
+        ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
+        BESIDE the axes and make room for it. On a section that is usually what
+        you want: a layer legend placed anywhere inside sits on top of the
+        geology it is describing.
+
+        An unrecognised word raises and lists the accepted ones, rather than
+        quietly falling back to a placement you did not ask for.
+    show_grid : bool, default True
+        *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
+        filled cells themselves rather than FloPy's ``plot_grid``, which takes no
+        layer filter and would outline the very layers you excluded.
     layer_labels : sequence of str, optional
         *(``fill=`` only)* Legend names for the layers -- your unit names rather
         than ``Layer 1..N``. One per layer, in model order.
@@ -848,14 +879,15 @@ def section(
             line=line, cells=cells, per=per, kstpkper=kstpkper,
             fill=fill, fill_cmap=fill_cmap, fill_label=fill_label,
             layers=layers, head_layers=head_layers, layer_labels=layer_labels,
-            title=section_name, backend=kind,
-            asked=locals(),
+            show_grid=show_grid, legend=legend, title=section_name, backend=kind,
+            asked=locals(), extra=kwargs,
         )
-    if layers is not None or layer_labels is not None or head_layers != 0:
+    if (layers is not None or layer_labels is not None or head_layers != 0
+            or not show_grid or legend is not True):
         raise ValueError(
-            "layers=, head_layers= and layer_labels= describe the CELLS a "
-            "filled section draws; the line profile has none. Pass fill= "
-            "(with backend='mpl'), or use layer= to overlay profiles."
+            "layers=, head_layers=, layer_labels= and show_grid= describe the "
+            "CELLS a filled section draws; the line profile has none. Pass "
+            "fill= (with backend='mpl'), or use layer= to overlay profiles."
         )
     if is_model:
         picture = XSection(
@@ -1574,6 +1606,8 @@ class ModelPlots:
         layers=None,
         head_layers: int | list[int] | None = 0,
         layer_labels=None,
+        show_grid: bool = True,
+        legend=True,
         backend: str = "plotly",
         **kwargs,
     ):
@@ -1705,6 +1739,24 @@ class ModelPlots:
             second way.
         **kwargs
             Forwarded to the underlying section class.
+        show_grid : bool, default True
+            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
+            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
+            layer filter and would outline the very layers you excluded.
+        legend : bool or str, default True
+            *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
+            ``True`` uses the house default (upper right); ``"auto"`` lets
+            matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
+            ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
+            ``"upper right"``) places it inside the axes.
+
+            ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
+            BESIDE the axes and make room for it. On a section that is usually what
+            you want: a layer legend placed anywhere inside sits on top of the
+            geology it is describing.
+
+            An unrecognised word raises and lists the accepted ones, rather than
+            quietly falling back to a placement you did not ask for.
 
         Returns
         -------

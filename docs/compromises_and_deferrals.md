@@ -5166,11 +5166,47 @@ same day, which is the useful part of the result.
           this one, because `layer` is real on the profile branch. The filled
           branch takes `layers=` (plural) and `layer=` now raises naming it: two
           spellings for two meanings beats one that silently means neither.
+        - **`layers=` also had to stop the OUTLINES.** Reported after the first
+          cut: "only the layers I list are filled, but cells for all layers
+          still draw". FloPy's `plot_grid` outlines every cell and takes no
+          layer filter, so masking the fill left the excluded layer drawn.
+          Cropping cannot cover for it -- a layer's elevation range OVERLAPS its
+          neighbours', and the canonical bottom layer spans -1.3..59.8 straight
+          through a retained band of 28.5..166.0. With a subset the edges now
+          come from the filled collection itself, which is already masked; with
+          every layer the two-collection picture is untouched.
+        - **`legend=` places it, with words that exist.** `"bottom"` is the
+          obvious one and is not a matplotlib `loc` value, so a friendly set
+          (`top`/`bottom`/`left`/`right`, the four corners, `auto`) maps onto
+          what `loc` accepts and matplotlib's own strings pass through
+          unchanged. `"outside <side>"` is not a matplotlib placement at all and
+          is the one that matters here: a layer legend anywhere INSIDE the axes
+          sits on top of the geology it describes. An unknown word RAISES and
+          lists the accepted ones -- falling back to `"best"` would be a legend
+          that ignored where it was told to go.
+        - **`show_grid=False` was silently dropped**, found by the probe written
+          to check the above. The filled branch builds no class that takes an
+          open tail -- that is the profile branch's `XSection` -- so anything
+          left in `**kwargs` was accepted and discarded. It is a named parameter
+          now, and leftovers RAISE.
         - **`layers=` masks AND crops.** FloPy's `plot_array` skips NaN cells, so
           masking hides them without moving any other cell's geometry -- but the
           axis stays full height, which puts the two layers you asked for in a
-          thin band. Measured: `layers=[0, 1]` goes 124 drawn cells to 62 and
-          y-limits `[-1, 160]` to `[41, 165]`. The legend narrows to match.
+          thin band. Measured: `layers=[0, 1]` goes 124 drawn cells to 62. The
+          legend narrows to match.
+        - **The crop must come from the DRAWING, not from the grid.** Reported as
+          "the axes need to adjust to the new extent; the y-axis scale still
+          assumes all layers are drawn". The first cut used the modelgrid's own
+          `top`/`botm`, which are whole-GRID statistics -- so the limits came
+          from cells the section line never crosses. Measured, `layers=[0]` gave
+          an axis of 66.3..164.2 for content spanning 72.0..146.2: a quarter of
+          the height empty. Now measured off the drawn polygons, which is exact
+          and needs no grid introspection. Water surfaces are `Line2D` rather
+          than collections and had to be added explicitly -- without them
+          `layers=[3]` with the default `head_layers=0` cropped out the very line
+          its own legend advertised. Full-layer sections keep FloPy's framing:
+          it is what `plot_model_cross_section` and everything built on it
+          already use, and tightening it unasked would move every one.
         - **`head_layers=` chooses whose water levels are drawn**, defaulting to
           `0` -- the single water table every earlier figure got, so nothing
           moves. A list draws one surface per layer, each LABELLED, because

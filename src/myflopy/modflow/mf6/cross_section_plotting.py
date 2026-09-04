@@ -232,22 +232,40 @@ def _surface_colours(labels: Sequence[str], style) -> list[str]:
     return [mapping[label] for label in labels]
 
 
-def _layer_elevation_bounds(modelgrid, chosen: Sequence[int]):
-    """``(ymin, ymax)`` spanning the chosen layers, padded, or None if unknowable."""
+def _drawn_elevation_bounds(axes):
+    """``(ymin, ymax)`` of what is actually ON the axes, padded, or None.
 
-    try:
-        top = np.asarray(modelgrid.top, dtype=float)
-        botm = np.asarray(modelgrid.botm, dtype=float)
-    except (AttributeError, TypeError, ValueError):        # pragma: no cover
+    Measured from the drawn polygons rather than from the grid's own
+    ``top``/``botm``, which was the first cut and was wrong in a way that looked
+    almost right: those are whole-GRID statistics, so the limits came from cells
+    the section line never crosses. Measured on the canonical model,
+    ``layers=[0]`` gave an axis of 66.3..164.2 for content spanning 72.0..146.2 --
+    a quarter of the height empty, which reads as "the axis still thinks the
+    other layers are there".
+    """
+
+    values = [
+        path.vertices[:, 1]
+        for collection in axes.collections
+        for path in collection.get_paths()
+        if len(path.vertices)
+    ]
+    # The water surfaces are `Line2D`, not collections. Leaving them out cropped
+    # them off the picture -- `layers=[3]` with the default `head_layers=0` drew
+    # a legend entry for a line above the top of the axis.
+    values += [
+        np.asarray(line.get_ydata(), dtype=float)
+        for line in axes.lines
+        if len(line.get_ydata())
+    ]
+    if not values:                                         # pragma: no cover
         return None
-    if botm.ndim != 2:                                     # pragma: no cover
+    stacked = np.concatenate(values)
+    finite = stacked[np.isfinite(stacked)]
+    if finite.size == 0:                                   # pragma: no cover
         return None
-    # The top of layer k is the model top for k == 0 and the bottom above it
-    # otherwise -- the same stacking `LayerSurfaces` uses.
-    tops = np.vstack([top[None, :], botm[:-1]])
-    upper = np.nanmax(tops[list(chosen)])
-    lower = np.nanmin(botm[list(chosen)])
-    if not np.isfinite(upper) or not np.isfinite(lower) or upper <= lower:
+    lower, upper = float(finite.min()), float(finite.max())
+    if upper <= lower:                                     # pragma: no cover
         return None
     pad = 0.05 * (upper - lower)
     return (lower - pad, upper + pad)
@@ -269,6 +287,76 @@ def layer_labels_from_model(model, nlay: int) -> list[str] | None:
         return None
     names = list(names)
     return names if len(names) == nlay else None
+
+
+#: Friendly placements, mapped onto what matplotlib's `loc` actually accepts.
+#: `"bottom"` is the obvious word and is not one of its values; `"outside ..."`
+#: is not a placement it has at all, and is the one that matters on a section --
+#: a layer legend sits on top of the geology everywhere inside the axes.
+_LEGEND_ALIASES = {
+    "auto": "best",
+    "top": "upper center",
+    "bottom": "lower center",
+    "left": "center left",
+    "right": "center right",
+    "topleft": "upper left",
+    "topright": "upper right",
+    "bottomleft": "lower left",
+    "bottomright": "lower right",
+}
+
+#: `(loc, bbox_to_anchor)` for placements that sit OUTSIDE the axes.
+_LEGEND_OUTSIDE = {
+    "right": ("center left", (1.02, 0.5)),
+    "left": ("center right", (-0.02, 0.5)),
+    "bottom": ("upper center", (0.5, -0.08)),
+    "top": ("lower center", (0.5, 1.02)),
+}
+
+
+def legend_placement(legend):
+    """``(show, loc, bbox_to_anchor)`` from a friendly ``legend=`` value.
+
+    Accepts ``True``/``False``/``None``, ``"auto"``, a plain side (``"bottom"``,
+    ``"left"``, ``"right"``, ``"top"``), a corner (``"topright"`` or matplotlib's
+    own ``"upper right"``), or ``"outside <side>"`` to put it beside the axes.
+    Anything matplotlib's ``loc`` understands passes straight through, so this
+    narrows nothing.
+
+    Raises on an unknown word rather than falling back to ``"best"``: a legend
+    that silently ignored where you told it to go is the defect this whole
+    section's worth of work has been about.
+    """
+
+    if legend is None or legend is False:
+        return False, None, None
+    if legend is True:
+        return True, None, None
+
+    text = str(legend).strip().lower()
+    if text.startswith("outside"):
+        side = text.replace("outside", "").strip().replace("_", "") or "right"
+        if side not in _LEGEND_OUTSIDE:
+            raise ValueError(
+                f"outside legend must name {sorted(_LEGEND_OUTSIDE)}, not {side!r}."
+            )
+        return (True, *_LEGEND_OUTSIDE[side])
+
+    key = text.replace("_", "").replace(" ", "")
+    if key in _LEGEND_ALIASES:
+        return True, _LEGEND_ALIASES[key], None
+    known = {
+        "best", "upper right", "upper left", "lower left", "lower right",
+        "right", "center left", "center right", "lower center", "upper center",
+        "center",
+    }
+    if text in known:
+        return True, text, None
+    raise ValueError(
+        f"legend={legend!r} is not a placement. Use True/False, 'auto', a side "
+        f"({', '.join(sorted(_LEGEND_ALIASES))}), 'outside <side>', or one of "
+        f"matplotlib's own: {', '.join(sorted(known))}."
+    )
 
 
 def plot_layered_cross_section(
@@ -296,6 +384,8 @@ def plot_layered_cross_section(
     show_layers: bool = True,
     show_head: bool = True,
     show_legend: bool = True,
+    legend_loc: str | None = None,
+    legend_anchor=None,
 ):
     """Render a layer-colored cross section from any flopy modelgrid + line.
 
@@ -363,8 +453,19 @@ def plot_layered_cross_section(
 
         xsect = PlotCrossSection(model=flopy_model, modelgrid=modelgrid, line=line_spec)
 
-        if show_grid:
+        # `plot_grid` draws EVERY cell's edges and takes no layer filter, so with
+        # a subset it outlined the layers just masked out of the fill -- a bottom
+        # layer excluded from `layers=` still appeared, as outlines. Cropping the
+        # y-axis cannot fix that: a layer's elevation range overlaps its
+        # neighbours' (measured, the canonical bottom layer spans -1.3..59.8
+        # inside a retained band of 28.5..166.0). So with a subset the edges come
+        # from the FILL collection itself, which is already masked.
+        if show_grid and chosen is None:
             xsect.plot_grid(ax=ax, linewidths=style.grid_linewidth, color=style.grid_color)
+        edges = (
+            {"edgecolor": style.grid_color, "linewidth": style.grid_linewidth}
+            if show_grid and chosen is not None else {}
+        )
 
         if values is not None:
             # A continuous field REPLACES the layer colouring: one fill per cell,
@@ -375,6 +476,7 @@ def plot_layered_cross_section(
                 ax=ax,
                 cmap=values_cmap,
                 alpha=style.layer_alpha,
+                **edges,
             )
             if colorbar:
                 bar = fig.colorbar(painted, ax=ax, fraction=0.025, pad=0.02)
@@ -388,6 +490,7 @@ def plot_layered_cross_section(
                 vmin=0,
                 vmax=nlay - 1,
                 alpha=style.layer_alpha,
+                **edges,
             )
 
         drawn_surfaces = _resolve_head_surfaces(head_surfaces, head_surface, style)
@@ -405,7 +508,10 @@ def plot_layered_cross_section(
         if ylim is not None:
             ax.set_ylim(*ylim)
         elif chosen is not None:
-            bounds = _layer_elevation_bounds(modelgrid, chosen)
+            # Only for a SUBSET. Drawing every layer keeps FloPy's own framing,
+            # which `plot_model_cross_section` and every figure built on it
+            # already use -- tightening that unasked would move them all.
+            bounds = _drawn_elevation_bounds(ax)
             if bounds is not None:
                 ax.set_ylim(*bounds)
 
@@ -430,10 +536,15 @@ def plot_layered_cross_section(
             )
             ax.legend(
                 handles=handles,
-                loc=style.legend_loc,
+                loc=legend_loc or style.legend_loc,
                 frameon=style.legend_frameon,
                 fontsize=style.legend_fontsize,
+                **({"bbox_to_anchor": legend_anchor} if legend_anchor else {}),
             )
+            if legend_anchor:
+                # An outside legend needs room made for it, or it is drawn off
+                # the canvas edge and saved figures clip it.
+                fig.tight_layout()
 
     return fig, ax
 
@@ -506,6 +617,8 @@ def filled_section(
     layers=None,
     head_layers=0,
     layer_labels=None,
+    show_grid: bool = True,
+    legend=True,
     per=None,
     kstpkper=None,
     cmap: str = "viridis",
@@ -526,6 +639,7 @@ def filled_section(
     ``fill="results"`` raises rather than quietly degrading to ``"layer"``.
     """
 
+    show, loc, anchor = legend_placement(legend)
     values = section_values(model, fill, per=per, kstpkper=kstpkper)
     surfaces = section_head_surfaces(
         model, head_layers, per=per, kstpkper=kstpkper
@@ -541,6 +655,10 @@ def filled_section(
         values_label=label,
         layers=layers,
         layer_labels=names,
+        show_grid=show_grid,
+        show_legend=show,
+        legend_loc=loc,
+        legend_anchor=anchor,
         head_surfaces=surfaces,
         flopy_model=getattr(model, "gwf", None),
         title=title,

@@ -738,6 +738,24 @@ class GridPlots:
             is a plain frame, has no names to find and falls back to ``Layer N``.
         **kwargs
             Forwarded to the underlying section class.
+        show_grid : bool, default True
+            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
+            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
+            layer filter and would outline the very layers you excluded.
+        legend : bool or str, default True
+            *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
+            ``True`` uses the house default (upper right); ``"auto"`` lets
+            matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
+            ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
+            ``"upper right"``) places it inside the axes.
+
+            ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
+            BESIDE the axes and make room for it. On a section that is usually what
+            you want: a layer legend placed anywhere inside sits on top of the
+            geology it is describing.
+
+            An unrecognised word raises and lists the accepted ones, rather than
+            quietly falling back to a placement you did not ask for.
 
         Returns
         -------
