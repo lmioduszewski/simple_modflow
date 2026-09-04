@@ -1278,10 +1278,14 @@ never a trailing `.plot()`.
    inactive region you'll spend an afternoon chasing in the head field.
 8. `GridSpec.structured` / `from_geopackage` exist but **fail fast** — only
    `voronoi` and `python` resolve. Use `GridSpec.from_object` for a built grid.
-9. **`project.save()` refuses numpy** — arrays *and* scalars. An eagerly-built
-   stack cannot be persisted without `.tolist()` at the boundary. Call
-   `project.validate()` to see this without touching disk; running and reopening
-   work fine either way.
+9. **`project.save()` skips a simulation that embeds numpy** — arrays *and*
+   scalars — but persists everything else and names what it left out
+   (`report.skipped`). It used to refuse the whole project, so one such
+   simulation cost you the entire package library. A package carrying arrays is
+   fine either way: it is pickled rather than JSON-encoded. Call
+   `project.validate()` to see the issues without touching disk. A **dangling
+   `mf.ref`** still raises — that is a mistake with a fix — but only after the
+   write, so the library persists regardless.
 10. **Mixed source resolutions need no pre-alignment.** Area-weighted sampling
     puts a 25-ft DEM and a coarse contoured contact on the same footing. A
     mismatched **CRS**, though, samples in the wrong place and surfaces as a

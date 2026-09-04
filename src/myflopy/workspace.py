@@ -6,6 +6,7 @@ import json
 import pickle
 import re
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import import_module
@@ -366,6 +367,57 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
             for exchange in spec.exchanges
         ],
     }
+
+
+@dataclass(frozen=True, slots=True)
+class SaveReport:
+    """What :meth:`Project.save` actually persisted, and what it could not.
+
+    ``save()`` used to refuse the WHOLE project when any one simulation was
+    un-persistable -- so a project with 14 saveable packages and one simulation
+    carrying an inline array wrote nothing at all, and its library did not
+    survive the session. The default is now to persist what it can and say what
+    it skipped; ``strict=True`` restores the refuse-everything behaviour.
+
+    ``simulations``/``packages``/``grids`` count what was persisted;
+    ``pickled`` is how many of those packages and grids needed the pickle
+    fallback rather than readable JSON, which is the number worth watching --
+    a pickled entry is version-fragile. ``skipped`` pairs each unpersisted
+    simulation with why.
+
+    Truthy when anything was written, and usable anywhere a path is (``os.fspath``,
+    ``open()``, ``Path(...)``) -- though it is NOT equal to a ``Path``.
+    """
+
+    project_spec: Path
+    simulations: int = 0
+    packages: int = 0
+    grids: int = 0
+    pickled: int = 0
+    skipped: tuple[tuple[str, str], ...] = ()
+
+    def __fspath__(self) -> str:
+        """The project spec path, so a report can stand in for one in ``open``/``Path``."""
+
+        return str(self.project_spec)
+
+    def __bool__(self) -> bool:
+        """Whether anything was persisted."""
+
+        return bool(self.simulations or self.packages or self.grids)
+
+    def __repr__(self) -> str:
+        """Compact summary naming the skip count, never the full skip list."""
+
+        pieces = [
+            f"project_spec={self.project_spec.name!r}",
+            f"simulations={self.simulations}",
+            f"packages={self.packages}",
+            f"grids={self.grids}",
+            f"pickled={self.pickled}",
+            f"skipped={len(self.skipped)}",
+        ]
+        return f"SaveReport({', '.join(pieces)})"
 
 
 @dataclass(slots=True)
@@ -1048,14 +1100,23 @@ class Project:
             issues.extend(self._unresolved_refs(simulation))
         return issues
 
-    def _project_dict(self) -> dict[str, Any]:
-        """Return the durable project document."""
+    def _project_dict(self, *, simulations: Iterable[str] | None = None) -> dict[str, Any]:
+        """Return the durable project document.
+
+        ``simulations`` lists the names actually written. It must exclude anything
+        :meth:`save` skipped: :meth:`load` raises ``FileNotFoundError`` for a
+        listed entry whose file is missing, which is a contract worth keeping --
+        so a skipped simulation is left OUT of the listing rather than listed and
+        absent.
+        """
 
         return {
             "kind": "Project",
             "name": self.name,
             "layout": self.layout.to_dict(),
-            "simulations": sorted(self.simulations),
+            "simulations": sorted(
+                self.simulations if simulations is None else simulations
+            ),
             "packages": sorted(self.packages),
             "grids": sorted(self.grids),
         }
@@ -1081,14 +1142,14 @@ class Project:
             # Recipe GridSpec or GridRef: already serializable.
             _write_json(self.layout.grid_spec_path(key), grid.to_dict())
 
-    def _save_package(self, key: str, package: PackageSpec) -> None:
+    def _save_package(self, key: str, package: PackageSpec) -> bool:
         """Persist one project package, pickling it when it carries arrays.
 
         Source-driven / scalar packages serialize to readable JSON. A package
         whose options embed arrays (a computed ``k`` field, explicit
         stress-period data, etc.) is pickled as an artifact instead, mirroring
         how built grids are persisted, so it can be reused across variants
-        without recomputing.
+        without recomputing. Returns whether it fell back to pickling.
         """
 
         try:
@@ -1097,7 +1158,7 @@ class Project:
             doc = None
         if doc is not None:
             _write_json(self.layout.package_spec_path(key), doc)
-            return
+            return False
         pickle_path = self.layout.package_pickle_path(key)
         pickle_path.parent.mkdir(parents=True, exist_ok=True)
         with pickle_path.open("wb") as handle:
@@ -1112,20 +1173,63 @@ class Project:
                 "pickle_path": pickle_path.relative_to(self.root).as_posix(),
             },
         )
+        return True
 
-    def save(self) -> Path:
+    def save(self, *, strict: bool = False) -> SaveReport:
         """Persist the project document, its simulations, and its package library.
 
-        Persistence is opt-in. Returns the path to the written project spec.
+        Persistence is opt-in. Returns a :class:`SaveReport` naming what was
+        written and what could not be.
+
+        A simulation that embeds a raw array, derives from an unregistered
+        simulation, or references an undefined library entry cannot be
+        persisted. By default such a simulation is SKIPPED and everything else is
+        written -- because refusing the whole project loses a library whose every
+        package would have saved.
+
+        A simulation embedding a raw array is skipped with a logged warning: there
+        is nothing to fix at save time. A simulation with a DANGLING reference is
+        skipped and then RAISES, because that is a mistake with a fix -- but the
+        raise comes after the write, so the library persists either way.
+        ``strict=True`` restores the previous behaviour and raises before writing
+        anything.
+
+        Packages are unaffected by a skipped simulation: :meth:`_save_package`
+        already pickles a package whose ``to_dict`` raises, so an array-bearing
+        package persists either way.
         """
 
         issues = self.validate()
-        if issues:
+        if issues and strict:
             raise ValueError(
                 "Project cannot be saved:\n"
                 + "\n".join(f"- {issue}" for issue in issues)
             )
 
+        # Two kinds of un-persistable simulation, handled differently on purpose.
+        # An embedded array is nothing the caller can fix at save time, so it is
+        # skipped and logged. A dangling reference is a MISTAKE -- the fix is to
+        # define the entry -- so it still raises. Either way the write happens
+        # first, so one bad simulation no longer costs the whole library.
+        skipped: list[tuple[str, str]] = []
+        integrity: list[str] = []
+        for name, simulation in self.simulations.items():
+            reason = self._why_unserializable(simulation)
+            broken = self._unresolved_refs(simulation)
+            if simulation.derived_from is not None and (
+                simulation.derived_from not in self.simulations
+            ):
+                broken.append(
+                    f"Simulation '{name}' derives from unknown simulation "
+                    f"'{simulation.derived_from}'."
+                )
+            if broken:
+                integrity.extend(broken)
+                skipped.append((name, "; ".join(broken)))
+            elif reason is not None:
+                skipped.append((name, reason))
+
+        skipped_names = {name for name, _ in skipped}
         self.layout.ensure()
         _write_json(
             self.manifest_path,
@@ -1136,14 +1240,44 @@ class Project:
                 }
             },
         )
-        _write_json(self.layout.project_spec_path, self._project_dict())
-        for name, simulation in self.simulations.items():
-            _write_json(self.layout.simulation_spec_path(name), simulation.to_dict())
+        written_names = [
+            name for name in self.simulations if name not in skipped_names
+        ]
+        _write_json(
+            self.layout.project_spec_path,
+            self._project_dict(simulations=written_names),
+        )
+        for name in written_names:
+            _write_json(
+                self.layout.simulation_spec_path(name),
+                self.simulations[name].to_dict(),
+            )
+        pickled = 0
         for key, package in self.packages.items():
-            self._save_package(key, package)
+            if self._save_package(key, package):
+                pickled += 1
         for key, grid in self.grids.items():
             self._save_grid(key, grid)
-        return self.layout.project_spec_path
+        for name, reason in skipped:
+            logger.warning(
+                "Project '%s': simulation '%s' not persisted -- %s",
+                self.name,
+                name,
+                reason,
+            )
+        if integrity:
+            raise ValueError(
+                "Project saved, but these simulations were left out and must be "
+                "fixed:\n" + "\n".join(f"- {issue}" for issue in integrity)
+            )
+        return SaveReport(
+            project_spec=self.layout.project_spec_path,
+            simulations=len(written_names),
+            packages=len(self.packages),
+            grids=len(self.grids),
+            pickled=pickled,
+            skipped=tuple(skipped),
+        )
 
     @staticmethod
     def _restore_layout(root: Path) -> ProjectLayout | None:

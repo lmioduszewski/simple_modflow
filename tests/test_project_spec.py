@@ -465,10 +465,14 @@ def test_project_save_load_round_trip(tmp_path):
     project.add_simulation(baseline)
     project.add_simulation(high_k)
 
-    saved_path = project.save()
+    report = project.save()
     loaded = mf.Project.load(project.root)
 
-    assert saved_path == project.layout.project_spec_path
+    # save() returns a SaveReport, not a Path. It is os.fspath-able, so it can
+    # still stand in for one -- but it is deliberately NOT equal to a Path.
+    assert Path(report) == project.layout.project_spec_path
+    assert report.simulations == 2
+    assert report.skipped == ()
     assert (project.root / "project.json").exists()
     assert (project.root / "specs" / "simulations" / "baseline.json").exists()
     assert (project.root / "specs" / "simulations" / "high_k.json").exists()

@@ -4,6 +4,7 @@ import json
 import shutil
 
 import flopy
+import numpy as np
 import pytest
 
 import myflopy as mf
@@ -569,3 +570,90 @@ def test_a_native_workspace_carries_no_spec_block(tmp_path):
 
     assert native.spec_block is None
     assert native.to_dict()["spec"] is None
+
+
+def test_one_unserializable_simulation_no_longer_costs_the_whole_library(tmp_path):
+    """``save()`` used to refuse everything when any simulation embedded an array.
+
+    A project with a full package library and one such simulation therefore wrote
+    NOTHING -- measured: 0 package files -- and the library did not survive the
+    session even though every package would have persisted on its own.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    array_package = mf.npf(k=np.arange(9.0))
+    project.add_package("npf/base", array_package)
+    project.add_package("ic/steady", mf.ic(strt=1.0))
+    project.add_simulation(
+        mf.SimulationSpec(
+            "good",
+            models=[mf.gwf("flow", packages=[mf.ref("npf/base"), mf.ref("ic/steady")])],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    # embeds the array directly rather than referencing the library
+    project.add_simulation(
+        mf.SimulationSpec(
+            "inline",
+            models=[mf.gwf("flow", packages=[array_package])],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+
+    report = project.save()
+
+    assert report.packages == 2
+    assert report.pickled == 1              # the array package took the pickle path
+    assert report.simulations == 1
+    assert [name for name, _ in report.skipped] == ["inline"]
+    assert bool(report) is True
+
+    loaded = mf.Project.load(project.root)
+    assert sorted(loaded.packages) == ["ic/steady", "npf/base"]
+    assert np.array_equal(loaded.packages["npf/base"].options["k"], np.arange(9.0))
+    # The skipped simulation is left OUT of the listing, not listed and absent --
+    # load() raises FileNotFoundError for a listed entry whose file is missing.
+    assert sorted(loaded.simulations) == ["good"]
+
+
+def test_strict_save_still_refuses_everything(tmp_path):
+    """``strict=True`` is the old behaviour, and must raise BEFORE writing."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/base", mf.npf(k=1.0))
+    project.add_simulation(
+        mf.SimulationSpec(
+            "inline",
+            models=[mf.gwf("flow", packages=[mf.npf(k=np.arange(9.0))])],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+
+    with pytest.raises(ValueError, match="cannot be saved"):
+        project.save(strict=True)
+
+    assert not project.layout.project_spec_path.exists()
+
+
+def test_a_dangling_reference_still_raises_but_after_the_write(tmp_path):
+    """An embedded array is nothing to fix; a dangling ref is a mistake with a fix.
+
+    So it still raises -- but only after the library has been persisted, so the
+    error costs a message rather than the whole project.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("ic/steady", mf.ic(strt=1.0))
+    project.add_simulation(
+        mf.SimulationSpec(
+            "dangling",
+            models=[mf.gwf("flow", packages=[mf.ref("npf/base")])],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+
+    with pytest.raises(ValueError, match="npf/base"):
+        project.save()
+
+    # ...and the library is on disk anyway.
+    assert sorted(mf.Project.load(project.root).packages) == ["ic/steady"]

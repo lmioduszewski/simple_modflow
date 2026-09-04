@@ -5409,3 +5409,44 @@ same day, which is the useful part of the result.
           no-op inter-model mover. Model and simulation options were re-checked
           and genuinely have none -- neither constructor takes a dict-valued
           parameter.
+
+180. **`Project.save()` persists what it can, and the return type changed
+      (2026-09-04).**
+      Step 2 of `docs/project_libraries_design.md`. Measured on the user's real
+      project: `specs/packages/` empty and `specs/project_spec.json` absent, so
+      `Project.load` raised and a 14-key package library did not survive the
+      session that built it. Cause: `save()` called `validate()` and raised on
+      ANY issue, so one simulation embedding a numpy array refused the whole
+      project -- reproduced, **0 package files written** for a project whose every
+      package would have persisted on its own (`_save_package` already falls back
+      to pickling).
+      - **Two kinds of failure, handled differently on purpose.** An embedded
+        array is nothing the caller can fix at save time, so that simulation is
+        skipped and logged at WARNING. A **dangling `mf.ref`** (or a
+        `derived_from` naming an unregistered simulation) is a mistake with a
+        fix, so it still RAISES -- but *after* the write, so the error costs a
+        message rather than the whole library.
+        `test_project_save_rejects_unresolved_references` passes unchanged, which
+        is the evidence the contract was kept rather than weakened.
+      - **A skipped simulation is left OUT of the project document's listing**,
+        not listed and absent. `Project.load` raises `FileNotFoundError` for a
+        listed entry whose file is missing (pinned by
+        `test_project_load_fails_loud_on_missing_file`), and that fail-loud
+        contract is worth keeping.
+      - **BREAKING: `save()` returns `SaveReport`, not `Path`.** It is
+        `os.fspath`-able, so `Path(report)` / `open(report)` work, but it is not
+        `==` a `Path` -- `__fspath__` does not participate in equality, so
+        `test_project_spec.py`'s `saved_path == project.layout.project_spec_path`
+        was rewritten rather than papered over with a custom `__eq__`.
+      - **Counts are per-kind, not a single `written` total.** An earlier draft
+        had `written` mixing simulations and packages, which made the number
+        unreadable; it is now `simulations`/`packages`/`grids`/`pickled`.
+        `pickled` is the one worth watching -- a pickled entry is a cache, not an
+        archive.
+      - **`strict=True` is the old behaviour** (raise before writing anything),
+        kept for anyone who wants a project to be all-or-nothing.
+      - **NOT fixed here:** the array-bearing simulation still cannot be
+        persisted at all. Making `ModelContext`-borne grids/domains serializable
+        was considered and refused for this pass -- it would flood
+        `Project.validate()` for every real GIS model and silently break
+        `SimulationSpec.to_yaml`, which goes through the same `to_dict`.

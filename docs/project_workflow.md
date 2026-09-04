@@ -121,16 +121,31 @@ In memory, everything works immediately — including raw arrays and coupled
 models. Nothing is written until you call `save()`.
 
 ```python
-project.save()                       # writes specs/, packages/, grids/ under the root
+report = project.save()              # writes specs/, packages/, grids/ under the root
+report                               # SaveReport(project_spec='project_spec.json',
+                                     #            simulations=2, packages=14, grids=1,
+                                     #            pickled=9, skipped=0)
 later = mf.Project.load("modeling/cumberland")
 later.run("refined_hk", "refined_hk", overwrite=True)
 ```
 
+`save()` returns a **`SaveReport`**, not a path. It is `os.fspath`-able — so
+`Path(report)` and `open(report)` work — but it is deliberately not *equal* to a
+`Path`. `pickled` is the number worth watching: a pickled entry is a cache, not
+an archive. `skipped` pairs each unpersisted simulation with the reason.
+
 ### Serialization boundary
 
-`save()` requires serializable specs. It can persist simulations whose package
-data is JSON-friendly or expressed as data sources, the package library, and
-the grid library. It **cannot** yet persist:
+`save()` persists what it can and reports the rest. A simulation it cannot
+serialize is **skipped** — written into neither the project document nor its own
+file — and named in `report.skipped`; the package and grid libraries are
+persisted regardless. Before 2026-09-04 a single such simulation refused the
+whole project, so a library of otherwise-saveable packages wrote nothing at all.
+Pass `strict=True` for that older behaviour (raise before writing anything).
+
+It can persist simulations whose package data is JSON-friendly or expressed as
+data sources, the package library, and the grid library. It **cannot** yet
+persist:
 
 - **Simulations with exchanges** (coupled GWF↔GWT, GWF↔PRT, …).
 - **Specs that embed raw arrays** — e.g. an `npf` carrying a NumPy `k` array, or
