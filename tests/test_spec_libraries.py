@@ -235,3 +235,51 @@ def test_every_library_answers_the_same_verbs():
         assert verbs <= set(dir(library)), library.__name__
         assert library._kind != SpecLibrary._kind
         assert library._columns != SpecLibrary._columns
+
+
+# --- keys that name the same file ------------------------------------------
+
+
+def test_two_keys_that_map_to_one_file_are_refused_before_writing(tmp_path):
+    """``_slug`` rewrites every unsafe character to ``_``, so distinct keys can
+    name one file. Writing both silently loses one -- measured before the fix:
+
+        in memory : {'npf/high k': 111.0, 'npf/high_k': 999.0}
+        after load: {'npf/high k': 999.0, 'npf/high_k': 999.0}
+
+    Unlike a dangling reference, this cannot be written harmlessly and reported
+    afterwards, so it is checked BEFORE anything is written.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/high k", mf.npf(k=111.0))
+    project.add_package("npf/high_k", mf.npf(k=999.0))
+
+    with pytest.raises(ValueError) as caught:
+        project.save()
+
+    message = str(caught.value)
+    assert "'npf/high k' and 'npf/high_k'" in message
+    assert "specs/packages/npf/high_k.json" in message
+    assert not (project.root / "specs").exists()      # nothing written
+
+
+def test_grid_keys_collide_more_readily_than_package_keys(tmp_path):
+    """A grid key is slugged FLAT -- every ``/`` collapses -- so ``base/coarse``
+    and ``base_coarse`` name one file, where the package layout nests instead."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_grid("base/coarse", mf.GridSpec.python("g.py", function="b"))
+    project.add_grid("base_coarse", mf.GridSpec.python("g.py", function="b"))
+
+    with pytest.raises(ValueError, match="base_coarse"):
+        project.save()
+
+    # ...while the same shapes as PACKAGE keys nest and do not collide.
+    ok = mf.Project(tmp_path / "ok", name="ok")
+    ok.add_package("base/coarse", mf.ic(strt=1.0))
+    ok.add_package("base_coarse", mf.ic(strt=2.0))
+    ok.save()
+    reloaded = mf.Project.load(ok.root)
+    assert reloaded.package("base/coarse").options["strt"] == 1.0
+    assert reloaded.package("base_coarse").options["strt"] == 2.0

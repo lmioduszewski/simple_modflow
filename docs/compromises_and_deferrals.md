@@ -5526,3 +5526,28 @@ same day, which is the useful part of the result.
         not unwrap `functools.partial`, so all seven list BCs plus lak/sfr/uzf/mvr
         labelled themselves `'partial'` in every repr, summary and snapshot
         entry -- 11 lines of `tests/api_snapshot.json` now name the FloPy class.
+
+183. **Two library keys that name one file are refused before the write
+      (2026-09-04).**
+      Found while answering "are the keys with `/` an issue?" -- they are not,
+      but the characters `_slug` REWRITES are. `_slug` maps every unsafe
+      character to `_`, so `"npf/high k"` and `"npf/high_k"` are distinct keys
+      naming one file. Measured before the fix:
+      `in memory {'npf/high k': 111.0, 'npf/high_k': 999.0}` ->
+      `after load {'npf/high k': 999.0, 'npf/high_k': 999.0}` -- the second write
+      won and the reload handed the survivor's spec back under BOTH keys, with no
+      warning.
+      - **Checked BEFORE the write, unlike the dangling-ref case in 180.** A
+        dangling reference can be written harmlessly and reported afterwards; a
+        collision cannot -- by the time it is observable, a spec is gone.
+        Refusing costs a rename; writing costs a package.
+      - **Grids collide more readily than packages.** `grid_spec_path` slugs the
+        whole key FLAT, so `"base/coarse"` and `"base_coarse"` collide;
+        `package_spec_path` splits on `/` into nested directories, so the same
+        pair is fine there. Both are checked; the test pins the asymmetry.
+      - **The `/` itself is fine and stays.** It nests packages on disk
+        (`specs/packages/npf/base.json`) and costs nothing in completion:
+        measured, IPython completes `project.packages['npf` -> `npf/base`,
+        `npf/high_k`, because its completer inspects the live dict. PyCharm
+        completes neither slashed nor underscored runtime keys, so renaming would
+        buy nothing anywhere.

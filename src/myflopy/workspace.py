@@ -6,7 +6,7 @@ import json
 import pickle
 import re
 import warnings
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html import escape
@@ -139,6 +139,29 @@ def _package_key_parts(key: str) -> tuple[str, ...]:
     if not parts:
         raise ValueError("Package spec keys must contain at least one safe segment.")
     return parts
+
+
+def _colliding_keys(
+    keys: Iterable[str], path_for: Callable[[str], Path]
+) -> list[tuple[str, str, Path]]:
+    """Find library keys that map to the same file, in key order.
+
+    ``_slug`` is lossy -- it rewrites every unsafe character to ``_`` -- so
+    ``"npf/high k"`` and ``"npf/high_k"`` are distinct keys that name one file.
+    Left undetected, ``save()`` writes both and the second silently wins; the
+    reload then hands the survivor's spec back under BOTH keys. Grids collide
+    more readily than packages: their whole key is slugged flat, so
+    ``"base/coarse"`` and ``"base_coarse"`` collide too.
+    """
+
+    seen: dict[Path, str] = {}
+    collisions: list[tuple[str, str, Path]] = []
+    for key in sorted(keys):
+        path = path_for(key)
+        first = seen.setdefault(path, key)
+        if first != key:
+            collisions.append((first, key, path))
+    return collisions
 
 
 def _artifact_versions() -> dict[str, str]:
@@ -1378,6 +1401,27 @@ class Project:
                 skipped.append((name, reason))
 
         skipped_names = {name for name, _ in skipped}
+
+        # Checked BEFORE the write, unlike the dangling-ref case below: two keys
+        # that name one file cannot be written harmlessly -- the second silently
+        # overwrites the first, and the reload hands the survivor back under both
+        # keys. Refusing costs a rename; writing costs a spec.
+        clashes = [
+            *_colliding_keys(self.packages, self.layout.package_spec_path),
+            *_colliding_keys(self.grids, self.layout.grid_spec_path),
+        ]
+        if clashes:
+            raise ValueError(
+                "Project cannot be saved -- these library keys map to the same "
+                "file, so one would silently overwrite the other. Rename one of "
+                "each pair:\n"
+                + "\n".join(
+                    f"- '{first}' and '{second}' both -> "
+                    f"{path.relative_to(self.root).as_posix()}"
+                    for first, second, path in clashes
+                )
+            )
+
         self.layout.ensure()
         _write_json(
             self.manifest_path,
