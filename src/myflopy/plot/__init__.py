@@ -63,7 +63,10 @@ from __future__ import annotations
 
 import inspect
 
+import numpy as np
+
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.cross_section_plotting import filled_section
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import (
     GridMesh,
@@ -541,6 +544,100 @@ _MODEL_ONLY_SECTION_ARGS = {
 }
 
 
+#: Section arguments that shape the LINE PROFILE and have no meaning once the
+#: cells themselves are drawn. `fill=` renders through FloPy's
+#: `PlotCrossSection`, which walks the grid cell by cell -- there is no sampling
+#: interval to set, no interpolation to choose, and the model top is an edge of
+#: the drawn geometry rather than a separate trace. Naming them lets the filled
+#: branch say so instead of accepting a knob it will not turn.
+_PROFILE_ONLY_SECTION_ARGS = {
+    "x_or_y": "x",
+    "spacing": 10,
+    "num_points": 100,
+    "interpolate": False,
+    "use_rbf": True,
+    "interpolator": None,
+    "extrapolate_beyond_section_ends": False,
+    "show_model_top": True,
+    "show_model_btm": False,
+    "surf_type": "hds",
+    "clip": None,
+    "animation_kstpkpers": None,
+}
+
+
+
+def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
+                    fill, fill_cmap, fill_label, layers, head_layers,
+                    layer_labels, title, backend, asked):
+    """Draw the section as CELLS -- the grid, its layers, and a field on them.
+
+    The picture `section()` could not draw before 2026-09-02: its line profile
+    answers "what is the head along this line", and this answers "what does the
+    model look like in cross-section". Same subject, same verb; `fill` chooses
+    which. This resolves the verb's arguments; the drawing is
+    :func:`~myflopy.modflow.mf6.cross_section_plotting.filled_section`, which the
+    grid scope calls directly.
+    """
+
+    if backend != "mpl":
+        raise ValueError(
+            "fill= draws the cells through FloPy's cross-section renderer, "
+            "which is Matplotlib; pass backend='mpl'. Without fill=, the "
+            "section is a line profile and both backends draw it."
+        )
+    stray = sorted(
+        name for name, default in _PROFILE_ONLY_SECTION_ARGS.items()
+        if _asked_for(asked.get(name, default), default)
+    )
+    if stray:
+        raise ValueError(
+            f"{', '.join(stray)} shape the line PROFILE; fill= draws the cells "
+            f"themselves, so they have nothing to act on. Drop them, or drop "
+            f"fill= to get the profile."
+        )
+    if _asked_for(asked.get("layer", 0), 0):
+        raise ValueError(
+            "layer= overlays head PROFILES, which the filled section does not "
+            "draw. Use layers= to choose which layers' cells to draw, and "
+            "head_layers= to choose whose water levels go on top."
+        )
+    if line is None and cells is None:
+        raise ValueError("fill= needs a section line: pass line= or cells=.")
+    if line is not None and cells is not None:
+        raise ValueError("line= and cells= both give the path; pass one.")
+
+    if cells is not None:
+        # A cell path becomes the polyline through those cells' centroids, so
+        # `cells=` keeps working here rather than being refused for a reason the
+        # caller would find arbitrary.
+        chosen = [cells] if isinstance(cells, (int, np.integer)) else list(cells)
+        centroids = vor.gdf_vorPolys.geometry.iloc[chosen].centroid
+        path = [(point.x, point.y) for point in centroids]
+    else:
+        path = line
+
+    # A bare grid has no flopy modelgrid of its own; `GridSection` already builds
+    # one from the DISV gridprops, so borrow it rather than repeat the
+    # construction (top/botm/cell2d/ncpl/crs) a second time.
+    grid = source.gwf.modelgrid if is_model else GridSection(vor=vor, line=_as_line(path)).grid
+    return filled_section(
+        grid, path,
+        model=source if is_model else None,
+        fill=fill, layers=layers, head_layers=head_layers,
+        layer_labels=layer_labels, per=per, kstpkper=kstpkper,
+        cmap=fill_cmap, label=fill_label, title=title,
+    )
+
+
+def _as_line(path):
+    """A LineString for `GridSection`, which needs a geometry rather than coords."""
+
+    import shapely as shp
+
+    return path if isinstance(path, shp.LineString) else shp.LineString(list(path))
+
+
 def section(
     source,
     /,
@@ -563,6 +660,12 @@ def section(
     section_name: str | None = None,
     clip=None,
     animation_kstpkpers=None,
+    fill=None,
+    fill_cmap: str = "viridis",
+    fill_label: str | None = None,
+    layers=None,
+    head_layers: int | list[int] | None = 0,
+    layer_labels=None,
     backend: str = "plotly",
     **kwargs,
 ):
@@ -620,6 +723,65 @@ def section(
     animation_kstpkpers : sequence of tuple, optional
         *(model only)* The periods ``.ani`` steps through; defaults to every
         output time.
+    fill : {'layer', 'results'} or array-like, optional
+        Draw the CELLS instead of a line profile -- the grid, its layers, and a
+        field painted on them. This is the "cross-section of the model" picture:
+        without it, ``section`` answers *what is the head along this line*; with
+        it, *what does the model look like through here*.
+
+        ``'layer'`` colours each cell by its layer and draws the simulated head
+        as a water surface over the geology. ``'results'`` colours the cells by
+        the model's own dependent variable instead -- heads on GWF,
+        concentration on GWT, temperature on GWE -- with a colorbar. Any
+        ``(nlay, ncpl)`` array does the same for a field of your own (K, a zone
+        id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
+        every layer the same.
+
+        **Requires ``backend="mpl"``**: the renderer is FloPy's
+        ``PlotCrossSection`` and there is no Plotly equivalent to defer to.
+        Passing ``fill=`` with the default backend raises and says so, rather
+        than returning a line profile you did not ask for.
+
+        The line-profile arguments -- ``interpolate``, ``spacing``,
+        ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
+        ``show_model_top``, ``show_model_btm``, ``surf_type``, ``clip``,
+        ``extrapolate_beyond_section_ends``, ``animation_kstpkpers`` -- have
+        nothing to act on here and raise if given. ``line=`` and ``cells=`` both
+        work; a cell path becomes the polyline through those cells' centroids.
+    fill_cmap : str, default 'viridis'
+        Colormap for ``fill='results'`` or an array ``fill``. Ignored for
+        ``fill='layer'``, which uses the discrete layer palette.
+    fill_label : str, optional
+        Colorbar label for ``fill='results'`` or an array ``fill``.
+    layers : int or sequence of int, optional
+        *(``fill=`` only)* Which layers' CELLS to draw, zero-based. With none,
+        every layer. The unselected cells are masked out and the vertical extent
+        is cropped to what remains -- leaving the axis at full height would put
+        the two layers you asked for in a thin band with empty space above and
+        below. A layer outside the model raises rather than drawing nothing.
+
+        This is why ``layer=`` raises here: it means something else. ``layer=``
+        overlays head PROFILES on the line-profile section; the filled section
+        draws cells, so choosing them needs its own name.
+    head_layers : int or sequence of int or None, default 0
+        *(``fill='layer'`` only)* Whose water levels to draw over the geology.
+        The default, layer 0, is the single water table every filled section drew
+        before this parameter existed. A list draws one surface per layer, each
+        labelled and coloured through :func:`~myflopy.viz.category_colors` -- so
+        a given layer's water level keeps its colour across figures. ``None``
+        draws none, for the geology alone.
+
+        Ignored with ``fill='results'`` or an array fill: those paint the field
+        onto the cells, so a line of the same quantity on top would say it twice.
+    layer_labels : sequence of str, optional
+        *(``fill=`` only)* Legend names for the layers -- your unit names rather
+        than ``Layer 1..N``. One per layer, in model order.
+
+        Defaults to the names the model's own build context carries
+        (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
+        declared through the spec API already knows its layers are called
+        "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
+        is a plain frame, has no names to find and falls back to ``Layer N``.
     backend : {'plotly', 'mpl'}, default 'plotly'
         Which renderer draws the section. ``'plotly'`` returns the interactive
         picture; ``'mpl'`` returns a static
@@ -669,10 +831,32 @@ def section(
     >>> vor.plot.section(line)                       # geometry, no results
     >>> model.plot.section(line=line, backend="mpl") # a static mpl Figure
     >>> vor.plot.section(line, backend="mpl").savefig("grid_section.png")
+    >>> model.plot.section(line=line, fill="layer", backend="mpl")
+    >>> model.plot.section(line=line, fill="results", per=15, backend="mpl")
+    >>> vor.plot.section(line, fill="layer", backend="mpl")   # geometry only
+    >>> model.plot.section(line=line, fill="layer", layers=[0, 1], backend="mpl")
+    >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
+    >>> model.plot.section(line=line, fill="layer", backend="mpl",
+    ...                    layer_labels=["fill", "sand", "clay", "till"])
     """
 
     vor, is_model = _grid_of(source)
     kind = normalize_backend(backend)
+    if fill is not None:
+        return _filled_section(
+            source, vor, is_model,
+            line=line, cells=cells, per=per, kstpkper=kstpkper,
+            fill=fill, fill_cmap=fill_cmap, fill_label=fill_label,
+            layers=layers, head_layers=head_layers, layer_labels=layer_labels,
+            title=section_name, backend=kind,
+            asked=locals(),
+        )
+    if layers is not None or layer_labels is not None or head_layers != 0:
+        raise ValueError(
+            "layers=, head_layers= and layer_labels= describe the CELLS a "
+            "filled section draws; the line profile has none. Pass fill= "
+            "(with backend='mpl'), or use layer= to overlay profiles."
+        )
     if is_model:
         picture = XSection(
             model=source,
@@ -1171,7 +1355,195 @@ class ModelPlots:
         backend: str = "plotly",
         **trace_kwargs,
     ):
-        """This model's plan-view map. See :func:`myflopy.plot.map`."""
+        """This model's plan-view map. See :func:`myflopy.plot.map`.
+
+        The single map verb. Contours, observation markers, a hillshade and particle
+        pathlines are all **options** here rather than verbs of their own, because a
+        map is a plan view whatever is drawn on it.
+
+        Every parameter below is spelled out in the signature rather than swept into
+        ``**kwargs``, so an editor can complete and type-check them. The defaults are
+        not restated here by hand -- each mirrors the default of whichever link in the
+        ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
+        ``test_plot_vocabulary`` fails if the two ever drift apart.
+
+        Parameters
+        ----------
+        values : sequence of float, optional
+            One value per cell -- heads, drawdown, K, a zone id, a residual, any
+            per-cell array. Overrides whatever ``type`` would have read. Length must
+            equal ``vor.ncpl``.
+        per : int, optional
+            Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
+            with neither, the model's first output time is used.
+        kstpkper : tuple of (int, int), optional
+            Exact ``(timestep, period)`` to read, as MODFLOW reports it. Use
+            ``model.kstpkper`` to list what is available.
+        per_timestep : {'last', 'first'} or int, default 'last'
+            Which timestep WITHIN ``per`` to read, when a period has several. Ignored
+            when ``kstpkper`` names the timestep outright.
+        layer : int, default 0
+            Zero-based layer. Layer 0 is the top.
+        type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
+            Which field to read when ``values`` is not given. ``'hds'`` heads,
+            ``'conc'`` GWT concentration, ``'temp'`` GWE temperature. The first
+            three also select the default sectioned hover.
+        zmin, zmax : float, optional
+            Fixed color-scale limits. Set both to hold the scale steady across
+            frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+            color. With neither, the range comes from the data.
+        colorscale : str or list of (float, str), optional
+            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
+            scale** -- names round-trip through a plotly-to-matplotlib table that
+            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
+            renders mirrored between backends (ledger 69/70).
+        logscale : bool, default False
+            Color on a log scale. Non-positive values are masked.
+        contours : bool or str, default False
+            Overlay contour lines. ``True`` contours the mapped values; a string
+            names a different field to contour instead.
+        contour_values : sequence of float, optional
+            Contour a supplied array rather than the mapped one.
+        contour_levels : int or float or list of float, default 10
+            A count of levels, a fixed interval, or explicit level values.
+        contour_color : str, default 'black'
+            Line colour for the contour trace.
+        contour_width : float, default 1.5
+            Line width for the contour trace.
+        contour_name : str, optional
+            Legend name for the contour trace.
+        contour_clip : bool, default True
+            Clip contours to the active domain instead of the full grid extent.
+        contour_resolution : int, default 150
+            Grid size used to build the contours, per axis. Higher is smoother and
+            slower. **Only acts under ``contour_method="cubic"``**, which is the one
+            that interpolates onto a square grid before contouring; the default
+            linear method triangulates the cell centres directly, so there is no
+            grid for this to size and passing it changes nothing (measured: 338
+            contour points at 40, 150 and 400 alike).
+        contour_method : {'linear', 'cubic'}, default 'linear'
+            How the scattered cell values become contours. ``'linear'``
+            triangulates the cell centres and contours the triangulation --
+            fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+            a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+            that -- smoother, slower, and able to overshoot between cells.
+            ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+            ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+            both; ``'nearest'`` in particular was documented here for a while and
+            has never been implemented.
+        select : sequence of int, ndarray, str, Path or geometry, optional
+            Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+            name of a registered model region (``"all_streams"``), a path to a
+            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            nothing (with a warning) when the selection is empty.
+        select_style : {'outline', 'dim', 'both'}, default 'outline'
+            How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+            of the selection and leaves every cell at full opacity. ``'dim'`` fades
+            the *unselected* cells to 20% instead, which suits a bare grid where the
+            selection is the subject, but on a field it costs a measured 6.9x of
+            readable contrast everywhere you did not select -- and one box/lasso
+            gesture in the browser overwrites it. ``'both'`` draws each.
+        select_color : str, optional
+            Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+            when the default red collides with a red-blue diverging colorscale.
+        locs : Path or GeoDataFrame, optional
+            Point locations to mark -- wells, observations, samples. A path is read
+            as a vector file.
+        hillshade_path : Path, optional
+            A hillshade GeoTIFF to draw beneath the cells for topographic context.
+        bgs : bool, default False
+            Draw the basemap beneath a semi-transparent cell layer.
+        zoom : int, default 13
+            Initial map zoom. Ignored when ``fit_bounds`` is True.
+        fit_bounds : bool, default True
+            Fit the initial view to the grid extent rather than using ``zoom``.
+        bounds_padding : float, default 0.05
+            Fractional padding around the fitted bounds.
+        hover : HoverSpec, optional
+            Replace the sectioned hover outright. See
+            :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
+            How the per-layer profile renders in the hover.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        hover_fields : sequence of str, optional
+            Extra columns to append to the hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
+        show_mounding : bool, default False
+            Add head-above-initial (mounding) to the hover.
+        hover_heads : bool, default True
+            Include heads in the legacy flat hover.
+        hover_ks : bool, default False
+            Include hydraulic conductivity in the legacy flat hover.
+        custom_hover : dict, optional
+            Legacy flat hover: ``{label: per-cell sequence}``. Supplying it
+            suppresses the default sectioned hover.
+        rch_scale : float, optional
+            Multiplier applied to recharge values when ``type='rch'``.
+        animation_kstpkpers : sequence of tuple, optional
+            The output times ``.ani`` steps through. Defaults to every time the model
+            wrote.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Which renderer draws the map. ``'plotly'`` returns the interactive
+            ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
+            static :class:`matplotlib.figure.Figure` instead, for a report, a
+            multi-panel figure of your own, or anywhere a live figure is not wanted.
+            Accepts ``'interactive'`` and ``'matplotlib'``/``'static'`` as aliases;
+            anything else raises rather than being ignored.
+
+            The switch changes the RENDERER, never the subject: both backends draw
+            this same map. Two differences are worth knowing before you rely on
+            one. The Matplotlib branch draws in **model coordinates** with no
+            basemap, so ``bgs`` and ``zoom`` have nothing to act on there; and a
+            NAMED diverging colorscale renders mirrored between the two, because the
+            name round-trips through a plotly-to-matplotlib table that maps
+            ``'rdbu'`` to the reversed colormap -- pass explicit stops when the
+            direction carries meaning (ledger 69/70).
+
+            ``backend='mpl'`` and ``.plot_mpl()`` on the returned picture are the
+            same renderer reached two ways. Prefer the parameter: it is the spelling
+            the whole grammar shares, so it also works on the nouns
+            (``model.hds.map(backend='mpl')``) and on the composers
+            (``mosaic``/``animate``), where there is no intermediate picture to call
+            a method on.
+        **trace_kwargs
+            Anything else rides through to the ``go.Choroplethmap`` trace --
+            ``zmid``, ``colorbar``, ``reversescale``, ``showscale``. These are
+            genuinely open-ended and Plotly owns their names, so they are validated
+            LATE, at render time, not here.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            With ``backend='plotly'`` (the default), a
+            :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
+            ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
+            carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
+            animation over periods.
+
+            With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
+            use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+
+        See Also
+        --------
+        section : the same data as a vertical slice.
+        grid : the mesh with no values and no basemap (and no CRS needed).
+        myflopy.plot.animate : flip a sequence of these through time.
+
+        Examples
+        --------
+        >>> model.plot.map(layer=0)                          # this model's heads
+        >>> model.plot.map(values=drawdown, layer=0)         # any per-cell array
+        >>> model.plot.map(layer=0, contours=True, contour_levels=8)
+        >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
+        >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
+        >>> vor.plot.map(values=node_ids)                    # a bare grid
+
+        Bound form of :func:`myflopy.plot.map`.
+        """
 
         return map(self.model, **_bound_args(locals(), "trace_kwargs"), **trace_kwargs)
 
@@ -1196,10 +1568,185 @@ class ModelPlots:
         section_name: str | None = None,
         clip=None,
         animation_kstpkpers=None,
+        fill=None,
+        fill_cmap: str = "viridis",
+        fill_label: str | None = None,
+        layers=None,
+        head_layers: int | list[int] | None = 0,
+        layer_labels=None,
         backend: str = "plotly",
         **kwargs,
     ):
-        """A vertical slice through this model. See :func:`myflopy.plot.section`."""
+        """A vertical slice through this model. See :func:`myflopy.plot.section`.
+
+        Through a MODEL this is the results section -- the field against distance
+        along the line. Through a bare GRID it is the geometry section: layers and
+        cell edges, no results. They are different classes because they answer
+        different questions, and **most arguments below only apply to the model
+        branch** -- they are marked. A grid takes ``line`` and nothing else.
+
+        Parameters
+        ----------
+        line : LineString or Path, optional
+            The section line as a geometry or a vector file. Positional, so
+            ``plot.section(vor, line)`` reads naturally. For a bare grid this is the
+            only way to specify the path. Mutually exclusive with ``cells``.
+        cells : int or list of int, optional
+            *(model only)* Cell indices defining the section path, in order.
+        per : int, optional
+            *(model only)* Stress period (0-based). Mutually exclusive with
+            ``kstpkper``.
+        kstpkper : tuple of (int, int), optional
+            *(model only)* Exact ``(timestep, period)``.
+        layer : int or list of int, default 0
+            *(model only)* Layer(s) to draw. A list overlays several.
+        x_or_y : {'x', 'y'}, default 'x'
+            Which coordinate becomes the horizontal axis.
+        spacing : int, default 10
+            *(model only)* Sample spacing along the line, in model units.
+        num_points : int, default 100
+            *(model only)* Number of samples when interpolating.
+        interpolate : bool, default False
+            *(model only)* Interpolate between cell centers rather than stepping
+            cell to cell.
+        use_rbf : bool, default True
+            *(model only)* Use radial-basis interpolation when ``interpolate`` is
+            True.
+        interpolator : str, optional
+            *(model only)* Override the interpolation method by name.
+        extrapolate_beyond_section_ends : bool, default False
+            *(model only)* Extend the section past the first and last cell centers.
+        show_model_top : bool, default True
+            *(model only)* Draw the model-top profile.
+        show_model_btm : bool, default False
+            *(model only)* Draw layer-bottom profiles.
+        surf_type : {'hds', 'lyr'}, default 'hds'
+            *(model only)* Section the head field, or the layer elevations.
+        section_name : str, optional
+            *(model only)* Legend name for the traces.
+        clip : Path or geometry, optional
+            *(model only)* Restrict the section to cells intersecting this region.
+        animation_kstpkpers : sequence of tuple, optional
+            *(model only)* The periods ``.ani`` steps through; defaults to every
+            output time.
+        fill : {'layer', 'results'} or array-like, optional
+            Draw the CELLS instead of a line profile -- the grid, its layers, and a
+            field painted on them. This is the "cross-section of the model" picture:
+            without it, ``section`` answers *what is the head along this line*; with
+            it, *what does the model look like through here*.
+
+            ``'layer'`` colours each cell by its layer and draws the simulated head
+            as a water surface over the geology. ``'results'`` colours the cells by
+            the model's own dependent variable instead -- heads on GWF,
+            concentration on GWT, temperature on GWE -- with a colorbar. Any
+            ``(nlay, ncpl)`` array does the same for a field of your own (K, a zone
+            id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
+            every layer the same.
+
+            **Requires ``backend="mpl"``**: the renderer is FloPy's
+            ``PlotCrossSection`` and there is no Plotly equivalent to defer to.
+            Passing ``fill=`` with the default backend raises and says so, rather
+            than returning a line profile you did not ask for.
+
+            The line-profile arguments -- ``interpolate``, ``spacing``,
+            ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
+            ``show_model_top``, ``show_model_btm``, ``surf_type``, ``clip``,
+            ``extrapolate_beyond_section_ends``, ``animation_kstpkpers`` -- have
+            nothing to act on here and raise if given. ``line=`` and ``cells=`` both
+            work; a cell path becomes the polyline through those cells' centroids.
+        fill_cmap : str, default 'viridis'
+            Colormap for ``fill='results'`` or an array ``fill``. Ignored for
+            ``fill='layer'``, which uses the discrete layer palette.
+        fill_label : str, optional
+            Colorbar label for ``fill='results'`` or an array ``fill``.
+        layers : int or sequence of int, optional
+            *(``fill=`` only)* Which layers' CELLS to draw, zero-based. With none,
+            every layer. The unselected cells are masked out and the vertical extent
+            is cropped to what remains -- leaving the axis at full height would put
+            the two layers you asked for in a thin band with empty space above and
+            below. A layer outside the model raises rather than drawing nothing.
+
+            This is why ``layer=`` raises here: it means something else. ``layer=``
+            overlays head PROFILES on the line-profile section; the filled section
+            draws cells, so choosing them needs its own name.
+        head_layers : int or sequence of int or None, default 0
+            *(``fill='layer'`` only)* Whose water levels to draw over the geology.
+            The default, layer 0, is the single water table every filled section drew
+            before this parameter existed. A list draws one surface per layer, each
+            labelled and coloured through :func:`~myflopy.viz.category_colors` -- so
+            a given layer's water level keeps its colour across figures. ``None``
+            draws none, for the geology alone.
+
+            Ignored with ``fill='results'`` or an array fill: those paint the field
+            onto the cells, so a line of the same quantity on top would say it twice.
+        layer_labels : sequence of str, optional
+            *(``fill=`` only)* Legend names for the layers -- your unit names rather
+            than ``Layer 1..N``. One per layer, in model order.
+
+            Defaults to the names the model's own build context carries
+            (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
+            declared through the spec API already knows its layers are called
+            "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
+            is a plain frame, has no names to find and falls back to ``Layer N``.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Which renderer draws the section. ``'plotly'`` returns the interactive
+            picture; ``'mpl'`` returns a static
+            :class:`matplotlib.figure.Figure`. Accepts ``'interactive'`` and
+            ``'matplotlib'``/``'static'`` as aliases; anything else raises.
+
+            Applies to both branches: a model section renders through the same
+            overlay builder the noun grammar uses
+            (``model.hds.section(line=..., backend='mpl')``), and a grid section
+            through ``GridSection``'s own cell-outline renderer. Until 2026-09-02
+            this parameter did not exist on the verb and a caller who passed it got
+            a Plotly figure back with no error at all -- it vanished into the
+            ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
+            to ``.plot_mpl()`` on the result, which is the same renderer reached a
+            second way.
+        **kwargs
+            Forwarded to the underlying section class.
+
+        Returns
+        -------
+        XSection or GridSection or matplotlib.figure.Figure
+            With ``backend='plotly'`` (the default) a
+            :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
+            carries ``.ani``, or ``GridSection`` for a bare grid. Both answer
+            ``.plot_mpl()``.
+
+            With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
+            ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.
+
+        Raises
+        ------
+        ValueError
+            If a model-only argument is given for a bare grid. It names the
+            arguments, because the alternative is a ``TypeError`` from a constructor
+            the caller never mentioned.
+
+        See Also
+        --------
+        map : the same data in plan view.
+        myflopy.plot.grid : the mesh itself.
+
+        Examples
+        --------
+        >>> model.plot.section(cells=[1653, 651, 1241])
+        >>> model.plot.section(line=line, layer=[0, 1], interpolate=True)
+        >>> model.plot.section(cells=cells).save("section.png")
+        >>> vor.plot.section(line)                       # geometry, no results
+        >>> model.plot.section(line=line, backend="mpl") # a static mpl Figure
+        >>> vor.plot.section(line, backend="mpl").savefig("grid_section.png")
+        >>> model.plot.section(line=line, fill="layer", backend="mpl")
+        >>> model.plot.section(line=line, fill="results", per=15, backend="mpl")
+        >>> vor.plot.section(line, fill="layer", backend="mpl")   # geometry only
+        >>> model.plot.section(line=line, fill="layer", layers=[0, 1], backend="mpl")
+        >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
+        >>> model.plot.section(line=line, fill="layer", backend="mpl",
+        ...                    layer_labels=["fill", "sand", "clay", "till"])
+
+        Bound form of :func:`myflopy.plot.section`.
+        """
 
         return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
 
@@ -1220,7 +1767,58 @@ class ModelPlots:
         zs=None,
         **kwargs,
     ) -> InterpolatedSurface:
-        """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`."""
+        """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`.
+
+        Always Plotly, and always a height field. The 3-D grid VOLUME and 3-D
+        particle pathlines are different shapes and live on :func:`grid` with
+        ``backend="vtk"``: a ``backend=`` switch should change the renderer, not
+        what is being drawn.
+
+        Parameters
+        ----------
+        layer : int, default 0
+            Zero-based layer to interpolate.
+        per : int, optional
+            Stress period (0-based). Mutually exclusive with ``kstpkper``.
+        kstpkper : tuple of (int, int), optional
+            Exact ``(timestep, period)``. Defaults to the model's FIRST output time.
+        surf_type : {'hds', 'lyr'}, default 'hds'
+            Interpolate the head field, or the layer elevation surface.
+        resolution : int, default 1000
+            Interpolation grid size per axis. Higher is smoother and slower.
+        use_rbf : bool, default False
+            Radial-basis interpolation instead of linear.
+        interpolator : str, optional
+            Override the interpolation method by name.
+        clip : Path or geometry, optional
+            Restrict the surface to cells intersecting this region. See also
+            ``.clipped_fig()`` on the result.
+        crs : str, optional
+            Override the grid's CRS.
+        xs, ys, zs : array-like, optional
+            Supply the point cloud directly instead of reading it from a model.
+        **kwargs
+            Forwarded to :class:`~myflopy.modflow.mf6.grid.interpolated_surface
+            .InterpolatedSurface`.
+
+        Returns
+        -------
+        InterpolatedSurface
+            A :class:`~myflopy.viz.Picture`; also carries ``.clipped_fig()`` and
+            ``.surface_trace()`` for composing into a larger scene.
+
+        See Also
+        --------
+        grid : the mesh itself, including the 3-D volume via ``backend="vtk"``.
+
+        Examples
+        --------
+        >>> model.plot.surface(layer=0)
+        >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
+        >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
+
+        Bound form of :func:`myflopy.plot.surface`.
+        """
 
         return surface(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
 
@@ -1241,6 +1839,85 @@ class ModelPlots:
         """This model's mesh -- flat, or the 3-D volume with particle tracks.
 
         See :func:`myflopy.plot.grid`.
+
+        The one picture :func:`map` cannot give you. A choropleth colours cells
+        against a web basemap and so **requires a CRS**; this draws in the grid's own
+        coordinates and needs none, which makes it the view for a grid you are still
+        refining, before there is a model or a projection.
+
+        Both backends draw the same subject -- this grid -- so ``backend=`` switches
+        only the renderer. That is why the 3-D volume is ``grid`` and not
+        ``surface``: ``surface`` means a height field.
+
+        Parameters
+        ----------
+        backend : {'plotly', 'mpl', 'vtk'}, default 'plotly'
+            ``'plotly'`` draws cell edges in 2-D -- fast, CRS-free, no basemap.
+            ``'mpl'`` draws the same 2-D mesh through FloPy's own patch renderer and
+            returns a static :class:`matplotlib.figure.Figure`; it is the same
+            renderer as ``.plot_mpl()`` on the returned picture, offered here so the
+            switch is spelled the same way on every verb. ``'vtk'`` renders the cell
+            VOLUME in 3-D as an interactive PyVista scene, and needs the ``viz3d``
+            extra (``pip install 'myflopy[viz3d]'``).
+
+            All three draw the same subject -- this grid -- which is the rule the
+            parameter follows everywhere: ``backend=`` changes the renderer, never
+            what is being drawn.
+        pathlines : DataFrame, optional
+            Particle track records, drawn as time-coloured tubes over the 3-D mesh.
+            Requires ``backend="vtk"``; in plan view the equivalent is
+            ``map(pathlines=...)``. Passing it with ``backend="plotly"`` raises.
+
+        vertical_exaggeration : float, default 1.0
+            *(vtk only)* Multiplier on z, to make a thin model legible.
+        model_style : {'wireframe', 'surface', 'points'}, default 'wireframe'
+            *(vtk only)* How the grid itself is drawn beneath the tracks.
+        model_opacity : float, default 0.25
+            *(vtk only)* Opacity of the grid, so tracks inside it stay visible.
+        pathline_cmap : str, default 'viridis'
+            *(vtk only)* Colormap for the time-coloured tubes.
+        pathline_width : float, default 4.0
+            *(vtk only)* Tube width.
+        show_edges : bool, default True
+            *(vtk only)* Draw cell edges on the mesh.
+        off_screen : bool, default True
+            *(vtk only)* Render without opening a window -- the right default in a
+            notebook or on a headless machine.
+        **kwargs
+            Forwarded to the backend's builder.
+
+        Returns
+        -------
+        GridMesh or VtkScene
+            Both are :class:`~myflopy.viz.Picture`. ``GridMesh`` carries
+            ``.plot_mpl()``, which is FloPy's own patch renderer. ``VtkScene``
+            exposes ``.scene`` (the PyVista ``Plotter``) instead of ``.fig``.
+
+        Raises
+        ------
+        ValueError
+            If ``backend`` is none of ``'plotly'``, ``'mpl'`` or ``'vtk'``, if ``pathlines``
+            or any ``vtk only`` argument above is given with the plotly backend, or
+            if the VTK backend is asked for without either pathlines or a layer
+            stack.
+
+        See Also
+        --------
+        map : values over the cells, on a basemap.
+        surface : a 3-D height field, which is a different shape.
+        myflopy.layers.StackPlots.grid : the LAYER-stack 3-D volume, which takes
+            ``layers``/``scale``/``color_by``/``cmap`` -- a different builder, and
+            not reachable through this function.
+
+        Examples
+        --------
+        >>> vor.plot.grid()                         # the 2-D mesh
+        >>> vor.plot()                              # the same thing, shorthand
+        >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
+        >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
+        >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
+
+        Bound form of :func:`myflopy.plot.grid`.
         """
 
         return grid(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -1261,6 +1938,67 @@ class ModelPlots:
         which need not all come from this model. For this model's results over
         time, the grammar generates the frames for you:
         ``model.hds.animate(kind="map", over="period")``.
+
+        A **combinator**, like :func:`mosaic` -- its first argument is the frames,
+        not a subject. To animate one model's results over time, prefer the grammar
+        (``model.hds.animate(kind="map", over="period")``), which generates the
+        frames for you and calls this.
+
+        Parameters
+        ----------
+        frames : sequence
+            The frames, as bare pictures or ``(label, picture)`` pairs -- the same
+            shapes :func:`mosaic` accepts. Unlabelled frames are numbered.
+        backend : {'plotly', 'png'}, default 'plotly'
+            ``'plotly'`` builds one live figure with play/pause and a slider: fast
+            and interactive, but every frame must share a trace structure, and a
+            choropleth re-embeds its geometry per frame, so the file grows with
+            cells x frames. ``'png'`` rasterizes each frame and pages through them
+            with a browser slider: frames need share NOTHING, so kinds can be mixed,
+            and the size does not grow with cell count. Prefer ``'png'`` on a large
+            grid.
+        title : str, optional
+            Figure title (plotly) or document title (png).
+        dpi : int, default 140
+            *(png only)* Raster resolution per frame.
+        interval_ms : int, default 700
+            *(png only)* Milliseconds per frame during playback.
+        **kwargs
+            Forwarded to the backend's animation class.
+
+        Returns
+        -------
+        FrameAnimation or SliderAnimation
+            Both are :class:`~myflopy.viz.Picture`. ``FrameAnimation.fig`` is the
+            plotly figure; ``SliderAnimation`` has no single figure, so its ``.fig``
+            raises and names ``.frames`` instead. ``SliderAnimation.export()``
+            returns the richer ``StandaloneHtmlSlider`` handle when you want the
+            frame manifest or the resume/progress machinery.
+
+        Raises
+        ------
+        ValueError
+            If ``frames`` is empty, if ``backend`` is neither value, or if the
+            plotly backend is given frames that do not share a trace structure. That
+            last one raises rather than silently falling back to raster -- swapping
+            an interactive figure for a static page changes what you get.
+
+        See Also
+        --------
+        myflopy.viz.mosaic : the same frames side by side instead of in sequence.
+        myflopy.export_head_map_slider_html : a FloPy-rendered slider, which is a
+            different picture rather than a second spelling of this one.
+
+        Examples
+        --------
+        >>> frames = [model.plot.map(per=p, layer=0) for p in range(model.nper)]
+        >>> plot.animate(frames).show()
+        >>> plot.animate(frames, backend="png").html("heads.html")
+        >>> plot.animate([("start", first), ("end", last)])
+        >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
+        >>> plot.animate(mixed, backend="png")           # only png can mix kinds
+
+        Bound form of :func:`myflopy.plot.animate`.
         """
 
         return animate(**_bound_args(locals(), "kwargs"), **kwargs)
@@ -1280,6 +2018,69 @@ class ModelPlots:
         Subject-free -- it takes the panels you hand it, which need not all come
         from this model. It lives here so the five verbs are discoverable in one
         place from a model you already have.
+
+        The free-form composer of the unified view grammar: pass any mix of
+        ``Choro`` choropleth maps and Plotly figures (``viz.Fig`` timeseries,
+        cross-sections, ...) and get one figure back. The leaf
+        ``.mosaic(by=...)`` verbs are sugar over this same composition.
+
+        Parameters
+        ----------
+        panels
+            A list of panels, or of ``(label, panel)`` pairs. A panel is either a
+            ``Choro`` (anything exposing ``get_choropleth()``) or a Plotly figure
+            whose traces are copied into its grid cell. Map panels contribute their
+            cell trace **and** their overlays (contours, location markers,
+            pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
+            title, else ``Panel <n>``.
+        ncols
+            Grid width; rows grow as needed.
+        title
+            Overall figure title.
+        diff
+            When ``True``, the shared map color scale is centered at zero
+            (diverging), as used by the diff surfaces.
+        sync_views
+            Every map panel always *starts* framed to the same shared extent (the
+            union of the panels' grid bounds) so the small multiples line up at the
+            site. When ``sync_views`` is ``True`` (default), the panels are also
+            wired to pan and zoom **together** live -- dragging or zooming one map
+            moves the others (via a ``plotly_relayout`` handler injected at
+            ``show()`` / ``write_html()`` time; inline notebook display shows the
+            shared start view but not the live linking). Set ``False`` to let each
+            map pan/zoom independently after the shared start. Panels without
+            geometry (raw Plotly figures) are unaffected.
+        colorbar
+            Colorbar settings for the shared map color axis -- a dict of Plotly
+            ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
+            Panels are pooled onto one ``coloraxis``, which discards each panel's
+            own ``colorbar``; without this a log-scaled mosaic silently reads in
+            log10 units. The callable form exists because the useful labels depend
+            on the pooled limits, and those are only known here -- e.g.
+            ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
+            Ignored when no panel is a map.
+
+        Returns
+        -------
+        Fig
+            A single Plotly figure holding every panel as a subplot. Not a
+            :class:`Picture` -- it is already the assembled figure, so use it
+            directly (``.show()``, ``.write_html(...)``).
+
+        See Also
+        --------
+        myflopy.plot.animate : the same panels in sequence rather than side by side.
+
+        Bound form of :func:`myflopy.plot.mosaic`.
+
+        Examples
+        --------
+        >>> viz.mosaic([
+        ...     group.hds.map("F9b"),                       # a choropleth
+        ...     group.packages.lak.results.stage.plot(),     # a timeseries
+        ... ], ncols=2)
+
+        Bound form of :func:`myflopy.plot.mosaic`.
         """
 
         return mosaic(
@@ -1336,10 +2137,48 @@ def _parameter_name(line: str) -> tuple[str, ...]:
     parameters in one entry, so this returns a tuple rather than a name.
     """
 
-    if not line[:1].strip() or ":" not in line:
+    if not line[:1].strip():
         return ()
+    if ":" not in line:
+        # A VAR-ARG head -- `**kwargs`, `*args` -- is a legal NumPy entry with no
+        # type after it, and was invisible to the name-filter, so splicing a
+        # docstring that already had one appended a second copy.
+        stripped = line.strip()
+        return (stripped,) if stripped.startswith("*") else ()
     head = line.split(":", 1)[0]
     return tuple(part.strip() for part in head.split(",") if part.strip())
+
+
+def _bare_parameter_name(line: str) -> tuple[str, ...]:
+    """An entry head with no type, valid only INSIDE a Parameters block.
+
+    NumPy allows `panels` on its own line with the description indented under
+    it, and `viz.mosaic` writes every one of its parameters that way. At column
+    0 anywhere else the same line is prose or a section heading -- `Returns` is a
+    perfectly good identifier -- so this is never applied outside the block.
+    """
+
+    stripped = line.strip()
+    if not line[:1].strip() or ":" in stripped or stripped in _SECTION_HEADS:
+        return ()
+    parts = [part.strip() for part in stripped.split(",")]
+    return tuple(parts) if parts and all(p.isidentifier() for p in parts) else ()
+
+
+def _documented_names(sections: str) -> set[str]:
+    """Every parameter name a docstring's Parameters blocks declare."""
+
+    names: set[str] = set()
+    in_params = False
+    previous = ""
+    for line in sections.splitlines():
+        stripped = line.strip()
+        if stripped and set(stripped) == {"-"} and previous.strip() in _SECTION_HEADS:
+            in_params = previous.strip() in _PARAMETER_SECTIONS
+        if in_params:
+            names.update(_parameter_name(line) or _bare_parameter_name(line))
+        previous = line
+    return names
 
 
 def _filter_parameters(sections: str, *, keep=None, drop=()) -> str:
@@ -1364,7 +2203,7 @@ def _filter_parameters(sections: str, *, keep=None, drop=()) -> str:
         if stripped and set(stripped) == {"-"} and previous.strip() in _SECTION_HEADS:
             in_params = previous.strip() in _PARAMETER_SECTIONS
             skipping = False
-        names = _parameter_name(line) if in_params else ()
+        names = (_parameter_name(line) or _bare_parameter_name(line)) if in_params else ()
         if names:
             wanted = [
                 n for n in names
@@ -1554,15 +2393,20 @@ def _inherit_verb_docs(namespace) -> None:
             # `Parameters` headings, which is malformed NumPy -- so the method's
             # own entries win and the inherited block contributes only the names
             # it does not already cover.
-            own_names = {
-                name
-                for line in own_sections.splitlines()
-                for name in _parameter_name(line)
-            }
+            own_names = _documented_names(own_sections)
             sections = _filter_parameters(sections, drop=own_names)
             sections = _merge_parameter_sections(own_sections, sections)
-        parts = [own_prose, extended, sections,
-                 f"Bound form of :func:`myflopy.plot.{verb}`."]
+        # Both guards make the splice IDEMPOTENT, which it was not: re-running it
+        # over its own output grew `ModelPlots.section` from 169 lines to 179,
+        # duplicating the extended prose, the `**kwargs` entry and the footer.
+        # That matters now the generated text is written back into the source --
+        # a module reloaded in a notebook would otherwise compound it.
+        footer = f"Bound form of :func:`myflopy.plot.{verb}`."
+        if extended and extended in own_prose:
+            extended = ""
+        parts = [own_prose, extended, sections]
+        if footer not in own_prose and not sections.rstrip().endswith(footer):
+            parts.append(footer)
         method.__doc__ = "\n\n".join(p for p in parts if p)
 
 

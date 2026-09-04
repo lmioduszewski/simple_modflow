@@ -60,6 +60,39 @@ and `"interactive"` resolve through one function, `normalize_backend`.
 that is hidden. `animate`'s `backend={"plotly", "png"}` is a different axis — a
 rasteriser over frames, not a second renderer of one subject.
 
+**A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
+Without it, `section` answers *what is the head along this line* -- a profile,
+two traces, no geometry. With it, *what does the model look like through here* --
+the cells, their layers, and a field painted on them. `fill="layer"` colours by
+layer and draws the simulated head as a water surface over the geology;
+`fill="results"` colours the cells by the model's own dependent variable (head /
+concentration / temperature, resolved through `_field_reader`) with a colorbar;
+any `(nlay, ncpl)` array does the same for a field of your own. It stays ONE
+verb because both are vertical slices -- geometry chooses the verb, and this is
+the same geometry drawn two ways.
+
+**Choosing what goes in it: `layers=`, `head_layers=`, `layer_labels=`.**
+`layers=` picks which layers' CELLS are drawn — masked, and the vertical extent
+cropped to what remains, because a full-height axis puts two layers in a thin
+band. `head_layers=` picks whose water levels go on top (default `0`, the single
+water table; a list draws one labelled surface each through `category_colors`, so
+a layer keeps its colour across figures; `None` draws none). `layer_labels=`
+names the units in the legend, defaulting to the names the model's own build
+context carries — `ModelContext(surfaces=stack.build(vor))` keeps them through
+`ModelSpec.build`, so a spec-declared model already knows its layers are "sand"
+and "clay". **`layer=` RAISES in the filled branch**: it means "overlay these
+layers' head profiles" on the other branch, and it silently did nothing here on
+the first cut.
+
+`fill=` is **matplotlib only** (FloPy's `PlotCrossSection` is the renderer and
+has no Plotly counterpart), and it RAISES rather than falling back: with the
+default backend, with any line-profile argument that cannot act on it
+(`interpolate`, `spacing`, `num_points`, ...), with `fill="results"` on a bare
+grid, and on a flat `(ncpl,)` array, which would paint every layer the same and
+look like an answer. Before this existed the picture was
+`myflopy.modflow.mf6.plot_model_cross_section` -- a deep import, on no scope,
+and lost twice by the person who asked for it.
+
 **`.plot_mpl()` on the returned picture is the same renderer reached a second
 way, and is not the spelling to teach.** It still exists, still works, and is
 what `backend="mpl"` calls underneath. But it only exists once a picture has been

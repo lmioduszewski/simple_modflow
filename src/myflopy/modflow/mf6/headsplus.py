@@ -527,6 +527,111 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         ----------
         backend : {'plotly', 'mpl'}, default 'plotly'
             Renderer. ``'mpl'`` returns a Matplotlib figure instead of a Picture.
+        per : int, optional
+            Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
+            with neither, the model's first output time is used.
+        kstpkper : tuple of (int, int), optional
+            Exact ``(timestep, period)`` to read, as MODFLOW reports it. Use
+            ``model.kstpkper`` to list what is available.
+        per_timestep : {'last', 'first'} or int, default 'last'
+            Which timestep WITHIN ``per`` to read, when a period has several. Ignored
+            when ``kstpkper`` names the timestep outright.
+        layer : int, default 0
+            Zero-based layer. Layer 0 is the top.
+        zmin, zmax : float, optional
+            Fixed color-scale limits. Set both to hold the scale steady across
+            frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+            color. With neither, the range comes from the data.
+        colorscale : str or list of (float, str), optional
+            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
+            scale** -- names round-trip through a plotly-to-matplotlib table that
+            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
+            renders mirrored between backends (ledger 69/70).
+        logscale : bool, default False
+            Color on a log scale. Non-positive values are masked.
+        contours : bool or str, default False
+            Overlay contour lines. ``True`` contours the mapped values; a string
+            names a different field to contour instead.
+        contour_values : sequence of float, optional
+            Contour a supplied array rather than the mapped one.
+        contour_levels : int or float or list of float, default 10
+            A count of levels, a fixed interval, or explicit level values.
+        contour_color : str, default 'black'
+            Line colour for the contour trace.
+        contour_width : float, default 1.5
+            Line width for the contour trace.
+        contour_name : str, optional
+            Legend name for the contour trace.
+        contour_clip : bool, default True
+            Clip contours to the active domain instead of the full grid extent.
+        contour_resolution : int, default 150
+            Grid size used to build the contours, per axis. Higher is smoother and
+            slower. **Only acts under ``contour_method="cubic"``**, which is the one
+            that interpolates onto a square grid before contouring; the default
+            linear method triangulates the cell centres directly, so there is no
+            grid for this to size and passing it changes nothing (measured: 338
+            contour points at 40, 150 and 400 alike).
+        contour_method : {'linear', 'cubic'}, default 'linear'
+            How the scattered cell values become contours. ``'linear'``
+            triangulates the cell centres and contours the triangulation --
+            fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+            a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+            that -- smoother, slower, and able to overshoot between cells.
+            ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+            ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+            both; ``'nearest'`` in particular was documented here for a while and
+            has never been implemented.
+        select : sequence of int, ndarray, str, Path or geometry, optional
+            Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+            name of a registered model region (``"all_streams"``), a path to a
+            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            nothing (with a warning) when the selection is empty.
+        select_style : {'outline', 'dim', 'both'}, default 'outline'
+            How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+            of the selection and leaves every cell at full opacity. ``'dim'`` fades
+            the *unselected* cells to 20% instead, which suits a bare grid where the
+            selection is the subject, but on a field it costs a measured 6.9x of
+            readable contrast everywhere you did not select -- and one box/lasso
+            gesture in the browser overwrites it. ``'both'`` draws each.
+        select_color : str, optional
+            Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+            when the default red collides with a red-blue diverging colorscale.
+        locs : Path or GeoDataFrame, optional
+            Point locations to mark -- wells, observations, samples. A path is read
+            as a vector file.
+        hillshade_path : Path, optional
+            A hillshade GeoTIFF to draw beneath the cells for topographic context.
+        bgs : bool, default False
+            Draw the basemap beneath a semi-transparent cell layer.
+        fit_bounds : bool, default True
+            Fit the initial view to the grid extent rather than using ``zoom``.
+        bounds_padding : float, default 0.05
+            Fractional padding around the fitted bounds.
+        hover : HoverSpec, optional
+            Replace the sectioned hover outright. See
+            :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
+            How the per-layer profile renders in the hover.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
+        show_mounding : bool, default False
+            Add head-above-initial (mounding) to the hover.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            With ``backend='plotly'`` (the default), a
+            :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
+            ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
+            carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
+            animation over periods.
+
+            With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
+            use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
 
         Raises
         ------

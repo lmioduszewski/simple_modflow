@@ -4725,12 +4725,14 @@ same day, which is the useful part of the result.
         the signature `(*args, **kwargs)`? -- where 8.8 states four requirements.
         Pointing the six tests at `DependentVariableFile.map` today, four fail.
         That is why the new test DISCOVERS its subjects instead of listing them.
-      - **The contract is signature-static, docstring-runtime**, matching the verb
-        tier rather than inventing a stricter rule for nouns: the reference is
-        written once on the free verb and spliced at import
-        (`_inherit_verb_docs`), so no bound method repeats it in source either.
-        What a purely static reader gets is the SIGNATURE, which is the
-        load-bearing assertion.
+      - ~~**The contract is signature-static, docstring-runtime**~~ -- **REVERSED
+        2026-09-02, see 178.** This was written up as the contract; it was never
+        a decision anyone made, only a description of what the code happened to
+        do. The claim that "what a purely static reader gets is the SIGNATURE,
+        which is the load-bearing assertion" is wrong: an editor is where these
+        docstrings are actually read, and PyCharm showed ONE line of
+        `model.plot.section` against 169 assembled at import. The splice is still
+        the single author; its output is now written into the source.
       - **The tiers are MEASURED, not stylistic.** Every Tier 1 name changes the
         figure on both a results noun and a record noun. Tier 2
         (`kstpkper`/`per_timestep`/`bgs`/`hover_layers`/`hover_surfaces`/
@@ -5040,3 +5042,210 @@ same day, which is the useful part of the result.
     `test_terms_with_no_package_accessor_are_reachable` each failed and then
     passed with no change to this file. Attribution here was done by
     `git stash push` on `project/group/lak.py` alone and re-running.
+
+177. **`layer=` on the grid's feature-to-cell selectors (2026-09-03).**
+    `vor.get_vor_cells_as_dict` and `vor.get_vor_cells_as_series` both reached a
+    vector file through a bare `gpd.read_file(path)`, which reads the **first**
+    layer and, for a multi-layer GeoPackage, emits only a `UserWarning`. So there
+    was no way to ask for any other layer, and reading the wrong table was silent
+    in any caller that does not surface warnings. Both now take
+    `layer: str | int | None = None`, threaded through a shared `_read_locs`
+    helper in `grid/selection.py`; the wrapper methods on `VoronoiGridPlus` mirror
+    it. Reported from a real pond footprint stored beside other layers in one
+    `.gpkg`.
+    - **`layer=None` is GDAL's own default**, so every call written before the
+      parameter is byte-identical -- pinned by
+      `test_vector_layer_selection.py::test_default_is_unchanged`, which asserts
+      the no-argument call equals `layer=<first layer name>` rather than
+      restating a literal.
+    - **Validated up front rather than by catching.** GDAL's message is
+      `Layer 'x' could not be opened`, which does not say what IS in the file --
+      exactly the question the caller has. `_layer_names` uses
+      `geopandas.list_layers` to raise a `ValueError` naming the available
+      layers. That function is geopandas **1.0+** while `pyproject.toml` declares
+      `geopandas>=0.14`, so it is fetched with `getattr` and the check is
+      **skipped** on an older geopandas, which then gets GDAL's poorer message.
+      Deliberate: raising the floor for one error string is not worth it, and
+      validating up front avoids a broad `except` that the narrowness rule would
+      otherwise force onto the allowlist (pyogrio's `DataLayerError` subclasses
+      `RuntimeError`, fiona's `DriverError` does not, so no narrow tuple covers
+      both engines).
+    - **`get_vor_cells_as_series` REFUSES `layer=` for an in-memory geometry**,
+      where there is no file to pick a layer from -- a parameter that cannot act
+      is the same defect as a missing one (the rule `surface` follows for
+      `backend=`).
+    - **Not extended to `read_gpkg` / `read_shp_gpkg`** in
+      `modflow/utils/datatypes/readers.py`, which have the same first-layer-only
+      behaviour. `read_gpkg`'s docstring claims it is "useful when you have
+      multiple layers", which its `gpd.read_file(gpkg_path)` does not deliver;
+      that is a separate defect, on a reader with more callers, and was out of
+      scope here.
+    - **The nested return shape was left alone.** `get_vor_cells_as_dict` returns
+      `{name: [[cell, ...]]}` -- one inner list per matched feature, not a flat
+      cell list. `utils/datatypes/locs.py` and `mf6/heads_observations.py` both
+      depend on it (the latter's `assert len(cell_ids) == 1`, whose message says
+      "more than one cell found", is in fact counting groups). Changing it is a
+      breaking change worth doing separately; the new test flattens twice and
+      says why.
+
+
+177. **`section(fill=...)`: the cross-section of the MODEL, not of a line
+      (2026-09-02).**
+      Reported as "so we really have no way to easily draw an mpl cross section
+      showing the grid, layers, and results? Please double check. It's not on
+      `model.plot.grid`?" -- after the same user had gone looking for it once
+      already the same day. Audited every route before building anything:
+      | route | drew |
+      |---|---|
+      | `model.plot.grid(backend="mpl")` | a PLAN view. Not a section at all |
+      | `model.plot.section(line, backend="mpl")` | 2 lines, 0 filled collections |
+      | `model.hds.section(line, backend="mpl")` | the same 2 lines |
+      | `vor.plot.section(line, backend="mpl")` | 124 lines -- cell OUTLINES, no results |
+      | `plot_model_cross_section(m, line, kstpkper=)` | 2 collections + 31 lines |
+      So the picture existed, in exactly one place, reachable only by deep import
+      from `myflopy.modflow.mf6` and bound to no scope. That is why it was lost
+      twice.
+      - **One verb, not a sixth.** Geometry chooses the verb and both pictures
+        are vertical slices, so `fill=` selects the subject within `section`
+        rather than earning a `filled_section`. The two answer different
+        questions -- *what is the head along this line* against *what does the
+        model look like through here* -- but they answer them about the same
+        geometry.
+      - **`fill=` is Matplotlib ONLY, and raises rather than degrading.** FloPy's
+        `PlotCrossSection` is the renderer and there is no Plotly counterpart to
+        defer to. `fill=` with the default backend raises naming `backend="mpl"`,
+        which is the same shape `plot.grid` already uses for `pathlines=` with
+        the plotly backend. Silently returning the line profile instead would
+        have been this session's own defect, one verb along.
+      - **The profile-only arguments RAISE too.** `interpolate`, `spacing`,
+        `num_points`, `use_rbf`, `interpolator`, `x_or_y`, `show_model_top`,
+        `show_model_btm`, `surf_type`, `clip`,
+        `extrapolate_beyond_section_ends`, `animation_kstpkpers` shape a sampled
+        line; the filled branch walks the grid cell by cell and has nothing to
+        sample. `_PROFILE_ONLY_SECTION_ARGS` names them so the message can list
+        what was given, instead of turning a knob that does nothing.
+      - **A COMPROMISE caught by its own test: the grid branch silently
+        downgraded `fill="results"` to `"layer"`.** First draft coerced the
+        unanswerable value because a bare grid has no results -- handing back a
+        picture that looks right and is not the one asked for. It raises now,
+        naming what a grid does not have. Written into the test before the fix,
+        which is the only reason it did not ship.
+      - **A flat `(ncpl,)` array is refused.** It would colour every layer the
+        same and read as a real answer; the message says to stack the layers or
+        use `fill="results"`. `model.hds.array()` returns exactly that flat
+        shape, so this is the mistake the API invites.
+      - **`fill="results"` is kind-neutral**, resolved through the model's own
+        `_field_reader` rather than `.hds` -- heads on GWF, concentration on GWT,
+        temperature on GWE, the same rule ledger 99 established for `XSection`.
+      - **`cells=` keeps working**, converted to the polyline through those
+        cells' centroids, rather than being refused for a reason a caller would
+        find arbitrary.
+      - **The layer fill still draws the RESULTS.** `fill="layer"` is not the
+        geology alone: the simulated head goes on as a water surface over it,
+        because that is the picture people mean. Measured: 2 filled collections
+        + 31 head-surface artists on the canonical model. `fill="results"`
+        replaces the layer colouring instead of adding to it -- a cell has one
+        fill, and drawing both would leave the legend and the colorbar
+        describing the same patch differently -- so its layer legend is
+        suppressed and it earns a colorbar (the observable difference the test
+        asserts on).
+      - **Fixed in passing:** `docs/build_myflopy_api_pamphlet.py` documented
+        `mf.plot_model_cross_section(model, line=section.line)`, which raises
+        `AttributeError` under the documented `import myflopy as mf` -- it is
+        exported from `myflopy.modflow.mf6`, never top-level. It now shows both
+        section spellings on the grammar instead. `model.xsect(...)` in the same
+        block was also long retired.
+      - **Three follow-ups from the first look at it, same day.** "The labelling
+        of the units didn't show up in the legend. And the `layer` arg doesn't
+        seem to do anything for the mpl pic. I'd like to be able to define what
+        layers to draw. And really I should be able to decide what water levels
+        to draw."
+        - **`layer=` was accepted and IGNORED** -- the defect this family of work
+          exists to end, reintroduced by the very change that closed it
+          elsewhere. `_PROFILE_ONLY_SECTION_ARGS` listed twelve names and not
+          this one, because `layer` is real on the profile branch. The filled
+          branch takes `layers=` (plural) and `layer=` now raises naming it: two
+          spellings for two meanings beats one that silently means neither.
+        - **`layers=` masks AND crops.** FloPy's `plot_array` skips NaN cells, so
+          masking hides them without moving any other cell's geometry -- but the
+          axis stays full height, which puts the two layers you asked for in a
+          thin band. Measured: `layers=[0, 1]` goes 124 drawn cells to 62 and
+          y-limits `[-1, 160]` to `[41, 165]`. The legend narrows to match.
+        - **`head_layers=` chooses whose water levels are drawn**, defaulting to
+          `0` -- the single water table every earlier figure got, so nothing
+          moves. A list draws one surface per layer, each LABELLED, because
+          several unlabelled lines on one section cannot be told apart; colours
+          come from `category_colors`, keyed by label, so a layer's water level
+          is the same colour on every section it appears in. `None` draws the
+          geology alone. Ignored under `fill="results"`, which already paints
+          that quantity onto the cells.
+        - **Layer names come from the SPECS, which was the user's own
+          suggestion.** `ModelSpec.build` stores the `ModelContext` on the model
+          (`specs.py:2141`), so a model declared with
+          `ModelContext(surfaces=stack.build(vor))` carries `.names` -- "sand",
+          "clay" -- and the legend uses them with no argument at all.
+          `layer_labels=` overrides. The fallback matters and is tested: the
+          canonical model is built imperatively, has `myflopy_context is None`,
+          and correctly gets `Layer N`. A `surfaces` that is a plain frame (the
+          shape `ModelContext`'s own docstring shows) also has no names.
+      - **NOT done, and deliberately:** `plot_model_cross_section` and
+        `plot_layered_cross_section` stay where they are and keep their callers.
+        They are the ENGINE under `fill=` (`LayerStack.plot.section` uses the
+        same renderer), so deleting them would mean inlining a renderer into a
+        verb. What changed is which spelling the docs teach.
+
+
+178. **Spliced docstrings written into the source, because an editor cannot run
+      your module (2026-09-02).**
+      Reported as "`model.plot.section` docstring doesn't show in PyCharm. It
+      shows the args but the docstring itself is only one line. Needs complete
+      docstring. This is a reoccurring issue" -- and then, decisively, "I don't
+      remember deciding the docstrings were runtime only."
+      - **The user was right that they never decided it.** Ledger 169b recorded
+        "signature-static, docstring-runtime" as the contract earlier the same
+        day, reasoning that the SIGNATURE is what a static reader needs. That is
+        the same argument plan 8.8 demolished for `**kwargs`, one field along:
+        `__doc__` assigned at import reaches `help()` and reaches no editor.
+        Measured across the bound tier: `ModelPlots.section` 1 source line
+        against 169 runtime, `.map` 1 against 188, `.surface` 1 against 51,
+        `.grid` 3 against 82 -- and every noun the same shape.
+      - **Generate, then pin** -- the contract this repo already runs on for
+        `api_snapshot.json` and `import_layers.json`.
+        `scripts/derive_docstrings.py` writes each assembled docstring back into
+        its own file; `tests/test_docstrings_are_static.py` fails in BOTH
+        directions, so editing `plot.map`'s reference without regenerating fails,
+        and hand-editing a generated docstring fails too. 29 methods, discovered
+        by the `_myflopy_own_doc` marker the splicers already stamp rather than
+        listed, so a noun added to the splice cannot be left behind.
+      - **The prerequisite was idempotency, and the splice did not have it.**
+        Writing the text into the source means the splicers re-run over their own
+        output at every import; a non-fixed-point would grow the docstring each
+        time. Measured: a second pass took `ModelPlots.section` from 169 lines to
+        179. Three duplications, each its own small bug:
+        - the free verb's extended PROSE was appended unconditionally;
+        - the `Bound form of ...` footer likewise;
+        - and `**kwargs` was duplicated because `_parameter_name` requires a
+          `name : type` head, while a VAR-ARG entry legally has no type -- so the
+          name filter could not see it to drop the inherited copy.
+      - **A fourth needed care: an entry head with NO type at all.**
+        `viz.mosaic` documents every parameter as a bare `panels` with the
+        description indented under it -- legal NumPy, and equally invisible to
+        the filter. The obvious fix (treat a bare identifier at column 0 as a
+        head) is WRONG and was caught immediately: `Returns` is a valid
+        identifier, so section headings started parsing as parameters and all
+        thirteen methods drifted. It is only unambiguous INSIDE a `Parameters`
+        block, so `_bare_parameter_name` is scoped there and `_documented_names`
+        walks the blocks rather than the whole remainder.
+      - **`mosaic` needed two generation passes, and that is not drift.** Its
+        first pass applies the canonical NumPy section ORDER (177 put `Returns`
+        before `Examples`), which changes the text once; the second is a fixed
+        point. Verified to three passes: 66, 68, 68, 68.
+      - **Found in passing: `GridPlots.map` documented four of its own
+        parameters with bare heads**, so once the filter could see them it
+        dropped the typed inherited copies and left entries the noun docstring
+        test rejects. They now carry real `name : type` heads -- which they
+        should have had regardless.
+      - **NOT changed: the splicers still run at import.** They remain the single
+        author, so the reference is still written once on the free verb. What
+        changed is that their output is committed rather than assembled only in
+        memory.

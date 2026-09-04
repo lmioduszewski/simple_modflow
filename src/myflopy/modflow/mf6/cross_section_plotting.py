@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import matplotlib.lines as mlines
@@ -19,7 +20,8 @@ import shapely as shp
 from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
-from myflopy.viz import mpl_axes
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.viz import category_colors, mpl_axes
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -66,10 +68,26 @@ def _theme_context(style: ModelCrossSectionStyle):
 
 
 def _normalize_line(line) -> dict:
-    """Normalize a section line (dict, ``LineString``, or coord sequence) to a ``{"line": coords}`` dict."""
+    """Normalize a section line to a ``{"line": coords}`` dict.
+
+    Accepts a dict, a ``LineString``, a sequence of ``(x, y)`` pairs, or a path
+    to a vector file to read one from -- the same set every ``section(line=...)``
+    entry point takes, so the filled branch and the profile branch cannot
+    disagree about what a line is.
+    """
 
     if isinstance(line, dict):
         return line
+
+    if isinstance(line, (str, Path)):
+        geometry = read_shp_gpkg(Path(line)).union_all()
+        return _normalize_line(geometry)
+
+    if isinstance(line, shp.MultiLineString):
+        merged = shp.line_merge(line)
+        return _normalize_line(
+            merged if isinstance(merged, shp.LineString) else max(merged.geoms, key=lambda g: g.length)
+        )
 
     if isinstance(line, shp.LineString):
         return {"line": list(line.coords)}
@@ -148,28 +166,109 @@ def _build_legend_handles(
     *,
     layer_colors: Sequence[str],
     layer_labels: Sequence[str],
-    head_label: str,
-    head_color: str,
-    head_linewidth: float,
-    include_head: bool,
+    surfaces: Sequence[tuple[str, str]] = (),
+    head_linewidth: float = 1.5,
 ) -> list:
-    """Legend handles for the section: a color patch per layer, plus the head line when included."""
+    """Legend handles: a colour patch per drawn layer, then one line per surface."""
 
     handles = [
         mpatches.Patch(color=color, label=label)
         for color, label in zip(layer_colors, layer_labels, strict=False)
     ]
-    if include_head:
-        handles.append(
-            mlines.Line2D(
-                [],
-                [],
-                color=head_color,
-                linewidth=head_linewidth,
-                label=head_label,
-            )
-        )
+    handles += [
+        mlines.Line2D([], [], color=colour, linewidth=head_linewidth, label=label)
+        for label, colour in surfaces
+    ]
     return handles
+
+
+def _resolve_drawn_layers(layers, nlay: int) -> list[int] | None:
+    """The zero-based layers to draw, or None for all of them.
+
+    Validated against ``nlay`` here rather than left to produce an empty picture:
+    a section that silently draws nothing is the same defect as one that draws
+    the wrong thing.
+    """
+
+    if layers is None:
+        return None
+    chosen = [layers] if isinstance(layers, (int, np.integer)) else list(layers)
+    chosen = [int(k) for k in chosen]
+    bad = [k for k in chosen if not 0 <= k < nlay]
+    if bad:
+        raise ValueError(
+            f"layers={bad} are outside this model's {nlay} layers (0..{nlay - 1})."
+        )
+    if not chosen:
+        raise ValueError("layers= selected nothing; omit it to draw them all.")
+    return sorted(set(chosen))
+
+
+def _resolve_head_surfaces(head_surfaces, head_surface, style) -> list:
+    """Normalize the surface arguments to ``[(label, array), ...]``."""
+
+    if head_surfaces:
+        return [(str(label), np.asarray(a, dtype=float)) for label, a in head_surfaces]
+    if head_surface is not None:
+        return [(style.head_label, np.asarray(head_surface, dtype=float))]
+    return []
+
+
+def _surface_colours(labels: Sequence[str], style) -> list[str]:
+    """One colour per drawn surface, keyed by LABEL.
+
+    A single surface keeps ``style.head_color`` exactly, so every figure drawn
+    before several were possible is unchanged. Several go through
+    :func:`~myflopy.viz.category_colors`, which memoizes by name -- so a given
+    layer's water level is the same colour on every section it appears in, and
+    the palette is already hex (matplotlib reads it; Plotly's ``rgb(...)`` form
+    would not).
+    """
+
+    labels = list(labels)
+    if len(labels) <= 1:
+        return [style.head_color]
+    mapping = category_colors(labels)
+    return [mapping[label] for label in labels]
+
+
+def _layer_elevation_bounds(modelgrid, chosen: Sequence[int]):
+    """``(ymin, ymax)`` spanning the chosen layers, padded, or None if unknowable."""
+
+    try:
+        top = np.asarray(modelgrid.top, dtype=float)
+        botm = np.asarray(modelgrid.botm, dtype=float)
+    except (AttributeError, TypeError, ValueError):        # pragma: no cover
+        return None
+    if botm.ndim != 2:                                     # pragma: no cover
+        return None
+    # The top of layer k is the model top for k == 0 and the bottom above it
+    # otherwise -- the same stacking `LayerSurfaces` uses.
+    tops = np.vstack([top[None, :], botm[:-1]])
+    upper = np.nanmax(tops[list(chosen)])
+    lower = np.nanmin(botm[list(chosen)])
+    if not np.isfinite(upper) or not np.isfinite(lower) or upper <= lower:
+        return None
+    pad = 0.05 * (upper - lower)
+    return (lower - pad, upper + pad)
+
+
+def layer_labels_from_model(model, nlay: int) -> list[str] | None:
+    """Layer names carried by the model's own build context, if it has any.
+
+    `ModelSpec.build` stores the `ModelContext` on the model, so a model declared
+    with `ModelContext(surfaces=stack.build(vor))` knows what its layers are
+    CALLED -- "sand", "clay" -- rather than only how many there are. A model
+    built the imperative way, or one whose `surfaces` is a plain frame, carries
+    no names and gets the `Layer N` default.
+    """
+
+    names = getattr(getattr(getattr(model, "myflopy_context", None), "surfaces", None),
+                    "names", None)
+    if names is None:
+        return None
+    names = list(names)
+    return names if len(names) == nlay else None
 
 
 def plot_layered_cross_section(
@@ -181,6 +280,12 @@ def plot_layered_cross_section(
     layer_colors: Sequence[str] | None = None,
     layer_labels: Sequence[str] | None = None,
     head_surface=None,
+    head_surfaces=None,
+    layers=None,
+    values=None,
+    values_cmap: str = "viridis",
+    values_label: str | None = None,
+    colorbar: bool = True,
     flopy_model=None,
     ylim: tuple[float, float] | None = None,
     xlim: tuple[float, float] | None = None,
@@ -209,6 +314,25 @@ def plot_layered_cross_section(
         shapely ``LineString``, or a sequence of ``(x, y)`` pairs.
     head_surface
         Optional 1-D array drawn as a line over the section (e.g. simulated heads).
+    head_surfaces
+        Optional ``[(label, array), ...]`` drawn as several labelled surfaces --
+        one water level per layer, say. Takes precedence over ``head_surface``.
+    layers
+        Zero-based layers to DRAW. With none, every layer. Cells outside the
+        selection are masked out and the vertical extent is cropped to what
+        remains, because leaving the axis at full height puts the layers you
+        asked for in a thin band with empty space above and below.
+    values
+        Optional ``(nlay, ncpl)`` array to colour the CELLS by -- heads,
+        concentration, K, a zone id. Replaces the layer colouring rather than
+        adding to it: a cell has one fill, and drawing both would mean the legend
+        and the colorbar describe the same patch differently.
+    values_cmap
+        Matplotlib colormap for ``values``.
+    values_label
+        Colorbar label for ``values``.
+    colorbar
+        Draw the colorbar for ``values``. Ignored without ``values``.
     flopy_model
         Optional flopy model passed through to ``PlotCrossSection`` (only needed
         for model-aware head rendering).
@@ -219,6 +343,15 @@ def plot_layered_cross_section(
     line_spec = _normalize_line(line)
     nlay = modelgrid.nlay
     layer_id = _resolve_layer_array(modelgrid)
+    chosen = _resolve_drawn_layers(layers, nlay)
+    if chosen is not None:
+        # Masked, not dropped: FloPy's `plot_array` skips NaN cells, which keeps
+        # every other cell's geometry exactly where it was.
+        keep = np.zeros(nlay, dtype=bool)
+        keep[chosen] = True
+        layer_id = np.where(keep[:, None], layer_id.astype(float), np.nan)
+        if values is not None:
+            values = np.where(keep[:, None], np.asarray(values, dtype=float), np.nan)
     resolved_layer_colors = _resolve_layer_colors(nlay, layer_colors, style)
     resolved_layer_labels = _resolve_layer_labels(nlay, layer_labels)
 
@@ -233,7 +366,21 @@ def plot_layered_cross_section(
         if show_grid:
             xsect.plot_grid(ax=ax, linewidths=style.grid_linewidth, color=style.grid_color)
 
-        if show_layers:
+        if values is not None:
+            # A continuous field REPLACES the layer colouring: one fill per cell,
+            # so the legend and the colorbar cannot describe the same patch two
+            # different ways. The layer legend is suppressed for the same reason.
+            painted = xsect.plot_array(
+                np.asarray(values, dtype=float),
+                ax=ax,
+                cmap=values_cmap,
+                alpha=style.layer_alpha,
+            )
+            if colorbar:
+                bar = fig.colorbar(painted, ax=ax, fraction=0.025, pad=0.02)
+                if values_label:
+                    bar.set_label(values_label, size=style.label_fontsize)
+        elif show_layers:
             xsect.plot_array(
                 layer_id,
                 ax=ax,
@@ -243,18 +390,24 @@ def plot_layered_cross_section(
                 alpha=style.layer_alpha,
             )
 
-        if show_head and head_surface is not None:
-            xsect.plot_surface(
-                head_surface,
-                ax=ax,
-                color=style.head_color,
-                lw=style.head_linewidth,
-            )
+        drawn_surfaces = _resolve_head_surfaces(head_surfaces, head_surface, style)
+        if show_head:
+            surface_colours = _surface_colours([n for n, _ in drawn_surfaces], style)
+            for (_label, surface), colour in zip(
+                drawn_surfaces, surface_colours, strict=False
+            ):
+                xsect.plot_surface(
+                    surface, ax=ax, color=colour, lw=style.head_linewidth,
+                )
 
         if xlim is not None:
             ax.set_xlim(*xlim)
         if ylim is not None:
             ax.set_ylim(*ylim)
+        elif chosen is not None:
+            bounds = _layer_elevation_bounds(modelgrid, chosen)
+            if bounds is not None:
+                ax.set_ylim(*bounds)
 
         ax.set_xlabel(xlabel or style.xlabel, size=style.label_fontsize)
         ax.set_ylabel(ylabel or style.ylabel, size=style.label_fontsize)
@@ -263,14 +416,17 @@ def plot_layered_cross_section(
         if title or style.title:
             ax.set_title(title or style.title, fontsize=style.title_fontsize)
 
-        if show_legend:
+        if show_legend and values is None:
+            shown = chosen if chosen is not None else range(nlay)
             handles = _build_legend_handles(
-                layer_colors=resolved_layer_colors,
-                layer_labels=resolved_layer_labels,
-                head_label=style.head_label,
-                head_color=style.head_color,
+                layer_colors=[resolved_layer_colors[k] for k in shown],
+                layer_labels=[resolved_layer_labels[k] for k in shown],
+                surfaces=list(zip(
+                    [label for label, _ in drawn_surfaces],
+                    _surface_colours([n for n, _ in drawn_surfaces], style),
+                    strict=False,
+                )) if show_head else [],
                 head_linewidth=style.head_linewidth,
-                include_head=show_head and head_surface is not None,
             )
             ax.legend(
                 handles=handles,
@@ -280,6 +436,146 @@ def plot_layered_cross_section(
             )
 
     return fig, ax
+
+
+#: What `section(fill=...)` accepts as a named fill.
+FILL_KINDS = ("layer", "results")
+
+
+def section_values(model, fill, *, per=None, kstpkper=None):
+    """The ``(nlay, ncpl)`` array a ``fill=`` asks for, or None to colour by layer.
+
+    ``"results"`` resolves through the model's own field reader rather than
+    ``.hds``, so it is heads on GWF, concentration on GWT and temperature on GWE
+    -- the rule ledger 99 established for cross-sections generally. Anything
+    array-like is taken as given.
+    """
+
+    if isinstance(fill, str):
+        if fill == "layer":
+            return None
+        if fill not in FILL_KINDS:
+            raise ValueError(
+                f"fill must be one of {FILL_KINDS} or a per-cell array, not {fill!r}."
+            )
+        reader = getattr(model, "_field_reader", None)
+        if reader is None:
+            raise ValueError(
+                "fill='results' needs a model with results; a bare grid has "
+                "none. Use fill='layer' for the geometry, or pass an array."
+            )
+        nlay = model.gwf.modelgrid.nlay
+        return np.asarray(
+            [reader.array(layer=k, per=per, kstpkper=kstpkper) for k in range(nlay)],
+            dtype=float,
+        )
+
+    values = np.asarray(fill, dtype=float)
+    if values.ndim == 1:
+        raise ValueError(
+            f"fill= needs one value per cell PER LAYER -- a (nlay, ncpl) array. "
+            f"Got a flat {values.shape} array, which would colour every layer "
+            f"the same. Stack the layers, or pass fill='results'."
+        )
+    return values
+
+
+def section_time(model, per, kstpkper):
+    """The ``(kstp, kper)`` a filled section reads, from ``per``/``kstpkper``/the end."""
+
+    if kstpkper is not None:
+        return tuple(kstpkper)
+    times = list(model.kstpkper)
+    if per is None:
+        return times[-1]
+    matching = [t for t in times if int(t[1]) == int(per)]
+    if not matching:
+        raise ValueError(
+            f"per={per} has no saved output; this model wrote periods "
+            f"{sorted({int(t[1]) for t in times})}."
+        )
+    return max(matching)
+
+
+def filled_section(
+    modelgrid,
+    line,
+    *,
+    model=None,
+    fill="layer",
+    layers=None,
+    head_layers=0,
+    layer_labels=None,
+    per=None,
+    kstpkper=None,
+    cmap: str = "viridis",
+    label: str | None = None,
+    title: str | None = None,
+):
+    """The shared renderer behind ``section(fill=...)`` at every scope.
+
+    Lives here, at layer 1, so both `myflopy.plot.section` (layer 7) and
+    `GridPlots.section` (layer 3) reach it DOWNWARD. The obvious alternative --
+    the grid scope calling up into `myflopy.plot` -- is an upward import the
+    layering ratchet rightly refuses, and it would have been the only one in the
+    package.
+
+    ``model`` is optional and duck-typed: with one, ``fill="results"`` can read a
+    field and ``fill="layer"`` draws the simulated head as a water surface over
+    the geology; without one (a bare grid) neither is available and
+    ``fill="results"`` raises rather than quietly degrading to ``"layer"``.
+    """
+
+    values = section_values(model, fill, per=per, kstpkper=kstpkper)
+    surfaces = section_head_surfaces(
+        model, head_layers, per=per, kstpkper=kstpkper
+    ) if values is None else []
+    names = layer_labels
+    if names is None and model is not None:
+        names = layer_labels_from_model(model, modelgrid.nlay)
+    figure, _axes = plot_layered_cross_section(
+        modelgrid,
+        _normalize_line(line),
+        values=values,
+        values_cmap=cmap,
+        values_label=label,
+        layers=layers,
+        layer_labels=names,
+        head_surfaces=surfaces,
+        flopy_model=getattr(model, "gwf", None),
+        title=title,
+        show_head=bool(surfaces),
+    )
+    return figure
+
+
+def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None) -> list:
+    """``[(label, array)]`` -- one water surface per requested layer.
+
+    ``head_layers=None`` draws none, an int or a list draws those layers. The
+    default is layer 0, which is what a single water table means and what every
+    figure drawn before 2026-09-02 got.
+
+    Labelled per layer rather than "Simulated Head" once, because several
+    unlabelled lines on one section are unreadable -- and the label carries the
+    layer NAME when the model's build context knows it.
+    """
+
+    if model is None or head_layers is None:
+        return []
+    reader = getattr(model, "_field_reader", None)
+    if reader is None:
+        return []
+    nlay = model.gwf.modelgrid.nlay
+    chosen = _resolve_drawn_layers(head_layers, nlay)
+    if chosen is None:                                     # pragma: no cover
+        chosen = list(range(nlay))
+    names = layer_labels_from_model(model, nlay) or [f"Layer {k + 1}" for k in range(nlay)]
+    return [
+        (f"Head, {names[k]}" if len(chosen) > 1 else "Simulated Head",
+         reader.array(layer=k, per=per, kstpkper=kstpkper))
+        for k in chosen
+    ]
 
 
 def plot_model_cross_section(

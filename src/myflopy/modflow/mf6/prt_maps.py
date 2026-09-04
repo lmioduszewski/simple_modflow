@@ -803,6 +803,99 @@ class PRTPathlineView(_PRTDerivedView):
         **base_kwargs
             Anything else rides through to the base map's Plotly trace. The
             base-map options that used to live here are named above.
+        zmin, zmax : float, optional
+            Fixed color-scale limits. Set both to hold the scale steady across
+            frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+            color. With neither, the range comes from the data.
+        colorscale : str or list of (float, str), optional
+            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
+            scale** -- names round-trip through a plotly-to-matplotlib table that
+            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
+            renders mirrored between backends (ledger 69/70).
+        logscale : bool, default False
+            Color on a log scale. Non-positive values are masked.
+        contours : bool or str, default False
+            Overlay contour lines. ``True`` contours the mapped values; a string
+            names a different field to contour instead.
+        contour_values : sequence of float, optional
+            Contour a supplied array rather than the mapped one.
+        contour_levels : int or float or list of float, default 10
+            A count of levels, a fixed interval, or explicit level values.
+        contour_color : str, default 'black'
+            Line colour for the contour trace.
+        contour_width : float, default 1.5
+            Line width for the contour trace.
+        contour_name : str, optional
+            Legend name for the contour trace.
+        contour_clip : bool, default True
+            Clip contours to the active domain instead of the full grid extent.
+        contour_resolution : int, default 150
+            Grid size used to build the contours, per axis. Higher is smoother and
+            slower. **Only acts under ``contour_method="cubic"``**, which is the one
+            that interpolates onto a square grid before contouring; the default
+            linear method triangulates the cell centres directly, so there is no
+            grid for this to size and passing it changes nothing (measured: 338
+            contour points at 40, 150 and 400 alike).
+        contour_method : {'linear', 'cubic'}, default 'linear'
+            How the scattered cell values become contours. ``'linear'``
+            triangulates the cell centres and contours the triangulation --
+            fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+            a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+            that -- smoother, slower, and able to overshoot between cells.
+            ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+            ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+            both; ``'nearest'`` in particular was documented here for a while and
+            has never been implemented.
+        select : sequence of int, ndarray, str, Path or geometry, optional
+            Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+            name of a registered model region (``"all_streams"``), a path to a
+            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            nothing (with a warning) when the selection is empty.
+        select_style : {'outline', 'dim', 'both'}, default 'outline'
+            How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+            of the selection and leaves every cell at full opacity. ``'dim'`` fades
+            the *unselected* cells to 20% instead, which suits a bare grid where the
+            selection is the subject, but on a field it costs a measured 6.9x of
+            readable contrast everywhere you did not select -- and one box/lasso
+            gesture in the browser overwrites it. ``'both'`` draws each.
+        select_color : str, optional
+            Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+            when the default red collides with a red-blue diverging colorscale.
+        locs : Path or GeoDataFrame, optional
+            Point locations to mark -- wells, observations, samples. A path is read
+            as a vector file.
+        hillshade_path : Path, optional
+            A hillshade GeoTIFF to draw beneath the cells for topographic context.
+        fit_bounds : bool, default True
+            Fit the initial view to the grid extent rather than using ``zoom``.
+        bounds_padding : float, default 0.05
+            Fractional padding around the fitted bounds.
+        hover : HoverSpec, optional
+            Replace the sectioned hover outright. See
+            :mod:`myflopy.modflow.utils.datatypes.hover`.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Which renderer draws the map. ``'plotly'`` returns the interactive
+            ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
+            static :class:`matplotlib.figure.Figure` instead, for a report, a
+            multi-panel figure of your own, or anywhere a live figure is not wanted.
+            Accepts ``'interactive'`` and ``'matplotlib'``/``'static'`` as aliases;
+            anything else raises rather than being ignored.
+
+            The switch changes the RENDERER, never the subject: both backends draw
+            this same map. Two differences are worth knowing before you rely on
+            one. The Matplotlib branch draws in **model coordinates** with no
+            basemap, so ``bgs`` and ``zoom`` have nothing to act on there; and a
+            NAMED diverging colorscale renders mirrored between the two, because the
+            name round-trips through a plotly-to-matplotlib table that maps
+            ``'rdbu'`` to the reversed colormap -- pass explicit stops when the
+            direction carries meaning (ledger 69/70).
+
+            ``backend='mpl'`` and ``.plot_mpl()`` on the returned picture are the
+            same renderer reached two ways. Prefer the parameter: it is the spelling
+            the whole grammar shares, so it also works on the nouns
+            (``model.hds.map(backend='mpl')``) and on the composers
+            (``mosaic``/``animate``), where there is no intermediate picture to call
+            a method on.
 
         Returns
         -------

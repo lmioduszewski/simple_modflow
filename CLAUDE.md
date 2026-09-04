@@ -62,6 +62,22 @@ the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means 
 height field; `surface(backend="vtk")` exists and draws those height fields as
 separate PyVista sheets, which is the rule holding rather than bending). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
 `.save(path)` / `.html(path)`, and never a trailing `.plot()`.
+**A cross-section of the MODEL (grid + layers + results) is
+`section(fill=..., backend="mpl")`** (ledger 177, 2026-09-02) -- `fill="layer"`
+colours cells by layer and draws the head as a water surface; `fill="results"`
+colours them by head/conc/temp with a colorbar; a `(nlay, ncpl)` array paints
+anything else. Plain `section()` is a LINE PROFILE (head vs distance) and draws
+no cells -- that difference is what sent this looking twice. `fill=` is mpl-only
+and raises rather than degrading: on the plotly backend, on any profile-only
+argument, on `"results"` for a bare grid, and on a flat `(ncpl,)` array.
+Pick what it contains with `layers=` (which layers' cells; masks and CROPS the
+view), `head_layers=` (whose water levels ride on top -- default `0`, a list
+draws one labelled surface each, `None` none) and `layer_labels=` (unit names for
+the legend, defaulting to `model.myflopy_context.surfaces.names` when the model
+was declared with a `LayerBuildResult` as its `surfaces`). **`layer=` RAISES
+here** -- it means "overlay these layers' head profiles" on the profile branch.
+RETIRED as the spelling to teach: `mf.plot_model_cross_section` (still there,
+still the engine, but on no scope and not exported top-level).
 **Want it static? `backend="mpl"`, on `map` / `section` / `grid`, at EVERY scope**
 (ledger 176, 2026-09-02) — free verb, bound namespace, and noun. The NOUN-tier
 `mosaic`/`animate` take it too, which is where it earns its keep because there is
@@ -113,11 +129,13 @@ signatures — it stays `*args, **kwargs` and points at the leaf.
 rather than listing them; its `UNCONVERTED` set is now empty and asserted empty).
 A noun names Tier 1 (`NOUN_MAP_PARAMS`, 22 including `backend`) plus its own
 selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
-per-layer names that were measured byte-identical on a record noun. The docstring
-contract is **signature-static, docstring-runtime**: the source carries the
-noun's own parameters plus real Examples, and the ~22 shared entries splice from
-`plot.map` at import (`inherit_map_docs`), so every parameter appears in both the
-`def` line and `help()` without being hand-copied fifteen times.
+per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178, 2026-09-02): the splice is
+still the single author, but `scripts/derive_docstrings.py` writes its output
+back into each source file, because PyCharm and Pylance never run the module and
+were showing ONE line of `model.plot.section` against 169. Change a reference on
+`plot.map`, then rerun the script and review the diff --
+`tests/test_docstrings_are_static.py` fails in both directions. Hand-editing a
+generated docstring fails too. The splice must stay IDEMPOTENT for this to hold.
 **Converting one? The hazard is a `**kwargs` tail something READ.** PRT's `map`
 consulted `base_kwargs` for three separate refusals; naming the parameters
 emptied it and would have disabled all three silently (`_explicit_options`

@@ -14,6 +14,7 @@ declared here on purpose.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import re
 
@@ -724,3 +725,218 @@ def test_contour_resolution_is_documented_as_cubic_only(canonical_run):
     assert "Only acts under" in (inspect.getdoc(plot.map) or ""), (
         "contour_resolution's entry must say which method it applies to"
     )
+
+
+# --- section(fill=): the cells, not a line profile -----------------------------
+def _mid_line(model):
+    """A West-East line across the middle of a model's grid."""
+
+    import shapely as shp
+
+    xmin, ymin, xmax, ymax = model.vor.gdf_vorPolys.total_bounds
+    middle = (ymin + ymax) / 2
+    return shp.LineString([(xmin + 1, middle), (xmax - 1, middle)])
+
+
+def test_a_filled_section_draws_the_cells_and_the_line_profile_does_not(canonical_run):
+    """`fill=` is the picture the verb could not draw before (2026-09-02).
+
+    `section` answered "what is the head along this line" -- two traces, no
+    geometry. The picture people mean by "a cross-section of the model" is the
+    cells: the grid, its layers, and a field on them. That existed only as
+    `myflopy.modflow.mf6.plot_model_cross_section`, reachable by deep import and
+    from no scope at all, which is how it was lost twice.
+
+    Counting artists is the falsifiable form: a profile has LINES and no filled
+    collections; a filled section has both.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+
+    profile = canonical_run.plot.section(line=line, backend="mpl").axes[0]
+    assert not profile.collections, "the line profile drew filled cells"
+    assert profile.lines, "the line profile drew no profile"
+
+    filled = canonical_run.plot.section(line=line, fill="layer", backend="mpl").axes[0]
+    assert filled.collections, "fill='layer' drew no cells"
+    # ... and the RESULTS are still there, as the water surface over the geology.
+    assert filled.lines, "fill='layer' dropped the simulated head surface"
+
+
+def test_a_results_fill_paints_the_cells_and_earns_a_colorbar(canonical_run):
+    """`fill='results'` colours the cells by the model's own field.
+
+    Kind-neutral by construction -- it reads through `_field_reader`, so it is
+    heads on GWF, concentration on GWT, temperature on GWE. The colorbar is the
+    observable difference from `fill='layer'`, whose discrete layer palette gets
+    a legend instead.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+
+    layered = canonical_run.plot.section(line=line, fill="layer", backend="mpl")
+    painted = canonical_run.plot.section(
+        line=line, fill="results", per=1, backend="mpl", fill_label="head (ft)"
+    )
+    assert len(painted.axes) > len(layered.axes), "fill='results' drew no colorbar"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"fill": "layer"}, "backend='mpl'"),
+        ({"fill": "layer", "backend": "mpl", "interpolate": True}, "line PROFILE"),
+        ({"fill": "layer", "backend": "mpl", "spacing": 99}, "line PROFILE"),
+        ({"fill": "nope", "backend": "mpl"}, "fill must be"),
+    ],
+)
+def test_fill_refuses_what_it_cannot_honour(kwargs, message, canonical_run):
+    """Every one of these was silently accepted somewhere in this family before.
+
+    A `fill=` that quietly returned a Plotly line profile, or that took
+    `interpolate=True` and ignored it, would be the same defect the whole 8.8
+    pass exists to end -- a parameter an editor completes and the code discards.
+    """
+
+    with pytest.raises(ValueError, match=message):
+        canonical_run.plot.section(line=_mid_line(canonical_run), **kwargs)
+
+
+def test_a_bare_grid_fills_by_layer_but_has_no_results_to_paint(canonical_run):
+    """A grid answers `fill='layer'` and refuses `fill='results'`, naming why."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+    assert canonical_run.vor.plot.section(line, fill="layer", backend="mpl").axes[0].collections
+
+    with pytest.raises(ValueError, match="bare grid has"):
+        canonical_run.vor.plot.section(line, fill="results", backend="mpl")
+
+
+def test_a_flat_array_fill_is_refused_rather_than_broadcast(canonical_run):
+    """One value per cell is ambiguous in section -- it would paint every layer
+    the same and look like a real answer."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    flat = canonical_run.hds.array(layer=0)
+    with pytest.raises(ValueError, match="PER LAYER"):
+        canonical_run.plot.section(
+            line=_mid_line(canonical_run), fill=flat, backend="mpl"
+        )
+
+
+def _drawn_cells(figure):
+    """How many section cells actually carry a value (the rest are masked)."""
+
+    import numpy as np
+
+    array = figure.axes[0].collections[-1].get_array()
+    return int(np.sum(~np.ma.getmaskarray(array))) if array is not None else -1
+
+
+def _legend_labels(figure):
+    legend = figure.axes[0].get_legend()
+    return [text.get_text() for text in legend.get_texts()] if legend else []
+
+
+def test_layers_selects_which_cells_are_drawn_and_crops_to_them(canonical_run):
+    """`layers=` must act. It was accepted and IGNORED on the first cut.
+
+    `layer=` already existed on the profile branch meaning "overlay these
+    layers' head profiles", so it rode the filled branch doing nothing -- the
+    exact defect (a parameter an editor completes and the code discards) that
+    this whole family of work exists to end. The filled branch gets its own
+    name and refuses the profile one.
+
+    Cropping is part of the behaviour, not decoration: masking alone leaves the
+    two layers you asked for in a thin band of a full-height axis.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+    section = functools.partial(
+        canonical_run.plot.section, line=line, fill="layer", backend="mpl"
+    )
+
+    everything = section()
+    subset = section(layers=[0, 1])
+    assert _drawn_cells(subset) < _drawn_cells(everything)
+    assert len(_legend_labels(subset)) < len(_legend_labels(everything))
+
+    full_height = everything.axes[0].get_ylim()
+    cropped = subset.axes[0].get_ylim()
+    assert cropped[0] > full_height[0], "the view was not cropped to the drawn layers"
+
+    with pytest.raises(ValueError, match="layers= to choose"):
+        section(layer=2)
+    with pytest.raises(ValueError, match="outside this model"):
+        section(layers=[0, 99])
+
+
+def test_head_layers_chooses_whose_water_levels_are_drawn(canonical_run):
+    """One water table is the default; several are drawn labelled, none is legal."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+    section = functools.partial(
+        canonical_run.plot.section, line=line, fill="layer", backend="mpl"
+    )
+
+    one = section()
+    several = section(head_layers=[0, 2])
+    none = section(head_layers=None)
+
+    assert len(none.axes[0].lines) == 0
+    assert len(several.axes[0].lines) == 2 * len(one.axes[0].lines)
+    # ... and each is named, because several unlabelled lines are unreadable.
+    labels = _legend_labels(several)
+    assert sum("Head" in text for text in labels) == 2
+    assert _legend_labels(one).count("Simulated Head") == 1
+
+
+def test_layer_labels_name_the_units_and_default_to_the_models_own(canonical_run):
+    """The legend should say "sand", not "Layer 2", when anything knows better.
+
+    Explicit names win; otherwise they come from the model's build context
+    (`ModelContext(surfaces=stack.build(vor))` carries them through
+    `ModelSpec.build`). The canonical model is built imperatively and has no
+    context, so it exercises the documented fallback.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from myflopy.modflow.mf6.cross_section_plotting import layer_labels_from_model
+
+    line = _mid_line(canonical_run)
+    named = canonical_run.plot.section(
+        line=line, fill="layer", backend="mpl", layers=[0, 1],
+        layer_labels=["sand", "clay", "till", "rock"],
+    )
+    assert _legend_labels(named)[:2] == ["sand", "clay"]
+
+    assert layer_labels_from_model(canonical_run, canonical_run.gwf.modelgrid.nlay) is None
+    fallback = canonical_run.plot.section(line=line, fill="layer", backend="mpl")
+    assert _legend_labels(fallback)[0] == "Layer 1"
+
+
+def test_the_filled_only_arguments_are_refused_on_the_profile(canonical_run):
+    """They describe cells; a line profile has none, so they must not be ignored."""
+
+    for kwargs in ({"layers": [0]}, {"layer_labels": ["a"]}, {"head_layers": [0, 1]}):
+        with pytest.raises(ValueError, match="filled section draws"):
+            canonical_run.plot.section(line=_mid_line(canonical_run), **kwargs)
