@@ -25,6 +25,7 @@ import flopy
 from myflopy.sources import (
     DataSourceSpec,
     LiteralSource,
+    is_source_payload,
     source_from_dict,
 )
 from myflopy.specs_io import simulation_from_yaml, simulation_to_yaml
@@ -381,8 +382,20 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
     """
 
     if isinstance(value, dict) and "kind" in value:
-        kind = value["kind"]
-        if kind.endswith("Source"):
+        # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
+        # ends in "Spec", so an ``endswith("Source")`` test handed the public
+        # base class back as a plain dict. The endswith arm is kept so an
+        # UNKNOWN "...Source" kind still raises rather than degrading silently.
+        if is_source_payload(value) or str(value["kind"]).endswith("Source"):
+            if int_keys:
+                # A source wraps its payload, so the promotion has to reach
+                # inside it -- ``LiteralSource({0: True})`` is period-keyed and
+                # otherwise came back string-keyed through JSON while YAML kept
+                # the ints, leaving the two formats disagreeing.
+                value = {
+                    key: _spec_value(item, int_keys=True)
+                    for key, item in value.items()
+                }
             return source_from_dict(value)
     if isinstance(value, list):
         return [_spec_value(item, int_keys=int_keys) for item in value]
@@ -402,8 +415,10 @@ def _spec_options(data: Any) -> dict[str, Any]:
     The mapping's own keys are FloPy parameter names and are left alone; it is
     the dicts *nested* in a value (``stress_period_data={0: [...]}``) that carry
     stress-period keys. Used for :class:`PackageSpec`'s ``options``/``inputs``,
-    the only spec fields that reach a package builder able to take period data --
-    grid/model/exchange/simulation options have no period dimension.
+    the only spec fields that reach a package builder able to take period data,
+    and for :class:`ExchangeSpec`'s options, because ``ModflowGwfgwf.perioddata``
+    carries an exchange-level MVR. Grid, model and simulation options have no
+    period dimension -- neither constructor takes a dict-valued parameter.
     """
 
     return {key: _spec_value(item, int_keys=True) for key, item in dict(data).items()}
@@ -2375,7 +2390,7 @@ class ExchangeSpec:
             name=data["name"],
             builder=_resolve_callable(data["builder"]),
             models=tuple(data.get("models", ())),
-            options=_spec_value(dict(data.get("options", {}))),
+            options=_spec_options(data.get("options", {})),
         )
 
     def __repr__(self) -> str:

@@ -676,3 +676,59 @@ def test_from_dict_still_rejects_a_null_options_block():
     for field in ("options", "inputs", "metadata", "requires"):
         with pytest.raises(TypeError):
             mf.PackageSpec.from_dict({**base, field: None})
+
+
+def test_source_payloads_are_rebuilt_by_registry_and_keep_int_keys():
+    """Two defects in the same guard, both silent.
+
+    ``_spec_value`` decided "is this a source?" with ``kind.endswith("Source")``.
+    ``DataSourceSpec``'s own kind ends in "Spec", so the public base class came
+    back as a plain ``dict``. And the guard returned BEFORE the int-key
+    restoration, so a period-keyed ``LiteralSource`` lost its keys through JSON
+    while YAML kept them -- the two documented formats disagreeing about one spec.
+    """
+
+    import json
+
+    import yaml
+
+    from myflopy.sources import DataSourceSpec, LiteralSource, RasterSource
+    from myflopy.specs import _json_value, _spec_options, _spec_value
+
+    for source in (DataSourceSpec(path="x.tif"), RasterSource(path="r.tif")):
+        revived = mf.PackageSpec.from_dict(
+            json.loads(json.dumps(mf.npf(k=1.0).with_input("k", source).to_dict()))
+        ).inputs["k"]
+        assert type(revived) is type(source)
+
+    # An unknown "...Source" kind must still fail loudly rather than degrade.
+    with pytest.raises(ValueError, match="Unknown source kind"):
+        _spec_value({"kind": "MadeUpSource"})
+
+    payload = _json_value({"steady_state": LiteralSource({0: True, 1: False})})
+    from_json = _spec_options(json.loads(json.dumps(payload)))["steady_state"]
+    from_yaml = _spec_options(yaml.safe_load(yaml.safe_dump(payload)))["steady_state"]
+    assert from_json.value == from_yaml.value == {0: True, 1: False}
+
+
+def test_exchange_options_restore_int_period_keys():
+    """``ModflowGwfgwf.perioddata`` is an exchange-level MVR, so it IS period-keyed.
+
+    Latent today -- FloPy 3.10 cannot construct the exchange child package at all
+    -- but the round trip lost the keys, so a fixed FloPy would have shipped a
+    silently no-op inter-model mover.
+    """
+
+    import json
+
+    from myflopy.builders import build_gwf_gwf_exchange
+
+    exchange = ExchangeSpec(
+        name="gwfgwf",
+        builder=build_gwf_gwf_exchange,
+        models=("a", "b"),
+        options={"nexg": 1, "perioddata": {0: [["a_sfr", 0, "b_lak", 0, "FACTOR", 1.0]]}},
+    )
+    revived = ExchangeSpec.from_dict(json.loads(json.dumps(exchange.to_dict())))
+
+    assert list(revived.options["perioddata"]) == [0]

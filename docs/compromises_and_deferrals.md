@@ -5363,6 +5363,23 @@ same day, which is the useful part of the result.
           string-keyed and FloPy writes an empty `BEGIN time / END time`.
           Reachable through the `**options` passthrough; TAS appears in no doc,
           example, test or notebook here, so exposure is low.
-        - Refuted while checking: `LiteralSource` payloads DO restore their int
-          keys (they ride `inputs`), and exchange/model/simulation options carry
-          no period-keyed data.
+      - **Three more of the same class, found by the adversarial pass and fixed
+        in the follow-up (2026-09-03):**
+        - **A source wraps its payload, and the guard returned before the
+          promotion.** A period-keyed `LiteralSource({0: True})` came back
+          string-keyed through JSON while YAML kept the ints, so the two
+          documented formats disagreed about one spec. (An earlier draft of this
+          entry called this "refuted" -- that check omitted the `json.dumps`
+          step, which is the whole durable path. It was real.)
+        - **`kind.endswith("Source")` is not the authority; the registry is.**
+          `DataSourceSpec`'s own kind ends in "Spec", so the public base class
+          was handed back as a plain `dict`. Now `is_source_payload` checks
+          `_SOURCE_TYPES`, with the `endswith` arm kept so an UNKNOWN
+          "...Source" kind still raises instead of degrading to a dict.
+        - **Exchange options DO have a period dimension.** An earlier draft of
+          this entry claimed otherwise; `ModflowGwfgwf.perioddata` is an
+          exchange-level MVR. Latent today (FloPy 3.10 cannot construct that
+          child package at all), but a fixed FloPy would have shipped a silently
+          no-op inter-model mover. Model and simulation options were re-checked
+          and genuinely have none -- neither constructor takes a dict-valued
+          parameter.

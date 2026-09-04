@@ -485,6 +485,18 @@ _SOURCE_TYPES: dict[str, type[Any]] = {
 }
 
 
+def is_source_payload(data: Any) -> bool:
+    """Whether ``data`` is a serialized source dict :func:`source_from_dict` rebuilds.
+
+    The registry is the authority. A ``kind.endswith("Source")`` test looks
+    equivalent and is not: :class:`DataSourceSpec`'s own kind is
+    ``"DataSourceSpec"``, which ends in "Spec", so such a test silently passed
+    the public base class through as a plain ``dict``.
+    """
+
+    return isinstance(data, dict) and str(data.get("kind")) in _SOURCE_TYPES
+
+
 def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
     """Recreate a source specification from its serialized representation."""
 
@@ -498,6 +510,7 @@ def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
 
 __all__ = [
     "DataSourceSpec",
+    "is_source_payload",
     "GeoPackageSourceSpec",
     "LiteralSource",
     "RasterSource",
