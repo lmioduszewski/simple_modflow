@@ -5184,6 +5184,23 @@ same day, which is the useful part of the result.
           sits on top of the geology it describes. An unknown word RAISES and
           lists the accepted ones -- falling back to `"best"` would be a legend
           that ignored where it was told to go.
+        - **Legend text is chosen from the BACKGROUND, not inherited.** Reported
+          as "the legend text is unreadable because it is white on a white
+          background". Matplotlib takes label colour from the `text.color`
+          rcParam, which a dark notebook theme sets globally, while `mpl_axes`
+          builds a seaborn *whitegrid* figure -- white on white. `readable_on`
+          picks by Rec. 601 luma, so it is black here and still white on a dark
+          figure; forcing black would have traded one unreadable legend for
+          another. Same class as `PALETTE.highlight` being a Plotly colour
+          matplotlib rejects: ambient state deciding the picture.
+        - **FloPy raises a BARE `StopIteration` when the line misses the grid**,
+          and it is worse than it sounds: its own guard builds the error message
+          with `next(iter(self.xypts.values()))`, which is the very call that
+          fails when nothing was intersected. So the traceback names
+          `crosssection.py`, carries no message, and a mistyped line reads as a
+          library fault -- `zip(xy[0], xy[0])` pairs X with X, which is how it
+          was hit. Wrapped now, naming BOTH extents: knowing it missed is
+          useless without knowing by how much.
         - **`show_grid=False` was silently dropped**, found by the probe written
           to check the above. The filled branch builds no class that takes an
           open tail -- that is the profile branch's `XSection` -- so anything

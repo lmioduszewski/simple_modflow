@@ -1121,3 +1121,66 @@ def test_legend_placement_actually_moves_the_legend(canonical_run):
             canonical_run.plot.section(
                 line=line, fill="layer", backend="mpl", legend=bad
             )
+
+
+def test_legend_text_is_readable_whatever_the_ambient_theme_says(canonical_run):
+    """"The legend text is unreadable because it is white on a white background."
+
+    Matplotlib takes label colour from the `text.color` rcParam, which a dark
+    notebook theme sets globally -- while `mpl_axes` builds a seaborn
+    *whitegrid* figure. White text on a white figure. The colour is chosen from
+    the figure's own background now, rather than inherited, and derived rather
+    than forced to black so a genuinely dark figure does not get black-on-black.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.colors import to_hex
+
+    from myflopy.modflow.mf6.cross_section_plotting import readable_on
+
+    line = _mid_line(canonical_run)
+
+    def _label_colours(**rcparams):
+        with matplotlib.rc_context(rcparams):
+            figure = canonical_run.plot.section(
+                line=line, fill="layer", backend="mpl", legend="outside right"
+            )
+        legend = figure.axes[0].get_legend()
+        return {to_hex(text.get_color()) for text in legend.get_texts()}
+
+    assert _label_colours() == {"#000000"}
+    # The reported case: the theme says white, the figure is white.
+    assert _label_colours(**{"text.color": "white"}) == {"#000000"}
+
+    # ... and the other direction is not broken in exchange.
+    assert readable_on("white") == "black"
+    assert readable_on("#222222") == "white"
+
+
+def test_a_section_line_that_misses_the_grid_says_so(canonical_run):
+    """FloPy raises a BARE `StopIteration` here, and it is worse than it sounds.
+
+    Its own guard builds the message with `next(iter(self.xypts.values()))` --
+    the very call that fails when no cell was intersected. So the traceback
+    names `crosssection.py`, carries no message at all, and a mistyped line
+    (`zip(xy[0], xy[0])` pairs X with X) reads as a library fault.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    xmin, ymin, xmax, ymax = canonical_run.vor.gdf_vorPolys.total_bounds
+    far_away = [(xmax + 1e5, ymax + 1e5), (xmax + 2e5, ymax + 2e5)]
+
+    with pytest.raises(ValueError) as raised:
+        canonical_run.plot.section(line=far_away, fill="layer", backend="mpl")
+
+    message = str(raised.value)
+    assert "crosses no cells" in message
+    # It must name BOTH extents -- knowing it missed is useless without knowing
+    # by how much, which is what turns this into a five-second fix.
+    assert "The grid spans" in message and "the line spans" in message
+    assert "zip(xy[0], xy[1])" in message

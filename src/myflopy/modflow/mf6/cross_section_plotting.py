@@ -47,6 +47,10 @@ class ModelCrossSectionStyle:
     head_linewidth: float = 1.5
     head_label: str = "Simulated Head"
     legend_loc: str = "upper right"
+    #: None means "pick from the background". A fixed colour is inherited from
+    #: `text.color`, which a notebook theme sets -- white text on the white
+    #: figure `mpl_axes` builds is a legend nobody can read.
+    legend_labelcolor: str | None = None
     legend_frameon: bool = False
     legend_fontsize: float = 16
     use_figs_theme: bool = False
@@ -180,6 +184,30 @@ def _build_legend_handles(
         for label, colour in surfaces
     ]
     return handles
+
+
+def readable_on(background) -> str:
+    """``"black"`` or ``"white"``, whichever can be read on ``background``.
+
+    Reported as "the legend text is unreadable because it is white on a white
+    background". Matplotlib takes label colour from the `text.color` rcParam,
+    which a dark notebook theme sets globally -- while `mpl_axes` builds a
+    seaborn *whitegrid* figure, so the text went white on white. Inheriting an
+    ambient setting is the same class of defect as `PALETTE.highlight` being a
+    Plotly colour matplotlib rejects: state from elsewhere decides the picture.
+
+    Derived rather than forced to black, so a genuinely dark figure does not get
+    black-on-black in exchange.
+    """
+
+    from matplotlib.colors import to_rgb
+
+    try:
+        red, green, blue = to_rgb(background)
+    except (ValueError, TypeError):                        # pragma: no cover
+        return "black"
+    # Rec. 601 luma -- the standard weighting for perceived brightness.
+    return "black" if (0.299 * red + 0.587 * green + 0.114 * blue) > 0.5 else "white"
 
 
 def _resolve_drawn_layers(layers, nlay: int) -> list[int] | None:
@@ -359,6 +387,37 @@ def legend_placement(legend):
     )
 
 
+def _cross_section(flopy_model, modelgrid, line_spec):
+    """FloPy's ``PlotCrossSection``, with a readable error when the line misses.
+
+    FloPy raises a BARE ``StopIteration`` here -- its own guard reads
+    ``next(iter(self.xypts.values()))`` to build the message, which is exactly
+    the call that fails when no cell was intersected. The traceback names
+    `crosssection.py` and says nothing at all, so a mistyped line (``zip(xy[0],
+    xy[0])`` pairs X with X) looks like a library fault.
+    """
+
+    try:
+        return PlotCrossSection(
+            model=flopy_model, modelgrid=modelgrid, line=line_spec
+        )
+    except StopIteration as error:
+        points = np.asarray(line_spec.get("line", []), dtype=float)
+        extent = modelgrid.extent
+        where = (
+            f"the line spans x {points[:, 0].min():.6g}..{points[:, 0].max():.6g}, "
+            f"y {points[:, 1].min():.6g}..{points[:, 1].max():.6g}"
+            if points.ndim == 2 and len(points) else "the line has no points"
+        )
+        raise ValueError(
+            f"the section line crosses no cells, so there is nothing to draw. "
+            f"The grid spans x {extent[0]:.6g}..{extent[1]:.6g}, "
+            f"y {extent[2]:.6g}..{extent[3]:.6g}, and {where}. "
+            f"A line built as `zip(xy[0], xy[0])` pairs X with X and will miss "
+            f"the grid; `zip(xy[0], xy[1])` is the one you want."
+        ) from error
+
+
 def plot_layered_cross_section(
     modelgrid,
     line,
@@ -451,7 +510,7 @@ def plot_layered_cross_section(
         else:
             fig = ax.figure
 
-        xsect = PlotCrossSection(model=flopy_model, modelgrid=modelgrid, line=line_spec)
+        xsect = _cross_section(flopy_model, modelgrid, line_spec)
 
         # `plot_grid` draws EVERY cell's edges and takes no layer filter, so with
         # a subset it outlined the layers just masked out of the fill -- a bottom
@@ -539,6 +598,10 @@ def plot_layered_cross_section(
                 loc=legend_loc or style.legend_loc,
                 frameon=style.legend_frameon,
                 fontsize=style.legend_fontsize,
+                labelcolor=(
+                    style.legend_labelcolor
+                    or readable_on(fig.get_facecolor())
+                ),
                 **({"bbox_to_anchor": legend_anchor} if legend_anchor else {}),
             )
             if legend_anchor:
