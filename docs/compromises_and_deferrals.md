@@ -5184,6 +5184,22 @@ same day, which is the useful part of the result.
           sits on top of the geology it describes. An unknown word RAISES and
           lists the accepted ones -- falling back to `"best"` would be a legend
           that ignored where it was told to go.
+        - **`reverse=` mirrors the section, and the two branches need DIFFERENT
+          mechanisms** -- which is the whole finding. `XSection` samples the line
+          itself, so reversing the coordinates mirrors the profile. FloPy's
+          `PlotCrossSection` NORMALIZES direction internally: measured, a forward
+          and a reversed line give byte-identical geometry, the same 31 nodes and
+          the same `xcenters`, `direction` 'x' either way. So the identical trick
+          is a silent no-op on the filled branch, and it mirrors the VIEW
+          instead. Two attempts at rewriting the drawn geometry failed on
+          matplotlib internals first -- `PatchCollection.get_paths()` returns
+          paths DERIVED from its patches, so writing `path.vertices` is discarded
+          without error, and its `set_paths` expects patches rather than paths
+          (`AttributeError: 'Path' object has no attribute 'get_transform'`).
+          Inverting the limits needs neither and covers artists added later.
+          Tick labels are rewritten to measure from the new start: leaving them
+          counting down from L would make the mirrored picture incomparable with
+          the original.
         - **Legend text is chosen from the BACKGROUND, not inherited.** Reported
           as "the legend text is unreadable because it is white on a white
           background". Matplotlib takes label colour from the `text.color`

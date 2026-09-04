@@ -64,9 +64,13 @@ from __future__ import annotations
 import inspect
 
 import numpy as np
+import shapely as shp
 
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.cross_section_plotting import filled_section
+from myflopy.modflow.mf6.cross_section_plotting import (
+    filled_section,
+    normalize_line,
+)
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import (
     GridMesh,
@@ -569,8 +573,8 @@ _PROFILE_ONLY_SECTION_ARGS = {
 
 def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
                     fill, fill_cmap, fill_label, layers, head_layers,
-                    layer_labels, show_grid, legend, title, backend, asked,
-                    extra):
+                    layer_labels, show_grid, legend, reverse, title, backend,
+                    asked, extra):
     """Draw the section as CELLS -- the grid, its layers, and a field on them.
 
     The picture `section()` could not draw before 2026-09-02: its line profile
@@ -636,7 +640,7 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
         model=source if is_model else None,
         fill=fill, layers=layers, head_layers=head_layers,
         layer_labels=layer_labels, show_grid=show_grid, legend=legend,
-        per=per, kstpkper=kstpkper,
+        reverse=reverse, per=per, kstpkper=kstpkper,
         cmap=fill_cmap, label=fill_label, title=title,
     )
 
@@ -647,6 +651,33 @@ def _as_line(path):
     import shapely as shp
 
     return path if isinstance(path, shp.LineString) else shp.LineString(list(path))
+
+
+def _reversed_section_path(line, cells):
+    """``(line, cells)`` with the traverse direction flipped.
+
+    ONE transform serving both branches, applied before either is chosen:
+    reversing is a property of the LINE, not of what gets drawn on it, so a
+    profile and a filled section mirror the same way. Distance along the section
+    is measured from the first point by `PlotCrossSection` and by `XSection`
+    alike, so reversing the points is the whole of it.
+
+    A vector-file path is read here rather than passed on, because a `Path` has
+    no order to reverse until it is geometry.
+    """
+
+    if cells is not None:
+        chosen = [cells] if isinstance(cells, (int, np.integer)) else list(cells)
+        return line, chosen[::-1]
+    if line is None:
+        raise ValueError(
+            "reverse= flips a section line; pass line= or cells= to have one."
+        )
+    # `normalize_line` already accepts every form `line=` takes -- a geometry, a
+    # coordinate sequence, a flopy dict, or a vector file to read one from -- so
+    # reversing goes through it rather than a second reader that would drift.
+    coords = list(normalize_line(line)["line"])
+    return shp.LineString(coords[::-1]), cells
 
 
 def section(
@@ -679,6 +710,7 @@ def section(
     layer_labels=None,
     show_grid: bool = True,
     legend=True,
+    reverse: bool = False,
     backend: str = "plotly",
     **kwargs,
 ):
@@ -786,6 +818,19 @@ def section(
 
         Ignored with ``fill='results'`` or an array fill: those paint the field
         onto the cells, so a line of the same quantity on top would say it twice.
+    reverse : bool, default False
+        Traverse the line the other way -- a section drawn north-south comes
+        back south-north, mirrored about its own centre.
+
+        Applies to BOTH branches, because it is a property of the line rather
+        than of what is drawn on it: distance along the section is measured from
+        the first point either way. Works with ``line=`` (the coordinates are
+        reversed) and with ``cells=`` (the cell order is), and a vector file is
+        read first, since a path has no direction until it is geometry.
+
+        Reversing the line yourself does the same thing; this saves writing
+        ``[::-1]`` and getting it right for each of the four forms ``line=``
+        accepts.
     legend : bool or str, default True
         *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
         ``True`` uses the house default (upper right); ``"auto"`` lets
@@ -873,13 +918,20 @@ def section(
 
     vor, is_model = _grid_of(source)
     kind = normalize_backend(backend)
+    if reverse and fill is None:
+        # Only the PROFILE branch honours a reversed line -- `XSection` samples
+        # the line itself. FloPy's `PlotCrossSection` normalizes direction, so
+        # the filled branch mirrors the finished drawing instead (measured: a
+        # forward and a reversed line give byte-identical geometry there).
+        line, cells = _reversed_section_path(line, cells)
     if fill is not None:
         return _filled_section(
             source, vor, is_model,
             line=line, cells=cells, per=per, kstpkper=kstpkper,
             fill=fill, fill_cmap=fill_cmap, fill_label=fill_label,
             layers=layers, head_layers=head_layers, layer_labels=layer_labels,
-            show_grid=show_grid, legend=legend, title=section_name, backend=kind,
+            show_grid=show_grid, legend=legend, reverse=reverse,
+            title=section_name, backend=kind,
             asked=locals(), extra=kwargs,
         )
     if (layers is not None or layer_labels is not None or head_layers != 0
@@ -1608,6 +1660,7 @@ class ModelPlots:
         layer_labels=None,
         show_grid: bool = True,
         legend=True,
+        reverse: bool = False,
         backend: str = "plotly",
         **kwargs,
     ):
@@ -1757,6 +1810,19 @@ class ModelPlots:
 
             An unrecognised word raises and lists the accepted ones, rather than
             quietly falling back to a placement you did not ask for.
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Applies to BOTH branches, because it is a property of the line rather
+            than of what is drawn on it: distance along the section is measured from
+            the first point either way. Works with ``line=`` (the coordinates are
+            reversed) and with ``cells=`` (the cell order is), and a vector file is
+            read first, since a path has no direction until it is geometry.
+
+            Reversing the line yourself does the same thing; this saves writing
+            ``[::-1]`` and getting it right for each of the four forms ``line=``
+            accepts.
 
         Returns
         -------

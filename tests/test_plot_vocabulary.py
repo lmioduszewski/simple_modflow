@@ -1184,3 +1184,54 @@ def test_a_section_line_that_misses_the_grid_says_so(canonical_run):
     # by how much, which is what turns this into a five-second fix.
     assert "The grid spans" in message and "the line spans" in message
     assert "zip(xy[0], xy[1])" in message
+
+
+def test_reverse_mirrors_the_section_and_relabels_the_distance(canonical_run):
+    """`reverse=True` reads the section from the other end.
+
+    The two branches need DIFFERENT mechanisms, which is the whole story here.
+    `XSection` samples the line itself, so reversing the coordinates mirrors the
+    profile. FloPy's `PlotCrossSection` normalizes direction internally --
+    measured, a forward and a reversed line give byte-identical geometry, the
+    same 31 nodes and the same `xcenters` -- so the identical trick is a silent
+    no-op there, and the filled branch mirrors the view instead.
+
+    The tick labels are rewritten with it. Leaving them counting down from L
+    would make the mirrored picture incomparable with the original.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+
+    forward = canonical_run.plot.section(line=line, fill="layer", backend="mpl")
+    reversed_ = canonical_run.plot.section(
+        line=line, fill="layer", backend="mpl", reverse=True
+    )
+
+    low, high = reversed_.axes[0].get_xlim()
+    assert low > high, "reverse=True did not mirror the filled section"
+    assert forward.axes[0].get_xlim()[0] < forward.axes[0].get_xlim()[1]
+
+    # Distance still reads from the left edge, which is now the far end.
+    reversed_.canvas.draw()
+    formatter = reversed_.axes[0].xaxis.get_major_formatter()
+    assert float(formatter(low)) == pytest.approx(0.0, abs=1e-6)
+    assert float(formatter(high)) == pytest.approx(abs(high - low), rel=1e-3)
+
+    # The profile branch mirrors too, by the other route.
+    profile = canonical_run.plot.section(line=line, backend="mpl")
+    mirrored = canonical_run.plot.section(line=line, backend="mpl", reverse=True)
+    import numpy as np
+
+    ahead = np.asarray(profile.axes[0].lines[0].get_ydata(), dtype=float)
+    back = np.asarray(mirrored.axes[0].lines[0].get_ydata(), dtype=float)
+    assert np.allclose(ahead, back[::-1])
+
+
+def test_reverse_needs_a_line_to_reverse(canonical_run):
+    """Without `line=` or `cells=` there is no direction to flip."""
+
+    with pytest.raises(ValueError, match="pass line= or cells="):
+        canonical_run.plot.section(reverse=True)

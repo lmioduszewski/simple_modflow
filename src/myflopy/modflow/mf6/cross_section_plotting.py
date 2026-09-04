@@ -71,7 +71,7 @@ def _theme_context(style: ModelCrossSectionStyle):
     return REPORT.context()
 
 
-def _normalize_line(line) -> dict:
+def normalize_line(line) -> dict:
     """Normalize a section line to a ``{"line": coords}`` dict.
 
     Accepts a dict, a ``LineString``, a sequence of ``(x, y)`` pairs, or a path
@@ -85,11 +85,11 @@ def _normalize_line(line) -> dict:
 
     if isinstance(line, (str, Path)):
         geometry = read_shp_gpkg(Path(line)).union_all()
-        return _normalize_line(geometry)
+        return normalize_line(geometry)
 
     if isinstance(line, shp.MultiLineString):
         merged = shp.line_merge(line)
-        return _normalize_line(
+        return normalize_line(
             merged if isinstance(merged, shp.LineString) else max(merged.geoms, key=lambda g: g.length)
         )
 
@@ -387,6 +387,41 @@ def legend_placement(legend):
     )
 
 
+def mirror_horizontally(axes) -> None:
+    """Reflect the section about its own centre, so it reads from the other end.
+
+    The filled section cannot be reversed by reversing its LINE: FloPy's
+    `PlotCrossSection` normalizes direction internally, and a forward and a
+    reversed line produce byte-identical geometry (measured -- same 31 nodes,
+    same `xcenters`, `direction` 'x' either way). The profile branch DOES honour
+    line order, because `XSection` samples the line itself.
+
+    Done by inverting the VIEW and relabelling the axis, not by rewriting the
+    drawn geometry. Two attempts at the latter failed on matplotlib internals --
+    `PatchCollection.get_paths()` hands back paths derived from its patches, so
+    writing to `path.vertices` is silently discarded, and its `set_paths`
+    expects patches rather than paths. Inverting the limits needs neither, works
+    for every artist including the ones added later, and leaves the data in one
+    consistent frame.
+
+    The tick labels are rewritten to measure from the NEW start, so the left
+    edge still reads 0: a feature that was `d` from the old start is `L - d`
+    from this one, and saying otherwise would make the two pictures
+    incomparable.
+    """
+
+    from matplotlib.ticker import FuncFormatter
+
+    axes.relim()
+    axes.autoscale_view(scalex=True, scaley=False)
+    low, high = axes.get_xlim()
+    total = low + high
+    axes.set_xlim(high, low)
+    axes.xaxis.set_major_formatter(
+        FuncFormatter(lambda value, _pos: f"{total - value:g}")
+    )
+
+
 def _cross_section(flopy_model, modelgrid, line_spec):
     """FloPy's ``PlotCrossSection``, with a readable error when the line misses.
 
@@ -445,6 +480,7 @@ def plot_layered_cross_section(
     show_legend: bool = True,
     legend_loc: str | None = None,
     legend_anchor=None,
+    reverse: bool = False,
 ):
     """Render a layer-colored cross section from any flopy modelgrid + line.
 
@@ -489,7 +525,7 @@ def plot_layered_cross_section(
     Returns ``(fig, ax)``.
     """
     style = ModelCrossSectionStyle() if style is None else style
-    line_spec = _normalize_line(line)
+    line_spec = normalize_line(line)
     nlay = modelgrid.nlay
     layer_id = _resolve_layer_array(modelgrid)
     chosen = _resolve_drawn_layers(layers, nlay)
@@ -561,6 +597,11 @@ def plot_layered_cross_section(
                 xsect.plot_surface(
                     surface, ax=ax, color=colour, lw=style.head_linewidth,
                 )
+
+        if reverse:
+            # Before the limits are set, so the crop below measures the mirrored
+            # drawing rather than the original.
+            mirror_horizontally(ax)
 
         if xlim is not None:
             ax.set_xlim(*xlim)
@@ -682,6 +723,7 @@ def filled_section(
     layer_labels=None,
     show_grid: bool = True,
     legend=True,
+    reverse: bool = False,
     per=None,
     kstpkper=None,
     cmap: str = "viridis",
@@ -712,13 +754,14 @@ def filled_section(
         names = layer_labels_from_model(model, modelgrid.nlay)
     figure, _axes = plot_layered_cross_section(
         modelgrid,
-        _normalize_line(line),
+        normalize_line(line),
         values=values,
         values_cmap=cmap,
         values_label=label,
         layers=layers,
         layer_labels=names,
         show_grid=show_grid,
+        reverse=reverse,
         show_legend=show,
         legend_loc=loc,
         legend_anchor=anchor,

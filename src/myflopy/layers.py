@@ -1845,6 +1845,19 @@ class StackPlots:
             ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
             to ``.plot_mpl()`` on the result, which is the same renderer reached a
             second way.
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Applies to BOTH branches, because it is a property of the line rather
+            than of what is drawn on it: distance along the section is measured from
+            the first point either way. Works with ``line=`` (the coordinates are
+            reversed) and with ``cells=`` (the cell order is), and a vector file is
+            read first, since a path has no direction until it is geometry.
+
+            Reversing the line yourself does the same thing; this saves writing
+            ``[::-1]`` and getting it right for each of the four forms ``line=``
+            accepts.
 
         Returns
         -------
