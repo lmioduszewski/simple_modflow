@@ -484,14 +484,22 @@ class VoronoiGridPlus(VoronoiGrid):
         predicate: str = 'intersects',
         return_dict: bool = False,
         name_field: str = 'ExploName',
+        layer: str | int | None = None,
     ) -> pd.Series | dict:
-        """Map overlapping geometry to intersected Voronoi cell IDs."""
+        """Map overlapping geometry to intersected Voronoi cell IDs.
+
+        ``layer`` picks one layer out of a multi-layer vector file when
+        ``overlapping_geometry`` is a path; ``None`` reads the first, as before.
+        Passing it alongside an in-memory geometry raises, since there is then no
+        file to pick a layer from.
+        """
         return selection_get_vor_cells_as_series(
             self.gdf_vorPolys,
             overlapping_geometry=overlapping_geometry,
             predicate=predicate,
             return_dict=return_dict,
             name_field=name_field,
+            layer=layer,
         )
 
     def get_vor_cells_as_dict(
@@ -501,8 +509,15 @@ class VoronoiGridPlus(VoronoiGrid):
         predicate: str = 'intersects',
         loc_name_field: str = None,
         return_gdf: bool = False,
+        layer: str | int | None = None,
     ) -> dict:
-        """Return intersected Voronoi cell IDs keyed by feature name."""
+        """Return intersected Voronoi cell IDs keyed by feature name.
+
+        ``layer`` names which layer to read out of a multi-layer file such as a
+        GeoPackage. ``None`` keeps GDAL's default -- the first layer -- so a call
+        written before this parameter existed behaves identically. A wrong name
+        raises listing the layers the file actually holds.
+        """
         return selection_get_vor_cells_as_dict(
             self,
             locs=locs,
@@ -510,6 +525,7 @@ class VoronoiGridPlus(VoronoiGrid):
             predicate=predicate,
             loc_name_field=loc_name_field,
             return_gdf=return_gdf,
+            layer=layer,
         )
 
     def get_model_boundary_polygons(self) -> dict:

@@ -15,17 +15,75 @@ from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 logger = get_logger(__name__)
 
 
+def _layer_names(path: Path) -> list[str] | None:
+    """The layer names in a vector file, or ``None`` when they cannot be listed.
+
+    ``geopandas.list_layers`` is 1.0+, and the declared floor is 0.14, so on an
+    older geopandas the caller skips validation and GDAL reports the failure
+    instead -- less helpful, never wrong.
+    """
+
+    lister = getattr(gpd, "list_layers", None)
+    if lister is None:
+        return None
+    return lister(path)["name"].tolist()
+
+
+def _read_locs(path: str | Path, layer: str | int | None = None) -> gpd.GeoDataFrame:
+    """Read one vector file, optionally naming which layer inside it to use.
+
+    ``layer=None`` is GDAL's own default -- the FIRST layer in the file -- which
+    is what this module did before the parameter existed, so existing calls are
+    unaffected. That default is the reason the parameter is needed: a GeoPackage
+    holding several layers reads its first and only emits a ``UserWarning``, so
+    reading the wrong table is silent in any code that does not surface warnings.
+
+    Raises ``ValueError`` naming the layers actually present, because GDAL's own
+    message (``Layer 'x' could not be opened``) does not say what IS in the file.
+    """
+
+    path = Path(path)
+    if layer is None:
+        return gpd.read_file(path)
+
+    available = _layer_names(path)
+    if available is not None:
+        if isinstance(layer, int):
+            if not 0 <= layer < len(available):
+                raise ValueError(
+                    f"{path.name} has {len(available)} layer(s), so index {layer} is out "
+                    f"of range. Layers: {', '.join(map(repr, available))}."
+                )
+        elif layer not in available:
+            raise ValueError(
+                f"{path.name} has no layer {layer!r}. "
+                f"Layers: {', '.join(map(repr, available))}."
+            )
+    return gpd.read_file(path, layer=layer)
+
+
 def get_vor_cells_as_series(
     gdf_vor_polys,
     overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries | Path = None,
     predicate: str = 'intersects',
     return_dict: bool = False,
     name_field: str = 'ExploName',
+    layer: str | int | None = None,
 ) -> pd.Series | dict:
     """
     Identify Voronoi cells matching a spatial predicate against provided geometries.
+
+    ``layer`` names which layer to read when ``overlapping_geometry`` is a path to
+    a multi-layer file (a GeoPackage); ``None`` keeps GDAL's default of the first
+    one. It is refused for an in-memory geometry, which has no layers to choose
+    between -- a parameter that cannot act is as much a defect as a missing one.
     """
     names = None
+    if layer is not None and not isinstance(overlapping_geometry, (str, Path)):
+        raise ValueError(
+            "layer= selects a layer inside a vector FILE, but overlapping_geometry is "
+            f"a {type(overlapping_geometry).__name__}. Drop layer=, or pass the file path."
+        )
 
     # Any shapely geometry, tested on the base class rather than a list of
     # concrete types -- the list left out MultiLineString, so a multi-part fault
@@ -41,7 +99,7 @@ def get_vor_cells_as_series(
         # shared branch raised AttributeError on every bare series.
         geometries = overlapping_geometry
     elif isinstance(overlapping_geometry, (str, Path)):
-        geoms = gpd.read_file(Path(overlapping_geometry))
+        geoms = _read_locs(overlapping_geometry, layer)
         geometries = geoms.geometry
         if name_field in geoms.columns:
             names = geoms[name_field]
@@ -87,12 +145,17 @@ def get_vor_cells_as_dict(
     predicate: str = 'intersects',
     loc_name_field: str = None,
     return_gdf: bool = False,
+    layer: str | int | None = None,
 ) -> dict:
     """
     Provide a shapefile (locs) and get back the voronoi cells that contain them.
+
+    ``layer`` names which layer to read out of a multi-layer file (a GeoPackage);
+    ``None`` keeps GDAL's default of the first one, which is what this did before
+    the parameter existed.
     """
     crs = vor.crs if crs is None else crs
-    gdf_locs = gpd.read_file(locs).to_crs(crs)
+    gdf_locs = _read_locs(locs, layer).to_crs(crs)
 
     loc_vor_cell_dict = {}
     for idx in gdf_locs.index:
