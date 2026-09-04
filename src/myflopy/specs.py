@@ -334,7 +334,15 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, Path):
         return value.as_posix()
     if isinstance(value, tuple):
-        return [_json_value(item) for item in value]
+        # Tagged, not flattened to a list. JSON has no tuple, and the difference
+        # is load-bearing: FloPy re-tuples cellids when it builds a recarray, but
+        # ``ModflowUtlobs`` writes each record field with ``repr``, so an
+        # untagged cellid comes back a list and is written ``west chd [0, 0, 0]``
+        # instead of ``west chd 1 1 1``. MF6 parses that, terminates normally,
+        # and returns DNODATA for every observation. Unlike an integer key there
+        # is no invertible read-side test -- a list that WAS a tuple is
+        # indistinguishable from one that never was -- so the tag is the fix.
+        return {"$tuple": [_json_value(item) for item in value]}
     if isinstance(value, list):
         return [_json_value(item) for item in value]
     if isinstance(value, dict):
@@ -381,6 +389,8 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
     ``lineage``) must keep the keys the user gave them.
     """
 
+    if isinstance(value, dict) and set(value) == {"$tuple"}:
+        return tuple(_spec_value(item, int_keys=int_keys) for item in value["$tuple"])
     if isinstance(value, dict) and "kind" in value:
         # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
         # ends in "Spec", so an ``endswith("Source")`` test handed the public
@@ -1379,7 +1389,12 @@ class GridSpec:
         if self.function is not None:
             payload["function"] = self.function
         if self.inputs:
-            payload["inputs"] = _json_value(self.inputs)
+            # list() first: this field is a tuple whose ELEMENT list is the
+            # serialized shape, and ``from_dict`` rebuilds the tuple itself.
+            # Passing the tuple in would tag the field as ``{"$tuple": [...]}``,
+            # which the reader then walks as a mapping (``lineage`` already
+            # does the same, :meth:`SimulationSpec.to_dict`).
+            payload["inputs"] = _json_value(list(self.inputs))
         if self.triangle_options:
             payload["triangle_options"] = _json_value(self.triangle_options)
         if self.mesh_options:

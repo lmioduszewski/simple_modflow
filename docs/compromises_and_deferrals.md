@@ -5343,7 +5343,10 @@ same day, which is the useful part of the result.
         is about, reached from a truncated or hand-edited YAML.
       - **STILL OPEN, same seam, same silent-wrong signature -- NOT fixed here
         (measured 2026-09-03):**
-        - **Tuple -> list loss is NOT harmless.** `_json_value` turns a cellid
+        - ~~**Tuple -> list loss is NOT harmless.**~~ **FIXED 2026-09-03 by a
+          tagged write** -- see the follow-up bullet below. Kept here because
+          the reasoning is why the tag was accepted.
+          **Tuple -> list loss is NOT harmless.** `_json_value` turns a cellid
           `(0, 0, 0)` into `[0, 0, 0]` and nothing re-tuples it. It is harmless
           for `stress_period_data`, because FloPy re-tuples cellids when it
           builds the recarray -- but **`observations=` writes each record field
@@ -5358,6 +5361,29 @@ same day, which is the useful part of the result.
           decision. `project/components.py` already re-tuples explicitly
           (`_restore_rows(..., tuple_indices=...)`), which is the shape a fix
           would take.
+        - **Tuples are now TAGGED on write (`{"$tuple": [...]}`), the one
+          deliberate format change here.** Approved explicitly: "It's okay if
+          older myflopy can't read. We are moving and updating fast." There is
+          no invertible read-side test for a tuple -- a list that WAS one is
+          indistinguishable from one that never was -- so unlike the integer
+          keys this could not be fixed on read alone. Consequences, all
+          measured: `from_dict(to_dict(x))` is now a true FIXED POINT (it was
+          not, for any spec carrying a tuple); the `.obs` file gets
+          `west chd 1 1 1` on all three paths; and **files written from this
+          commit on cannot be read by an older myflopy**, which is the accepted
+          cost. Old files still read correctly -- an untagged list stays a list,
+          exactly as before.
+          Two things this forced:
+          - `GridSpec.inputs` is a tuple FIELD whose serialized shape is a plain
+            list, so it must be `list()`-ed before `_json_value` or the reader
+            walks the tag as a mapping and rebuilds `("$tuple",)`. `lineage`
+            already did this; `requires` and `ExchangeSpec.models` were already
+            safe. Caught by an existing test, pinned by a new one.
+          - Under `default_flow_style=False` every tag cost three lines and the
+            YAML became unreadable -- a real cost to the human-editable format
+            §5.6 promises. A dumper renders just this one shape in flow style:
+            `- {$tuple: [1.0, 1, 1.0]}`. Measured 124 -> 77 lines on a small
+            model.
         - **Float-keyed dicts are not restored.** `_is_int_key` is int-only, so
           a TIMEARRAYSERIES block keyed by time (`{0.0: ...}`) comes back
           string-keyed and FloPy writes an empty `BEGIN time / END time`.

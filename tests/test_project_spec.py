@@ -732,3 +732,77 @@ def test_exchange_options_restore_int_period_keys():
     revived = ExchangeSpec.from_dict(json.loads(json.dumps(exchange.to_dict())))
 
     assert list(revived.options["perioddata"]) == [0]
+
+
+def test_tuples_survive_serialization_and_observations_write_real_cellids(tmp_path):
+    """Tuples are tagged, not flattened -- the difference reaches the MF6 files.
+
+    FloPy re-tuples cellids into a ``stress_period_data`` recarray, which hid
+    this; ``ModflowUtlobs`` instead writes each record field with ``repr``, so an
+    untagged cellid was emitted as ``west chd [0, 0, 0]``. MF6 parses that,
+    terminates normally, and returns DNODATA for every observation (ledger 179).
+    """
+
+    import json
+
+    def build() -> mf.SimulationSpec:
+        model = mf.gwf(
+            "gwf",
+            packages=[
+                mf.dis(nlay=1, nrow=1, ncol=3, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                mf.ic(strt=5.0),
+                mf.npf(k=1.0),
+                mf.chd(
+                    stress_period_data={0: [[(0, 0, 0), 10.0], [(0, 0, 2), 8.0]]},
+                    observations={
+                        "chd_obs.csv": [("west", "chd", (0, 0, 0)), ("east", "chd", (0, 0, 2))]
+                    },
+                ),
+            ],
+        )
+        return mf.SimulationSpec(
+            "s",
+            models=[model],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["gwf"])],
+        )
+
+    original = build()
+    # The round trip is now a true fixed point, tuples included.
+    assert mf.SimulationSpec.from_dict(
+        json.loads(json.dumps(original.to_dict()))
+    ).to_dict() == original.to_dict()
+
+    revivals = {
+        "direct": build(),
+        "json": mf.SimulationSpec.from_dict(json.loads(json.dumps(build().to_dict()))),
+        "yaml": mf.SimulationSpec.from_yaml(build().to_yaml()),
+    }
+    for label, spec in revivals.items():
+        workspace = tmp_path / label
+        built = spec.build_flopy(workspace)
+        built.simulation.write_simulation(silent=True)
+        obs_file = next(workspace.rglob("*.obs"))
+        rows = [
+            line.split()
+            for line in obs_file.read_text().splitlines()
+            if line.strip().startswith(("west", "east"))
+        ]
+        assert rows == [["west", "chd", "1", "1", "1"], ["east", "chd", "1", "1", "3"]], label
+
+
+def test_grid_spec_tuple_field_is_not_double_tagged():
+    """``GridSpec.inputs`` is a tuple FIELD whose serialized shape is a plain list.
+
+    Tagging the field itself would make ``from_dict`` walk ``{"$tuple": [...]}``
+    as a mapping and rebuild the tuple as ``("$tuple",)``.
+    """
+
+    grid = mf.GridSpec.python(
+        "grid/build_grid.py",
+        function="build_grid",
+        inputs=["inputs/domain.gpkg", mf.RasterSource("inputs/dem.tif", band=1)],
+    )
+    payload = grid.to_dict()
+
+    assert isinstance(payload["inputs"], list)
+    assert mf.GridSpec.from_dict(payload).inputs[0] == "inputs/domain.gpkg"

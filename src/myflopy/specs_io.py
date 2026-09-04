@@ -25,6 +25,31 @@ if TYPE_CHECKING:
     from myflopy.specs import SimulationSpec
 
 
+def _tuple_aware_dumper():
+    """A ``SafeDumper`` that renders a ``{"$tuple": [...]}`` tag inline.
+
+    Tuples are tagged rather than flattened so a cellid survives the round trip
+    (see ``_json_value``), but under the block style this file otherwise wants,
+    every one of them costs three lines and the document becomes unreadable --
+    a real cost to the human-editable YAML §5.6 promises. Emitting just this one
+    shape in flow style keeps a tagged cellid on a single short line.
+    """
+
+    import yaml
+
+    class _SpecDumper(yaml.SafeDumper):
+        pass
+
+    def _represent(dumper, data):
+        node = dumper.represent_dict(data)
+        if set(data) == {"$tuple"}:
+            node.flow_style = True
+        return node
+
+    _SpecDumper.add_representer(dict, _represent)
+    return _SpecDumper
+
+
 def simulation_to_yaml(spec: SimulationSpec) -> str:
     """Serialize a :class:`SimulationSpec` to a YAML string via its JSON-safe dict.
 
@@ -34,7 +59,12 @@ def simulation_to_yaml(spec: SimulationSpec) -> str:
 
     import yaml
 
-    return yaml.safe_dump(spec.to_dict(), sort_keys=False, default_flow_style=False)
+    return yaml.dump(
+        spec.to_dict(),
+        Dumper=_tuple_aware_dumper(),
+        sort_keys=False,
+        default_flow_style=False,
+    )
 
 
 def simulation_from_yaml(source: str | Path) -> SimulationSpec:
