@@ -130,7 +130,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### Serialization
 | Capability | Status | Where |
 |---|---|---|
-| `to_dict`/`from_dict` round-trip for all specs | ✅ | `specs.py` — Package/Grid/Model/SimulationSpec **incl. inter-model exchanges, post-build hooks, and list-BC `functools.partial` builders** (§5.6A; importable builders; lambdas/closures fail loud) |
+| `to_dict`/`from_dict` round-trip for all specs | ✅ | `specs.py` — Package/Grid/Model/SimulationSpec **incl. inter-model exchanges, post-build hooks, and list-BC `functools.partial` builders** (§5.6A; importable builders; lambdas/closures fail loud). Integer stress-period keys are restored on read for package options/inputs — without that a saved list BC came back empty and MF6 terminated normally without it (ledger 179) |
 | Workspace pickling / native MF6 reload | ✅ | `workspace.py`, `project/` (`load_mf6_run`) |
 | **YAML** config file wrapper | ✅ | `specs_io.py` — `SimulationSpec.to_yaml`/`from_yaml` + `Project.add_simulation_from_yaml` (§5.6, PyYAML safe mode); example `examples/mf6/yaml_spec/`. **TOML** deferred (no null type; `tomllib` is 3.11+) |
 

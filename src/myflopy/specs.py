@@ -316,7 +316,9 @@ def _revive_bound_arg(value: Any) -> Any:
 
     if isinstance(value, dict) and set(value) == {"$callable"}:
         return _resolve_callable(value["$callable"])
-    return _spec_value(value)
+    # A bound argument is builder input, so it gets the same int-key restoration
+    # as ``options``/``inputs`` -- see :func:`_spec_options`.
+    return _spec_value(value, int_keys=True)
 
 
 def _json_value(value: Any) -> Any:
@@ -344,11 +346,38 @@ def _json_value(value: Any) -> Any:
     )
 
 
-def _spec_value(value: Any) -> Any:
+def _is_int_key(key: Any) -> bool:
+    """Whether ``key`` is exactly what :func:`_json_value` writes for an ``int`` key.
+
+    The test is a canonical round trip -- ``str(int(key)) == key`` -- rather than
+    "looks like digits", which makes the promotion in :func:`_spec_value`
+    provably invertible and collision-free. ``"0"`` and ``"-1"`` qualify;
+    ``"007"``, ``"1_0"``, ``"1.0"``, ``" 1"`` and ``"head.csv"`` do not, so a
+    restored dict can never merge two distinct keys onto one.
+    """
+
+    if not isinstance(key, str):
+        return False
+    try:
+        return str(int(key)) == key
+    except ValueError:
+        return False
+
+
+def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
     """Recursively rehydrate a deserialized value, rebuilding tagged source specs.
 
     The inverse of :func:`_json_value`: any ``{"kind": "...Source", ...}`` dict
     becomes a source spec; lists/dicts are walked; everything else passes through.
+
+    ``int_keys`` restores the ``int`` dict keys that :func:`_json_value` had to
+    stringify to reach JSON. MF6 period-keyed options (``stress_period_data``,
+    ``saverecord``, ``steady_state``, ...) are keyed by stress period, and FloPy
+    silently writes an EMPTY period block for a string key -- so without this a
+    saved list BC comes back with no rows under a normal termination. Only whole
+    dicts whose keys are *all* canonical integers are promoted; see
+    :func:`_is_int_key`. Off by default because free-form fields (``metadata``,
+    ``lineage``) must keep the keys the user gave them.
     """
 
     if isinstance(value, dict) and "kind" in value:
@@ -356,10 +385,28 @@ def _spec_value(value: Any) -> Any:
         if kind.endswith("Source"):
             return source_from_dict(value)
     if isinstance(value, list):
-        return [_spec_value(item) for item in value]
+        return [_spec_value(item, int_keys=int_keys) for item in value]
     if isinstance(value, dict):
-        return {key: _spec_value(item) for key, item in value.items()}
+        restored = {
+            key: _spec_value(item, int_keys=int_keys) for key, item in value.items()
+        }
+        if int_keys and all(map(_is_int_key, restored)):
+            return {int(key): item for key, item in restored.items()}
+        return restored
     return value
+
+
+def _spec_options(data: Any) -> dict[str, Any]:
+    """Rehydrate a builder-kwargs mapping, restoring ``int`` keys inside its values.
+
+    The mapping's own keys are FloPy parameter names and are left alone; it is
+    the dicts *nested* in a value (``stress_period_data={0: [...]}``) that carry
+    stress-period keys. Used for :class:`PackageSpec`'s ``options``/``inputs``,
+    the only spec fields that reach a package builder able to take period data --
+    grid/model/exchange/simulation options have no period dimension.
+    """
+
+    return {key: _spec_value(item, int_keys=True) for key, item in dict(data).items()}
 
 
 def _preview(values: Iterable[Any], *, limit: int = 4) -> str:
@@ -641,8 +688,8 @@ class PackageSpec:
         return cls(
             name=data["name"],
             builder=_resolve_callable(data["builder"]),
-            inputs=_spec_value(dict(data.get("inputs", {}))),
-            options=_spec_value(dict(data.get("options", {}))),
+            inputs=_spec_options(data.get("inputs", {})),
+            options=_spec_options(data.get("options", {})),
             enabled=bool(data.get("enabled", True)),
             requires=tuple(data.get("requires", ())),
             metadata=_spec_value(dict(data.get("metadata", {}))),

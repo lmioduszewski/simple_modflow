@@ -292,7 +292,10 @@ release-group boundnames; without them it names the fix and offers
 
 **Serialization.** Any spec round-trips to a JSON-safe dict (`to_dict()`/
 `from_dict()`) — builders as importable references (including the list-BC
-`functools.partial` builders), sources tagged, paths POSIX-encoded. A whole
+`functools.partial` builders), sources tagged, paths POSIX-encoded, and
+**integer stress-period keys restored on read** (`to_dict()` must stringify them
+to reach JSON; `from_dict()` turns `'0'` back into `0` for package
+options/inputs, so a saved list BC keeps its rows — ledger 179). A whole
 simulation also reads/writes **YAML**:
 
 - `sim.to_yaml()` → YAML string; `sim.to_yaml(path)` also writes the file.

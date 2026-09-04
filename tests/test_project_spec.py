@@ -256,6 +256,24 @@ def test_list_bc_partial_builders_round_trip(tmp_path):
     flopy_model = built.simulation.get_model("gwf")
     for name in bcs:
         assert flopy_model.get_package(name) is not None, name
+        # ... and it still HAS its rows. `get_package` is not enough: a package
+        # whose period keys came back as strings exists but is empty, which is
+        # how this round-tripped stably while losing every boundary (ledger 179).
+        period_data = flopy_model.get_package(name).stress_period_data.get_data()
+        assert list(period_data) == [0], name
+        assert len(period_data[0]) == 1, name
+
+    # The written MF6 files carry a data row, not just a MAXBOUND that claims one.
+    built.simulation.write_simulation(silent=True)
+    for name in bcs:
+        body = (tmp_path / f"gwf.{name}").read_text()
+        rows = [
+            line.strip()
+            for line in body.splitlines()
+            if line.strip()
+            and not line.strip().upper().startswith(("BEGIN", "END", "#"))
+        ]
+        assert any(row[0].isdigit() for row in rows), f"{name} wrote an empty period"
 
 
 def test_package_ref_round_trip_and_model_package_lookup():
@@ -534,3 +552,127 @@ def test_project_build_resolves_python_grid_builder(tmp_path):
     marker = run.workspace / "_grid" / "gwf" / "built_grid.txt"
     assert marker.read_text() == "grid|elk_creek"
     assert run.flopy_model("gwf").myflopy_context.grid is resolved_grid
+
+
+# --- Integer stress-period keys survive serialization (ledger 179) ----------
+#
+# ``_json_value`` must stringify dict keys to reach JSON, and nothing reversed
+# it. FloPy accepts a string period key and writes an EMPTY period block under a
+# ``MAXBOUND`` that still claims a boundary, so a saved list BC came back
+# silently empty and MF6 terminated normally without it.
+
+
+def test_int_period_keys_restored_only_where_they_belong():
+    """``_spec_options`` promotes period keys; free-form fields keep their strings."""
+
+    from myflopy.specs import _is_int_key, _spec_options, _spec_value
+
+    assert [_is_int_key(k) for k in ("0", "-1", "12")] == [True, True, True]
+    # Non-canonical spellings are refused, so the promotion cannot merge two
+    # distinct keys onto one (``"007"`` and ``"7"`` would both become ``7``).
+    assert not any(
+        _is_int_key(k) for k in ("007", "1_0", "1.0", " 1", "", "head.csv", 0)
+    )
+
+    restored = _spec_options(
+        {
+            "stress_period_data": {"0": ["a"], "2": ["b"]},
+            "nested": {"0": {"1": "deep"}},
+            "negative": {"0": "a", "-1": "b"},
+            "padded": {"007": "a", "8": "b"},
+            "continuous": {"head.csv": ["a"]},
+            "empty": {},
+            # Promotion is recursive through LISTS as well as dicts.
+            "in_list": [{"0": "a"}, {"1": "b"}],
+        }
+    )
+    assert sorted(restored["stress_period_data"]) == [0, 2]
+    assert restored["nested"] == {0: {1: "deep"}}
+    assert sorted(restored["negative"]) == [-1, 0]
+    # All-or-nothing per dict: one non-canonical key leaves the whole dict alone.
+    assert sorted(restored["padded"]) == ["007", "8"]
+    assert list(restored["continuous"]) == ["head.csv"]
+    assert restored["empty"] == {}
+    assert restored["in_list"] == [{0: "a"}, {1: "b"}]
+    # The kwargs mapping's own keys are FloPy parameter names -- never promoted.
+    assert all(isinstance(key, str) for key in restored)
+    # And the default path (metadata, lineage) is untouched.
+    assert list(_spec_value({"0": "a", "1": "b"})) == ["0", "1"]
+
+
+def test_package_metadata_keeps_string_keys_through_round_trip():
+    """Provenance is free-form user data, so ``"0"`` must not become ``0``."""
+
+    package = mf.npf(k=1.0).with_metadata(**{"0": "zero", "source": "gis"})
+    loaded = mf.PackageSpec.from_dict(package.to_dict())
+
+    assert loaded.metadata == {"0": "zero", "source": "gis"}
+
+
+def test_project_save_load_preserves_stress_period_rows(tmp_path):
+    """The reported failure end to end: save -> load -> the BC still has its rows."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package(
+        "chd/base",
+        mf.chd(stress_period_data={0: [[(0, 0), 10.0]], 3: [[(0, 1), 9.0]]}),
+    )
+    project.save()
+
+    reloaded = mf.Project.load(tmp_path / "proj")
+    period_data = reloaded.packages["chd/base"].options["stress_period_data"]
+
+    assert sorted(period_data) == [0, 3]
+    assert all(isinstance(key, int) for key in period_data)
+
+
+def test_int_period_keys_restored_through_inputs_and_bound_builder_kwargs():
+    """The other two channels carrying builder kwargs, both easy to leave behind.
+
+    ``PackageSpec.build`` splats ``**inputs, **options`` into one call, and a
+    ``functools.partial`` builder can carry bound keywords (the §5.6A list-BC
+    machinery). All three are the same semantic class, so all three restore.
+    """
+
+    import functools
+
+    import flopy
+
+    from myflopy.advanced import _build_named
+
+    period = {0: [[(0, 0), 10.0]]}
+
+    via_inputs = mf.PackageSpec(
+        "chd", flopy.mf6.ModflowGwfchd, inputs={"stress_period_data": period}
+    )
+    assert list(
+        mf.PackageSpec.from_dict(via_inputs.to_dict()).inputs["stress_period_data"]
+    ) == [0]
+
+    via_partial = mf.PackageSpec(
+        "chd",
+        functools.partial(
+            _build_named, flopy.mf6.ModflowGwfchd, stress_period_data=period
+        ),
+    )
+    revived = mf.PackageSpec.from_dict(via_partial.to_dict())
+    assert list(revived.builder.keywords["stress_period_data"]) == [0]
+
+
+def test_from_dict_still_rejects_a_null_options_block():
+    """An absent key defaults; an explicit ``null`` must stay a loud ``TypeError``.
+
+    A hand-edited YAML with an emptied ``options:`` would otherwise build a
+    package with no period data at all -- the same "exists but is empty" outcome
+    the int-key restoration exists to prevent.
+    """
+
+    base = {
+        "kind": "PackageSpec",
+        "name": "chd",
+        "builder": "flopy.mf6.modflow.mfgwfchd:ModflowGwfchd",
+    }
+    assert mf.PackageSpec.from_dict(base).options == {}
+    for field in ("options", "inputs", "metadata", "requires"):
+        with pytest.raises(TypeError):
+            mf.PackageSpec.from_dict({**base, field: None})

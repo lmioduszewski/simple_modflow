@@ -5285,3 +5285,84 @@ same day, which is the useful part of the result.
         author, so the reference is still written once on the free verb. What
         changed is that their output is committed rather than assembled only in
         memory.
+
+179. **Integer stress-period keys restored on read, by a canonical-round-trip
+      test rather than a format change (2026-09-03).**
+      Found while scoping `Project` spec-library discovery: `Project.save()` ->
+      `Project.load()` silently emptied every list boundary condition.
+      `_json_value` must stringify dict keys to reach JSON (`specs.py`), and
+      nothing reversed it, so `stress_period_data={0: [...]}` came back as
+      `{'0': [...]}`. **FloPy accepts the string key without complaint** and
+      writes `BEGIN period 1 / END period 1` -- an empty block under a
+      `MAXBOUND 1` that still claims a boundary. MF6 then runs to normal
+      termination with the BC gone. `SimulationSpec.to_yaml`/`from_yaml` ride the
+      same `to_dict`/`from_dict` seam and had it too (§5.6).
+      - **The old test could not see it.**
+        `test_list_bc_partial_builders_round_trip` asserted
+        `loaded.to_dict() == spec.to_dict()`, which is idempotent after the first
+        pass, and `get_package(name) is not None`, which is true of an empty
+        package. Both now assert CONTENT: the period keys, the row count, and a
+        data row in the written MF6 file.
+      - **Fixed on READ, not on write.** `to_dict()` still emits all-string keys,
+        so the JSON and YAML file formats are byte-identical to what shipped
+        before -- old files read correctly, new files are readable by older
+        myflopy, and the human-readable YAML §5.6 promises is not polluted with a
+        `{"$keys": "int"}` tag. The cost is cosmetic: `to_yaml` still writes the
+        period key quoted (`'0':`) rather than `0:`.
+      - **The predicate is `str(int(key)) == key`, not "looks like digits."**
+        That is exactly the set of strings `_json_value` can produce from an
+        `int`, so the promotion is provably invertible and cannot merge two
+        distinct keys onto one: `"007"` and `"7"` would both reach `7`, so
+        `"007"` is refused. `"-1"` round-trips and is accepted; `"1_0"` (which
+        `int()` happily parses as 10), `"1.0"`, `" 1"` and `""` are refused.
+        Promotion is all-or-nothing per dict, so one odd key leaves the dict
+        alone.
+      - **Scoped to `PackageSpec.options`/`inputs`, deliberately.** `_spec_value`
+        feeds eight `from_dict` paths, including free-form `metadata` and
+        `lineage`; a blanket promotion would silently retype user data whose keys
+        happen to be digits. Package options are the only spec field that reaches
+        a builder able to take period-keyed data -- grid, model, exchange and
+        simulation options have no period dimension. If one ever does, the
+        helper `_spec_options` is the one-line opt-in.
+      - **Residual risk, accepted:** an MF6 option that is genuinely a dict with
+        canonical all-integer STRING keys would be retyped to `int`. No such
+        option exists in FloPy's MF6 surface as far as I can find -- period
+        dicts are the only integer-keyed options, and the string-keyed ones
+        (observation `continuous={"head.csv": ...}`, time series by name) are
+        never all-digit.
+      - **The three channels that carry builder kwargs all restore, not just
+        one.** `PackageSpec.options`, `PackageSpec.inputs` (splatted into the
+        same call by `build`) and a `functools.partial` builder's bound
+        `keywords` (the §5.6A list-BC machinery, revived through
+        `_revive_bound_arg`). Missing any one reproduces the bug on that route.
+        Each is mutation-tested: reverting any single wire fails a named test.
+      - **`_spec_options` keeps `from_dict`'s strictness.** An ABSENT `options`
+        key defaults to `{}`; an explicit `null` still raises `TypeError`, as it
+        did before. Accepting `null` as empty would build a package with no
+        period data at all -- the same "exists but is empty" outcome this entry
+        is about, reached from a truncated or hand-edited YAML.
+      - **STILL OPEN, same seam, same silent-wrong signature -- NOT fixed here
+        (measured 2026-09-03):**
+        - **Tuple -> list loss is NOT harmless.** `_json_value` turns a cellid
+          `(0, 0, 0)` into `[0, 0, 0]` and nothing re-tuples it. It is harmless
+          for `stress_period_data`, because FloPy re-tuples cellids when it
+          builds the recarray -- but **`observations=` writes each record field
+          with its Python `repr`**, so a round-tripped spec emits
+          `west  chd  [0, 0, 0]` into the `.obs` file where the direct spec
+          emits `west  chd  1 1 1`. MF6 parses that, terminates normally, and
+          returns DNODATA for every observation. Confirmed on DIS and DISV.
+          `metadata` loses tuples the same way (`at=(x, y)` comes back a list).
+          Not fixed in this pass because JSON cannot express a tuple, so unlike
+          the int-key promotion there is no invertible read-side heuristic --
+          it needs a tagged write, which is a file-format change and its own
+          decision. `project/components.py` already re-tuples explicitly
+          (`_restore_rows(..., tuple_indices=...)`), which is the shape a fix
+          would take.
+        - **Float-keyed dicts are not restored.** `_is_int_key` is int-only, so
+          a TIMEARRAYSERIES block keyed by time (`{0.0: ...}`) comes back
+          string-keyed and FloPy writes an empty `BEGIN time / END time`.
+          Reachable through the `**options` passthrough; TAS appears in no doc,
+          example, test or notebook here, so exposure is low.
+        - Refuted while checking: `LiteralSource` payloads DO restore their int
+          keys (they ride `inputs`), and exchange/model/simulation options carry
+          no period-keyed data.

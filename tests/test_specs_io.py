@@ -163,3 +163,39 @@ def test_from_yaml_rejects_non_mapping_and_bad_type():
         mf.SimulationSpec.from_yaml("- just\n- a\n- list\n")
     with pytest.raises(TypeError, match="str or Path"):
         mf.SimulationSpec.from_yaml(123)  # type: ignore[arg-type]
+
+
+def test_yaml_round_trip_preserves_stress_period_rows(tmp_path):
+    """YAML rides the same ``to_dict``/``from_dict`` seam, so it had the same
+    silent list-BC loss: ``to_yaml`` writes the period key quoted (``'0':``) and
+    nothing turned it back into an ``int`` (ledger 179). The file format is
+    unchanged -- the restoration happens on read -- so old YAML reads correctly too."""
+
+    model = mf.gwf(
+        "gwf",
+        packages=[
+            mf.disv(
+                nlay=1, ncpl=2, nvert=6,
+                vertices=[[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 1.0, 1.0],
+                          [3, 0.0, 1.0], [4, 2.0, 0.0], [5, 2.0, 1.0]],
+                cell2d=[[0, 0.5, 0.5, 4, 0, 1, 2, 3], [1, 1.5, 0.5, 4, 1, 4, 5, 2]],
+                top=10.0, botm=0.0,
+            ),
+            mf.ic(strt=5.0),
+            mf.npf(k=1.0),
+            mf.chd(stress_period_data={0: [[(0, 0), 10.0]]}),
+        ],
+    )
+    sim = mf.SimulationSpec(
+        "s",
+        models=[model],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["gwf"])],
+    )
+
+    revived = mf.SimulationSpec.from_yaml(sim.to_yaml())
+    period_data = revived.model("gwf").package("chd").options["stress_period_data"]
+    assert list(period_data) == [0]
+
+    built = revived.build_flopy(tmp_path)
+    chd = built.simulation.get_model("gwf").get_package("chd")
+    assert len(chd.stress_period_data.get_data()[0]) == 1
