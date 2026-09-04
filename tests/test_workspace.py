@@ -309,6 +309,8 @@ def test_run_builds_writes_executes_and_reopens_with_flopy_310(tmp_path):
     reopened = project.reopen_run("baseline")
 
     assert reopened.spec is None
+    # ...but the manifest's own spec block is retained, so saving does not erase it.
+    assert reopened.spec_block == manifest["spec"]
     assert reopened.status == "completed"
     assert reopened.success is True
     assert reopened.simulation.get_model("flow").name == "flow"
@@ -507,3 +509,63 @@ def test_project_pickles_array_bearing_packages_and_reuses_them(tmp_path):
     assert loaded.packages["npf/scalar"].options["k"] == 10.0
     reused = np.asarray(loaded.packages["npf/array"].options["k"])
     assert float(reused.reshape(-1)[0]) == 7.0
+
+
+def test_reopening_a_run_does_not_erase_its_provenance(tmp_path):
+    """A reopened run has no ``SimulationSpec``, and used to write that ignorance
+    to disk: ``to_dict`` emitted ``"spec": null`` over the record of what the run
+    contained. ``_record_status`` saves on every state change, so merely
+    re-executing a reopened run destroyed its own history.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    simulation = _tiny_flow_spec()
+    run = project.prepare_run("baseline", simulation)
+    original = json.loads(run.manifest_path.read_text())["spec"]
+    assert original["models"][0]["packages"]
+
+    reopened = project.reopen_run("baseline", load=False)
+    reopened.save_manifest()
+
+    assert json.loads(run.manifest_path.read_text())["spec"] == original
+
+    # Every status transition re-writes the whole manifest, so the block has to
+    # survive a sequence, not just one save.
+    for status in ("built", "written", "completed"):
+        reopened._record_status(status)
+    persisted = json.loads(run.manifest_path.read_text())
+    assert persisted["spec"] == original
+    assert persisted["run"]["status"] == "completed"
+
+
+def test_a_live_spec_still_wins_over_a_carried_forward_block(tmp_path):
+    """The carry-forward must not shadow a real spec: a run that HAS one
+    re-summarizes it, so an edited simulation is recorded as edited."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run("baseline", _tiny_flow_spec())
+    stale = json.loads(run.manifest_path.read_text())["spec"]
+
+    reopened = project.reopen_run("baseline", load=False)
+    reopened.spec = _tiny_flow_spec().with_package(mf.oc(printrecord=[("BUDGET", "ALL")]))
+    reopened.save_manifest()
+
+    written = json.loads(run.manifest_path.read_text())["spec"]
+    assert written != stale
+    assert "oc" in written["simulation_packages"] or any(
+        "oc" in model["packages"] for model in written["models"]
+    )
+
+
+def test_a_native_workspace_carries_no_spec_block(tmp_path):
+    """``Run.load`` on a manifest-less MF6 workspace has nothing to carry."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run("baseline", _tiny_flow_spec())
+    run.write()
+    run.manifest_path.unlink()
+
+    native = mf.Run.load(run.workspace, load=False)
+
+    assert native.spec_block is None
+    assert native.to_dict()["spec"] is None

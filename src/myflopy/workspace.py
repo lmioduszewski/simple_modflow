@@ -387,6 +387,12 @@ class Run:
     success: bool | None = None
     report: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # The manifest's own ``spec`` block, kept verbatim when this run was reopened
+    # rather than built. ``Run.reopen`` cannot rebuild a ``SimulationSpec`` (the
+    # manifest stores a readable summary, not the recipe), so without this the
+    # next ``save_manifest`` -- which ``_record_status`` fires on every state
+    # change -- would overwrite the record of what the run contained with null.
+    spec_block: dict[str, Any] | None = field(default=None, repr=False)
     built: BuiltSimulation | None = field(default=None, repr=False)
     simulation: Any | None = field(default=None, repr=False)
     build_context: SpecBuildContext | None = field(default=None, repr=False)
@@ -644,7 +650,11 @@ class Run:
                 "completed_at": self.completed_at,
                 "success": self.success,
             },
-            "spec": None if self.spec is None else _spec_summary(self.spec),
+            # A live spec re-summarizes; otherwise carry the block forward
+            # unchanged. Never write null over provenance this run did not author.
+            "spec": _spec_summary(self.spec)
+            if self.spec is not None
+            else self.spec_block,
             "metadata": self.metadata,
         }
 
@@ -681,6 +691,7 @@ class Run:
             completed_at=run_data.get("completed_at"),
             success=run_data.get("success"),
             metadata=dict(data.get("metadata", {})),
+            spec_block=data.get("spec"),
         )
         if load:
             run.open()
