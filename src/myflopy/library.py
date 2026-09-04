@@ -22,19 +22,17 @@ Library keys are **not** attribute-completable and never will be: they contain
 from __future__ import annotations
 
 import difflib
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from html import escape
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, TypeVar
 
 from myflopy.specs import (
     GridRef,
     GridSpec,
-    PackageRef,
     PackageSpec,
     SimulationSpec,
     _builder_label,
     _package_entry_label,
-    _summarize_value,
 )
 
 if TYPE_CHECKING:
