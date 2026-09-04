@@ -225,3 +225,118 @@ def test_the_outcome_is_never_cached_into_the_manifest(tmp_path):
     # Rewriting the listing changes the answer immediately, with no invalidation.
     _listing(run.workspace, _PREMATURE_TAIL)
     assert run.outcome.outcome == "failed"
+
+
+# --- the runs library --------------------------------------------------------
+
+
+def _run_with(project: mf.Project, name: str, tail: str | None) -> Path:
+    """Prepare a run and optionally give it a listing."""
+
+    simulation = mf.SimulationSpec(
+        name,
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.ic(strt=1.0),
+                    mf.npf(k=1.0),
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+    )
+    run = project.prepare_run(name, simulation)
+    if tail is not None:
+        _listing(run.workspace, tail)
+    return run.workspace
+
+
+def test_the_runs_library_reports_both_axes(tmp_path):
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "good", _NORMAL_TAIL)
+    _run_with(project, "bad", _PREMATURE_TAIL)
+    _run_with(project, "killed", _INTERRUPTED_TAIL)
+    _run_with(project, "never_ran", None)
+
+    frame = project.runs.summary().set_index("key")
+
+    assert set(frame.index) == {"good", "bad", "killed", "never_ran"}
+    assert frame.loc["good", "outcome"] == "normal"
+    assert frame.loc["bad", "outcome"] == "failed"
+    assert frame.loc["killed", "outcome"] == "incomplete"
+    assert frame.loc["never_ran", "outcome"] == "absent"
+    # status is myflopy's axis and is the same for all four
+    assert set(frame["status"]) == {"built"}
+
+
+def test_a_run_without_a_manifest_is_listed_not_hidden(tmp_path):
+    """Measured under examples/: 39 MF6 workspaces against 14 run.json files.
+    A ledger that omitted two thirds of real runs would be worse than none."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    workspace = _run_with(project, "owned", _NORMAL_TAIL)
+    (workspace.parent / "bare").mkdir()
+    (workspace.parent / "bare" / "mfsim.nam").write_text("# hand-run\n", encoding="utf-8")
+    _listing(workspace.parent / "bare", _NORMAL_TAIL)
+
+    frame = project.runs.summary().set_index("key")
+
+    assert set(frame.index) == {"owned", "bare"}
+    assert frame.loc["bare", "status"] == "discovered"
+    # ...keyed the same way whether or not it has a manifest
+    assert "runs/" not in " ".join(frame.index)
+
+
+def test_workspaces_outside_runs_keep_their_path_so_names_cannot_collide(tmp_path):
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "from_usg", _NORMAL_TAIL)
+    stray = project.root / "scratch" / "from_usg"
+    stray.mkdir(parents=True)
+    (stray / "mfsim.nam").write_text("# elsewhere\n", encoding="utf-8")
+
+    keys = set(project.runs.summary()["key"])
+
+    assert keys == {"from_usg", "scratch/from_usg"}
+
+
+def test_one_unreadable_manifest_does_not_hide_the_others(tmp_path):
+    """`_write_json` is a non-atomic write_text called several times per run, so
+    a truncated manifest is a real state. It must be a ROW, not an exception."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "good", _NORMAL_TAIL)
+    broken = _run_with(project, "broken", _NORMAL_TAIL)
+    (broken / "run.json").write_text('{"run": ', encoding="utf-8")
+
+    frame = project.runs.summary().set_index("key")
+
+    assert frame.loc["broken", "status"] == "unreadable"
+    assert frame.loc["good", "outcome"] == "normal"     # still listed, still right
+
+
+def test_the_library_is_cached_with_an_explicit_refresh(tmp_path):
+    """`project.runs["x"]` must return the same object twice -- a property that
+    rescanned would make `run.metadata[...] = ...` silently vanish."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "good", _NORMAL_TAIL)
+
+    assert project.runs["good"] is project.runs["good"]
+
+    _run_with(project, "later", _NORMAL_TAIL)
+    assert "later" not in project.runs          # cached, deliberately
+
+    assert "later" in project.refresh_runs()
+
+
+def test_a_missing_run_names_the_near_miss_like_every_other_library(tmp_path):
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "baseline", _NORMAL_TAIL)
+
+    with pytest.raises(KeyError) as caught:
+        project.runs["baselien"]
+
+    assert "Project 'p' has no run 'baselien'." in caught.value.args[0]
+    assert "Did you mean: 'baseline'?" in caught.value.args[0]

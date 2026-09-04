@@ -5596,3 +5596,38 @@ same day, which is the useful part of the result.
       - **Never raises.** An unreadable or non-UTF-8 listing is classified
         `incomplete`; a run you cannot classify must still be listable beside the
         ones you can.
+
+185. **`project.runs` -- the run ledger, deferred out of step 3 and built once the
+      outcome reader existed (2026-09-04).**
+      Held back from ledger 182 on purpose: its only worthwhile columns
+      (`outcome`, `stale`, `elapsed`) come from `run_record.read_listing_outcome`,
+      which landed in 184. A runs table whose one column was the `status` field
+      already reading `written` for every run would have been a surface without
+      an answer.
+      - **Manifest-less workspaces are INCLUDED**, listed as `discovered`.
+        Measured under `examples/`: 39 MF6 workspaces against 14 `run.json`
+        files, and most notebooks call `sim.run_simulation` directly. On the
+        user's real project it immediately surfaced `mounding_lower_L3_K`, a
+        completed run with no manifest at all.
+      - **Keying does not depend on having a manifest.** A workspace under
+        `runs/` is keyed by directory name either way; one elsewhere in the
+        project keeps its relative path, so `runs/from_usg` and
+        `scratch/from_usg` cannot collide. The first draft keyed the two loops
+        against different bases and produced `runs/mounding_lower_L3_K` beside a
+        bare `baseline` -- caught on the real project.
+      - **An unreadable manifest is a ROW (`status="unreadable"`), never an
+        exception.** `_write_json` is a non-atomic `write_text` called several
+        times per run, so a truncated file is a real state; one of them must not
+        hide every other run. Caught by name (`OSError`, `ValueError`, `KeyError`
+        -- `JSONDecodeError` subclasses `ValueError`), so the broad-catch
+        allowlist does not grow.
+      - **Cached, with `Project.refresh_runs()`.** `project.runs["x"]` must
+        return the same object twice, or `run.metadata[...] = ...` silently
+        vanishes. A property that rescanned per access would look convenient and
+        be a trap.
+      - **`outcome` is still not cached into the manifest** (see 184), so every
+        `summary()` re-reads the listing tails. Measured cheap -- only the last
+        8 KB of each -- and correct by construction, which is the trade taken.
+      - **NOT added: `RunLibrary.open(key)`.** It would be a second spelling of
+        `Project.reopen_run(name)`, which additionally attaches the build context.
+        `project.runs` is the browse surface, not a second way to open a run.

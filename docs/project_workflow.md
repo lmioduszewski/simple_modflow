@@ -186,6 +186,41 @@ by `names()`, `summary()`, the repr, and that `KeyError`.
 and PyCharm calls `__repr__` on every debugger step. Use `project.discover_runs()`
 for those.
 
+## The run ledger
+
+`project.runs` is every run under the project — with a manifest, without one, or
+broken:
+
+```python
+project.runs.summary()
+#  key                  status      outcome     stale  elapsed                          simulation
+#  baseline             completed   normal      True   3 Hours, 53 Minutes,  1 Seconds  baseline
+#  from_usg             written     incomplete  False  —                                tentrails
+#  mounding             completed   normal      False  15 Minutes,  4.265 Seconds       mounding
+#  mounding_lower_L3_K  discovered  normal      False  14 Minutes, 32.796 Seconds       —
+#  mounding_vol         completed   normal      False  16 Minutes, 54.890 Seconds       mounding_vol
+```
+
+Read `status` and `outcome` as two axes: `status` is what **myflopy** did to the
+run, `outcome` is what **MF6** did afterwards. A run written by one session and
+executed by another sits at `written` forever while its listing says
+`Normal termination`; `run.reconcile()` adopts the verdict.
+
+`stale=True` means an MF6 input file is newer than the listing — the verdict is
+real but describes superseded inputs.
+
+Runs with no `run.json` are listed as `discovered` rather than hidden: there are
+far more bare MF6 workspaces in practice than manifests, and a ledger that
+omitted them would be worse than none. A workspace under `runs/` is keyed by its
+directory name either way; one elsewhere keeps its path, so `runs/from_usg` and
+`scratch/from_usg` stay distinct. A truncated manifest is a row reading
+`unreadable`, never an exception — one bad file must not hide every other run.
+
+The library is **cached**, so `project.runs["baseline"]` returns the same object
+twice; call `project.refresh_runs()` after executing a run from elsewhere.
+Opening one run by name stays `project.reopen_run(name)`, which also attaches the
+build context so a revived spec resolves its library references.
+
 ## Persistence is opt-in
 
 In memory, everything works immediately — including raw arrays and coupled

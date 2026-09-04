@@ -366,7 +366,10 @@ and `OSError` caught by name, so the broad-catch allowlist does not grow.
 Scan cost measured: `rglob("mfsim.nam")` is 0 ms on the real project (4 hits), 2 ms on
 `examples/` (39 hits). Cached, with an explicit `refresh()`.
 
-**`RunLibrary` is NOT built yet.** Its two columns worth having — `outcome` and
+**`RunLibrary` — BUILT 2026-09-04 (ledger 185).** Original note kept below for
+the reasoning that deferred it; the outcome reader it waited on landed in 184.
+
+~~**`RunLibrary` is NOT built yet.**~~ Its two columns worth having — `outcome` and
 `manifest` — both come from `read_listing_outcome`, the other half of Step 1 that
 has not landed. A runs table whose only column is the `status` field that already
 reads `written` for every one of your runs would add a surface without adding an
