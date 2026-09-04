@@ -115,6 +115,40 @@ reproducible, version-robust path. `Project.load()` warns if a pickle's recorded
 `flopy` / `geopandas` / `shapely` / `numpy` versions differ from the current
 stack.
 
+## Did it actually work?
+
+A run manifest's `status` is **myflopy's verb** — what the library did to the run
+(`created` → `built` → `written` → `completed`). It says nothing about what MF6
+did afterwards, so a run written by one session and executed by another sits at
+`status="written", success=None` forever.
+
+`run.outcome` is **MF6's verdict**, read fresh from `mfsim.lst`:
+
+```python
+run.outcome
+# ListingOutcome(outcome='normal', elapsed='3 Hours, 53 Minutes,  1 Seconds', stale=True)
+
+run.outcome.succeeded        # True / False / None
+run.reconcile()              # adopt the verdict into status/success and persist
+```
+
+Four outcomes: `normal`, `failed` (MF6 reported premature termination),
+`incomplete` (a listing exists but reports neither — killed, crashed, or still
+running), and `absent` (no listing; MF6 never started here).
+
+**`succeeded` is `None`, not `False`, for an unfinished run.** Calling an
+interrupted run a failure would be the same class of lie as calling
+`status="written"` a success — so `reconcile()` leaves such a run alone rather
+than recording a verdict MF6 never gave.
+
+**`stale=True` means the listing predates its own inputs** — the verdict is real,
+but describes a superseded run. Only MF6 *inputs* count; results are legitimately
+newer than the listing that announced them.
+
+The outcome is deliberately **never cached into the manifest**. The listing is
+the authority and it is right there; storing a copy beside it would create a
+second source of truth that can disagree with the file it came from.
+
 ## Seeing what a project holds
 
 `project.packages`, `.grids` and `.simulations` are **`dict` subclasses** — every

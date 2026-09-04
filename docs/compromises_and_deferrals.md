@@ -5551,3 +5551,31 @@ same day, which is the useful part of the result.
         `npf/high_k`, because its completer inspects the live dict. PyCharm
         completes neither slashed nor underscored runtime keys, so renaming would
         buy nothing anywhere.
+
+184. **`status` is myflopy's verb, `outcome` is MF6's verdict (2026-09-04).**
+      The other half of step 1 in `docs/project_libraries_design.md`. Measured on
+      the real project: four runs, every one `status="written", success=None`,
+      while three had reached `Normal termination` and one had not. The manifest
+      could not tell a success from a failure.
+      - **Two axes, never collapsed.** `status` truthfully reports what the
+        LIBRARY did; it read as a lie only because nothing reported what MF6 did.
+        New leaf module `src/myflopy/run_record.py` (import layer 0, stdlib only,
+        so `workspace` gains no deferred import) reads `mfsim.lst`.
+      - **`succeeded` is `None`, not `False`, for an unfinished run.** A killed or
+        crashed run's listing simply stops mid-iteration -- that is what
+        `from_usg` looks like -- and calling it a failure would be the same class
+        of lie the entry exists to fix. `reconcile()` leaves such a run alone.
+      - **NOT cached into the manifest, deliberately.** The listing is the
+        authority and sits in the same directory; a stored verdict would be a
+        second source of truth that can disagree with its own source, and would
+        need carrying forward through `to_dict` like the spec blocks in 179/181.
+        Reading is cheap: only the last 8 KB is read, since a long transient run
+        writes one block per time step and the verdict is in the last few lines.
+        Pinned by a test over a 5 MB listing.
+      - **`stale` compares against MF6 INPUTS only.** Results are legitimately
+        newer than the listing that announced them, so counting them would mark
+        every completed run stale. Real finding: the user's `baseline` listing is
+        older than its own `.rch` -- a real verdict describing superseded inputs.
+      - **Never raises.** An unreadable or non-UTF-8 listing is classified
+        `incomplete`; a run you cannot classify must still be listable beside the
+        ones you can.

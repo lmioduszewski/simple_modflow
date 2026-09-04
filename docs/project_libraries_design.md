@@ -104,6 +104,8 @@ four of your runs look identical and none of them looks finished.
 
 ## 3. Step 1 — tracking truth
 
+**BUILT 2026-09-04** — `265b897` (provenance), `872ff7d` (recipe), ledger 184 (outcome).
+
 > **`status` is myflopy's verb. `outcome` is MF6's verdict. Two axes; never collapse
 > them.** `status="written"` is not a lie; it reads as one because nothing reports
 > what MF6 did afterwards.
@@ -166,10 +168,12 @@ def read_listing_outcome(workspace: Path) -> ListingOutcome: ...
    `mf.load_run` do not, having no library in scope. A spec embedding raw arrays
    gets no recipe and stays summary-only. **BUILT — ledger 181.**
 
-3. **`Run.outcome` reads `mfsim.lst`, view-only by default.** Not written back:
-   `_record_status` already rewrites the manifest on every transition, and a verdict
-   committed there would be erased by the next one. `run.reconcile()` is the explicit
-   opt-in that persists it, once change 1 makes persistence safe.
+3. **`Run.outcome` reads `mfsim.lst`, view-only.** **BUILT — ledger 184.** It is
+   never cached into the manifest at all: the listing is the authority and sits in
+   the same directory, so a stored verdict would be a second source of truth that
+   can disagree with its own source. `run.reconcile()` adopts it into
+   `status`/`success` and persists those (which ARE manifest fields, and were
+   wrong).
 
 **Not fixed here:** `prepare_run(overwrite=True)` (D5). It needs an archive-or-refuse
 policy and `examples/mf6/variant_workflow/01_package_library_and_variants.py` depends

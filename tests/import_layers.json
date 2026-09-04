@@ -156,6 +156,7 @@
  "myflopy.project.model_group": 12,
  "myflopy.project.model_results_diff": 10,
  "myflopy.project.run_model": 9,
+ "myflopy.run_record": 0,
  "myflopy.sources": 0,
  "myflopy.specs": 1,
  "myflopy.specs_io": 0,

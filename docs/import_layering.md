@@ -64,6 +64,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.project.group._shared` *(deferred imports: 1)*
 - `myflopy.project.group.budget`
 - `myflopy.project.model_config`
+- `myflopy.run_record`
 - `myflopy.sources`
 - `myflopy.specs_io` *(deferred imports: 1)*
 - `myflopy.viz`

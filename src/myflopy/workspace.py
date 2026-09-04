@@ -18,6 +18,7 @@ import flopy
 
 from myflopy._logging import get_logger
 from myflopy.library import GridLibrary, PackageLibrary, SimulationLibrary
+from myflopy.run_record import ListingOutcome, read_listing_outcome
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -747,6 +748,40 @@ class Run:
             if model is not None:
                 return model
         raise KeyError(f"Run '{self.name}' has no raw FloPy model named '{name}'.")
+
+    @property
+    def outcome(self) -> ListingOutcome:
+        """What MF6 reported in ``mfsim.lst``, read fresh each time.
+
+        ``status`` is myflopy's verb -- what the library did to this run. This is
+        MF6's verdict, and the two are independent: a run written by one session
+        and executed by another sits at ``status="written"`` forever while its
+        listing says ``Normal termination``.
+
+        Deliberately NOT stored in the manifest. The listing is the authority and
+        is right there; caching a verdict beside it would create a second source
+        of truth that can disagree with the file it came from.
+        """
+
+        return read_listing_outcome(self.workspace)
+
+    def reconcile(self, *, write: bool = True) -> ListingOutcome:
+        """Adopt MF6's verdict into ``status``/``success``, persisting by default.
+
+        A run MF6 never finished -- killed, crashed, still going, never started --
+        has no verdict, so nothing is changed: reporting that as failure would be
+        the same class of lie as reporting ``status="written"`` as success.
+        """
+
+        outcome = self.outcome
+        if outcome.succeeded is None:
+            return outcome
+        self.success = outcome.succeeded
+        self.status = "completed" if outcome.succeeded else "failed"
+        self.completed_at = self.completed_at or _utc_now()
+        if write:
+            self._record_status(self.status)
+        return outcome
 
     def to_dict(self) -> dict[str, Any]:
         """Return the readable manifest representation of this run."""
