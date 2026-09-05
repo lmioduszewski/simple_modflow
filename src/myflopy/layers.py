@@ -1473,6 +1473,9 @@ class StackPlots:
         still on synthetic coordinates. ``basemap=True`` routes through the
         shared choropleth instead, for a grid that really is georeferenced.
 
+        .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.map`.
+
         The single map verb. Contours, observation markers, a hillshade and particle
         pathlines are all **options** here rather than verbs of their own, because a
         map is a plan view whatever is drawn on it.
@@ -1482,6 +1485,7 @@ class StackPlots:
         not restated here by hand -- each mirrors the default of whichever link in the
         ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
         ``test_plot_vocabulary`` fails if the two ever drift apart.
+        .. end generated
 
         Parameters
         ----------
@@ -1494,6 +1498,7 @@ class StackPlots:
             Choropleth styling, forwarded to :meth:`~myflopy.modflow.mf6.grid
             .plotting.GridPlots.map`. **Only meaningful with ``basemap=True``**
             -- the default renderer is Matplotlib and takes none of them.
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
             One value per cell -- heads, drawdown, K, a zone id, a residual, any
             per-cell array. Overrides whatever ``type`` would have read. Length must
@@ -1649,6 +1654,7 @@ class StackPlots:
 
             With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
             use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+            .. end generated
 
         Raises
         ------
@@ -1657,6 +1663,7 @@ class StackPlots:
             to be accepted and silently discarded, which quietly produced an
             unstyled picture.
 
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         See Also
         --------
         section : the same data as a vertical slice.
@@ -1671,8 +1678,7 @@ class StackPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-
-        Bound form of :func:`myflopy.plot.map`.
+            .. end generated
         """
 
         if basemap:
@@ -1705,11 +1711,15 @@ class StackPlots:
     ) -> LayerSection:
         """A filled, layer-coloured cross-section: ``stack.plot.section(y=300)``.
 
+        .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.section`.
+
         Through a MODEL this is the results section -- the field against distance
         along the line. Through a bare GRID it is the geometry section: layers and
         cell edges, no results. They are different classes because they answer
         different questions, and **most arguments below only apply to the model
         branch** -- they are marked. A grid takes ``line`` and nothing else.
+        .. end generated
 
         Parameters
         ----------
@@ -1733,6 +1743,7 @@ class StackPlots:
             Plot title. Defaults to "Layer cross-section".
         **kwargs
             Forwarded to :class:`LayerSection`.
+            .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         cells : int or list of int, optional
             *(model only)* Cell indices defining the section path, in order.
         per : int, optional
@@ -1821,6 +1832,21 @@ class StackPlots:
 
             Ignored with ``fill='results'`` or an array fill: those paint the field
             onto the cells, so a line of the same quantity on top would say it twice.
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Works with ``line=`` (a geometry, coordinates, a flopy dict, or a vector
+            file) and with ``cells=``.
+
+            The two branches reach it differently, which matters if you were
+            thinking of doing it by hand. ``XSection`` samples the line itself, so
+            the PROFILE is mirrored by reversing the coordinates -- and reversing
+            them yourself works. The FILLED section is not: FloPy's
+            ``PlotCrossSection`` normalizes direction internally, so a reversed line
+            gives it byte-identical geometry and changes nothing. That branch
+            mirrors the view instead, and relabels the distance axis so it still
+            reads from the left edge.
         layer_labels : sequence of str, optional
             *(``fill=`` only)* Legend names for the layers -- your unit names rather
             than ``Layer 1..N``. One per layer, in model order.
@@ -1845,19 +1871,7 @@ class StackPlots:
             ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
             to ``.plot_mpl()`` on the result, which is the same renderer reached a
             second way.
-        reverse : bool, default False
-            Traverse the line the other way -- a section drawn north-south comes
-            back south-north, mirrored about its own centre.
-
-            Applies to BOTH branches, because it is a property of the line rather
-            than of what is drawn on it: distance along the section is measured from
-            the first point either way. Works with ``line=`` (the coordinates are
-            reversed) and with ``cells=`` (the cell order is), and a vector file is
-            read first, since a path has no direction until it is geometry.
-
-            Reversing the line yourself does the same thing; this saves writing
-            ``[::-1]`` and getting it right for each of the four forms ``line=``
-            accepts.
+            .. end generated
 
         Returns
         -------
@@ -1874,6 +1888,7 @@ class StackPlots:
             not one of the values above. Both are raised HERE, not later from
             ``.axes``.
 
+            .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         See Also
         --------
         map : the same data in plan view.
@@ -1894,8 +1909,7 @@ class StackPlots:
         >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
         >>> model.plot.section(line=line, fill="layer", backend="mpl",
         ...                    layer_labels=["fill", "sand", "clay", "till"])
-
-        Bound form of :func:`myflopy.plot.section`.
+            .. end generated
         """
 
         return LayerSection(
@@ -1925,10 +1939,14 @@ class StackPlots:
         ``result.surface_names``. That is a height field ``z(x, y)``; the layered
         grid VOLUME is :meth:`grid`, a different shape entirely.
 
+        .. generated from myflopy.plot.surface -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.surface`.
+
         Always Plotly, and always a height field. The 3-D grid VOLUME and 3-D
         particle pathlines are different shapes and live on :func:`grid` with
         ``backend="vtk"``: a ``backend=`` switch should change the renderer, not
         what is being drawn.
+        .. end generated
 
         Parameters
         ----------
@@ -1960,6 +1978,7 @@ class StackPlots:
             *(vtk only)* Draw the interpolation mesh on each sheet.
         **kwargs
             Forwarded to :class:`LayerSurface` (plotly) or the scene builder.
+            .. generated from myflopy.plot.surface -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
             Stress period (0-based). Mutually exclusive with ``kstpkper``.
         kstpkper : tuple of (int, int), optional
@@ -1977,6 +1996,7 @@ class StackPlots:
             Override the grid's CRS.
         xs, ys, zs : array-like, optional
             Supply the point cloud directly instead of reading it from a model.
+            .. end generated
 
         Returns
         -------
@@ -1989,6 +2009,7 @@ class StackPlots:
         ValueError
             If ``backend`` is neither ``'plotly'`` nor ``'vtk'``.
 
+            .. generated from myflopy.plot.surface -- edit there, then run scripts/derive_docstrings.py
         See Also
         --------
         grid : the mesh itself, including the 3-D volume via ``backend="vtk"``.
@@ -1998,8 +2019,7 @@ class StackPlots:
         >>> model.plot.surface(layer=0)
         >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
         >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
-
-        Bound form of :func:`myflopy.plot.surface`.
+            .. end generated
         """
 
         if backend == "vtk":
@@ -2040,6 +2060,9 @@ class StackPlots:
         subject -- this grid -- and differ only in renderer. That is why the 3-D
         volume is `grid`, not `surface`: `surface` means a height field.
 
+        .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.grid`.
+
         The one picture :func:`map` cannot give you. A choropleth colours cells
         against a web basemap and so **requires a CRS**; this draws in the grid's own
         coordinates and needs none, which makes it the view for a grid you are still
@@ -2048,6 +2071,7 @@ class StackPlots:
         Both backends draw the same subject -- this grid -- so ``backend=`` switches
         only the renderer. That is why the 3-D volume is ``grid`` and not
         ``surface``: ``surface`` means a height field.
+        .. end generated
 
         Parameters
         ----------
@@ -2074,6 +2098,7 @@ class StackPlots:
             thickness, ``terrain`` for elevations.
         width, height : int, default 900, 580
             *(vtk only)* Scene size in pixels.
+            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         pathlines : DataFrame, optional
             Particle track records, drawn as time-coloured tubes over the 3-D mesh.
             Requires ``backend="vtk"``; in plan view the equivalent is
@@ -2096,6 +2121,7 @@ class StackPlots:
             notebook or on a headless machine.
         **kwargs
             Forwarded to the backend's builder.
+            .. end generated
 
         Returns
         -------
@@ -2110,6 +2136,7 @@ class StackPlots:
             values above, or if a vtk-only argument is given with
             ``backend="plotly"``.
 
+            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         See Also
         --------
         map : values over the cells, on a basemap.
@@ -2125,8 +2152,7 @@ class StackPlots:
         >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
         >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
         >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
-
-        Bound form of :func:`myflopy.plot.grid`.
+            .. end generated
         """
 
         scene_args = {"color_by": color_by, "scale": scale, "cmap": cmap,

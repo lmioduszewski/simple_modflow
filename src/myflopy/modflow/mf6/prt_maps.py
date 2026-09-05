@@ -803,6 +803,7 @@ class PRTPathlineView(_PRTDerivedView):
         **base_kwargs
             Anything else rides through to the base map's Plotly trace. The
             base-map options that used to live here are named above.
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -896,6 +897,7 @@ class PRTPathlineView(_PRTDerivedView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+            .. end generated
 
         Returns
         -------

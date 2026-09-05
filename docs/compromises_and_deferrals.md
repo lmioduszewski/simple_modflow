@@ -5306,11 +5306,14 @@ same day, which is the useful part of the result.
       - **Generate, then pin** -- the contract this repo already runs on for
         `api_snapshot.json` and `import_layers.json`.
         `scripts/derive_docstrings.py` writes each assembled docstring back into
-        its own file; `tests/test_docstrings_are_static.py` fails in BOTH
-        directions, so editing `plot.map`'s reference without regenerating fails,
-        and hand-editing a generated docstring fails too. 29 methods, discovered
-        by the `_myflopy_own_doc` marker the splicers already stamp rather than
-        listed, so a noun added to the splice cannot be left behind.
+        its own file. 29 methods, discovered by a marker the splicers stamp
+        rather than listed, so a noun added to the splice cannot be left behind.
+        **CORRECTED by 180: this entry claimed the test "fails in BOTH
+        directions, so hand-editing a generated docstring fails too". That was
+        never true. Measured a day later: injecting a sentence into
+        `ModelPlots.map`'s inherited block left `--check` at exit 0, because with
+        the source acting as its own author a hand edit IS a fixed point. Worse,
+        the write-back killed propagation outright.** See 180.
       - **The prerequisite was idempotency, and the splice did not have it.**
         Writing the text into the source means the splicers re-run over their own
         output at every import; a non-fixed-point would grow the docstring each
@@ -5343,6 +5346,144 @@ same day, which is the useful part of the result.
         author, so the reference is still written once on the free verb. What
         changed is that their output is committed rather than assembled only in
         memory.
+
+180. **The docstring generator wrote its own output back and stopped propagating,
+      and `--check` could not see it (2026-09-05).**
+      179 above is unrelated; this closes 178. Once `derive_docstrings.py` wrote
+      the assembled text into the source, the next import cached THAT as
+      `_myflopy_own_doc`, so `_filter_parameters(sections, drop=own_names)`
+      dropped every inherited entry. Measured on the working tree: **29 of 29
+      methods had `_myflopy_own_doc == __doc__`, and 0 inherited lines survived
+      the drop.** The free verbs were decorative. `--check` printed "all spliced
+      docstrings are written into their source" and exited 0 throughout, because
+      source and runtime were the same stale text -- 61 green tests over a
+      mechanism that propagated nothing.
+      - **What still worked, and what that hid.** A NEW parameter name reached
+        3 of 29 (the verb tier only -- `keep=NOUN_MAP_PARAMS` filters the noun
+        block before the drop, and a new name is not in that set). EDITS,
+        REMOVALS and whole SECTIONS reached none. That asymmetry is why the
+        `reverse` PARAMETER appeared on the bound copies while its corrected
+        PROSE did not, and why three docstrings told readers `reverse` "applies
+        to BOTH branches" for days after that was measured false.
+      - **Prose edits were worse than frozen -- they ACCUMULATED.** The
+        idempotency guard was a containment check (`if extended in own_prose`),
+        which holds only while the reference never changes. Measured: three
+        edits to `plot.map`'s prose took `GridPlots.map` from 181 lines to 191,
+        201, 211, carrying three copies of the first edit beside the stale
+        original. Unbounded, on the most ordinary edit the design exists to
+        support, with `--check` green at every step.
+      - **The fix is a FENCE, so the splice recovers its own input.**
+        `.. generated from myflopy.plot.<verb> ...` / `.. end generated`
+        delimit what the reference wrote; `strip_generated` deletes those
+        regions and what is left is the method's own text. Idempotency and the
+        ratchet stop being guarded properties and become structural: re-splicing
+        first deletes the previous splice's output, so there is nothing to
+        duplicate (verified over three further passes: 0 of 29 changed), and a
+        hand edit inside a fence cannot be a fixed point. A hand edit OUTSIDE
+        one needs no tool run at all, which is the rule that matters daily.
+      - **Why not store the own text separately** (a decorator argument, a
+        module-level dict, a comment block): it duplicates ~1,400 lines with no
+        way for a reader to tell which copy is authoritative, and a method
+        leaves the pipeline the moment one declaration line is deleted.
+      - **Why not a parenthesized split docstring.** Adjacent string literals
+        concatenate at compile time, so a real Python COMMENT could carry the
+        boundary with zero footprint in `help()` -- and `ast.get_docstring`
+        accepts it. **Rejected on measurement: jedi, a genuinely static reader,
+        returns the signature and an EMPTY docstring for it.** The parentheses
+        alone are fatal, not the comment or the concatenation (tested all four
+        forms), and multi-line concatenation requires them. It would have looked
+        right in every test here and been blank in the editor -- the exact defect
+        178 was filed about.
+      - **The cost is 84 marker lines across ~4,500**, no duplication, and no
+        import-graph change. The fences are reStructuredText comments, so a
+        renderer drops them; in raw `help()` they are visible, and what they say
+        is the file to edit and the command to run, which is written nowhere else.
+        **Residual, unverified:** how PyCharm's own renderer treats a `..`
+        comment sitting between parameter entries.
+      - **The shadow ledger is the part that is not a mechanism.**
+        `tests/docstring_shadows.json` pins the 50 names across 23 methods that a
+        method documents locally AND its reference documents -- `layer` 16x,
+        `per` 13x, `backend` 5x. Those are exactly the places a reference edit
+        will not reach, deliberately and permanently. Nothing can detect that a
+        shadow's prose has become untrue; that is the ceiling, and the three
+        stale `reverse` entries were shadows nobody was watching. Pinning the
+        SET at least surfaces a new one in review.
+      - **Found and fixed in passing.** `GridPlots.map`'s `Parameters` block was
+        MALFORMED: two prose paragraphs sat at column 0 inside it, and a NumPy
+        reader showed the first as a parameter named `Requires a CRS` whose type
+        was ``because the basemap does. Use :meth:`grid` for a grid``. The
+        splice created them, by folding trailing own prose into the merged body.
+        `_refuse_malformed_entries` now raises on the reference as well as the
+        method, so the same mistake cannot propagate to thirteen copies.
+        Also: `inherit_map_docs` scanned EVERY line of the own sections for
+        names, sweeping `See Also` entries into the drop set (latent until a
+        parameter shares a name with one); and the free verb's first positional
+        was dropped by the literal name `"source"` rather than read off
+        `inspect.signature`, so renaming it would have left eleven bound
+        docstrings advertising a parameter their method does not accept.
+      - **Migration recovered the own text by SUBTRACTION against the
+        reference's current wording**, not by checkout from the pre-write-back
+        commit -- which is not a clean baseline, since `GridPlots.map`'s
+        re-headed entries and `GridPlots.section`'s `fill*` narrowing were
+        legitimate later edits. Six entries were flagged for a human ruling:
+        the three `reverse` copies (deleted -- stale) and `GridPlots.section`'s
+        `fill`/`fill_cmap`/`fill_label` (kept -- a deliberate narrowing).
+      - **The fence is INDENTED inside a section, and that was not optional.**
+        At column 0 inside a `Parameters` block a fence IS an entry head to every
+        NumPy parser. Measured with numpydoc against the first cut: **39 phantom
+        parameters across 21 methods**, named after the build instruction, plus
+        **2 docstrings numpydoc refused to parse at all** (`GridPlots.grid` and
+        `GridPlots.section`, where a closing fence landed inside a `See Also`).
+        That is the `Requires a CRS` defect this same pass added
+        `_refuse_malformed_entries` to end, reintroduced 43 times by the
+        generator itself -- and invisible from inside the project, because the
+        guard is taught to skip fence lines and myflopy's own parser ignores
+        them. Indented, the fence is a continuation of the description above:
+        renderers drop it, `strip_generated` still matches on the stripped line,
+        and numpydoc reports **0 phantoms and 0 parse failures**. A fence in the
+        leading PROSE stays at column 0, where no parser reads entries.
+      - **Three more found by attacking it, all fixed before commit.**
+        - `test_every_generated_region_is_fenced_on_both_sides` read the RUNTIME
+          docstring, which `_fence` balances by construction -- so it could never
+          fail for the case it is named after. Measured on a tree with one
+          closing fence deleted by hand: source balance -1, runtime balance 0,
+          test green, and the next regeneration replaced 31 lines of
+          `GridPlots.section`'s own text with the free verb's. It parses the
+          SOURCE now.
+        - The markers were not RESERVED. A `.. end generated` inside a reference's
+          Notes was written into a fenced region and closed it early on recovery,
+          so the tail was re-inherited beside itself and the docstring grew two
+          lines per regeneration -- the unbounded growth this design replaces,
+          arriving through the content channel. `_scrub_markers` drops them and
+          logs. Dropped rather than RAISED on purpose: the splicers run at
+          import, and raising takes `import myflopy` down for everyone --
+          including `derive_docstrings.py`, which imports the module before it
+          can repair anything, so the prescribed remedy would be unreachable.
+        - A backslash anywhere in a reference was written verbatim into a `"""`
+          literal. `C:\Users` makes the source fail to COMPILE (`\U` is an
+          invalid escape); `\n` corrupts silently and `--check` then certifies
+          it, the mangled text being the new fixed point. `_literal` emits a raw
+          literal when the text carries one.
+      - **Known and accepted, not fixed here.** `targets()` sweeps
+        `sys.modules`, so a spliced method in a module nothing imports is
+        invisible to the whole pipeline (source one line, runtime 126,
+        `--check` exit 0); it also dedupes on `(class, verb)` without the module,
+        so two same-named classes collapse. Both need a class that is never
+        imported by `myflopy.plot` or `myflopy.project.group.lak`, and the pinned
+        count of 29 is what would catch the first one. `_myflopy_spliced` is
+        stamped before the `if not sections: continue` guard, so a reference that
+        lost every section heading would leave its copies frozen and green.
+      - **NOT done, deliberately.** No per-parameter glossary: 12 names are
+        documented by more than one free verb and ZERO are byte-identical
+        (`layer` means three different things on `map`/`section`/`surface`), so
+        the unit of the shared reference is (verb, name) -- which is what a free
+        verb's docstring already is. The runtime splice was NOT deleted: it
+        keeps `help()` correct between a reference edit and its regeneration,
+        and gives `--check` a second, independent opinion on which methods are
+        managed. And the documented-but-unaccepted parameters
+        (`GridPlots.section` documents 22 names its `def` rejects, marked
+        *(model only)*) are left alone -- that is a decision about the API
+        surface, not the docstring pipeline.
 
 179. **Integer stress-period keys restored on read, by a canonical-round-trip
       test rather than a format change (2026-09-03).**

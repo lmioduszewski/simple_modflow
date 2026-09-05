@@ -535,6 +535,7 @@ class GroupLakConnections:
             area map; pass ``float("nan")`` to leave them uncoloured instead,
             which is what you want on an elevation column where zero is a real
             elevation and would distort the colour range.
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -628,6 +629,7 @@ class GroupLakConnections:
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+            .. end generated
 
         Returns
         -------

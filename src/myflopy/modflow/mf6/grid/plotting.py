@@ -423,6 +423,19 @@ class GridPlots:
         ``values`` is any per-cell array; with none, cells are keyed by node id
         -- which is what the old ``map_nodes()`` drew.
 
+        Requires a CRS, because the basemap does. Use :meth:`grid` for a grid
+        that does not have one yet.
+
+        A DELIBERATE SUBSET of :func:`myflopy.plot.map`. Everything omitted --
+        ``per``, ``kstpkper``, ``layer``, ``type``, ``show_mounding``, the
+        sectioned-hover knobs -- reads a model's results, and a bare grid has
+        none, so advertising them here would promise something this scope cannot
+        do. They still ride the ``**trace_kwargs`` tail if you pass one, because
+        narrowing the signature should not narrow what already worked.
+
+        .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.map`.
+
         The single map verb. Contours, observation markers, a hillshade and particle
         pathlines are all **options** here rather than verbs of their own, because a
         map is a plan view whatever is drawn on it.
@@ -432,6 +445,7 @@ class GridPlots:
         not restated here by hand -- each mirrors the default of whichever link in the
         ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
         ``test_plot_vocabulary`` fails if the two ever drift apart.
+        .. end generated
 
         Parameters
         ----------
@@ -453,16 +467,7 @@ class GridPlots:
             change with the scope. Note the Matplotlib branch draws in model
             coordinates with no basemap, which makes ``bgs`` and ``zoom`` inert
             there.
-
-        Requires a CRS, because the basemap does. Use :meth:`grid` for a grid
-        that does not have one yet.
-
-        A DELIBERATE SUBSET of :func:`myflopy.plot.map`. Everything omitted --
-        ``per``, ``kstpkper``, ``layer``, ``type``, ``show_mounding``, the
-        sectioned-hover knobs -- reads a model's results, and a bare grid has
-        none, so advertising them here would promise something this scope cannot
-        do. They still ride the ``**trace_kwargs`` tail if you pass one, because
-        narrowing the signature should not narrow what already worked.
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
             One value per cell -- heads, drawdown, K, a zone id, a residual, any
             per-cell array. Overrides whatever ``type`` would have read. Length must
@@ -597,8 +602,7 @@ class GridPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-
-        Bound form of :func:`myflopy.plot.map`.
+            .. end generated
         """
 
         picture = _choropleth_factory(
@@ -648,11 +652,15 @@ class GridPlots:
         Layers and cell edges, no results -- for a section through a model's
         results use ``model.plot.section(...)``.
 
+        .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.section`.
+
         Through a MODEL this is the results section -- the field against distance
         along the line. Through a bare GRID it is the geometry section: layers and
         cell edges, no results. They are different classes because they answer
         different questions, and **most arguments below only apply to the model
         branch** -- they are marked. A grid takes ``line`` and nothing else.
+        .. end generated
 
         Parameters
         ----------
@@ -673,6 +681,21 @@ class GridPlots:
             by the ``figs`` cross-section helper. Passing this used to raise a
             ``TypeError`` naming a parameter the docs advertised at every other
             scope (fixed 2026-09-02).
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Mirrors the finished DRAWING, not the line, and so does not work the
+            way you would do it by hand: FloPy's ``PlotCrossSection`` normalizes
+            direction internally, so handing it reversed coordinates gives it
+            byte-identical geometry and changes nothing. The view is inverted
+            instead and the distance axis relabelled, so it still reads from the
+            left edge.
+
+            ``backend="mpl"`` only, filled or not -- both Matplotlib branches
+            draw cells and mirror the same way. The Plotly geometry section is
+            not an axes and raises rather than ignoring the argument.
+            .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         cells : int or list of int, optional
             *(model only)* Cell indices defining the section path, in order.
         per : int, optional
@@ -731,21 +754,6 @@ class GridPlots:
 
             Ignored with ``fill='results'`` or an array fill: those paint the field
             onto the cells, so a line of the same quantity on top would say it twice.
-        layer_labels : sequence of str, optional
-            *(``fill=`` only)* Legend names for the layers -- your unit names rather
-            than ``Layer 1..N``. One per layer, in model order.
-
-            Defaults to the names the model's own build context carries
-            (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
-            declared through the spec API already knows its layers are called
-            "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
-            is a plain frame, has no names to find and falls back to ``Layer N``.
-        **kwargs
-            Forwarded to the underlying section class.
-        show_grid : bool, default True
-            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
-            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
-            layer filter and would outline the very layers you excluded.
         legend : bool or str, default True
             *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
             ``True`` uses the house default (upper right); ``"auto"`` lets
@@ -760,20 +768,22 @@ class GridPlots:
 
             An unrecognised word raises and lists the accepted ones, rather than
             quietly falling back to a placement you did not ask for.
-        reverse : bool, default False
-            Traverse the line the other way -- a section drawn north-south comes
-            back south-north, mirrored about its own centre.
+        show_grid : bool, default True
+            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
+            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
+            layer filter and would outline the very layers you excluded.
+        layer_labels : sequence of str, optional
+            *(``fill=`` only)* Legend names for the layers -- your unit names rather
+            than ``Layer 1..N``. One per layer, in model order.
 
-            Mirrors the finished DRAWING, not the line, and so does not work the
-            way you would do it by hand: FloPy's ``PlotCrossSection`` normalizes
-            direction internally, so handing it reversed coordinates gives it
-            byte-identical geometry and changes nothing. The view is inverted
-            instead and the distance axis relabelled, so it still reads from the
-            left edge.
-
-            ``backend="mpl"`` only, filled or not -- both Matplotlib branches
-            draw cells and mirror the same way. The Plotly geometry section is
-            not an axes and raises rather than ignoring the argument.
+            Defaults to the names the model's own build context carries
+            (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
+            declared through the spec API already knows its layers are called
+            "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
+            is a plain frame, has no names to find and falls back to ``Layer N``.
+        **kwargs
+            Forwarded to the underlying section class.
+            .. end generated
 
         Returns
         -------
@@ -781,6 +791,7 @@ class GridPlots:
             A :class:`~myflopy.viz.Picture` under the default backend; a bare
             Matplotlib figure under ``"mpl"``.
 
+            .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         Raises
         ------
         ValueError
@@ -792,14 +803,13 @@ class GridPlots:
         --------
         map : the same data in plan view.
         myflopy.plot.grid : the mesh itself.
+            .. end generated
 
         Examples
         --------
         >>> vor.plot.section(line)
         >>> vor.plot.section(line, backend="mpl").savefig("section.png")
         >>> vor.plot.section(line, fill="layer", backend="mpl")   # filled cells
-
-        Bound form of :func:`myflopy.plot.section`.
         """
 
         if fill is not None:
@@ -839,6 +849,9 @@ class GridPlots:
         ``GridMesh(vor)``, which accepts no other argument, so every one of them
         raised.
 
+        .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.grid`.
+
         The one picture :func:`map` cannot give you. A choropleth colours cells
         against a web basemap and so **requires a CRS**; this draws in the grid's own
         coordinates and needs none, which makes it the view for a grid you are still
@@ -847,6 +860,7 @@ class GridPlots:
         Both backends draw the same subject -- this grid -- so ``backend=`` switches
         only the renderer. That is why the 3-D volume is ``grid`` and not
         ``surface``: ``surface`` means a height field.
+        .. end generated
 
         Parameters
         ----------
@@ -857,6 +871,7 @@ class GridPlots:
             every other verb spells it. The 3-D volume is
             ``myflopy.plot.grid(stack, backend="vtk")``, which needs a layer
             stack this scope does not have.
+            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         pathlines : DataFrame, optional
             Particle track records, drawn as time-coloured tubes over the 3-D mesh.
             Requires ``backend="vtk"``; in plan view the equivalent is
@@ -879,11 +894,13 @@ class GridPlots:
             notebook or on a headless machine.
         **kwargs
             Forwarded to the backend's builder.
+            .. end generated
 
         Returns
         -------
         GridMesh or matplotlib.figure.Figure
 
+            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         Raises
         ------
         ValueError
@@ -899,13 +916,12 @@ class GridPlots:
         myflopy.layers.StackPlots.grid : the LAYER-stack 3-D volume, which takes
             ``layers``/``scale``/``color_by``/``cmap`` -- a different builder, and
             not reachable through this function.
+            .. end generated
 
         Examples
         --------
         >>> vor.plot.grid()
         >>> vor.plot.grid(backend="mpl")
-
-        Bound form of :func:`myflopy.plot.grid`.
         """
 
         mesh = GridMesh(self.vor)

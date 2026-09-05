@@ -170,6 +170,7 @@ class UzfInput:
             recharge is usually reviewed in; pass ``1.0`` to see the raw model
             units, or ``365.25`` for ft/year. Applied to every cell, including
             the zero-filled ones, so it never changes which cells are blank.
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -263,6 +264,7 @@ class UzfInput:
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+            .. end generated
 
         Returns
         -------

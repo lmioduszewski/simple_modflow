@@ -1443,6 +1443,9 @@ class ModelPlots:
     ):
         """This model's plan-view map. See :func:`myflopy.plot.map`.
 
+        .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.map`.
+
         The single map verb. Contours, observation markers, a hillshade and particle
         pathlines are all **options** here rather than verbs of their own, because a
         map is a plan view whatever is drawn on it.
@@ -1627,8 +1630,7 @@ class ModelPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-
-        Bound form of :func:`myflopy.plot.map`.
+            .. end generated
         """
 
         return map(self.model, **_bound_args(locals(), "trace_kwargs"), **trace_kwargs)
@@ -1667,6 +1669,9 @@ class ModelPlots:
         **kwargs,
     ):
         """A vertical slice through this model. See :func:`myflopy.plot.section`.
+
+        .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.section`.
 
         Through a MODEL this is the results section -- the field against distance
         along the line. Through a bare GRID it is the geometry section: layers and
@@ -1768,6 +1773,39 @@ class ModelPlots:
 
             Ignored with ``fill='results'`` or an array fill: those paint the field
             onto the cells, so a line of the same quantity on top would say it twice.
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Works with ``line=`` (a geometry, coordinates, a flopy dict, or a vector
+            file) and with ``cells=``.
+
+            The two branches reach it differently, which matters if you were
+            thinking of doing it by hand. ``XSection`` samples the line itself, so
+            the PROFILE is mirrored by reversing the coordinates -- and reversing
+            them yourself works. The FILLED section is not: FloPy's
+            ``PlotCrossSection`` normalizes direction internally, so a reversed line
+            gives it byte-identical geometry and changes nothing. That branch
+            mirrors the view instead, and relabels the distance axis so it still
+            reads from the left edge.
+        legend : bool or str, default True
+            *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
+            ``True`` uses the house default (upper right); ``"auto"`` lets
+            matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
+            ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
+            ``"upper right"``) places it inside the axes.
+
+            ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
+            BESIDE the axes and make room for it. On a section that is usually what
+            you want: a layer legend placed anywhere inside sits on top of the
+            geology it is describing.
+
+            An unrecognised word raises and lists the accepted ones, rather than
+            quietly falling back to a placement you did not ask for.
+        show_grid : bool, default True
+            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
+            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
+            layer filter and would outline the very layers you excluded.
         layer_labels : sequence of str, optional
             *(``fill=`` only)* Legend names for the layers -- your unit names rather
             than ``Layer 1..N``. One per layer, in model order.
@@ -1794,37 +1832,6 @@ class ModelPlots:
             second way.
         **kwargs
             Forwarded to the underlying section class.
-        show_grid : bool, default True
-            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
-            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
-            layer filter and would outline the very layers you excluded.
-        legend : bool or str, default True
-            *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
-            ``True`` uses the house default (upper right); ``"auto"`` lets
-            matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
-            ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
-            ``"upper right"``) places it inside the axes.
-
-            ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
-            BESIDE the axes and make room for it. On a section that is usually what
-            you want: a layer legend placed anywhere inside sits on top of the
-            geology it is describing.
-
-            An unrecognised word raises and lists the accepted ones, rather than
-            quietly falling back to a placement you did not ask for.
-        reverse : bool, default False
-            Traverse the line the other way -- a section drawn north-south comes
-            back south-north, mirrored about its own centre.
-
-            Applies to BOTH branches, because it is a property of the line rather
-            than of what is drawn on it: distance along the section is measured from
-            the first point either way. Works with ``line=`` (the coordinates are
-            reversed) and with ``cells=`` (the cell order is), and a vector file is
-            read first, since a path has no direction until it is geometry.
-
-            Reversing the line yourself does the same thing; this saves writing
-            ``[::-1]`` and getting it right for each of the four forms ``line=``
-            accepts.
 
         Returns
         -------
@@ -1864,8 +1871,7 @@ class ModelPlots:
         >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
         >>> model.plot.section(line=line, fill="layer", backend="mpl",
         ...                    layer_labels=["fill", "sand", "clay", "till"])
-
-        Bound form of :func:`myflopy.plot.section`.
+            .. end generated
         """
 
         return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -1888,6 +1894,9 @@ class ModelPlots:
         **kwargs,
     ) -> InterpolatedSurface:
         """A 3-D interpolated surface of this model. See :func:`myflopy.plot.surface`.
+
+        .. generated from myflopy.plot.surface -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.surface`.
 
         Always Plotly, and always a height field. The 3-D grid VOLUME and 3-D
         particle pathlines are different shapes and live on :func:`grid` with
@@ -1936,8 +1945,7 @@ class ModelPlots:
         >>> model.plot.surface(layer=0)
         >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
         >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
-
-        Bound form of :func:`myflopy.plot.surface`.
+            .. end generated
         """
 
         return surface(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -1959,6 +1967,9 @@ class ModelPlots:
         """This model's mesh -- flat, or the 3-D volume with particle tracks.
 
         See :func:`myflopy.plot.grid`.
+
+        .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.grid`.
 
         The one picture :func:`map` cannot give you. A choropleth colours cells
         against a web basemap and so **requires a CRS**; this draws in the grid's own
@@ -2036,8 +2047,7 @@ class ModelPlots:
         >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
         >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
         >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
-
-        Bound form of :func:`myflopy.plot.grid`.
+            .. end generated
         """
 
         return grid(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -2058,6 +2068,9 @@ class ModelPlots:
         which need not all come from this model. For this model's results over
         time, the grammar generates the frames for you:
         ``model.hds.animate(kind="map", over="period")``.
+
+        .. generated from myflopy.plot.animate -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.animate`.
 
         A **combinator**, like :func:`mosaic` -- its first argument is the frames,
         not a subject. To animate one model's results over time, prefer the grammar
@@ -2117,8 +2130,7 @@ class ModelPlots:
         >>> plot.animate([("start", first), ("end", last)])
         >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
         >>> plot.animate(mixed, backend="png")           # only png can mix kinds
-
-        Bound form of :func:`myflopy.plot.animate`.
+            .. end generated
         """
 
         return animate(**_bound_args(locals(), "kwargs"), **kwargs)
@@ -2138,6 +2150,9 @@ class ModelPlots:
         Subject-free -- it takes the panels you hand it, which need not all come
         from this model. It lives here so the five verbs are discoverable in one
         place from a model you already have.
+
+        .. generated from myflopy.plot.mosaic -- edit there, then run scripts/derive_docstrings.py
+        Bound form of :func:`myflopy.plot.mosaic`.
 
         The free-form composer of the unified view grammar: pass any mix of
         ``Choro`` choropleth maps and Plotly figures (``viz.Fig`` timeseries,
@@ -2191,16 +2206,13 @@ class ModelPlots:
         --------
         myflopy.plot.animate : the same panels in sequence rather than side by side.
 
-        Bound form of :func:`myflopy.plot.mosaic`.
-
         Examples
         --------
         >>> viz.mosaic([
         ...     group.hds.map("F9b"),                       # a choropleth
         ...     group.packages.lak.results.stage.plot(),     # a timeseries
         ... ], ncols=2)
-
-        Bound form of :func:`myflopy.plot.mosaic`.
+            .. end generated
         """
 
         return mosaic(
@@ -2218,6 +2230,173 @@ _SECTION_HEADS = (
     "Parameters", "Other Parameters", "Returns", "Yields", "Raises", "Warns",
     "See Also", "Notes", "References", "Examples",
 )
+
+
+#: The FENCE. Everything between an opening fence and `.. end generated` was
+#: written by the free verb and is replaced wholesale on the next regeneration;
+#: everything outside it is the method's own and is edited in place.
+#:
+#: This is what makes the splice recoverable FROM ITS OWN OUTPUT, which is the
+#: whole design. The previous version cached the pre-splice docstring on the
+#: function as `_myflopy_own_doc`; once `derive_docstrings.py` wrote the
+#: assembled text back into the source, the next import cached THAT, the
+#: method's own entries shadowed every inherited one, and the free verbs stopped
+#: reaching anything at all -- measured, 29 of 29, with `--check` green
+#: throughout because source and runtime agreed on the same stale text.
+#:
+#: A reStructuredText COMMENT, so a renderer drops it. In raw `help()` the two
+#: lines are visible, and what they say is the file to edit and the command to
+#: run -- which is written nowhere else in the library.
+_FENCE_OPEN_PREFIX = ".. generated from myflopy.plot."
+_FENCE_CLOSE = ".. end generated"
+
+
+def _fence_open(verb: str) -> str:
+    """The opening fence line for one verb's inherited text."""
+
+    return (
+        f"{_FENCE_OPEN_PREFIX}{verb} -- edit there, then run "
+        "scripts/derive_docstrings.py"
+    )
+
+
+def _collapse_blank_runs(text: str) -> str:
+    """One blank line between blocks, none at either end.
+
+    Stripping a fenced run leaves the blank line that preceded it beside the one
+    that followed. NumPy style never wants two, and the splice has to be a FIXED
+    POINT -- it runs at every import, so a docstring that grew a blank line per
+    reload would make the written source wrong the moment it was read back.
+    """
+
+    out: list[str] = []
+    for line in text.splitlines():
+        line = line.rstrip()
+        if not line and (not out or not out[-1]):
+            continue
+        out.append(line)
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out)
+
+
+def strip_generated(doc: str) -> str:
+    """The method's OWN docstring: everything outside the generated fences.
+
+    The inverse of :func:`_fence`, and the reason the splice is idempotent by
+    construction rather than by a guard. Re-splicing generated output first
+    deletes what the last splice wrote, so there is nothing left to duplicate --
+    where the old containment check (`if extended in own_prose`) held only while
+    the reference never changed, and appended a SECOND copy of the free verb's
+    prose the first time it did. Measured: three edits took `GridPlots.map` from
+    181 lines to 211, carrying three copies of the first edit.
+    """
+
+    kept: list[str] = []
+    inside = False
+    for line in doc.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_FENCE_OPEN_PREFIX):
+            inside = True
+            continue
+        if stripped == _FENCE_CLOSE:
+            inside = False
+            continue
+        if not inside:
+            kept.append(line)
+    return _collapse_blank_runs("\n".join(kept))
+
+
+def _scrub_markers(text: str, verb: str) -> str:
+    """Drop fence lines from content, so a stray one cannot nest or truncate.
+
+    The markers are RESERVED, and nothing checked that. A `.. end generated`
+    inside a free verb's Notes would be written into a fenced region and then
+    close it early on the next `strip_generated`, so the tail was reclassified as
+    the method's own, re-inherited beside itself, and the docstring grew by two
+    lines on every regeneration -- the unbounded growth this design replaces,
+    reintroduced through the content channel.
+
+    Dropped and logged rather than raised. The splicers run at IMPORT, so raising
+    here takes `import myflopy` down for everyone -- and `derive_docstrings.py`
+    imports the module before it does anything, so the tool that would repair it
+    could not run either. A degraded input that is ignored is exactly what
+    `logger.warning` is for.
+    """
+
+    kept, dropped = [], 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_FENCE_OPEN_PREFIX) or stripped == _FENCE_CLOSE:
+            dropped += 1
+            continue
+        kept.append(line)
+    if dropped:
+        logger.warning(
+            "dropped %d fence marker(s) from `%s` docstring content: the "
+            "`.. generated from ...` / `%s` lines are written by "
+            "scripts/derive_docstrings.py and cannot appear in the text itself",
+            dropped, verb, _FENCE_CLOSE,
+        )
+    return "\n".join(kept)
+
+
+def _fence(blocks, verb: str) -> str:
+    """Join ownership-tagged blocks, fencing each contiguous GENERATED run.
+
+    ``blocks`` are ``(text, generated, tight)``. ``tight`` joins to the previous
+    block with a single newline instead of a blank line, which is what a
+    ``Parameters`` list wants -- its entries are not blank-separated, so the
+    fence between the method's own entries and the inherited ones sits hard
+    against both, exactly where an entry head would.
+
+    A joiner blank line belongs to the OWN side whenever either neighbour is
+    own. That places the opening fence after the blank and the closing fence
+    before it, so a fence always hugs the generated text it delimits.
+    """
+
+    tagged: list[tuple[str, bool]] = []
+    blocks = [(_scrub_markers(text.strip("\n"), verb), gen, tight)
+              for text, gen, tight in blocks if text and text.strip()]
+    for index, (text, generated, tight) in enumerate(blocks):
+        if tagged and not tight:
+            previous = blocks[index - 1][1]
+            tagged.append(("", previous and generated))
+        tagged += [(line, generated) for line in text.splitlines()]
+
+    # A fence INSIDE a section is indented, so it reads as a continuation of the
+    # entry above rather than as a new entry head. At column 0 inside a
+    # `Parameters` block it IS an entry head to every NumPy parser -- measured
+    # with numpydoc: 39 phantom parameters across 21 methods, named after the
+    # build instruction, and two docstrings it refused to parse at all. That is
+    # the `Requires a CRS` defect this same pass added `_refuse_malformed_entries`
+    # to end, reintroduced by the generator itself. Indented it is a
+    # reStructuredText comment attached to the preceding description: renderers
+    # drop it, numpydoc folds it into text it already ignores, and
+    # `strip_generated` still finds it because it matches on the stripped line.
+    body = [line for line, _generated in tagged]
+    in_sections = [False] * len(body)
+    seen = False
+    for index, line in enumerate(body):
+        nxt = body[index + 1].strip() if index + 1 < len(body) else ""
+        if line.strip() in _SECTION_HEADS and nxt and set(nxt) == {"-"}:
+            seen = True
+        in_sections[index] = seen
+
+    out: list[str] = []
+    inside = False
+    for index, (line, generated) in enumerate(tagged):
+        pad = "    " if in_sections[index] else ""
+        if generated and not inside:
+            out.append(pad + _fence_open(verb))
+            inside = True
+        elif not generated and inside:
+            out.append(pad + _FENCE_CLOSE)
+            inside = False
+        out.append(line)
+    if inside:
+        out.append(("    " if in_sections and in_sections[-1] else "") + _FENCE_CLOSE)
+    return _collapse_blank_runs("\n".join(out))
 
 
 def _split_sections(doc: str) -> tuple[str, str]:
@@ -2351,6 +2530,59 @@ def _drop_parameter(sections: str, name: str) -> str:
     return _filter_parameters(sections, drop=(name,))
 
 
+def _refuse_malformed_entries(sections: str, where: str) -> None:
+    """Refuse a ``Parameters`` block whose column-0 line is not an entry head.
+
+    A paragraph written INSIDE a parameter list is read as an entry head by
+    every NumPy parser, this one included, so it becomes a parameter named after
+    its first clause. `GridPlots.map` carried two of them: one rendered as a
+    parameter called ``Requires a CRS`` whose type was ``because the basemap
+    does. Use :meth:`grid` for a grid``. The SPLICE is what put them there --
+    `_merge_parameter_sections` reads the own block to the next section heading,
+    so trailing prose is folded into the merged body.
+
+    Checked on the free verb as well as the method, and that is the point:
+    unrefused, one such paragraph in a reference propagates to every copy that
+    inherits it. Prose belongs above ``Parameters``.
+    """
+
+    lines = sections.splitlines()
+    in_params = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        following = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if stripped in _SECTION_HEADS and following and set(following) == {"-"}:
+            in_params = stripped in _PARAMETER_SECTIONS
+            continue
+        if not in_params or not stripped or not line[:1].strip():
+            continue
+        if set(stripped) == {"-"} or stripped.startswith(_FENCE_OPEN_PREFIX):
+            continue
+        if stripped == _FENCE_CLOSE:
+            continue
+        names = _parameter_name(line) or _bare_parameter_name(line)
+        if names and all(n.lstrip("*").isidentifier() for n in names):
+            continue
+        raise ValueError(
+            f"{where}: line {index + 1} of the sectioned docstring sits at "
+            f"column 0 inside a Parameters block but is not an entry head, so "
+            f"a NumPy reader documents it as a parameter named "
+            f"{names[0] if names else stripped.split()[0]!r}. Move the prose "
+            f"above the Parameters heading.\n    {stripped[:88]}"
+        )
+
+
+def _blocks_to_text(blocks) -> str:
+    """The assembled text of ownership-tagged blocks, ignoring ownership."""
+
+    out: list[str] = []
+    for text, _generated, tight in blocks:
+        if not text or not text.strip():
+            continue
+        out.append(("\n" if tight and out else "\n\n" if out else "") + text.strip("\n"))
+    return "".join(out)
+
+
 def inherit_map_docs(method, *, keep, extra: str = "") -> None:
     """Give a noun's ``map()`` the free verb's entries for the names it accepts.
 
@@ -2362,17 +2594,22 @@ def inherit_map_docs(method, *, keep, extra: str = "") -> None:
     cell, work the verb never does because it is handed ``values`` directly.
     """
 
-    own_doc = getattr(method, "_myflopy_own_doc", None)
-    if own_doc is None:
-        own_doc = method.__doc__ or ""
-        method._myflopy_own_doc = own_doc
-    own_prose, own_sections = _split_sections(inspect.cleandoc(own_doc).strip())
+    # A BOOLEAN stamp, not a cached docstring. The cache is what rotted: once the
+    # assembled text was written back into the source, the next import cached
+    # THAT as the method's own, its entries shadowed every inherited one, and the
+    # free verb stopped reaching anything. A boolean cannot go stale, and the own
+    # text is recovered from the fences instead -- see `strip_generated`.
+    method._myflopy_spliced = True
+    own = strip_generated(inspect.cleandoc(method.__doc__ or "").strip())
+    own_prose, own_sections = _split_sections(own)
     _, sections = _split_sections(inspect.cleandoc(map.__doc__))
+    _refuse_malformed_entries(sections, "myflopy.plot.map")
+    _refuse_malformed_entries(own_sections, getattr(method, "__qualname__", "?"))
     sections = _filter_parameters(sections, keep=set(keep))
     if extra:
-        sections = _merge_parameter_sections(
+        sections = _blocks_to_text(_merge_parameter_sections(
             "Parameters\n----------\n" + inspect.cleandoc(extra), sections
-        )
+        ))
     if own_sections:
         # The noun documents some of its own parameters -- `per`/`multiplier`
         # on `inputs.uzf`, `fill_value`/`agg` on a record field. Merging the
@@ -2384,23 +2621,28 @@ def inherit_map_docs(method, *, keep, extra: str = "") -> None:
         # method's own entry wins and the inherited block contributes only the
         # names it does not already cover -- the same rule
         # `_inherit_verb_docs` already applies to the bound namespaces.
-        own_names = {
-            name
-            for line in own_sections.splitlines()
-            for name in _parameter_name(line)
-        }
-        sections = _filter_parameters(sections, drop=own_names)
-        sections = _merge_parameter_sections(own_sections, sections)
-    method.__doc__ = "\n\n".join(p for p in (own_prose, sections) if p)
+        # `_documented_names` rather than a scan of every line: the inline
+        # version called `_parameter_name` on the WHOLE sectioned remainder, so
+        # a `See Also` entry (`map : draw a plan view`) parsed as a parameter
+        # and its name joined the drop set. Latent while no free-verb parameter
+        # shares a name with one -- permanent and invisible the day one does.
+        sections = _filter_parameters(sections, drop=_documented_names(own_sections))
+    blocks = [(own_prose, False, False)]
+    blocks += _merge_parameter_sections(own_sections, sections)
+    method.__doc__ = _fence(blocks, "map")
 
 
 def _merge_parameter_sections(own: str, inherited: str) -> str:
     """Fold an inherited Parameters block into one the method already has.
 
-    Emits ONE `Parameters` heading: the method's own entries first, then the
-    inherited ones, then whatever other sections each side carried. Two headings
-    is malformed NumPy -- a reader stops at the first block and never sees the
-    rest.
+    Returns ownership-tagged ``(text, generated, tight)`` blocks for
+    :func:`_fence` rather than finished text, because the merge INTERLEAVES and
+    the result has to stay separable: the method's own entries first, then the
+    inherited ones, under ONE `Parameters` heading (two headings is malformed
+    NumPy -- a reader stops at the first block and never sees the rest), then
+    whatever other sections each side carried. There is no single point at which
+    that text splits back into own and inherited, which is why the fences exist
+    and why the previous design could not recover its own input.
     """
 
     def _split_param_block(text: str) -> tuple[str, str]:
@@ -2422,8 +2664,16 @@ def _merge_parameter_sections(own: str, inherited: str) -> str:
 
     own_body, own_rest = _split_param_block(own)
     inh_body, inh_rest = _split_param_block(inherited)
-    merged = "\n".join(part for part in (own_body, inh_body) if part.strip())
-    parts = ["Parameters\n----------\n" + merged] if merged else []
+    blocks: list[tuple[str, bool, bool]] = []
+    if own_body.strip():
+        blocks.append(("Parameters\n----------\n" + own_body, False, False))
+        if inh_body.strip():
+            # TIGHT: parameter entries are not blank-separated, so the fence
+            # between the method's own and the inherited ones sits hard against
+            # both, where an entry head would.
+            blocks.append((inh_body, True, True))
+    elif inh_body.strip():
+        blocks.append(("Parameters\n----------\n" + inh_body, True, False))
     # The method's OWN Returns/See Also/Examples win outright; the inherited copy
     # of a section it already has is dropped rather than appended. Concatenating
     # both is the same malformation this function was written to end for
@@ -2435,10 +2685,16 @@ def _merge_parameter_sections(own: str, inherited: str) -> str:
     # Emitted in canonical NumPy ORDER rather than own-then-inherited. Appending
     # blindly put an inherited `Returns` after the method's own `Examples`, which
     # is a docstring no renderer lays out the way its author meant.
-    sections = dict(_split_named_sections(inh_rest))
-    sections.update(dict(_split_named_sections(own_rest)))     # own wins
-    parts += [sections[head] for head in _SECTION_HEADS if head in sections]
-    return "\n\n".join(parts)
+    own_named = dict(_split_named_sections(own_rest))
+    inh_named = dict(_split_named_sections(inh_rest))
+    for head in _SECTION_HEADS:
+        if head in _PARAMETER_SECTIONS and blocks:
+            continue
+        if head in own_named:
+            blocks.append((own_named[head], False, False))
+        elif head in inh_named:
+            blocks.append((inh_named[head], True, False))
+    return blocks
 
 
 def _split_named_sections(text: str) -> list[tuple[str, str]]:
@@ -2490,44 +2746,57 @@ def _inherit_verb_docs(namespace) -> None:
         free = globals().get(verb)
         if method is None or free is None or not free.__doc__:
             continue
-        # Splice from the method's ORIGINAL docstring, cached on first pass.
-        # Without this the function is not idempotent -- it re-splices its own
-        # output, and a second call took `ModelPlots.map` from 149 lines to 297,
-        # with every section duplicated. Nothing calls it twice today; a module
-        # reloaded in a notebook does.
-        own_doc = getattr(method, "_myflopy_own_doc", None)
-        if own_doc is None:
-            own_doc = method.__doc__ or ""
-            method._myflopy_own_doc = own_doc
-        own_prose, own_sections = _split_sections(inspect.cleandoc(own_doc).strip())
+        # A boolean stamp, and the own text recovered from the FENCES rather
+        # than from a cache. The cache is what broke this: `derive_docstrings.py`
+        # wrote the assembled text into the source, the next import cached that
+        # as the method's own, and `drop=own_names` then dropped every inherited
+        # entry -- 29 of 29 methods, with `--check` green throughout.
+        method._myflopy_spliced = True
+        own = strip_generated(inspect.cleandoc(method.__doc__ or "").strip())
+        own_prose, own_sections = _split_sections(own)
         prose, sections = _split_sections(inspect.cleandoc(free.__doc__))
         if not sections:
             continue
+        _refuse_malformed_entries(sections, f"myflopy.plot.{verb}")
+        _refuse_malformed_entries(own_sections, f"{namespace.__name__}.{verb}")
         # Keep the free verb's extended prose, drop its summary line: the bound
         # method's own summary says what binding this subject means.
         extended = "\n".join(prose.splitlines()[1:]).strip()
-        sections = _drop_parameter(sections, "source")
+        # The free verb's first positional is usually the SUBJECT, which binding
+        # supplies -- `plot.map(model, ...)` against `model.plot.map(...)`. Read
+        # off the signature rather than hardcoded as "source": renaming it there
+        # left eleven bound docstrings advertising a first positional their
+        # method does not accept, and nothing measured it.
+        #
+        # Dropped only if the BOUND method does not accept it, which is the
+        # distinction the name alone cannot make. `mosaic` and `animate` are
+        # COMBINATORS over pictures, not verbs with a subject: their first
+        # positionals (`panels`, `frames`) are real parameters the bound form
+        # takes, and dropping them by position left both undocumented.
+        subject = next(iter(inspect.signature(free).parameters), None)
+        if subject and subject not in inspect.signature(method).parameters:
+            sections = _drop_parameter(sections, subject)
         if own_sections:
             # The bound method documents some of its own parameters (GridPlots.map
             # does). Appending the inherited block wholesale gave it TWO
             # `Parameters` headings, which is malformed NumPy -- so the method's
             # own entries win and the inherited block contributes only the names
             # it does not already cover.
-            own_names = _documented_names(own_sections)
-            sections = _filter_parameters(sections, drop=own_names)
-            sections = _merge_parameter_sections(own_sections, sections)
-        # Both guards make the splice IDEMPOTENT, which it was not: re-running it
-        # over its own output grew `ModelPlots.section` from 169 lines to 179,
-        # duplicating the extended prose, the `**kwargs` entry and the footer.
-        # That matters now the generated text is written back into the source --
-        # a module reloaded in a notebook would otherwise compound it.
+            sections = _filter_parameters(sections, drop=_documented_names(own_sections))
+        # No idempotency GUARDS any more: `strip_generated` above deleted what the
+        # last splice wrote, so there is nothing left to duplicate. The guards
+        # they replace were containment checks (`if extended in own_prose`) that
+        # held only while the reference never changed -- the first edit to a free
+        # verb's prose appended a second copy beside the stale one, and the third
+        # edit left `GridPlots.map` at 211 lines carrying three.
         footer = f"Bound form of :func:`myflopy.plot.{verb}`."
-        if extended and extended in own_prose:
-            extended = ""
-        parts = [own_prose, extended, sections]
-        if footer not in own_prose and not sections.rstrip().endswith(footer):
-            parts.append(footer)
-        method.__doc__ = "\n\n".join(p for p in parts if p)
+        blocks = [
+            (own_prose, False, False),
+            (footer, True, False),
+            (extended, True, False),
+        ]
+        blocks += _merge_parameter_sections(own_sections, sections)
+        method.__doc__ = _fence(blocks, verb)
 
 
 def _inherit_noun_docs() -> None:

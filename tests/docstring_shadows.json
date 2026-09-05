@@ -1,0 +1,98 @@
+{
+ "CellBudgetResultsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "CellPackageInputFieldExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "DependentVariableFile.map": [
+  "backend"
+ ],
+ "GridPlots.grid": [
+  "backend"
+ ],
+ "GridPlots.map": [
+  "backend",
+  "select",
+  "select_color",
+  "select_style"
+ ],
+ "GridPlots.section": [
+  "backend",
+  "fill",
+  "fill_cmap",
+  "fill_label",
+  "line",
+  "reverse"
+ ],
+ "GroupLakConnections.map": [
+  "layer"
+ ],
+ "HfbPackageExplorer.map": [
+  "layer",
+  "per",
+  "values"
+ ],
+ "HfbResultsExplorer.map": [
+  "kstpkper",
+  "layer",
+  "per"
+ ],
+ "LakBudgetResultsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "LakConnectionsExplorer.map": [
+  "layer"
+ ],
+ "PRTPathlineView.map": [
+  "layer",
+  "per"
+ ],
+ "SfrBudgetResultsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "StackPlots.grid": [
+  "backend"
+ ],
+ "StackPlots.map": [
+  "layer"
+ ],
+ "StackPlots.section": [
+  "**kwargs",
+  "legend",
+  "line",
+  "show_grid"
+ ],
+ "StackPlots.surface": [
+  "**kwargs",
+  "layer",
+  "resolution"
+ ],
+ "StageResultsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "StaticArrayFieldExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "SurfaceWaterExchangeResultsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "SurfaceWaterInputFieldExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "UzfFieldInputsExplorer.map": [
+  "layer",
+  "per"
+ ],
+ "UzfInput.map": [
+  "per"
+ ]
+}

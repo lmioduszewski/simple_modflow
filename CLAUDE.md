@@ -129,13 +129,24 @@ signatures — it stays `*args, **kwargs` and points at the leaf.
 rather than listing them; its `UNCONVERTED` set is now empty and asserted empty).
 A noun names Tier 1 (`NOUN_MAP_PARAMS`, 22 including `backend`) plus its own
 selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
-per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178, 2026-09-02): the splice is
-still the single author, but `scripts/derive_docstrings.py` writes its output
-back into each source file, because PyCharm and Pylance never run the module and
-were showing ONE line of `model.plot.section` against 169. Change a reference on
-`plot.map`, then rerun the script and review the diff --
-`tests/test_docstrings_are_static.py` fails in both directions. Hand-editing a
-generated docstring fails too. The splice must stay IDEMPOTENT for this to hold.
+per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178/180, 2026-09-05): the free
+verb is the single author, and `scripts/derive_docstrings.py` writes the spliced
+result back into each source file, because PyCharm and Pylance never run the
+module and were showing ONE line of `model.plot.section` against 169. Change a
+reference on `plot.map`, rerun the script, review the diff.
+**Text between `.. generated from myflopy.plot.<verb> ...` and `.. end
+generated` is NOT yours** -- it is replaced wholesale on the next run. Everything
+outside a fence is the method's own: edit it in place, no regeneration needed.
+The fences are what let the splice recover its own input (`strip_generated`), so
+idempotency and the ratchet are structural rather than guarded -- the first
+version cached the pre-splice text instead, and once its output was written back
+the cache held that, every inherited entry was shadowed, and **all 29 methods
+silently stopped propagating while `--check` stayed green**. Editing a reference
+without regenerating fails; so does hand-editing inside a fence. A name a method
+documents that its reference ALSO documents is a *shadow* -- permanent, because
+the method's entry wins -- and every one is pinned in
+`tests/docstring_shadows.json`; read that diff, it is the list of places your
+edit will not reach.
 **Converting one? The hazard is a `**kwargs` tail something READ.** PRT's `map`
 consulted `base_kwargs` for three separate refusals; naming the parameters
 emptied it and would have disabled all three silently (`_explicit_options`
@@ -191,7 +202,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**1731 passed / 1 skipped**, 2026-08-28): `pytest -n 10` ≈ **67 s** (worksteal dist is in
+- Full suite (**2348 passed / 4 skipped**, 2026-09-05): `pytest -n 10` ≈ **90 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **4m55s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   Serial is ~3.7x the parallel run — that gap is the price of the `-n0`
   pre-commit check below, not a regression.

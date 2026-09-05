@@ -160,6 +160,47 @@ The exception is a verb that is genuinely polymorphic. The namespace-level
 `(*args, field=None, **kwargs)` and its docstring says to call the leaf instead.
 That is a real property of the design, not a shortcut.
 
+### The docstring is generated, and the fence says which half
+
+The same argument reaches the docstring: a `__doc__` assembled at import reaches
+`help()` and reaches no editor. So the spliced text is written into the source by
+`scripts/derive_docstrings.py`, and the boundary is marked:
+
+```
+Own summary line -- yours, edit it here.
+
+.. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
+Bound form of :func:`myflopy.plot.section`.
+...
+.. end generated
+```
+
+Inside a fence is the free verb's reference, replaced wholesale on the next run.
+Outside is yours, edited in place with no tool run.
+
+**Adding a noun?** Three steps, and the middle one is the one that gets missed:
+
+1. Write its own summary, prose, and only the parameters it documents
+   DIFFERENTLY from the reference.
+2. **Register it** — add the method to `_inherit_noun_docs()` in
+   `myflopy/plot/__init__.py` (or, for a class ABOVE that module in the import
+   graph, call `inherit_map_docs` at the bottom of its own module, as
+   `project/group/lak.py` does). Nothing discovers a noun that is not wired in.
+3. Run `python scripts/derive_docstrings.py` — the shared entries arrive fenced.
+
+Skip step 2 and the script reports success while the docstring stays as you
+wrote it. It is not silent forever — `test_the_sweep_finds_every_spliced_method_and_no_others`
+pins the count — but it is silent at the moment you would want to hear about it.
+
+Two things worth knowing before you write one. Prose belongs **above**
+`Parameters`: a paragraph at column 0 inside the list is read as an entry head by
+every NumPy parser, and `_refuse_malformed_entries` now raises rather than
+propagating it. And a parameter you document that the reference documents too is
+a **shadow** — your entry wins, permanently, so reference edits will never reach
+it. That is often right (`layer` is narrower on a record noun), but it is how
+three `reverse` entries came to say the opposite of what the verb did. Every
+shadow is pinned in `tests/docstring_shadows.json`; read that diff.
+
 ## Why this file exists
 
 The **spatial** half of the grammar was already decided and documented
