@@ -404,16 +404,21 @@ def mirror_horizontally(axes) -> None:
     for every artist including the ones added later, and leaves the data in one
     consistent frame.
 
-    The tick labels are rewritten to measure from the NEW start, so the left
-    edge still reads 0: a feature that was `d` from the old start is `L - d`
-    from this one, and saying otherwise would make the two pictures
-    incomparable.
+    The tick labels are rewritten to measure from the NEW start, so the
+    numbering still counts up left to right: a feature that was `d` from the old
+    start is `L - d` from this one, and saying otherwise would make the two
+    pictures incomparable.
+
+    Mirrors the CURRENT x view and does not refit it. The refit belongs to
+    whichever caller needs one: the filled branch mirrors before its limits are
+    set, so it autoscales first (a `PatchCollection` does not update the data
+    limits on its own). The grid's geometry section arrives already framed, and
+    autoscaling it here added matplotlib's 5% margins -- widening the picture as
+    a side effect of reversing it, which is not what the argument says it does.
     """
 
     from matplotlib.ticker import FuncFormatter
 
-    axes.relim()
-    axes.autoscale_view(scalex=True, scaley=False)
     low, high = axes.get_xlim()
     total = low + high
     axes.set_xlim(high, low)
@@ -600,7 +605,11 @@ def plot_layered_cross_section(
 
         if reverse:
             # Before the limits are set, so the crop below measures the mirrored
-            # drawing rather than the original.
+            # drawing rather than the original -- which is also why the refit
+            # is here: at this point the axes carry only collections, and those
+            # leave the data limits alone.
+            ax.relim()
+            ax.autoscale_view(scalex=True, scaley=False)
             mirror_horizontally(ax)
 
         if xlim is not None:

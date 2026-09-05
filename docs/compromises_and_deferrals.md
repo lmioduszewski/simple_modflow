@@ -5200,6 +5200,31 @@ same day, which is the useful part of the result.
           Tick labels are rewritten to measure from the new start: leaving them
           counting down from L would make the mirrored picture incomparable with
           the original.
+        - **The GRID scope mirrors its geometry section too, and the refit moved
+          to the caller.** The refusal was first written `if reverse:` with no
+          backend test, so `vor.plot.section(line, reverse=True, backend="mpl")`
+          raised -- answering with a message about the PLOTLY section, a branch
+          the caller had not asked for, and giving a reason ("has none") that is
+          false there: the Matplotlib geometry section draws layers and cell
+          edges like the filled one. `mirror_horizontally` inverts the VIEW, so
+          it does not care what is on the axes, and that path now works. Only
+          Plotly raises, and for the true reason -- it is not an axes.
+          Doing that exposed a second thing: `mirror_horizontally` was calling
+          `relim`/`autoscale_view` itself. The filled branch needs it (it mirrors
+          before its limits are set, and a `PatchCollection` leaves the data
+          limits alone); the geometry section arrives already framed, and
+          autoscaling it added matplotlib's 5% margins -- WIDENING the picture as
+          a side effect of reversing it. The refit moved to the one caller that
+          needs it. The margins are why the grid-scope test asserts span and
+          direction rather than "the left edge reads 0": that edge coordinate is
+          framing, not contract, and it is equally non-zero in the forward
+          picture. Read back through the `%g` tick formatter, so compared to six
+          significant figures.
+        - **This makes `reverse` the second entry `GridPlots.section` documents
+          in its own words** (with `fill`/`fill_cmap`/`fill_label`). Deliberate:
+          the scope's behaviour genuinely differs -- mpl-only, no `cells=`. It is
+          also how the docstring defect below arrived, so it is one of the
+          overrides any pipeline fix must carry rather than overwrite.
         - **Legend text is chosen from the BACKGROUND, not inherited.** Reported
           as "the legend text is unreadable because it is white on a white
           background". Matplotlib takes label colour from the `text.color`

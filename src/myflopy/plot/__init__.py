@@ -822,15 +822,17 @@ def section(
         Traverse the line the other way -- a section drawn north-south comes
         back south-north, mirrored about its own centre.
 
-        Applies to BOTH branches, because it is a property of the line rather
-        than of what is drawn on it: distance along the section is measured from
-        the first point either way. Works with ``line=`` (the coordinates are
-        reversed) and with ``cells=`` (the cell order is), and a vector file is
-        read first, since a path has no direction until it is geometry.
+        Works with ``line=`` (a geometry, coordinates, a flopy dict, or a vector
+        file) and with ``cells=``.
 
-        Reversing the line yourself does the same thing; this saves writing
-        ``[::-1]`` and getting it right for each of the four forms ``line=``
-        accepts.
+        The two branches reach it differently, which matters if you were
+        thinking of doing it by hand. ``XSection`` samples the line itself, so
+        the PROFILE is mirrored by reversing the coordinates -- and reversing
+        them yourself works. The FILLED section is not: FloPy's
+        ``PlotCrossSection`` normalizes direction internally, so a reversed line
+        gives it byte-identical geometry and changes nothing. That branch
+        mirrors the view instead, and relabels the distance axis so it still
+        reads from the left edge.
     legend : bool or str, default True
         *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
         ``True`` uses the house default (upper right); ``"auto"`` lets

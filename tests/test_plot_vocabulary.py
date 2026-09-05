@@ -1230,6 +1230,50 @@ def test_reverse_mirrors_the_section_and_relabels_the_distance(canonical_run):
     assert np.allclose(ahead, back[::-1])
 
 
+def test_reverse_mirrors_the_grid_scopes_geometry_section_too(canonical_run):
+    """`vor.plot.section(..., reverse=True)` works WITHOUT `fill=`.
+
+    It first did not: the refusal was written as `if reverse:` with no backend
+    test, so it fired on `backend="mpl"` as well and answered with a message
+    about the PLOTLY section -- naming a branch the caller had not asked for,
+    and giving a reason ("has none") that is false there. The Matplotlib
+    geometry section draws layers and cell edges like the filled one, and
+    `mirror_horizontally` inverts the VIEW rather than the drawn geometry, so
+    it does not care what is on the axes.
+
+    Plotly still raises, and now for the true reason: it is not an axes.
+    """
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    line = _mid_line(canonical_run)
+    vor = canonical_run.vor
+
+    forward = vor.plot.section(line, backend="mpl")
+    mirrored = vor.plot.section(line, backend="mpl", reverse=True)
+
+    assert forward.axes[0].get_xlim()[0] < forward.axes[0].get_xlim()[1]
+    low, high = mirrored.axes[0].get_xlim()
+    assert low > high, "reverse=True did not mirror the grid geometry section"
+
+    # Relabelled, so distance still counts UP from left to right and spans the
+    # same length. Asserted as span-and-direction rather than as "the left edge
+    # reads 0": this branch keeps matplotlib's 5% autoscale margins, where the
+    # filled branch fits its axes to the drawn polygons, so the edge coordinate
+    # is an artifact of the framing and not part of the contract.
+    mirrored.canvas.draw()
+    formatter = mirrored.axes[0].xaxis.get_major_formatter()
+    left, right = float(formatter(low)), float(formatter(high))
+    assert left < right, "the mirrored axis counts down"
+    # Compared loosely on purpose: the labels are rendered with ``%g``, so
+    # reading them back caps the comparison at six significant figures.
+    assert right - left == pytest.approx(abs(high - low), rel=1e-5)
+
+    with pytest.raises(ValueError, match="not an axes"):
+        vor.plot.section(line, reverse=True)
+
+
 def test_reverse_needs_a_line_to_reverse(canonical_run):
     """Without `line=` or `cells=` there is no direction to flip."""
 

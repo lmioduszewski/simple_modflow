@@ -13,7 +13,10 @@ from flopy.discretization.vertexgrid import VertexGrid
 from flopy.plot.crosssection import PlotCrossSection
 
 from myflopy import viz as f
-from myflopy.modflow.mf6.cross_section_plotting import filled_section
+from myflopy.modflow.mf6.cross_section_plotting import (
+    filled_section,
+    mirror_horizontally,
+)
 from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     as_mpl_figure,
@@ -637,6 +640,7 @@ class GridPlots:
         fill=None,
         fill_cmap: str = "viridis",
         fill_label: str | None = None,
+        reverse: bool = False,
         backend: str = "plotly",
     ):
         """A vertical slice of the grid geometry along ``line``.
@@ -756,6 +760,20 @@ class GridPlots:
 
             An unrecognised word raises and lists the accepted ones, rather than
             quietly falling back to a placement you did not ask for.
+        reverse : bool, default False
+            Traverse the line the other way -- a section drawn north-south comes
+            back south-north, mirrored about its own centre.
+
+            Mirrors the finished DRAWING, not the line, and so does not work the
+            way you would do it by hand: FloPy's ``PlotCrossSection`` normalizes
+            direction internally, so handing it reversed coordinates gives it
+            byte-identical geometry and changes nothing. The view is inverted
+            instead and the distance axis relabelled, so it still reads from the
+            left edge.
+
+            ``backend="mpl"`` only, filled or not -- both Matplotlib branches
+            draw cells and mirror the same way. The Plotly geometry section is
+            not an axes and raises rather than ignoring the argument.
 
         Returns
         -------
@@ -794,12 +812,24 @@ class GridPlots:
             # `myflopy.plot.section` would be an UPWARD import from this module.
             return filled_section(
                 _grid_section_factory(self.vor, line=line).grid, line,
-                fill=fill, cmap=fill_cmap, label=fill_label,
+                fill=fill, cmap=fill_cmap, label=fill_label, reverse=reverse,
+            )
+        if reverse and normalize_backend(backend) != "mpl":
+            raise ValueError(
+                "reverse= mirrors the drawn section by inverting its axes, "
+                "which is a Matplotlib operation; the Plotly geometry section "
+                "is not an axes. Pass backend='mpl'."
             )
         picture = _grid_section_factory(self.vor, line=line)
         if normalize_backend(backend) == "plotly":
             return picture
-        return as_mpl_figure(picture.plot_mpl())
+        figure = as_mpl_figure(picture.plot_mpl())
+        if reverse:
+            # The geometry section draws cells too, so it mirrors exactly as the
+            # filled one does -- `mirror_horizontally` inverts the view rather
+            # than the drawn geometry, so it does not care what is on the axes.
+            mirror_horizontally(figure.axes[0])
+        return figure
 
     def grid(self, *, backend: str = "plotly"):
         """The bare mesh: cell edges, no values, no basemap, no CRS needed.
