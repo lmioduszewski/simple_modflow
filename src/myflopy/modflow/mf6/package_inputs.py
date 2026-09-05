@@ -294,6 +294,7 @@ class CellPackageInputFieldExplorer(SpatialView):
             extensive quantity such as a conductance or a flow, ``mean`` for an
             intensive one such as an elevation or a head. Worth setting
             explicitly when a vector source put many features in one cell.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -388,6 +389,7 @@ class CellPackageInputFieldExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -630,6 +632,7 @@ class UzfFieldInputsExplorer(SpatialView):
             over the cell); switch to ``mean`` for an intensive one such as
             ``extdp``, ``extwc`` or ``rootact``, where summing a stacked column
             produces a number with no physical meaning.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -724,6 +727,7 @@ class UzfFieldInputsExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -1130,6 +1134,7 @@ class StaticArrayFieldExplorer(SpatialView):
             look identical for a uniform ``k`` and quite different for one built
             from a per-unit list. Use ``.wide()`` to see every layer side by side
             before choosing.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -1224,6 +1229,7 @@ class StaticArrayFieldExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns

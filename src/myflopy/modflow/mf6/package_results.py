@@ -287,6 +287,7 @@ class CellBudgetResultsExplorer(SpatialView):
             ``sum`` is right for a flow: two drains in one cell remove the sum of
             what each removes. Change it only when you want a per-feature
             statistic rather than the cell's net exchange.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -381,6 +382,7 @@ class CellBudgetResultsExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -614,6 +616,7 @@ class StageResultsExplorer(SpatialView):
             number. ``first`` suits a shared water level; use ``mean`` when two
             different features overlap a cell and you want the average of their
             stages rather than whichever was read first.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -708,6 +711,7 @@ class StageResultsExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns

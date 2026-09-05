@@ -397,6 +397,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             free choice of reducer left to make. Kept in the signature because
             removing it would break callers that pass it; it is a no-op, not a
             silent alternative.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -491,6 +492,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -880,6 +882,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             from total exchange over total flow area per cell, so no free choice
             of reducer remains. Kept in the signature because removing it would
             break callers that pass it; it is a no-op, not a silent alternative.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -974,6 +977,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -1435,6 +1439,7 @@ class LakConnectionsExplorer:
             to leave them uncoloured, which is usually clearer here: a lake
             covers a small part of the grid, and a 0.0 backdrop takes over the
             colour scale.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
             Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
@@ -1532,6 +1537,7 @@ class LakConnectionsExplorer:
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -2635,6 +2641,7 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             Value given to cells with neither a reach nor a lake connection.
             ``float("nan")`` leaves them uncoloured, which usually reads better:
             surface water touches a small fraction of most grids.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -2729,6 +2736,7 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns
@@ -2969,6 +2977,7 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             elevation or a leakance from being added to itself. Set it
             explicitly when a cell holds several reaches and you want a
             per-reach statistic rather than the cell total.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
@@ -3063,6 +3072,7 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             (``model.hds.map(backend='mpl')``) and on the composers
             (``mosaic``/``animate``), where there is no intermediate picture to call
             a method on.
+
             .. end generated
 
         Returns

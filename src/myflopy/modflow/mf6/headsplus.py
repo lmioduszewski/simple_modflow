@@ -527,6 +527,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         ----------
         backend : {'plotly', 'mpl'}, default 'plotly'
             Renderer. ``'mpl'`` returns a Matplotlib figure instead of a Picture.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
             Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
@@ -633,6 +634,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
             With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
             use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+
             .. end generated
 
         Raises

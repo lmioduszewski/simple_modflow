@@ -1485,6 +1485,7 @@ class StackPlots:
         not restated here by hand -- each mirrors the default of whichever link in the
         ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
         ``test_plot_vocabulary`` fails if the two ever drift apart.
+
         .. end generated
 
         Parameters
@@ -1498,6 +1499,7 @@ class StackPlots:
             Choropleth styling, forwarded to :meth:`~myflopy.modflow.mf6.grid
             .plotting.GridPlots.map`. **Only meaningful with ``basemap=True``**
             -- the default renderer is Matplotlib and takes none of them.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
             One value per cell -- heads, drawdown, K, a zone id, a residual, any
@@ -1654,6 +1656,7 @@ class StackPlots:
 
             With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
             use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+
             .. end generated
 
         Raises
@@ -1678,7 +1681,6 @@ class StackPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-            .. end generated
         """
 
         if basemap:
@@ -1719,6 +1721,7 @@ class StackPlots:
         cell edges, no results. They are different classes because they answer
         different questions, and **most arguments below only apply to the model
         branch** -- they are marked. A grid takes ``line`` and nothing else.
+
         .. end generated
 
         Parameters
@@ -1743,6 +1746,7 @@ class StackPlots:
             Plot title. Defaults to "Layer cross-section".
         **kwargs
             Forwarded to :class:`LayerSection`.
+
             .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         cells : int or list of int, optional
             *(model only)* Cell indices defining the section path, in order.
@@ -1871,6 +1875,7 @@ class StackPlots:
             ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
             to ``.plot_mpl()`` on the result, which is the same renderer reached a
             second way.
+
             .. end generated
 
         Returns
@@ -1909,7 +1914,6 @@ class StackPlots:
         >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
         >>> model.plot.section(line=line, fill="layer", backend="mpl",
         ...                    layer_labels=["fill", "sand", "clay", "till"])
-            .. end generated
         """
 
         return LayerSection(
@@ -1946,6 +1950,7 @@ class StackPlots:
         particle pathlines are different shapes and live on :func:`grid` with
         ``backend="vtk"``: a ``backend=`` switch should change the renderer, not
         what is being drawn.
+
         .. end generated
 
         Parameters
@@ -1978,6 +1983,7 @@ class StackPlots:
             *(vtk only)* Draw the interpolation mesh on each sheet.
         **kwargs
             Forwarded to :class:`LayerSurface` (plotly) or the scene builder.
+
             .. generated from myflopy.plot.surface -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
             Stress period (0-based). Mutually exclusive with ``kstpkper``.
@@ -1996,6 +2002,7 @@ class StackPlots:
             Override the grid's CRS.
         xs, ys, zs : array-like, optional
             Supply the point cloud directly instead of reading it from a model.
+
             .. end generated
 
         Returns
@@ -2019,7 +2026,6 @@ class StackPlots:
         >>> model.plot.surface(layer=0)
         >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
         >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
-            .. end generated
         """
 
         if backend == "vtk":
@@ -2071,6 +2077,7 @@ class StackPlots:
         Both backends draw the same subject -- this grid -- so ``backend=`` switches
         only the renderer. That is why the 3-D volume is ``grid`` and not
         ``surface``: ``surface`` means a height field.
+
         .. end generated
 
         Parameters
@@ -2098,6 +2105,7 @@ class StackPlots:
             thickness, ``terrain`` for elevations.
         width, height : int, default 900, 580
             *(vtk only)* Scene size in pixels.
+
             .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         pathlines : DataFrame, optional
             Particle track records, drawn as time-coloured tubes over the 3-D mesh.
@@ -2121,6 +2129,7 @@ class StackPlots:
             notebook or on a headless machine.
         **kwargs
             Forwarded to the backend's builder.
+
             .. end generated
 
         Returns
@@ -2152,7 +2161,6 @@ class StackPlots:
         >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
         >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
         >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
-            .. end generated
         """
 
         scene_args = {"color_by": color_by, "scale": scale, "cmap": cmap,

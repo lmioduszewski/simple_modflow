@@ -445,6 +445,7 @@ class GridPlots:
         not restated here by hand -- each mirrors the default of whichever link in the
         ``map -> _choropleth_factory -> Choro`` chain owns that argument, and
         ``test_plot_vocabulary`` fails if the two ever drift apart.
+
         .. end generated
 
         Parameters
@@ -467,6 +468,7 @@ class GridPlots:
             change with the scope. Note the Matplotlib branch draws in model
             coordinates with no basemap, which makes ``bgs`` and ``zoom`` inert
             there.
+
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
             One value per cell -- heads, drawdown, K, a zone id, a residual, any
@@ -602,7 +604,6 @@ class GridPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-            .. end generated
         """
 
         picture = _choropleth_factory(
@@ -660,6 +661,7 @@ class GridPlots:
         cell edges, no results. They are different classes because they answer
         different questions, and **most arguments below only apply to the model
         branch** -- they are marked. A grid takes ``line`` and nothing else.
+
         .. end generated
 
         Parameters
@@ -695,6 +697,7 @@ class GridPlots:
             ``backend="mpl"`` only, filled or not -- both Matplotlib branches
             draw cells and mirror the same way. The Plotly geometry section is
             not an axes and raises rather than ignoring the argument.
+
             .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         cells : int or list of int, optional
             *(model only)* Cell indices defining the section path, in order.
@@ -783,6 +786,7 @@ class GridPlots:
             is a plain frame, has no names to find and falls back to ``Layer N``.
         **kwargs
             Forwarded to the underlying section class.
+
             .. end generated
 
         Returns
@@ -803,6 +807,7 @@ class GridPlots:
         --------
         map : the same data in plan view.
         myflopy.plot.grid : the mesh itself.
+
             .. end generated
 
         Examples
@@ -860,6 +865,7 @@ class GridPlots:
         Both backends draw the same subject -- this grid -- so ``backend=`` switches
         only the renderer. That is why the 3-D volume is ``grid`` and not
         ``surface``: ``surface`` means a height field.
+
         .. end generated
 
         Parameters
@@ -871,6 +877,7 @@ class GridPlots:
             every other verb spells it. The 3-D volume is
             ``myflopy.plot.grid(stack, backend="vtk")``, which needs a layer
             stack this scope does not have.
+
             .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
         pathlines : DataFrame, optional
             Particle track records, drawn as time-coloured tubes over the 3-D mesh.
@@ -894,6 +901,7 @@ class GridPlots:
             notebook or on a headless machine.
         **kwargs
             Forwarded to the backend's builder.
+
             .. end generated
 
         Returns
@@ -916,6 +924,7 @@ class GridPlots:
         myflopy.layers.StackPlots.grid : the LAYER-stack 3-D volume, which takes
             ``layers``/``scale``/``color_by``/``cmap`` -- a different builder, and
             not reachable through this function.
+
             .. end generated
 
         Examples

@@ -1630,7 +1630,6 @@ class ModelPlots:
         >>> model.plot.map(layer=0, locs="wells.gpkg", hillshade_path="hs.tif")
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")
         >>> vor.plot.map(values=node_ids)                    # a bare grid
-            .. end generated
         """
 
         return map(self.model, **_bound_args(locals(), "trace_kwargs"), **trace_kwargs)
@@ -1871,7 +1870,6 @@ class ModelPlots:
         >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
         >>> model.plot.section(line=line, fill="layer", backend="mpl",
         ...                    layer_labels=["fill", "sand", "clay", "till"])
-            .. end generated
         """
 
         return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -1945,7 +1943,6 @@ class ModelPlots:
         >>> model.plot.surface(layer=0)
         >>> model.plot.surface(layer=0, surf_type="lyr")     # layer elevations
         >>> model.plot.surface(layer=0, resolution=400).html("surface.html")
-            .. end generated
         """
 
         return surface(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -2047,7 +2044,6 @@ class ModelPlots:
         >>> vor.plot.grid().plot_mpl()              # FloPy's matplotlib renderer
         >>> stack.plot.grid(["sand", "clay"])       # 3-D volume, a subset of layers
         >>> model.plot.grid(pathlines=run.track_records, backend="vtk")
-            .. end generated
         """
 
         return grid(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -2130,7 +2126,6 @@ class ModelPlots:
         >>> plot.animate([("start", first), ("end", last)])
         >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
         >>> plot.animate(mixed, backend="png")           # only png can mix kinds
-            .. end generated
         """
 
         return animate(**_bound_args(locals(), "kwargs"), **kwargs)
@@ -2212,7 +2207,6 @@ class ModelPlots:
         ...     group.hds.map("F9b"),                       # a choropleth
         ...     group.packages.lak.results.stage.plot(),     # a timeseries
         ... ], ncols=2)
-            .. end generated
         """
 
         return mosaic(
@@ -2292,6 +2286,8 @@ def strip_generated(doc: str) -> str:
     181 lines to 211, carrying three copies of the first edit.
     """
 
+    # `inside` staying True at end-of-text is the implicit close described in
+    # `_fence`: the remaining lines are generated and are simply not kept.
     kept: list[str] = []
     inside = False
     for line in doc.splitlines():
@@ -2385,17 +2381,33 @@ def _fence(blocks, verb: str) -> str:
 
     out: list[str] = []
     inside = False
+
+    def _mark(text: str, pad: str) -> None:
+        # A BLANK LINE first, always. reStructuredText only reads `.. text` as a
+        # comment when it starts its own block; hugged to the line above it is a
+        # paragraph continuation and RENDERS. Measured with docutils in all four
+        # positions, and reported from PyCharm before that: the opening fence
+        # (which had a blank before it) was invisible while `.. end generated`
+        # appeared inline at the end of the preceding sentence.
+        if out and out[-1].strip():
+            out.append("")
+        out.append(pad + text)
+
     for index, (line, generated) in enumerate(tagged):
         pad = "    " if in_sections[index] else ""
         if generated and not inside:
-            out.append(pad + _fence_open(verb))
+            _mark(_fence_open(verb), pad)
             inside = True
         elif not generated and inside:
-            out.append(pad + _FENCE_CLOSE)
+            _mark(_FENCE_CLOSE, pad)
             inside = False
         out.append(line)
-    if inside:
-        out.append(("    " if in_sections and in_sections[-1] else "") + _FENCE_CLOSE)
+    # A region running to the END of the docstring is NOT closed: there is
+    # nothing after it to delimit, so the marker carries no information and
+    # `strip_generated` treats end-of-text as an implicit close. It is also the
+    # worst-placed line in the whole scheme -- PyCharm renders the description
+    # and Examples first and builds its own parameter table below, so a trailing
+    # marker lands between the two, which is where it was reported from.
     return _collapse_blank_runs("\n".join(out))
 
 

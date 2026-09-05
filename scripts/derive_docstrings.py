@@ -234,6 +234,7 @@ def main() -> int:
     ledger = json.dumps(shadow_ledger(), indent=1, sort_keys=True) + "\n"
     ledger_stale = not SHADOWS.exists() or SHADOWS.read_text() != ledger
     if ledger_stale and not args.check:
+        SHADOWS.parent.mkdir(parents=True, exist_ok=True)
         SHADOWS.write_text(ledger)
 
     if args.check:

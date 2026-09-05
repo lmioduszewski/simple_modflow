@@ -5442,6 +5442,34 @@ same day, which is the useful part of the result.
         renderers drop it, `strip_generated` still matches on the stripped line,
         and numpydoc reports **0 phantoms and 0 parse failures**. A fence in the
         leading PROSE stays at column 0, where no parser reads entries.
+      - **A marker only disappears if a BLANK LINE precedes it.** Reported from
+        the Quick Documentation popup: `.. end generated` rendered inline at the
+        end of the preceding sentence, while the opening fence three paragraphs
+        above it was invisible. reStructuredText reads `.. text` as a comment
+        only when it begins its own block; hugged to the line above, it is a
+        paragraph continuation and RENDERS. `_fence` deliberately hugged the
+        markers to the generated text they delimit, which is what broke it.
+        Measured with docutils in all four positions -- column 0 and indented,
+        hugged and blank-separated -- and only the hugged ones are visible to a
+        reader. With a blank line before every fence: **0 of 29 docstrings show a
+        marker**, numpydoc still reports 0 phantom parameters and 0 parse
+        failures, and the design costs a reader nothing at all.
+        I got the explanation wrong TWICE before measuring it, and both wrong
+        answers were committed. First "PyCharm renders reStructuredText comments
+        as text" -- generalised from the single leaking case. Then "that one was
+        indented after a doctest block, so it was absorbed into a literal block"
+        -- a better story, still wrong, and it would have left the 53 markers
+        indented inside `Parameters` blocks visible, since those hug too. The
+        lesson is the ordinary one: docutils was installed the whole time and
+        the four-case table took thirty seconds.
+      - **Separately, a region running to the END of the docstring is not closed
+        at all.** The marker delimits nothing there, and `strip_generated`
+        already treats end-of-text as an implicit close. That removed a marker
+        from 11 of 29 docstrings and lets `ModelPlots.section` end on its last
+        example. The ratchet is unaffected: a close fence deleted from the MIDDLE
+        still fails `--check` (the recovered own text changes, so the assembly
+        stops matching the source) and still fails the balance test, which reads
+        the next opening fence as a nested one. Verified both by hand.
       - **Three more found by attacking it, all fixed before commit.**
         - `test_every_generated_region_is_fenced_on_both_sides` read the RUNTIME
           docstring, which `_fence` balances by construction -- so it could never
