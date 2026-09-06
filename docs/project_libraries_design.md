@@ -6,7 +6,10 @@ through the front door.*
 **Scope: inputs and model structure only.** Loading a run, opening its model and
 reaching results already works and is untouched by this.
 
-Status: **design, not built.** Every defect cited below was reproduced against
+Status: **BUILT** — all four steps landed 2026-09-04/05; see the per-step notes
+and ledger 179-187. Kept as the reasoning record.
+
+Originally: **design, not built.** Every defect cited below was reproduced against
 `/home/lukem/python/simple_modflow` @ `myflopy` and the real project at
 `/home/lukem/models/mf6/tentrails` on 2026-09-03.
 
@@ -379,6 +382,8 @@ answer. It follows the outcome reader.
 
 ## 6. Step 4 — fork
 
+**BUILT 2026-09-05** — `0dab9fd` (fork/edit), `043f55c` (rename carry), ledger 186.
+
 > **A fork is built, never patched.** A forked spec leaves through the same
 > constructor an ordinary `mf.rch(...)` leaves through, so every check that guards a
 > hand-written package guards a forked one.
@@ -428,6 +433,12 @@ whose `derived_from` names an unregistered simulation.
 ---
 
 ## 6a. Editing a package that a run already used
+
+**BUILT 2026-09-05** — `3987866`, ledger 187. One correction: digests are
+computed at `prepare_run`, not in `_spec_summary` as designed below — that
+function sees `_package_entry_label` only, and a `PackageRef` is stored
+unresolved, so digesting it needs the project library a module function cannot
+reach.
 
 Fork answers "I want a variant". It does not answer "`npf/base` was wrong, fix it" —
 and that is the case with teeth, because **the run manifest records package *keys*,
