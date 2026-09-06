@@ -211,8 +211,13 @@ project.packages.fork("npf/base", "npf/high", kk_typo=1.0)
 Both **deep-copy by default**, including options the fork never touched. That is
 not caution for its own sake: `with_options` rebuilds the options dict but not its
 values, so without the copy, editing a "copy" writes through into the original's
-arrays. Measured 15.2 ms / 0.50 MB on a Ten Trails-scale simulation. `deep=False`
-opts back into sharing.
+arrays.
+
+Cost scales with the number of **Python objects** copied, not with cell count.
+Arrays copy at memcpy speed — a 9,405-cell `npf` forks in 0.1 ms, a 72×9,405
+recharge array in 1.7 ms — but a record list does not: the USG-derived
+72-period, 9,090-record EVT takes **808 ms** for its 654,480 records.
+`deep=False` is 0.1 ms on that same package and opts back into sharing.
 
 `fork` refuses an existing key unless `overwrite=True`; `edit` is never refused.
 

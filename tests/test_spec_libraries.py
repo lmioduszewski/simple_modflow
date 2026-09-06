@@ -642,3 +642,45 @@ def test_a_non_string_swap_value_is_named(tmp_path):
 
     with pytest.raises(TypeError, match="must be a library key"):
         project.simulations.fork("coupled", "v", swap={"ic": mf.ic(strt=1.0)})
+
+
+def test_package_digests_are_cached_until_the_library_changes(tmp_path):
+    """Digesting costs pickling PYTHON OBJECTS, not bytes: a 72x9,090-record EVT
+    measures 1.3 s. ``RunLibrary.summary`` fingerprints the whole library per
+    call and Jupyter calls it on every bare ``project.runs``, so without a cache
+    the browse surface stalls on exactly the projects worth browsing."""
+
+    project = _project(tmp_path)
+
+    first = project.packages.digests()
+    assert project.packages.digests() is first          # cached, not recomputed
+
+    project.packages.edit("npf/base", k=50.0)
+    assert project.packages._digest_cache is None       # dropped on mutation
+    assert project.packages.digests()["npf/base"] != first["npf/base"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda lib: lib.__setitem__("new", mf.ic(strt=1.0)),
+        lambda lib: lib.pop("npf/base"),
+        lambda lib: lib.update({"another": mf.ic(strt=2.0)}),
+        lambda lib: lib.setdefault("defaulted", mf.ic(strt=3.0)),
+        lambda lib: lib.__delitem__("npf/base"),
+        lambda lib: lib.clear(),
+    ],
+    ids=["setitem", "pop", "update", "setdefault", "delitem", "clear"],
+)
+def test_every_mutating_route_drops_the_digest_cache(tmp_path, mutate):
+    """The cache is keyed on the library, so replacing an entry through ANY
+    route must invalidate it -- a stale fingerprint reports a changed package
+    as unchanged, which is the one thing drift must never do."""
+
+    packages = _project(tmp_path).packages
+    packages.digests()
+    assert packages._digest_cache is not None
+
+    mutate(packages)
+
+    assert packages._digest_cache is None

@@ -419,6 +419,11 @@ through into the baseline's `k`.
 (9 405 cells, 72 periods, ~14 400 CHD records). `deep=False` is the opt-out for
 someone who wants the aliasing on purpose.
 
+**CORRECTED 2026-09-06 (ledger 188/189):** that figure is a small-model one and
+misleads about the shape. Cost tracks the number of Python objects copied, not
+cells — a 9 405-cell `npf` forks in 0.1 ms and a 72×9 405 array in 1.7 ms, while
+the real 72-period × 9 090-record EVT takes **808 ms**.
+
 Every fork stamps `metadata["forked_from"] = {"key", "at", "note"}`, riding the
 existing `PackageSpec.metadata` slot that `_spec_summary` already copies into run
 manifests. **No new dataclass field.**
@@ -498,7 +503,7 @@ every field compares equal. Measured on the field-based digest:
 | stable across `Project.save()`/`load()` | yes |
 | distinguishes `k=1.0` from `k=50.0` | yes |
 | distinguishes one cell changed by `1e-9` in a 9 405-cell array | yes |
-| cost | **0.04 ms** per package |
+| cost | **0.04 ms** scalar, ~5 ms for a 72×9 405 array, **1.3 s** for the 654 480-record EVT — hence the cache (ledger 189) |
 
 That turns the question into a column:
 

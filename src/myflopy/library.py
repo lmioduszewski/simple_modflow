@@ -34,6 +34,7 @@ from myflopy.specs import (
     _builder_label,
     _package_entry_label,
     fork_package,
+    package_digest,
     ref,
 )
 
@@ -186,6 +187,7 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
     """The project's reusable package specs, keyed by library key."""
 
     _kind: ClassVar[str] = "package"
+    _digest_cache: dict[str, str | None] | None = None
     _columns: ClassVar[tuple[str, ...]] = (
         "key",
         "package",
@@ -208,6 +210,77 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
             "inputs": ", ".join(sorted(entry.inputs)) or "—",
             "requires": ", ".join(entry.requires) or "—",
         }
+
+    def digests(self) -> dict[str, str | None]:
+        """Fingerprint every package, caching until the library changes.
+
+        Digesting is cheap for array-valued options (a 72x9405 recharge array is
+        ~5 ms) and expensive for record lists, because the cost is pickling
+        Python objects rather than bytes: the USG-derived 72-period, 9,090-record
+        EVT measures **1.3 s**. ``RunLibrary.summary`` fingerprints the whole
+        library on every call and Jupyter calls that on every bare
+        ``project.runs``, so without this the browse surface stalls on exactly
+        the projects worth browsing.
+
+        The cache is dropped whenever the library is mutated. It is keyed on the
+        library, not on spec identity, so replacing an entry through any route --
+        ``edit``, ``fork``, plain assignment, ``pop`` -- invalidates it. Mutating
+        a spec's ``options`` dict IN PLACE bypasses it, as it also bypasses
+        ``_check_options``; that is not a supported way to change a package.
+        """
+
+        cached = getattr(self, "_digest_cache", None)
+        if cached is None:
+            cached = {key: package_digest(entry) for key, entry in self.items()}
+            self._digest_cache = cached
+        return cached
+
+    def _invalidate(self) -> None:
+        """Drop the digest cache. Called from every mutating dict operation."""
+
+        self._digest_cache = None
+
+    def __setitem__(self, key: str, value: PackageSpec) -> None:
+        """Register a package, dropping any cached fingerprints."""
+
+        self._invalidate()
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: str) -> None:
+        """Remove a package, dropping any cached fingerprints."""
+
+        self._invalidate()
+        super().__delitem__(key)
+
+    def pop(self, *args: Any) -> Any:
+        """Remove and return a package, dropping any cached fingerprints."""
+
+        self._invalidate()
+        return super().pop(*args)
+
+    def popitem(self) -> tuple[str, PackageSpec]:
+        """Remove and return one package, dropping any cached fingerprints."""
+
+        self._invalidate()
+        return super().popitem()
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        """Merge packages in, dropping any cached fingerprints."""
+
+        self._invalidate()
+        super().update(*args, **kwargs)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        """Fetch or insert a package, dropping any cached fingerprints."""
+
+        self._invalidate()
+        return super().setdefault(key, default)
+
+    def clear(self) -> None:
+        """Empty the library, dropping any cached fingerprints."""
+
+        self._invalidate()
+        super().clear()
 
     def fork(
         self,

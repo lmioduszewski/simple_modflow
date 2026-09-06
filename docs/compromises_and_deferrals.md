@@ -5986,3 +5986,33 @@ same day, which is the useful part of the result.
         the real reason is that `GridLibrary` has no `edit`, not that nothing
         can change a grid. The "15.2 ms / 0.50 MB" fork cost quoted in 186 is a
         SMALL-model figure; a real Ten Trails package is 60-350x that.
+
+189. **Package digests are cached, and the fork/digest cost figures were wrong
+      (2026-09-06).** Found while auditing for loose ends, by measuring the
+      claims rather than repeating them.
+      - **The "15.2 ms / 0.50 MB" fork cost quoted in 186 is a small-model
+        figure and misleads about the SHAPE of the cost.** It scales with the
+        number of PYTHON OBJECTS copied, not with cell count. Measured: a
+        9,405-cell `npf` forks in **0.1 ms** and a 72x9,405 recharge ARRAY in
+        **1.7 ms** (arrays copy at memcpy speed), while the USG-derived
+        72-period, 9,090-record list EVT takes **808 ms** for its 654,480
+        records -- 53x the quoted number, on a package this project actually
+        has. Corrected at all four sites.
+      - **`package_digest` has the same shape, and it mattered more.** ~0.04 ms
+        for a scalar package, ~5 ms for the 72x9,405 array, **1.3 s** for that
+        EVT. `RunLibrary.summary` fingerprints the whole library on every call
+        and Jupyter calls it on every bare `project.runs`, so the browse surface
+        stalled on exactly the projects worth browsing. Ledger 188 had fixed the
+        O(runs x packages) part but left the per-package cost paid per call.
+      - **`PackageLibrary.digests()` caches until the library is mutated.**
+        Measured 1051 ms then 0 ms on repeat. The cache is keyed on the LIBRARY,
+        not on spec identity, so every mutating route drops it --
+        `__setitem__`/`__delitem__`/`pop`/`popitem`/`update`/`setdefault`/`clear`
+        are overridden, each pinned by a parametrized test. A stale fingerprint
+        would report a changed package as unchanged, which is the one thing
+        drift must never do.
+      - **Known hole, and the same one `_check_options` has:** mutating a spec's
+        `options` dict IN PLACE bypasses the cache, because a frozen dataclass
+        does not stop you writing into its mutable field. That is already not a
+        supported way to change a package -- it also skips validation -- and
+        `edit`/`fork` exist precisely so it is not needed.

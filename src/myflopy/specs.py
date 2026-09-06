@@ -493,7 +493,14 @@ def package_digest(package: PackageSpec) -> str | None:
     Measured stable across processes, ``PYTHONHASHSEED``, ``to_dict``/
     ``from_dict``, ``to_yaml``/``from_yaml`` and ``Project.save``/``load``; it
     distinguishes ``k=1.0`` from ``k=50.0`` and one cell changed by ``1e-9`` in a
-    9,405-cell array, at ~0.04 ms per package.
+    9,405-cell array.
+
+    Cost has the same shape as forking: it is pickling PYTHON OBJECTS, not bytes.
+    A scalar package is ~0.04 ms and a 72x9,405 array package ~5 ms, but the
+    USG-derived 72-period, 9,090-record list EVT measures **1.3 s**. That is why
+    :meth:`~myflopy.library.PackageLibrary.digests` caches until the library
+    changes -- ``RunLibrary.summary`` fingerprints the whole library per call,
+    and Jupyter calls it on every bare ``project.runs``.
 
     ``metadata`` is deliberately EXCLUDED: it carries provenance (``forked_from``,
     ``edited``) that says where a spec came from, not what it builds. Including it
@@ -624,8 +631,11 @@ def fork_package(
     ``deep=True`` (the default) also unaliases options the fork never touched,
     which is where the real hazard lives: :meth:`PackageSpec.with_options`
     rebuilds the options dict but not its values, so a "copy" can write through
-    into the parent's arrays. Measured 15.2 ms / 0.50 MB on a Ten Trails-scale
-    simulation. ``deep=False`` opts back into sharing.
+    into the parent's arrays. Measured: cost scales with the number of PYTHON OBJECTS copied, not with cell count:
+    a 9,405-cell ``npf`` forks in 0.1 ms and a 72x9,405 recharge ARRAY in 1.7 ms
+    (arrays copy at memcpy speed), while the USG-derived 72-period, 9,090-record
+    list EVT takes **808 ms** for its 654,480 records. ``deep=False`` is 0.1 ms
+    on that same package and opts back into sharing.
     """
 
     options = copy.deepcopy(package.options) if deep else dict(package.options)

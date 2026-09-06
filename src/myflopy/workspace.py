@@ -602,14 +602,7 @@ class RunLibrary(SpecLibrary["Run"]):
 
         memo = getattr(self, "_digest_memo", None)
         if memo is None:
-            memo = (
-                {}
-                if self._packages is None
-                else {
-                    key: package_digest(package)
-                    for key, package in self._packages.items()
-                }
-            )
+            memo = {} if self._packages is None else self._packages.digests()
         return memo
 
     def _drift_label(self, entry: Run, now_by_key: dict[str, str | None]) -> str:
@@ -637,14 +630,7 @@ class RunLibrary(SpecLibrary["Run"]):
 
         import pandas as pd
 
-        memo = (
-            {}
-            if self._packages is None
-            else {
-                key: package_digest(package)
-                for key, package in self._packages.items()
-            }
-        )
+        memo = {} if self._packages is None else self._packages.digests()
         self._digest_memo = memo
         try:
             rows = [self._row(key, self[key]) for key in self.names()]
@@ -1566,7 +1552,7 @@ class Project:
     def _library_digests(self) -> dict[str, str | None]:
         """Fingerprint the whole package library once, for a batch comparison."""
 
-        return {key: package_digest(package) for key, package in self.packages.items()}
+        return self.packages.digests()
 
     def _why_unserializable(self, simulation: SimulationSpec) -> str | None:
         """Return a readable reason a simulation cannot be persisted, or None."""
