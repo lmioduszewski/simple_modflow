@@ -6057,3 +6057,37 @@ same day, which is the useful part of the result.
         versus the designed `manifest` field -- staleness of the INPUTS is the
         question that bears on whether a verdict still applies, which the
         manifest's own timestamp does not answer.
+
+191. **D5 recorded at last, and the two ways step 1 made it worse (2026-09-06).**
+      `prepare_run(overwrite=True)` reuses a run directory: it resets
+      `status`/`success`/`metadata` and leaves the previous run's files -- results,
+      listing, and any orphan package file only the old spec wrote. Design §7.3
+      deferred this and **no ledger entry was ever written**, contrary to the
+      standing rule; a 92-finding sweep flagged that omission four times
+      independently. Recorded now, and still deferred: an archive-or-refuse
+      policy is a real design decision, and
+      `examples/mf6/variant_workflow/01_package_library_and_variants.py` depends
+      on today's behaviour.
+      - **Step 1 turned it from "loses the record" into "reports the wrong
+        result".** `Run.outcome` reads `mfsim.lst` fresh and nothing cleared it,
+        so a re-prepared, NEVER-EXECUTED run reported the previous execution's
+        verdict: measured `outcome='normal', elapsed='3 Hours, 53 Minutes, 1
+        Seconds'` on a model that had not been run. That is precisely the class
+        of lie ledger 184 exists to remove, reintroduced one axis over.
+        `read_listing_outcome(..., since=)` now reports **`superseded`** when the
+        listing predates the run's own preparation, and `succeeded` is `None`
+        there so `reconcile()` will not adopt it. On the real project this
+        immediately flags `baseline`, whose listing (19:50:17) predates its
+        manifest's `created_at` (19:55:11) by five minutes.
+      - **A scanned run fabricated its own timestamps.** `Run.created_at` and
+        `updated_at` default to construction time, so a manifest-less workspace
+        reported the SCAN's wall clock in `runs.summary()`'s `updated` column --
+        measured on the real project as two `discovered` rows 55 microseconds
+        apart, which is the loop, not the runs. They now read the newest file
+        mtime in the workspace. `superseded` is deliberately NOT applied to
+        those rows: a scanned run has no known preparation time to be older than.
+      - **Docs corrected in the same pass:** the `Project.runs` docstring told
+        readers to call `RunLibrary.refresh`, which never existed (it is
+        `Project.refresh_runs`), and `model_building_cheatsheet.md` still said
+        `save()` "raises rather than writing a project that cannot be reloaded",
+        contradicting its own gotcha #9 two paragraphs later since ledger 180.

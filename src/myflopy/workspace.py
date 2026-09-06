@@ -529,7 +529,19 @@ class RunLibrary(SpecLibrary["Run"]):
             # stay distinct.
             base = project.runs_dir if workspace.is_relative_to(project.runs_dir) else root
             key = _relative_key(workspace, base)
-            run = Run(name=workspace.name, workspace=workspace, status="discovered")
+            # Timestamps from the FILES, not from now. `created_at` defaults to
+            # the moment the Run is constructed, so a scanned run reported the
+            # scan's own wall clock in the `updated` column -- on the real
+            # project two discovered runs differed by 55 microseconds, which is
+            # the loop, not the runs.
+            stamp = _workspace_timestamp(name_file)
+            run = Run(
+                name=workspace.name,
+                workspace=workspace,
+                status="discovered",
+                created_at=stamp,
+                updated_at=stamp,
+            )
             if load:
                 run.open()
             library[key] = run
@@ -658,6 +670,19 @@ class RunLibrary(SpecLibrary["Run"]):
             "updated": entry.updated_at,
             "path": str(entry.workspace),
         }
+
+
+def _workspace_timestamp(name_file: Path) -> str:
+    """When a manifest-less run's files were last written, ISO-8601 UTC."""
+
+    try:
+        newest = max(
+            (item.stat().st_mtime for item in name_file.parent.iterdir() if item.is_file()),
+            default=name_file.stat().st_mtime,
+        )
+    except OSError:
+        return _utc_now()
+    return datetime.fromtimestamp(newest, timezone.utc).isoformat(timespec="seconds")
 
 
 def _relative_key(workspace: Path, base: Path) -> str:
@@ -1038,7 +1063,22 @@ class Run:
         of truth that can disagree with the file it came from.
         """
 
-        return read_listing_outcome(self.workspace)
+        return read_listing_outcome(self.workspace, since=self._prepared_at())
+
+    def _prepared_at(self) -> float | None:
+        """When this run was prepared, as a POSIX timestamp, if it is knowable.
+
+        ``None`` for a run discovered on disk without a manifest: its
+        ``created_at`` is whenever the scan happened to construct it, so using
+        that would call every such run's listing superseded.
+        """
+
+        if self.spec_block is None and self.status == "discovered":
+            return None
+        try:
+            return datetime.fromisoformat(self.created_at).timestamp()
+        except ValueError:
+            return None
 
     def reconcile(self, *, write: bool = True) -> ListingOutcome:
         """Adopt MF6's verdict into ``status``/``success``, persisting by default.
@@ -1292,7 +1332,7 @@ class Project:
         Runs live on disk rather than in the registries, so this is a scan --
         cheap (measured 0 ms on a 4-run project, 2 ms over 39 workspaces), but a
         scan. It is cached because ``project.runs["baseline"]`` must return the
-        same object twice; call :meth:`RunLibrary.refresh` after executing a run
+        same object twice; call :meth:`Project.refresh_runs` after executing a run
         from somewhere else.
 
         Reopening a single run by name stays :meth:`reopen_run`, which also

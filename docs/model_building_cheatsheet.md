@@ -1229,8 +1229,11 @@ So an array-laden package written **inline** in the model — `mf.disv(top=layer
 3. **Don't save.** Runs, scenarios, discovery and reopening never needed it.
 
 Call **`project.validate()`** to see which case you are in; it lists the offending
-simulations without touching disk, and `save()` raises the same message rather
-than writing a project that cannot be reloaded. Note it inspects *simulations*, so
+simulations without touching disk. Since 2026-09-04 `save()` no longer raises on
+them — it writes the project document, every package and every grid, SKIPS the
+simulation it cannot serialize, and names it in the returned `SaveReport.skipped`
+(a dangling `mf.ref` still raises, but only after the write). Pass `strict=True`
+for the old all-or-nothing behaviour. Note `validate()` inspects *simulations*, so
 a model built entirely from `mf.ref`/`mf.grid_ref` reports clean — correctly, since
 the arrays are the library's problem and the library can hold them.
 

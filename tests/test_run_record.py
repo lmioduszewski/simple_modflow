@@ -610,3 +610,75 @@ def test_metadata_is_excluded_from_the_fingerprint(tmp_path):
     assert package_digest(project.package("npf/base")) == before
     assert project.package("npf/base").metadata["edited"]["note"] == "just a note"
     assert project.runs.summary().set_index("key").loc["baseline", "drift"] == "—"
+
+
+def test_a_re_prepared_run_does_not_inherit_the_previous_verdict(tmp_path):
+    """``prepare_run(overwrite=True)`` reuses the directory and leaves the old
+    listing and results in place (design D5, still open). Step 1's outcome reader
+    then attributed the PREVIOUS execution's verdict to a run that had not been
+    executed -- measured: ``outcome='normal', elapsed='3 Hours, 53 Minutes'`` for
+    a model that had just been re-prepared. That is the class of lie this whole
+    line of work exists to remove, reintroduced one axis over.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    simulation = mf.SimulationSpec(
+        "baseline",
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.ic(strt=1.0),
+                    mf.npf(k=1.0),
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+    )
+    run = project.prepare_run("baseline", simulation)
+    _listing(run.workspace, _NORMAL_TAIL)          # written AFTER preparation
+    run.reconcile()
+    assert run.status == "completed"
+
+    # Backdate the listing so the re-preparation is unambiguously later, then
+    # re-prepare -- exactly what overwrite=True does to a directory that already
+    # holds a finished run.
+    stale_time = time.time() - 600
+    os.utime(run.workspace / "mfsim.lst", (stale_time, stale_time))
+    again = project.prepare_run("baseline", simulation, overwrite=True)
+
+    assert again.outcome.outcome == "superseded"
+    assert again.outcome.succeeded is None
+    # ...so reconcile() refuses to re-adopt a verdict that is not this run's
+    again.reconcile()
+    assert again.success is None
+    assert project.refresh_runs().summary().iloc[0]["outcome"] == "superseded"
+
+
+def test_a_discovered_run_reports_its_files_timestamps_not_the_scans(tmp_path):
+    """``Run.created_at`` defaults to construction time, so a workspace scanned
+    without a manifest reported the SCAN's wall clock in the ``updated`` column.
+    Measured on the real project: two discovered runs 55 microseconds apart --
+    that is the loop, not the runs."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    bare = project.runs_dir / "hand_run"
+    bare.mkdir(parents=True)
+    (bare / "mfsim.nam").write_text("# hand-run\n", encoding="utf-8")
+    _listing(bare, _NORMAL_TAIL)
+    old = time.time() - 86_400
+    for item in bare.iterdir():
+        os.utime(item, (old, old))
+
+    row = project.runs.summary().set_index("key").loc["hand_run"]
+
+    assert row["status"] == "discovered"
+    assert row["updated"].startswith(
+        __import__("datetime").datetime.fromtimestamp(
+            old, __import__("datetime").timezone.utc
+        ).strftime("%Y-%m-%d")
+    )
+    # ...and its listing is NOT called superseded: a scanned run has no known
+    # preparation time to be older than.
+    assert row["outcome"] == "normal"

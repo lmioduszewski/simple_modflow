@@ -305,6 +305,13 @@ Five states, and the four that are not `unchanged` all mean "do not assume":
 | `unfingerprinted` | the package cannot be fingerprinted (a closure builder, an option that does not pickle) — it is still perfectly buildable |
 | `unknown` | the run predates digests; a missing fingerprint is not evidence of sameness |
 
+An `outcome` of `superseded` means the listing in that directory is OLDER than
+the run's own preparation, so its verdict belongs to a previous run.
+`prepare_run(overwrite=True)` reuses the directory and leaves the old listing and
+results behind, so without this a re-prepared, never-executed run reported the
+previous execution's `normal` and its elapsed time. `reconcile()` refuses to
+adopt a superseded verdict.
+
 The fingerprint covers the option and input VALUES a spec holds, its name, its
 builder REFERENCE, `enabled` and `requires`. It does not see the body of an
 importable builder, or the contents of a file a source points at — it says the

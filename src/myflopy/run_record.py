@@ -54,6 +54,11 @@ class ListingOutcome:
         killed, crashed, or is still going. This is what a real interrupted run
         looks like: the file simply stops mid-iteration.
         ``"absent"`` -- no listing file, so MF6 never started here.
+        ``"superseded"`` -- a listing exists but PREDATES this run's
+        preparation, so its verdict belongs to a previous run in the same
+        directory. ``prepare_run(overwrite=True)`` leaves the old listing and
+        results in place, so without this a re-prepared, never-executed run
+        reported the previous execution's outcome and elapsed time.
     finished_at
         MF6's own run-end stamp, verbatim, or ``None``.
     elapsed
@@ -83,7 +88,7 @@ class ListingOutcome:
             return True
         if self.outcome == "failed":
             return False
-        return None
+        return None  # incomplete, absent, superseded -- no verdict for THIS run
 
     def __repr__(self) -> str:
         """Compact: the verdict, plus staleness when it matters."""
@@ -122,8 +127,16 @@ def _is_stale(listing: Path) -> bool:
     return False
 
 
-def read_listing_outcome(workspace: Path | str) -> ListingOutcome:
+def read_listing_outcome(
+    workspace: Path | str, *, since: float | None = None
+) -> ListingOutcome:
     """Read what MF6 reported in ``workspace/mfsim.lst``.
+
+    ``since`` is a POSIX timestamp for when the run in this directory was
+    prepared. A listing older than that describes a PREVIOUS run --
+    ``prepare_run(overwrite=True)`` reuses the directory and leaves the old
+    listing and results behind -- so its verdict is reported as ``superseded``
+    rather than attributed to a run that has not executed.
 
     Never raises: an unreadable or truncated listing is reported as
     ``"incomplete"``, because a run you cannot classify must still be listable
@@ -132,7 +145,10 @@ def read_listing_outcome(workspace: Path | str) -> ListingOutcome:
 
     listing = Path(workspace) / _LISTING_NAME
     try:
-        size = listing.stat().st_size
+        stat = listing.stat()
+        if since is not None and stat.st_mtime < since:
+            return ListingOutcome(outcome="superseded", stale=_is_stale(listing))
+        size = stat.st_size
         with listing.open("rb") as handle:
             if size > _TAIL_BYTES:
                 handle.seek(size - _TAIL_BYTES)
