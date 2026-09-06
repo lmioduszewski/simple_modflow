@@ -241,7 +241,22 @@ if TYPE_CHECKING:
         ref,
     )
     from myflopy.surfaces import LayerSurfaces, Surface
-    from myflopy.workspace import ModelView, Project, ProjectLayout, Run, load_run
+    from myflopy.library import (
+        GridLibrary,
+        PackageLibrary,
+        SimulationLibrary,
+        SpecLibrary,
+    )
+    from myflopy.run_record import ListingOutcome, read_listing_outcome
+    from myflopy.workspace import (
+        ModelView,
+        Project,
+        ProjectLayout,
+        Run,
+        RunLibrary,
+        SaveReport,
+        load_run,
+    )
 
 try:
     from importlib.metadata import PackageNotFoundError, version
@@ -317,6 +332,18 @@ _EXPORTS = {
     "Project": ("myflopy.workspace", "Project"),
     "Run": ("myflopy.workspace", "Run"),
     "load_run": ("myflopy.workspace", "load_run"),
+    # Types a PUBLIC method hands back. `project.save()` returns a SaveReport and
+    # `run.outcome` a ListingOutcome, so without these you get an object whose
+    # type you cannot name without reaching into a submodule.
+    "SaveReport": ("myflopy.workspace", "SaveReport"),
+    "ListingOutcome": ("myflopy.run_record", "ListingOutcome"),
+    "read_listing_outcome": ("myflopy.run_record", "read_listing_outcome"),
+    # Types a PUBLIC attribute holds: project.packages/grids/simulations/runs.
+    "SpecLibrary": ("myflopy.library", "SpecLibrary"),
+    "PackageLibrary": ("myflopy.library", "PackageLibrary"),
+    "GridLibrary": ("myflopy.library", "GridLibrary"),
+    "SimulationLibrary": ("myflopy.library", "SimulationLibrary"),
+    "RunLibrary": ("myflopy.workspace", "RunLibrary"),
     "SimulationSpec": ("myflopy.specs", "SimulationSpec"),
     "SFRBuilder": ("myflopy.modflow.mf6.sfr", "SFRBuilder"),
     "LAKBuilder": ("myflopy.modflow.mf6.lakes", "LAKBuilder"),

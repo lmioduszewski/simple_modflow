@@ -1000,6 +1000,31 @@ class Run:
         raise KeyError(f"Run '{self.name}' has no raw FloPy model named '{name}'.")
 
     @property
+    def spec_name(self) -> str | None:
+        """The simulation this run was prepared from, per its manifest."""
+
+        return (self.spec_block or {}).get("name")
+
+    @property
+    def package_keys(self) -> dict[str, tuple[str, ...]]:
+        """What each model carried, as the LIBRARY KEYS recorded at run time.
+
+        Read from the manifest's own summary block rather than from
+        :attr:`spec`, so it answers for a run reopened in a later session whose
+        recipe could not be revived -- that block is the authority on what a run
+        WAS. Returns ``{}`` for a run with no manifest.
+
+        These are labels, not contents: a key says which entry was used, and
+        ``project.runs.drift()`` says whether that entry still means the same
+        thing.
+        """
+
+        return {
+            model.get("name", "?"): tuple(model.get("packages", ()))
+            for model in (self.spec_block or {}).get("models", ())
+        }
+
+    @property
     def outcome(self) -> ListingOutcome:
         """What MF6 reported in ``mfsim.lst``, read fresh each time.
 

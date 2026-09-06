@@ -71,7 +71,8 @@ proj.packages.fork("rch_pond", "rch_pond_vol",
                    note="max-volume pond")
 
 proj.save()
-# SaveReport(project_spec='specs/project_spec.json', written=6, pickled=8, skipped=0)
+# SaveReport(project_spec='project_spec.json', simulations=3, packages=14, grids=1,
+#            pickled=9, skipped=0)
 
 # ── session 2, next morning ──────────────  nothing rebuilt, nothing remembered ──
 proj = mf.Project.load("/home/lukem/models/mf6/tentrails")
@@ -87,14 +88,15 @@ proj.package("rch_pond_vol")
 #             options={'recharge': '<ndarray (72, 9405)>', 'irch': 'top_active'},
 #             metadata_keys=('forked_from',))
 
-proj.runs.summary()
-#  key           status     outcome     manifest  simulation    packages  updated
-#  baseline      written    normal      behind    baseline      11        2026-09-03T…
-#  mounding      written    normal      behind    mounding      12        2026-09-03T…
-#  mounding_vol  written    normal      behind    mounding_vol  12        2026-09-03T…
-#  from_usg      written    incomplete  behind    tentrails     11        2026-09-02T…
+proj.runs.summary()          # shipped columns: key status outcome stale drift
+#                              #   elapsed simulation models packages updated path
+#  key           status   outcome     stale  drift  elapsed
+#  baseline      written  normal      True   —      3 Hours, 53 Minutes,  1 Seconds
+#  mounding      written  normal      False  —      15 Minutes,  4.265 Seconds
+#  mounding_vol  written  normal      False  —      16 Minutes, 54.890 Seconds
+#  from_usg      written  incomplete  False  —      —
 
-proj.runs["mounding_vol"].record.package_keys["tentrails"]
+proj.runs["mounding_vol"].package_keys["tentrails"]
 # ('dis/base','npf/base','sto/base','ic/steady','chd/base','ghb/base','drn/base',
 #  'riv/rock','crisp/base','oc/all','rch/background','rch_pond_vol')
 ```
@@ -118,28 +120,15 @@ New leaf module `src/myflopy/run_record.py` — **stdlib only, layer 0**. Not un
 `myflopy/project/__init__.py` (layer 13) at runtime. Zero new deferred imports, so
 `tests/deferred_import_allowlist.json`'s `"myflopy.workspace": 1` is untouched.
 
+**`RunRecord` was NOT built, deliberately.** Every field it proposed already
+lives on `Run` itself — `status`, `success`, the timestamps, `metadata`, and
+`spec_block` (the verbatim `_spec_summary` payload) — so the class would have
+been a second object holding the same state. The two properties that were
+genuinely useful are on `Run` instead: **`run.package_keys`** (model → library
+keys, read from `spec_block` so it answers for a run whose recipe could not be
+revived) and **`run.spec_name`**. Ledger 190.
+
 ```python
-@dataclass(frozen=True, slots=True)
-class RunRecord:
-    """A run's manifest read back as a typed object — the authority on what a run
-    WAS whenever its live SimulationSpec is gone. Nothing here is inferred."""
-
-    name: str
-    status: str
-    executable: str
-    created_at: str
-    updated_at: str
-    completed_at: str | None
-    success: bool | None
-    spec_block: dict[str, Any] | None          # the _spec_summary payload, verbatim
-    metadata: dict[str, Any]
-
-    @property
-    def package_keys(self) -> dict[str, tuple[str, ...]]: ...   # model -> library keys
-    @property
-    def spec_name(self) -> str | None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class ListingOutcome:
     """What mfsim.lst says MF6 did, and whether it still describes the inputs."""
@@ -147,7 +136,12 @@ class ListingOutcome:
     outcome: str                  # "normal" | "failed" | "incomplete" | "absent"
     finished_at: str | None
     elapsed: str | None
-    manifest: str                 # "current" | "behind" | "rewritten"
+    stale: bool                   # SHIPPED AS: an MF6 input is newer than the
+                                  # listing. The designed "manifest" field
+                                  # ("current"/"behind"/"rewritten") compared the
+                                  # manifest's timestamp instead; staleness of
+                                  # the INPUTS is the question that actually
+                                  # bears on whether the verdict still applies.
 
 
 def read_listing_outcome(workspace: Path) -> ListingOutcome: ...
@@ -574,7 +568,7 @@ grepped — but it is a change).
 
 | Area | Work |
 |---|---|
-| `src/myflopy/run_record.py` | new, ~120 lines: `RunRecord`, `ListingOutcome`, `read_listing_outcome` |
+| `src/myflopy/run_record.py` | new, ~150 lines: `ListingOutcome`, `read_listing_outcome`. `RunRecord` was dropped — see §3 |
 | `src/myflopy/library.py` | new, ~200 lines: `SpecLibrary` + 3 subclasses |
 | `src/myflopy/workspace.py` | `Run.to_dict` carry-forward; `Run.reopen(project=)`; `Run.outcome`/`record`/`reconcile`; `RunLibrary`; `Project.runs`/`package`/`grid`/`__repr__`/`_repr_html_`; `save() -> SaveReport` |
 | `src/myflopy/specs.py` | `fork_package` helper; `package_digest`; `SimulationSpec` fork support |

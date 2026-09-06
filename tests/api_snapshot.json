@@ -997,6 +997,7 @@
     }
   },
   "surfaces": {
+    "GridLibrary.members": [],
     "GroupPackages.properties": [
       "chd",
       "drn",
@@ -1040,6 +1041,64 @@
       "uzf",
       "wel"
     ],
+    "PackageLibrary.members": [
+      "clear",
+      "digests",
+      "edit",
+      "fork",
+      "persistence",
+      "pop",
+      "popitem",
+      "setdefault",
+      "update"
+    ],
+    "Project.members": [
+      "add_grid",
+      "add_package",
+      "add_simulation",
+      "add_simulation_from_yaml",
+      "discover_native_runs",
+      "discover_runs",
+      "grid",
+      "load",
+      "manifest_path",
+      "package",
+      "prepare_run",
+      "refresh_runs",
+      "reopen_run",
+      "run",
+      "runs",
+      "runs_dir",
+      "save",
+      "simulation",
+      "summary",
+      "validate"
+    ],
+    "Run.members": [
+      "build",
+      "execute",
+      "flopy_model",
+      "load",
+      "manifest_path",
+      "model",
+      "model_names",
+      "open",
+      "outcome",
+      "package_keys",
+      "pest_runs",
+      "reconcile",
+      "reopen",
+      "save_manifest",
+      "spec_name",
+      "to_dict",
+      "write"
+    ],
+    "RunLibrary.members": [
+      "discover",
+      "drift",
+      "summary"
+    ],
+    "SaveReport.members": [],
     "SimulationBase.package_properties": [
       "all_conc",
       "all_heads",
@@ -1085,6 +1144,14 @@
       "uzf_output",
       "wel",
       "workspace"
+    ],
+    "SimulationLibrary.members": [
+      "fork"
+    ],
+    "SpecLibrary.members": [
+      "copy",
+      "names",
+      "summary"
     ],
     "advanced.__all__": [
       "chd_spec",
@@ -1194,6 +1261,7 @@
       "FrameExportProgress",
       "GeoPackageSource",
       "GeoPackageSourceSpec",
+      "GridLibrary",
       "GridRef",
       "GridSpec",
       "GweModel",
@@ -1214,6 +1282,7 @@
       "LayerQCReport",
       "LayerStack",
       "LayerSurfaces",
+      "ListingOutcome",
       "LiteralSource",
       "LoadedMf6Run",
       "Max",
@@ -1234,6 +1303,7 @@
       "PRTRunResults",
       "PackageArtifact",
       "PackageCompatibilityError",
+      "PackageLibrary",
       "PackageRef",
       "PackageSpec",
       "ParallelCompatibilityError",
@@ -1253,6 +1323,8 @@
       "Raster",
       "RasterSource",
       "Run",
+      "RunLibrary",
+      "SaveReport",
       "SfrFlowObservationSpec",
       "SfrFlowTargets",
       "SfrStageObservationSpec",
@@ -1260,8 +1332,10 @@
       "ShapeSource",
       "SimpleModelConfig",
       "SimulationBase",
+      "SimulationLibrary",
       "SimulationSpec",
       "SpecBuildContext",
+      "SpecLibrary",
       "Spread",
       "StandaloneHtmlSlider",
       "StreamConnection",
@@ -1333,6 +1407,7 @@
       "prt",
       "rch",
       "read_gpkg",
+      "read_listing_outcome",
       "read_shp_gpkg",
       "read_usg",
       "ref",

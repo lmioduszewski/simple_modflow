@@ -6016,3 +6016,44 @@ same day, which is the useful part of the result.
         does not stop you writing into its mutable field. That is already not a
         supported way to change a package -- it also skips validation -- and
         `edit`/`fork` exist precisely so it is not needed.
+
+190. **Loose ends closed after the project-libraries work (2026-09-06).**
+      Three found by auditing what the work PROMISED against what it built.
+      - **`tests/api_snapshot.json` now covers the project surface.** It
+        collected `package_api.__all__` only, so `Project`, `Run` and the
+        libraries were guarded by nothing -- which is precisely how
+        `ProjectSpec.package_spec(key)` vanished in the 2026-06-17 fold without a
+        single test failing, the regression that started this whole line of work
+        (ledger 182). A `members()` collector records every public method and
+        property each class DEFINES, under `Project.members`, `Run.members`,
+        `SaveReport.members` and one per library. Verified by deleting
+        `Project.package` and watching the snapshot test fail.
+        **Signatures are deliberately NOT captured** for this tier: these are
+        hand-written verbs whose parameters change often, and the value is in
+        noticing a verb appearing or vanishing, not in churning the snapshot on
+        every keyword added.
+      - **`RunRecord` was designed and never built -- correctly.** Every field it
+        proposed already lives on `Run` (`status`, `success`, the timestamps,
+        `metadata`, and `spec_block`, the verbatim `_spec_summary` payload), so
+        the class would have been a second object holding the same state. The two
+        genuinely useful parts are properties on `Run` instead:
+        `run.package_keys` (model -> library keys, read from `spec_block` so it
+        answers for a run whose recipe could not be revived) and
+        `run.spec_name`. The design doc's own worked example called
+        `run.record.package_keys`, which never existed; corrected there.
+      - **The types public methods RETURN are now exported.** `project.save()`
+        hands back a `SaveReport` and `run.outcome` a `ListingOutcome`, but
+        neither was reachable as `mf.*` -- you got an object whose type you could
+        not name without importing from a submodule. Both are exported now, along
+        with the library classes that are the TYPES of `project.packages` /
+        `.grids` / `.simulations` / `.runs`. Per D12 every one is in the
+        `TYPE_CHECKING` block as well as `_EXPORTS`, or it is invisible to
+        PyCharm.
+      - **Also corrected in the design doc, which was marked BUILT while
+        describing things that were not:** the `SaveReport` repr in its worked
+        example (shipped as simulations/packages/grids/pickled, not
+        written/pickled), the `runs.summary()` columns (shipped with
+        stale/drift/elapsed, not a `manifest` column), and `ListingOutcome.stale`
+        versus the designed `manifest` field -- staleness of the INPUTS is the
+        question that bears on whether a verdict still applies, which the
+        manifest's own timestamp does not answer.

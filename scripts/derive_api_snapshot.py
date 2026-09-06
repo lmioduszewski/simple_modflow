@@ -160,6 +160,32 @@ def collect_surfaces() -> dict[str, list[str]]:
             if isinstance(value, property) and not name.startswith("_")
         )
 
+    def members(cls) -> list[str]:
+        """Every public member a class DEFINES -- methods and properties alike.
+
+        The project/run surface was covered by nothing until 2026-09-06, which is
+        how ``ProjectSpec.package_spec(key)`` disappeared in the 2026-06-17 fold
+        into ``Project`` without a single test failing (ledger 182). Signatures
+        are deliberately not captured here: these are hand-written verbs whose
+        parameters change often, and the value is in noticing a verb APPEARING or
+        VANISHING.
+        """
+
+        return sorted(
+            name
+            for name, value in vars(cls).items()
+            if not name.startswith("_")
+            and (callable(value) or isinstance(value, (property, classmethod, staticmethod)))
+        )
+
+    from myflopy.library import (
+        GridLibrary,
+        PackageLibrary,
+        SimulationLibrary,
+        SpecLibrary,
+    )
+    from myflopy.workspace import Project, Run, RunLibrary, SaveReport
+
     return {
         "registry.cell_stress": sorted(
             name for name, spec in _PACKAGE_EXPLORER_SPECS.items()
@@ -181,6 +207,15 @@ def collect_surfaces() -> dict[str, list[str]]:
         "budget_tables.cell_based": sorted(_cell_based_budget_packages()),
         "components.SUPPORTED_ARTIFACT_TYPES": sorted(SUPPORTED_PACKAGE_ARTIFACT_TYPES),
         "components.APPLY_ORDER": sorted(PACKAGE_ARTIFACT_APPLY_ORDER),
+        # The project/run surface. Covered by nothing before 2026-09-06.
+        "Project.members": members(Project),
+        "Run.members": members(Run),
+        "SaveReport.members": members(SaveReport),
+        "SpecLibrary.members": members(SpecLibrary),
+        "PackageLibrary.members": members(PackageLibrary),
+        "GridLibrary.members": members(GridLibrary),
+        "SimulationLibrary.members": members(SimulationLibrary),
+        "RunLibrary.members": members(RunLibrary),
     }
 
 
