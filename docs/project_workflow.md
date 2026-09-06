@@ -186,6 +186,57 @@ by `names()`, `summary()`, the repr, and that `KeyError`.
 and PyCharm calls `__repr__` on every debugger step. Use `project.discover_runs()`
 for those.
 
+## Forking and editing packages
+
+Two verbs, spelled apart because they differ in one important way: `fork` leaves
+the original alone, `edit` changes what an existing key **means**.
+
+```python
+project.packages.fork("rch_pond", "rch_pond_vol",
+                      name="rch_pond_vol", recharge=pond_flow_vol,
+                      note="max-volume pond")
+
+project.packages.edit("npf/base", k=res.per_layer(K_revised),
+                      note="post-calibration K")
+```
+
+Both are **built, not patched** — the new spec goes through the same constructor
+`mf.npf(...)` does, so a typo raises here rather than at MF6 build time:
+
+```python
+project.packages.fork("npf/base", "npf/high", kk_typo=1.0)
+# TypeError: npf: ModflowGwfnpf does not accept 'kk_typo'. Did you mean 'k'?
+```
+
+Both **deep-copy by default**, including options the fork never touched. That is
+not caution for its own sake: `with_options` rebuilds the options dict but not its
+values, so without the copy, editing a "copy" writes through into the original's
+arrays. Measured 15.2 ms / 0.50 MB on a Ten Trails-scale simulation. `deep=False`
+opts back into sharing.
+
+`fork` refuses an existing key unless `overwrite=True`; `edit` is never refused.
+
+Simulations fork the same way, swapping packages by library key:
+
+```python
+project.simulations.fork("baseline", "mounding",
+                         swap={"rch/series": "rch_pond"})
+```
+
+The flat form applies to **every model carrying that label** — right for a
+single-model simulation and for genuinely shared packages. A coupled GWF/GWT
+simulation has `ic`, `oc` and `dis` on both models, so name the model when you
+mean one:
+
+```python
+project.simulations.fork("coupled", "hot_start",
+                         swap={"tport": {"ic": "ic/warm"}})
+```
+
+A label matching nothing raises, naming what the source actually carries — a typo
+that silently swapped nothing would hand back a "variant" identical to its parent.
+The fork records `derived_from` and appends to `lineage`, one entry per swap.
+
 ## The run ledger
 
 `project.runs` is every run under the project — with a manifest, without one, or

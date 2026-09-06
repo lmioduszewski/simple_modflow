@@ -283,3 +283,161 @@ def test_grid_keys_collide_more_readily_than_package_keys(tmp_path):
     reloaded = mf.Project.load(ok.root)
     assert reloaded.package("base/coarse").options["strt"] == 1.0
     assert reloaded.package("base_coarse").options["strt"] == 2.0
+
+
+# --- forking and editing (design step 4) ------------------------------------
+
+
+def test_a_fork_is_built_not_patched(tmp_path):
+    """The obvious implementation is silently wrong. ``PackageSpec`` is
+    frozen+slots and validates in ``__post_init__``, but ``copy.deepcopy``
+    reconstructs it through ``__reduce_ex__`` -- so deep-copying the spec and
+    writing into ``copy.options`` accepts a typo that only surfaces at MF6 build.
+    Forking goes through ``dataclasses.replace``, the ordinary path.
+    """
+
+    project = _project(tmp_path)
+
+    with pytest.raises(TypeError, match="does not accept 'kk_typo'"):
+        project.packages.fork("npf/base", "npf/typo", kk_typo=1.0)
+
+    assert "npf/typo" not in project.packages       # nothing registered on failure
+
+
+def test_a_fork_does_not_alias_the_options_it_did_not_touch(tmp_path):
+    """Where the real hazard lives: ``with_options`` rebuilds the options dict but
+    not its VALUES, so a "copy" can write through into the parent's arrays."""
+
+    project = _project(tmp_path)
+    project.add_package(
+        "npf/arrays", mf.npf(k=np.array([1.0, 2.0]), k33=np.array([0.1, 0.2]))
+    )
+
+    forked = project.packages.fork("npf/arrays", "npf/high", k=np.array([9.0, 9.0]))
+    forked.options["k33"][0] = -99.0                # an option the fork never set
+
+    assert project.package("npf/arrays").options["k33"][0] == 0.1
+    assert forked.options["k33"] is not project.package("npf/arrays").options["k33"]
+
+    # ...and the sharing is available on purpose when asked for.
+    shared = project.packages.fork("npf/arrays", "npf/shared", deep=False)
+    assert shared.options["k33"] is project.package("npf/arrays").options["k33"]
+
+
+def test_fork_registers_stamps_and_refuses_to_clobber(tmp_path):
+    project = _project(tmp_path)
+
+    forked = project.packages.fork(
+        "rch_pond", "rch_pond_vol", name="rch_pond_vol", note="max-volume pond"
+    )
+
+    assert project.package("rch_pond_vol") is forked
+    assert forked.name == "rch_pond_vol"
+    stamp = forked.metadata["forked_from"]
+    assert stamp["key"] == "rch_pond" and stamp["note"] == "max-volume pond"
+
+    with pytest.raises(KeyError, match="already has a package 'rch_pond_vol'"):
+        project.packages.fork("rch_pond", "rch_pond_vol")
+    assert project.packages.fork("rch_pond", "rch_pond_vol", overwrite=True)
+
+
+def test_edit_changes_what_a_key_means(tmp_path):
+    """``fork`` leaves the original alone; ``edit`` changes what an existing key
+    MEANS, which is the operation that can invalidate a run's history."""
+
+    project = _project(tmp_path)
+
+    edited = project.packages.edit("npf/base", k=50.0, note="post-calibration")
+
+    assert project.package("npf/base") is edited
+    assert edited.options["k"] == 50.0
+    assert edited.metadata["edited"]["note"] == "post-calibration"
+    assert "forked_from" not in edited.metadata     # a different stamp on purpose
+
+    with pytest.raises(TypeError, match="does not accept"):
+        project.packages.edit("npf/base", kk_typo=1.0)
+    assert project.package("npf/base").options["k"] == 50.0   # unchanged by the failure
+
+
+def _coupled(tmp_path) -> Project:
+    """A GWF+GWT project: `ic` sits on BOTH models, which is the ambiguous case."""
+
+    project = mf.Project(tmp_path / "coupled", name="coupled")
+    project.add_package("ic/flow", mf.ic(strt=1.0))
+    project.add_package("ic/tport", mf.ic(strt=0.0))
+    dis = dict(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0)
+    project.add_simulation(
+        mf.SimulationSpec(
+            "coupled",
+            models=[
+                mf.gwf("flow", packages=[mf.dis(**dis), mf.ic(strt=45.0)]),
+                mf.gwt("tport", packages=[mf.dis(**dis), mf.ic(strt=0.0)]),
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    return project
+
+
+def _labels(spec, model):
+    return [getattr(e, "key", None) or e.name for e in spec.model(model).packages]
+
+
+def test_a_flat_swap_reaches_every_model_carrying_the_label(tmp_path):
+    project = _coupled(tmp_path)
+
+    forked = project.simulations.fork("coupled", "both", swap={"ic": "ic/flow"})
+
+    assert _labels(forked, "flow") == ["dis", "ic/flow"]
+    assert _labels(forked, "tport") == ["dis", "ic/flow"]
+
+
+def test_a_model_qualified_swap_reaches_exactly_one(tmp_path):
+    """A coupled simulation carries ic/oc/dis on both models, so the flat form
+    cannot express "just the transport one"."""
+
+    project = _coupled(tmp_path)
+
+    forked = project.simulations.fork(
+        "coupled", "one", swap={"tport": {"ic": "ic/tport"}}
+    )
+
+    assert _labels(forked, "flow") == ["dis", "ic"]
+    assert _labels(forked, "tport") == ["dis", "ic/tport"]
+
+
+def test_a_swap_matching_nothing_raises_naming_the_source(tmp_path):
+    """A typo that silently swapped nothing would hand back a "variant" identical
+    to its parent. The message names the simulation the caller asked about, not
+    the derived name they have not seen yet."""
+
+    project = _coupled(tmp_path)
+
+    with pytest.raises(KeyError) as caught:
+        project.simulations.fork("coupled", "typo", swap={"rch/nope": "x"})
+
+    assert "Simulation 'coupled' has no package 'rch/nope'" in caught.value.args[0]
+    assert "typo" not in caught.value.args[0]
+    assert "typo" not in project.simulations
+
+    with pytest.raises(KeyError, match="has no model 'nope'"):
+        project.simulations.fork("coupled", "bad", swap={"nope": {"ic": "ic/flow"}})
+
+
+def test_a_simulation_fork_carries_its_lineage(tmp_path):
+    project = _project(tmp_path)
+    project.add_package("npf/high", mf.npf(k=50.0))
+
+    forked = project.simulations.fork(
+        "baseline", "high_k", swap={"npf/base": "npf/high"}
+    )
+
+    assert project.simulations["high_k"] is forked
+    assert forked.derived_from == "baseline"
+    assert [step["operation"] for step in forked.lineage] == [
+        "derive",
+        "replace_package",
+    ]
+    # the parent stays registered, or Project.save would refuse the fork
+    assert "baseline" in project.simulations
+    project.save()

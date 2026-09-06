@@ -5841,3 +5841,40 @@ same day, which is the useful part of the result.
       - **NOT added: `RunLibrary.open(key)`.** It would be a second spelling of
         `Project.reopen_run(name)`, which additionally attaches the build context.
         `project.runs` is the browse surface, not a second way to open a run.
+
+186. **Forking and editing packages: built, never patched (2026-09-05).**
+      Step 4 of `docs/project_libraries_design.md` -- the feature originally
+      asked for ("see what package specs have been defined, and then fork them to
+      new packages with edits").
+      - **The obvious implementation is silently wrong, and was in the first
+        draft of the design.** `PackageSpec` is `frozen=True, slots=True` and
+        validates in `__post_init__` -> `_check_options`, but `copy.deepcopy`
+        reconstructs a slots dataclass through `__reduce_ex__`, so
+        `__post_init__` NEVER RUNS. Deep-copying the spec and writing into
+        `copy.options` therefore accepts a typo silently -- measured,
+        `cp.options["kk_typo"] = 1.0` sails through and surfaces at MF6 build.
+        `fork_package` copies the option VALUES and hands them to
+        `dataclasses.replace`, which is the ordinary construction path.
+      - **`deep=True` is the default because the hazard is in the options nobody
+        edited.** `with_options` rebuilds the options dict but not its values, so
+        a fork could write through into the parent's numpy arrays. Measured 15.2
+        ms / 0.50 MB on a Ten Trails-scale simulation -- cheap enough that
+        sharing is the opt-in, not the default.
+      - **`metadata` is excluded from `package_digest`.** It carries provenance
+        (`forked_from`, `edited`), which says where a spec came from rather than
+        what it builds; including it would make stamping a note look like a
+        change to the model.
+      - **A flat `swap=` reaches EVERY model carrying the label.** The
+        alternative -- refusing an ambiguous match -- makes a coupled GWF/GWT
+        simulation unswappable, since `ic`/`oc`/`dis` sit on both models. The
+        model-qualified form (`{"tport": {"ic": ...}}`) is how you mean one, and
+        a mapping value is what distinguishes the two forms.
+      - **A swap matching nothing RAISES**, resolved against the SOURCE spec so
+        the message names the simulation the caller asked about rather than the
+        derived name they have not seen. A typo that silently swapped nothing
+        would return a "variant" identical to its parent.
+      - **`fork` refuses an existing key without `overwrite=True`; `edit` never
+        refuses.** Replacing a package other simulations reference is the
+        accident `fork` exists to avoid; revising `npf/base` deliberately is the
+        normal case, and the consequence is made visible by drift tracking rather
+        than prevented.

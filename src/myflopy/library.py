@@ -33,6 +33,9 @@ from myflopy.specs import (
     SimulationSpec,
     _builder_label,
     _package_entry_label,
+    _package_slot,
+    fork_package,
+    ref,
 )
 
 if TYPE_CHECKING:
@@ -76,6 +79,15 @@ class SpecLibrary(dict[str, _T]):
 
     # -- discover -------------------------------------------------------------
 
+    def _where(self) -> str:
+        """How to name this library in a message -- with its project when known."""
+
+        return (
+            f"Project '{self._project_name}'"
+            if self._project_name
+            else f"This {self._kind} library"
+        )
+
     def names(self) -> list[str]:
         """Return the defined keys, sorted.
 
@@ -108,12 +120,7 @@ class SpecLibrary(dict[str, _T]):
         ``dict.get`` never calls ``__missing__``.
         """
 
-        where = (
-            f"Project '{self._project_name}'"
-            if self._project_name
-            else f"This {self._kind} library"
-        )
-        lines = [f"{where} has no {self._kind} '{key}'."]
+        lines = [f"{self._where()} has no {self._kind} '{key}'."]
         close = difflib.get_close_matches(key, self.names(), n=1, cutoff=0.6)
         if close:
             lines.append(f"Did you mean: '{close[0]}'?")
@@ -200,6 +207,74 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
             "requires": ", ".join(entry.requires) or "—",
         }
 
+    def fork(
+        self,
+        source: str,
+        key: str,
+        *,
+        name: str | None = None,
+        deep: bool = True,
+        note: str | None = None,
+        overwrite: bool = False,
+        **overrides: Any,
+    ) -> PackageSpec:
+        """Register a copy of ``source`` under ``key``, with ``overrides`` applied.
+
+        The copy is BUILT through the ordinary construction path, so a typo in
+        ``overrides`` raises here exactly as it would in ``mf.npf(...)`` -- see
+        :func:`~myflopy.specs.fork_package`. ``deep=True`` also unaliases the
+        options the fork did not touch, so editing the fork cannot write through
+        into the original's arrays.
+
+        Mutates the library and returns the new spec. Refuses an existing ``key``
+        unless ``overwrite=True``: silently replacing a package that other
+        simulations reference is the accident this verb exists to avoid.
+        """
+
+        if key in self and not overwrite:
+            raise KeyError(
+                f"{self._where()} already has a package '{key}'. "
+                "Pass overwrite=True to replace it, or pick another key."
+            )
+        forked = fork_package(
+            self[source], name=name, deep=deep, note=note, source=source, **overrides
+        )
+        self[key] = forked
+        return forked
+
+    def edit(
+        self,
+        key: str,
+        *,
+        name: str | None = None,
+        deep: bool = True,
+        note: str | None = None,
+        **overrides: Any,
+    ) -> PackageSpec:
+        """Replace the package at ``key`` with an edited copy of itself.
+
+        The same operation as :meth:`fork` with a different destination, spelled
+        apart on purpose: :meth:`fork` leaves the original alone, this changes
+        what an existing key MEANS. Every run that already used ``key`` recorded
+        the key, not its contents, so this is the verb that can invalidate
+        history -- ``project.runs.drift()`` is what makes that visible.
+
+        Editing is never refused. It is your library, and revising ``npf/base``
+        is the normal case; the point is that the consequence stops being silent.
+        """
+
+        edited = fork_package(
+            self[key],
+            name=name,
+            deep=deep,
+            note=note,
+            source=key,
+            stamp="edited",
+            **overrides,
+        )
+        self[key] = edited
+        return edited
+
     def persistence(self) -> pd.DataFrame:
         """Report how each package would be persisted by ``Project.save()``.
 
@@ -283,6 +358,58 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
         "derived_from",
     )
 
+    def fork(
+        self,
+        source: str,
+        name: str,
+        *,
+        swap: Mapping[str, Any] | None = None,
+        register: bool = True,
+        overwrite: bool = False,
+    ) -> SimulationSpec:
+        """Register a variant of ``source`` under ``name``, swapping packages.
+
+        Wraps :meth:`~myflopy.specs.SimulationSpec.derive`, which already records
+        ``derived_from`` and appends to ``lineage``; each swap adds its own
+        ``replace_package`` entry, so the fork carries an auditable trail.
+
+        ``swap`` maps an existing package label to the library key that should
+        take its slot, in either of two forms::
+
+            swap={"rch/series": "rch_pond"}            # every model that has it
+            swap={"flow": {"rch/series": "rch_pond"}}  # one named model
+
+        The flat form applies to **every model carrying that label**, which is
+        what you want for a single-model simulation and for genuinely shared
+        packages. A coupled GWF/GWT simulation has ``ic``, ``oc`` and ``dis`` on
+        both models, so name the model when you mean one of them. A label that
+        matches nothing raises -- a typo that silently changed no packages would
+        hand back a "variant" identical to its parent.
+
+        ``register=False`` returns the spec without adding it. Note that a spec
+        whose ``derived_from`` names a simulation NOT in the library makes
+        :meth:`Project.save` refuse it, so an unregistered parent is a save-time
+        error rather than a fork-time one.
+        """
+
+        if name in self and not overwrite:
+            raise KeyError(
+                f"{self._where()} already has a simulation '{name}'. "
+                "Pass overwrite=True to replace it, or pick another name."
+            )
+        # Resolved against the SOURCE, so a bad label names the simulation the
+        # caller asked about rather than the derived name they have not seen yet.
+        targets = _swap_targets(self[source], swap or {})
+        spec = self[source].derive(name)
+        for model_name, old_label, new_key in targets:
+            entry = spec.model(model_name).package(old_label)
+            spec = spec.replace_package(
+                model_name, ref(new_key), name=_package_slot(entry)
+            )
+        if register:
+            self[name] = spec
+        return spec
+
     def _row(self, key: str, entry: SimulationSpec) -> dict[str, Any]:
         """Summarize one simulation: its models, what they carry, its lineage."""
 
@@ -298,3 +425,51 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
             "exchanges": len(entry.exchanges),
             "derived_from": entry.derived_from or "—",
         }
+
+
+def _swap_targets(
+    spec: SimulationSpec, swap: Mapping[str, Any]
+) -> list[tuple[str, str, str]]:
+    """Resolve a ``swap`` mapping to ``(model, old label, new key)`` triples.
+
+    Accepts both the flat form (``{"rch/series": "rch_pond"}``) and the
+    model-qualified form (``{"flow": {"rch/series": "rch_pond"}}``); a value that
+    is itself a mapping marks the qualified form, so the two cannot be confused.
+    Raises when a label matches no package, naming what the model does carry.
+    """
+
+    model_names = set(spec.model_names)
+    targets: list[tuple[str, str, str]] = []
+    for outer, value in swap.items():
+        if isinstance(value, Mapping):
+            if outer not in model_names:
+                raise KeyError(
+                    f"Simulation '{spec.name}' has no model '{outer}'. "
+                    f"Models: {', '.join(sorted(model_names))}."
+                )
+            pairs = [(outer, old, new) for old, new in value.items()]
+        else:
+            pairs = [(model, outer, value) for model in spec.model_names]
+        for model_name, old_label, new_key in pairs:
+            labels = [
+                _package_entry_label(entry)
+                for entry in spec.model(model_name).packages
+            ]
+            if old_label in labels:
+                targets.append((model_name, old_label, new_key))
+    for outer, value in swap.items():
+        if isinstance(value, Mapping):
+            continue
+        if not any(old == outer for _, old, _ in targets):
+            carried = sorted(
+                {
+                    _package_entry_label(entry)
+                    for model in spec.models
+                    for entry in model.packages
+                }
+            )
+            raise KeyError(
+                f"Simulation '{spec.name}' has no package '{outer}' to swap. "
+                f"It carries: {', '.join(carried)}."
+            )
+    return targets
