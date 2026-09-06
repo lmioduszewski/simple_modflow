@@ -479,6 +479,65 @@ def package_digest(package: PackageSpec) -> str:
     return hashlib.sha256(pickle.dumps(payload, protocol=5)).hexdigest()[:16]
 
 
+def _renamed_options(
+    options: dict[str, Any], old: str, new: str, supplied: Iterable[str] = ()
+) -> dict[str, Any]:
+    """Carry a package rename into the option values that embed the old name.
+
+    A package name is not just ``PackageSpec.name``: the helpers bake it into
+    ``options`` too (``advanced._named_options`` sets ``pname=name`` and
+    ``filename="{model_name}.{name}"``). A fork that renamed only the dataclass
+    field left those stale, and MF6 then keeps ONE package of two under a FloPy
+    "Replacing existing package" warning -- measured, two CHD specs on one model
+    collapsed to a single ``flow.chd`` holding only the second.
+
+    Only those two are rewritten, and only when they still hold the value the
+    helper wrote. Anything else naming the package RAISES rather than being
+    guessed at, because the conventions genuinely conflict and ``PackageSpec``
+    carries no package-type field to dispatch on: uzf/lak/sfr write
+    ``{model_name}_{name}_{suffix}`` (``package_registry``) while mvr writes
+    ``{model_name}.{name}.bud`` (``advanced``). A ``str.replace`` across them
+    would corrupt ``{model_name}_sfr_stage.sfr`` when renaming a package called
+    ``sfr``.
+
+    NOT handled, and out of reach from one spec: a sibling's ``requires=`` tuple,
+    MVR's ``options["packages"]`` and its ``perioddata`` source/destination
+    strings, and ``MoverConnection.package``. Renaming a package another one
+    names is the caller's to fix.
+    """
+
+    renamed = dict(options)
+    if renamed.get("pname") == old:
+        renamed["pname"] = new
+    if renamed.get("filename") == f"{{model_name}}.{old}":
+        renamed["filename"] = f"{{model_name}}.{new}"
+    # A containment test cannot decide these on its own: the corrected value
+    # "{model_name}_sfr_north_budget.sfr" still contains "sfr" twice -- once
+    # because the new name embeds the old, once because ".sfr" is the file
+    # suffix. So the question asked is whether the CALLER took responsibility for
+    # the key in this call, which is answerable exactly.
+    handled = set(supplied)
+    stale = sorted(
+        key
+        for key, value in renamed.items()
+        if key.endswith("_filerecord")
+        and key not in handled
+        and isinstance(value, str)
+        and old in value
+    )
+    if stale:
+        raise ValueError(
+            f"Cannot rename package '{old}' to '{new}': "
+            f"{', '.join(stale)} still names '{old}', and the output-file "
+            "conventions differ per package type (uzf/lak/sfr write "
+            "'{model_name}_{name}_<suffix>', mvr writes '{model_name}.{name}.bud'), "
+            "so rewriting them here would be a guess. Pass the corrected "
+            f"{'value' if len(stale) == 1 else 'values'} explicitly, or fork "
+            "without name= and rename at the source."
+        )
+    return renamed
+
+
 def fork_package(
     package: PackageSpec,
     /,
@@ -515,6 +574,12 @@ def fork_package(
     """
 
     options = copy.deepcopy(package.options) if deep else dict(package.options)
+    # Overrides merge FIRST, so a caller who supplies a corrected filerecord
+    # satisfies the rename check below rather than being refused for a value they
+    # just replaced.
+    options.update(overrides)
+    if name is not None and name != package.name:
+        options = _renamed_options(options, package.name, name, overrides)
     inputs = copy.deepcopy(package.inputs) if deep else dict(package.inputs)
     metadata = copy.deepcopy(package.metadata) if deep else dict(package.metadata)
     provenance: dict[str, Any] = {
@@ -528,7 +593,7 @@ def fork_package(
     return replace(
         package,
         name=package.name if name is None else name,
-        options={**options, **overrides},
+        options=options,
         inputs=inputs,
         metadata=metadata,
     )

@@ -23,6 +23,7 @@ from myflopy.library import (
     SimulationLibrary,
     SpecLibrary,
 )
+from myflopy.specs import fork_package
 from myflopy.workspace import Project
 
 
@@ -441,3 +442,96 @@ def test_a_simulation_fork_carries_its_lineage(tmp_path):
     # the parent stays registered, or Project.save would refuse the fork
     assert "baseline" in project.simulations
     project.save()
+
+
+def test_a_renamed_fork_does_not_collapse_onto_its_parent(tmp_path):
+    """A package name is not just ``PackageSpec.name``. The helpers bake it into
+    ``options`` as ``pname``/``filename``, so a fork that renamed only the field
+    left those stale -- and MF6 kept ONE package of two under a FloPy "Replacing
+    existing package" warning. Measured before the fix: two CHD specs on one
+    model wrote a single ``flow.chd`` holding only the second.
+    """
+
+    base = mf.chd(stress_period_data={0: [[(0, 0, 0), 10.0]]})
+    forked = fork_package(
+        base, name="chd_east", stress_period_data={0: [[(0, 0, 2), 8.0]]}
+    )
+
+    assert forked.options["pname"] == "chd_east"
+    assert forked.options["filename"] == "{model_name}.chd_east"
+
+    simulation = mf.SimulationSpec(
+        "s",
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=1, ncol=3, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.ic(strt=5.0),
+                    mf.npf(k=1.0),
+                    base,
+                    forked,
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+    )
+    built = simulation.build_flopy(tmp_path / "ws")
+    built.simulation.write_simulation(silent=True)
+
+    names = [p.package_name for p in built.simulation.get_model("flow").packagelist]
+    assert "chd" in names and "chd_east" in names
+    written = sorted(f.name for f in (tmp_path / "ws").iterdir() if ".chd" in f.name)
+    assert written == ["flow.chd", "flow.chd_east"]
+
+
+def test_a_rename_that_cannot_be_carried_safely_is_refused(tmp_path):
+    """uzf/lak/sfr write ``{model_name}_{name}_<suffix>`` while mvr writes
+    ``{model_name}.{name}.bud``, and ``PackageSpec`` has no package-type field to
+    dispatch on -- so a filerecord still naming the old package raises rather
+    than being guessed at. A ``str.replace`` would corrupt
+    ``{model_name}_sfr_stage.sfr`` when renaming a package called ``sfr``."""
+
+    spec = mf.sfr.flopy(
+        nreaches=1,
+        packagedata=[],
+        connectiondata=[],
+        perioddata={},
+        pname="sfr",
+        budget_filerecord="{model_name}_sfr_budget.sfr",
+    )
+
+    with pytest.raises(ValueError) as caught:
+        fork_package(spec, name="sfr_north")
+
+    assert "budget_filerecord" in str(caught.value)
+    assert "would be a guess" in str(caught.value)
+
+    # ...and renaming is fine once the caller supplies the corrected values.
+    # The check is keyed on whether the CALLER handled the key, not on whether
+    # the value contains the old name: "{model_name}_sfr_north_budget.sfr" still
+    # contains "sfr" twice, once because the new name embeds the old and once
+    # because ".sfr" is the file suffix.
+    renamed = fork_package(
+        spec,
+        name="sfr_north",
+        budget_filerecord="{model_name}_sfr_north_budget.sfr",
+        stage_filerecord="{model_name}_sfr_north_stage.sfr",
+    )
+    assert renamed.options["pname"] == "sfr_north"
+
+    # Handling only some of them is still refused, naming the ones left.
+    with pytest.raises(ValueError, match="stage_filerecord"):
+        fork_package(spec, name="sfr_north", budget_filerecord="ok.bud")
+
+
+def test_an_unrelated_pname_is_left_alone():
+    """Only values still holding what the helper wrote are rewritten -- a pname
+    the user set deliberately is theirs."""
+
+    spec = mf.npf(k=1.0).with_options(pname="my_own_name")
+
+    forked = fork_package(spec, name="npf_high")
+
+    assert forked.name == "npf_high"
+    assert forked.options["pname"] == "my_own_name"

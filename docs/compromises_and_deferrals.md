@@ -5873,6 +5873,30 @@ same day, which is the useful part of the result.
         the message names the simulation the caller asked about rather than the
         derived name they have not seen. A typo that silently swapped nothing
         would return a "variant" identical to its parent.
+      - **A rename carries into `pname`/`filename`, and REFUSES anything else.**
+        Caught by adversarial verification after the first commit: a package name
+        is not just `PackageSpec.name`, since `advanced._named_options` bakes it
+        into `options` as `pname=name` and `filename="{model_name}.{name}"`. A
+        fork that renamed only the field left those stale, and MF6 kept ONE
+        package of two under a FloPy "Replacing existing package" warning --
+        measured, two CHD specs on one model wrote a single `flow.chd` holding
+        only the second. Only those two are rewritten, and only when they still
+        hold what the helper wrote; a `*_filerecord` still naming the old package
+        raises, because uzf/lak/sfr write `{model_name}_{name}_<suffix>` while
+        mvr writes `{model_name}.{name}.bud` and `PackageSpec` has no
+        package-type field to dispatch on.
+      - **That refusal is keyed on CALLER RESPONSIBILITY, not containment.** A
+        containment test cannot decide it: the corrected
+        `{model_name}_sfr_north_budget.sfr` still contains `"sfr"` twice, once
+        because the new name embeds the old and once because `.sfr` is the file
+        suffix. So the question asked is whether the caller supplied that key in
+        this call -- which is answerable exactly. Overrides therefore merge
+        BEFORE the rename check, or a caller would be refused for a value they
+        had just replaced.
+      - **NOT carried, and out of reach from one spec:** a sibling's `requires=`
+        tuple, MVR's `options["packages"]` and its `perioddata` source/destination
+        strings, and `MoverConnection.package`. Renaming a package another one
+        names is the caller's to fix.
       - **`fork` refuses an existing key without `overwrite=True`; `edit` never
         refuses.** Replacing a package other simulations reference is the
         accident `fork` exists to avoid; revising `npf/base` deliberately is the
