@@ -340,3 +340,121 @@ def test_a_missing_run_names_the_near_miss_like_every_other_library(tmp_path):
 
     assert "Project 'p' has no run 'baselien'." in caught.value.args[0]
     assert "Did you mean: 'baseline'?" in caught.value.args[0]
+
+
+# --- drift: what an edit invalidated (design step 4 / §6a) ------------------
+
+
+def _library_project(tmp_path: Path) -> mf.Project:
+    """A project whose simulation references library packages, then runs it."""
+
+    import numpy as np
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/base", mf.npf(k=1.0))
+    project.add_package("rch/series", mf.rch.array(recharge={0: np.zeros(4)}, irch=None))
+    project.add_package("rch_pond", mf.rch.array(recharge={0: np.ones(4)}, irch=None))
+    project.add_simulation(
+        mf.SimulationSpec(
+            "baseline",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[
+                        mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                        mf.ic(strt=1.0),
+                        mf.ref("npf/base"),
+                        mf.ref("rch/series"),
+                    ],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+        )
+    )
+    project.prepare_run("baseline", project.simulations["baseline"])
+    return project
+
+
+def test_only_library_references_are_fingerprinted(tmp_path):
+    """An inline package is baked into the run's own recipe and cannot drift; a
+    reference names a library entry that can be edited afterwards."""
+
+    project = _library_project(tmp_path)
+    manifest = json.loads((project.runs_dir / "baseline" / "run.json").read_text())
+
+    assert set(manifest["package_digests"]) == {"npf/base", "rch/series"}
+    assert "dis" not in manifest["package_digests"]      # inline, cannot drift
+
+
+def test_editing_a_package_shows_up_as_drift(tmp_path):
+    """The defect this exists for: the manifest records package KEYS, so editing
+    npf/base leaves every earlier run still naming it -- true of the key, false
+    of the model. Measured before this: two models differing 50x in K produced
+    byte-identical manifests."""
+
+    project = _library_project(tmp_path)
+    assert set(project.runs.drift()["state"]) == {"unchanged"}
+
+    project.packages.edit("npf/base", k=50.0, note="post-calibration")
+    project.packages.pop("rch/series")
+
+    drift = project.refresh_runs().drift().set_index("key")
+
+    assert drift.loc["npf/base", "state"] == "edited"
+    assert drift.loc["npf/base", "ran_with"] != drift.loc["npf/base", "library_now"]
+    assert drift.loc["rch/series", "state"] == "removed"
+    assert drift.loc["rch/series", "library_now"] == "—"
+
+
+def test_the_summary_names_the_drifted_keys(tmp_path):
+    project = _library_project(tmp_path)
+    assert project.runs.summary().set_index("key").loc["baseline", "drift"] == "—"
+
+    project.packages.edit("npf/base", k=50.0)
+
+    row = project.refresh_runs().summary().set_index("key").loc["baseline"]
+    assert row["drift"] == "npf/base"
+
+
+def test_a_run_recorded_before_digests_reports_unknown(tmp_path):
+    """A missing fingerprint is not evidence of sameness. Reporting it as
+    ``unchanged`` would be the same class of lie as ``status='written'`` reading
+    as success -- which is the defect two commits back."""
+
+    project = _library_project(tmp_path)
+    manifest_path = project.runs_dir / "baseline" / "run.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("package_digests")
+    manifest_path.write_text(json.dumps(manifest))
+
+    refreshed = project.refresh_runs()
+
+    assert refreshed.drift().iloc[0]["state"] == "unknown"
+    assert refreshed.summary().set_index("key").loc["baseline", "drift"] == "unknown"
+
+
+def test_drift_needs_a_project_bound_library(tmp_path):
+    """A library detached by dict.copy() has no packages to compare against, and
+    says so rather than reporting everything unchanged."""
+
+    from myflopy.workspace import RunLibrary
+
+    project = _library_project(tmp_path)
+    assert project.runs.drift() is not None
+
+    with pytest.raises(RuntimeError, match="not bound to a project"):
+        RunLibrary(project.runs).drift()
+
+
+def test_editing_does_not_disturb_a_runs_own_recipe(tmp_path):
+    """Drift reports; it must not rewrite history. The run's stored digests and
+    spec blocks are what it RAN with and stay put."""
+
+    project = _library_project(tmp_path)
+    manifest_path = project.runs_dir / "baseline" / "run.json"
+    before = json.loads(manifest_path.read_text())
+
+    project.packages.edit("npf/base", k=50.0)
+    project.refresh_runs().drift()
+
+    assert json.loads(manifest_path.read_text()) == before

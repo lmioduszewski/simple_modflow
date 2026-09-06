@@ -34,6 +34,7 @@ from myflopy.specs import (
     GridRef,
     GridSpec,
     PackageRef,
+    package_digest,
     PackageSpec,
     SimulationSpec,
     SpecBuildContext,
@@ -450,6 +451,7 @@ class RunLibrary(SpecLibrary["Run"]):
         "status",
         "outcome",
         "stale",
+        "drift",
         "elapsed",
         "simulation",
         "models",
@@ -457,6 +459,10 @@ class RunLibrary(SpecLibrary["Run"]):
         "updated",
         "path",
     )
+    # The library to compare recorded digests against. A class default rather
+    # than constructor state, for the reason in SpecLibrary: dict.copy() and
+    # dict.__or__ drop instance attributes.
+    _packages: PackageLibrary | None = None
 
     @classmethod
     def discover(
@@ -466,6 +472,7 @@ class RunLibrary(SpecLibrary["Run"]):
 
         library = cls()
         library._project_name = project.name
+        library._packages = project.packages
         root = project.root
         seen: set[Path] = set()
 
@@ -506,6 +513,84 @@ class RunLibrary(SpecLibrary["Run"]):
             library[key] = run
         return library
 
+    def drift(self, key: str | None = None) -> pd.DataFrame:
+        """Report which library packages a run used have changed since it ran.
+
+        The manifest records package KEYS, so ``project.packages.edit("npf/base",
+        ...)`` leaves every earlier run still naming ``npf/base`` -- true of the
+        key, false of the model it actually used. Each run also records a
+        fingerprint of what those keys MEANT at the time; this compares them.
+
+        States: ``unchanged`` (reproducible from the library as it stands),
+        ``edited`` (the key still exists and means something else), ``removed``
+        (the key is gone), and ``unknown`` for a run recorded before digests
+        existed -- a missing fingerprint is not evidence of sameness, and
+        reporting it as ``unchanged`` would be the same class of lie as
+        ``status="written"`` reading as success.
+        """
+
+        import pandas as pd
+
+        if self._packages is None:
+            raise RuntimeError(
+                "This run library is not bound to a project, so there is no "
+                "package library to compare against. Use project.runs."
+            )
+        if key is None:
+            keys = self.names()
+        else:
+            self[key]  # raise the did-you-mean KeyError for an unknown run
+            keys = [key]
+        rows: list[dict[str, Any]] = []
+        for run_key in keys:
+            recorded = self[run_key].package_digests
+            if not recorded:
+                rows.append(
+                    {
+                        "run": run_key,
+                        "key": "—",
+                        "ran_with": "—",
+                        "library_now": "—",
+                        "state": "unknown" if recorded is None else "unchanged",
+                    }
+                )
+                continue
+            for package_key, ran_with in sorted(recorded.items()):
+                package = self._packages.get(package_key)
+                now = None if package is None else package_digest(package)
+                if now is None:
+                    state = "removed"
+                elif now == ran_with:
+                    state = "unchanged"
+                else:
+                    state = "edited"
+                rows.append(
+                    {
+                        "run": run_key,
+                        "key": package_key,
+                        "ran_with": ran_with,
+                        "library_now": now or "—",
+                        "state": state,
+                    }
+                )
+        return pd.DataFrame(rows, columns=["run", "key", "ran_with", "library_now", "state"])
+
+    def _drift_label(self, entry: Run) -> str:
+        """The one-cell drift summary for :meth:`summary`."""
+
+        recorded = entry.package_digests
+        if recorded is None:
+            return "unknown"
+        if self._packages is None or not recorded:
+            return "—"
+        moved = [
+            package_key
+            for package_key, ran_with in sorted(recorded.items())
+            if (package := self._packages.get(package_key)) is None
+            or package_digest(package) != ran_with
+        ]
+        return ", ".join(moved) if moved else "—"
+
     def _row(self, key: str, entry: Run) -> dict[str, Any]:
         """Summarize one run: what myflopy did, and what MF6 did."""
 
@@ -518,6 +603,7 @@ class RunLibrary(SpecLibrary["Run"]):
             "status": entry.status,
             "outcome": outcome.outcome,
             "stale": outcome.stale,
+            "drift": self._drift_label(entry),
             "elapsed": outcome.elapsed or "—",
             "simulation": block.get("name", "—"),
             "models": ", ".join(models) or "—",
@@ -618,6 +704,10 @@ class Run:
     # it can say what a run contained but never rebuild it. This is what lets a
     # run reopened in a later session be rebuilt, re-run, or forked.
     spec_recipe: dict[str, Any] | None = field(default=None, repr=False)
+    # What each library package MEANT when this run was prepared. The manifest
+    # records package KEYS, so without this, editing 'npf/base' afterwards leaves
+    # every run claiming to have used it -- true of the key, false of the model.
+    package_digests: dict[str, str] | None = field(default=None, repr=False)
     built: BuiltSimulation | None = field(default=None, repr=False)
     simulation: Any | None = field(default=None, repr=False)
     build_context: SpecBuildContext | None = field(default=None, repr=False)
@@ -915,6 +1005,7 @@ class Run:
             if self.spec is not None
             else self.spec_block,
             "spec_recipe": self._spec_recipe_block(),
+            "package_digests": self.package_digests,
             "metadata": self.metadata,
         }
 
@@ -976,6 +1067,7 @@ class Run:
             metadata=dict(data.get("metadata", {})),
             spec_block=data.get("spec"),
             spec_recipe=data.get("spec_recipe"),
+            package_digests=data.get("package_digests"),
         )
         run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
         if load:
@@ -1303,6 +1395,7 @@ class Project:
             executable=executable,
             metadata={} if metadata is None else dict(metadata),
             build_context=self._build_context(workspace),
+            package_digests=self._package_digests(spec),
         )
         run.save_manifest()
         if build:
@@ -1379,6 +1472,29 @@ class Project:
                     run.open()
             runs.append(run)
         return runs
+
+    def _package_digests(self, spec: SimulationSpec) -> dict[str, str]:
+        """Fingerprint what each LIBRARY package meant for this simulation.
+
+        Only ``mf.ref`` entries are recorded. A package written inline is baked
+        into the run's own recipe and cannot drift; a reference names a library
+        entry that can be edited afterwards, which is the whole point of
+        recording it. A ref whose key is not defined is skipped -- ``validate``
+        already reports that, and a digest is not the place to raise it.
+        """
+
+        digests: dict[str, str] = {}
+        entries = [
+            *spec.packages,
+            *(entry for model in spec.models for entry in model.packages),
+        ]
+        for entry in entries:
+            if not isinstance(entry, PackageRef):
+                continue
+            package = self.packages.get(entry.key)
+            if package is not None:
+                digests[entry.key] = package_digest(package)
+        return digests
 
     def _why_unserializable(self, simulation: SimulationSpec) -> str | None:
         """Return a readable reason a simulation cannot be persisted, or None."""

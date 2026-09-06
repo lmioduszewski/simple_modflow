@@ -267,6 +267,30 @@ directory name either way; one elsewhere keeps its path, so `runs/from_usg` and
 `scratch/from_usg` stay distinct. A truncated manifest is a row reading
 `unreadable`, never an exception — one bad file must not hide every other run.
 
+### What an edit invalidated
+
+The manifest records package **keys**, not their contents, so
+`project.packages.edit("npf/base", ...)` leaves every earlier run still naming
+`npf/base` — true of the key, false of the model it actually used. Each run also
+records a fingerprint of what those keys meant at the time:
+
+```python
+project.runs.drift()
+#  run       key         ran_with          library_now       state
+#  baseline  npf/base    8b6bcfeb950cb270  0e83cf9f816b6102  edited
+#  baseline  rch/series  333df8c89afe0a37  333df8c89afe0a37  unchanged
+#  mounding  rch_pond    8a2aacef0f6bca5d  —                 removed
+```
+
+`summary()` carries the one-cell version as a `drift` column naming the moved
+keys. A run reading `unchanged` throughout is reproducible from the library as it
+stands; anything else names exactly what to look at.
+
+Only `mf.ref` entries are fingerprinted — a package written inline is baked into
+the run's own recipe and cannot drift. A run recorded before digests existed
+reports `unknown`, not `unchanged`: a missing fingerprint is not evidence of
+sameness. Drift only reports; it never rewrites a run's stored history.
+
 The library is **cached**, so `project.runs["baseline"]` returns the same object
 twice; call `project.refresh_runs()` after executing a run from elsewhere.
 Opening one run by name stays `project.reopen_run(name)`, which also attaches the

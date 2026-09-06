@@ -5878,3 +5878,36 @@ same day, which is the useful part of the result.
         accident `fork` exists to avoid; revising `npf/base` deliberately is the
         normal case, and the consequence is made visible by drift tracking rather
         than prevented.
+
+187. **Drift: which library packages a run used have changed since (2026-09-05).**
+      The other half of step 4 (design §6a). `edit` is never refused, so the
+      contract is that its consequence stops being silent -- this is that.
+      Measured on the current code before it: two models differing **50x in K**
+      produced byte-identical manifests, and `ModelGroup(...).diff().report()`
+      called them "identical to reference".
+      - **Digests are computed at `prepare_run`, not in `_spec_summary`.** The
+        design put them there; that is impossible, because `_spec_summary` sees
+        `_package_entry_label` only, and a `PackageRef` is stored UNRESOLVED --
+        digesting it needs the project library, which the module function has no
+        access to. `Project._package_digests` resolves refs and the block rides
+        the manifest beside `spec`/`spec_recipe`, carried forward by `to_dict`
+        under the same rule as those (ledger 179/181).
+      - **Only `mf.ref` entries are fingerprinted.** An inline package is baked
+        into the run's own recipe and cannot drift; recording it would report
+        every inline `dis` as `removed`, since its label is not a library key.
+      - **`metadata` is excluded from the digest** (see 186), so stamping a note
+        does not read as a change to the model.
+      - **A run with no digest block reports `unknown`, never `unchanged`.** A
+        missing fingerprint is not evidence of sameness -- the same class of lie
+        as `status="written"` reading as success, which is what ledger 184 fixed.
+      - **`drift` reports; it never rewrites.** Pinned by a test that asserts the
+        manifest is byte-identical after an edit and a drift call.
+      - **`RunLibrary._packages` is a class-level default**, like
+        `_project_name`: `dict.copy()`/`dict.__or__` drop instance state, so a
+        detached library raises naming the cause rather than silently reporting
+        everything unchanged.
+      - **NOT built: drift on grids or simulations.** A grid is referenced by key
+        the same way and could drift identically, but `GridSpec` has no
+        copy-on-write verbs, so nothing can edit one in place yet -- the verb
+        would have no way to be exercised. Revisit if `GridLibrary` ever gains
+        `edit`.
