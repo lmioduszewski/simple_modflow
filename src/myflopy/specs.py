@@ -14,7 +14,7 @@ import functools
 import hashlib
 import inspect
 import pickle
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -25,6 +25,7 @@ from typing import Any, TypeAlias, TypeVar, cast
 
 import flopy
 
+from myflopy._logging import get_logger
 from myflopy.sources import (
     DataSourceSpec,
     LiteralSource,
@@ -32,6 +33,8 @@ from myflopy.sources import (
     source_from_dict,
 )
 from myflopy.specs_io import simulation_from_yaml, simulation_to_yaml
+
+logger = get_logger(__name__)
 
 Builder = Callable[..., Any]
 Hook = Callable[[Any, dict[str, Any], "ModelContext"], Any]
@@ -449,7 +452,36 @@ def _spec_options(data: Any) -> dict[str, Any]:
     return {key: _spec_value(item, int_keys=True) for key, item in dict(data).items()}
 
 
-def package_digest(package: PackageSpec) -> str:
+def _canonical(value: Any) -> Any:
+    """Normalize a value for fingerprinting, so representation is not content.
+
+    Dict key ORDER is not content -- ``Project.save()``/``load()`` round-trips a
+    package's options through JSON and hands them back in a different order, so
+    without this every reloaded package fingerprints as edited. Sets are ordered
+    by ``repr`` for the same reason one step further: their pickle varies BETWEEN
+    PROCESSES, which would make a digest unstable in exactly the way its contract
+    promises it is not.
+
+    Lists and tuples keep their order (it is meaningful in a record list) but
+    collapse to one type, since MF6 cannot tell a list of records from a tuple of
+    them. Everything else -- arrays, scalars, sources -- passes through.
+    """
+
+    if isinstance(value, dict):
+        return tuple(
+            sorted(
+                ((_canonical(key), _canonical(item)) for key, item in value.items()),
+                key=lambda pair: repr(pair[0]),
+            )
+        )
+    if isinstance(value, (set, frozenset)):
+        return tuple(sorted((_canonical(item) for item in value), key=repr))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical(item) for item in value)
+    return value
+
+
+def package_digest(package: PackageSpec) -> str | None:
     """Return a content fingerprint of what ``package`` BUILDS.
 
     Fingerprints the FIELDS -- name, builder reference, options, inputs, enabled,
@@ -466,16 +498,39 @@ def package_digest(package: PackageSpec) -> str:
     ``metadata`` is deliberately EXCLUDED: it carries provenance (``forked_from``,
     ``edited``) that says where a spec came from, not what it builds. Including it
     would make stamping a note look like a change to the model.
+
+    Returns ``None`` when the package cannot be fingerprinted at all -- a builder
+    that is not importable, or an option that does not pickle. Such a package is
+    still perfectly buildable, so this reports rather than raises.
+
+    What it does NOT see: the BODY of an importable builder (only its reference),
+    and the CONTENTS of a file a source points at (only its path). A digest says
+    the recipe is unchanged, not that the world is.
     """
 
-    payload = (
-        package.name,
-        _callable_ref(package.builder),
-        pickle.dumps(package.options, protocol=5),
-        pickle.dumps(package.inputs, protocol=5),
-        package.enabled,
-        tuple(package.requires),
-    )
+    try:
+        payload = (
+            package.name,
+            _callable_ref(package.builder),
+            pickle.dumps(_canonical(package.options), protocol=5),
+            pickle.dumps(_canonical(package.inputs), protocol=5),
+            package.enabled,
+            tuple(sorted(package.requires)),
+        )
+    except (ValueError, TypeError, AttributeError, pickle.PicklingError) as error:
+        # A builder that is not importable (a closure, a lambda) or an option
+        # that will not pickle (an open file handle) cannot be fingerprinted.
+        # That is NOT a reason to refuse the package: it was buildable and
+        # runnable before drift existed, and a bookkeeping column must never
+        # gate whether a model can be prepared. Callers report it as
+        # "unfingerprinted" rather than guessing at "unchanged".
+        logger.debug(
+            "Package '%s' cannot be fingerprinted (%s); drift will report it "
+            "as unfingerprinted.",
+            package.name,
+            error,
+        )
+        return None
     return hashlib.sha256(pickle.dumps(payload, protocol=5)).hexdigest()[:16]
 
 
@@ -987,6 +1042,28 @@ def _package_entry_matches(package: PackageEntry, name: str) -> bool:
     """
 
     return package.name == name or _package_slot(package) == name
+
+
+def _package_entry_index(
+    packages: Sequence[PackageEntry], target: str
+) -> int | None:
+    """Find the entry ``target`` names: by FULL LABEL first, then by slot hint.
+
+    The label pass is what makes ``<type>/<variant>`` keys addressable. Matching
+    on the slot alone -- which is only the key's first segment for a ref -- means
+    ``wel/north`` and ``wel/south`` both answer to ``wel``, so replacing one
+    silently replaced whichever came first. Measured: swapping ``wel/south``
+    deleted ``wel/north`` and left ``wel/south`` pumping, and MF6 reported normal
+    termination on the wrong model.
+    """
+
+    for index, existing in enumerate(packages):
+        if _package_entry_label(existing) == target:
+            return index
+    for index, existing in enumerate(packages):
+        if _package_slot(existing) == target:
+            return index
+    return None
 
 
 def _package_entry_is_enabled(package: PackageEntry) -> bool:
@@ -2272,12 +2349,11 @@ class ModelSpec:
         package = _package_entry(package)
         target = slot if slot is not None else _package_slot(package)
         packages = list(self.packages)
-        for index, existing in enumerate(packages):
-            if _package_slot(existing) == target:
-                packages[index] = package
-                break
-        else:
+        index = _package_entry_index(packages, target)
+        if index is None:
             packages.append(package)
+        else:
+            packages[index] = package
         return replace(self, packages=tuple(packages))
 
     def with_packages(self, *packages: PackageEntry | str) -> ModelSpec:
@@ -2846,7 +2922,7 @@ class SimulationSpec:
         package = _package_entry(package)
         model = self.model(model_name)
         target = name if name is not None else _package_slot(package)
-        if not any(_package_slot(existing) == target for existing in model.packages):
+        if _package_entry_index(list(model.packages), target) is None:
             raise KeyError(
                 f"Model '{model_name}' has no '{target}' package to replace. "
                 "Pass name=<slot> to target a slot explicitly, or use add_package."

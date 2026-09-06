@@ -33,7 +33,6 @@ from myflopy.specs import (
     SimulationSpec,
     _builder_label,
     _package_entry_label,
-    _package_slot,
     fork_package,
     ref,
 )
@@ -161,7 +160,10 @@ class SpecLibrary(dict[str, _T]):
         """Return a copy that is still a library. ``dict.copy`` returns a plain dict."""
 
         clone = type(self)(self)
-        clone._project_name = self._project_name
+        # Copy ALL instance state, not just the name: a subclass that grows
+        # another binding (RunLibrary's package library) would otherwise come
+        # back detached and answer as if it had nothing to compare against.
+        clone.__dict__.update(self.__dict__)
         return clone
 
     def __or__(self, other: Mapping[str, _T]) -> SpecLibrary[_T]:
@@ -175,7 +177,7 @@ class SpecLibrary(dict[str, _T]):
         """Reflected merge, preserving the library type."""
 
         merged = type(self)(other)
-        merged._project_name = self._project_name
+        merged.__dict__.update(self.__dict__)
         merged.update(self)
         return merged
 
@@ -402,10 +404,10 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
         targets = _swap_targets(self[source], swap or {})
         spec = self[source].derive(name)
         for model_name, old_label, new_key in targets:
-            entry = spec.model(model_name).package(old_label)
-            spec = spec.replace_package(
-                model_name, ref(new_key), name=_package_slot(entry)
-            )
+            # Target the FULL LABEL, not the entry's slot hint: a slot is only
+            # the key's first segment for a ref, so wel/north and wel/south both
+            # answer to "wel" and the swap landed on whichever came first.
+            spec = spec.replace_package(model_name, ref(new_key), name=old_label)
         if register:
             self[name] = spec
         return spec
@@ -432,44 +434,91 @@ def _swap_targets(
 ) -> list[tuple[str, str, str]]:
     """Resolve a ``swap`` mapping to ``(model, old label, new key)`` triples.
 
-    Accepts both the flat form (``{"rch/series": "rch_pond"}``) and the
-    model-qualified form (``{"flow": {"rch/series": "rch_pond"}}``); a value that
-    is itself a mapping marks the qualified form, so the two cannot be confused.
-    Raises when a label matches no package, naming what the model does carry.
+    Accepts the flat form (``{"rch/series": "rch_pond"}``, every model carrying
+    the label) and the model-qualified form
+    (``{"flow": {"rch/series": "rch_pond"}}``, exactly that model); a mapping
+    VALUE marks the qualified form, so the two cannot be confused.
+
+    Every label is validated in BOTH forms. A label matching nothing raises: a
+    typo that silently swapped nothing would hand back a "variant" identical to
+    its parent, which is the failure this check exists for -- and the qualified
+    form is the one the docs tell you to use for coupled models, so it needs the
+    guarantee at least as much.
+
+    Two entries targeting the same model and label also raise rather than letting
+    dict order decide which wins.
     """
 
-    model_names = set(spec.model_names)
+    model_names = list(spec.model_names)
+    simulation_labels = {
+        _package_entry_label(entry) for entry in spec.packages
+    }
     targets: list[tuple[str, str, str]] = []
+    claimed: dict[tuple[str, str], str] = {}
+
+    def labels_of(model_name: str) -> list[str]:
+        return [
+            _package_entry_label(entry)
+            for entry in spec.model(model_name).packages
+        ]
+
+    def inventory() -> str:
+        carried = sorted(
+            {label for model in model_names for label in labels_of(model)}
+            | simulation_labels
+        )
+        return ", ".join(carried)
+
+    def claim(model_name: str, old_label: str, new_key: str) -> None:
+        if not isinstance(new_key, str):
+            raise TypeError(
+                f"swap[{old_label!r}] must be a library key (a string), not "
+                f"{type(new_key).__name__}. Pass the key the package is "
+                "registered under."
+            )
+        previous = claimed.get((model_name, old_label))
+        if previous is not None and previous != new_key:
+            raise ValueError(
+                f"swap targets '{old_label}' on model '{model_name}' twice, "
+                f"with '{previous}' and '{new_key}'. Name it once -- otherwise "
+                "which one applies depends on the order the mapping was written."
+            )
+        claimed[(model_name, old_label)] = new_key
+        targets.append((model_name, old_label, new_key))
+
+    def refuse(old_label: str, where: str) -> None:
+        if old_label in simulation_labels:
+            raise KeyError(
+                f"'{old_label}' is a simulation-level package of "
+                f"'{spec.name}' (tdis/ims and friends), which swap= cannot "
+                "replace yet. Build the variant with mf.simulation(...) instead."
+            )
+        raise KeyError(
+            f"{where} has no package '{old_label}' to swap. "
+            f"It carries: {inventory()}."
+        )
+
+    # Qualified entries first, so a mixed mapping resolves the same either way.
     for outer, value in swap.items():
-        if isinstance(value, Mapping):
-            if outer not in model_names:
-                raise KeyError(
-                    f"Simulation '{spec.name}' has no model '{outer}'. "
-                    f"Models: {', '.join(sorted(model_names))}."
-                )
-            pairs = [(outer, old, new) for old, new in value.items()]
-        else:
-            pairs = [(model, outer, value) for model in spec.model_names]
-        for model_name, old_label, new_key in pairs:
-            labels = [
-                _package_entry_label(entry)
-                for entry in spec.model(model_name).packages
-            ]
-            if old_label in labels:
-                targets.append((model_name, old_label, new_key))
+        if not isinstance(value, Mapping):
+            continue
+        if outer not in model_names:
+            raise KeyError(
+                f"Simulation '{spec.name}' has no model '{outer}'. "
+                f"Models: {', '.join(sorted(model_names))}."
+            )
+        for old_label, new_key in value.items():
+            if old_label not in labels_of(outer):
+                refuse(old_label, f"Model '{outer}' of simulation '{spec.name}'")
+            claim(outer, old_label, new_key)
+
     for outer, value in swap.items():
         if isinstance(value, Mapping):
             continue
-        if not any(old == outer for _, old, _ in targets):
-            carried = sorted(
-                {
-                    _package_entry_label(entry)
-                    for model in spec.models
-                    for entry in model.packages
-                }
-            )
-            raise KeyError(
-                f"Simulation '{spec.name}' has no package '{outer}' to swap. "
-                f"It carries: {', '.join(carried)}."
-            )
+        matched = [model for model in model_names if outer in labels_of(model)]
+        if not matched:
+            refuse(outer, f"Simulation '{spec.name}'")
+        for model_name in matched:
+            claim(model_name, outer, value)
+
     return targets

@@ -458,3 +458,155 @@ def test_editing_does_not_disturb_a_runs_own_recipe(tmp_path):
     project.refresh_runs().drift()
 
     assert json.loads(manifest_path.read_text()) == before
+
+
+# --- defects found by adversarial verification of drift ----------------------
+
+
+def test_the_digest_is_insensitive_to_representation_not_content(tmp_path):
+    """``Project.save()``/``load()`` round-trips options through JSON and hands
+    them back in a different order, so an order-sensitive digest reported EVERY
+    reloaded package as edited -- which would have made drift useless on exactly
+    the workflow it exists for."""
+
+    import flopy
+
+    from myflopy.specs import PackageSpec, package_digest
+
+    original = mf.npf(k=1.0, icelltype=1)
+    reordered = PackageSpec(
+        "npf",
+        original.builder,
+        {key: original.options[key] for key in reversed(list(original.options))},
+    )
+    assert package_digest(original) == package_digest(reordered)
+
+    # requires order is not observable by MF6 either
+    left = PackageSpec("x", flopy.mf6.ModflowGwfnpf, {}, requires=("a", "b"))
+    right = PackageSpec("x", flopy.mf6.ModflowGwfnpf, {}, requires=("b", "a"))
+    assert package_digest(left) == package_digest(right)
+
+    # ...but a real change still moves it
+    assert package_digest(original) != package_digest(mf.npf(k=50.0, icelltype=1))
+
+
+def test_the_digest_survives_a_real_save_and_reload(tmp_path):
+    project = _library_project(tmp_path)
+    project.save()
+
+    reloaded = mf.Project.load(project.root)
+    reloaded._runs = None
+
+    assert set(reloaded.runs.drift()["state"]) == {"unchanged"}
+
+
+def test_a_package_that_cannot_be_fingerprinted_does_not_break_prepare_run(tmp_path):
+    """A bookkeeping column must never gate the primary build verb. A closure
+    builder was buildable and runnable before drift existed, and still is."""
+
+    import flopy
+
+    from myflopy.specs import PackageSpec
+
+    def make_builder():
+        def build_npf(model, **options):
+            return flopy.mf6.ModflowGwfnpf(model, **options)
+
+        return build_npf
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/custom", PackageSpec("npf", make_builder(), {"k": 1.0}))
+    project.add_simulation(
+        mf.SimulationSpec(
+            "s",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[
+                        mf.dis(nlay=1, nrow=1, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                        mf.ref("npf/custom"),
+                    ],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    assert project.validate() == []
+
+    run = project.prepare_run("r", "s", build=False)      # used to raise
+
+    assert json.loads(run.manifest_path.read_text())["package_digests"] == {
+        "npf/custom": None
+    }
+    # ...and drift says it cannot tell, rather than guessing at "unchanged"
+    assert project.runs.drift().iloc[0]["state"] == "unfingerprinted"
+
+
+def test_a_detached_library_does_not_report_a_clean_bill_of_health(tmp_path):
+    """``drift()`` refuses when unbound; ``summary()`` used to print "—" for the
+    same library, which reads as "nothing changed"."""
+
+    from myflopy.workspace import RunLibrary
+
+    project = _library_project(tmp_path)
+    detached = RunLibrary(project.runs)
+    detached._packages = None
+
+    assert detached.summary().set_index("key").loc["baseline", "drift"] == "unbound"
+
+    # ...and a copy() keeps its binding rather than becoming one of these
+    assert project.runs.copy()._packages is project.packages
+
+
+def test_the_drift_column_fingerprints_the_library_once_per_call(tmp_path):
+    """Digesting per (run, package) made summary() O(runs x packages) and
+    re-hashed the same arrays for every run -- measured ~1 ms to ~3 s."""
+
+    import time
+
+    import numpy as np
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    for index in range(6):
+        project.add_package(f"npf/v{index}", mf.npf(k=np.random.rand(9405)))
+    refs = [mf.ref(f"npf/v{index}") for index in range(6)]
+    project.add_simulation(
+        mf.SimulationSpec(
+            "s",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[
+                        mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                        *refs,
+                    ],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    for index in range(20):
+        project.prepare_run(f"r{index}", "s", build=False)
+
+    started = time.perf_counter()
+    frame = project.runs.summary()
+    elapsed = time.perf_counter() - started
+
+    assert len(frame) == 20
+    assert elapsed < 1.0, f"summary() took {elapsed:.2f}s -- the memo is not working"
+
+
+def test_metadata_is_excluded_from_the_fingerprint(tmp_path):
+    """Provenance says where a spec came from, not what it builds -- stamping a
+    note must not read as a change to the model."""
+
+    from myflopy.specs import package_digest
+
+    project = _library_project(tmp_path)
+    before = package_digest(project.package("npf/base"))
+
+    project.packages.edit("npf/base", note="just a note")
+
+    assert package_digest(project.package("npf/base")) == before
+    assert project.package("npf/base").metadata["edited"]["note"] == "just a note"
+    assert project.runs.summary().set_index("key").loc["baseline", "drift"] == "—"

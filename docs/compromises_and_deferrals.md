@@ -5935,3 +5935,54 @@ same day, which is the useful part of the result.
         copy-on-write verbs, so nothing can edit one in place yet -- the verb
         would have no way to be exercised. Revisit if `GridLibrary` ever gains
         `edit`.
+
+188. **What adversarial verification found in 186/187, and what it cost
+      (2026-09-05).** A 35-agent pass over the two step-4 commits returned 27
+      confirmed defects, four of them making previously-working code fail or
+      silently produce a wrong model. Recorded because the pattern repeats: every
+      one came from a *reasonable-looking* shortcut.
+      - **`swap=` replaced the WRONG package.** `_package_slot` is only the key's
+        FIRST SEGMENT for a ref, so `wel/north` and `wel/south` both answered to
+        `wel` and `with_package` replaced whichever came first. Measured: asking
+        to swap `wel/south` DELETED `wel/north`, left `wel/south` pumping, and
+        MF6 reported normal termination on the wrong model. It fired on exactly
+        the `<type>/<variant>` keying this project teaches. Fixed by
+        `_package_entry_index`, which matches the FULL LABEL first and falls back
+        to the slot hint -- so `model.package("npf")` still finds whatever
+        occupies the slot.
+      - **`prepare_run` began RAISING on packages that ran fine one commit
+        earlier.** `package_digest` called `_callable_ref` (which refuses a
+        closure) and `pickle.dumps` (which refuses a file handle), so a
+        bookkeeping column gated the primary build verb while `validate()`
+        reported clean. `package_digest` now returns `None` instead, and drift
+        reports `unfingerprinted` -- guessing `unchanged` would be the same lie
+        as `status="written"` reading as success.
+      - **The digest was ORDER-SENSITIVE, which made drift useless on its own
+        headline workflow.** `Project.save()`/`load()` round-trips options
+        through JSON and returns them in a different order, so every reloaded
+        package fingerprinted as `edited`. `_canonical` now sorts mapping keys
+        recursively, sorts sets (whose pickle varies BETWEEN PROCESSES,
+        contradicting the stability the docstring claimed), sorts `requires`, and
+        collapses list/tuple -- none of which MF6 can observe.
+      - **The model-qualified `swap=` never validated its labels**, so a typo in
+        exactly the form the docs recommend for coupled models registered a
+        "variant" identical to its parent. Both forms validate now, mixing them
+        over one entry raises rather than letting dict order decide, a
+        simulation-level label says so instead of denying it exists, and a
+        non-string value is named.
+      - **The drift column was O(runs x packages) with no memo** -- measured 1 ms
+        to ~3 s, re-hashing the same arrays once per run. `summary()` now
+        fingerprints the library ONCE per call and discards the memo, so an edit
+        is picked up next call without needing invalidation. 40 runs x 7
+        packages: 13 ms.
+      - **A detached `RunLibrary` printed "—" in the drift column** -- a clean
+        bill of health for a library it could not see -- while `drift()` refused.
+        It reports `unbound`, and `SpecLibrary.copy`/`__or__` now carry the whole
+        instance `__dict__` so a copy keeps its binding at all.
+      - **Still open, noted not fixed:** two distinct lambdas fingerprint alike
+        (no shipped builder collides); `deep=True` does not unalias object-dtype
+        cells inside a DataFrame option (no `mf.*` helper produces one); grid
+        drift is untracked and 187's stated reason for deferring it was wrong --
+        the real reason is that `GridLibrary` has no `edit`, not that nothing
+        can change a grid. The "15.2 ms / 0.50 MB" fork cost quoted in 186 is a
+        SMALL-model figure; a real Ten Trails package is 60-350x that.

@@ -535,3 +535,110 @@ def test_an_unrelated_pname_is_left_alone():
 
     assert forked.name == "npf_high"
     assert forked.options["pname"] == "my_own_name"
+
+
+# --- defects found by adversarial verification of step 4 --------------------
+
+
+def _wells(tmp_path) -> Project:
+    """Two wells keyed <type>/<variant> -- the project's own documented style,
+    and the shape that made swap= replace the wrong one."""
+
+    project = mf.Project(tmp_path / "wells", name="wells")
+    # Distinct names, or _require_unique_names refuses the pair at build -- which
+    # is the same guard commit 043f55c exists to keep working.
+    project.add_package(
+        "wel/north", mf.wel(stress_period_data={0: [((0, 0, 2), -100.0)]}, name="wel_north")
+    )
+    project.add_package(
+        "wel/south", mf.wel(stress_period_data={0: [((0, 0, 7), -100.0)]}, name="wel_south")
+    )
+    project.add_package(
+        "wel/south_off", mf.wel(stress_period_data={0: [((0, 0, 7), 0.0)]}, name="wel_south_off")
+    )
+    dis = dict(nlay=1, nrow=1, ncol=10, delr=10.0, delc=10.0, top=20.0, botm=0.0)
+    project.add_simulation(
+        mf.SimulationSpec(
+            "baseline",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[
+                        mf.dis(**dis),
+                        mf.ic(strt=10.0),
+                        mf.npf(k=10.0),
+                        mf.ref("wel/north"),
+                        mf.ref("wel/south"),
+                    ],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["flow"])],
+        )
+    )
+    return project
+
+
+def test_swap_replaces_the_named_package_not_its_slot_mate(tmp_path):
+    """A slot is only the key's FIRST SEGMENT for a ref, so wel/north and
+    wel/south both answered to "wel" and the swap landed on whichever came
+    first. Measured before the fix: swapping wel/south deleted wel/north, left
+    wel/south pumping, and MF6 reported normal termination on the wrong model."""
+
+    project = _wells(tmp_path)
+
+    forked = project.simulations.fork(
+        "baseline", "south_off", swap={"wel/south": "wel/south_off"}
+    )
+
+    labels = [getattr(e, "key", None) or e.name for e in forked.model("flow").packages]
+    assert labels == ["dis", "ic", "npf", "wel/north", "wel/south_off"]
+
+    # ...and the built model carries the north well and the OFF south one.
+    run = project.prepare_run("south_off", "south_off")
+    built = sorted(
+        n for n in run.flopy_model("flow").get_package_list() if n.startswith("WEL")
+    )
+    assert built == ["WEL_NORTH", "WEL_SOUTH_OFF"]
+
+
+def test_the_model_qualified_swap_validates_its_labels_too(tmp_path):
+    """The guarantee the flat form makes -- a label matching nothing raises --
+    was absent from exactly the form the docs recommend for coupled models, so a
+    typo registered a "variant" identical to its parent."""
+
+    project = _coupled(tmp_path)
+
+    with pytest.raises(KeyError) as caught:
+        project.simulations.fork("coupled", "typo", swap={"tport": {"rch/nope": "ic/flow"}})
+
+    assert "Model 'tport' of simulation 'coupled' has no package 'rch/nope'" in caught.value.args[0]
+    assert "typo" not in project.simulations
+
+
+def test_a_swap_naming_one_target_twice_is_refused(tmp_path):
+    """Mixing the flat and qualified forms over the same entry made the result
+    depend on the order the mapping happened to be written."""
+
+    project = _coupled(tmp_path)
+
+    with pytest.raises(ValueError, match="twice"):
+        project.simulations.fork(
+            "coupled", "v", swap={"ic": "ic/flow", "flow": {"ic": "ic/tport"}}
+        )
+
+
+def test_a_simulation_level_package_says_so_rather_than_denying_it_exists(tmp_path):
+    """tdis/ims cannot be swapped, but the old message claimed the simulation had
+    no such package while listing an inventory that omitted them."""
+
+    project = _coupled(tmp_path)
+
+    with pytest.raises(KeyError, match="simulation-level package"):
+        project.simulations.fork("coupled", "v", swap={"tdis": "x"})
+
+
+def test_a_non_string_swap_value_is_named(tmp_path):
+    project = _coupled(tmp_path)
+
+    with pytest.raises(TypeError, match="must be a library key"):
+        project.simulations.fork("coupled", "v", swap={"ic": mf.ic(strt=1.0)})

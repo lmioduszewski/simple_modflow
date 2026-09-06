@@ -287,9 +287,25 @@ keys. A run reading `unchanged` throughout is reproducible from the library as i
 stands; anything else names exactly what to look at.
 
 Only `mf.ref` entries are fingerprinted — a package written inline is baked into
-the run's own recipe and cannot drift. A run recorded before digests existed
-reports `unknown`, not `unchanged`: a missing fingerprint is not evidence of
-sameness. Drift only reports; it never rewrites a run's stored history.
+the run's own recipe and cannot drift. Drift only reports; it never rewrites a
+run's stored history.
+
+Five states, and the four that are not `unchanged` all mean "do not assume":
+
+| state | meaning |
+|---|---|
+| `unchanged` | reproducible from the library as it stands |
+| `edited` | the key still exists and means something else |
+| `removed` | the key is gone from the library |
+| `unfingerprinted` | the package cannot be fingerprinted (a closure builder, an option that does not pickle) — it is still perfectly buildable |
+| `unknown` | the run predates digests; a missing fingerprint is not evidence of sameness |
+
+The fingerprint covers the option and input VALUES a spec holds, its name, its
+builder REFERENCE, `enabled` and `requires`. It does not see the body of an
+importable builder, or the contents of a file a source points at — it says the
+recipe is unchanged, not that the world is. Dict key order, `requires` order and
+list-vs-tuple are normalised away, so a `save()`/`load()` round trip does not
+read as an edit.
 
 The library is **cached**, so `project.runs["baseline"]` returns the same object
 twice; call `project.refresh_runs()` after executing a run from elsewhere.
