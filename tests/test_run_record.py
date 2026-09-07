@@ -750,3 +750,125 @@ def test_a_discovered_run_reports_its_files_timestamps_not_the_scans(tmp_path):
     # ...and its listing is NOT called superseded: a scanned run has no known
     # preparation time to be older than.
     assert row["outcome"] == "normal"
+
+
+# --- PEST calibrations are not runs ------------------------------------------
+
+
+def _calibration_tree(runs_dir: Path) -> Path:
+    """A calibration beside a run: template, both masters, three workers.
+
+    Each is a wholesale copy of the model workspace, so each carries an
+    ``mfsim.nam`` -- which is why they flooded the ledger.
+    """
+
+    pest = runs_dir / "baseline.pest"
+    for sub in (
+        "cal", "cal_ies_master", "cal_prior_master",
+        "worker_0", "worker_1", "worker_2",
+    ):
+        workspace = pest / sub
+        workspace.mkdir(parents=True)
+        (workspace / "mfsim.nam").write_text("x", encoding="utf-8")
+    (pest / "cal" / "myflopy_pest_metadata.json").write_text("{}", encoding="utf-8")
+    return pest
+
+
+def test_a_calibration_is_reported_not_listed_as_runs(tmp_path):
+    """One calibration would otherwise add six rows to a ledger whose job is
+    telling you what you ran. It is excluded, counted, and named in the repr --
+    absent from the table, never silently absent."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    simulation = mf.SimulationSpec(
+        "s",
+        models=[
+            mf.gwf(
+                "flow",
+                packages=[
+                    mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                    mf.ic(strt=1.0),
+                ],
+            )
+        ],
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    )
+    project.add_simulation(simulation)
+    project.prepare_run("baseline", simulation).write()
+    _calibration_tree(project.runs_dir)
+
+    runs = project.refresh_runs()
+
+    assert list(runs) == ["baseline"]
+    calibrations = runs.calibrations
+    assert list(calibrations["calibration"]) == ["runs/baseline.pest"]
+    assert list(calibrations["workspaces"]) == [6]     # ONE row, not six
+    assert "1 calibration excluded" in repr(runs)
+    assert "model.pest_runs" in runs._repr_html_()
+
+
+def test_the_outermost_marker_wins_so_one_calibration_is_one_row(tmp_path):
+    """The template carries the metadata marker and sits INSIDE the .pest root,
+    so returning the first match up the tree split one calibration into two --
+    the tree, and its own template counted separately."""
+
+    from myflopy.run_record import pest_tree_root
+
+    root = tmp_path
+    template = root / "runs" / "baseline.pest" / "cal"
+    template.mkdir(parents=True)
+    (template / "myflopy_pest_metadata.json").write_text("{}", encoding="utf-8")
+
+    assert pest_tree_root(template, root) == root / "runs" / "baseline.pest"
+    assert pest_tree_root(root / "runs" / "baseline.pest" / "worker_0", root) == (
+        root / "runs" / "baseline.pest"
+    )
+    assert pest_tree_root(root / "runs" / "baseline", root) is None
+
+
+def test_the_legacy_pest_dirname_and_a_custom_workspace_are_both_caught(tmp_path):
+    from myflopy.run_record import pest_tree_root
+
+    legacy = tmp_path / "runs" / "m" / "pest" / "cal"
+    legacy.mkdir(parents=True)
+    assert pest_tree_root(legacy, tmp_path) == tmp_path / "runs" / "m" / "pest"
+
+    custom = tmp_path / "scratch" / "elsewhere"
+    custom.mkdir(parents=True)
+    (custom / "myflopy_pest_metadata.json").write_text("{}", encoding="utf-8")
+    assert pest_tree_root(custom, tmp_path) == custom
+
+
+def test_the_pest_markers_match_the_pest_module():
+    """They are DUPLICATED rather than imported -- see the note in run_record --
+    so this is what keeps them honest."""
+
+    from myflopy.modflow.mf6.pest import runs as pest_runs
+    from myflopy import run_record
+
+    assert run_record.PEST_ROOT_SUFFIX == pest_runs.PEST_ROOT_SUFFIX
+    assert run_record.LEGACY_PEST_DIRNAME == pest_runs.LEGACY_PEST_DIRNAME
+    assert run_record.PEST_METADATA == pest_runs.METADATA_FILENAME
+
+
+def test_importing_myflopy_does_not_drag_in_the_pest_package():
+    """The reason those constants are duplicated. Importing
+    myflopy.modflow.mf6.pest.runs executes the pest package __init__, measured at
+    1.43 s against an `import myflopy` that costs 0.02 s -- a 70x regression to
+    reach three strings. A subprocess, because another test may already have
+    imported pest into this one."""
+
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, myflopy; "
+         "print('myflopy.modflow.mf6.pest' in sys.modules)"],
+        capture_output=True, text=True, check=True,
+    )
+
+    assert result.stdout.strip() == "False", (
+        "import myflopy now loads the pest package; the run_record constants "
+        "exist to avoid exactly that"
+    )

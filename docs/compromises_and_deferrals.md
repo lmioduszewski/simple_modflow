@@ -6156,3 +6156,35 @@ same day, which is the useful part of the result.
         `project.runs` -- its master and worker workspaces each hold an
         `mfsim.nam`, so one calibration becomes a dozen `discovered` rows; and no
         NOTEBOOK exercises the new verbs.
+
+195. **PEST calibrations are excluded from the run ledger, and reported
+      (2026-09-06).** The last item left open by ledger 194.
+      A calibration builds into `<model workspace>.pest/` -- a SIBLING of the run
+      directory, so inside `project.root` -- holding the PstFrom template,
+      `<name>_ies_master`, `<name>_prior_master` and every pyEMU worker (launched
+      with `worker_root=master.parent`, `pest/project.py`). Each is a wholesale
+      `shutil.copytree` of the model workspace, so each carries an `mfsim.nam`
+      and `RunLibrary`'s `rglob` listed it as a run: one calibration with 8
+      workers adds ~11 rows to a ledger whose job is telling you what you ran.
+      - **Reported, not silently absent** -- the user's explicit requirement.
+        `repr(project.runs)` names the count, `_repr_html_` names each tree under
+        the table, and `project.runs.calibrations` is a one-row-per-calibration
+        frame pointing at `model.pest_runs`, which returns handles that
+        understand phi, ensembles and forecasts. Nothing is lost; it stops being
+        conflated.
+      - **The markers are DUPLICATED into `run_record.py`, not imported.**
+        `myflopy.modflow.mf6.pest.runs` is import layer 0, so importing it would
+        not break layering -- but it executes the pest package `__init__`,
+        measured at **1.43 s** against an `import myflopy` that costs **0.02 s**.
+        A 70x import regression to reach three string constants is not a trade
+        worth making. Pinned equal by a test, plus a subprocess test asserting
+        `myflopy.modflow.mf6.pest` is NOT in `sys.modules` after `import
+        myflopy` -- that guard is the actual regression risk here.
+      - **The OUTERMOST marker wins.** The template directory carries
+        `myflopy_pest_metadata.json` and sits inside the `.pest` root, so
+        returning the first match walking up split one calibration into two rows
+        -- the tree, and its own template counted separately. Caught by running
+        it.
+      - **`discover_native_runs()` is deliberately unchanged.** Its documented
+        job is every native MF6 workspace, and a PEST worker genuinely is one. It
+        stays the raw sweep; `project.runs` is the curated ledger.

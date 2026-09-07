@@ -1094,6 +1094,7 @@
       "write"
     ],
     "RunLibrary.members": [
+      "calibrations",
       "discover",
       "drift",
       "summary"

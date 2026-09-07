@@ -22,7 +22,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["ListingOutcome", "read_listing_outcome"]
+__all__ = ["ListingOutcome", "read_listing_outcome", "pest_tree_root"]
+
+# PEST calibration markers, DUPLICATED from myflopy.modflow.mf6.pest.runs rather
+# than imported. That module is import layer 0 and could be imported from here
+# without breaking layering -- but importing it executes the pest package
+# __init__, measured at **1.43 s** against an `import myflopy` that costs 0.02 s.
+# A 70x import regression to reach three string constants is not a trade worth
+# making, so they are pinned equal by a test instead (the repo's generate-then-pin
+# pattern, as for api_snapshot.json and import_layers.json).
+PEST_ROOT_SUFFIX = ".pest"
+LEGACY_PEST_DIRNAME = "pest"
+PEST_METADATA = "myflopy_pest_metadata.json"
 
 _LISTING_NAME = "mfsim.lst"
 
@@ -99,6 +110,42 @@ class ListingOutcome:
         if self.stale:
             pieces.append("stale=True")
         return f"ListingOutcome({', '.join(pieces)})"
+
+
+def pest_tree_root(workspace: Path, root: Path) -> Path | None:
+    """The calibration directory ``workspace`` belongs to, or ``None``.
+
+    A calibration builds into ``<model workspace>.pest/`` -- a SIBLING of the run
+    directory, so inside the project root -- holding the PstFrom template,
+    ``<name>_ies_master``, ``<name>_prior_master`` and every pyEMU worker. Each is
+    a wholesale copy of the model workspace, so each carries an ``mfsim.nam`` and
+    would otherwise be listed as a run: one calibration with 8 workers becomes
+    ~11 rows in a ledger whose job is telling you what you ran.
+
+    Two markers, either sufficient. An ancestor named ``*.pest`` (or the legacy
+    ``pest``) catches the whole tree at once, since pyEMU is launched with
+    ``worker_root`` inside it. An ancestor holding
+    ``myflopy_pest_metadata.json`` covers a calibration built at a custom
+    ``workspace=``.
+    """
+
+    outermost: Path | None = None
+    current = workspace
+    while True:
+        name = current.name
+        if (
+            name.endswith(PEST_ROOT_SUFFIX)
+            or name == LEGACY_PEST_DIRNAME
+            or (current / PEST_METADATA).is_file()
+        ):
+            # Keep walking: the OUTERMOST match is the calibration. The template
+            # directory carries the metadata marker and sits inside the `.pest`
+            # root, so returning the first match split one calibration into two
+            # -- the tree, and its own template counted separately.
+            outermost = current
+        if current == root or current.parent == current:
+            return outermost
+        current = current.parent
 
 
 def _input_files(workspace: Path) -> set[Path]:

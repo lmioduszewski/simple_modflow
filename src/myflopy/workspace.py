@@ -23,7 +23,7 @@ from myflopy.library import (
     SimulationLibrary,
     SpecLibrary,
 )
-from myflopy.run_record import ListingOutcome, read_listing_outcome
+from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outcome
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -485,6 +485,7 @@ class RunLibrary(SpecLibrary["Run"]):
     # dict.__or__ drop instance attributes.
     _packages: PackageLibrary | None = None
     _digest_memo: dict[str, str | None] | None = None
+    _calibrations: dict[str, int] | None = None
 
     @classmethod
     def discover(
@@ -518,9 +519,19 @@ class RunLibrary(SpecLibrary["Run"]):
                 run = Run(name=workspace.name, workspace=workspace, status="unreadable")
             library[key] = run
 
+        calibrations: dict[str, int] = {}
         for name_file in sorted(root.rglob("mfsim.nam")):
             workspace = name_file.parent
             if workspace in seen:
+                continue
+            # A calibration's template, masters and workers are each a full copy
+            # of the model workspace. They are counted and reported, never listed
+            # as runs -- one calibration would otherwise add a dozen rows to a
+            # ledger whose job is telling you what you ran.
+            calibration = pest_tree_root(workspace, root)
+            if calibration is not None:
+                key = _relative_key(calibration, root)
+                calibrations[key] = calibrations.get(key, 0) + 1
                 continue
             # Key by directory name when it sits under runs/, exactly as a
             # manifest-bearing run is keyed -- whether a run happens to have a
@@ -545,7 +556,56 @@ class RunLibrary(SpecLibrary["Run"]):
             if load:
                 run.open()
             library[key] = run
+        library._calibrations = calibrations
         return library
+
+    @property
+    def calibrations(self) -> pd.DataFrame:
+        """The PEST calibration trees under this project, which are NOT runs.
+
+        A calibration's template, IES/prior masters and every pyEMU worker are
+        each a full copy of the model workspace, so each carries an
+        ``mfsim.nam``. Listing them as runs floods the ledger -- one calibration
+        with 8 workers adds ~11 rows -- and conflates a tool's scratch space with
+        work you did. They are excluded and counted here instead, and the run
+        repr says how many, so nothing is silently absent.
+
+        Open a calibration with ``model.pest_runs`` / ``mf.find_pest_runs``,
+        which return handles that understand phi, ensembles and forecasts.
+        """
+
+        import pandas as pd
+
+        rows = [
+            {"calibration": key, "workspaces": count, "open_with": "model.pest_runs"}
+            for key, count in sorted((self._calibrations or {}).items())
+        ]
+        return pd.DataFrame(rows, columns=["calibration", "workspaces", "open_with"])
+
+    def __repr__(self) -> str:
+        """Compact one-liner, naming excluded calibrations when there are any."""
+
+        base = super().__repr__()
+        count = len(self._calibrations or {})
+        if not count:
+            return base
+        noun = "calibration" if count == 1 else "calibrations"
+        return f"{base[:-1]}; {count} {noun} excluded -- see .calibrations)"
+
+    def _repr_html_(self) -> str:
+        """The run table, with the excluded calibrations named beneath it."""
+
+        html = super()._repr_html_()
+        if not self._calibrations:
+            return html
+        listed = ", ".join(
+            f"<code>{escape(key)}</code> ({count})"
+            for key, count in sorted(self._calibrations.items())
+        )
+        return (
+            f"{html}<p><em>Excluded as PEST calibrations, not runs:</em> {listed}. "
+            "Open them with <code>model.pest_runs</code>.</p>"
+        )
 
     def drift(self, key: str | None = None) -> pd.DataFrame:
         """Report which library packages a run used have changed since it ran.

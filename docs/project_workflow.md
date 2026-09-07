@@ -320,6 +320,28 @@ recipe is unchanged, not that the world is. Dict key order, `requires` order and
 list-vs-tuple are normalised away, so a `save()`/`load()` round trip does not
 read as an edit.
 
+**PEST calibrations are reported, not listed.** A calibration builds into
+`<model workspace>.pest/` — inside the project — holding the PstFrom template,
+the IES and prior masters, and every pyEMU worker. Each is a wholesale copy of
+the model workspace, so each carries an `mfsim.nam`; listing them would add a
+dozen rows per calibration to a ledger whose job is telling you what you ran.
+They are excluded and counted instead:
+
+```python
+project.runs
+# RunLibrary(1 runs: 'baseline'; 1 calibration excluded -- see .calibrations)
+
+project.runs.calibrations
+#  calibration          workspaces  open_with
+#  runs/baseline.pest            6  model.pest_runs
+```
+
+Nothing is hidden — the repr says how many, and `model.pest_runs` /
+`mf.find_pest_runs` open them properly, returning handles that understand phi,
+ensembles and forecasts. `project.discover_native_runs()` is unchanged and still
+returns every native MF6 workspace, calibration copies included; it is the raw
+sweep, where `project.runs` is the curated ledger.
+
 The library is **cached**, so `project.runs["baseline"]` returns the same object
 twice; call `project.refresh_runs()` after executing a run from elsewhere.
 Opening one run by name stays `project.reopen_run(name)`, which also attaches the
