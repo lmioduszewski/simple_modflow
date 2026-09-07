@@ -6152,10 +6152,14 @@ same day, which is the useful part of the result.
         changed". Verified on the real project: `baseline` still reports stale
         (its declared inputs ARE newer than its listing) and the other five do
         not.
-      - **Still open, deliberately:** a PEST calibration tree would flood
-        `project.runs` -- its master and worker workspaces each hold an
-        `mfsim.nam`, so one calibration becomes a dozen `discovered` rows; and no
-        NOTEBOOK exercises the new verbs.
+      - ~~PEST calibration trees flood `project.runs`~~ **FIXED 2026-09-06,
+        ledger 195** -- excluded and reported via `project.runs.calibrations`.
+      - **Still open:** no NOTEBOOK exercises the new verbs. The flagship
+        example script does (section 5); a
+        `examples/mf6/notebooks/project_libraries_tour.ipynb` following the
+        `canonical_fast_tour` / `plotting_vocabulary_tour` pattern is the
+        remaining gap, and is the one that decides whether this surface gets
+        used at all.
 
 195. **PEST calibrations are excluded from the run ledger, and reported
       (2026-09-06).** The last item left open by ledger 194.
