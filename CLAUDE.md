@@ -189,6 +189,8 @@ MF6's verdict** read from `mfsim.lst`: `normal`/`failed`/`incomplete`/`absent`/
 **`project.runs.drift()`** says which library packages a run used have changed since,
 via a content fingerprint stored per run. `project.save()` returns a **`SaveReport`**,
 not a path, and persists what it can rather than refusing the whole project.
+Runnable tour: `examples/mf6/notebooks/project_libraries_tour.ipynb` (executed by
+`tests/test_project_libraries_tour.py`, not merely source-checked).
 Two costs that surprise: fork and digest scale with the number of PYTHON OBJECTS,
 not cells — a 72×9,405 array package digests in ~5 ms, the 654,480-record EVT in
 **1.3 s**, so `PackageLibrary.digests()` caches until the library is mutated.

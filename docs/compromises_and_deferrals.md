@@ -6154,12 +6154,14 @@ same day, which is the useful part of the result.
         not.
       - ~~PEST calibration trees flood `project.runs`~~ **FIXED 2026-09-06,
         ledger 195** -- excluded and reported via `project.runs.calibrations`.
-      - **Still open:** no NOTEBOOK exercises the new verbs. The flagship
-        example script does (section 5); a
-        `examples/mf6/notebooks/project_libraries_tour.ipynb` following the
-        `canonical_fast_tour` / `plotting_vocabulary_tour` pattern is the
-        remaining gap, and is the one that decides whether this surface gets
-        used at all.
+      - ~~No notebook exercises the new verbs~~ **FIXED 2026-09-06:**
+        `examples/mf6/notebooks/project_libraries_tour.ipynb`, following the
+        `canonical_fast_tour` / `plotting_vocabulary_tour` pattern. **It is
+        EXECUTED by `tests/test_project_libraries_tour.py`, not source-checked
+        like the repo's other notebook tests** -- a tour whose whole claim is
+        that the surface works end to end is worse than useless if it does not
+        run. 0.4 s, a two-cell model in a temp directory, two real MF6 runs.
+        All items in 194 are now closed.
 
 195. **PEST calibrations are excluded from the run ledger, and reported
       (2026-09-06).** The last item left open by ledger 194.

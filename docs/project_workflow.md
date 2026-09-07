@@ -150,6 +150,11 @@ The outcome is deliberately **never cached into the manifest**. The listing is
 the authority and it is right there; storing a copy beside it would create a
 second source of truth that can disagree with the file it came from.
 
+> **Runnable tour:** `examples/mf6/notebooks/project_libraries_tour.ipynb` walks
+> this whole surface on a two-cell model in a temp directory — define, browse,
+> fork, edit, run, reconcile, drift, save, reload. It executes in seconds and a
+> test runs it, so it cannot rot silently.
+
 ## Seeing what a project holds
 
 `project.packages`, `.grids` and `.simulations` are **`dict` subclasses** — every
