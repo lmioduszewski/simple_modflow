@@ -101,24 +101,65 @@ class ListingOutcome:
         return f"ListingOutcome({', '.join(pieces)})"
 
 
-def _is_stale(listing: Path) -> bool:
-    """Whether any MF6 input beside ``listing`` is newer than it.
+def _input_files(workspace: Path) -> set[Path]:
+    """The MF6 input files of a workspace, as its own name files declare them.
 
-    Compares against the simulation name file and the package inputs rather than
-    every file in the directory: outputs (``.hds``, ``.cbc``) are written DURING
-    the run and are legitimately newer, so including them would mark every run
-    stale.
+    ``mfsim.nam`` names the TDIS file, each model's name file and the solution
+    files; a model name file then names its package files. Every whitespace
+    token in those that resolves to a real file IS an input -- MF6 says so
+    itself. Output paths (``.hds``, ``.cbc``) are named INSIDE package files, not
+    in the name files, so they never appear here.
+
+    Returns an empty set when there is no ``mfsim.nam``, which callers read as
+    "cannot tell" rather than "nothing changed".
+    """
+
+    root = workspace / "mfsim.nam"
+    if not root.is_file():
+        return set()
+    inputs: set[Path] = set()
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        if current in inputs:
+            continue
+        inputs.add(current)
+        try:
+            text = current.read_text(encoding="utf-8", errors="replace")
+        except OSError:  # unreadable -- what we already collected still stands
+            continue
+        for token in text.split():
+            candidate = workspace / token
+            if candidate.is_file() and candidate not in inputs:
+                # Only a name file can name further inputs; a package file's
+                # tokens are data, and following them would sweep in outputs.
+                if candidate.suffix.lower() == ".nam":
+                    pending.append(candidate)
+                else:
+                    inputs.add(candidate)
+    return inputs
+
+
+def _is_stale(listing: Path) -> bool:
+    """Whether any MF6 INPUT is newer than the listing.
+
+    A listing older than its inputs describes a superseded run -- the verdict is
+    real, but no longer about what is on disk now.
+
+    The input set comes from the workspace's own name files rather than from a
+    guess about file extensions. An earlier version deny-listed seven output
+    suffixes and treated everything else as an input, so saving a figure or a
+    note into a run directory marked the run stale -- and it missed MF6's own
+    ``.cbb`` budget file, which is an output it did not list. Measured: adding
+    ``heads.png``, ``notes.txt`` or ``flow.cbb`` to a clean finished run all
+    flipped it to stale.
     """
 
     try:
         listing_time = listing.stat().st_mtime
     except OSError:
         return False
-    workspace = listing.parent
-    outputs = {".hds", ".cbc", ".ucn", ".bud", ".lst", ".csv", ".json"}
-    for candidate in workspace.iterdir():
-        if not candidate.is_file() or candidate.suffix.lower() in outputs:
-            continue
+    for candidate in _input_files(listing.parent):
         try:
             if candidate.stat().st_mtime > listing_time:
                 return True

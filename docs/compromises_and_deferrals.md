@@ -6141,7 +6141,18 @@ same day, which is the useful part of the result.
         example that only running it would find -- a simulation registers under
         its own name, not one I picked, and `swap` matches the label an entry
         carries, so it needs the ref-based variant rather than the inline base.
+      - **`stale` now asks the name files instead of guessing by extension
+        (fixed 2026-09-06).** It deny-listed seven output suffixes and treated
+        everything else as an input, so `heads.png`, `notes.txt` and MF6's own
+        `flow.cbb` each flipped a clean finished run to stale -- measured. The
+        input set now comes from `mfsim.nam` and the model name files it points
+        at, which is MF6 declaring its own inputs; output paths live INSIDE
+        package files and never appear there. A workspace with no `mfsim.nam`
+        yields an empty set, which reads as "cannot tell" rather than "nothing
+        changed". Verified on the real project: `baseline` still reports stale
+        (its declared inputs ARE newer than its listing) and the other five do
+        not.
       - **Still open, deliberately:** a PEST calibration tree would flood
-        `project.runs` (its worker workspaces each hold an `mfsim.nam`); `stale`
-        decides "is this an output?" by file extension, so a figure saved into a
-        run directory marks it stale; and no NOTEBOOK exercises the new verbs.
+        `project.runs` -- its master and worker workspaces each hold an
+        `mfsim.nam`, so one calibration becomes a dozen `discovered` rows; and no
+        NOTEBOOK exercises the new verbs.

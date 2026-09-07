@@ -94,17 +94,84 @@ def test_only_the_tail_is_read(tmp_path):
     assert elapsed < 0.5, f"read took {elapsed:.2f}s -- the whole file was read"
 
 
+def _nam_workspace(workspace: Path) -> None:
+    """A workspace whose name files declare their inputs, as MF6 writes them."""
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "mfsim.nam").write_text(
+        "BEGIN timing\n  TDIS6  s.tdis\nEND timing\n"
+        "BEGIN models\n  gwf6  flow.nam  flow\nEND models\n",
+        encoding="utf-8",
+    )
+    (workspace / "flow.nam").write_text(
+        "BEGIN packages\n  DIS6 flow.dis\n  NPF6 flow.npf\nEND packages\n",
+        encoding="utf-8",
+    )
+    for name in ("s.tdis", "flow.dis", "flow.npf"):
+        (workspace / name).write_text("x", encoding="utf-8")
+
+
+def test_stale_asks_the_name_files_not_the_file_extension(tmp_path):
+    """An earlier version deny-listed seven output suffixes and treated
+    everything else as an input, so a figure or a note saved into a run
+    directory marked the run stale -- and it MISSED MF6's own ``.cbb`` budget
+    file, an output the list did not name. Measured: adding ``heads.png``,
+    ``notes.txt`` or ``flow.cbb`` to a clean finished run all flipped it.
+
+    The name files declare the inputs, so they are what gets asked.
+    """
+
+    from myflopy.run_record import _input_files
+
+    workspace = tmp_path / "run"
+    _nam_workspace(workspace)
+    past = time.time() - 600
+    for item in workspace.iterdir():
+        os.utime(item, (past, past))
+    _listing(workspace, _NORMAL_TAIL)          # newest
+
+    assert {f.name for f in _input_files(workspace)} == {
+        "mfsim.nam", "flow.nam", "s.tdis", "flow.dis", "flow.npf",
+    }
+    assert read_listing_outcome(workspace).stale is False
+
+    for name in ("heads.png", "notes.txt", "flow.cbb", "flow.hds"):
+        stray = workspace / name
+        stray.write_text("x", encoding="utf-8")
+        os.utime(stray, (time.time() + 60, time.time() + 60))
+        assert read_listing_outcome(workspace).stale is False, name
+        stray.unlink()
+
+    # ...but editing a declared INPUT still marks it, which is the whole point.
+    os.utime(workspace / "flow.npf", (time.time() + 60, time.time() + 60))
+    assert read_listing_outcome(workspace).stale is True
+
+
+def test_a_workspace_without_a_name_file_cannot_tell(tmp_path):
+    """No mfsim.nam means no declared inputs, which reads as "cannot tell" --
+    not as "nothing changed"."""
+
+    from myflopy.run_record import _input_files
+
+    workspace = tmp_path / "run"
+    _listing(workspace, _NORMAL_TAIL)
+
+    assert _input_files(workspace) == set()
+    assert read_listing_outcome(workspace).stale is False
+
+
 def test_inputs_newer_than_the_listing_mark_it_stale(tmp_path):
     """A listing that predates its inputs describes a superseded run: the verdict
     is real, but no longer about what is on disk now. Observed on a real
     project, where baseline's inputs were rewritten after it ran."""
 
     workspace = tmp_path / "run"
-    listing = _listing(workspace, _NORMAL_TAIL)
+    _nam_workspace(workspace)
+    _listing(workspace, _NORMAL_TAIL)
     assert read_listing_outcome(workspace).stale is False
 
-    package = workspace / "flow.rch"
-    package.write_text("BEGIN period 1\nEND period 1\n", encoding="utf-8")
+    package = workspace / "flow.npf"          # declared by flow.nam
+    package.write_text("BEGIN options\nEND options\n", encoding="utf-8")
     os.utime(package, (time.time() + 60, time.time() + 60))
 
     assert read_listing_outcome(workspace).stale is True
@@ -115,6 +182,7 @@ def test_outputs_written_during_the_run_do_not_mark_it_stale(tmp_path):
     make every completed run report stale."""
 
     workspace = tmp_path / "run"
+    _nam_workspace(workspace)
     _listing(workspace, _NORMAL_TAIL)
     for name in ("flow.hds", "flow.cbc", "run.json"):
         output = workspace / name
