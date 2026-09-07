@@ -10,6 +10,11 @@ fix. Everything is serial.
 `derive`/`replace_package` are immutable: each returns a new SimulationSpec, so
 the base stays intact and a variant can itself be tweaked and re-run.
 
+Section 5 does the same work through the LIBRARY verbs (`packages.fork`/`edit`,
+`simulations.fork(swap=)`), which register what they make and record where it
+came from -- and shows `project.runs.drift()` naming the runs an edit
+invalidated.
+
 Run:
     python 01_package_library_and_variants.py
 """
@@ -81,3 +86,50 @@ reloaded = mf.Project.load(project.root)
 from_lib = sim.derive("from_library").replace_package("flow", mf.ref("npf/high_k"))
 lib_run = reloaded.run("from_library", from_lib, overwrite=True)
 print(f"from_library success={lib_run.success}  k[0]={concerns.k0(lib_run):.1f}  (from pickle)")
+
+
+# --- 5. The same work through the library verbs (2026-09, ledger 186/187). ---
+# `derive`/`replace_package` above are the SPEC-level, immutable spelling: they
+# hand you a new object and leave registering it to you. The library verbs are
+# the registering, mutating spelling -- same mechanism underneath, and they
+# record where each variant came from.
+#
+# Fork a package to a new key, edit one in place, and fork a simulation by
+# swapping a library key for another:
+project.packages.fork("npf/high_k", "npf/very_high_k", note="second pass")
+
+# Register the ref-based variant, then fork IT by swapping one library key for
+# another. `swap` matches the LABEL an entry carries, which for `mf.ref` is its
+# library key -- so this targets the npf reference and leaves everything else.
+project.add_simulation(from_lib)
+v2 = project.simulations.fork(
+    "from_library", "from_library_v2", swap={"npf/high_k": "npf/very_high_k"}
+)
+print()
+print("from_library_v2 packages:",
+      [getattr(e, "key", None) or e.name for e in v2.model("flow").packages])
+print("derived_from:", v2.derived_from, "| lineage:", [s["operation"] for s in v2.lineage])
+
+# `edit` changes what an EXISTING key means -- the operation that can invalidate
+# a run that already used it. Provenance alone does NOT count as a change: the
+# fingerprint covers what a package BUILDS, so stamping a note leaves every run
+# reading `unchanged`.
+project.packages.edit("npf/high_k", note="reviewed 2026-09")
+print()
+print("after a note-only edit:",
+      project.refresh_runs().drift("from_library").iloc[0]["state"])
+
+# Changing a VALUE does count, and names the runs it reaches.
+project.packages.edit("npf/high_k", k=[[42.0]], note="post-calibration K")
+
+# What is defined, and what each one is:
+print()
+print(project)
+print(project.packages.summary()[["key", "package", "builder"]].to_string(index=False))
+
+# What has been run, what MF6 said about it, and what an edit invalidated.
+# `status` is myflopy's verb; `outcome` is MF6's verdict from mfsim.lst.
+print()
+print(project.runs.summary()[["key", "status", "outcome", "drift"]].to_string(index=False))
+print()
+print(project.runs.drift().to_string(index=False))

@@ -6130,8 +6130,18 @@ same day, which is the useful part of the result.
         both cases the number stayed with whichever entry outside documents
         already cite, and those citations were updated. Entry 42 appears twice
         deliberately -- the second is the struck-through resolution.
+      - **The flagship example now exercises the new verbs.**
+        `examples/mf6/variant_workflow/01_package_library_and_variants.py` gains
+        a section 5 doing the same work through `packages.fork`/`edit` and
+        `simulations.fork(swap=)`, and running `project.runs.drift()` over the
+        runs it just executed. Verified end to end with real MF6. It
+        deliberately shows BOTH edit outcomes: a note-only edit leaves every run
+        `unchanged` (provenance is not content), and a value edit reports
+        `edited` and names the run. Writing it caught two errors in my own
+        example that only running it would find -- a simulation registers under
+        its own name, not one I picked, and `swap` matches the label an entry
+        carries, so it needs the ref-based variant rather than the inline base.
       - **Still open, deliberately:** a PEST calibration tree would flood
         `project.runs` (its worker workspaces each hold an `mfsim.nam`); `stale`
         decides "is this an output?" by file extension, so a figure saved into a
-        run directory marks it stale; and no example or notebook yet exercises
-        the new verbs.
+        run directory marks it stale; and no NOTEBOOK exercises the new verbs.
