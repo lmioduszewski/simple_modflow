@@ -669,8 +669,11 @@ def test_package_digests_are_cached_until_the_library_changes(tmp_path):
         lambda lib: lib.setdefault("defaulted", mf.ic(strt=3.0)),
         lambda lib: lib.__delitem__("npf/base"),
         lambda lib: lib.clear(),
+        # |= does NOT route through __or__ or update on a dict subclass, so it
+        # slipped past every other hook and left a stale fingerprint behind.
+        lambda lib: lib.__ior__({"merged": mf.ic(strt=4.0)}),
     ],
-    ids=["setitem", "pop", "update", "setdefault", "delitem", "clear"],
+    ids=["setitem", "pop", "update", "setdefault", "delitem", "clear", "ior"],
 )
 def test_every_mutating_route_drops_the_digest_cache(tmp_path, mutate):
     """The cache is keyed on the library, so replacing an entry through ANY
@@ -684,3 +687,47 @@ def test_every_mutating_route_drops_the_digest_cache(tmp_path, mutate):
     mutate(packages)
 
     assert packages._digest_cache is None
+
+
+def test_save_report_counts_pickled_grids_as_its_docstring_says(tmp_path):
+    """``pickled`` documented "packages and grids" and counted only packages, so
+    a project whose grid is a built mesh under-reported what it had cached."""
+
+    from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf/base", mf.npf(k=1.0))          # JSON
+    project.add_grid("grid/base", irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0))
+
+    report = project.save()
+
+    assert report.grids == 1
+    assert report.pickled == 1        # the built mesh, which cannot be JSON
+
+
+def test_prepare_run_reuses_the_library_digest_cache(tmp_path):
+    """Digesting is expensive for record-list packages (1.3 s for the real EVT),
+    so prepare_run must not re-pay it per run."""
+
+    project = _project(tmp_path)
+    project.add_simulation(
+        mf.SimulationSpec(
+            "s",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[
+                        mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0),
+                        mf.ref("npf/base"),
+                    ],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    project.packages.digests()
+    cached = project.packages._digest_cache
+
+    project.prepare_run("r", "s", build=False)
+
+    assert project.packages._digest_cache is cached   # reused, not recomputed

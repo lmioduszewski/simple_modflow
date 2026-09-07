@@ -5043,7 +5043,9 @@ same day, which is the useful part of the result.
     passed with no change to this file. Attribution here was done by
     `git stash push` on `project/group/lak.py` alone and re-running.
 
-177. **`layer=` on the grid's feature-to-cell selectors (2026-09-03).**
+192. **`layer=` on the grid's feature-to-cell selectors (2026-09-03).**
+      *(Renumbered from a duplicate 177 on 2026-09-06; "ledger 177" in CLAUDE.md
+      and view_layer_conventions.md means the `section(fill=)` entry below.)*
     `vor.get_vor_cells_as_dict` and `vor.get_vor_cells_as_series` both reached a
     vector file through a bare `gpd.read_file(path)`, which reads the **first**
     layer and, for a multi-layer GeoPackage, emits only a `UserWarning`. So there
@@ -5637,7 +5639,7 @@ same day, which is the useful part of the result.
           and genuinely have none -- neither constructor takes a dict-valued
           parameter.
 
-180. **`Project.save()` persists what it can, and the return type changed
+193. **`Project.save()` persists what it can, and the return type changed
       (2026-09-04).**
       Step 2 of `docs/project_libraries_design.md`. Measured on the user's real
       project: `specs/packages/` empty and `specs/project_spec.json` absent, so
@@ -5764,7 +5766,7 @@ same day, which is the useful part of the result.
       `after load {'npf/high k': 999.0, 'npf/high_k': 999.0}` -- the second write
       won and the reload handed the survivor's spec back under BOTH keys, with no
       warning.
-      - **Checked BEFORE the write, unlike the dangling-ref case in 180.** A
+      - **Checked BEFORE the write, unlike the dangling-ref case in 193.** A
         dangling reference can be written harmlessly and reported afterwards; a
         collision cannot -- by the time it is observable, a spec is gone.
         Refusing costs a rename; writing costs a package.
@@ -6090,4 +6092,46 @@ same day, which is the useful part of the result.
         readers to call `RunLibrary.refresh`, which never existed (it is
         `Project.refresh_runs`), and `model_building_cheatsheet.md` still said
         `save()` "raises rather than writing a project that cannot be reloaded",
-        contradicting its own gotcha #9 two paragraphs later since ledger 180.
+        contradicting its own gotcha #9 two paragraphs later since ledger 193.
+
+194. **The documentation tail, and four code bugs hiding in it (2026-09-06).**
+      A 92-finding sweep over the whole project-libraries body of work. Most of
+      it was prose, but four items filed as documentation were defects.
+      - **`|=` left a STALE digest cache.** `dict.__ior__` does not route through
+        `__or__` or `update` on a subclass, so it slipped past every other
+        invalidation hook added in ledger 189. A stale fingerprint reports a
+        changed package as `unchanged` -- the one thing drift must never do.
+        `__ior__` is overridden and is now in the parametrized invalidation
+        sweep, which is where it should have been caught.
+      - **`SaveReport.pickled` never counted grids** although its docstring said
+        "packages and grids", so a project whose grid is a built mesh
+        under-reported what it had cached. `_save_grid` returns whether it
+        pickled, like `_save_package` already did.
+      - **`Project._package_digests` bypassed the cache**, re-paying the full
+        fingerprint on every `prepare_run` -- 1.3 s per run on a project holding
+        the record-list EVT.
+      - **`drift()`'s docstring named four states; the code returns five.** It
+        omitted `unfingerprinted`, added in 188.
+      - **Docs that were simply never told.** `CLAUDE.md` had no entry for this
+        surface at all and never linked `docs/project_workflow.md`;
+        `codebase_structure.md` was missing both new modules;
+        `package_api_reference.md` (the declared "map of the whole API") and
+        `myflopy_context.md` (the "accurate, code-derived capability map") carried
+        none of it. All four now do.
+      - **Docs that were wrong rather than absent.** `manual/04_architecture.md`
+        said array-bearing specs "cannot be serialized to disk" -- a library
+        package carrying arrays has persisted via pickle since long before this
+        work; it is an inline simulation that is skipped.
+        `project_workflow.md` listed `GridSpec.structured`/`from_geopackage` as
+        usable grid tiers (both fail fast) and its quickstart advertised
+        `m.visualize`, deleted in plan 8.6b.
+      - **Ledger numbering was broken and is now fixed**: `layer=` duplicated
+        177 and is now 192; `Project.save()` duplicated 180 and is now 193. In
+        both cases the number stayed with whichever entry outside documents
+        already cite, and those citations were updated. Entry 42 appears twice
+        deliberately -- the second is the struck-through resolution.
+      - **Still open, deliberately:** a PEST calibration tree would flood
+        `project.runs` (its worker workspaces each hold an `mfsim.nam`); `stale`
+        decides "is this an output?" by file extension, so a figure saved into a
+        run directory marks it stale; and no example or notebook yet exercises
+        the new verbs.

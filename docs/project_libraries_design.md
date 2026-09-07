@@ -7,7 +7,7 @@ through the front door.*
 reaching results already works and is untouched by this.
 
 Status: **BUILT** — all four steps landed 2026-09-04/05; see the per-step notes
-and ledger 179-187. Kept as the reasoning record.
+and ledger 179-193. Kept as the reasoning record.
 
 Originally: **design, not built.** Every defect cited below was reproduced against
 `/home/lukem/python/simple_modflow` @ `myflopy` and the real project at
@@ -207,7 +207,7 @@ class Project:
     def save(self, *, strict: bool = False) -> SaveReport: ...
 ```
 
-**BUILT 2026-09-04** (ledger 180). One refinement found in implementation: the two
+**BUILT 2026-09-04** (ledger 193). One refinement found in implementation: the two
 kinds of failure want different treatment. An embedded array is nothing the caller
 can fix at save time — skip and log. A **dangling `mf.ref`** is a mistake with a
 fix, so it still raises — but *after* the write, so the error costs a message

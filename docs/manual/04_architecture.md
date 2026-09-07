@@ -184,10 +184,14 @@ parts, building a family of related models is cheap and side-effect-free — the
 baseline is never disturbed by a variant.
 
 > **Note — when immutability has a cost.** Specs that embed **raw NumPy arrays**
-> (an `npf` with a `k` array, a `wel` with explicit per-cell data) work perfectly
-> in memory but cannot be serialized to disk. For durable, swappable inputs,
-> express data as **source specs** (`mf.RasterSource`, `mf.GeoPackageSourceSpec`,
-> …) instead of materialized arrays. See [Chapter 18](18_serialization.md).
+> (an `npf` with a `k` array, a `wel` with explicit per-cell data) cannot be
+> written as JSON. A *library* package carrying arrays persists anyway —
+> `project.save()` pickles it and records a version sidecar — but a *simulation*
+> that embeds one inline is skipped and named in `SaveReport.skipped`. So put the
+> arrays in the library and reference them with `mf.ref(...)`. For durable,
+> version-robust inputs, express data as **source specs** (`mf.RasterSource`,
+> `mf.GeoPackageSourceSpec`, …) instead: a pickle is a cache, not an archive.
+> See [Chapter 18](18_serialization.md).
 
 ---
 

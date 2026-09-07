@@ -101,6 +101,12 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Category colors (release groups, zones) | ✅ | `viz.PALETTE.categorical` + memoized `viz.category_colors` — one color per name across every figure |
 | MODPATH-style particle tracking (mp3du) | ✅ | `modflow/mp3du/` (`ParticleTrackingInput`, `run_particle_tracking`) |
 | Workspace / project / run management | ✅ | `workspace.py` (`Project`, `Run`, `load_run`), `project/` |
+| Browsable spec libraries (discover / inspect / fork) | ✅ | `library.py` — `project.packages`/`.grids`/`.simulations` are `dict` SUBCLASSES answering `names()`/`summary()`/did-you-mean `KeyError`, plus `packages.fork`/`edit` and `simulations.fork(swap=)`. `project.package(key)`/`grid(key)` mirror the existing `simulation(name)` (ledger 182, 186) |
+| Run ledger, incl. workspaces with no manifest | ✅ | `project.runs` (`RunLibrary`) — one row per run under the project, `discovered` for a bare MF6 workspace, `unreadable` for a truncated manifest (ledger 185) |
+| What MF6 reported, vs what myflopy did | ✅ | `run.outcome` / `run.reconcile()` from `run_record.py`: `status` is myflopy's verb, `outcome` is MF6's verdict read from `mfsim.lst` — `normal`/`failed`/`incomplete`/`absent`/`superseded` (ledger 184, 191) |
+| Which runs an edit invalidated | ✅ | `project.runs.drift()` — each run records a content fingerprint of the LIBRARY packages it used, so editing one names the runs it affected (ledger 187) |
+| Rebuild or fork a run from a later session | ✅ | the manifest stores the full `SimulationSpec` recipe, so `reopen_run(...).build()` works with no build script (ledger 181) |
+| Partial project persistence | ✅ | `project.save()` returns a `SaveReport`, writing what it can and naming any simulation it skipped; `strict=True` restores all-or-nothing (ledger 193) |
 | Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
 | Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |
 | Adaptive time stepping (ATS; zero-based `ats=` periods) | ✅ | `simulation/discretization.py` (`TemporalDiscretization(ats=...)`) |

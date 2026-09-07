@@ -290,6 +290,32 @@ release-group boundnames; without them it names the fix and offers
 `mf.Project(root, name=)` → `prepare_run`/`run` → `mf.Run`; `mf.load_run` /
 `mf.load_mf6_run`; `mf.ModelGroup`; `mf.ParallelModelWorkflow`.
 
+**The project's libraries.** `project.packages` / `.grids` / `.simulations` are
+`dict` **subclasses** — every dict operation works unchanged, and each also
+answers the same questions. Full walkthrough in
+[project_workflow.md](project_workflow.md).
+
+| | |
+|---|---|
+| what is defined | `project.packages.names()`, `.summary()`, `repr(project)`, `project.summary()` |
+| give me that one | `project.package(key)` / `.grid(key)` / `.simulation(name)`, or subscript (a miss names the near miss) |
+| make a variant | `project.packages.fork(source, key, **overrides)`, `project.simulations.fork(source, name, swap={...})` |
+| change one in place | `project.packages.edit(key, **overrides)` |
+| how it would persist | `project.packages.persistence()` |
+
+Forks and edits are **built, not patched** — they go through the same
+constructor `mf.npf(...)` does, so a typo raises there rather than at MF6 build
+time, and they deep-copy by default so editing a fork cannot write through into
+the original's arrays.
+
+**Runs.** `project.runs` is the ledger: one row per run under the project,
+including bare MF6 workspaces with no manifest. `run.outcome` is what **MF6**
+reported in `mfsim.lst` (`normal`/`failed`/`incomplete`/`absent`/`superseded`),
+which is a different axis from `run.status`, what **myflopy** did;
+`run.reconcile()` adopts the verdict. `project.runs.drift()` reports which
+library packages a run used have changed since it ran. `project.save()` returns a
+`SaveReport`, not a path.
+
 **Serialization.** Any spec round-trips to a JSON-safe dict (`to_dict()`/
 `from_dict()`) — builders as importable references (including the list-BC
 `functools.partial` builders), sources tagged, paths POSIX-encoded, **tuples

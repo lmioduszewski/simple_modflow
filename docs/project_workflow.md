@@ -34,7 +34,7 @@ project.add_simulation(baseline)
 # 4. Build and run. `run(run_name, simulation)` writes + executes into runs/<run_name>/.
 #    `simulation` may be a SimulationSpec or a registered simulation name.
 run = project.run("baseline", "baseline")
-m = run.model("flow")                      # a ModelView: m.hds, m.packages, m.visualize ...
+m = run.model("flow")                      # a ModelView: m.hds, m.packages, m.plot ...
 ```
 
 `mf.ref("npf/base")` and `mf.grid_ref("base")` are the reuse idioms. A
@@ -106,7 +106,8 @@ register it under a new key — then swap to it with `replace_grid`.
 |---|---|---|
 | Built object — `project.add_grid(key, vor)` / `mf.GridSpec.from_object(vor)` | Your default: build, look, use | a **pickle** (a regenerable cache) plus a version sidecar |
 | `mf.GridSpec.python("grids.py", function="build_grid")` | A settled, reproducible build recipe | JSON pointing at your builder |
-| `mf.GridSpec.voronoi(...)` / `.structured(...)` / `.from_geopackage(...)` | Simple or already-existing grids | JSON recipe |
+| `mf.GridSpec.voronoi(...)` | A Voronoi mesh from GIS boundary/refinement | JSON recipe |
+| `.structured(...)` / `.from_geopackage(...)` | **Constructors exist but FAIL FAST** — only `voronoi` and `python` resolve. Use `GridSpec.from_object` for a built or structured grid | — |
 
 A built-object grid is held in memory and is **not** serializable on its own
 (`GridSpec.from_object(...).to_dict()` raises). It is pickled only when you call

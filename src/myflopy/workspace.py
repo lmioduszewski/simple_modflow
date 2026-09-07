@@ -555,12 +555,15 @@ class RunLibrary(SpecLibrary["Run"]):
         key, false of the model it actually used. Each run also records a
         fingerprint of what those keys MEANT at the time; this compares them.
 
-        States: ``unchanged`` (reproducible from the library as it stands),
+        Five states, and the four that are not ``unchanged`` all mean "do not
+        assume": ``unchanged`` (reproducible from the library as it stands),
         ``edited`` (the key still exists and means something else), ``removed``
-        (the key is gone), and ``unknown`` for a run recorded before digests
-        existed -- a missing fingerprint is not evidence of sameness, and
-        reporting it as ``unchanged`` would be the same class of lie as
-        ``status="written"`` reading as success.
+        (the key is gone from the library), ``unfingerprinted`` (the package is
+        still perfectly buildable but cannot be fingerprinted -- a closure
+        builder, an option that does not pickle), and ``unknown`` for a run
+        recorded before digests existed. A missing fingerprint is not evidence
+        of sameness, and reporting any of the last three as ``unchanged`` would
+        be the same class of lie as ``status="written"`` reading as success.
         """
 
         import pandas as pd
@@ -1602,6 +1605,7 @@ class Project:
         """
 
         digests: dict[str, str | None] = {}
+        library = self.packages.digests()  # cached until the library changes
         entries = [
             *spec.packages,
             *(entry for model in spec.models for entry in model.packages),
@@ -1609,9 +1613,8 @@ class Project:
         for entry in entries:
             if not isinstance(entry, PackageRef):
                 continue
-            package = self.packages.get(entry.key)
-            if package is not None:
-                digests[entry.key] = package_digest(package)
+            if entry.key in self.packages:
+                digests[entry.key] = library[entry.key]
         return digests
 
     def _library_digests(self) -> dict[str, str | None]:
@@ -1705,8 +1708,12 @@ class Project:
             "grids": sorted(self.grids),
         }
 
-    def _save_grid(self, key: str, grid: Any) -> None:
-        """Persist one project-library grid, pickling built grid objects."""
+    def _save_grid(self, key: str, grid: Any) -> bool:
+        """Persist one project-library grid, pickling built grid objects.
+
+        Returns whether it fell back to pickling, so ``SaveReport.pickled``
+        counts grids as its docstring has always claimed.
+        """
 
         if isinstance(grid, GridSpec) and grid.method == "object":
             pickle_path = self.layout.grid_pickle_path(key)
@@ -1722,9 +1729,10 @@ class Project:
                 "pickle_path": pickle_path.relative_to(self.root).as_posix(),
             }
             _write_json(self.layout.grid_spec_path(key), doc)
-        else:
-            # Recipe GridSpec or GridRef: already serializable.
-            _write_json(self.layout.grid_spec_path(key), grid.to_dict())
+            return True
+        # Recipe GridSpec or GridRef: already serializable.
+        _write_json(self.layout.grid_spec_path(key), grid.to_dict())
+        return False
 
     def _save_package(self, key: str, package: PackageSpec) -> bool:
         """Persist one project package, pickling it when it carries arrays.
@@ -1862,7 +1870,8 @@ class Project:
             if self._save_package(key, package):
                 pickled += 1
         for key, grid in self.grids.items():
-            self._save_grid(key, grid)
+            if self._save_grid(key, grid):
+                pickled += 1
         for name, reason in skipped:
             logger.warning(
                 "Project '%s': simulation '%s' not persisted -- %s",

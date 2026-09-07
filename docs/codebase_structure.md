@@ -52,7 +52,16 @@ working on it.
   `PackageSpec`, `ModelSpec`, `ModelContext`, `ExchangeSpec`, `SimulationSpec`,
   `GridSpec`, refs, hooks, and the complete `to_dict`/`from_dict` round-trip.
 - [src/myflopy/workspace.py](../src/myflopy/workspace.py)
-  `Project` / `Run` lifecycle (package + grid libraries, prepare/run/reopen).
+  `Project` / `Run` lifecycle: the package/grid/simulation libraries,
+  prepare/run/reopen, `SaveReport`, and `RunLibrary` (`project.runs`, the run
+  ledger, including workspaces with no manifest).
+- [src/myflopy/library.py](../src/myflopy/library.py)
+  `SpecLibrary` and its three subclasses — the `dict`-subclass browse surface
+  behind `project.packages` / `.grids` / `.simulations`: `names`, `summary`,
+  did-you-mean `KeyError`, `fork`/`edit`, and the cached package digests.
+- [src/myflopy/run_record.py](../src/myflopy/run_record.py)
+  `ListingOutcome` / `read_listing_outcome` — what MF6 reported in `mfsim.lst`,
+  read back as `run.outcome`. Stdlib only, import layer 0.
 - [src/myflopy/geopackage.py](../src/myflopy/geopackage.py)
   `GeoPackageSource` — the GIS-features-to-cells pipeline behind `mf.*.gpkg`.
 - [src/myflopy/sources.py](../src/myflopy/sources.py)

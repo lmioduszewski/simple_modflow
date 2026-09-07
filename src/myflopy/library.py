@@ -282,6 +282,19 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
         self._invalidate()
         super().clear()
 
+    def __ior__(self, other: Mapping[str, PackageSpec]) -> PackageLibrary:
+        """In-place merge, dropping any cached fingerprints.
+
+        ``|=`` does NOT route through ``__or__`` or ``update`` on a dict
+        subclass, so it slipped past every other invalidation hook and left a
+        stale fingerprint behind -- which reports a changed package as
+        unchanged, the one thing drift must never do.
+        """
+
+        self._invalidate()
+        super().__ior__(other)
+        return self
+
     def fork(
         self,
         source: str,

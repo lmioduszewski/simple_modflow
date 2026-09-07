@@ -162,6 +162,37 @@ had no rule, and the gap produced `sfr.results.long_profile`/`plot_long_profile`
 plus ~20 lines of hand-rolled matplotlib in two notebooks that redrew — off-color —
 a figure the library already built.
 
+## Browsing a Project: libraries, runs, forks (2026-09-04/06, ledger 179-191)
+**`docs/project_workflow.md` is the walkthrough**; `docs/project_libraries_design.md`
+is the reasoning record. `project.packages` / `.grids` / `.simulations` are `dict`
+**subclasses** — every dict operation works unchanged, plus `names()`, `summary()`,
+a did-you-mean `KeyError`, and `_repr_html_`. `project.package(key)` / `.grid(key)`
+mirror the long-standing `simulation(name)`; `package_spec(key)` had existed on the
+retired `ProjectSpec` and was dropped in the 2026-06-17 fold, unnoticed because
+**`api_snapshot.json` covered no part of the `Project` surface** — it does now
+(`Project.members`, `Run.members`, one row per library), so a verb vanishing fails CI.
+**Variants: `packages.fork(source, key, **overrides)` / `packages.edit(key, ...)` /
+`simulations.fork(source, name, swap={...})`.** Forks are **built, not patched** —
+`copy.deepcopy` reconstructs a frozen+slots dataclass through `__reduce_ex__`, so
+`__post_init__` never runs and an in-place option write accepts a typo silently;
+they go through `dataclasses.replace` instead, and deep-copy by default so editing a
+fork cannot write through into the parent's arrays. A rename carries into
+`pname`/`filename` and REFUSES a `*_filerecord` still naming the old package. A flat
+`swap=` reaches every model carrying the label; `{"model": {...}}` names one.
+**Runs are a ledger, not a list: `project.runs`.** It includes bare MF6 workspaces
+(`discovered`) and truncated manifests (`unreadable`) — measured 39 workspaces
+against 14 manifests under `examples/`. **`status` is myflopy's verb, `outcome` is
+MF6's verdict** read from `mfsim.lst`: `normal`/`failed`/`incomplete`/`absent`/
+`superseded`, the last meaning the listing predates this run's own preparation
+(`prepare_run(overwrite=True)` reuses the directory — design D5, still open, ledger
+191). `run.reconcile()` adopts a verdict; it will not adopt a superseded one.
+**`project.runs.drift()`** says which library packages a run used have changed since,
+via a content fingerprint stored per run. `project.save()` returns a **`SaveReport`**,
+not a path, and persists what it can rather than refusing the whole project.
+Two costs that surprise: fork and digest scale with the number of PYTHON OBJECTS,
+not cells — a 72×9,405 array package digests in ~5 ms, the 654,480-record EVT in
+**1.3 s**, so `PackageLibrary.digests()` caches until the library is mutated.
+
 ## Compromise ledger (standing user rule, 2026-07-17)
 **`docs/compromises_and_deferrals.md`** records every deliberate scope cut,
 test-fidelity trade, judgment call, or considered-but-omitted optional inside
@@ -202,8 +233,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2348 passed / 4 skipped**, 2026-09-05): `pytest -n 10` ≈ **90 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **4m55s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**2388 passed / 4 skipped**, 2026-09-06): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **6m06s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+  **A parallel run competing with another MF6 workload fails intermittently** —
+  a different test each time, all passing in isolation, wall time 85 s → 245 s.
+  That is contention, not a regression; re-run alone before believing a failure.
   Serial is ~3.7x the parallel run — that gap is the price of the `-n0`
   pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
