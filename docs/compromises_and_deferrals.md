@@ -6272,3 +6272,38 @@ same day, which is the useful part of the result.
         because the parameters on these verbs are about to change wholesale.
       - Verified by deleting `ModelSpec.without_package` and watching
         `test_api_snapshot.py` fail naming `ModelSpec.members`.
+
+198. **The coupled one-liner in `simulation()`'s own docstring could not run
+      (2026-09-10).** `mf.simulation(flow, transport)` -- labelled there as "one
+      IMS each (coupled-ready)" -- wrote `COMPLEXITY simple` onto the GWT solver,
+      selecting conjugate gradient, and MF6 aborted: *"MODEL TRANS PRODUCES AN
+      ASYMMETRIC COEFFICIENT MATRIX, BUT THE CONJUGATE GRADIENT METHOD WAS
+      SELECTED. USE BICGSTAB INSTEAD."* Measured preset matrix: SIMPLE fails,
+      MODERATE and COMPLEX pass, a bare IMS fails.
+      - **Keyed on the MATRIX, not the model kind, and that is the whole point.**
+        A rule written against `model_type` fixes the coupled case and leaves
+        every unconfined model broken: `mf.gwf(..., newtonoptions="NEWTON")` fails
+        identically under SIMPLE, because Newton makes a GWF matrix asymmetric
+        too. Both measured, both pass with `linear_acceleration="BICGSTAB"`.
+      - **BICGSTAB rather than bumping `complexity`.** MODERATE also passes, but
+        complexity is the caller's knob and the requirement MF6 states is the
+        acceleration. Only the asymmetric model's solver gets it; a plain GWF
+        solver is untouched.
+      - **NO TEST COVERED THIS**, which is how it survived: nothing in the suite
+        built a spec-declared GWF-GWT and ran it. `test_gwt_gwe_results.py`
+        hand-sets complexity AND a BICGSTAB override, so it exercised a
+        simulation the helper would never synthesize. The new tests reach MF6.
+      - **Solver ORDER rides along.** MF6 requires a GWF solution to be listed in
+        `mfsim.nam` before the solution of any model it feeds; nothing enforced
+        it, so a hand-written `solver=[transport_ims, flow_ims]` wrote a name file
+        MF6 rejects for a reason that reads like a physics problem. Solvers are
+        now sorted by MODEL DECLARATION order -- the order the caller already
+        expressed. The sort is stable and a solver naming no known model keeps
+        its place at the end.
+      - **A caller's explicit `solver=` list IS reordered.** Deliberate: the
+        order carries exactly one meaning to MF6 and there is no legitimate
+        reason to want the GWT solution first.
+      - **`complexity=` survives here**, even though it is on the vocabulary
+        work's cut list (it is ignored the moment `solver=` is passed). This pass
+        is bugs only; removing the parameter is a public-API change and belongs
+        with that work.
