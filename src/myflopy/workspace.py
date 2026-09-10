@@ -95,6 +95,32 @@ def load_run(
     return Run.load(workspace, executable=executable, load=load)
 
 
+def _refuse_overwrite(
+    library: Any, key: str, verb: str, overwrite: bool, project_name: str
+) -> None:
+    """Refuse to replace an existing library entry unless asked to.
+
+    ``add_package`` used to replace silently, while ``packages.fork`` refused the
+    same collision -- so whether re-using a key destroyed the old entry or raised
+    depended on which verb you happened to reach for. The registration verbs were
+    the unguarded ones, which is backwards: a fork is a deliberate new thing,
+    while re-registering a key is usually a second script run or a copied line.
+
+    ``overwrite=True`` is the way to mean it. ``packages.edit(key, ...)`` is the
+    way to change what a key MEANS, and is deliberately never refused.
+    """
+
+    if overwrite or key not in library:
+        return
+    kind = getattr(library, "_kind", "entry")
+    raise KeyError(
+        f"Project '{project_name}' already has a {kind} '{key}'. Pass "
+        f"overwrite=True to replace it, or pick another key. To change what "
+        f"'{key}' MEANS, use {kind}s.edit(...) -- that records the edit and "
+        f"project.runs.drift() will show which runs it invalidated."
+    )
+
+
 def _refuse_wrong_library(value: Any, expected: type, verb: str) -> None:
     """Refuse a spec handed to the wrong project library.
 
@@ -1388,7 +1414,9 @@ class Project:
 
         return self.layout.manifest_path
 
-    def add_package(self, key: str, package: PackageSpec) -> PackageSpec:
+    def add_package(
+        self, key: str, package: PackageSpec, *, overwrite: bool = False
+    ) -> PackageSpec:
         """Add or replace a reusable package spec under a project ``key``.
 
         The key is a free-form library address that models reference later, for
@@ -1399,10 +1427,13 @@ class Project:
         """
 
         _refuse_wrong_library(package, PackageSpec, "add_package")
+        _refuse_overwrite(self.packages, key, "add_package", overwrite, self.name)
         self.packages[key] = package
         return package
 
-    def add_grid(self, key: str, grid: Any) -> GridSpec | GridRef:
+    def add_grid(
+        self, key: str, grid: Any, *, overwrite: bool = False
+    ) -> GridSpec | GridRef:
         """Add or replace a reusable grid under a project ``key``.
 
         The grid may be a ``GridSpec`` recipe or an already-built grid object
@@ -1420,14 +1451,20 @@ class Project:
         """
 
         _refuse_wrong_library(grid, GridSpec, "add_grid")
+        _refuse_overwrite(self.grids, key, "add_grid", overwrite, self.name)
         grid = _grid_entry(grid)
         self.grids[key] = grid
         return grid
 
-    def add_simulation(self, simulation: SimulationSpec) -> SimulationSpec:
+    def add_simulation(
+        self, simulation: SimulationSpec, *, overwrite: bool = False
+    ) -> SimulationSpec:
         """Add or replace a reusable simulation specification."""
 
         _refuse_wrong_library(simulation, SimulationSpec, "add_simulation")
+        _refuse_overwrite(
+            self.simulations, simulation.name, "add_simulation", overwrite, self.name
+        )
         reason = self._why_unserializable(simulation)
         if reason is not None:
             # Said HERE, at the line that registered it, rather than discovered

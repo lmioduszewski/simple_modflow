@@ -6549,3 +6549,30 @@ same day, which is the useful part of the result.
         accessors get it from, rather than repeating it ten times.
       - A test asserts every accessor is annotated AND that each admits the list,
         so one added later without an annotation fails by name.
+
+208. **The guarded verb was the deliberate one (2026-09-10).**
+      `project.add_package(key, spec)` replaced an existing entry silently, while
+      `packages.fork(source, key)` refused exactly the same collision unless told
+      `overwrite=True`. That is backwards: a fork is a deliberate new thing,
+      while re-using a registration key is usually an accident -- a second script
+      run, a copied line, a notebook cell executed twice. All three registration
+      verbs now take `overwrite=False`.
+      - **`packages.edit(key, ...)` stays deliberately unguarded.** Changing what
+        a key MEANS is the supported operation; `project.runs.drift()` is what
+        makes its consequences visible. The refusal message names it, so the verb
+        is discoverable from the error.
+      - **The deferral reason given in ledger 201 was WRONG.** It said adding
+        this would "break every re-registration in the examples mid-stream."
+        Measured: zero breakage. 2552 tests pass, and a static scan of every
+        example and notebook found one apparent duplicate key that turned out to
+        be an ASCII diagram in a module docstring. The cost was assumed, not
+        checked.
+      - **`Project.load` is unaffected** -- it registers into a fresh project, so
+        nothing collides. Pinned by a test, because a future eager-reload path
+        would hit this immediately.
+      - **The snapshot did not move, and that is ledger 197's limitation biting
+        for the first time.** `members()` captures names, not signatures, so
+        adding `overwrite=` to three public methods produced a zero-line diff in
+        `api_snapshot.json`. The behaviour change is real and the ratchet cannot
+        see it. If that matters more than once, the fix is the `spec.signatures`
+        block 197 describes.

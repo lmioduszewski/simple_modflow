@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2542 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2552 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m42s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -301,6 +301,12 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
+- **Registering an existing key RAISES** (ledger 208, 2026-09-10):
+  `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
+  replace silently while `packages.fork` refused the same collision — the guarded
+  verb was the deliberate one and the unguarded verb was the accident (a second
+  script run, a cell executed twice). **`packages.edit(key, ...)` stays unguarded**:
+  changing what a key MEANS is supported, and `runs.drift()` shows the cost.
 - **`mf.disv(layers)`** (ledger 206, 2026-09-10) — the discretization was the ONE
   package you could not get from a `mf.<name>(...)` helper; it came only from
   `result.to_disv()`. It delegates to that same method rather than re-deriving,
