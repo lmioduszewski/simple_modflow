@@ -235,8 +235,8 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2388 passed / 4 skipped**, 2026-09-06): `pytest -n 10` ≈ **85 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **6m06s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**2413 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **5m34s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -341,6 +341,18 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `LayerSurfaces` engine (`surfaces.py`: area-weighted sampling, top-down reconcile, pinch-out
   → idomain), which uses atomic `Surface` objects (`raster`/`from_contours`/`from_points`/
   `from_array`/constant + algebra). Use `LayerStack`; `LayerSurfaces`/`Surface` are the engine/atoms.
+  **`vor.gdf_topbtm` is GEOMETRY-FIRST, and that is a contract** (ledger 196, 2026-09-10):
+  several consumers decode it POSITIONALLY (`iloc[:, 1]` = model top, `iloc[:, 2:]` =
+  bottoms), so where the geometry column sits is load-bearing. `reconcile=True` — the
+  DEFAULT — used to append geometry at the end, which made the hover read the first
+  bottom as the top (5.0 against a truth of 10.0) and hand back a Polygon as the last
+  bottom, silently. Normalization lives on the **getter** (`grid.geometry_first`), not
+  the setter, because `__setstate__` and in-place edits both bypass the setter — and the
+  getter STORES what it normalized and returns that object, because returning a copy
+  loses `vor.gdf_topbtm[2] = ...` silently. Geometry is found by **dtype**, not the name.
+  Column *names* (int vs unit strings) were the wrong diagnosis: those raise loudly.
+  Still open there: `ModelContext.surfaces` is a captured reference the getter cannot
+  reach, and it is where the SFR-vs-context stale-snapshot divergence lives.
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or

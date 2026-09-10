@@ -37,6 +37,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_around_point as geometry_generate_grid_around_point,
 )
+from myflopy.modflow.mf6.grid.geometry import geometry_first
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_coordinates as geometry_generate_grid_coordinates,
 )
@@ -352,15 +353,35 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def gdf_topbtm(self):
-        """Return cached top/bottom surfaces, building them from rasters if needed."""
+        """Return cached top/bottom surfaces, building them from rasters if needed.
+
+        The column order is normalized on READ, not on write, because two routes
+        bypass the setter entirely. ``__setstate__`` writes ``__dict__`` directly,
+        so a reloaded grid otherwise keeps whatever order it was saved in; and an
+        in-place edit (``vor.gdf_topbtm[2] = ...``, which the canonical notebook
+        does) calls this getter and mutates the frame without the setter ever
+        running.
+
+        The normalized frame is STORED and returned -- never a normalized copy.
+        Returning a copy would hand that in-place edit a temporary, and the write
+        would be silently lost: measured, a bottom set to 99.0 read back as 5.0.
+        That would be a worse bug than the one this fixes.
+        """
         if self._gdf_topbtm is None and self.rasters is not None:
             self._gdf_topbtm = self.get_gdf_topbtm_multilyr(rasters=self.rasters)
+        self._gdf_topbtm = geometry_first(self._gdf_topbtm)
         return self._gdf_topbtm
 
     @gdf_topbtm.setter
     def gdf_topbtm(self, value):
-        """Set the cached top/bottom surface GeoDataFrame."""
-        self._gdf_topbtm = value
+        """Set the cached top/bottom surface GeoDataFrame.
+
+        ``_nlay`` is dropped as well: it caches on first read and nothing
+        invalidated it, so re-attaching a frame with a different layer count left
+        the old count in place.
+        """
+        self._gdf_topbtm = geometry_first(value)
+        self._nlay = None
 
     def get_disu_connectivity(self, *, use_representative_point: bool = False, tol: float = 0.0, validate: bool = True):
         """Compute DISU-style connectivity arrays for the current Voronoi grid."""

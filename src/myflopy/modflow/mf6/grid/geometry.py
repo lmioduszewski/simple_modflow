@@ -329,6 +329,36 @@ def voronoi_refine_by_point(point: shp.Point, spacing: int, tri) -> gpd.GeoDataF
     return gdf_all_polys
 
 
+def geometry_first(gdf):
+    """Return ``gdf`` with its geometry column(s) first, elevations in order.
+
+    ``gdf_topbtm`` is read POSITIONALLY by several consumers -- ``iloc[:, 1]`` for
+    the model top, ``iloc[:, 2:]`` for the bottoms -- and nothing enforced where
+    the geometry column sat. :meth:`LayerSurfaces.sample` with ``reconcile=True``
+    (the default) drops geometry, reconciles, then re-wraps with
+    ``gpd.GeoDataFrame(df, geometry=...)``, which appends geometry at the **end**
+    and undoes the explicit geometry-first ordering three lines above it. So a
+    keyword about physics moved the column every positional reader depends on.
+
+    Measured on a three-layer frame: the layer-elevation hover then read the first
+    bottom as the model top (5.0 where the truth was 10.0) and handed a Polygon
+    back as the last bottom, raising nothing. Integer labels do not protect
+    against it, which is why unifying the column NAMES would not have helped.
+
+    Geometry is found by DTYPE rather than by the name ``"geometry"``: a frame
+    whose geometry column is called ``geom`` was otherwise swept in as a layer
+    bottom. Idempotent, and returns the frame unchanged when it is already
+    ordered, so callers can apply it on every read without copying.
+    """
+
+    if gdf is None or getattr(gdf, "columns", None) is None:
+        return gdf
+    geo = [c for c in gdf.columns if str(getattr(gdf[c], "dtype", "")) == "geometry"]
+    if not geo or list(gdf.columns)[: len(geo)] == geo:
+        return gdf
+    return gdf[geo + [c for c in gdf.columns if c not in geo]]
+
+
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
     """Adjust stacked surface elevations to preserve layer ordering.
 

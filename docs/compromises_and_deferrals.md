@@ -6194,3 +6194,56 @@ same day, which is the useful part of the result.
       - **`discover_native_runs()` is deliberately unchanged.** Its documented
         job is every native MF6 workspace, and a PEST worker genuinely is one. It
         stays the raw sweep; `project.runs` is the curated ledger.
+
+196. **`gdf_topbtm` is read positionally, and a physics keyword moved the column
+      (2026-09-10).** Several consumers decode the layer-elevation frame by
+      POSITION -- `iloc[:, 1]` is the model top, `iloc[:, 2:]` the bottoms
+      (`choros.py:695`, `:1184`) -- and nothing enforced where the geometry
+      column sat. `LayerSurfaces.sample` writes `gdf[["geometry"] + labels]`,
+      then under `if reconcile:` (**the default**) `reconcile_surfaces` returns a
+      plain frame and `gpd.GeoDataFrame(df, geometry=...)` APPENDS geometry at
+      the end, undoing the ordering three lines above.
+      - **Measured**, three-layer frame: the hover read the first bottom as the
+        model top (5.0 against a truth of 10.0) and handed a Polygon back as the
+        last bottom, raising nothing. The dry-cell dagger flipped with it.
+      - **Column NAMES were the wrong diagnosis**, and the one three docstrings
+        adopt (`geopackage.py:97`, `layers.py:679`, `usg/model.py:262` all frame
+        the divergence as int-vs-named). Names cause loud `KeyError`s. The silent
+        half is geometry's POSITION, which flips on a keyword about physics and
+        which no docstring in the repo mentioned. Unifying names would have left
+        it fully intact.
+      - **Enforced on the GETTER, not the setter, and that is not a preference.**
+        Two routes bypass the setter: `__setstate__` does `__dict__.update`, so a
+        reloaded grid keeps whatever order it was saved in; and an in-place edit
+        (`vor.gdf_topbtm[2] = ...`, which `canonical_model_template.ipynb` cell 6
+        performs) mutates the frame the getter returned.
+      - **The getter STORES what it normalized and returns that object.**
+        Returning a normalized copy hands an in-place edit a temporary: measured,
+        a bottom set to 99.0 read back as 5.0. That is a worse bug than the one
+        being fixed, and it is what the obvious spelling produces. Pinned by
+        `test_an_in_place_edit_survives_the_normalizing_getter`.
+      - **Geometry is found by DTYPE, not by the name `"geometry"`** -- a frame
+        whose column is `geom` was otherwise swept in as a layer bottom.
+      - **`LayerStack.to_disv` now publishes `result.attach_to_grid(vor)`**
+        rather than letting the second sampling attach. It was publishing the
+        stack's string labels (`['top','sand','clay','geometry']`), which made
+        `mf.sfr` and `vor.plot.section` raise `KeyError: 0` on the path
+        `model_building_cheatsheet.md` §5 teaches, while `to_disv`'s own
+        docstring promised those consumers work.
+      - **`_nlay` invalidation** rides along: it cached on first read and nothing
+        dropped it, so re-attaching a frame with a different layer count left the
+        old count standing.
+      - **Setter normalization is redundant with the getter** and kept anyway, so
+        anything reading `_gdf_topbtm` directly sees an ordered frame. It is
+        pinned against the private storage rather than through the getter because
+        mutation testing showed every behavioural test still passed without it.
+      - **NOT DONE, deliberately.** (a) `ModelContext.surfaces` is a captured
+        reference, not the property, so normalizing the getter does not reach it
+        -- and that is where the stale-snapshot divergence lives (`sfr.py:637`
+        reads `grid.gdf_topbtm` while `lakes.py:604` and `geopackage.py:181` read
+        `context.surfaces`; measured SFR reach top 70.0 against
+        `CellSurfaceOffset` 60.0, truth 30.0, no exception). (b) The tolerant
+        reader-side accessor decoding all six writer layouts. (c) `DisuGrid`'s
+        `['top']`/`['bottom']` lookup, satisfied by no writer since 2024-05-11,
+        whose `except ValueError` cannot catch the `KeyError` pandas raises. All
+        three belong with the regrid work, where surfaces get resampled anyway.

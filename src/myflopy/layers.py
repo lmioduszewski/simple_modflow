@@ -3099,14 +3099,14 @@ class LayerStack:
             triggers = [stack_trigger] * len(triggers)
         else:
             triggers = [stack_trigger if v is None else v for v in triggers]
-        return ls.to_disv(
+        spec = ls.to_disv(
             vor,
             idomain=result.idomain,
             minimum_thickness=min_thk,
             pinch=pinch,
             length_units=self.length_units,
             name=name,
-            attach=attach,
+            attach=False,
             reconcile=rec_on,
             which=which,
             min_sep=seps,
@@ -3114,6 +3114,15 @@ class LayerStack:
             method=method,
             refresh=refresh,
         )
+        if attach:
+            # Publish `result`'s surfaces, not the second sampling's. They are the
+            # arrays this spec was built from -- the reason `attach=False` above --
+            # and they carry the INTEGER columns the surface-aware builders read.
+            # `ls.to_disv(attach=True)` publishes the stack's string labels
+            # ('top', 'sand', ...), which made `mf.sfr` and `vor.plot.section`
+            # raise `KeyError: 0` on the path the cheatsheet teaches.
+            result.attach_to_grid(vor)
+        return spec
 
 
 __all__ = [

@@ -22,7 +22,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 
-from myflopy.modflow.mf6.grid.geometry import reconcile_surfaces
+from myflopy.modflow.mf6.grid.geometry import geometry_first, reconcile_surfaces
 from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 
 # Surfaces defined relative to the surface immediately above them.
@@ -880,7 +880,14 @@ class LayerSurfaces:
             df = reconcile_surfaces(
                 vor, df=gdf, min_sep=min_sep, trigger_sep=trigger_sep, which=which
             )
-            gdf = gpd.GeoDataFrame(df, geometry=gdf.geometry.values, crs=gdf.crs)
+            # Re-apply the ordering: `reconcile_surfaces` returns a plain frame
+            # and `gpd.GeoDataFrame(df, geometry=...)` APPENDS geometry at the
+            # end, undoing the `[["geometry"] + labels]` three lines above. That
+            # made a keyword about physics move the column every positional
+            # reader depends on -- see `geometry_first`.
+            gdf = geometry_first(
+                gpd.GeoDataFrame(df, geometry=gdf.geometry.values, crs=gdf.crs)
+            )
         return gdf
 
     def attach(self, vor, **kwargs) -> gpd.GeoDataFrame:
