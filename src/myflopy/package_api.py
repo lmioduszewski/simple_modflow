@@ -1150,19 +1150,33 @@ def _exchange_kind(model: ModelSpec | str, verb: str) -> str:
 
 
 def disv(
+    layers: Any = None,
     *,
-    nlay: int,
-    ncpl: int,
-    nvert: int,
-    vertices: Any,
-    cell2d: Any,
-    top: Any,
-    botm: Any,
+    grid: Any = None,
+    nlay: int | None = None,
+    ncpl: int | None = None,
+    nvert: int | None = None,
+    vertices: Any = None,
+    cell2d: Any = None,
+    top: Any = None,
+    botm: Any = None,
     idomain: Any | None = None,
     name: str = "disv",
     **options: Any,
 ) -> PackageSpec:
     """Vertex discretization (DISV) package: the unstructured grid + layers.
+
+    Every other package in a model comes from ``mf.<name>(...)``; this one used
+    to be the exception, reachable only as ``result.to_disv()``. Pass the built
+    layer result and it is not::
+
+        layers = stack.build(vor, attach=True)
+        mf.disv(layers)                      # the mesh comes with it
+
+    The result carries the grid it was built on, so nothing else is needed --
+    ``grid=`` is only for a stack declared without one. ``result.to_disv()``
+    still works and is the same call; this is the spelling that matches the rest
+    of the package-first API.
 
     DISV defines the model geometry from a vertex/cell2d mesh plus per-layer ``top``
     and ``botm`` (and optional ``idomain``). With a myflopy grid you rarely type the
@@ -1192,6 +1206,43 @@ def disv(
     -------
     PackageSpec
     """
+
+    if layers is not None:
+        # Delegate rather than re-derive: the result's own `to_disv` is what
+        # guarantees the DISV matches the arrays you inspected with `qc()`.
+        # Re-deriving here would be a SECOND resolution of the same stack, which
+        # measured 8.5 ft of drift on a real model (see LayerStack.to_disv).
+        supplied = {
+            key: value
+            for key, value in {
+                "nlay": nlay, "ncpl": ncpl, "nvert": nvert, "vertices": vertices,
+                "cell2d": cell2d, "top": top, "botm": botm,
+            }.items()
+            if value is not None
+        }
+        if supplied:
+            raise TypeError(
+                "mf.disv(layers) takes the geometry FROM the layer result; "
+                f"also passing {', '.join(sorted(supplied))} would describe a "
+                "different mesh. Pass one or the other."
+            )
+        spec = layers.to_disv(grid, name=name) if grid is not None else layers.to_disv(name=name)
+        return spec.with_options(**options) if options else spec
+
+    missing = [
+        key
+        for key, value in {
+            "nlay": nlay, "ncpl": ncpl, "nvert": nvert,
+            "vertices": vertices, "cell2d": cell2d, "top": top, "botm": botm,
+        }.items()
+        if value is None
+    ]
+    if missing:
+        raise TypeError(
+            f"mf.disv() is missing {', '.join(missing)}. Pass a built layer "
+            "result instead -- mf.disv(stack.build(vor)) -- and the mesh comes "
+            "with it."
+        )
 
     values = {
         "nlay": nlay,

@@ -6511,3 +6511,27 @@ same day, which is the useful part of the result.
         namesake went, which had none.
       - Migrations: `with_hook(h)` -> `mf.gwf(..., hooks=[h])`; `with_input(k, s)`
         -> `dataclasses.replace(spec, inputs={k: s})`. Two call sites, both tests.
+
+206. **The discretization was the one package with no `mf.` helper (2026-09-10).**
+      Every other package in a model comes from `mf.<name>(...)`; DISV came only
+      from `result.to_disv()`. That asymmetry -- not the character count -- is
+      what the user was pointing at, and the first answer given to them argued
+      length and missed the point.
+      - **`mf.disv(layers)` DELEGATES to `result.to_disv()`**, it does not
+        re-derive. Re-deriving would be a second resolution of the same stack,
+        which `LayerStack.to_disv`'s own comment records as 8.5 ft of drift on a
+        real model -- and the drift is silent, because `attach_to_grid` publishes
+        the result's surfaces while the DISV carries the other resolution's.
+      - **`mf.disv(ctx, res)` was the user's spelling and is NOT what shipped.**
+        A `LayerBuildResult` carries `res.vor`, so the context is redundant --
+        `ctx.grid` IS `res.vor`. One positional, `grid=` only for a stack
+        declared without one.
+      - **Mixing the two forms raises.** `mf.disv(layers, nlay=99)` describes two
+        different meshes; silently preferring either is the class of bug this
+        whole pass exists to remove.
+      - **NOT DONE: renaming `LayerBuildResult`.** The workflow recommended
+        `Layers`; the user asked for the call form, not the rename, and renaming
+        a public class in `mf.__all__` on aesthetics alone is not a call to make
+        on their behalf mid-pass. Their actual question -- "what is res for?" --
+        is answered by the docs, and now by a helper that does not need the
+        variable at all.

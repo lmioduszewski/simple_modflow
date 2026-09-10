@@ -92,13 +92,15 @@
     },
     "disv": {
       "__call__": [
-        "nlay:KEYWORD_ONLY=<required>",
-        "ncpl:KEYWORD_ONLY=<required>",
-        "nvert:KEYWORD_ONLY=<required>",
-        "vertices:KEYWORD_ONLY=<required>",
-        "cell2d:KEYWORD_ONLY=<required>",
-        "top:KEYWORD_ONLY=<required>",
-        "botm:KEYWORD_ONLY=<required>",
+        "layers:POSITIONAL_OR_KEYWORD=None",
+        "grid:KEYWORD_ONLY=None",
+        "nlay:KEYWORD_ONLY=None",
+        "ncpl:KEYWORD_ONLY=None",
+        "nvert:KEYWORD_ONLY=None",
+        "vertices:KEYWORD_ONLY=None",
+        "cell2d:KEYWORD_ONLY=None",
+        "top:KEYWORD_ONLY=None",
+        "botm:KEYWORD_ONLY=None",
         "idomain:KEYWORD_ONLY=None",
         "name:KEYWORD_ONLY='disv'",
         "options:VAR_KEYWORD=<required>"

@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2514 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2521 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m42s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -301,6 +301,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
+- **`mf.disv(layers)`** (ledger 206, 2026-09-10) — the discretization was the ONE
+  package you could not get from a `mf.<name>(...)` helper; it came only from
+  `result.to_disv()`. It delegates to that same method rather than re-deriving,
+  because a second resolution of the same stack measured 8.5 ft of drift. Mixing
+  it with hand-written `nlay=`/`vertices=` raises. The hand-written form still works.
 - **One verb per operation, both tiers** (ledger 204, 2026-09-10):
   `with_packages(*pkgs, slot=, on=, name=)` / `without_packages(*names, on=)`. One or
   many, varargs or a list. GONE: `ModelSpec.with_package`/`without_package`,
