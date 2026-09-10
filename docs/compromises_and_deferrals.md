@@ -6535,3 +6535,17 @@ same day, which is the useful part of the result.
         on their behalf mid-pass. Their actual question -- "what is res for?" --
         is answered by the docs, and now by a helper that does not need the
         variable at all.
+
+207. **`run.model().chd.` autocompleted list methods (2026-09-10).** The ten
+      package accessors on `SimulationBase` carried no return annotation, and
+      PyCharm and Pylance are STATIC -- they read the `def` line and never run
+      the module -- so an editor offered `append`, `count`, `sort`.
+      - **The annotation is a UNION, and that is honest rather than lazy.**
+        FloPy's `get_package` returns a LIST when a model carries more than one
+        package of a type: measured, two CHD packages give a two-element list.
+        Annotating the single class would be a lie an editor then propagates into
+        every call site downstream.
+      - `package()`'s docstring now states the list behaviour once, where the
+        accessors get it from, rather than repeating it ten times.
+      - A test asserts every accessor is annotated AND that each admits the list,
+        so one added later without an annotation fails by name.

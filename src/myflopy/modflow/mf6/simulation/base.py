@@ -702,6 +702,13 @@ class SimulationBase:
         ----------
         package_names
             One package name such as ``"rch"`` or a list of package names.
+
+        Notes
+        -----
+        FloPy's ``get_package`` returns a LIST when a model carries more than one
+        package of a type -- two CHDs give a two-element list, verified. The
+        typed accessors below say so in their return annotation rather than
+        promising a single package they cannot guarantee.
         """
 
         if isinstance(package_names, (list, tuple, set)):
@@ -743,25 +750,25 @@ class SimulationBase:
         return [tuple(int(value) for value in pair) for pair in self._get_budget_reader().get_kstpkper()]
 
     @property
-    def lak(self):
+    def lak(self) -> "flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]":
         """Return the MF6 LAK package attached to this model."""
 
         return self.package("lak")
 
     @property
-    def uzf(self):
+    def uzf(self) -> "flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]":
         """Return the MF6 UZF package attached to this model."""
 
         return self.package("uzf")
 
     @property
-    def sfr(self):
+    def sfr(self) -> "flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]":
         """Return the MF6 SFR package attached to this model."""
 
         return self.package("sfr")
 
     @property
-    def rch(self):
+    def rch(self) -> "flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]":
         """Return the MF6 RCH package attached to this model."""
 
         return self.package("rch")
@@ -776,37 +783,37 @@ class SimulationBase:
     # this list is complete against the registry, so forgetting one fails.
 
     @property
-    def chd(self):
+    def chd(self) -> "flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]":
         """Return the MF6 CHD package attached to this model."""
 
         return self.package("chd")
 
     @property
-    def drn(self):
+    def drn(self) -> "flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]":
         """Return the MF6 DRN package attached to this model."""
 
         return self.package("drn")
 
     @property
-    def ghb(self):
+    def ghb(self) -> "flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]":
         """Return the MF6 GHB package attached to this model."""
 
         return self.package("ghb")
 
     @property
-    def riv(self):
+    def riv(self) -> "flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]":
         """Return the MF6 RIV package attached to this model."""
 
         return self.package("riv")
 
     @property
-    def wel(self):
+    def wel(self) -> "flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]":
         """Return the MF6 WEL package attached to this model."""
 
         return self.package("wel")
 
     @property
-    def evt(self):
+    def evt(self) -> "flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]":
         """Return the MF6 EVT package attached to this model."""
 
         return self.package("evt")
