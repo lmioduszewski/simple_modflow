@@ -6332,3 +6332,33 @@ same day, which is the useful part of the result.
       - **Nothing in the suite depended on any of the old behaviour**: 2437
         passed with the silent no-op turned into a raise. That is evidence the
         no-op was never a feature, not evidence the change is small.
+
+200. **A `chd` handed to a simulation was accepted, and died inside FloPy
+      (2026-09-10).** A simulation carries timing and solvers; a model package
+      given to `mf.simulation(packages=[...])` or `sim.with_package(...)` was
+      accepted at declaration and failed much later as FloPy's `Invalid package
+      type "chd". Unable to register package.` -- a message naming the type but
+      not the mistake, arriving a long way from the line that caused it.
+      - **Read from the BUILDER's first constructor parameter**, never the
+        package name. Measured across every `flopy.mf6` package class, that
+        partitions cleanly: `model` 78, `simulation` 15,
+        `parent_model_or_package` 8, `parent_package` 7. A name-prefix heuristic
+        is WRONG on 17 -- all six exchange classes (`gwfgwt`, `gwfgwf`, ...) carry
+        a model-kind prefix and are simulation-scoped, and eleven `utl*` classes
+        read as simulation while being model- or sub-package-scoped (and they
+        split BOTH ways: `utllaktab` hangs off a model, `utlats` off a parent
+        package).
+      - **`functools.partial` must be unwrapped or the check inverts.** The seven
+        list BCs all build through `partial(_build_named, ModflowGwfchd)` and
+        measure as unknown without it -- so the check would wave through every
+        BC it exists to catch while still catching `npf`. Mutation-tested.
+      - **Abstain rather than guess.** Only a decidable `"model"` is refused;
+        `parent_model_or_package` (MVR/GNC, genuinely either), a `PackageRef`
+        (no builder until it resolves), and any plain callable all pass.
+      - **The change's only casualty was the bug it was built to find.**
+        `tests/test_workspace.py` declared an `oc` at the simulation tier and
+        passed because it only writes a manifest and never builds -- and its
+        assertion accepted the package in EITHER tier, which is what hid it. It
+        now edits the model, using `sto` rather than `oc`: the model already
+        carries an `oc`, and the manifest summary records package NAMES, so
+        replacing one changes nothing to assert against.

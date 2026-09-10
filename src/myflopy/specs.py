@@ -1044,6 +1044,94 @@ def _package_slot(package: PackageEntry) -> str:
     return package.name
 
 
+def _package_scope(builder) -> str | None:
+    """``"model"``, ``"simulation"``, or ``None`` when it cannot be told.
+
+    Read from the BUILDER's first constructor parameter, never from the package
+    name. Measured across every ``flopy.mf6`` package class, the first parameter
+    partitions them cleanly -- ``model`` (78), ``simulation`` (15),
+    ``parent_model_or_package`` (8, genuinely either: MVR/MVT/GNC),
+    ``parent_package`` (7, sub-packages) -- while a name-prefix heuristic is
+    WRONG on 17 of them: all six exchange classes (``gwfgwt``, ``gwfgwf``, ...)
+    are simulation-scoped but carry a model-kind prefix, and eleven ``utl*``
+    classes (``utllaktab``, ``utlsfrtab``, ``utlats``, ...) are model- or
+    sub-package-scoped but read as simulation.
+
+    Unwraps ``functools.partial`` for the same reason :func:`_accepted_options`
+    does, and it matters more here: the seven list BCs all build through
+    ``partial(_build_named, ModflowGwfchd)`` and measure as unknown without it --
+    so a check meant to keep ``chd`` off the simulation would have waved through
+    exactly the packages it was written for while catching ``npf``.
+
+    ``None`` for anything undecidable, including a ``PackageRef`` (no builder at
+    all): a ref cannot be classified before it resolves, and refusing one would
+    break the library indirection.
+    """
+
+    import functools
+
+    if builder is None:
+        return None
+    if isinstance(builder, functools.partial):
+        for value in (*builder.args, *builder.keywords.values()):
+            scope = _package_scope(value)
+            if scope is not None:
+                return scope
+        return None
+
+    targets = getattr(builder, "mf6_targets", None)
+    if targets is None:
+        if not inspect.isclass(builder):
+            return None
+        targets = (builder,)
+
+    scopes = set()
+    for target in targets:
+        try:
+            parameters = list(inspect.signature(target.__init__).parameters)
+        except (ValueError, TypeError):  # C-implemented or unintrospectable
+            continue
+        if len(parameters) > 1:
+            scopes.add(parameters[1])
+    if not scopes:
+        return None
+    if scopes == {"model"}:
+        return "model"
+    if "simulation" in scopes:
+        return "simulation"
+    return None
+
+
+def _refuse_model_packages(
+    packages: Iterable[PackageSpec], simulation_name: str
+) -> None:
+    """Refuse a MODEL package declared at the simulation tier.
+
+    A simulation carries timing and solvers -- ``tdis``, ``ims``, ``ems`` -- and a
+    ``chd`` handed to it was accepted at declaration and died much later inside
+    FloPy as ``Invalid package type "chd". Unable to register package.``, which
+    names the type but not the mistake. This raises at the call site and names
+    the fix.
+
+    Only entries whose scope is decidably ``"model"`` are refused; anything
+    undecidable (a ref, MVR/GNC, a plain callable) passes, because a check that
+    guesses is worse here than one that abstains.
+    """
+
+    stray = [
+        package for package in packages if _package_scope(package.builder) == "model"
+    ]
+    if not stray:
+        return
+    names = ", ".join(package.name for package in stray)
+    raise ValueError(
+        f"Simulation '{simulation_name}' was given model package(s): {names}. "
+        "A simulation carries timing and solvers (mf.tdis, mf.ims, mf.ems); "
+        "model packages belong on the model -- pass them to mf.gwf(packages=[...]) "
+        "or use model.with_package(...)."
+    )
+
+
 def _package_entry_indices(
     packages: Sequence[PackageEntry], target: str
 ) -> list[int]:
@@ -2877,6 +2965,7 @@ class SimulationSpec:
         concrete_packages = [
             package for package in self.packages if isinstance(package, PackageSpec)
         ]
+        _refuse_model_packages(concrete_packages, self.name)
         if len(concrete_packages) == len(self.packages):
             _validate_concrete_packages(concrete_packages)
 

@@ -569,15 +569,24 @@ def test_a_live_spec_still_wins_over_a_carried_forward_block(tmp_path):
     run = project.prepare_run("baseline", _tiny_flow_spec())
     stale = json.loads(run.manifest_path.read_text())["spec"]
 
+    # The edit adds a package to the MODEL. It used to hand an `oc` to
+    # `with_package` at the SIMULATION tier -- which FloPy rejects at build
+    # ("Invalid package type"), invisible here because this test only writes a
+    # manifest, and hidden further by an assertion that accepted the package in
+    # either tier. The simulation tier now refuses it at declaration.
+    # `sto`, not `oc`: the model already carries an `oc`, and the manifest
+    # summary records package NAMES, so replacing one changes nothing to assert.
+    edited = _tiny_flow_spec()
+    edited = edited.with_model(
+        edited.model("flow").with_package(mf.sto(steady_state={0: True}))
+    )
     reopened = project.reopen_run("baseline", load=False)
-    reopened.spec = _tiny_flow_spec().with_package(mf.oc(printrecord=[("BUDGET", "ALL")]))
+    reopened.spec = edited
     reopened.save_manifest()
 
     written = json.loads(run.manifest_path.read_text())["spec"]
     assert written != stale
-    assert "oc" in written["simulation_packages"] or any(
-        "oc" in model["packages"] for model in written["models"]
-    )
+    assert any("sto" in model["packages"] for model in written["models"])
 
 
 def test_a_native_workspace_carries_no_spec_block(tmp_path):
