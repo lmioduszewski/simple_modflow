@@ -604,14 +604,14 @@ def tdis(
     return PackageSpec(name, flopy.mf6.ModflowTdis, values)
 
 
-# Captured under a private name so simulation()'s ``tdis=`` keyword can shadow
-# the public ``tdis`` builder without losing access to the default.
+# Captured under a private name so `simulation()` can reach the default timing
+# builder from inside a module that also exports `tdis` publicly.
 _steady_tdis = tdis
 
 
 def ims(
     *,
-    models: Iterable[str],
+    models: Iterable[str] | None = None,
     name: str = "ims",
     print_option: str | None = None,
     complexity: str | None = None,
@@ -700,7 +700,12 @@ def ims(
     ...        outer_maximum=100, inner_maximum=100, linear_acceleration="BICGSTAB")
     """
 
-    values = {"models": tuple(models), "pname": name if pname is None else pname, **kwargs}
+    # `models=None` is left OUT rather than stored as None: `simulation()` fills
+    # it with whatever the other solvers did not claim, and an absent key is what
+    # `_claim_models` and `_ordered_solvers` both test for.
+    values: dict[str, Any] = {"pname": name if pname is None else pname, **kwargs}
+    if models is not None:
+        values["models"] = tuple(models)
     for key, value in {
         "print_option": print_option,
         "complexity": complexity,
@@ -742,7 +747,7 @@ def ims(
 
 def ems(
     *,
-    models: Iterable[str],
+    models: Iterable[str] | None = None,
     name: str = "ems",
     filename: str | None = None,
     pname: str | None = None,
@@ -775,7 +780,9 @@ def ems(
     PackageSpec
     """
 
-    values = {"models": tuple(models), "pname": name if pname is None else pname, **kwargs}
+    values: dict[str, Any] = {"pname": name if pname is None else pname, **kwargs}
+    if models is not None:
+        values["models"] = tuple(models)
     if filename is not None:
         values["filename"] = filename
     return PackageSpec(name, build_ems, values)
@@ -800,6 +807,92 @@ def _asymmetric_matrix(model: ModelSpec) -> bool:
     if model.model_type in ("gwt", "gwe"):
         return True
     return model.model_type == "gwf" and bool(model.options.get("newtonoptions"))
+
+
+def _partition_simulation_packages(
+    packages: Iterable[Any],
+) -> tuple[list[PackageSpec], list[PackageSpec], list[Any]]:
+    """Split a ``packages=`` list into ``(timing, solvers, everything else)``.
+
+    Identified by BUILDER, the same signal :func:`~myflopy.specs._package_scope`
+    uses, so it does not depend on what a package happens to be named.
+
+    A ``PackageRef`` lands in "everything else" and does not suppress a default:
+    an unresolved reference carries no builder, so a ref standing for a TDIS is
+    indistinguishable from one standing for anything else, and guessing would
+    either drop the caller's timing or write two.
+    """
+
+    timing: list[PackageSpec] = []
+    solvers: list[PackageSpec] = []
+    others: list[Any] = []
+    for entry in packages:
+        if not isinstance(entry, PackageSpec):
+            others.append(entry)
+        elif entry.builder is flopy.mf6.ModflowTdis:
+            timing.append(entry)
+        elif entry.builder in (build_ims, build_ems):
+            solvers.append(entry)
+        else:
+            others.append(entry)
+    return timing, solvers, others
+
+
+def _claim_models(
+    solvers: list[PackageSpec], models: tuple[ModelSpec, ...]
+) -> list[PackageSpec]:
+    """Give every model a solver, without overriding one the caller supplied.
+
+    A solver declaring ``models=`` claims exactly those. A solver declaring none
+    claims everything left over -- which is what lets a one-model simulation say
+    ``mf.ims(complexity="COMPLEX")`` and name nothing. Models still unclaimed get
+    a synthesized solver each.
+
+    PRT is never folded into an unnamed IMS: MF6 rejects an explicit model under
+    IMS6, so a PRT model always gets its own EMS even when an open IMS is present.
+    """
+
+    claimed = {
+        name for spec in solvers for name in (spec.options.get("models") or ())
+    }
+    open_solvers = [spec for spec in solvers if not spec.options.get("models")]
+    if len(open_solvers) > 1:
+        names = ", ".join(spec.name for spec in open_solvers)
+        raise ValueError(
+            f"simulation() was given {len(open_solvers)} solvers with no models=: "
+            f"{names}. At most one can claim the models the others left -- give "
+            "the rest an explicit models=(...)."
+        )
+
+    unclaimed = [model for model in models if model.name not in claimed]
+    resolved: list[PackageSpec] = []
+    for spec in solvers:
+        if spec.options.get("models"):
+            resolved.append(spec)
+            continue
+        # The open solver takes every unclaimed model except PRT, which needs an
+        # EMS of its own whatever else is going on.
+        taken = tuple(m.name for m in unclaimed if m.model_type != "prt")
+        if not taken:
+            raise ValueError(
+                f"Solver '{spec.name}' declares no models= and there are none "
+                "left for it to claim."
+            )
+        resolved.append(spec.with_options(models=taken))
+        unclaimed = [m for m in unclaimed if m.name not in taken]
+
+    for model in unclaimed:
+        if model.model_type == "prt":
+            resolved.append(ems(models=[model.name], name=f"{model.name}_ems"))
+            continue
+        # NOT `options` -- `simulation()` has its own `**options`.
+        solver_options: dict[str, Any] = {"complexity": "SIMPLE"}
+        if _asymmetric_matrix(model):
+            solver_options["linear_acceleration"] = "BICGSTAB"
+        resolved.append(
+            ims(models=[model.name], name=f"{model.name}_ims", **solver_options)
+        )
+    return resolved
 
 
 def _ordered_solvers(
@@ -831,31 +924,37 @@ def _ordered_solvers(
 def simulation(
     *models: ModelSpec,
     name: str = "sim",
-    tdis: PackageSpec | None = None,
-    solver: PackageSpec | Iterable[PackageSpec] | None = None,
-    complexity: str | None = "SIMPLE",
+    packages: Iterable[PackageEntry] = (),
     exchanges: Iterable[Any] = (),
-    packages: Iterable[PackageSpec] = (),
     **options: Any,
 ) -> SimulationSpec:
-    """Assemble a :class:`SimulationSpec` with sensible timing/solver defaults.
+    """Assemble a :class:`SimulationSpec`, defaulting the timing and solvers.
 
     The common case -- one or more models that should just run -- needs no
-    timing or solver boilerplate::
+    boilerplate::
 
         mf.simulation(flow)              # steady, one IMS solving `flow`
-        mf.simulation(flow, transport)   # one IMS each (coupled-ready)
+        mf.simulation(flow, transport)   # one IMS each, coupled-ready
 
-    Defaults: a single steady stress period (``mf.tdis()``) and one solver per
-    model, each solving only that model -- an ``IMS`` for GWF/GWT/GWE models and
-    an ``EMS`` for PRT models (PRT is explicit in MF6 and is rejected under
-    IMS6). Override any of it::
+    Everything simulation-level goes through ONE ``packages=`` list, the way
+    model packages go through ``mf.gwf(packages=[...])``::
 
-        mf.simulation(flow, tdis=mf.tdis(nper=12, perioddata=spd))
-        mf.simulation(flow, transport, solver=[flow_ims, transport_ims])
+        mf.simulation(flow, packages=[mf.tdis(nper=12, perioddata=spd)])
+        mf.simulation(flow, transport, packages=[tdis, flow_ims, transport_ims])
 
-    Extra simulation-level packages are appended via ``packages=``; couplings
-    via ``exchanges=``.
+    Whatever you supply, myflopy fills in the rest: a steady ``mf.tdis()`` when
+    the list has no timing, and a solver for every model no supplied solver
+    claims -- an ``IMS`` for GWF/GWT/GWE and an ``EMS`` for PRT, which MF6
+    requires (it rejects an explicit model under IMS6).
+
+    A solver with no ``models=`` claims every model the others left, so a
+    one-model simulation needs no names at all::
+
+        mf.simulation(flow, packages=[mf.ims(complexity="COMPLEX")])
+
+    Solvers are ordered by MODEL DECLARATION order regardless of the order you
+    list them: MF6 requires a GWF solution to appear in ``mfsim.nam`` before the
+    solution of any model it feeds.
 
     Parameters
     ----------
@@ -863,19 +962,17 @@ def simulation(
         One or more model specs (``mf.gwf(...)`` etc.). At least one is required.
     name : str, default "sim"
         Simulation name.
-    tdis : PackageSpec, optional
-        Timing package; defaults to a single steady period (``mf.tdis()``).
-    solver : PackageSpec or Iterable[PackageSpec], optional
-        Solver spec(s); defaults to one per model, each solving only that model
-        (``mf.ims`` for GWF/GWT/GWE, ``mf.ems`` for PRT).
-    complexity : str, optional, default "SIMPLE"
-        Solver complexity preset used for the default per-model IMS.
+    packages : Iterable[PackageEntry], optional
+        Simulation-level packages -- timing (``mf.tdis``) and solvers
+        (``mf.ims`` / ``mf.ems``). A model package raises; it belongs on the
+        model. A ``mf.ref`` is passed through untouched and does NOT suppress a
+        default, because an unresolved reference cannot be identified -- supply
+        the timing or solver it stands for explicitly alongside it.
     exchanges : Iterable, optional
-        Inter-model exchange specs (e.g. ``mf.build_gwf_gwt_exchange(...)``).
-    packages : Iterable[PackageSpec], optional
-        Extra simulation-level packages to append.
+        Inter-model exchange specs -- see :func:`exchange`.
     **options
-        Additional :class:`SimulationSpec` fields (e.g. ``workspace``).
+        Additional :class:`SimulationSpec` fields (``workspace``, ``executable``,
+        ``run_name``).
 
     Returns
     -------
@@ -884,44 +981,36 @@ def simulation(
     Raises
     ------
     ValueError
-        If no model specs are given.
+        If no model specs are given, if ``packages`` carries more than one
+        timing package or more than one unnamed solver, or if a model package is
+        handed to the simulation tier.
 
     Examples
     --------
-    >>> mf.simulation(flow)                                      # steady, one IMS
-    >>> mf.simulation(flow, tdis=mf.tdis(nper=12, perioddata=spd))
-    >>> mf.simulation(flow, transport, solver=[flow_ims, transport_ims])
+    >>> mf.simulation(flow)
+    >>> mf.simulation(flow, packages=[mf.ims(complexity="COMPLEX")])
+    >>> mf.simulation(flow, transport, packages=[tdis, flow_ims, transport_ims])
     """
 
     if not models:
         raise ValueError("simulation() requires at least one model spec.")
 
-    timing = _steady_tdis() if tdis is None else tdis
-    if solver is None:
-        solvers: list[PackageSpec] = []
-        for model in models:
-            # PRT models are explicit -- MF6 rejects them under IMS6 ("Explicit
-            # models require EMS6"), so their default solver is an EMS.
-            if model.model_type == "prt":
-                solvers.append(ems(models=[model.name], name=f"{model.name}_ems"))
-                continue
-            # NOT `options` -- that name is this function's own `**options`.
-            solver_options: dict[str, Any] = {"complexity": complexity}
-            if _asymmetric_matrix(model):
-                solver_options["linear_acceleration"] = "BICGSTAB"
-            solvers.append(
-                ims(models=[model.name], name=f"{model.name}_ims", **solver_options)
-            )
-    elif isinstance(solver, PackageSpec):
-        solvers = [solver]
-    else:
-        solvers = list(solver)
-    solvers = _ordered_solvers(solvers, models)
+    timing, solvers, others = _partition_simulation_packages(packages)
 
+    if len(timing) > 1:
+        names = ", ".join(spec.name for spec in timing)
+        raise ValueError(
+            f"simulation() was given {len(timing)} timing packages: {names}. "
+            "A simulation has exactly one TDIS."
+        )
+    if not timing:
+        timing = [_steady_tdis()]
+
+    solvers = _claim_models(solvers, models)
     return SimulationSpec(
         name,
         models=tuple(models),
-        packages=(timing, *solvers, *packages),
+        packages=(*timing, *_ordered_solvers(solvers, models), *others),
         exchanges=tuple(exchanges),
         **options,
     )

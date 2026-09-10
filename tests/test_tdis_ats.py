@@ -114,8 +114,10 @@ def _written_ats(tmp: Path, tdis):
         mf.sto(ss=1e-5, sy=0.1, iconvert=1, transient={0: True}),
         mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "LAST")]),
     ])
-    sim = mf.simulation(model, name="s", tdis=tdis,
-                        solver=mf.ims(models=["m"], complexity="simple"))
+    sim = mf.simulation(
+        model, name="s",
+        packages=[tdis, mf.ims(models=["m"], complexity="simple")],
+    )
     built = sim.build(tmp)
     flopy_sim = built.sim if hasattr(built, "sim") else built
     for attr in ("simulation", "_simulation", "mfsim"):

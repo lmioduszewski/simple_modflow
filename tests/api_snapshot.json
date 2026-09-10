@@ -146,7 +146,7 @@
     },
     "ems": {
       "__call__": [
-        "models:KEYWORD_ONLY=<required>",
+        "models:KEYWORD_ONLY=None",
         "name:KEYWORD_ONLY='ems'",
         "filename:KEYWORD_ONLY=None",
         "pname:KEYWORD_ONLY=None",
@@ -386,7 +386,7 @@
     },
     "ims": {
       "__call__": [
-        "models:KEYWORD_ONLY=<required>",
+        "models:KEYWORD_ONLY=None",
         "name:KEYWORD_ONLY='ims'",
         "print_option:KEYWORD_ONLY=None",
         "complexity:KEYWORD_ONLY=None",
@@ -693,11 +693,8 @@
       "__call__": [
         "models:VAR_POSITIONAL=<required>",
         "name:KEYWORD_ONLY='sim'",
-        "tdis:KEYWORD_ONLY=None",
-        "solver:KEYWORD_ONLY=None",
-        "complexity:KEYWORD_ONLY='SIMPLE'",
-        "exchanges:KEYWORD_ONLY=()",
         "packages:KEYWORD_ONLY=()",
+        "exchanges:KEYWORD_ONLY=()",
         "options:VAR_KEYWORD=<required>"
       ]
     },

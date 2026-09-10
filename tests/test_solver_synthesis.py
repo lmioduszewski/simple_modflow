@@ -121,7 +121,7 @@ def test_solvers_are_ordered_by_model_declaration_not_by_the_list_given():
         _flow(),
         _transport(),
         name="c",
-        solver=[
+        packages=[
             mf.ims(models=["trans"], name="trans_ims", linear_acceleration="BICGSTAB"),
             mf.ims(models=["flow"], name="flow_ims"),
         ],
@@ -165,9 +165,76 @@ def test_a_backwards_solver_list_still_produces_a_runnable_name_file(tmp_path):
         _transport(),
         name="c",
         exchanges=(_gwf_gwt_exchange(),),
-        solver=[
+        packages=[
             mf.ims(models=["trans"], name="trans_ims", linear_acceleration="BICGSTAB"),
             mf.ims(models=["flow"], name="flow_ims"),
         ],
     )
     assert _run(spec, tmp_path) is True
+
+
+# --- assembling `packages=` ------------------------------------------------- #
+
+
+def test_two_timing_packages_are_refused():
+    """Both used to survive: FloPy warned "Replacing", and the last one won."""
+
+    with pytest.raises(ValueError, match="2 timing packages"):
+        mf.simulation(
+            _flow(), name="s", packages=[mf.tdis(), mf.tdis(name="tdis2")]
+        )
+
+
+def test_two_solvers_with_no_models_are_refused():
+    """Which one claims the leftovers has no defined answer."""
+
+    with pytest.raises(ValueError, match="2 solvers with no models="):
+        mf.simulation(_flow(), name="s", packages=[mf.ims(), mf.ims(name="ims2")])
+
+
+def test_a_solver_with_no_models_claims_what_the_others_left():
+    spec = mf.simulation(
+        _flow(),
+        _transport(),
+        name="s",
+        packages=[mf.ims(models=["trans"], name="trans_ims"), mf.ims(name="rest")],
+    )
+    claimed = {p.name: p.options.get("models") for p in _solvers(spec)}
+    assert claimed == {"rest": ("flow",), "trans_ims": ("trans",)}
+
+
+def test_prt_gets_its_own_ems_even_when_an_open_ims_is_present():
+    """MF6 rejects an explicit model under IMS6, so PRT is never folded in."""
+
+    particles = mf.prt("part", packages=[mf.dis(**_DIS), mf.mip(porosity=0.3)])
+    spec = mf.simulation(
+        _flow(), particles, name="s", packages=[mf.ims(complexity="COMPLEX")]
+    )
+    claimed = {p.name: p.options.get("models") for p in _solvers(spec)}
+    assert claimed == {"ims": ("flow",), "part_ems": ("part",)}
+
+
+def test_an_open_solver_with_nothing_left_to_claim_is_refused():
+    with pytest.raises(ValueError, match="none left for it to claim"):
+        mf.simulation(
+            _flow(),
+            name="s",
+            packages=[mf.ims(models=["flow"], name="explicit"), mf.ims(name="open")],
+        )
+
+
+def test_a_supplied_timing_package_replaces_the_default():
+    spec = mf.simulation(
+        _flow(), name="s", packages=[mf.tdis(nper=3, perioddata=[(1.0, 1, 1.0)] * 3)]
+    )
+    timing = [p for p in spec.packages if p.name == "tdis"]
+    assert len(timing) == 1
+    assert timing[0].options["nper"] == 3
+
+
+def test_a_ref_passes_through_and_does_not_suppress_the_timing_default():
+    """A ref carries no builder, so it cannot be identified as timing or solver."""
+
+    spec = mf.simulation(_flow(), name="s", packages=[mf.ref("tdis/monthly")])
+    assert "tdis" in spec.package_names          # the default is still added
+    assert "tdis/monthly" in spec.package_names  # and the ref is kept

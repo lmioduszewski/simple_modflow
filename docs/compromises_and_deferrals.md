@@ -6393,3 +6393,38 @@ same day, which is the useful part of the result.
         `overwrite=False` guard belongs with the vocabulary work, where
         `packages.fork`'s refusal and this verb should end up consistent; adding
         it here would break every re-registration in the examples mid-stream.
+
+202. **`mf.simulation` grew three ways to say one thing (2026-09-10).** `tdis=`,
+      `solver=` and `packages=` were three channels into ONE
+      `SimulationSpec.packages` tuple, and `complexity=` was a fourth that only
+      reached the synthesized solver -- silently ignored the moment `solver=` was
+      passed. `solver=` also had two shapes (a spec, or a list of them). All
+      collapsed into `packages=[...]`, matching `mf.gwf(packages=[...])`.
+      - **`models=` is now OPTIONAL on `mf.ims`/`mf.ems`.** A solver declaring
+        none claims every model the others left, which is what lets a one-model
+        simulation write `packages=[mf.ims(complexity="COMPLEX")]` and name
+        nothing. Added because the migration would otherwise have been a
+        REGRESSION for exactly the case `complexity=` existed to serve -- the
+        real notebook it was written for goes from one keyword to naming its own
+        model. `build_ims`/`build_ems` raise if such a spec reaches a build
+        without a simulation having filled it in.
+      - **The key is absent, not `None`.** `_claim_models` and `_ordered_solvers`
+        both test truthiness of `options.get("models")`, so an unfilled solver
+        carries no `models` key at all rather than a null one.
+      - **PRT is never folded into an open IMS.** MF6 rejects an explicit model
+        under IMS6, so a PRT model gets its own EMS even when an unnamed IMS is
+        present and would otherwise have claimed it.
+      - **Two refusals that used to be silent corruption.** Two TDIS packages
+        used to survive into the spec, with FloPy warning "tdis package already
+        exists. Replacing" and whichever built last winning; two unnamed solvers
+        had no defined meaning at all. Both raise.
+      - **A `mf.ref` in `packages=` does NOT suppress a default.** An unresolved
+        reference carries no builder, so a ref standing for a TDIS cannot be told
+        from one standing for anything else -- guessing would either drop the
+        caller's timing or write two. Documented on the parameter.
+      - **Blast radius was 3 test call sites and 1 notebook cell**, far smaller
+        than the surface suggested: 44 `mf.simulation(` calls repo-wide, only 4
+        of which used any of the removed keywords.
+      - **`examples/mf6/notebooks/bearcreek_uncertainty.ipynb` is GITIGNORED** --
+        a live working notebook, not repo content. Its cell was edited surgically
+        so it keeps running; that edit is in the working tree and in no commit.

@@ -542,14 +542,25 @@ def test_simulation_one_ims_per_model_for_coupled():
 
 
 def test_simulation_overrides_tdis_and_solver():
+    """One `packages=` list carries both, the way `mf.gwf(packages=[...])` does."""
+
     flow = mf.gwf("flow", packages=[])
     my_tdis = mf.tdis(nper=3, perioddata=[(1.0, 1, 1.0)] * 3)
     my_ims = mf.ims(models=["flow"], complexity="COMPLEX", name="custom_ims")
-    sim = mf.simulation(flow, tdis=my_tdis, solver=my_ims)
+    sim = mf.simulation(flow, packages=[my_tdis, my_ims])
 
     tdis_pkg = next(p for p in sim.packages if p.name == "tdis")
     assert tdis_pkg.options["nper"] == 3
     assert [p.name for p in sim.packages] == ["tdis", "custom_ims"]
+
+
+def test_a_solver_with_no_models_claims_the_one_model_there_is():
+    """The reason `models=` became optional: a one-model simulation names nothing."""
+
+    sim = mf.simulation(mf.gwf("flow", packages=[]), packages=[mf.ims(complexity="COMPLEX")])
+    solver = next(p for p in sim.packages if p.name != "tdis")
+    assert solver.options["models"] == ("flow",)
+    assert solver.options["complexity"] == "COMPLEX"
 
 
 def test_simulation_requires_a_model():

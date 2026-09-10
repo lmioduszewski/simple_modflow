@@ -39,7 +39,7 @@ Everything below is an attribute of the top-level `myflopy` module (imported as
 |---|---|
 | `mf.gwf(name, context=, packages=[...])` | a groundwater-flow model |
 | `mf.gwt(...)` / `mf.gwe(...)` / `mf.prt(...)` | transport / energy / particle-tracking models |
-| `mf.simulation(...)` / `mf.SimulationSpec(...)` | one MF6 simulation (tdis + solver + models) |
+| `mf.simulation(*models, packages=[tdis, ims])` / `mf.SimulationSpec(...)` | one MF6 simulation; `packages=` carries timing and solvers, defaults fill the rest |
 
 ### Discretization, core, solver
 
@@ -54,10 +54,18 @@ via `**options`; for PRT, `trackcsv_filerecord=`). `mf.npf` and `mf.sto` are
 GWF-only (MF6 has no GWT/GWE variant); `mf.ic` and `mf.disu` reject PRT (MF6 has
 no `ModflowPrtic`/`ModflowPrtdisu`).
 
-**Solvers**: `mf.ims(models=…)` for GWF/GWT/GWE; **`mf.ems(models=…)`** for PRT —
-PRT models are *explicit* in MF6 and are rejected under IMS6 ("Explicit models
-require EMS6"). `mf.simulation(...)`'s solver default is kind-aware: one IMS per
-GWF/GWT/GWE model, one EMS per PRT model.
+**Solvers**: `mf.ims(...)` for GWF/GWT/GWE; **`mf.ems(...)`** for PRT — PRT models
+are *explicit* in MF6 and are rejected under IMS6 ("Explicit models require
+EMS6"). Everything simulation-level goes through ONE list,
+`mf.simulation(*models, packages=[tdis, ims, ims2])`, the way model packages go
+through `mf.gwf(packages=[...])`; myflopy fills in whatever the list omits — a
+steady `mf.tdis()` and a solver for every model no supplied solver claims, one
+IMS per GWF/GWT/GWE and one EMS per PRT. **`models=` is optional on a solver**:
+one that declares none claims every model the others left, so a single-model
+simulation writes `packages=[mf.ims(complexity="COMPLEX")]` and names nothing.
+Solvers are ordered by MODEL DECLARATION order however you list them — MF6
+requires a GWF solution in `mfsim.nam` before the solution of any model it feeds.
+A **model** package handed to `packages=` raises (ledger 200).
 
 **Grid helpers** (`mf.disv` is the default — myflopy is Voronoi/DISV-first):
 

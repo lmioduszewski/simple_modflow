@@ -21,7 +21,7 @@ class PackageBuilder(Protocol):
         """Return a package spec from the builder's stored configuration."""
 
 
-def build_ims(simulation, *, models: Iterable[str], **options):
+def build_ims(simulation, *, models: Iterable[str] | None = None, **options):
     """Build an IMS solver package and register it with the named models.
 
     Each solution needs a distinct file. Without one, multiple IMS packages
@@ -45,6 +45,13 @@ def build_ims(simulation, *, models: Iterable[str], **options):
         The constructed and registered IMS package.
     """
 
+    if models is None:
+        raise ValueError(
+            "mf.ims(...) was declared with no models= and never reached a\n"
+            "simulation that could fill it in. Pass models=(...), or declare it\n"
+            "inside mf.simulation(model, packages=[...]) which claims the rest."
+        )
+
     models = list(models)
     base = options.get("pname") or (models[0] if models else "ims")
     options.setdefault("filename", f"{base}.ims")
@@ -53,7 +60,7 @@ def build_ims(simulation, *, models: Iterable[str], **options):
     return ims
 
 
-def build_ems(simulation, *, models: Iterable[str], **options):
+def build_ems(simulation, *, models: Iterable[str] | None = None, **options):
     """Build an EMS (explicit) solver package and register it with the named models.
 
     PRT models are *explicit* in MF6 -- they must sit in an EMS6 solution group,
@@ -77,6 +84,13 @@ def build_ems(simulation, *, models: Iterable[str], **options):
     flopy.mf6.ModflowEms
         The constructed and registered EMS package.
     """
+
+    if models is None:
+        raise ValueError(
+            "mf.ems(...) was declared with no models= and never reached a\n"
+            "simulation that could fill it in. Pass models=(...), or declare it\n"
+            "inside mf.simulation(model, packages=[...]) which claims the rest."
+        )
 
     models = list(models)
     base = options.get("pname") or (models[0] if models else "ems")
