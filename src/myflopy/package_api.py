@@ -781,6 +781,53 @@ def ems(
     return PackageSpec(name, build_ems, values)
 
 
+def _asymmetric_matrix(model: ModelSpec) -> bool:
+    """Whether this model's coefficient matrix is asymmetric, so CG cannot solve it.
+
+    Not a tuning preference -- MF6 refuses outright: *"MODEL x PRODUCES AN
+    ASYMMETRIC COEFFICIENT MATRIX, BUT THE CONJUGATE GRADIENT METHOD WAS
+    SELECTED. USE BICGSTAB INSTEAD."*
+
+    Keyed on the MATRIX, not the model kind, and that distinction is the whole
+    point. Transport and energy are asymmetric because they advect. A GWF model
+    is asymmetric when it is formulated with NEWTON -- so ``mf.simulation(flow)``
+    on an unconfined model failed exactly the way ``mf.simulation(flow,
+    transport)`` did, and a rule written against ``model_type`` alone would have
+    fixed one and left the other. Both measured: under ``complexity="SIMPLE"``,
+    GWT and GWF-with-Newton both fail and both pass with ``BICGSTAB``.
+    """
+
+    if model.model_type in ("gwt", "gwe"):
+        return True
+    return model.model_type == "gwf" and bool(model.options.get("newtonoptions"))
+
+
+def _ordered_solvers(
+    solvers: list[PackageSpec], models: tuple[ModelSpec, ...]
+) -> list[PackageSpec]:
+    """Order solutions the way MF6 requires them in ``mfsim.nam``.
+
+    A GWF solution must be listed before the solution of any model it feeds:
+    *"The IMS specified for GWF must be listed in mfsim.nam before the IMS for
+    GWT"*, and the GWF-PRT pairing says the same about the EMS. Nothing enforced
+    it, so a hand-written ``solver=[transport_ims, flow_ims]`` wrote a name file
+    MF6 rejects, for a reason that reads like a physics problem.
+
+    Model DECLARATION order is the order the caller already expressed, so sort by
+    it rather than trusting the order a solver list happened to use. The sort is
+    stable, and a solver naming no known model keeps its place at the end.
+    """
+
+    position = {model.name: index for index, model in enumerate(models)}
+    unknown = len(position)
+
+    def rank(spec: PackageSpec) -> int:
+        named = spec.options.get("models") or ()
+        return min((position.get(name, unknown) for name in named), default=unknown)
+
+    return sorted(solvers, key=rank)
+
+
 def simulation(
     *models: ModelSpec,
     name: str = "sim",
@@ -851,18 +898,25 @@ def simulation(
 
     timing = _steady_tdis() if tdis is None else tdis
     if solver is None:
-        # PRT models are explicit -- MF6 rejects them under IMS6 ("Explicit
-        # models require EMS6"), so their default solver is an EMS.
-        solvers: list[PackageSpec] = [
-            ems(models=[m.name], name=f"{m.name}_ems")
-            if m.model_type == "prt"
-            else ims(models=[m.name], name=f"{m.name}_ims", complexity=complexity)
-            for m in models
-        ]
+        solvers: list[PackageSpec] = []
+        for model in models:
+            # PRT models are explicit -- MF6 rejects them under IMS6 ("Explicit
+            # models require EMS6"), so their default solver is an EMS.
+            if model.model_type == "prt":
+                solvers.append(ems(models=[model.name], name=f"{model.name}_ems"))
+                continue
+            # NOT `options` -- that name is this function's own `**options`.
+            solver_options: dict[str, Any] = {"complexity": complexity}
+            if _asymmetric_matrix(model):
+                solver_options["linear_acceleration"] = "BICGSTAB"
+            solvers.append(
+                ims(models=[model.name], name=f"{model.name}_ims", **solver_options)
+            )
     elif isinstance(solver, PackageSpec):
         solvers = [solver]
     else:
         solvers = list(solver)
+    solvers = _ordered_solvers(solvers, models)
 
     return SimulationSpec(
         name,

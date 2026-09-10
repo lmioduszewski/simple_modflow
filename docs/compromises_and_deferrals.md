@@ -6247,3 +6247,28 @@ same day, which is the useful part of the result.
         `['top']`/`['bottom']` lookup, satisfied by no writer since 2024-05-11,
         whose `except ValueError` cannot catch the `KeyError` pandas raises. All
         three belong with the regrid work, where surfaces get resampled anyway.
+
+197. **The declarative spec layer was pinned by nothing (2026-09-10).** Before
+      this, `SimulationSpec` appeared in `tests/api_snapshot.json` exactly once --
+      as a bare name inside `mf.__all__`. `ModelSpec`, `PackageSpec`,
+      `ModelContext` and `GridSpec` appeared not at all. A verb or a field could
+      appear or vanish on the layer the whole package-first API is built from and
+      no test would notice. This is the same hole ledger 182 recorded for the
+      project/run surface, one tier down, and it is why this had to land BEFORE
+      any vocabulary work rather than alongside it.
+      - **Fields as well as members.** `members()` sees methods and properties;
+        it cannot see a dataclass field. `PackageSpec.enabled` is the worked
+        example -- it participates in `package_digest`, so removing it would make
+        every historical run manifest report `state='edited'`, and the vocabulary
+        work has `disabled()` (the METHOD) on its cut list, one careless step
+        from the field. `spec_fields()` covers that.
+      - **Names only, not signatures, and that is a KNOWN limit.** `members()`
+        deliberately captures no parameters (its own docstring says why), so this
+        catches a verb appearing or vanishing and NOT a signature widening --
+        `SimulationSpec.models` changing from `tuple[ModelSpec, ...]` to a union
+        would still pass. Adding `with_packages(..., slot=)` in the vocabulary
+        work will therefore show a zero-line diff here. If that matters when the
+        time comes, a `spec.signatures` block is the fix; it is not built now
+        because the parameters on these verbs are about to change wholesale.
+      - Verified by deleting `ModelSpec.without_package` and watching
+        `test_api_snapshot.py` fail naming `ModelSpec.members`.

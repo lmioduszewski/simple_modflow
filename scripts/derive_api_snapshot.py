@@ -178,11 +178,33 @@ def collect_surfaces() -> dict[str, list[str]]:
             and (callable(value) or isinstance(value, (property, classmethod, staticmethod)))
         )
 
+    def spec_fields(cls) -> list[str]:
+        """The dataclass FIELDS a spec declares, which ``members`` cannot see.
+
+        A field vanishing is at least as load-bearing as a verb vanishing, and
+        nothing covered it. ``PackageSpec.enabled`` is the worked example:
+        it participates in ``package_digest``, so removing it would make every
+        historical run manifest report ``state='edited'`` -- and the vocabulary
+        work has ``disabled()`` (the METHOD) on its cut list, one careless step
+        away from the field.
+        """
+
+        import dataclasses
+
+        return sorted(field.name for field in dataclasses.fields(cls))
+
     from myflopy.library import (
         GridLibrary,
         PackageLibrary,
         SimulationLibrary,
         SpecLibrary,
+    )
+    from myflopy.specs import (
+        GridSpec,
+        ModelContext,
+        ModelSpec,
+        PackageSpec,
+        SimulationSpec,
     )
     from myflopy.workspace import Project, Run, RunLibrary, SaveReport
 
@@ -216,6 +238,21 @@ def collect_surfaces() -> dict[str, list[str]]:
         "GridLibrary.members": members(GridLibrary),
         "SimulationLibrary.members": members(SimulationLibrary),
         "RunLibrary.members": members(RunLibrary),
+        # The SPEC surface. Covered by nothing before 2026-09-10: `SimulationSpec`
+        # appeared in this file exactly once, as a bare name in `mf.__all__`, so a
+        # verb or field could appear or vanish on the declarative layer without a
+        # single test noticing. Verbs and fields both, because a field going is at
+        # least as consequential as a method going.
+        "PackageSpec.members": members(PackageSpec),
+        "PackageSpec.fields": spec_fields(PackageSpec),
+        "ModelSpec.members": members(ModelSpec),
+        "ModelSpec.fields": spec_fields(ModelSpec),
+        "SimulationSpec.members": members(SimulationSpec),
+        "SimulationSpec.fields": spec_fields(SimulationSpec),
+        "ModelContext.members": members(ModelContext),
+        "ModelContext.fields": spec_fields(ModelContext),
+        "GridSpec.members": members(GridSpec),
+        "GridSpec.fields": spec_fields(GridSpec),
     }
 
 

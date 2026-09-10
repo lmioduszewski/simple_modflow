@@ -998,6 +998,40 @@
   },
   "surfaces": {
     "GridLibrary.members": [],
+    "GridSpec.fields": [
+      "boundary",
+      "breaklines",
+      "crs",
+      "engine",
+      "function",
+      "grid_type",
+      "inputs",
+      "mesh_options",
+      "metadata",
+      "method",
+      "name",
+      "obj",
+      "options",
+      "persist",
+      "pickle_path",
+      "points",
+      "refinement",
+      "script",
+      "source",
+      "triangle_options",
+      "voronoi_options"
+    ],
+    "GridSpec.members": [
+      "from_dict",
+      "from_geopackage",
+      "from_object",
+      "from_pickle",
+      "python",
+      "resolve",
+      "structured",
+      "to_dict",
+      "voronoi"
+    ],
     "GroupPackages.properties": [
       "chd",
       "drn",
@@ -1010,6 +1044,18 @@
       "surface_water",
       "uzf",
       "wel"
+    ],
+    "ModelContext.fields": [
+      "dates",
+      "domain",
+      "grid",
+      "length_units",
+      "metadata",
+      "surfaces",
+      "time_units"
+    ],
+    "ModelContext.members": [
+      "with_metadata"
     ],
     "ModelPackages.properties": [
       "chd",
@@ -1027,6 +1073,32 @@
       "surface_water",
       "uzf",
       "wel"
+    ],
+    "ModelSpec.fields": [
+      "builder",
+      "context",
+      "grid",
+      "hooks",
+      "model_type",
+      "name",
+      "options",
+      "packages"
+    ],
+    "ModelSpec.members": [
+      "build",
+      "from_dict",
+      "package",
+      "package_names",
+      "resolved_packages",
+      "to_dict",
+      "type_enum",
+      "with_context",
+      "with_grid",
+      "with_hook",
+      "with_options",
+      "with_package",
+      "with_packages",
+      "without_package"
     ],
     "PackageDiffNamespace.properties": [
       "chd",
@@ -1051,6 +1123,26 @@
       "popitem",
       "setdefault",
       "update"
+    ],
+    "PackageSpec.fields": [
+      "builder",
+      "enabled",
+      "inputs",
+      "metadata",
+      "name",
+      "options",
+      "requires"
+    ],
+    "PackageSpec.members": [
+      "build",
+      "disabled",
+      "from_dict",
+      "option_summary",
+      "to_dict",
+      "with_input",
+      "with_inputs",
+      "with_metadata",
+      "with_options"
     ],
     "Project.members": [
       "add_grid",
@@ -1148,6 +1240,41 @@
     ],
     "SimulationLibrary.members": [
       "fork"
+    ],
+    "SimulationSpec.fields": [
+      "builder",
+      "derived_from",
+      "exchanges",
+      "executable",
+      "lineage",
+      "models",
+      "name",
+      "options",
+      "packages",
+      "run_name",
+      "workspace"
+    ],
+    "SimulationSpec.members": [
+      "add_package",
+      "build",
+      "build_flopy",
+      "derive",
+      "from_dict",
+      "from_yaml",
+      "model",
+      "model_names",
+      "package_names",
+      "replace_grid",
+      "replace_package",
+      "resolved_packages",
+      "to_dict",
+      "to_yaml",
+      "with_exchange",
+      "with_model",
+      "with_models",
+      "with_package",
+      "with_packages",
+      "with_workspace"
     ],
     "SpecLibrary.members": [
       "copy",
