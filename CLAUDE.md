@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2474 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2487 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m42s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -301,6 +301,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
+- **Coupling models is `mf.exchange(a, b)`** (ledger 203, 2026-09-10) — it reads the
+  two kinds and picks the MF6 class; `.gwfgwt/.gwfgwe/.gwfprt/.gwfgwf` are explicit
+  and take plain names. The four `build_*_exchange` functions resolved on `mf` but
+  were in NEITHER `__all__` NOR `dir(mf)`, so autocomplete never offered the one
+  name a coupled model needs — and the spelling four docstrings taught raised
+  ValueError. **Nothing wires an exchange for you**: a coupled sim without one
+  builds, runs and moves nothing under normal termination.
 - **Simulation assembly is ONE list** (ledger 202, 2026-09-10):
   `mf.simulation(*models, name=, packages=[tdis, ims, ims2], exchanges=)`. `tdis=`,
   `solver=` and `complexity=` are GONE — `complexity=` was ignored the moment

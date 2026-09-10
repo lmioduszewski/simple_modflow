@@ -67,6 +67,15 @@ Solvers are ordered by MODEL DECLARATION order however you list them — MF6
 requires a GWF solution in `mfsim.nam` before the solution of any model it feeds.
 A **model** package handed to `packages=` raises (ledger 200).
 
+**Exchanges**: `mf.exchange(flow, transport)` reads the two models' kinds and
+picks the MF6 class; `mf.exchange.gwfgwt/.gwfgwe/.gwfprt/.gwfgwf(a, b)` say it
+outright and accept plain names. **Nothing wires one for you** -- a coupled
+simulation without an exchange builds, runs, and moves nothing, under normal
+termination. Order does not matter; the GWF model is put first because that is
+what MF6 wants. `gwfgwf` is the one carrying real content and refuses a call
+without `nexg`/`exchangedata`, which MF6 rejects as *Required block "DIMENSIONS"
+not found*. The four `build_*_exchange` functions underneath stay engine-tier.
+
 **Grid helpers** (`mf.disv` is the default — myflopy is Voronoi/DISV-first):
 
 - `mf.disv(nlay=, ncpl=, nvert=, vertices=, cell2d=, top=, botm=, idomain=)` —
@@ -187,8 +196,7 @@ particles = mf.prt("particles", packages=[
           budget_filerecord="particles.bud", saverecord=[("BUDGET", "ALL")]),
 ])
 sim = mf.simulation(flow, particles,        # solver default: IMS for flow, EMS for particles
-    exchanges=[mf.ExchangeSpec("gwfprt", mf.build_gwf_prt_exchange,
-                               models=("flow", "particles"))])
+    exchanges=[mf.exchange(flow, particles)])   # -> ModflowGwfprt, chosen from the kinds
 ```
 
 Release-point `boundname`s are echoed (uppercased) into the track CSV's `name`

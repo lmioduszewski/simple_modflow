@@ -2920,7 +2920,7 @@ class SimulationSpec:
     packages
         Simulation-wide packages -- ``mf.tdis(...)`` and ``mf.ims(...)`` solver(s).
     exchanges
-        Inter-model exchanges (e.g. ``mf.build_gwf_gwt_exchange("flow", "transport")``).
+        Inter-model exchanges (e.g. ``mf.exchange(flow, transport)``).
     workspace, executable, run_name
         Optional run location / MF6 executable / run name overrides.
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import flopy
 import geopandas as gpd
@@ -37,6 +37,10 @@ from myflopy.builders import (
     build_disu,
     build_disv,
     build_ems,
+    build_gwf_gwe_exchange,
+    build_gwf_gwf_exchange,
+    build_gwf_gwt_exchange,
+    build_gwf_prt_exchange,
     build_ic,
     build_ims,
     build_oc,
@@ -55,8 +59,10 @@ from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
 from myflopy.specs import (
+    ExchangeSpec,
     ModelContext,
     ModelSpec,
+    PackageEntry,
     PackageSpec,
     PostBuildHook,
     SimulationSpec,
@@ -240,7 +246,7 @@ def gwt(
     ``flopy.mf6.ModflowGwt`` and takes the transport packages (``mf.disv`` or a
     shared grid, plus the MST/ADV/DSP/SSM/IC/OC transport packages) through
     ``packages``. Couple it to a flow model with a GWF-GWT exchange
-    (:func:`build_gwf_gwt_exchange`) in the same :class:`SimulationSpec`.
+    (``mf.exchange(flow, transport)``) in the same :class:`SimulationSpec`.
 
     Parameters
     ----------
@@ -273,7 +279,7 @@ def gwt(
     >>> mf.SimulationSpec("sim", models=(flow, transport),
     ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
     ...                             mf.ims(models=("transport",)),
-    ...                             mf.build_gwf_gwt_exchange("flow", "transport")])
+    ...                             mf.exchange(flow, transport)])
     """
 
     options = _model_options(
@@ -330,7 +336,7 @@ def gwe(
     The heat-transport counterpart of :func:`gwf`: it wraps
     ``flopy.mf6.ModflowGwe`` and takes the energy packages (EST/ADV/CND/SSM/IC/OC)
     through ``packages``. Couple it to a flow model with a GWF-GWE exchange
-    (:func:`build_gwf_gwe_exchange`) in the same :class:`SimulationSpec`. Use it to
+    (``mf.exchange(flow, energy)``) in the same :class:`SimulationSpec`. Use it to
     model aquifer thermal transport (ATES, heat pumps, thermal plumes).
 
     Parameters
@@ -364,7 +370,7 @@ def gwe(
     >>> mf.SimulationSpec("sim", models=(flow, energy),
     ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
     ...                             mf.ims(models=("heat",)),
-    ...                             mf.build_gwf_gwe_exchange("flow", "heat")])
+    ...                             mf.exchange(flow, heat)])
     """
 
     options = _model_options(
@@ -1014,6 +1020,133 @@ def simulation(
         exchanges=tuple(exchanges),
         **options,
     )
+
+
+class _ExchangeHelper:
+    """Package-first inter-model exchanges -- the coupling a multi-model run needs.
+
+    ``mf.simulation(flow, transport)`` wires no exchange for you: the models are
+    built and nothing moves between them, MF6 reports normal termination, and the
+    transport model sees no flow field. The exchange is the piece that does it.
+
+    ``mf.exchange(flow, transport)`` reads the two models' kinds and picks the MF6
+    exchange class. The explicit spellings are there when you want to be plain, or
+    need the options only GWF-GWF has::
+
+        mf.exchange(flow, transport)                      # -> ModflowGwfgwt
+        mf.exchange.gwfgwt(flow, transport)               # the same, said outright
+        mf.exchange.gwfgwf(coarse, fine, nexg=12, exchangedata=rows)
+
+    Three of the four carry no information beyond the model pair, which is why
+    inference is safe for them. GWF-GWF is the exception -- it takes 18 options,
+    and MF6 rejects one written without ``nexg``/``exchangedata`` ("Required
+    block \"DIMENSIONS\" not found").
+
+    Order does not matter: whichever model is the GWF is put first, because that
+    is the order MF6 wants and getting it wrong is not a choice anyone makes on
+    purpose.
+    """
+
+    _BUILDERS: ClassVar[dict[tuple[str, str], Any]] = {}
+
+    def __call__(
+        self,
+        source: ModelSpec,
+        target: ModelSpec,
+        *,
+        name: str | None = None,
+        **options: Any,
+    ) -> ExchangeSpec:
+        """Return the exchange coupling ``source`` and ``target``, chosen by kind.
+
+        Both must be :class:`ModelSpec` objects -- the kinds are what select the
+        MF6 class, so a pair of names cannot be resolved. Use an explicit
+        spelling (:meth:`gwfgwt` and friends) if all you have are names.
+        """
+
+        pair = tuple(_exchange_kind(model, "mf.exchange") for model in (source, target))
+        models = (source, target)
+        if pair[1] == "gwf" and pair[0] != "gwf":
+            pair, models = pair[::-1], models[::-1]
+        builder = self._BUILDERS.get(pair)
+        if builder is None:
+            supported = ", ".join(f"{a}-{b}" for a, b in sorted(self._BUILDERS))
+            raise ValueError(
+                f"No MF6 exchange couples a {pair[0]} model to a {pair[1]} model. "
+                f"Supported: {supported}."
+            )
+        return self._spec(builder, models, name=name, **options)
+
+    def gwfgwt(self, flow, transport, *, name=None, **options) -> ExchangeSpec:
+        """Couple a flow model to a solute-transport model (``ModflowGwfgwt``)."""
+
+        return self._spec(build_gwf_gwt_exchange, (flow, transport), name=name, **options)
+
+    def gwfgwe(self, flow, energy, *, name=None, **options) -> ExchangeSpec:
+        """Couple a flow model to an energy-transport model (``ModflowGwfgwe``)."""
+
+        return self._spec(build_gwf_gwe_exchange, (flow, energy), name=name, **options)
+
+    def gwfprt(self, flow, particles, *, name=None, **options) -> ExchangeSpec:
+        """Couple a flow model to a particle-tracking model (``ModflowGwfprt``)."""
+
+        return self._spec(build_gwf_prt_exchange, (flow, particles), name=name, **options)
+
+    def gwfgwf(self, first, second, *, name=None, **options) -> ExchangeSpec:
+        """Couple two flow models across a shared interface (``ModflowGwfgwf``).
+
+        Unlike the other three this carries real content, and MF6 refuses an
+        exchange written without it: ``nexg`` and ``exchangedata`` describe the
+        connected cell pairs, and a file holding only an empty options block
+        fails with *Required block "DIMENSIONS" not found*.
+        """
+
+        missing = [key for key in ("nexg", "exchangedata") if key not in options]
+        if missing:
+            raise ValueError(
+                "A GWF-GWF exchange needs "
+                f"{' and '.join(missing)}: MF6 reads the connected cell pairs from "
+                'its DIMENSIONS block and rejects a file without them ("Required '
+                'block \"DIMENSIONS\" not found").'
+            )
+        return self._spec(build_gwf_gwf_exchange, (first, second), name=name, **options)
+
+    @staticmethod
+    def _spec(builder, models, *, name=None, **options) -> ExchangeSpec:
+        """Name the pair and wrap it, so callers never touch ExchangeSpec."""
+
+        names = tuple(_exchange_name(model) for model in models)
+        return ExchangeSpec(
+            name or "-".join(names), builder, models=names, options=options
+        )
+
+
+_ExchangeHelper._BUILDERS = {
+    ("gwf", "gwt"): build_gwf_gwt_exchange,
+    ("gwf", "gwe"): build_gwf_gwe_exchange,
+    ("gwf", "prt"): build_gwf_prt_exchange,
+    ("gwf", "gwf"): build_gwf_gwf_exchange,
+}
+
+exchange = _ExchangeHelper()
+
+
+def _exchange_name(model: ModelSpec | str) -> str:
+    """The model NAME an exchange records, from a spec or a plain name."""
+
+    return model if isinstance(model, str) else model.name
+
+
+def _exchange_kind(model: ModelSpec | str, verb: str) -> str:
+    """The model KIND, refusing a bare name -- inference needs the kind."""
+
+    if isinstance(model, str):
+        raise TypeError(
+            f"{verb}() needs the model SPECS, not their names: the kinds are what "
+            f"choose the MF6 exchange class. Got {model!r}. Pass the objects, or "
+            f"name the exchange outright with {verb}.gwfgwt(...) and friends."
+        )
+    return str(getattr(model.model_type, "value", model.model_type))
 
 
 def disv(

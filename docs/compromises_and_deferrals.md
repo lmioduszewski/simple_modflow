@@ -6428,3 +6428,30 @@ same day, which is the useful part of the result.
       - **`examples/mf6/notebooks/bearcreek_uncertainty.ipynb` is GITIGNORED** --
         a live working notebook, not repo content. Its cell was edited surgically
         so it keeps running; that edit is in the working tree and in no commit.
+
+203. **The one name a coupled model needs, offered by no IDE (2026-09-10).** The
+      four `build_*_exchange` functions resolve on `mf` but appear in NEITHER
+      `mf.__all__` NOR `dir(mf)` -- they are second-tier exports -- so
+      autocomplete never offered them. Worse, the spelling four docstrings taught,
+      `mf.build_gwf_gwt_exchange("flow", "transport")`, raises `ValueError`: the
+      real builder takes `(simulation, models, **options)` and must be wrapped in
+      an `ExchangeSpec`. Four sites, all fixed.
+      - **`mf.exchange(a, b)` infers from the KINDS**, which is safe precisely
+        because three of the four exchanges carry no information beyond the model
+        pair (`ModflowGwfgwt`/`gwe`/`prt` take only filename/pname).
+      - **GWF-GWF is the exception and is treated as one.** It takes 18 options,
+        and MF6 rejects a file written without `nexg`/`exchangedata` -- *Required
+        block "DIMENSIONS" not found*. `mf.exchange.gwfgwf` refuses rather than
+        writing that file.
+      - **The GWF model is put first regardless of argument order.** MF6 wants
+        that order and there is no reason to want the other; making the caller
+        get it right buys nothing.
+      - **Inference refuses bare NAMES.** Kinds are what select the class, so
+        `mf.exchange("flow", "trans")` cannot work -- it raises, naming the
+        explicit spellings, which do accept names.
+      - **The four `build_*` functions stay second-tier.** They are the engine;
+        `mf.exchange` is the front door. Not deleted, because `ExchangeSpec`
+        round-trips through `_callable_ref` by importable reference.
+      - **Still true and worth repeating**: nothing wires an exchange for you. A
+        coupled simulation without one builds, runs, and moves nothing, under
+        normal termination.
