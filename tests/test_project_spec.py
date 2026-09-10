@@ -17,7 +17,7 @@ def _example_post_build_hook(model, packages, context):
 
 
 def _basic_simulation() -> mf.SimulationSpec:
-    gwf = mf.gwf("gwf").with_package(mf.ic(strt=9.0)).with_package(mf.npf(k=1.0))
+    gwf = mf.gwf("gwf").with_packages(mf.ic(strt=9.0)).with_packages(mf.npf(k=1.0))
     return mf.SimulationSpec(
         "baseline",
         models=(gwf,),
@@ -125,16 +125,16 @@ def test_project_layout_defaults_to_home_mf6(monkeypatch, tmp_path):
 def test_simulation_spec_with_models_and_derivation_replace_package():
     baseline = _basic_simulation()
 
-    high_k = baseline.derive("high_k").replace_package("gwf", mf.npf(k=35.0))
+    high_k = baseline.derive("high_k").with_packages(mf.npf(k=35.0), on="gwf")
 
     assert high_k.name == "high_k"
     assert high_k.derived_from == "baseline"
     assert high_k.model("gwf").package("npf").options["k"] == 35.0
     assert baseline.model("gwf").package("npf").options["k"] == 1.0
     assert high_k.lineage[-1] == {
-        "operation": "replace_package",
+        "operation": "with_packages",
         "model": "gwf",
-        "package": "npf",
+        "packages": ["npf"],
     }
 
 
@@ -277,7 +277,7 @@ def test_list_bc_partial_builders_round_trip(tmp_path):
 
 
 def test_package_ref_round_trip_and_model_package_lookup():
-    model = mf.gwf("gwf").with_package("npf/base")
+    model = mf.gwf("gwf").with_packages("npf/base")
     loaded = mf.ModelSpec.from_dict(model.to_dict())
 
     assert loaded.package_names == ("npf/base",)
@@ -308,7 +308,7 @@ def test_model_spec_post_build_hooks_round_trip():
 
 
 def test_simulation_spec_exchanges_round_trip():
-    gwf = mf.gwf("flow").with_package(mf.ic(strt=1.0)).with_package(mf.npf(k=1.0))
+    gwf = mf.gwf("flow").with_packages(mf.ic(strt=1.0)).with_packages(mf.npf(k=1.0))
     gwt = mf.gwt("transport")
     exchange = ExchangeSpec(
         "flow-transport",
@@ -460,7 +460,7 @@ def test_manual_model_context_grid_is_preserved_without_grid_spec(tmp_path):
 
 def test_project_save_load_round_trip(tmp_path):
     baseline = _basic_simulation()
-    high_k = baseline.derive("high_k").replace_package("gwf", mf.npf(k=35.0))
+    high_k = baseline.derive("high_k").with_packages(mf.npf(k=35.0), on="gwf")
     project = mf.Project(tmp_path / "elk_creek", name="elk_creek")
     project.add_simulation(baseline)
     project.add_simulation(high_k)
@@ -499,7 +499,7 @@ def test_project_saves_and_loads_package_library(tmp_path):
 
 
 def test_project_build_resolves_package_refs(tmp_path):
-    gwf = mf.gwf("gwf").with_package("npf/base")
+    gwf = mf.gwf("gwf").with_packages("npf/base")
     simulation = mf.SimulationSpec(
         "baseline",
         models=(gwf,),

@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2487 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2514 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m42s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -301,6 +301,18 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
+- **One verb per operation, both tiers** (ledger 204, 2026-09-10):
+  `with_packages(*pkgs, slot=, on=, name=)` / `without_packages(*names, on=)`. One or
+  many, varargs or a list. GONE: `ModelSpec.with_package`/`without_package`,
+  `SimulationSpec.with_package`/`add_package`/`replace_package` — four spellings for
+  add-or-replace, of which two differed only in the absent-slot case and one
+  recorded its own lineage as `'replace_package'`. **`slot=` carries the must-exist
+  assertion** `replace_package` held, and that is load-bearing: without it a missed
+  swap ADDS, and MF6 sums two RCH packages under normal termination (0.8000 against
+  an intended 0.4000). `on=<model>` picks the tier; `name=` derives a named variant
+  in one step. **`without_packages` at the simulation tier is NEW** — there was no
+  way to drop a tdis or solver short of rebuilding the tuple.
+  Lineage now reads `{"operation": "with_packages", "model":, "packages": [...]}`.
 - **Coupling models is `mf.exchange(a, b)`** (ledger 203, 2026-09-10) — it reads the
   two kinds and picks the MF6 class; `.gwfgwt/.gwfgwe/.gwfprt/.gwfgwf` are explicit
   and take plain names. The four `build_*_exchange` functions resolved on `mf` but

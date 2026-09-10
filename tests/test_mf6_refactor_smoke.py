@@ -1176,7 +1176,7 @@ def test_simple_model_spec_exposes_replaceable_package_specs():
         baseline = simple_model_spec(config)
         flow = baseline.model("class_smoke")
         npf = flow.package("npf")
-        high_k = baseline.with_model(flow.with_package(npf.with_options(k=[25.0, 25.0])))
+        high_k = baseline.with_model(flow.with_packages(npf.with_options(k=[25.0, 25.0])))
 
         assert [package.name for package in flow.packages][-1] == "drn"
         assert flow.package("drn").options["stress_period_data"] == [

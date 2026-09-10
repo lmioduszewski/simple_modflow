@@ -1044,6 +1044,24 @@ def _package_slot(package: PackageEntry) -> str:
     return package.name
 
 
+def _flatten_packages(items: Iterable[Any]) -> list[Any]:
+    """Flatten one level of nesting, so a verb takes one thing or a list of them.
+
+    ``with_packages(npf)``, ``with_packages(npf, ic)`` and
+    ``with_packages([npf, ic])`` all mean the same thing. Strings are NOT
+    iterated apart -- a package name is one item, not a list of characters.
+    """
+
+    flat: list[Any] = []
+    for item in items:
+        if isinstance(item, str) or not isinstance(item, Iterable):
+            flat.append(item)
+        else:
+            flat.extend(item)
+    return flat
+
+
+
 def _package_scope(builder) -> str | None:
     """``"model"``, ``"simulation"``, or ``None`` when it cannot be told.
 
@@ -1128,7 +1146,7 @@ def _refuse_model_packages(
         f"Simulation '{simulation_name}' was given model package(s): {names}. "
         "A simulation carries timing and solvers (mf.tdis, mf.ims, mf.ems); "
         "model packages belong on the model -- pass them to mf.gwf(packages=[...]) "
-        "or use model.with_package(...)."
+        "or use model.with_packages(...)."
     )
 
 
@@ -2458,31 +2476,54 @@ class ModelSpec:
         if len(concrete_packages) == len(self.packages):
             _validate_concrete_packages(concrete_packages)
 
-    def with_package(
-        self, package: PackageEntry | str, *, slot: str | None = None
+    def with_packages(
+        self, *packages: PackageEntry | str | Iterable[Any], slot: str | None = None
     ) -> ModelSpec:
-        """Return a copy with ``package`` added or replaced in its slot.
+        """Return a copy with each package added or replaced in its slot.
 
-        The slot defaults to the entry's own slot (a concrete package's name, or
-        a reference's key prefix). Pass ``slot`` to target a slot explicitly.
+        One verb, one or many, varargs or a list::
+
+            model.with_packages(mf.npf(k=50.0))
+            model.with_packages(npf, ic, oc)
+            model.with_packages([npf, ic, oc])
+
+        The slot defaults to each entry's own (a concrete package's name, or a
+        reference's key prefix). ``slot=`` targets one explicitly -- needed when
+        a semantically-keyed ref such as ``mf.ref("k/calibrated")`` fills the
+        ``npf`` slot, since its key prefix says ``k``.
+
+        **With ``slot=`` the slot must already exist**, and that assertion is
+        load-bearing rather than pedantic: without it a swap that misses silently
+        ADDS, and MF6 accepts two RCH packages on one model and sums them --
+        measured at 0.8000 against an intended 0.4000, under normal termination.
+        Without ``slot=`` this adds or replaces freely, which is what declaring a
+        package means.
         """
 
-        package = _package_entry(package)
-        target = slot if slot is not None else _package_slot(package)
-        packages = list(self.packages)
-        index = _package_entry_index(packages, target, where=f"Model '{self.name}'")
-        if index is None:
-            packages.append(package)
-        else:
-            packages[index] = package
-        return replace(self, packages=tuple(packages))
-
-    def with_packages(self, *packages: PackageEntry | str) -> ModelSpec:
-        """Return a copy with each supplied package added or replaced by name."""
-
+        entries = [_package_entry(entry) for entry in _flatten_packages(packages)]
+        if slot is not None and len(entries) != 1:
+            raise ValueError(
+                f"slot='{slot}' targets ONE package; {len(entries)} were given. "
+                "Call with_packages once per targeted slot."
+            )
         spec = self
-        for package in packages:
-            spec = spec.with_package(package)
+        for entry in entries:
+            target = slot if slot is not None else _package_slot(entry)
+            current = list(spec.packages)
+            index = _package_entry_index(
+                current, target, where=f"Model '{spec.name}'"
+            )
+            if index is None:
+                if slot is not None:
+                    raise KeyError(
+                        f"Model '{spec.name}' has no '{target}' package to replace. "
+                        f"It carries: {', '.join(spec.package_names) or 'nothing'}. "
+                        "Drop slot= to add it instead."
+                    )
+                current.append(entry)
+            else:
+                current[index] = entry
+            spec = replace(spec, packages=tuple(current))
         return spec
 
     def package(self, name: str) -> PackageEntry:
@@ -2502,29 +2543,32 @@ class ModelSpec:
             )
         return self.packages[index]
 
-    def without_package(self, name: str) -> ModelSpec:
-        """Return a copy without the named package.
+    def without_packages(self, *names: str | Iterable[str]) -> ModelSpec:
+        """Return a copy without the named packages. One or many.
 
-        RAISES when ``name`` matches nothing. It used to be a silent no-op that
+        RAISES when a name matches nothing. It used to be a silent no-op that
         still returned a new object, so a typo -- or a package already removed --
         read exactly like success, and the only way to know was to compare
         ``package_names`` before and after.
 
-        Removes exactly ONE entry. Matching the slot alone used to delete every
-        entry sharing it, so ``without_package("wel")`` on a model carrying
+        Removes exactly ONE entry per name. Matching the slot alone used to
+        delete every entry sharing it, so ``"wel"`` on a model carrying
         ``wel/north`` and ``wel/south`` took both; now that names two packages
         and raises.
         """
 
-        packages = list(self.packages)
-        index = _package_entry_index(packages, name, where=f"Model '{self.name}'")
-        if index is None:
-            raise KeyError(
-                f"Model '{self.name}' has no package '{name}' to remove. "
-                f"It carries: {', '.join(self.package_names) or 'nothing'}."
-            )
-        del packages[index]
-        return replace(self, packages=tuple(packages))
+        spec = self
+        for name in _flatten_packages(names):
+            current = list(spec.packages)
+            index = _package_entry_index(current, name, where=f"Model '{spec.name}'")
+            if index is None:
+                raise KeyError(
+                    f"Model '{spec.name}' has no package '{name}' to remove. "
+                    f"It carries: {', '.join(spec.package_names) or 'nothing'}."
+                )
+            del current[index]
+            spec = replace(spec, packages=tuple(current))
+        return spec
 
     def resolved_packages(
         self,
@@ -2997,26 +3041,97 @@ class SimulationSpec:
                 return model
         raise KeyError(f"Simulation '{self.name}' has no model named '{name}'.")
 
-    def with_package(self, package: PackageEntry | str) -> SimulationSpec:
-        """Return a copy with a simulation-level package added or replaced."""
+    def with_packages(
+        self,
+        *packages: PackageEntry | str | Iterable[Any],
+        on: str | None = None,
+        slot: str | None = None,
+        name: str | None = None,
+    ) -> SimulationSpec:
+        """Return a copy with packages added or replaced. One verb, both tiers.
 
-        package = _package_entry(package)
-        packages = list(self.packages)
-        for index, existing in enumerate(packages):
-            if existing.name == package.name:
-                packages[index] = package
-                break
-        else:
-            packages.append(package)
-        return replace(self, packages=tuple(packages))
+        Without ``on=`` these are SIMULATION packages -- timing and solvers. A
+        model package raises; it belongs on a model.
 
-    def with_packages(self, *packages: PackageEntry | str) -> SimulationSpec:
-        """Return a copy with each simulation-level package added or replaced."""
+        ``on="flow"`` targets that model's packages instead, which is what
+        ``add_package`` and ``replace_package`` used to do between them. They
+        differed only in the absent-slot case, and their shared assertion now
+        rides on ``slot=``::
 
-        spec = self
-        for package in packages:
-            spec = spec.with_package(package)
-        return spec
+            sim.with_packages(mf.tdis(nper=12, perioddata=spd))
+            sim.with_packages(mf.ref("npf/high"), on="flow", slot="npf/base")
+            sim.with_packages(chd, drn, on="flow")
+
+        ``name=`` returns the copy under a new simulation name, routed through
+        :meth:`derive` so ``derived_from`` and ``lineage`` are recorded -- one
+        step from a simulation to a named variant of it.
+        """
+
+        entries = [_package_entry(entry) for entry in _flatten_packages(packages)]
+        if on is not None:
+            model = self.model(on)
+            spec = self.with_model(model.with_packages(*entries, slot=slot))
+            labels = [_package_entry_label(entry) for entry in entries]
+            spec = replace(
+                spec,
+                lineage=(
+                    *spec.lineage,
+                    {
+                        "operation": "with_packages",
+                        "model": on,
+                        "packages": labels,
+                    },
+                ),
+            )
+            return spec.derive(name) if name is not None else spec
+
+        if slot is not None:
+            raise ValueError(
+                "slot= targets a package inside a MODEL; pass on=<model name> "
+                "with it. A simulation's own packages are matched by full name."
+            )
+        current = list(self.packages)
+        for entry in entries:
+            for index, existing in enumerate(current):
+                if existing.name == entry.name:
+                    current[index] = entry
+                    break
+            else:
+                current.append(entry)
+        spec = replace(self, packages=tuple(current))
+        return spec.derive(name) if name is not None else spec
+
+    def without_packages(
+        self, *names: str | Iterable[str], on: str | None = None
+    ) -> SimulationSpec:
+        """Return a copy without the named packages, at either tier.
+
+        ``on="flow"`` removes from that model. Without it, removes the
+        simulation's own -- which had NO verb at all before, so dropping a tdis
+        or a solver meant rebuilding the ``packages`` tuple by hand.
+
+        Raises when a name matches nothing, at both tiers.
+        """
+
+        wanted = list(_flatten_packages(names))
+        if on is not None:
+            model = self.model(on)
+            return self.with_model(model.without_packages(*wanted))
+
+        current = list(self.packages)
+        for name in wanted:
+            for index, existing in enumerate(current):
+                if existing.name == name:
+                    del current[index]
+                    break
+            else:
+                carried = ", ".join(entry.name for entry in current) or "nothing"
+                raise KeyError(
+                    f"Simulation '{self.name}' has no package '{name}' to remove. "
+                    f"It carries: {carried}. Pass on=<model name> for a model's "
+                    "packages."
+                )
+        return replace(self, packages=tuple(current))
 
     def with_exchange(self, exchange: ExchangeSpec) -> SimulationSpec:
         """Return a copy with ``exchange`` added or replaced by name."""
@@ -3049,41 +3164,6 @@ class SimulationSpec:
             ),
         )
 
-    def replace_package(
-        self, model_name: str, package: PackageEntry | str, *, name: str | None = None
-    ) -> SimulationSpec:
-        """Return a copy with a model package replaced in its slot.
-
-        The slot defaults to the replacement's own slot (a concrete package's
-        name, or a reference's key prefix). Pass ``name`` to target a slot
-        explicitly -- needed when a semantically-keyed ref such as
-        ``mf.ref("k/calibrated")`` replaces the ``npf`` slot.
-
-        The target slot must already exist; use :meth:`add_package` to add.
-        """
-
-        package = _package_entry(package)
-        model = self.model(model_name)
-        target = name if name is not None else _package_slot(package)
-        if _package_entry_index(
-            list(model.packages), target, where=f"Model '{model_name}'"
-        ) is None:
-            raise KeyError(
-                f"Model '{model_name}' has no '{target}' package to replace. "
-                "Pass name=<slot> to target a slot explicitly, or use add_package."
-            )
-        return replace(
-            self.with_model(model.with_package(package, slot=target)),
-            lineage=(
-                *self.lineage,
-                {
-                    "operation": "replace_package",
-                    "model": model_name,
-                    "package": _package_entry_label(package),
-                },
-            ),
-        )
-
     def replace_grid(
         self, model_name: str, grid: GridSpec | GridRef | Any
     ) -> SimulationSpec:
@@ -3105,28 +3185,6 @@ class SimulationSpec:
             lineage=(
                 *self.lineage,
                 {"operation": "replace_grid", "model": model_name, "grid": grid_label},
-            ),
-        )
-
-    def add_package(
-        self, model_name: str, package: PackageEntry | str, *, name: str | None = None
-    ) -> SimulationSpec:
-        """Return a copy with a package added or replaced on one model."""
-
-        package = _package_entry(package)
-        model = self.model(model_name)
-        target = name if name is not None else _package_slot(package)
-        existed = any(_package_slot(existing) == target for existing in model.packages)
-        operation = "replace_package" if existed else "add_package"
-        return replace(
-            self.with_model(model.with_package(package, slot=target)),
-            lineage=(
-                *self.lineage,
-                {
-                    "operation": operation,
-                    "model": model_name,
-                    "package": _package_entry_label(package),
-                },
             ),
         )
 

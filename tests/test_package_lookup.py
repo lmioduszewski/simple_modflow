@@ -48,13 +48,13 @@ def test_package_refuses_an_ambiguous_slot():
 
 def test_with_package_refuses_an_ambiguous_slot():
     with pytest.raises(KeyError, match="wel/north, wel/south"):
-        _ambiguous().with_package(mf.ref("wel/east"), slot="wel")
+        _ambiguous().with_packages(mf.ref("wel/east"), slot="wel")
 
 
 def test_without_package_refuses_an_ambiguous_slot_instead_of_deleting_both():
     model = _ambiguous()
     with pytest.raises(KeyError, match="wel/north, wel/south"):
-        model.without_package("wel")
+        model.without_packages("wel")
     assert model.package_names == ("npf", "ic", "wel/north", "wel/south")
 
 
@@ -79,8 +79,8 @@ def test_a_slot_hint_still_works_when_only_one_entry_claims_it():
 
 def test_the_three_verbs_agree_on_the_entry_a_name_resolves_to():
     model = _unambiguous()
-    replaced = model.with_package(mf.ref("wel/east"), slot="wel")
-    removed = model.without_package("wel")
+    replaced = model.with_packages(mf.ref("wel/east"), slot="wel")
+    removed = model.without_packages("wel")
 
     assert model.package("wel").key == "wel/north"
     assert replaced.package_names == ("npf", "ic", "wel/east")
@@ -88,7 +88,7 @@ def test_the_three_verbs_agree_on_the_entry_a_name_resolves_to():
 
 
 def test_without_package_removes_exactly_one_named_entry():
-    model = _ambiguous().without_package("wel/north")
+    model = _ambiguous().without_packages("wel/north")
     assert model.package_names == ("npf", "ic", "wel/south")
 
 
@@ -99,12 +99,12 @@ def test_without_package_raises_on_a_name_it_cannot_find():
     """It used to return a new object having changed nothing."""
 
     with pytest.raises(KeyError, match="no package 'sfr' to remove"):
-        _unambiguous().without_package("sfr")
+        _unambiguous().without_packages("sfr")
 
 
 def test_the_not_found_message_lists_what_the_model_carries():
     with pytest.raises(KeyError) as excinfo:
-        _unambiguous().without_package("sfr")
+        _unambiguous().without_packages("sfr")
     assert "npf, ic, wel/north" in str(excinfo.value)
 
 
@@ -117,4 +117,4 @@ def test_package_not_found_also_lists_what_the_model_carries():
 def test_replace_package_reports_ambiguity_against_the_named_model():
     sim = mf.simulation(_ambiguous(), name="s")
     with pytest.raises(KeyError, match="wel/north, wel/south"):
-        sim.replace_package("flow", mf.ref("wel/east"), name="wel")
+        sim.with_packages(mf.ref("wel/east"), on="flow", slot="wel")

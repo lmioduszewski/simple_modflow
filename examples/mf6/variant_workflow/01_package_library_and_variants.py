@@ -57,7 +57,7 @@ print(f"base    success={base.success}  k[0]={concerns.k0(base):.1f}")
 
 # --- 2. Derive a variant from the finished model, inspect it, then run it.
 #        Same loop as the base: prepare (build in memory) -> look -> execute.
-high = sim.derive("high_k").replace_package("flow", concerns.npf(scale=10.0))
+high = sim.derive("high_k").with_packages(concerns.npf(scale=10.0), on="flow")
 high_run = project.prepare_run("high_k", high, overwrite=True)
 print("inspect high_k: k[0] =", concerns.k0(high_run))   # plot/check before running
 high_run.execute()
@@ -65,13 +65,13 @@ print(f"high_k  success={high_run.success}  k[0]={concerns.k0(high_run):.1f}")
 
 
 # --- 3. That variant needs a tweak: adjust the same package, re-run (overwrite).
-high = high.replace_package("flow", concerns.npf(scale=25.0))
+high = high.with_packages(concerns.npf(scale=25.0), on="flow")
 high_run = project.run("high_k", high, overwrite=True)
 print(f"high_k  success={high_run.success}  k[0]={concerns.k0(high_run):.1f}  (re-run)")
 
 
 # --- 4. Not locked to npf: derive another variant changing a DIFFERENT package.
-shallow = sim.derive("shallow").replace_package("flow", concerns.dis(top=30.0))
+shallow = sim.derive("shallow").with_packages(concerns.dis(top=30.0), on="flow")
 shallow_run = project.run("shallow", shallow, overwrite=True)
 print(f"shallow success={shallow_run.success}  top[0]={concerns.top0(shallow_run):.1f}")
 
@@ -83,7 +83,7 @@ project.add_package("npf/high_k", concerns.npf(scale=10.0))
 project.save()
 
 reloaded = mf.Project.load(project.root)
-from_lib = sim.derive("from_library").replace_package("flow", mf.ref("npf/high_k"))
+from_lib = sim.derive("from_library").with_packages(mf.ref("npf/high_k"), on="flow")
 lib_run = reloaded.run("from_library", from_lib, overwrite=True)
 print(f"from_library success={lib_run.success}  k[0]={concerns.k0(lib_run):.1f}  (from pickle)")
 

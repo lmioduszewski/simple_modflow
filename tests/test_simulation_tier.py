@@ -115,7 +115,7 @@ def test_with_package_on_a_simulation_refuses_a_model_package_too():
 
     sim = mf.simulation(_flow(), name="s")
     with pytest.raises(ValueError, match="was given model package"):
-        sim.with_package(mf.oc(printrecord=[("BUDGET", "ALL")]))
+        sim.with_packages(mf.oc(printrecord=[("BUDGET", "ALL")]))
 
 
 def test_timing_and_solvers_are_accepted():

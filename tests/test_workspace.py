@@ -139,7 +139,7 @@ def test_project_package_library_resolves_and_swaps_references(tmp_path):
     )
 
     baseline = project.add_simulation(_tiny_flow_with_npf_ref())
-    high_k = baseline.derive("high_k").replace_package("flow", mf.ref("npf/high_k"))
+    high_k = baseline.derive("high_k").with_packages(mf.ref("npf/high_k"), on="flow")
     project.add_simulation(high_k)
 
     base_run = project.prepare_run("baseline", "tiny_flow").build()
@@ -235,12 +235,12 @@ def test_replace_package_targets_slot_for_semantic_key_ref(tmp_path):
     variant = (
         _tiny_flow_spec()
         .derive("v")
-        .replace_package("flow", mf.ref("k/high"), name="npf")
+        .with_packages(mf.ref("k/high"), on="flow", slot="npf")
     )
     assert variant.model("flow").package("k/high").key == "k/high"
     # Targeting a non-existent slot is a clear error.
     with pytest.raises(KeyError, match="no 'does_not_exist' package"):
-        _tiny_flow_spec().replace_package("flow", mf.npf(k=1.0), name="does_not_exist")
+        _tiny_flow_spec().with_packages(mf.npf(k=1.0), on="flow", slot="does_not_exist")
 
 
 def test_provenance_keeps_package_reference_variant(tmp_path):
@@ -255,14 +255,14 @@ def test_provenance_keeps_package_reference_variant(tmp_path):
     high_k = (
         _tiny_flow_with_npf_ref()
         .derive("high_k")
-        .replace_package("flow", mf.ref("npf/high_k"))
+        .with_packages(mf.ref("npf/high_k"), on="flow")
     )
 
     # Lineage records the library key, not just the package name.
     assert high_k.lineage[-1] == {
-        "operation": "replace_package",
+        "operation": "with_packages",
         "model": "flow",
-        "package": "npf/high_k",
+        "packages": ["npf/high_k"],
     }
 
     run = project.prepare_run("high_k", high_k)
@@ -578,7 +578,7 @@ def test_a_live_spec_still_wins_over_a_carried_forward_block(tmp_path):
     # summary records package NAMES, so replacing one changes nothing to assert.
     edited = _tiny_flow_spec()
     edited = edited.with_model(
-        edited.model("flow").with_package(mf.sto(steady_state={0: True}))
+        edited.model("flow").with_packages(mf.sto(steady_state={0: True}))
     )
     reopened = project.reopen_run("baseline", load=False)
     reopened.spec = edited
@@ -733,7 +733,7 @@ def test_a_reopened_run_can_be_rebuilt_and_forked_in_a_later_session(tmp_path):
     assert reopened.built.simulation.get_model("flow").npf.k.array[0][0][0] == 1.0
 
     # ...and it can be varied, which is what the recipe really buys.
-    variant = reopened.spec.derive("high_k").replace_package("flow", mf.npf(k=99.0))
+    variant = reopened.spec.derive("high_k").with_packages(mf.npf(k=99.0), on="flow")
     forked = later.prepare_run("high_k", variant)
     assert forked.built.simulation.get_model("flow").npf.k.array[0][0][0] == 99.0
     assert variant.derived_from == "baseline"

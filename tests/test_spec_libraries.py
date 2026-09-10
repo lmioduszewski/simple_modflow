@@ -437,7 +437,7 @@ def test_a_simulation_fork_carries_its_lineage(tmp_path):
     assert forked.derived_from == "baseline"
     assert [step["operation"] for step in forked.lineage] == [
         "derive",
-        "replace_package",
+        "with_packages",
     ]
     # the parent stays registered, or Project.save would refuse the fork
     assert "baseline" in project.simulations

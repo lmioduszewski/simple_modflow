@@ -493,7 +493,11 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
             # Target the FULL LABEL, not the entry's slot hint: a slot is only
             # the key's first segment for a ref, so wel/north and wel/south both
             # answer to "wel" and the swap landed on whichever came first.
-            spec = spec.replace_package(model_name, ref(new_key), name=old_label)
+            # slot= keeps replace_package's must-exist assertion: a swap that
+            # misses would ADD, and MF6 sums two RCH packages under a clean run.
+            spec = spec.with_packages(
+                ref(new_key), on=model_name, slot=old_label
+            )
         if register:
             self[name] = spec
         return spec

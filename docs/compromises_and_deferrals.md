@@ -6455,3 +6455,36 @@ same day, which is the useful part of the result.
       - **Still true and worth repeating**: nothing wires an exchange for you. A
         coupled simulation without one builds, runs, and moves nothing, under
         normal termination.
+
+204. **Four spellings for add-or-replace, two for remove (2026-09-10).**
+      `ModelSpec.with_package`, `ModelSpec.with_packages`,
+      `SimulationSpec.add_package` and `SimulationSpec.replace_package` all added
+      or replaced a package. The last two differed ONLY in the absent-slot case,
+      and `add_package` recorded its own lineage entry as `'replace_package'`
+      whenever the slot happened to exist. Collapsed to `with_packages` /
+      `without_packages`, one or many, varargs or a list, with `on=` choosing the
+      tier.
+      - **`slot=` carries `replace_package`'s must-exist assertion**, which is
+        the one piece of it that mattered. Without the assertion a swap that
+        misses silently ADDS, and MF6 accepts two RCH packages on one model and
+        sums them -- 0.8000 against an intended 0.4000, under normal termination.
+        The NAME was redundant; the check was not.
+      - **`without_packages` at the simulation tier is new capability**, not a
+        rename: there was no verb for dropping a tdis or a solver at all, short
+        of rebuilding the `packages` tuple by hand.
+      - **The singular forms are DELETED, not kept as aliases.** English prefers
+        `with_package(npf)`, and that is a real cost; the user asked for one verb
+        and 54 call sites migrated mechanically. Reverting is cheap if the plural
+        grates in practice -- it is one alias each.
+      - **The lineage SHAPE changed**: `{"operation": "replace_package", ...,
+        "package": "npf/high"}` became `{"operation": "with_packages", ...,
+        "packages": ["npf/high"]}`, a list because the verb is now plural.
+        Verified first that nothing reads lineage entries programmatically --
+        they are written and displayed, never parsed -- so old manifests keep
+        their old shape harmlessly.
+      - **The automated migration damaged 9 of 54 sites and the tests caught none
+        of it directly.** A regex rewriting `replace_package(model, pkg)` to
+        `with_packages(pkg, on=model)` matched `[^,]+?\\)` against the FIRST
+        closing paren, so a nested call like `mf.ref("npf/high_k")` swallowed the
+        keyword: `mf.ref("npf/high_k", on="flow")`. It happened to still parse.
+        Found by listing every migrated line rather than by trusting green tests.

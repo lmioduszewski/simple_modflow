@@ -37,7 +37,7 @@ def test_package_specs_are_replaced_by_name_without_mutating_the_base_model():
     high_k_npf = base_npf.with_options(k=10.0)
     model = ModelSpec("flow", ModelType.GWF, packages=(base_npf,))
 
-    variant = model.with_package(high_k_npf)
+    variant = model.with_packages(high_k_npf)
 
     assert model.packages[0].options["k"] == 1.0
     assert variant.packages[0].options["k"] == 10.0

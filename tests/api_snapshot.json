@@ -1093,9 +1093,8 @@
       "with_grid",
       "with_hook",
       "with_options",
-      "with_package",
       "with_packages",
-      "without_package"
+      "without_packages"
     ],
     "PackageDiffNamespace.properties": [
       "chd",
@@ -1252,7 +1251,6 @@
       "workspace"
     ],
     "SimulationSpec.members": [
-      "add_package",
       "build",
       "build_flopy",
       "derive",
@@ -1262,16 +1260,15 @@
       "model_names",
       "package_names",
       "replace_grid",
-      "replace_package",
       "resolved_packages",
       "to_dict",
       "to_yaml",
       "with_exchange",
       "with_model",
       "with_models",
-      "with_package",
       "with_packages",
-      "with_workspace"
+      "with_workspace",
+      "without_packages"
     ],
     "SpecLibrary.members": [
       "copy",
