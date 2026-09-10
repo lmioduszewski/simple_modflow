@@ -6362,3 +6362,34 @@ same day, which is the useful part of the result.
         now edits the model, using `sto` rather than `oc`: the model already
         carries an `oc`, and the manifest summary records package NAMES, so
         replacing one changes nothing to assert against.
+
+201. **The project accepted specs into the wrong library, and went quiet when it
+      lost work (2026-09-10).** Two failures with one shape: every signal said
+      success, and the loss appeared in a later session.
+      - **`project.add_package("flow_hi", mf.gwf(...))` was accepted.**
+        `validate()` returned clean, `save()` reported success while silently
+        writing no simulations, and the next session's `Project.load` raised
+        `KeyError: 'builder'` -- the whole project unopenable from one wrong
+        verb. `_refuse_wrong_library` refuses a spec that belongs to a different
+        library, naming the verb that was wanted.
+      - **Only a spec that clearly belongs elsewhere is refused.** `add_grid`
+        legitimately takes a `GridSpec`, a `GridRef`, or an already-built mesh,
+        and a built mesh is none of the four spec types, so it passes untouched.
+      - **`add_simulation` now warns when the simulation will not persist.**
+        Previously this was discoverable only as `SaveReport(simulations=0,
+        skipped=1)` -- truthy, raising nothing -- and that is what left a real
+        project's `specs/` directory empty. Said at the line that registered it,
+        naming `mf.ref(key)` as the fix.
+      - **`Run._spec_recipe_block` was announcing at DEBUG** that a run had
+        stopped being re-runnable: the manifest keeps a readable summary,
+        `reopen_run(...).spec` comes back `None`, and nothing said so. Now
+        WARNING, and de-duplicated per run via `Run._warned_unserializable`
+        because `_record_status` re-summarizes on every status change and would
+        otherwise repeat it three or four times.
+      - **Both warnings are `logger.warning`, not prints** -- a degraded input is
+        exactly what the logging rule reserves that level for, and
+        `test_no_library_prints.py` stays green.
+      - **NOT done:** `add_package` still silently REPLACES an existing key. The
+        `overwrite=False` guard belongs with the vocabulary work, where
+        `packages.fork`'s refusal and this verb should end up consistent; adding
+        it here would break every re-registration in the examples mid-stream.

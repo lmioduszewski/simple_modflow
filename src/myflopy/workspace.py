@@ -33,6 +33,7 @@ from myflopy.specs import (
     BuiltSimulation,
     GridRef,
     GridSpec,
+    ModelSpec,
     PackageRef,
     package_digest,
     PackageSpec,
@@ -92,6 +93,38 @@ def load_run(
     """
 
     return Run.load(workspace, executable=executable, load=load)
+
+
+def _refuse_wrong_library(value: Any, expected: type, verb: str) -> None:
+    """Refuse a spec handed to the wrong project library.
+
+    ``project.add_package("flow_hi", mf.gwf(...))`` was accepted in full:
+    ``validate()`` returned clean, ``save()`` reported success while silently
+    writing no simulations, and the NEXT session's ``Project.load`` raised
+    ``KeyError: 'builder'`` -- the whole project unopenable, from one wrong verb
+    and with every signal in between saying it had worked.
+
+    Only a spec that clearly belongs to a different library is refused. A built
+    mesh handed to ``add_grid`` is none of these types and passes, which is the
+    point: ``add_grid`` legitimately takes a ``GridSpec``, a ``GridRef``, or an
+    already-built grid object.
+    """
+
+    elsewhere = {
+        ModelSpec: (
+            "a model",
+            "wrap it with mf.simulation(model) and pass that to "
+            "project.add_simulation()",
+        ),
+        SimulationSpec: ("a simulation", "use project.add_simulation(sim)"),
+        PackageSpec: ("a package", "use project.add_package(key, spec)"),
+        GridSpec: ("a grid", "use project.add_grid(key, grid)"),
+    }
+    for kind, (label, fix) in elsewhere.items():
+        if kind is not expected and isinstance(value, kind):
+            raise TypeError(
+                f"project.{verb}() was given {label} ({type(value).__name__}) -- {fix}."
+            )
 
 
 def _library_grid_spec(key: str, value) -> GridSpec:
@@ -849,6 +882,9 @@ class Run:
     _model_views: dict[str, SimulationBase] = field(
         default_factory=dict, init=False, repr=False
     )
+    # `_record_status` re-summarizes the spec on every status change, so the
+    # not-re-runnable warning would fire three or four times for one run.
+    _warned_unserializable: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Coerce ``workspace`` to a :class:`~pathlib.Path`."""
@@ -1199,12 +1235,25 @@ class Run:
         try:
             return self.spec.to_dict()
         except ValueError as error:  # not JSON-encodable -- an embedded array
-            logger.debug(
-                "Run '%s': spec not stored as a rebuildable recipe (%s); "
-                "the manifest keeps its readable summary only.",
-                self.name,
-                error,
-            )
+            # WARNING, not DEBUG. This is the moment the run stops being
+            # re-runnable, and it was announced at a level nobody sees: the
+            # manifest keeps a readable summary, `reopen_run(...).spec` comes
+            # back None, and nothing said so. De-duplicated because
+            # `_record_status` re-summarizes on every status change, so a single
+            # run would otherwise repeat it three or four times.
+            if not self._warned_unserializable:
+                self._warned_unserializable = True
+                logger.warning(
+                    "Run '%s' is not re-runnable: its spec could not be stored as "
+                    "a rebuildable recipe (%s). The manifest keeps a readable "
+                    "summary only, and reopen_run('%s').spec will be None. "
+                    "Register array-bearing packages with "
+                    "project.add_package(key, spec) and reference them with "
+                    "mf.ref(key) to keep the recipe serializable.",
+                    self.name,
+                    error,
+                    self.name,
+                )
             return self.spec_recipe
 
     def save_manifest(self) -> Path:
@@ -1349,6 +1398,7 @@ class Project:
         packages are checked for name collisions when a run is built.
         """
 
+        _refuse_wrong_library(package, PackageSpec, "add_package")
         self.packages[key] = package
         return package
 
@@ -1369,6 +1419,7 @@ class Project:
         the build (:func:`_library_grid_spec`).
         """
 
+        _refuse_wrong_library(grid, GridSpec, "add_grid")
         grid = _grid_entry(grid)
         self.grids[key] = grid
         return grid
@@ -1376,6 +1427,20 @@ class Project:
     def add_simulation(self, simulation: SimulationSpec) -> SimulationSpec:
         """Add or replace a reusable simulation specification."""
 
+        _refuse_wrong_library(simulation, SimulationSpec, "add_simulation")
+        reason = self._why_unserializable(simulation)
+        if reason is not None:
+            # Said HERE, at the line that registered it, rather than discovered
+            # as `SaveReport(simulations=0, skipped=1)` -- which is truthy, raises
+            # nothing, and is what left a real project's `specs/` directory empty.
+            logger.warning(
+                "Simulation '%s' will NOT persist: %s. project.save() will skip "
+                "it and Project.load() will not see it. Register array-bearing "
+                "packages with project.add_package(key, spec) and reference them "
+                "with mf.ref(key).",
+                simulation.name,
+                reason,
+            )
         self.simulations[simulation.name] = simulation
         return simulation
 
