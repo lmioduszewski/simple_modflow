@@ -49,7 +49,8 @@ def _rich_simulation() -> mf.SimulationSpec:
             mf.rch(stress_period_data={0: [[(0, 0), 0.001]]}),
             mf.oc(budget_filerecord="flow.cbc", saverecord=[("BUDGET", "ALL")]),
         ],
-    ).with_hook(PostBuildHook("record", _record_hook))
+        hooks=[PostBuildHook("record", _record_hook)],
+    )
     transport = mf.gwt("transport", packages=[mf.disv(**_disv_kwargs()), mf.ic(strt=0.0)])
     return mf.SimulationSpec(
         "coupled",

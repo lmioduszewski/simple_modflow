@@ -902,25 +902,10 @@ class PackageSpec:
 
         return replace(self, options={**self.options, **overrides})
 
-    def disabled(self) -> PackageSpec:
-        """Return a disabled copy of this package specification."""
-
-        return replace(self, enabled=False)
-
     def with_metadata(self, **updates: Any) -> PackageSpec:
         """Return a copy with selected provenance metadata added or replaced."""
 
         return replace(self, metadata={**self.metadata, **updates})
-
-    def with_input(self, name: str, source: Any) -> PackageSpec:
-        """Return a copy with one named package input source added."""
-
-        return replace(self, inputs={**self.inputs, name: source})
-
-    def with_inputs(self, **sources: Any) -> PackageSpec:
-        """Return a copy with named package input sources added or replaced."""
-
-        return replace(self, inputs={**self.inputs, **sources})
 
     def to_dict(self) -> dict[str, Any]:
         """Return a durable JSON-ready representation of this package recipe."""
@@ -2205,12 +2190,6 @@ class ModelContext:
     time_units: str = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def with_metadata(self, **updates: Any) -> ModelContext:
-        """Return a copy with selected metadata added or replaced."""
-
-        return replace(self, metadata={**self.metadata, **updates})
-
-
 @dataclass(frozen=True, slots=True)
 class SpecBuildContext:
     """Filesystem + library context threaded through a spec build.
@@ -2604,18 +2583,6 @@ class ModelSpec:
         """Return a copy with a grid recipe, reference, or built object attached."""
 
         return replace(self, grid=grid)
-
-    def with_hook(self, hook: PostBuildHook) -> ModelSpec:
-        """Return a copy with a post-build hook added or replaced by name."""
-
-        hooks = list(self.hooks)
-        for index, existing in enumerate(hooks):
-            if existing.name == hook.name:
-                hooks[index] = hook
-                break
-        else:
-            hooks.append(hook)
-        return replace(self, hooks=tuple(hooks))
 
     def build(
         self,

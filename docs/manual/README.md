@@ -92,7 +92,7 @@ Throughout, two example models recur so the code stays concrete:
 - 5.1 `PackageSpec` — a serializable description of one FloPy package; the three forms (`()`, `.gpkg()`, `.flopy()`)
 - 5.2 `ModelSpec` — one GWF/GWT/GWE/PRT model; `mf.gwf/gwt/gwe/prt`
 - 5.3 `SimulationSpec` — tdis + ims + models + exchanges; `.model()`, `.with_model()`, `.with_package()`
-- 5.4 `ModelContext` — grid, surfaces, dates, domain, metadata; `with_metadata`
+- 5.4 `ModelContext` — grid, surfaces, dates, domain, metadata (edit with `dataclasses.replace`)
 - 5.5 `PackageRef` / `GridRef` and the `ref` / `grid_ref` helpers (library reuse)
 - 5.6 `PostBuildHook` — attach observations, validation, or extra FloPy objects after the build
 - 5.7 `BuiltModel` / `BuiltSimulation` — the products of a build

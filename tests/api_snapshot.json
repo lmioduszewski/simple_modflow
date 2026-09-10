@@ -1051,9 +1051,7 @@
       "surfaces",
       "time_units"
     ],
-    "ModelContext.members": [
-      "with_metadata"
-    ],
+    "ModelContext.members": [],
     "ModelPackages.properties": [
       "chd",
       "drn",
@@ -1091,7 +1089,6 @@
       "type_enum",
       "with_context",
       "with_grid",
-      "with_hook",
       "with_options",
       "with_packages",
       "without_packages"
@@ -1131,12 +1128,9 @@
     ],
     "PackageSpec.members": [
       "build",
-      "disabled",
       "from_dict",
       "option_summary",
       "to_dict",
-      "with_input",
-      "with_inputs",
       "with_metadata",
       "with_options"
     ],

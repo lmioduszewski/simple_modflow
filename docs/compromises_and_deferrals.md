@@ -6488,3 +6488,26 @@ same day, which is the useful part of the result.
         closing paren, so a nested call like `mf.ref("npf/high_k")` swallowed the
         keyword: `mf.ref("npf/high_k", on="flow")`. It happened to still parse.
         Found by listing every migrated line rather than by trusting green tests.
+
+205. **Four verbs nobody typed while building a model (2026-09-10).** Removed:
+      `PackageSpec.disabled`, `PackageSpec.with_input`, `PackageSpec.with_inputs`,
+      `ModelSpec.with_hook`, `ModelContext.with_metadata`. Each capability
+      survives through the constructor or `dataclasses.replace`; only the wither
+      is gone.
+      - **`disabled()` had ZERO callers anywhere** -- src, tests, examples,
+        notebooks, docs -- and was the only producer of `enabled=False` in the
+        whole repo. So the disable capability was never exercised by anything.
+      - **The `enabled` FIELD stays, and must.** It participates in
+        `package_digest`, so removing it would make every historical run manifest
+        report `state='edited'`. `dataclasses.replace(pkg, enabled=False)` still
+        reaches it. Removing the verb is safe; removing the field never is.
+      - **`with_workspace` was on the cut list and is KEPT.** The claim it rested
+        on -- "`prepare_run` never reads `spec.workspace`" -- is true and
+        incomplete: `SimulationSpec.build()` reads it (`specs.py`, the standalone
+        path), and three tests exercise exactly that. Checking the second reader
+        is what saved it.
+      - **`PackageSpec.with_metadata` stays too**, on 7 src callers: it is how
+        `fork_package` stamps `forked_from`/`edited`. Only the `ModelContext`
+        namesake went, which had none.
+      - Migrations: `with_hook(h)` -> `mf.gwf(..., hooks=[h])`; `with_input(k, s)`
+        -> `dataclasses.replace(spec, inputs={k: s})`. Two call sites, both tests.

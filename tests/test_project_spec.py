@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 import geopandas as gpd
@@ -701,7 +702,13 @@ def test_source_payloads_are_rebuilt_by_registry_and_keep_int_keys():
 
     for source in (DataSourceSpec(path="x.tif"), RasterSource(path="r.tif")):
         revived = mf.PackageSpec.from_dict(
-            json.loads(json.dumps(mf.npf(k=1.0).with_input("k", source).to_dict()))
+            json.loads(
+                json.dumps(
+                    dataclasses.replace(
+                        mf.npf(k=1.0), inputs={"k": source}
+                    ).to_dict()
+                )
+            )
         ).inputs["k"]
         assert type(revived) is type(source)
 

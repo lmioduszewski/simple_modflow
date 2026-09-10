@@ -161,7 +161,7 @@ with a `with_*` method. This *copy-on-write* style is the foundation of variants
 npf = mf.npf(k=10.0)
 
 npf_high = npf.with_options(k=100.0)          # change a FloPy option
-npf_src  = npf.with_inputs(k=mf.RasterSource("k.tif"))   # swap an input source
+npf_src  = dataclasses.replace(npf, inputs={"k": mf.RasterSource("k.tif")})  # swap a source
 npf_tag  = npf.with_metadata(note="calibrated")          # annotate (non-FloPy)
 # npf itself is unchanged; each call returns a NEW PackageSpec.
 ```
