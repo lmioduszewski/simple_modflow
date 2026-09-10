@@ -6307,3 +6307,28 @@ same day, which is the useful part of the result.
         work's cut list (it is ignored the moment `solver=` is passed). This pass
         is bugs only; removing the parameter is a public-API change and belongs
         with that work.
+
+199. **Three lookups, one question, three answers (2026-09-10).** On a model
+      carrying `mf.ref("wel/north")` and `mf.ref("wel/south")`, asking about
+      `"wel"` gave: `package("wel")` -> the north one, `with_package(x, slot="wel")`
+      -> replaced the north one, `without_package("wel")` -> deleted **both**.
+      Nobody chose that. `_package_entry_index` grew its label-first pass after a
+      swap deleted the wrong well package and MF6 reported normal termination on
+      the wrong model; the fix reached that lookup and neither of the other two.
+      - **One resolver.** `_package_entry_indices` returns EVERY match, label pass
+        first (exact, at most one, since names are unique within a model) then
+        slot hint (a hint, so it can match several). `_package_entry_index` wraps
+        it and RAISES on more than one, naming the model and both candidates.
+      - **Ambiguity is the caller's to settle, not list order's.** The old
+        behaviour was not a policy, it was whichever entry happened to be
+        declared first.
+      - **`without_package` raises on a name it cannot find.** It used to be a
+        silent no-op that still returned a new object, so a typo -- or a package
+        already removed -- read exactly like success, and the only way to know
+        was to diff `package_names`. Both not-found messages now list what the
+        model carries.
+      - **`_package_entry_matches` is deleted**, not left beside its replacement.
+        It was the second of the three implementations and had no other caller.
+      - **Nothing in the suite depended on any of the old behaviour**: 2437
+        passed with the silent no-op turned into a raise. That is evidence the
+        no-op was never a feature, not evidence the change is small.

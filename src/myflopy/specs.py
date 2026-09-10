@@ -1044,36 +1044,59 @@ def _package_slot(package: PackageEntry) -> str:
     return package.name
 
 
-def _package_entry_matches(package: PackageEntry, name: str) -> bool:
-    """Match an entry by its full identity (name / key) or by its slot hint.
+def _package_entry_indices(
+    packages: Sequence[PackageEntry], target: str
+) -> list[int]:
+    """Every entry ``target`` names: by FULL LABEL first, then by slot hint.
 
-    So ``model.package("npf/base")`` finds that exact ref, and
-    ``model.package("npf")`` finds whatever occupies the ``npf`` slot.
+    The label pass is what makes ``<type>/<variant>`` keys addressable, and it
+    can match at most one entry because names are unique within a model. The slot
+    pass is a HINT -- only the key's first segment for a ref -- so it can match
+    several, and that ambiguity belongs to the caller rather than to list order.
+
+    ONE resolver, because three had drifted apart. On a model carrying
+    ``mf.ref("wel/north")`` and ``mf.ref("wel/south")``, ``package("wel")``
+    returned the north one, ``with_package`` replaced the north one, and
+    ``without_package("wel")`` deleted BOTH -- three answers to one question, and
+    nobody chose any of them. The label-first pass was added after a swap deleted
+    the wrong well package and MF6 reported normal termination on the wrong
+    model; that fix reached this lookup and neither of the other two.
     """
 
-    return package.name == name or _package_slot(package) == name
+    labelled = [
+        index
+        for index, existing in enumerate(packages)
+        if _package_entry_label(existing) == target
+    ]
+    if labelled:
+        return labelled
+    return [
+        index
+        for index, existing in enumerate(packages)
+        if _package_slot(existing) == target
+    ]
 
 
 def _package_entry_index(
-    packages: Sequence[PackageEntry], target: str
+    packages: Sequence[PackageEntry], target: str, *, where: str | None = None
 ) -> int | None:
-    """Find the entry ``target`` names: by FULL LABEL first, then by slot hint.
+    """The single entry ``target`` names, or ``None``; raises when it names several.
 
-    The label pass is what makes ``<type>/<variant>`` keys addressable. Matching
-    on the slot alone -- which is only the key's first segment for a ref -- means
-    ``wel/north`` and ``wel/south`` both answer to ``wel``, so replacing one
-    silently replaced whichever came first. Measured: swapping ``wel/south``
-    deleted ``wel/north`` and left ``wel/south`` pumping, and MF6 reported normal
-    termination on the wrong model.
+    Resolving an ambiguous name by taking the first match is what let a swap land
+    on the wrong package. ``where`` names the owner in the error so the caller can
+    see which model it is being asked about.
     """
 
-    for index, existing in enumerate(packages):
-        if _package_entry_label(existing) == target:
-            return index
-    for index, existing in enumerate(packages):
-        if _package_slot(existing) == target:
-            return index
-    return None
+    matches = _package_entry_indices(packages, target)
+    if len(matches) > 1:
+        labels = ", ".join(_package_entry_label(packages[i]) for i in matches)
+        owner = f"{where} has" if where else "There are"
+        raise KeyError(
+            f"{owner} {len(matches)} packages matching '{target}': {labels}. "
+            "Name one of them exactly -- matching the slot alone would act on "
+            "whichever happened to be declared first."
+        )
+    return matches[0] if matches else None
 
 
 def _package_entry_is_enabled(package: PackageEntry) -> bool:
@@ -2359,7 +2382,7 @@ class ModelSpec:
         package = _package_entry(package)
         target = slot if slot is not None else _package_slot(package)
         packages = list(self.packages)
-        index = _package_entry_index(packages, target)
+        index = _package_entry_index(packages, target, where=f"Model '{self.name}'")
         if index is None:
             packages.append(package)
         else:
@@ -2375,24 +2398,45 @@ class ModelSpec:
         return spec
 
     def package(self, name: str) -> PackageEntry:
-        """Return one package specification by name."""
+        """Return one package specification by name.
 
-        for package in self.packages:
-            if _package_entry_matches(package, name):
-                return package
-        raise KeyError(f"Model '{self.name}' has no package named '{name}'.")
+        Resolves through the shared lookup, so an ambiguous name raises here
+        rather than quietly handing back whichever was declared first.
+        """
+
+        index = _package_entry_index(
+            list(self.packages), name, where=f"Model '{self.name}'"
+        )
+        if index is None:
+            raise KeyError(
+                f"Model '{self.name}' has no package named '{name}'. "
+                f"It carries: {', '.join(self.package_names) or 'nothing'}."
+            )
+        return self.packages[index]
 
     def without_package(self, name: str) -> ModelSpec:
-        """Return a copy without the named package."""
+        """Return a copy without the named package.
 
-        return replace(
-            self,
-            packages=tuple(
-                package
-                for package in self.packages
-                if not _package_entry_matches(package, name)
-            ),
-        )
+        RAISES when ``name`` matches nothing. It used to be a silent no-op that
+        still returned a new object, so a typo -- or a package already removed --
+        read exactly like success, and the only way to know was to compare
+        ``package_names`` before and after.
+
+        Removes exactly ONE entry. Matching the slot alone used to delete every
+        entry sharing it, so ``without_package("wel")`` on a model carrying
+        ``wel/north`` and ``wel/south`` took both; now that names two packages
+        and raises.
+        """
+
+        packages = list(self.packages)
+        index = _package_entry_index(packages, name, where=f"Model '{self.name}'")
+        if index is None:
+            raise KeyError(
+                f"Model '{self.name}' has no package '{name}' to remove. "
+                f"It carries: {', '.join(self.package_names) or 'nothing'}."
+            )
+        del packages[index]
+        return replace(self, packages=tuple(packages))
 
     def resolved_packages(
         self,
@@ -2932,7 +2976,9 @@ class SimulationSpec:
         package = _package_entry(package)
         model = self.model(model_name)
         target = name if name is not None else _package_slot(package)
-        if _package_entry_index(list(model.packages), target) is None:
+        if _package_entry_index(
+            list(model.packages), target, where=f"Model '{model_name}'"
+        ) is None:
             raise KeyError(
                 f"Model '{model_name}' has no '{target}' package to replace. "
                 "Pass name=<slot> to target a slot explicitly, or use add_package."
