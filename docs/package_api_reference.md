@@ -474,10 +474,12 @@ stepping lets MODFLOW 6 choose its own step within a period -- and, crucially,
 are selected zero-based: `ats=True`, `ats=[7, 9]`, or `ats={7: {"dtmin": 1e-4}}`.
 
 **Building from a line BC? Wrap the conductance in `mf.Spread`.** A feature's value is
-otherwise written to every cell it intersects, which is right for an elevation and
+otherwise written to every cell it covers, which is right for an elevation and
 multiplies a conductance by the cell count (measured: 2.02x, on an unchanged grid).
 `conductance=mf.Spread("conductance")` gives each cell its share — by length for a
 line, area for a polygon, and the whole value for a point, which has nothing to divide.
+A polygon covers a cell by AREA: one drawn along cell faces reaches only the cells
+inside it, not the neighbours it shares an edge with (ledger 210).
 
 Runnable walkthrough: **`examples/mf6/notebooks/usg_export_to_new_model.ipynb`** —
 each written file, and the call that consumes it. It builds no model; it lays out the

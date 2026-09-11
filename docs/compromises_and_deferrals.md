@@ -6611,3 +6611,77 @@ same day, which is the useful part of the result.
         layouts (ledger 196). With these three readers sharing one source and
         the positional readers covered by the geometry-first getter, it is no
         longer load-bearing.
+
+210. **A polygon drawn on cell faces was also written to the cells outside it (2026-09-11).**
+      `GeoPackageSource._cell_shares` measured each piece of a feature by the
+      PIECE's own extent -- area if it had any, else length. A polygon meets each
+      face-adjacent cell along the edge they share, a line with no area, so every
+      neighbour of a polygon drawn on cell faces was admitted with a pseudo-share
+      of edge / area (L / L**2). All seven `.gpkg` list BCs and
+      `GeoPackageSource.k_array` inherited it. Measured: a DRN polygon that is
+      exactly one cell wrote 5 records and 500 of conductance where 1 and 100 are
+      right; on an 8x8 grid a face-aligned polygon wrote 12 records and 1,200, and
+      MF6 terminated normally with DRN outflow -6,053.84 against -2,811.84 for
+      the same polygon inset by 0.1; a K zone that was one cell painted five.
+      - **The FEATURE picks the measure now, never the piece.** An areal
+        feature's pieces are measured by area, a line's by length, a point's not
+        at all.
+      - **`mf.Spread` hid it sometimes, and by units.** The pseudo-share fell
+        under `min_share=0.01` at one scale and not at another, so the same
+        geometry resolved to different cells in feet and in metres.
+        `mode="retained"` renormalized the pseudo-shares: the total was conserved
+        and 16% of it sat outside the polygon.
+      - **"Refinement triples totals" was this bug, misdiagnosed.** A 4x4 -> 8x8
+        refinement did triple a total, but only because the polygon's edges were
+        faces on the finer grid. Refining under an unaligned polygon conserves.
+      - **JUDGMENT CALL: a piece narrower than 0.01 is dropped too**
+        (`geopackage._SLIVER_WIDTH`, in the grid's length unit). Exact
+        coincidence has commoner near misses, each leaving a neighbour a sliver
+        that carried the WHOLE unsplit value -- the same defect. A perturbation is
+        a WIDTH, so the test is a piece's mean width, 2 x area / perimeter.
+        Measured, the same on 5 ft and 500 ft cells: 3e-7 after a double-precision
+        reprojection (4326, 32610); 3.4e-4 after NAD83 <-> NAD83(HARN) (2285, which
+        PROJ closes through WGS 84 without a grid, and which vanishes at the
+        origin); 3.5e-3 to 5e-3 for cells read back from a DISV FloPy wrote at 9
+        significant digits. A feature itself narrower than the tolerance is kept
+        whole, and a 0.015 strip into a neighbour reaches it (both tested). It
+        also drops REAL corner clips that thin, deliberately -- the call
+        `Spread.min_share` makes: on real overlays of independent meshes, 46
+        such nicks, at most 1.5e-3 ft2 and 8.3e-6 of a cell. **Not covered:** coordinates ROUNDED on export (GeoJSON at 7 decimal
+        degrees, 0.003 to 0.018, straddling the tolerance), and a datum shift of
+        feet, which is geometry, not noise.
+      - **The first version of this fix used a share of the cell, and was wrong.**
+        Dropping a piece under 1e-6 of min(cell, feature) held on the 500 ft cells
+        it was tested on, at the origin. Below ~340 ft cells the NAD83 shift got
+        through, and 17,416 of 18,107 one-cell zones on the real Ten Trails mesh
+        still leaked. An adversarial review caught it before commit; the test now
+        runs 25, 100 and 500 ft cells at State Plane coordinates.
+      - **A GeometryCollection mixing points, lines and polygons now RAISES.** It
+        has no single measure: measured as a polygon, its line part vanished
+        without a message (the old code kept it, with a wrong share).
+      - **`edges_only` with a polygon that only BORDERS the grid edge** -- an ocean
+        polygon on the coastline -- reached the edge cells through this bug and
+        reaches none now: draw it overlapping the edge cells. The same polygon
+        through the legacy `Boundaries` engine still reaches them. The next entry
+        makes the miss loud.
+      - **Real data, old vs new, every feature** -- the Ten Trails mesh (18,107
+        cells), the old USG mesh (9,405), the demo site (4,107), the canonical
+        grids, and every GIS file in `examples/` and the Ten Trails / USG-export
+        data: no cell added, no share changed on a kept cell, no feature emptied.
+        Every removal was a zero-area touch or a piece under the width. Polygons
+        made from a mesh's own cells now resolve to exactly one cell each; the four
+        USG lake polygons to 707 cells, the export's 707 CLN lake nodes (956
+        before); the CHD a real run wrote reproduces exactly (120 cells).
+        Last-feature-wins K painting changes painter in 5 of 18,107 cells, each of
+        which the old painter covered by 1e-8 to 8e-6. The widest real noise was
+        0.00494, from a written DISV -- 2x under the tolerance. Coordinates of 8 or
+        more integer digits would round about 10x wider; none of the data has them.
+      - **Eight mutants, all killed, each by the test written for it:** the
+        original piece-picks-the-measure code (27 tests fail), the areal test
+        decided per piece (16), no tolerance (11), the first version's share rule
+        (5), no thin-feature guard, a 0.05 tolerance, the width without its factor
+        of 2 (one each; the 0.015 strip pins the last two), and a mixed collection
+        not refused. Run on a copy of `src/`, behind an import probe.
+      - **NOT in this entry:** a LINE on a face still counts in both cells and a
+        POINT on a face or vertex still goes to 2-4 cells (the tie rule, next);
+        features that miss the grid are still dropped silently.

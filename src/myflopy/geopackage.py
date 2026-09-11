@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 import geopandas as gpd
 import numpy as np
+import shapely
 
 from myflopy._logging import get_logger
 from myflopy.advanced import (
@@ -34,6 +35,26 @@ def _extent(geometry) -> float:
         return 0.0
     area = float(getattr(geometry, "area", 0.0) or 0.0)
     return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
+
+
+# An areal piece narrower than this, in the grid's length unit, is dropped. Almost
+# always it is a face-aligned edge whose coordinates were perturbed. A
+# perturbation is a WIDTH, so the test is the piece's mean width, not its share of
+# the cell: a share rule caught a NAD83 round trip on 500 ft cells and missed it on
+# 300 ft ones. Measured: 3e-7 after a double-precision reprojection, 3.4e-4 after
+# NAD83 <-> NAD83(HARN), up to 5e-3 from vertices FloPy wrote at 9 significant
+# digits. It also drops REAL corner clips that thin, deliberately, as
+# Spread.min_share does -- on real overlays at most 1.5e-3 ft2, 8.3e-6 of a cell.
+# Coordinates ROUNDED on export (GeoJSON at 7 decimal degrees: 0.003 to 0.018)
+# straddle it and are not reliably covered. Ledger 210.
+_SLIVER_WIDTH = 0.01
+
+
+def _mean_width(geometry) -> float:
+    """Twice the area over the perimeter: a strip's width, or half a square's side."""
+
+    perimeter = float(geometry.length)
+    return 2.0 * float(geometry.area) / perimeter if perimeter > 0 else 0.0
 
 
 def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):
@@ -434,7 +455,7 @@ class GeoPackageSource:
         return (period,)
 
     def _cells(self, geometry, *, layer: int, edges_only: bool = False) -> list[int]:
-        """The active grid cells a feature's ``geometry`` intersects (optionally edge cells only)."""
+        """The active grid cells a feature's ``geometry`` covers (optionally edge cells only)."""
 
         return [cell for cell, _ in self._cell_shares(geometry, layer=layer, edges_only=edges_only)]
 
@@ -448,6 +469,13 @@ class GeoPackageSource:
         of the WHOLE feature, so they sum to less than one where part of it lies
         outside the active grid; :class:`Spread` decides what that means.
 
+        The FEATURE picks the measure, never the piece. A polygon meets each
+        face-adjacent cell along the edge they share -- a line, with no area -- and
+        measuring that piece by its length admitted every neighbour of a polygon
+        drawn on cell faces, at the full value for any field not wrapped in
+        :class:`Spread`: a K zone that was exactly one cell painted five. Pieces
+        narrower than ``_SLIVER_WIDTH`` are dropped for the same reason.
+
         Candidates come from the spatial index rather than an elementwise
         ``intersects`` over every cell, which was O(features x ncpl).
         """
@@ -458,7 +486,16 @@ class GeoPackageSource:
             edge_cells = set(self.grid.get_grid_edge())
             candidates = [cell for cell in candidates if cell in edge_cells]
 
+        if geometry is not None and geometry.geom_type == "GeometryCollection":
+            if len(set(shapely.get_dimensions(shapely.get_parts(geometry)).tolist())) > 1:
+                raise ValueError(
+                    "A GeometryCollection mixing points, lines and polygons has no single "
+                    "measure to divide it by; write one feature per geometry type."
+                )
         measure = _extent(geometry)
+        areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
+        # A feature that is itself this thin is what was drawn, not a sliver of it.
+        sliver = _SLIVER_WIDTH if areal and _mean_width(geometry) > _SLIVER_WIDTH else 0.0
         shares: list[tuple[int, float]] = []
         for cell in candidates:
             cell = int(cell)
@@ -467,10 +504,17 @@ class GeoPackageSource:
             if measure <= 0:
                 shares.append((cell, 1.0))
                 continue
-            piece = _extent(geometry.intersection(polys.geometry.loc[cell]))
-            if piece <= 0:
-                continue
-            shares.append((cell, piece / measure))
+            polygon = polys.geometry.loc[cell]
+            piece = geometry.intersection(polygon)
+            if areal:
+                size = float(piece.area)
+                if size <= 0 or _mean_width(piece) < sliver:
+                    continue
+            else:
+                size = float(piece.length)
+                if size <= 0:
+                    continue
+            shares.append((cell, size / measure))
         return shares
 
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
@@ -508,7 +552,7 @@ class GeoPackageSource:
 
         Validates the required columns exist, then for each feature emits one
         ``[(layer, cell), *values(, boundname)]`` record per applicable period and
-        intersected cell, keyed by stress period.
+        covered cell, keyed by stress period.
         """
 
         spreads = tuple(f for f in fields if isinstance(f, Spread))
