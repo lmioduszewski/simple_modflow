@@ -6650,15 +6650,41 @@ same day, which is the useful part of the result.
         such nicks, at most 1.5e-3 ft2 and 8.3e-6 of a cell. **Not covered:** coordinates ROUNDED on export (GeoJSON at 7 decimal
         degrees, 0.003 to 0.018, straddling the tolerance), and a datum shift of
         feet, which is geometry, not noise.
+      - **Revised the same day, after a second review** (all LOW; none bites the
+        real grids here, whose narrowest cell is 0.31 ft wide):
+        - the width is measured on a piece's AREAL parts only -- a piece that also
+          touches its cell along a face is a GeometryCollection holding that face
+          as a line, and counted in the perimeter it made a 1.2 ft square a 0.00998
+          "sliver";
+        - a sliver must ALSO be under 1% of its cell (`_SLIVER_SHARE`). Noise is
+          width / cell width of a cell, under 0.5% on any cell wider than half a
+          unit, so real grids are untouched; on 0.05-unit cells the rule dropped
+          pieces holding 14-27% of their cell;
+        - if EVERY piece of a feature is a sliver, none is dropped -- they are the
+          feature. A strip 0.015 wide centred on a face is two 0.0075 halves and
+          lost both; a lab-scale grid of 0.01-unit cells lost all its coverage.
+        - **Limit, recorded not fixed:** 9-digit DISV rounding is covered only while
+          |coordinates| < 1e7 grid units. Texas State Plane northings and Web
+          Mercator exceed it (slivers to 0.044); no grid here does.
+        - Cost measured on the Ten Trails mesh: `_cell_shares` 1.07-1.17x.
+        - Four mutants for the revision, all killed: the width counting a
+          collection's lines, no 1% cap, all-sliver features dropped, and mixed
+          collections refused again.
       - **The first version of this fix used a share of the cell, and was wrong.**
         Dropping a piece under 1e-6 of min(cell, feature) held on the 500 ft cells
         it was tested on, at the origin. Below ~340 ft cells the NAD83 shift got
         through, and 17,416 of 18,107 one-cell zones on the real Ten Trails mesh
         still leaked. An adversarial review caught it before commit; the test now
         runs 25, 100 and 500 ft cells at State Plane coordinates.
-      - **A GeometryCollection mixing points, lines and polygons now RAISES.** It
-        has no single measure: measured as a polygon, its line part vanished
-        without a message (the old code kept it, with a wrong share).
+      - **A GeometryCollection mixing dimensions is measured by its highest one.**
+        The first version refused it -- measured as a polygon, its line part
+        vanished without a message -- and the second review REVERSED that: it is
+        what `gpd.clip` and `gpd.overlay` return by default
+        (`keep_geom_type=False`) wherever a zone runs along the clip edge, the lines
+        being zero-area artifacts of the coincidence, so the refusal refused the
+        commonest GIS operation's default output (and misfired on an EMPTY member).
+        A deliberate line inside a polygon feature adds no area and reaches
+        nothing: write one feature per geometry type.
       - **`edges_only` with a polygon that only BORDERS the grid edge** -- an ocean
         polygon on the coastline -- reached the edge cells through this bug and
         reaches none now: draw it overlapping the edge cells. The same polygon

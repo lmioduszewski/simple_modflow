@@ -49,10 +49,23 @@ def _extent(geometry) -> float:
 # straddle it and are not reliably covered. Ledger 210.
 _SLIVER_WIDTH = 0.01
 
+# ...and a sliver is also under this share of its cell. Noise is width / cell width
+# of a cell, under 1% on any cell wider than half a unit, so this changes nothing on
+# a real grid; without it a lab-scale grid (0.01-unit cells) lost ALL its coverage,
+# every piece being narrower than the tolerance.
+_SLIVER_SHARE = 0.01
+
 
 def _mean_width(geometry) -> float:
-    """Twice the area over the perimeter: a strip's width, or half a square's side."""
+    """Twice the area over the perimeter of the AREAL parts: a strip's width, half a square's side.
 
+    Areal parts only: a piece that also touches its cell along a face comes back as
+    a GeometryCollection holding that face as a line, and counted in the perimeter
+    it made a 1.2 ft square a 0.00998 "sliver".
+    """
+
+    if geometry.geom_type == "GeometryCollection":
+        geometry = shapely.union_all([part for part in shapely.get_parts(geometry) if part.area > 0])
     perimeter = float(geometry.length)
     return 2.0 * float(geometry.area) / perimeter if perimeter > 0 else 0.0
 
@@ -480,7 +493,8 @@ class GeoPackageSource:
         measuring that piece by its length admitted every neighbour of a polygon
         drawn on cell faces, at the full value for any field not wrapped in
         :class:`Spread`: a K zone that was exactly one cell painted five. Pieces
-        narrower than ``_SLIVER_WIDTH`` are dropped for the same reason.
+        narrower than ``_SLIVER_WIDTH`` and under ``_SLIVER_SHARE`` of their cell are
+        dropped for the same reason, unless every piece of the feature is one.
 
         Candidates come from the spatial index rather than an elementwise
         ``intersects`` over every cell, which was O(features x ncpl).
@@ -488,12 +502,6 @@ class GeoPackageSource:
 
         if geometry is None or geometry.is_empty:
             return []
-        if geometry.geom_type == "GeometryCollection":
-            if len(set(shapely.get_dimensions(shapely.get_parts(geometry)).tolist())) > 1:
-                raise ValueError(
-                    "A GeometryCollection mixing points, lines and polygons has no single "
-                    "measure to divide it by; write one feature per geometry type."
-                )
         polys = self.grid.gdf_vorPolys
         edge_cells = set(self.grid.get_grid_edge()) if edges_only else None
         measure = _extent(geometry)
@@ -508,10 +516,15 @@ class GeoPackageSource:
                     chosen.add(hits[0])
             return [(cell, 1.0) for cell in sorted(chosen)]
 
+        # A GeometryCollection is measured by its highest dimension: the lines in a
+        # polygon collection add no area. In practice they are what gpd.clip and
+        # gpd.overlay leave (keep_geom_type=False) where a zone ran along the clip
+        # edge, so refusing the collection refused their default output.
         areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
         # A feature that is itself this thin is what was drawn, not a sliver of it.
-        sliver = _SLIVER_WIDTH if areal and _mean_width(geometry) > _SLIVER_WIDTH else 0.0
+        thin_feature = areal and _mean_width(geometry) <= _SLIVER_WIDTH
         sizes: dict[int, float] = {}
+        slivers: set[int] = set()
         on_faces: dict[int, Any] = {}
         for cell in self._usable_cells(
             polys.sindex.query(geometry, predicate="intersects"),
@@ -521,8 +534,14 @@ class GeoPackageSource:
             piece = geometry.intersection(polygon)
             if areal:
                 size = float(piece.area)
-                if size <= 0 or _mean_width(piece) < sliver:
+                if size <= 0:
                     continue
+                if (
+                    not thin_feature
+                    and _mean_width(piece) < _SLIVER_WIDTH
+                    and size < _SLIVER_SHARE * float(polygon.area)
+                ):
+                    slivers.add(cell)
             else:
                 size = float(piece.length)
                 if size <= 0:
@@ -531,6 +550,11 @@ class GeoPackageSource:
                 if along.length > 0:
                     on_faces[cell] = along
             sizes[cell] = size
+        # Slivers go -- unless they are all there is, when they ARE the feature: a
+        # strip 0.015 wide centred on a face is two 0.0075 halves, and lost both.
+        if len(slivers) < len(sizes):
+            for cell in slivers:
+                del sizes[cell]
         # Pairwise, but only over cells whose piece runs along their own boundary:
         # usually none, so a line off every face pays nothing for this.
         faced = sorted(on_faces)
