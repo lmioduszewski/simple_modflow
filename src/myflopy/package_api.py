@@ -3837,7 +3837,11 @@ class _SFRPackage:
             confluences/splits.
         inflow, rainfall, evaporation, runoff, status
             Per-period boundary inputs, keyed by stream id (e.g.
-            ``inflow={0: {"main": 1.0e4}}``).
+            ``inflow={0: {"main": 1.0e4}}``). ``inflow`` enters at each stream's
+            headwater reach; ``rainfall`` and ``evaporation`` are rates applied to
+            every reach. ``runoff`` is each stream's TOTAL volume per time, split
+            across its reaches in proportion to reach length -- a bare number is
+            every stream's total, and it does not grow when the grid is refined.
         mover
             Enable MVR so this stream can give/receive water from lakes or UZF.
         length_conversion, time_conversion

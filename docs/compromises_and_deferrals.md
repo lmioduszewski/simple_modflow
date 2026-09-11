@@ -7057,3 +7057,22 @@ same day, which is the useful part of the result.
       - `import_layers.json` gains `myflopy._defaults` at layer 0 and moves
         `modflow.utils.contour_interp` from 0 to 1, since it now imports it.
       - Found by the 2026-09-10 sweep, as bug 18 of 21.
+
+226. **SFR runoff grew with the number of reaches (2026-09-11).**
+      MF6's RUNOFF is a volume per time on each reach, and `SFRBuilder` wrote a
+      scalar runoff to EVERY reach -- so a stream's total runoff scaled with its
+      reach count, and refining the grid under a stream multiplied it. A
+      `{stream: amount}` mapping put the whole amount on the stream's upstream
+      reach. Decided 2026-09-11, with the Phase 2 remap design:
+      - **A number is each stream's TOTAL, split across its reaches in proportion
+        to `rlen`**; `{stream: total}` gives each named stream its own, split the
+        same way. An integer key names a reach and takes its amount as given, as
+        do explicit per-reach rows.
+      - **A time-series name is refused** unless given per reach: a series cannot
+        be split by length. None of the user's models used runoff.
+      - RAINFALL and EVAPORATION stay per-reach rates broadcast to every reach;
+        INFLOW stays a point source at the headwater.
+      - A per-stream total spread by length does not depend on the grid, which is
+        what Phase 2 needs to carry runoff onto a new mesh.
+      - Three mutants, killed: the old broadcast, an even split instead of by
+        length, and a time series let through.

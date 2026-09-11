@@ -749,10 +749,10 @@ class SFRBuilder:
         explicit row tuples.
 
         A **scalar** is expanded by keyword: ``RAINFALL``/``EVAPORATION``/
-        ``RUNOFF``/``STATUS`` are per-reach quantities and broadcast to EVERY
-        reach (matching :class:`LAKBuilder`'s per-lake broadcast), while
-        ``INFLOW`` is a volumetric point source and enters at the single
-        headwater (first) reach.
+        ``STATUS`` are per-reach quantities and broadcast to EVERY reach
+        (matching :class:`LAKBuilder`'s per-lake broadcast), while ``INFLOW`` is
+        a volumetric point source and enters at the single headwater (first)
+        reach. ``RUNOFF`` is volumetric too, but spread: see :meth:`_runoff_rows`.
         """
 
         if value is None:
@@ -762,6 +762,9 @@ class SFRBuilder:
         for period in range(self.nper):
             current = period_values.get(period)
             if current is None:
+                continue
+            if keyword == "RUNOFF" and (isinstance(current, (Mapping, Real, str))):
+                result[period].extend(self._runoff_rows(current))
                 continue
             if isinstance(current, Mapping):
                 for location, amount in current.items():
@@ -785,6 +788,52 @@ class SFRBuilder:
                 for row in current:
                     result[period].append([int(row[0]), keyword, *row[1:]])
         return result
+
+    def _runoff_rows(self, current: Any) -> list[list[Any]]:
+        """One period's RUNOFF rows: a TOTAL per stream, spread along it by reach length.
+
+        RUNOFF is a volume per time on each reach, and a scalar was written to
+        EVERY reach -- so a stream's runoff scaled with its reach count, and
+        refining the grid under a stream multiplied it. A number is now each
+        stream's total, ``{stream: total}`` gives each named stream its own, and
+        either is split in proportion to ``rlen``. An integer key names a REACH and
+        takes its amount as given. A time series cannot be split by length, so it
+        is refused unless given per reach, as explicit rows.
+        """
+
+        def refuse():
+            raise ValueError(
+                "A RUNOFF time series cannot be spread along a stream by reach length; "
+                "give it per reach -- runoff={period: [(reach, 'series'), ...]} -- or "
+                "give each stream a number."
+            )
+
+        rows: list[list[Any]] = []
+        totals: dict[str, Any] = {}
+        if isinstance(current, Mapping):
+            for location, amount in current.items():
+                if isinstance(location, int):
+                    rows.append([int(location), "RUNOFF", amount])
+                else:
+                    totals[str(location)] = amount
+        elif isinstance(current, str):
+            refuse()
+        else:
+            totals = {stream: current for stream in self.stream_reaches}
+
+        for stream, total in totals.items():
+            if isinstance(total, str):
+                refuse()
+            if stream not in self.stream_reaches:
+                raise KeyError(
+                    f"runoff names stream {stream!r}; the streams are "
+                    f"{sorted(self.stream_reaches)}."
+                )
+            reaches = self.stream_reaches[stream]
+            lengths = self.reaches.loc[reaches, "rlen"].astype(float)
+            for rno, length in zip(reaches, lengths, strict=True):
+                rows.append([int(rno), "RUNOFF", float(total) * float(length) / float(lengths.sum())])
+        return rows
 
     @property
     def perioddata(self) -> dict[int, list[list[Any]]]:
