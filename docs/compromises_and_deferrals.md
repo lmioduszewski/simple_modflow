@@ -6912,3 +6912,16 @@ same day, which is the useful part of the result.
         off-centre, at 45 and 68 degrees, and across an irregular Voronoi grid with
         generators on the trace -- and a slow MF6 test measures the flow across the
         trace itself, which is what the barrier is for.
+
+217. **Particle tracking failed on every converted USG model (2026-09-11).**
+      `UsgModel.to_mf6` wrote NPF with `save_flows` only. PRT reads the specific
+      discharge and the saturation GWF saves to its budget, so a PRT run on any
+      converted model failed. Both are saved now. The 2026-09-10 bug sweep had to
+      patch the NPF by hand before it could reproduce entries 218 and 219 at all.
+      - Cost: two more budget records per step, which particle tracking cannot do
+        without.
+      - **NOT done:** a `PRTProject` precheck naming the missing flags for a model
+        built some other way; such a model still fails inside MF6 rather than with
+        a myflopy message.
+      - One mutant, killed: the flags left off (the NPF test fails, and so do the
+        end-to-end PRT tests entry 219 adds).

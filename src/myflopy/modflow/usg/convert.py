@@ -174,7 +174,16 @@ def to_mf6(
             xorigin=xorigin,
             yorigin=yorigin,
         ),
-        api.npf(k=model.k, k33=model.k33, icelltype=model.icelltype, save_flows=True),
+        # PRT reads specific discharge and saturation from the flow model's budget;
+        # without them every particle-tracking run on a converted model failed.
+        api.npf(
+            k=model.k,
+            k33=model.k33,
+            icelltype=model.icelltype,
+            save_flows=True,
+            save_specific_discharge=True,
+            save_saturation=True,
+        ),
         api.ic(strt=model.strt),
     ]
 

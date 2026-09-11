@@ -445,3 +445,13 @@ def test_the_grid_gets_the_models_layer_elevations(usg):
     for layer in range(NLAY):
         assert np.allclose(frame[layer + 1].to_numpy(), usg.botm[layer])
     assert frame.crs == usg.grid.crs
+
+
+def test_the_converted_npf_saves_what_particle_tracking_reads(usg):
+    """PRT reads specific discharge and saturation from the flow budget; without
+    both, every particle-tracking run on a converted model failed (ledger 217)."""
+
+    sim = usg.to_mf6("tiny", start_date_time="2020-01-01")
+    npf = next(p for p in sim.models[0].packages if p.name == "npf")
+    assert npf.options["save_specific_discharge"] is True
+    assert npf.options["save_saturation"] is True
