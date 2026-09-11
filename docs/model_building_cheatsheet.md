@@ -1094,9 +1094,11 @@ sfr = mf.sfr(context=ctx, nper=nper, streams="streams.gpkg",
              roughness=0.030, streambed_k=0.05, streambed_thickness=1.5,
              inflow={0: {"north_trib": 15000.0}}, mover=True)
 
+lake_bed = mf.Contours("lake_contours.gpkg", z="Elev", epsg="2927",
+                       region_vector="lakes.gpkg")   # bathymetry, clipped to the lake
 lak = mf.lak(context=ctx, nper=nper, lakes="lakes.gpkg", lake_id_field="name",
-             starting_stage={"valley_lake": 101.0}, bed_leakance=0.11,
-             connection_modes="automatic", mover=True)
+             starting_stage={"valley_lake": 101.0}, lake_bottom=lake_bed,
+             bed_leakance=0.11, connection_modes="bathy", mover=True)
 
 mvr = mf.mvr(nper=nper, moves=(
     mf.Move(mf.sfr_connection(sfr, "main_stem"),
@@ -1107,6 +1109,38 @@ mvr = mf.mvr(nper=nper, moves=(
 Pull `sfr`/`lak` out as handles so the mover references them **semantically**
 rather than by raw reach index. MVR is validated: moved packages must be declared
 in the model *and* ordered before the mover.
+
+#### A lakebed from bathymetry
+
+`connection_modes="bathy"` (the default; `"automatic"` is its old name) connects
+each lake cell through its bed *and* through every step in it, so `lake_bottom`
+has to vary **per cell**. It is required — leave it out and `mf.lak` raises
+`lake_bottom is required`. Any of these works:
+
+```python
+lake_bottom=lake_bed                                # any Surface: mf.Contours, mf.Raster, algebra
+lake_bottom="bathy.tif"                             # a raster path, Path or str
+lake_bottom=pd.Series({812: 94.5, 813: 92.0})       # per cell, already computed
+lake_bottom={"valley_lake": lake_bed, "pond": "pond.tif"}   # one per lake
+lake_bottom=mf.Surface.offset_below(6)              # 6 ft below the model top
+```
+
+A `str` that names a column of `lakes` is still read as the column. A Surface or
+raster is sampled onto the grid **once** — it used to be once per cell read, the
+whole grid each time: 5 samples for a 2-cell pond. `units="meters"` on a Surface
+converts to the model's units, and a relative Surface measures from the model top.
+
+**Only the lake's own cells need a value.** The neighbours each step is measured
+against are land: where the source has nothing for one — a raster clipped to the
+lake, a Series of lake cells — it sits at the model top. Two adjustments WARN: a
+bed above its cell's model top is capped at the top, and a lake cell the raster
+misses entirely (a sliver the polygon clips at its edge) gets the top too, zero
+depth. A raster that misses the whole lake raises, and so does a Series missing a
+lake cell.
+
+A **flat**-bottomed basin is the other mode: `connection_modes="rectangular"`
+with one `lake_bottom` and a `lake_top` per lake. A flat bed under `"bathy"` has
+no steps, so it builds no sidewall connections and warns.
 
 ---
 

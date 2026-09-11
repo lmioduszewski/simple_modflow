@@ -28,6 +28,7 @@ from myflopy.specs import (
     mf6_length_conversion,
     mf6_time_conversion,
 )
+from myflopy.surfaces import Surface, _length_factor
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,7 +373,12 @@ class LAKBuilder:
     _connections: tuple[tuple[str, LakeConnection], ...] | None = field(
         default=None, init=False, repr=False, compare=False
     )
-    _bottom_cache: dict[tuple[str, int], float] = field(
+    # lake_bottom / lake_top resolved once per lake, and each raster or Surface
+    # sampled onto the grid once, however many lakes and cells read it.
+    _per_lake: dict[tuple[str, str], float | dict[int, float]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    _sampled: dict[Any, np.ndarray] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
     _lake_cells: dict[str, list[int]] | None = field(
@@ -488,12 +494,18 @@ class LAKBuilder:
         object.__setattr__(self, "_lake_cells", result)
         return result
 
-    def _lake_value(self, value: Any, lake_id: str, *, name: str, default: Any = None) -> Any:
+    def _lake_value(
+        self, value: Any, lake_id: str, *, name: str, default: Any = None, per_cell: bool = False
+    ) -> Any:
         """Resolve a per-lake parameter for ``lake_id`` from many input shapes.
 
-        Accepts ``None`` (uses ``default``), a column name / literal string, a
-        per-lake mapping, a path, a scalar, or a one-per-lake sequence; raises if a
-        required value is missing.
+        Accepts ``None`` (uses ``default``), a lake-table column name, a numeric
+        string, a per-lake mapping, a scalar, a Series keyed by lake id (read by
+        label, never position), or a one-per-lake sequence; raises if a required
+        value is missing. With ``per_cell`` (``lake_bottom``/``lake_top``) it also
+        passes through what varies by CELL for :meth:`_per_cell`: a
+        :class:`~myflopy.surfaces.Surface`, a raster ``Path`` or ``str`` naming an
+        existing file, or a Series whose index is not the lake ids.
         """
 
         if value is None:
@@ -501,18 +513,51 @@ class LAKBuilder:
                 raise ValueError(f"{name} is required.")
             return default
         if isinstance(value, str):
-            return self.lake_table.loc[lake_id, value] if value in self.lake_table.columns else value
+            if value in self.lake_table.columns:
+                return self.lake_table.loc[lake_id, value]
+            if per_cell and Path(value).is_file():
+                return Path(value)
+            try:
+                return float(value)
+            except ValueError:
+                columns = ", ".join(str(c) for c in self.lake_table.columns if c != "geometry")
+                raise ValueError(
+                    f"{name}={value!r} is not a column of the lake table ({columns})"
+                    + (" or an existing raster file." if per_cell else ".")
+                ) from None
         if isinstance(value, Mapping):
             if lake_id not in value:
-                raise ValueError(f"{name} is missing lake '{lake_id}'.")
-            return value[lake_id]
-        if isinstance(value, Path):
+                hint = (
+                    " A mapping here is keyed by lake id; for one value per cell pass a "
+                    "cell-indexed pandas Series, a raster, or a Surface."
+                    if per_cell
+                    else ""
+                )
+                raise ValueError(f"{name} is missing lake '{lake_id}'.{hint}")
+            inner = value[lake_id]
+            if per_cell and isinstance(inner, str) and Path(inner).is_file():
+                return Path(inner)
+            return inner
+        if isinstance(value, Surface):
+            if not per_cell:
+                raise ValueError(f"{name} is one value per lake; only lake_bottom and lake_top take a Surface.")
             return value
-        if isinstance(value, Real):
+        if isinstance(value, (Path, Real)):
             return value
+        if isinstance(value, pd.Series):
+            if all(lake in value.index for lake in self.lake_ids):
+                return value[lake_id]
+            if per_cell:
+                return value  # indexed by cell: the same map for every lake
         values = list(value)
         if len(values) != len(self.lake_ids):
-            raise ValueError(f"{name} must contain one value per lake.")
+            hint = (
+                " For one value per CELL pass a cell-indexed pandas Series or "
+                "mf.Surface.from_array(values)."
+                if per_cell
+                else ""
+            )
+            raise ValueError(f"{name} must contain one value per lake.{hint}")
         return values[self.lake_number(lake_id)]
 
     def _connection_mode(self, lake_id: str) -> str | Sequence[LakeConnection]:
@@ -589,15 +634,9 @@ class LAKBuilder:
 
     def _top(self, lake_id: str, cell: int) -> float:
         """Facility top elevation for rectangular lakes (the connection ``telev``)."""
-        value = self._lake_value(self.lake_top, lake_id, name="lake_top")
-        if isinstance(value, Path):
-            sampled = self.grid.get_raster_vals_at_centroids([value], [lake_id])
-            value = sampled.loc[cell, lake_id]
-        elif isinstance(value, (Mapping, pd.Series)):
-            if cell not in value:
-                raise ValueError(f"lake_top for '{lake_id}' is missing cell {cell}.")
-            value = value[cell]
-        return float(value)
+
+        top = self._per_cell("lake_top", lake_id)
+        return top if isinstance(top, float) else top[cell]
 
     def _surfaces(self) -> pd.DataFrame:
         """The per-cell top/bottom elevation table (context surfaces, else the grid's), geometry dropped."""
@@ -631,22 +670,136 @@ class LAKBuilder:
         return None
 
     def _bottom(self, lake_id: str, cell: int) -> float:
-        """The lakebed bottom elevation at ``cell`` for a lake (raster/mapping/scalar), cached."""
+        """The lakebed elevation at ``cell`` -- one of the lake's cells, or a neighbour."""
 
-        key = (lake_id, cell)
-        if key in self._bottom_cache:
-            return self._bottom_cache[key]
-        value = self._lake_value(self.lake_bottom, lake_id, name="lake_bottom")
-        if isinstance(value, Path):
-            sampled = self.grid.get_raster_vals_at_centroids([value], [lake_id])
-            value = sampled.loc[cell, lake_id]
-        elif isinstance(value, (Mapping, pd.Series)):
-            if cell not in value:
-                raise ValueError(f"lake_bottom for '{lake_id}' is missing cell {cell}.")
-            value = value[cell]
-        resolved = float(value)
-        self._bottom_cache[key] = resolved
-        return resolved
+        bed = self._per_cell("lake_bottom", lake_id)
+        return bed if isinstance(bed, float) else bed[cell]
+
+    def _per_cell(self, name: str, lake_id: str) -> float | dict[int, float]:
+        """``lake_bottom`` or ``lake_top`` for one lake: one flat value, or one per cell.
+
+        Resolved once per lake. A Surface or raster path is sampled onto the grid
+        by :meth:`_sample`; a cell-indexed Series or ``{cell: value}`` mapping is
+        read as given. Anything else is one value for the whole lake.
+        """
+
+        key = (name, lake_id)
+        if key not in self._per_lake:
+            value = self._lake_value(getattr(self, name), lake_id, name=name, per_cell=True)
+            if isinstance(value, (Path, Surface, Mapping, pd.Series)):
+                self._per_lake[key] = self._cell_values(name, lake_id, value)
+            else:
+                self._per_lake[key] = float(value)
+        return self._per_lake[key]
+
+    def _cell_values(self, name: str, lake_id: str, source: Any) -> dict[int, float]:
+        """Per-cell ``lake_bottom``/``lake_top`` over the lake's cells (and a bed's neighbours).
+
+        ``bathy`` compares each lake cell's bed with its NEIGHBOURS', so a bed is
+        read at the cells around the lake too. Those are land, and where the
+        source has no value for one -- a raster clipped to the lake, a Series of
+        the lake's own cells -- the bed there is the model top. That used to be an
+        accident: a Series had to list them or raise, and a raster's NaN reached
+        ``min(cell_top, nan)``, which returns the cell top only because it is the
+        first argument.
+
+        A bed is capped at its cell's model top, because a lakebed is not above the
+        ground it is cut into. A lake cell capped that way WARNS, since more than
+        rounding means the two surfaces disagree. A lake cell a raster has no data
+        for (usually one the polygon clips at its edge) is set to the top, zero
+        depth, and WARNS; one missing from a Series RAISES, because that is an
+        omission rather than a sampling artefact. ``lake_top`` is read at the
+        lake's cells only, and is neither filled nor capped.
+        """
+
+        bed = name == "lake_bottom"
+        cells = self.lake_cells[lake_id]
+        wanted = [*cells, *self._neighbours(lake_id)] if bed else list(cells)
+        sampled = isinstance(source, (Path, Surface))
+        if sampled:
+            grid_values = self._sample(source)
+            values = {cell: float(grid_values[cell]) for cell in wanted}
+        else:
+            values = {cell: float(source[cell]) if cell in source else np.nan for cell in wanted}
+        missing = [cell for cell in cells if not np.isfinite(values[cell])]
+        if missing and not (sampled and bed):
+            if sampled:
+                reason = "the raster has no data there"
+            else:
+                reason = "a per-cell value must cover every cell of the lake"
+                if bed:
+                    reason += " (only its neighbours default, to the model top)"
+                if isinstance(source, pd.Series):
+                    reason += "; a Series is read by CELL unless its index holds every lake id"
+            raise ValueError(f"{name} for '{lake_id}' has no value at lake cell(s) {missing}: {reason}.")
+        if not bed:
+            return values
+        if len(missing) == len(cells):
+            raise ValueError(
+                f"lake_bottom has no data at any of the {len(cells)} cells of lake "
+                f"'{lake_id}' -- does the raster cover the lake?"
+            )
+
+        model_top = self._surfaces().select_dtypes("number").iloc[:, 0]
+        above = [cell for cell in cells if values[cell] > model_top.loc[cell]]
+        excess = max((values[cell] - float(model_top.loc[cell]) for cell in above), default=0.0)
+        for cell, value in values.items():
+            top = float(model_top.loc[cell])
+            if not np.isfinite(value) or value > top:
+                values[cell] = top
+        if missing:
+            warnings.warn(
+                f"lake_bottom has no data at {len(missing)} of the {len(cells)} cells of "
+                f"lake '{lake_id}' {missing[:10]}; their bed is set to the model top "
+                "(zero depth). Usually cells the lake polygon only clips at its edge.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if above:
+            warnings.warn(
+                f"lake_bottom is above the model top at {len(above)} of the {len(cells)} "
+                f"cells of lake '{lake_id}', by up to {excess:.3g}; capped at the top "
+                "there. More than rounding means the bed and the model top disagree.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return values
+
+    def _neighbours(self, lake_id: str) -> list[int]:
+        """The cells sharing a face with the lake that are not part of it."""
+
+        cells = self.lake_cells[lake_id]
+        around = {int(other) for cell in cells for other in self.grid.find_adjacent_cells(cell)}
+        return sorted(around - set(cells))
+
+    def _sample(self, source: Path | Surface) -> np.ndarray:
+        """Sample a raster or Surface onto every cell of the grid, once per source.
+
+        Each lake indexes the result. It used to be sampled once for every
+        distinct cell read -- the whole grid, area-weighted, each time: 5 samples
+        for a 2-cell pond with 3 neighbours, so the cost grew as (lake + shore
+        cells) x grid size. A Surface defined relative to the one above it
+        (``offset_below``, ``fill="propagate"``) takes the model top as that
+        surface, and ``units=`` converts to the context's length units, as it
+        does in a ``LayerStack``.
+        """
+
+        key = str(source) if isinstance(source, Path) else id(source)
+        if key not in self._sampled:
+            surface = Surface.raster(source) if isinstance(source, Path) else source
+            model_top = self._surfaces().select_dtypes("number").iloc[:, 0]
+            previous = model_top.reindex(range(self.grid.ncpl)).to_numpy(dtype=float)
+            values = np.asarray(surface.values(self.grid, previous=previous), dtype=float)
+            length_units = getattr(self.context, "length_units", None)
+            if surface.units and length_units:
+                if surface.is_relative:
+                    raise ValueError(
+                        "units= is only supported on absolute surfaces, not relative "
+                        "(offset_below / constant_thickness)."
+                    )
+                values = values * _length_factor(surface.units, length_units)
+            self._sampled[key] = values
+        return self._sampled[key]
 
     def _leakance(self, lake_id: str, connection_type: str, explicit: float | None = None) -> float:
         """The (positive) lakebed leakance for one lake + connection type (explicit wins).
@@ -808,8 +961,9 @@ class LAKBuilder:
                     f"{len(lake_cells)} cells: its lake_bottom is flat, so there "
                     f"are no exposed steps to connect through, leaving the lake "
                     f"with no lateral aquifer exchange. If that is not intended, "
-                    f"either give lake_bottom real bathymetry (a raster or "
-                    f"per-cell mapping with varying elevations), or use "
+                    f"either give lake_bottom real bathymetry (a Surface such "
+                    f"as mf.Raster or mf.Contours, a raster path, or a "
+                    f"cell-indexed Series), or use "
                     f"connection_modes='rectangular' for a flat-bottomed "
                     f"infiltration basin (edges only), or only_vertical=True for "
                     f"a sealed concrete vault (bottom only).",

@@ -313,7 +313,11 @@ lak = LAKBuilder(
 flow = flow.with_package(lak.build())
 ```
 
-`"automatic"` builds natural-lake bottom and shoreline connections.
+`"automatic"` (now spelled `"bathy"`) builds natural-lake bottom and shoreline
+connections from a bed that varies per cell: give `lake_bottom` a `Surface`
+(`mf.Raster`, `mf.Contours`), a raster path, or a cell-indexed Series. A per-lake
+value such as the column above is a flat bed, which has no shoreline steps to
+connect through; `mf.lak`'s docstring has the rules.
 `"rectangular"` builds a box-like facility with bottom connections and
 vertical sidewall connections across every face of its footprint cells.
 A sequence of `LakeConnection` objects supplies explicit connections for one

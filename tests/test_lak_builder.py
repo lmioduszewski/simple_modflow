@@ -11,6 +11,7 @@ import rasterio
 from rasterio.transform import from_origin
 from shapely.geometry import Polygon
 
+import myflopy as mf
 from myflopy import (
     LAKBuilder,
     LakeConnection,
@@ -455,3 +456,193 @@ def test_bathy_scalar_bottom_makes_no_exposed_steps():
     with pytest.warns(UserWarning, match="no horizontal"):
         assert _horizontals(builder, "basin") == []
     assert len(_verticals(builder, "basin")) == 2
+
+
+# --- a per-cell lake_bottom: bathymetry ------------------------------------------
+# The pond covers cells 3 and 4 of _grid() (model top 12 everywhere); its
+# neighbours are 0 (below 3), 1 (below 4) and 5 (right of 4). A bed of 5 under
+# cell 3 and 9 under cell 4, with every neighbour at the model top, gives exactly
+# these connections, as (cellid, type, belev, telev):
+POND_CONNECTIONS = sorted([
+    ((1, 3), "VERTICAL", 5.0, 5.0),
+    ((0, 3), "HORIZONTAL", 8.0, 12.0),  # 3 -> 0, layer 0: face 5..12 clipped to [8, 12]
+    ((1, 3), "HORIZONTAL", 5.0, 8.0),   # 3 -> 0, layer 1
+    ((0, 3), "HORIZONTAL", 8.0, 9.0),   # 3 -> 4, layer 0: up to cell 4's bed
+    ((1, 3), "HORIZONTAL", 5.0, 8.0),   # 3 -> 4, layer 1
+    ((0, 4), "VERTICAL", 9.0, 9.0),
+    ((0, 4), "HORIZONTAL", 9.0, 12.0),  # 4 -> 1
+    ((0, 4), "HORIZONTAL", 9.0, 12.0),  # 4 -> 5; 4 -> 3 steps DOWN, so none
+])
+
+
+def _pond_kwargs(**updates) -> dict:
+    grid = _grid()
+    lakes = gpd.GeoDataFrame(
+        {"name": ["pond"]},
+        geometry=[Polygon([(0.05, 1.05), (1.95, 1.05), (1.95, 1.95), (0.05, 1.95)])],
+        crs=grid.crs,
+    )
+    values = dict(
+        context=ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int)),
+        nper=1,
+        lakes=lakes,
+        lake_id_field="name",
+        starting_stage={"pond": 11.0},
+        bed_leakance=0.1,
+        connection_modes="bathy",
+    )
+    values.update(updates)
+    return values
+
+
+def _connections(spec: PackageSpec) -> list:
+    return sorted((tuple(row[2]), row[3], row[5], row[6]) for row in spec.options["connectiondata"])
+
+
+def _tif(path, values, *, x0: float = 0.0):
+    """A 0.25-pixel GeoTIFF whose top edge is y=2 (the top of _grid())."""
+    values = np.asarray(values, dtype="float32")
+    with rasterio.open(
+        path, "w", driver="GTiff", height=values.shape[0], width=values.shape[1], count=1,
+        dtype="float32", crs="EPSG:2927", transform=from_origin(x0, 2.0, 0.25, 0.25),
+        nodata=-9999.0,
+    ) as destination:
+        destination.write(values, 1)
+    return path
+
+
+def _pond_bathy(path):
+    """Bathymetry clipped to the pond (x 0..2, y 1..2): 5 over cell 3, 9 over cell 4."""
+    return _tif(path, np.hstack([np.full((4, 4), 5.0), np.full((4, 4), 9.0)]))
+
+
+@pytest.mark.parametrize("form", ["Raster", "Path", "str", "per-lake Raster", "per-lake str"])
+def test_bathy_lake_bottom_from_a_raster_or_surface(tmp_path, form):
+    # A str path and a bare Surface both failed before: 'could not convert string
+    # to float' and "'Surface' object is not iterable".
+    tif = _pond_bathy(tmp_path / "bathy.tif")
+    lake_bottom = {
+        "Raster": mf.Raster(tif),
+        "Path": tif,
+        "str": str(tif),
+        "per-lake Raster": {"pond": mf.Raster(tif)},
+        "per-lake str": {"pond": str(tif)},
+    }[form]
+    assert _connections(mf.lak(**_pond_kwargs(lake_bottom=lake_bottom))) == POND_CONNECTIONS
+
+
+def test_a_raster_is_sampled_once_not_once_per_cell(tmp_path, monkeypatch):
+    """Every cell read used to area-sample the WHOLE grid: 5 samples for this
+    2-cell pond with 3 neighbours, growing as (lake + shore cells) x grid size.
+    It is one per source now -- also when two lakes share it."""
+    from myflopy.modflow.mf6.grid import surfaces as grid_surfaces
+
+    original = grid_surfaces._area_weighted_sample
+    calls = []
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(grid_surfaces, "_area_weighted_sample", counting)
+    mf.lak(**_pond_kwargs(lake_bottom=_pond_bathy(tmp_path / "bathy.tif")))
+    assert len(calls) == 1
+
+    calls.clear()
+    everywhere = mf.Raster(_tif(tmp_path / "flat.tif", np.full((8, 12), 9.0)))
+    builder = _builder(lake_bottom=everywhere)  # lakes 'natural' and 'trench'
+    assert builder.connectiondata
+    assert len(calls) == 1
+
+
+def test_a_cell_indexed_series_needs_only_the_lake_cells():
+    """The neighbours 'bathy' compares against are land: absent from the Series,
+    they sit at the model top rather than raising 'missing cell 0'. A bare
+    Series used to raise 'must contain one value per lake'."""
+    bare = mf.lak(**_pond_kwargs(lake_bottom=pd.Series({3: 5.0, 4: 9.0})))
+    keyed = mf.lak(**_pond_kwargs(lake_bottom={"pond": pd.Series({3: 5.0, 4: 9.0})}))
+    assert _connections(bare) == _connections(keyed) == POND_CONNECTIONS
+
+
+def test_a_neighbour_without_a_bed_is_land_at_its_own_model_top():
+    """The step toward a neighbour stops at THAT cell's ground. A neighbour with no
+    value used to reach min(cell_top, nan), which is the LAKE cell's own top --
+    right only where the two tops agree, as they do everywhere else in _grid()."""
+    grid = _grid()
+    surfaces = grid.gdf_topbtm.drop(columns="geometry").copy()
+    surfaces.loc[0, 0] = 11.0  # the ground south of cell 3 is a foot lower
+    kwargs = _pond_kwargs(lake_bottom=pd.Series({3: 5.0, 4: 9.0}))
+    kwargs["context"] = ModelContext(grid=grid, domain=np.ones((2, 6), dtype=int), surfaces=surfaces)
+    faces = _connections(mf.lak(**kwargs))
+    assert ((0, 3), "HORIZONTAL", 8.0, 11.0) in faces  # 3 -> 0 stops at cell 0's ground
+    assert ((0, 3), "HORIZONTAL", 8.0, 12.0) not in faces
+
+
+def test_a_series_keyed_by_lake_id_is_read_by_label_not_position():
+    # Reversed against the lake table; read by position, 'natural' would get 6.
+    builder = _builder(
+        lake_bottom=pd.Series({"trench": 6.0, "natural": 9.0}),
+        starting_stage=pd.Series({"trench": 10.0, "natural": 11.0}),
+    )
+    assert builder._bottom("natural", 3) == 9.0
+    assert builder._bottom("trench", 1) == 6.0
+    assert [row[1] for row in builder.packagedata] == [11.0, 10.0]
+
+
+def test_a_per_cell_bed_missing_a_lake_cell_raises_naming_it():
+    with pytest.raises(ValueError, match=r"no value at lake cell\(s\) \[4\]"):
+        mf.lak(**_pond_kwargs(lake_bottom=pd.Series({3: 5.0})))
+
+
+def test_a_bed_above_the_model_top_is_capped_with_a_warning():
+    # 12.5 is in no layer (top 12), which used to raise 'does not intersect active cell'.
+    builder = LAKBuilder(**_pond_kwargs(lake_bottom=pd.Series({3: 5.0, 4: 12.5})))
+    with pytest.warns(UserWarning, match=r"above the model top at 1 of the 2 cells of lake 'pond', by up to 0\.5"):
+        connections = builder.connections
+    assert builder._bottom("pond", 4) == 12.0
+    assert [c.cellid for _, c in connections if c.connection_type == "VERTICAL"] == [(1, 3), (0, 4)]
+
+
+def test_a_lake_cell_the_raster_misses_sits_at_the_model_top_with_a_warning(tmp_path):
+    builder = LAKBuilder(**_pond_kwargs(lake_bottom=mf.Raster(_tif(tmp_path / "half.tif", np.full((4, 4), 5.0)))))
+    with pytest.warns(UserWarning, match=r"no data at 1 of the 2 cells of lake 'pond' \[4\]"):
+        assert builder._bottom("pond", 4) == 12.0
+    assert builder._bottom("pond", 3) == 5.0
+
+
+def test_a_raster_that_misses_the_whole_lake_raises(tmp_path):
+    elsewhere = mf.Raster(_tif(tmp_path / "elsewhere.tif", np.full((4, 4), 5.0), x0=50.0))
+    with pytest.raises(ValueError, match="no data at any of the 2 cells of lake 'pond'"):
+        mf.lak(**_pond_kwargs(lake_bottom=elsewhere))
+
+
+def test_a_str_that_is_neither_a_column_nor_a_file_says_both(tmp_path):
+    with pytest.raises(ValueError, match=r"is not a column of the lake table \(.*\) or an existing raster file"):
+        mf.lak(**_pond_kwargs(lake_bottom=str(tmp_path / "bathy_typo.tif")))
+
+
+def test_a_surface_where_one_value_per_lake_is_wanted_is_refused():
+    with pytest.raises(ValueError, match="only lake_bottom and lake_top take a Surface"):
+        mf.lak(**_pond_kwargs(lake_bottom=pd.Series({3: 5.0, 4: 9.0}), starting_stage=mf.Surface.flat(11.0)))
+
+
+def test_surface_units_convert_to_the_model_length_units(tmp_path):
+    metres = _tif(tmp_path / "bathy_m.tif", np.hstack([np.full((4, 4), 1.524), np.full((4, 4), 2.7432)]))
+    builder = LAKBuilder(**_pond_kwargs(lake_bottom=mf.Raster(metres, units="meters")))
+    assert builder._bottom("pond", 3) == pytest.approx(5.0, abs=1e-4)
+    assert builder._bottom("pond", 4) == pytest.approx(9.0, abs=1e-4)
+
+
+def test_a_relative_surface_hangs_below_the_model_top():
+    # "The surface above" a lakebed is the model top, so offset_below is a depth.
+    builder = LAKBuilder(**_pond_kwargs(lake_bottom=mf.Surface.offset_below(4.0)))
+    assert builder._bottom("pond", 3) == builder._bottom("pond", 4) == 8.0
+
+
+def test_rectangular_lake_top_takes_a_surface_and_is_never_filled_or_capped():
+    # 13 is above the model top (12) -- a berm, which the lakebed cap must not touch.
+    flat = _rect_builder(lake_top={"basin": 13.0}).connectiondata
+    assert _rect_builder(lake_top=mf.Surface.from_array(np.full(6, 13.0))).connectiondata == flat
+    assert {row[6] for row in flat if row[3] == "VERTICAL"} == {13.0}
+    with pytest.raises(ValueError, match=r"lake_top for 'basin' has no value at lake cell\(s\) \[4\]"):
+        _rect_builder(lake_top=pd.Series({3: 13.0})).validate()

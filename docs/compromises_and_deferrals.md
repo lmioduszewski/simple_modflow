@@ -4371,8 +4371,9 @@ same day, which is the useful part of the result.
        EVERY feature's bed is the model top -- lakes as well as streams, to 0.00003 ft
        (Keevie 313/313 nodes at top, Black Diamond 150/150, Horseshoe 140/140,
        Marjorie 104/104). So a LAK built from these bottoms has zero depth, and worse,
-       312 of Keevie's nodes round to just ABOVE their cell top, which `mf.lak` rejects
-       as "bottom does not intersect active cell". This is reported in the manifest
+       312 of Keevie's nodes round to just ABOVE their cell top, which `mf.lak` rejected
+       as "bottom does not intersect active cell" (since ledger 231 the raster route
+       caps them at the top and warns instead). This is reported in the manifest
        rather than papered over: inventing a depth is the user's call, not the
        exporter's. Found by round-tripping the export back through `mf.lak`, which is
        why that round trip is worth doing on any future exporter.
@@ -7219,3 +7220,93 @@ same day, which is the useful part of the result.
         uncaught, a fresh run reading its copies back, and `reopen_run` flagging
         no keys.
       - Found by the 2026-09-10 sweep, as bug 9 of 21.
+
+231. **A lakebed from bathymetry had no supported route (2026-09-11).**
+      `mf.lak(connection_modes="bathy")` needs a per-cell `lake_bottom`, and its
+      docstring promised "a raster `Path` or a cell-indexed `Series`". Measured on
+      `tests/test_lak_builder.py::_grid` (a pond on cells 3 and 4, neighbours 0, 1
+      and 5), only `{lake_id: Series}` and a `Path` worked. A bare Series raised
+      "must contain one value per lake"; a Series of the lake's cells raised
+      "missing cell 0" -- a NEIGHBOUR, which nothing documented; a `str` path gave
+      "could not convert string to float"; and `mf.Raster(...)` -- any `Surface`,
+      so `mf.Contours` too -- gave "'Surface' object is not iterable", which a user
+      hit on 2026-08-31 with `Surface.raster(...).below(10)`. The `Path` route
+      area-sampled the WHOLE grid once per distinct cell it read. And the
+      cheatsheet's `mf.lak` example omitted `lake_bottom`, so it raised.
+      - **`lake_bottom` and `lake_top` take a `Surface`, a raster `Path` or `str`,
+        or a bare cell-indexed Series**, bare or `{lake_id: ...}`. A `str` naming a
+        column is still the column; one that is neither a column nor an existing
+        file raises naming both, instead of reaching `float()`. A numeric string
+        still works as a literal, as it did by accident.
+      - **Sampled once per source**, through `Surface.values(grid,
+        previous=model_top)`, then indexed per lake. Measured on a 2,729-cell grid
+        with a 105-cell pond: **149 full-grid samples in 10.9 s before, 1 in 1.3 s
+        after**, the same 421 connections. Passing the model top as "the surface
+        above" makes a relative Surface a depth below ground
+        (`mf.Surface.offset_below(6)`), and `units=` converts as it does in a
+        `LayerStack`. The one sample is still full-grid; a window around the lakes
+        was not worth the code.
+      - **The neighbours are land, and default to the model top.** `bathy` reads
+        the bed at each lake cell's non-lake neighbours to find the exposed steps.
+        Where the source has none -- a raster clipped to the lake, a Series of the
+        lake's cells -- it is now that neighbour's model top, deliberately. A
+        raster's NaN used to reach `min(cell_top, nan)`, which returns the LAKE
+        cell's top only because it is the first argument. The two agree except
+        where the neighbour's ground is lower than the lake cell's top: the face now
+        stops at the neighbour's ground, above which there is no aquifer to
+        exchange with.
+      - **Judgment call: a per-cell bed is capped at its cell's model top, and a
+        capped LAKE cell warns.** A bed above ground lies in no layer and used to
+        raise "does not intersect active cell". A bathymetry interpolation and a
+        DEM are built independently and disagree a little at the shore -- in the
+        GRASS end-to-end check below, 5 of 105 cells, by up to 0.48 ft -- so
+        raising failed the Contours recipe on a correct model. The trade: a warning
+        can be missed, and a bed that is wrong everywhere (a DEM passed as the bed)
+        builds a zero-depth lake with one warning naming the count. **A scalar bed
+        is never capped**: a rectangular facility's flat bottom is a design value,
+        and still raises when it lies outside the cell. The USG export note and
+        CLAUDE.md's Keevie trap said `mf.lak` rejects such beds; both now say it
+        caps and warns, and ledger 169 is annotated.
+      - **A lake cell a raster has no data for is set to the top (zero depth) and
+        warns; one missing from a Series raises.** The first is a sampling artefact
+        -- a sliver the polygon clips, holding no pixel centre, whose centroid
+        falls outside the clipped raster (2 of 105 cells end to end). The second is
+        an omission. A raster with no data on ANY lake cell raises: that is the
+        wrong raster, not a sliver.
+      - **"Model top" means column 0 of the layer-elevation table**, not the top of
+        the highest ACTIVE layer. Where layer 0 is inactive and has thickness, a
+        capped or filled bed lands in an inactive cell and still raises "does not
+        intersect active cell", as it did before. Not handled.
+      - **`lake_top` takes the same forms but is never filled or capped**: a
+        facility top above ground is legitimate (a berm), and there is no natural
+        default for a missing one.
+      - **A Series keyed by lake id is now read by LABEL**, for every per-lake input
+        (`starting_stage` and `bed_leakance` too). It was read by position, so one
+        in a different order from the lake table was misassigned silently. For
+        `lake_bottom`/`lake_top` a Series whose index is NOT the lake ids is read
+        as cell-indexed, so a positional per-lake Series with a default index now
+        raises naming the lake cells it misses, with a hint.
+      - **Not done:** `mf.lak`'s `lake_bottom`/`lake_top` annotations stay `Any` (a
+        union would show `Surface` in the editor, but needs pandas and `Surface`
+        under `TYPE_CHECKING` in `package_api`); `LakeTableBuilder(dem=)` still
+        takes a path, not a Surface (`surface.resolve_source()` gives one); a bare
+        `{cell: value}` dict is still read as keyed by lake id (its error now
+        points at the Series); an ncpl-length array is not read per cell
+        (`mf.Surface.from_array` is the spelling).
+      - **Verified end to end with GRASS** (`/usr/bin/grass`), outside the suite:
+        digitized pond contours -> `mf.Contours(..., region_vector=pond.gpkg)` ->
+        `mf.lak(lake_bottom=...)` on the 2,729-cell grid -> MF6 normal
+        termination, lake stage 174.0 ft. The tests write their own GeoTIFFs, so
+        none needs GRASS.
+      - Docs: the `mf.lak` docstring (with a Contours example), cheatsheet §7 (the
+        example now uses a contour bathymetry) plus a recipe,
+        `package_api_reference.md` Advanced packages, `core_specs.md` Lakes,
+        CLAUDE.md, and the USG export note.
+      - 14 new tests (18 cases) in `tests/test_lak_builder.py`. Seventeen mutants,
+        all killed: neighbours not read, the sample cache off, no cap, a NaN
+        neighbour left unfilled, either warning dropped, a whole-lake miss not
+        raised, a lake-id Series read by position, the model top not passed as
+        `previous`, `units=` ignored, a `str` path not recognized bare or inside a
+        mapping, `lake_top` treated as a bed, a Series missing a lake cell not
+        raised, a Surface accepted for a per-lake input, and a bare cell Series
+        refused.

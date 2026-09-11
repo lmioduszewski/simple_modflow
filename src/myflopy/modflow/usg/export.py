@@ -899,8 +899,9 @@ def _note_bed_at_top(model, features, manifest) -> None:
     ground surface to within 0.00003 ft. Two consequences the caller must decide
     about rather than discover: the lakes carry **no bathymetry**, so a LAK built
     from these bottoms has no depth; and a bottom exactly at its cell's top is a
-    knife edge that float noise tips either way, which is how ``mf.lak`` comes to
-    reject a lake whose numbers look right.
+    knife edge that float noise tips either way. ``mf.lak`` used to reject such a
+    lake outright; through the raster it now caps the ones above at their top
+    and warns, so the lake builds -- still with no depth.
     """
 
     coincident, above = [], 0
@@ -916,7 +917,7 @@ def _note_bed_at_top(model, features, manifest) -> None:
         + ", ".join(coincident)
         + " (within 0.001 length units), so these features carry NO bathymetry -- a lake "
         f"built from them has zero depth. {above} node(s) round to just ABOVE their cell "
-        "top, which mf.lak rejects as a bottom outside the cell; give lake_bottom your own "
+        "top, which mf.lak caps at the top with a warning; give lake_bottom your own "
         "depth below top rather than the exported elevation."
     )
 

@@ -135,6 +135,23 @@ mapping, or a `{period: ...}` mapping.
 Movers: `mf.mvr(moves=[mf.Move(mf.MoverConnection("sfr", 0), mf.MoverConnection("lak", 0))])`.
 Moved packages must be declared in the model and ordered before the mover.
 
+**A lakebed from bathymetry.** `mf.lak(connection_modes="bathy")` (the default)
+needs `lake_bottom` per cell: a `Surface` (`mf.Contours(...)`, `mf.Raster(...)`,
+or algebra on one), a raster path (`Path` or `str`), or a cell-indexed
+`pd.Series` — bare for every lake, or `{lake_id: ...}` for each. A Surface or
+raster is sampled onto the grid once. Only the lake's cells need a value: the
+neighbours its sidewall steps are measured against sit at the model top where the
+source has none, and a bed above its cell's top is capped there, with a warning.
+
+```python
+bed = mf.Contours("pond_contours.gpkg", z="Elev", epsg="2927", region_vector="pond.gpkg")
+lak = mf.lak(context=ctx, nper=nper, lakes="pond.gpkg", lake_id_field="name",
+             starting_stage={"pond": 101.0}, lake_bottom=bed, bed_leakance=0.1)
+```
+
+A flat-bottomed basin is `connection_modes="rectangular"`, with one `lake_bottom`
+and a `lake_top` per lake.
+
 ### GWT / GWE transport packages
 
 Thin factories (same shape as `mf.ic`), for solute-transport (GWT) and

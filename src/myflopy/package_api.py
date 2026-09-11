@@ -4001,7 +4001,7 @@ class _LAKPackage:
         how the bed connections are generated per lake:
 
         * ``"bathy"`` (default; alias ``"automatic"``) -- natural lakes. Needs a
-          *per-cell* ``lake_bottom`` (a raster ``Path`` or a cell-indexed ``Series``).
+          *per-cell* ``lake_bottom`` -- the bathymetry (see ``lake_bottom`` below).
           One vertical connection per cell, plus a horizontal connection toward each
           neighbor whose lake bottom is *higher* (the exposed step), clipped to every
           layer the exposed face spans.
@@ -4029,11 +4029,34 @@ class _LAKPackage:
         lakes
             Lake polygons: a geopackage/shapefile path (or list), or a GeoDataFrame.
             ``lake_id_field`` is the attribute naming each lake.
-        starting_stage, lake_bottom, bed_leakance
-            Initial stage, lake-bottom elevation, and bed leakance per lake.
+        starting_stage, bed_leakance
+            Initial stage and bed leakance, one per lake: a scalar, a column of
+            ``lakes``, a ``{lake_id: value}`` mapping, or a Series keyed by lake id.
+        lake_bottom
+            The lakebed elevation. One value per lake, in any of those forms, is a
+            flat bed -- what ``"rectangular"`` lakes take. ``"bathy"`` wants one per
+            CELL:
+
+            * a :class:`~myflopy.surfaces.Surface` -- ``mf.Raster("bathy.tif")``,
+              ``mf.Contours(...)``, or algebra on one (``mf.Raster(dem).below(10)``);
+            * a raster path, as a ``Path`` or a ``str`` (a ``str`` naming a column
+              of ``lakes`` is read as the column);
+            * a cell-indexed ``pd.Series`` (its index is cell numbers, not lake ids).
+
+            Bare, it serves every lake; ``{lake_id: ...}`` gives each its own. A
+            Surface or raster is sampled onto the grid once, area-weighted, and
+            each lake reads its cells from that. Only the lake's own cells need a
+            value: the neighbours ``"bathy"`` compares against are land, and sit at
+            the model top wherever the source has none -- a raster clipped to the
+            lake, or a Series of the lake's cells. A per-cell bed above its cell's
+            model top is capped there, with a warning. A lake cell a raster has no
+            data for (one the polygon clips at its edge) is set to the top, with a
+            warning; a lake cell missing from a Series raises.
         lake_top
             Facility top per lake -- **required for ``"rectangular"``** lakes; the
-            horizontal-connection ``telev``. Ignored by ``"bathy"``.
+            horizontal-connection ``telev``. Takes the same forms as
+            ``lake_bottom``, but is read at the lake's cells only and never filled
+            or capped. Ignored by ``"bathy"``.
         only_vertical
             ``True`` (or a per-lake mapping) to build vault lakes with vertical
             connections only (no horizontal sidewall exchange).
@@ -4061,6 +4084,13 @@ class _LAKPackage:
         >>> mf.lak(context=ctx, nper=1, lakes="lakes.gpkg", lake_id_field="name",
         ...        starting_stage={"valley_lake": 101.0}, lake_bottom={"valley_lake": 96.0},
         ...        bed_leakance=0.1, status={"valley_lake": ["ACTIVE"]}, mover=True)
+
+        A natural lake whose bed comes from bathymetry contours, clipped to the pond:
+
+        >>> bed = mf.Contours("pond_contours.gpkg", z="Elev", epsg="2927",
+        ...                   region_vector="pond.gpkg")
+        >>> mf.lak(context=ctx, nper=1, lakes="pond.gpkg", lake_id_field="name",
+        ...        starting_stage={"pond": 101.0}, lake_bottom=bed, bed_leakance=0.1)
         """
 
         builder = LAKBuilder(

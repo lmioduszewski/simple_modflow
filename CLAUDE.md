@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2722 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2740 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -347,6 +347,12 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   it. The error prints both extents and both CRSs, because a location mismatch is two
   boxes; a partial miss WARNS by name. A polygon covers a cell by AREA (ledger 210):
   drawn along faces it reaches only the cells inside it, never its neighbours.
+- **A lakebed from bathymetry is `mf.lak(lake_bottom=<Surface>)`** (ledger 231,
+  2026-09-11) -- `mf.Contours`/`mf.Raster`/algebra, a raster `Path` or `str`, or a
+  cell-indexed Series. Sampled ONCE (it was one full-grid sample per cell read).
+  `bathy` reads the bed at the lake's NEIGHBOURS too; where the source has none they
+  are the model top, and a per-cell bed above its model top is capped with a warning.
+  A scalar bed is never capped -- `rectangular` facilities keep their flat bottom.
 - **Package-first surface**: `mf.gwf/gwt/gwe/prt`; `mf.disv` (+ `mf.dis`/`mf.disu`
   structured/unstructured passthroughs, viz stays DISV-only); `mf.ic/npf/sto/oc/tdis/ims`;
   list BCs `mf.chd/ghb/drn/riv/wel/rch/evt` each with `()` (direct data), `.gpkg(path, context=, nper=)`
@@ -511,8 +517,9 @@ Four measured facts drive the design, and each is a trap if forgotten:
 - **The CLN carries NO bathymetry.** Every feature's bed is the model top, lakes
   included (Keevie 313/313 nodes, Marjorie 104/104, to 0.00003 ft). So a LAK built
   from the exported bottoms has zero depth, and 312 of Keevie's round just ABOVE
-  their cell top -- which `mf.lak` rejects as "bottom does not intersect active
-  cell". Supply your own depth. Also: 3 of RockCreek's 39 cells are inactive in
+  their cell top. Through the raster, `mf.lak` now caps those at the top and WARNS
+  (ledger 231); it used to reject them as "bottom does not intersect active cell",
+  so the warning is the signal now, not an error. Supply your own depth. Also: 3 of RockCreek's 39 cells are inactive in
   every layer (USG allowed the connection, MF6's SFR will not) -- see `cell_active`.
 **`free_row` (`usg/_io.py`), not `free_floats`, for any row with a trailing label** --
 `Wlnd217` contributes a phantom `217.0` to a regex number scan. Same class of bug as the
