@@ -20,6 +20,7 @@ from myflopy.advanced import (
     riv_spec,
     wel_spec,
 )
+from myflopy.modflow.mf6.grid.geometry import _SLIVER_SHARE, _SLIVER_WIDTH, _mean_width
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import ModelContext, PackageSpec, _layer_elevations
 
@@ -35,39 +36,6 @@ def _extent(geometry) -> float:
         return 0.0
     area = float(getattr(geometry, "area", 0.0) or 0.0)
     return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
-
-
-# An areal piece narrower than this, in the grid's length unit, is dropped. Almost
-# always it is a face-aligned edge whose coordinates were perturbed. A
-# perturbation is a WIDTH, so the test is the piece's mean width, not its share of
-# the cell: a share rule caught a NAD83 round trip on 500 ft cells and missed it on
-# 300 ft ones. Measured: 3e-7 after a double-precision reprojection, 3.4e-4 after
-# NAD83 <-> NAD83(HARN), up to 5e-3 from vertices FloPy wrote at 9 significant
-# digits. It also drops REAL corner clips that thin, deliberately, as
-# Spread.min_share does -- on real overlays at most 1.5e-3 ft2, 8.3e-6 of a cell.
-# Coordinates ROUNDED on export (GeoJSON at 7 decimal degrees: 0.003 to 0.018)
-# straddle it and are not reliably covered. Ledger 210.
-_SLIVER_WIDTH = 0.01
-
-# ...and a sliver is also under this share of its cell. Noise is width / cell width
-# of a cell, under 1% on any cell wider than half a unit, so this changes nothing on
-# a real grid; without it a lab-scale grid (0.01-unit cells) lost ALL its coverage,
-# every piece being narrower than the tolerance.
-_SLIVER_SHARE = 0.01
-
-
-def _mean_width(geometry) -> float:
-    """Twice the area over the perimeter of the AREAL parts: a strip's width, half a square's side.
-
-    Areal parts only: a piece that also touches its cell along a face comes back as
-    a GeometryCollection holding that face as a line, and counted in the perimeter
-    it made a 1.2 ft square a 0.00998 "sliver".
-    """
-
-    if geometry.geom_type == "GeometryCollection":
-        geometry = shapely.union_all([part for part in shapely.get_parts(geometry) if part.area > 0])
-    perimeter = float(geometry.length)
-    return 2.0 * float(geometry.area) / perimeter if perimeter > 0 else 0.0
 
 
 def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):

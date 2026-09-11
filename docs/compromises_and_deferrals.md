@@ -6805,3 +6805,34 @@ same day, which is the useful part of the result.
         computed in a geographic CRS is not the cell's centre.
       - **Four mutants, all killed:** no fallback, no bounds check, nodata
         ignored in the fallback, and the fallback overriding the majority.
+
+214. **A stream centerline on a cell face was two streams' worth of reaches (2026-09-11).**
+      `SFRBuilder.reaches` intersected each cell with the centerline, and a closed
+      cell polygon includes its boundary, so a stretch lying ON a shared face came
+      back full length from BOTH cells. A stream along a row line of a 4x4 grid gave
+      8 reaches and 200 ft of rlen for a 100 ft stream -- streambed conductance
+      doubled -- and the two copies' projected midpoints tied, so the stable sort
+      interleaved the rows and the chain routed back and forth between them. MF6
+      accepts every record: each is a valid cell, a positive rlen, an adjacent
+      neighbour. Found by the vector-to-cell sweep that followed entry 210; the
+      GeoPackage fix does not reach `sfr.py`.
+      - **The lower-numbered cell keeps a face stretch** (decided 2026-09-11). The
+        `.gpkg` rule splits a line on a face evenly (entry 212); for SFR that makes
+        two parallel reaches and breaks the chain, so one cell it is. A stretch is
+        claimed only by a reach that is KEPT, so a lower cell whose piece falls
+        under `min_reach_length` does not take it from the cell that would have.
+      - **A piece under `_SLIVER_WIDTH` (0.01) is dropped whatever
+        `min_reach_length` says.** A diagonal through vertices sent through EPSG:4326
+        and back clipped three corner cells by ~9e-7 ft and put three micro-reaches
+        in the chain; the code's own comment records MF6 dying (SIGFPE) on a
+        0.005 ft reach. `min_reach_length` keeps its 0.0 default -- it is the
+        user's deliberate minimum; noise is not the user's to configure.
+      - **The tolerance now lives once, in `grid/geometry.py`**, shared with the
+        GeoPackage resolver (entry 210), so the two cannot drift apart.
+      - Exact coincidence only: a centerline 1e-9 ft off the face was already
+        right. The triggers are streams snapped to grid vertices, drawn along row
+        lines of a structured or quadtree DISV grid, or derived from cell
+        boundaries.
+      - **Five mutants, all killed:** no claim subtracted, the higher-numbered cell
+        claiming, no noise floor, claims not accumulated, and a stretch claimed
+        before the length check.

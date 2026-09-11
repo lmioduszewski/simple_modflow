@@ -17,6 +17,7 @@ import pandas as pd
 from shapely.geometry import Point
 
 from myflopy.advanced import sfr_spec
+from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH
 from myflopy.specs import (
     _layer_elevations,
     ModelContext,
@@ -433,20 +434,36 @@ class SFRBuilder:
 
         rows = []
         rno = 0
+        polys = self.grid.gdf_vorPolys
         for stream_id in self._ordered_stream_ids():
             line = self.stream_table.loc[stream_id].geometry
-            intersecting = self.grid.gdf_vorPolys[self.grid.gdf_vorPolys.intersects(line)]
+            # Lowest-numbered first: the cell that keeps a stretch lying on a face.
+            intersecting = polys[polys.intersects(line)].sort_index()
             segments = []
+            claimed = None
             for cell, grid_row in intersecting.iterrows():
                 segment = grid_row.geometry.intersection(line)
+                # A closed cell includes its boundary, so a stretch lying ON a face is
+                # in both cells' pieces. Counted in both, it doubled rlen and zig-zagged
+                # the chain between them. The lower-numbered cell keeps it (decided
+                # 2026-09-11): halving it would make two parallel reaches.
+                if claimed is not None:
+                    segment = segment.difference(claimed)
                 # A stream clipping the corner of a cell yields a sliver reach. MF6
                 # divides by reach length, and a reach of 0.005 ft crashed it outright
                 # (SIGFPE while reading the package) on a real 652-reach model, where
                 # 36 reaches were under 5 ft. Dropping one leaves the stream connected
                 # through its neighbours, because the topology is rebuilt from the
                 # ordering below rather than from the discarded cell.
-                if segment.length <= max(0.0, self.min_reach_length):
+                # Under ``_SLIVER_WIDTH`` a piece is noise whatever ``min_reach_length``
+                # says: a CRS round trip clipped corner cells by ~9e-7 ft.
+                if segment.length <= max(_SLIVER_WIDTH, self.min_reach_length):
                     continue
+                # Claimed only once KEPT, so a lower cell whose piece is dropped does
+                # not take the stretch from the cell that would have kept it.
+                along = segment.intersection(grid_row.geometry.boundary)
+                if along.length > 0:
+                    claimed = along if claimed is None else claimed.union(along)
                 midpoint = segment.interpolate(0.5, normalized=True)
                 segments.append((line.project(midpoint), int(cell), segment))
             segments.sort(key=lambda item: item[0])

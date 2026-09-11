@@ -359,6 +359,40 @@ def geometry_first(gdf):
     return gdf[geo + [c for c in gdf.columns if c not in geo]]
 
 
+# An areal piece narrower than this, in the grid's length unit, is dropped. Almost
+# always it is a face-aligned edge whose coordinates were perturbed. A
+# perturbation is a WIDTH, so the test is the piece's mean width, not its share of
+# the cell: a share rule caught a NAD83 round trip on 500 ft cells and missed it on
+# 300 ft ones. Measured: 3e-7 after a double-precision reprojection, 3.4e-4 after
+# NAD83 <-> NAD83(HARN), up to 5e-3 from vertices FloPy wrote at 9 significant
+# digits. It also drops REAL corner clips that thin, deliberately, as
+# Spread.min_share does -- on real overlays at most 1.5e-3 ft2, 8.3e-6 of a cell.
+# Coordinates ROUNDED on export (GeoJSON at 7 decimal degrees: 0.003 to 0.018)
+# straddle it and are not reliably covered. Ledger 210 -- and SFR drops a reach
+# SHORTER than it, whatever min_reach_length says (ledger 214).
+_SLIVER_WIDTH = 0.01
+
+# ...and a sliver is also under this share of its cell. Noise is width / cell width
+# of a cell, under 1% on any cell wider than half a unit, so this changes nothing on
+# a real grid; without it a lab-scale grid (0.01-unit cells) lost ALL its coverage,
+# every piece being narrower than the tolerance.
+_SLIVER_SHARE = 0.01
+
+
+def _mean_width(geometry) -> float:
+    """Twice the area over the perimeter of the AREAL parts: a strip's width, half a square's side.
+
+    Areal parts only: a piece that also touches its cell along a face comes back as
+    a GeometryCollection holding that face as a line, and counted in the perimeter
+    it made a 1.2 ft square a 0.00998 "sliver".
+    """
+
+    if geometry.geom_type == "GeometryCollection":
+        geometry = shp.union_all([part for part in shp.get_parts(geometry) if part.area > 0])
+    perimeter = float(geometry.length)
+    return 2.0 * float(geometry.area) / perimeter if perimeter > 0 else 0.0
+
+
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
     """Adjust stacked surface elevations to preserve layer ordering.
 
