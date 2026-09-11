@@ -6859,3 +6859,56 @@ same day, which is the useful part of the result.
       - **Four mutants, all killed:** the representative point (the old code), ties
         to the upstream reach, connections ignoring the outlet, and diversions
         ignoring the outlet.
+
+216. **A fault trace resolved to the faces it crossed, and 68-100% of the flow still crossed it (2026-09-11).**
+      `barrier_faces` accepted a cell pair when the trace crossed the pair's shared
+      face. That is right only for a trace drawn exactly along faces. A trace
+      through cells crosses the faces between consecutive cells ALONG the fault,
+      which block nothing across it; the connections carrying cross-fault flow --
+      the straddled cell to its neighbours on either side -- have faces the trace
+      never touches. Measured with MF6 at hydchr 1e-10: 100% still crossed on a
+      square grid through cell centres or off-centre, 93-98% on an irregular
+      Voronoi grid, 79% on one refined along the fault, 95% on the canonical grid
+      with the tests' own `crossing_line`, and 69% in the canonical model -- where
+      `packages.hfb.results.q.summary()` read as a SEALED barrier, because it sums
+      |q| on the barrier's own faces. A 45-degree trace through grid vertices
+      resolved to zero faces. `test_a_tighter_barrier_passes_less_water` measured
+      that same self-referential sum and passed on a barrier leaking 95%.
+      - **A barrier now cuts the CONNECTIONS whose centre-to-centre segment crosses
+        the trace** -- the DISV `cell2d` centres, `vor.points`, the points MF6
+        connects. A trace along faces resolves exactly as before (20 faces at
+        x=1000 on a 50 ft grid).
+      - **A centre ON the trace belongs to its left**, looking along the trace as
+        drawn. Without a side, both of its connections across the trace touch it
+        only at an end and neither is cut: on a Triangle grid, whose boundary
+        generators sit on the bisected segments, the connection rule without one
+        leaked 52%. Which side is arbitrary, and moves the staircase by one cell;
+        that it is fixed is not. A connection running ALONG the trace (both centres
+        on it) is not cut.
+      - **`strict=` is gone** from `mf.hfb.line`, `mf.hfb.gpkg` and
+        `vor.barrier_faces`. It suppressed end-point touches of the face test and
+        has nothing to act on now; a parameter that cannot act is the defect
+        ledger 176 names. `api_snapshot.json` records the removal.
+      - **Existing `.line`/`.gpkg` models get different faces** -- the correct ones.
+        Accepted 2026-09-11. `mf.hfb(pairs=...)`, `.enclose`, `.flopy` and the USG
+        importer (explicit pairs) are untouched.
+      - **JUDGMENT CALL: no length correction.** The cut is a staircase up to half a
+        cell off the trace and longer than it (about 1.4x at 45 degrees on a square
+        grid), and MF6 multiplies hydchr by face width, so a FINITE-hydchr barrier
+        is up to that much more conductive than the trace it stands for. A
+        near-impermeable barrier is unaffected. Every grid-snapped HFB has this.
+      - **A closed ring through `.line` is watertight now** (82 cuts on the
+        canonical ring against `.enclose`'s 83). `.enclose` stays: it decides inside
+        by centroid, and refuses a cut that leaks.
+      - **A trace that ENDS at a centre or on a connection cuts nothing there.** The
+        side rule is for a centre on a trace's interior; a draft that gave a
+        trace's start a side cut the connection to its right from a 0.01 stub
+        inside one cell. Elsewhere the test is a proper crossing (`crosses`, not
+        `intersects`) for the same reason.
+      - **Five mutants, all killed:** no side for a centre on the trace, the right
+        side for the left, `intersects` for `crosses`, a trace's end given a side,
+        and the old rule itself (faces the trace crosses: 10 tests fail).
+      - Tests: a flood fill proves each trace seals -- along faces, through centres,
+        off-centre, at 45 and 68 degrees, and across an irregular Voronoi grid with
+        generators on the trace -- and a slow MF6 test measures the flow across the
+        trace itself, which is what the barrier is for.

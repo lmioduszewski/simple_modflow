@@ -420,7 +420,7 @@ the run aborts instead. These resolve geometry and validate first.
 | call | from |
 |---|---|
 | `mf.hfb(pairs=…, hydchr=…, layers=…, context=…)` | explicit cell pairs |
-| `mf.hfb.line(trace, context=…, hydchr=…)` | a fault trace → the faces it crosses |
+| `mf.hfb.line(trace, context=…, hydchr=…)` | a fault trace → the connections it cuts |
 | `mf.hfb.gpkg(path, context=…, hydchr="hydchr")` | a GeoPackage line layer |
 | `mf.hfb.enclose(polygon, context=…, hydchr=…)` | a watertight cutoff wall around a region |
 | `mf.hfb.flopy(stress_period_data=…)` | the FloPy-native form, unvalidated |
@@ -428,9 +428,11 @@ the run aborts instead. These resolve geometry and validate first.
 `hydchr` is a hydraulic **characteristic**, 1/T — barrier K divided by barrier
 thickness, not K. `0` is impermeable; a negative value is a conductance multiplier.
 
-`.enclose` is separate from `.line` on purpose: a ring passes *through* cells, so
-the faces it crosses are **not** watertight. The cut between the enclosed cells and
-their neighbours is.
+A trace cuts the **connections** whose centre-to-centre segment crosses it -- not the
+faces it passes through, which run between cells ALONG the fault and block nothing
+across it (68-100% of the flow still crossed until ledger 216). A cell centre lying
+on the trace belongs to its left, looking along the trace as drawn. `.enclose` seals
+a REGION: cells inside by centroid, and it refuses a cut that leaks.
 
 Grid verbs underneath: `vor.barrier_faces(geom)`, `vor.enclosed_faces(polygon)`,
 `vor.shared_face(a, b)`.

@@ -604,8 +604,8 @@ class VoronoiGridPlus(VoronoiGrid):
 
         return shared_face_segment(self, cell_a, cell_b)
 
-    def barrier_faces(self, barrier, *, strict: bool = True):
-        """The cell-pair faces a barrier line crosses.
+    def barrier_faces(self, barrier):
+        """The cell pairs a barrier trace cuts -- the connections it blocks.
 
         See :func:`myflopy.modflow.mf6.grid.barriers.barrier_faces`. This is what
         turns a digitised fault trace into the pairs MODFLOW 6's HFB wants.
@@ -613,7 +613,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         from myflopy.modflow.mf6.grid.barriers import barrier_faces
 
-        return barrier_faces(self, barrier, strict=strict)
+        return barrier_faces(self, barrier)
 
     def enclosed_faces(self, polygon):
         """The watertight cut sealing the cells inside ``polygon`` from the rest.

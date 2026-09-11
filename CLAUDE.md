@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2647 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2661 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -432,8 +432,11 @@ READASARRAYS. Arrays are opt-in: for a sparse BC they are a pessimization.
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE
 between two cells, so MF6 wants a cell PAIR — and FloPy validates each cellid
 against idomain but **never checks the two are connected**, so a bad pair kills the
-run mid-way. `.line`/`.gpkg` resolve a fault trace to the faces it crosses
-(`vor.barrier_faces`), and every route validates first.
+run mid-way. `.line`/`.gpkg` resolve a fault trace to the CONNECTIONS it cuts --
+centre-to-centre segments crossing it (`vor.barrier_faces`, ledger 216) -- and every
+route validates first. They took the faces the trace crosses until 2026-09-11: those
+run between cells ALONG the fault, and 68-100% of the cross-fault flow still crossed
+while `results.q.summary()` read as sealed (it sums |q| on the barrier's own faces).
 **Deliberately not a `package_registry` entry**: HFB is face-indexed (no cellid, so
 `record_fields` is undefinable) and MF6 writes **no HFB budget record** at all. A
 registry entry would have to lie in the one file whose premise is that it cannot. It
@@ -445,9 +448,9 @@ renumber). Inputs side: `get`/`summary`/`segments`/`map`, all hand-written, beca
 the registry view is cell-keyed and a barrier is an EDGE.
 Three measured traps: a **duplicated face** is applied TWICE by MF6 and left
 permanently wrong (`condsat_reset` restores the already-modified value); a closed
-wall is **not** the faces its ring crosses (a ring goes through cells — measured 53
-crossed faces left all 441 cells connected, where the cut is 83 and seals 105);
-and `hydchr` is K/thickness, 1/T, not K.
+wall through `.line` is watertight now too (82 cuts on the canonical ring against
+`.enclose`'s 83), but only `.enclose` refuses a cut that leaks; and `hydchr` is
+K/thickness, 1/T, not K.
 
 ## Importing a MODFLOW-USG model? `mf.read_usg` (2026-08-28, ledger 159)
 `mf.read_usg(nam, gsf=)` -> `UsgModel` -> `.to_mf6()` -> `SimulationSpec` on **DISV**.

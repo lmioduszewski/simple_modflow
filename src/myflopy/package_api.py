@@ -4246,13 +4246,12 @@ class _HFBPackage:
         context: ModelContext,
         hydchr: float | Sequence[float],
         layers: int | Sequence[int] | None = None,
-        strict: bool = True,
         first_period: int = 0,
         name: str = "hfb",
         print_input: bool = False,
         **options: Any,
     ) -> PackageSpec:
-        """Return an HFB spec from a barrier trace, resolved to the faces it crosses.
+        """Return an HFB spec from a barrier trace, resolved to the connections it cuts.
 
         Parameters
         ----------
@@ -4264,10 +4263,6 @@ class _HFBPackage:
             Hydraulic characteristic, 1/T.
         layers : int or sequence of int, optional
             Layers the barrier cuts. ``None`` means layer 0 only.
-        strict : bool, default True
-            Ignore a crossing that only touches a face's END POINT. A trace
-            digitised *along* a cell edge otherwise picks up both faces meeting
-            that edge -- three faces where one was drawn.
         first_period, name, print_input, **options
             As for :meth:`__call__`.
 
@@ -4277,9 +4272,9 @@ class _HFBPackage:
         """
 
         grid = _hfb_grid(context, verb="mf.hfb.line")
-        faces = grid.barrier_faces(barrier, strict=strict)
+        faces = grid.barrier_faces(barrier)
         if not faces:
-            logger.warning("mf.hfb.line: the barrier crosses no cell face; HFB will be empty")
+            logger.warning("mf.hfb.line: the barrier cuts no connection; HFB will be empty")
         return self(
             pairs=faces,
             hydchr=hydchr,
@@ -4299,7 +4294,6 @@ class _HFBPackage:
         hydchr: RowValue = "hydchr",
         layer: str | None = None,
         layers: int | Sequence[int] | None = None,
-        strict: bool = True,
         first_period: int = 0,
         name: str = "hfb",
         print_input: bool = False,
@@ -4320,7 +4314,7 @@ class _HFBPackage:
             GeoPackage table name; the only table by default.
         layers : int or sequence of int, optional
             Model layers the barriers cut. ``None`` means layer 0 only.
-        strict, first_period, name, print_input, **options
+        first_period, name, print_input, **options
             As for :meth:`line`.
 
         Returns
@@ -4336,12 +4330,12 @@ class _HFBPackage:
         pairs: list[tuple[int, int]] = []
         values: list[float] = []
         for _, row in frame.iterrows():
-            crossed = grid.barrier_faces(row.geometry, strict=strict)
+            crossed = grid.barrier_faces(row.geometry)
             value = row[hydchr] if isinstance(hydchr, str) else hydchr
             pairs.extend(crossed)
             values.extend([float(value)] * len(crossed))
         if not pairs:
-            logger.warning("mf.hfb.gpkg: no feature in %s crosses a cell face", path)
+            logger.warning("mf.hfb.gpkg: no feature in %s cuts a connection", path)
 
         return self(
             pairs=pairs,
@@ -4368,18 +4362,18 @@ class _HFBPackage:
     ) -> PackageSpec:
         """Return an HFB spec sealing the cells inside ``polygon`` from the rest.
 
-        The barrier is the CUT between the enclosed cell set and its neighbours,
-        **not** the faces the polygon's ring crosses. A ring passes through
-        cells, so the crossed set has a gap at every cell it enters and leaves:
-        on a 441-cell grid a square ring crossed 53 faces and left every cell
-        still hydraulically connected, where the cut is 83 faces and seals 105.
+        The barrier is the CUT between the enclosed cell set -- cells whose
+        CENTROID is inside -- and its neighbours. :meth:`line` on the same ring
+        cuts nearly the same connections (82 against 83 on the canonical ring,
+        since ledger 216), but only this refuses a cut that leaks. Before 216,
+        ``.line`` took the faces the ring crossed: 53 of them, sealing nothing.
 
         Raises
         ------
         ValueError
             If the resulting cut does not in fact disconnect the interior. A
             leaking cutoff wall is always a bug, so this is an error rather than
-            a warning -- unlike :meth:`line`, where an open barrier is normal.
+            a warning -- unlike :meth:`line`, where an open-ENDED barrier is normal.
 
         Returns
         -------

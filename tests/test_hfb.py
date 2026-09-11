@@ -44,14 +44,14 @@ def _records(spec):
 # --- the geometry -------------------------------------------------------------
 
 
-def test_a_line_resolves_to_the_faces_it_crosses(canonical_run, crossing_line):
+def test_a_line_resolves_to_the_connections_it_cuts(canonical_run, crossing_line):
     faces = barrier_faces(canonical_run.vor, crossing_line)
     assert faces
     assert all(a < b for a, b in faces), "pairs come back canonically ordered"
     assert len(faces) == len(set(faces)), "and unique"
 
 
-def test_a_crossed_face_is_a_real_connection(canonical_run, crossing_line):
+def test_every_cut_is_a_real_connection(canonical_run, crossing_line):
     """Every face the resolver returns must be one MODFLOW 6 agrees exists.
 
     `vor.adjacent_cells_idx` was verified to be exactly MF6's DISV lateral
@@ -64,7 +64,7 @@ def test_a_crossed_face_is_a_real_connection(canonical_run, crossing_line):
         assert shared_face_segment(canonical_run.vor, cell_a, cell_b) is not None
 
 
-def test_a_stub_inside_one_cell_crosses_nothing(canonical_run):
+def test_a_stub_inside_one_cell_cuts_nothing(canonical_run):
     centroid = canonical_run.vor.gdf_vorPolys.geometry.iloc[0].centroid
     stub = shp.LineString([(centroid.x, centroid.y), (centroid.x + 0.01, centroid.y)])
     assert barrier_faces(canonical_run.vor, stub) == []
@@ -81,11 +81,11 @@ def test_cells_that_only_touch_share_no_face(canonical_run):
 # --- the closed-wall trap -----------------------------------------------------
 
 
-def test_a_ring_crossing_is_not_watertight_but_the_cut_is(canonical_run):
-    """This is the whole reason `.enclose` is not `closed=True` on `.line`.
-
-    A ring passes THROUGH cells, so the crossed-face set has a gap wherever it
-    enters and leaves one, and water simply walks around.
+def test_a_ring_seals_its_interior_like_the_enclosing_cut(canonical_run):
+    """A ring through cells used to leave every cell connected: it took the faces the
+    ring CROSSES, which run along it. It cuts the connections across it now (ledger
+    216) and seals like `.enclose` -- which stays, because it decides inside by
+    centroid and refuses a cut that leaks.
     """
 
     vor = canonical_run.vor
@@ -98,8 +98,7 @@ def test_a_ring_crossing_is_not_watertight_but_the_cut_is(canonical_run):
     assert is_watertight(vor, cut, interior[0])
 
     ring = barrier_faces(vor, polygon.exterior)
-    assert not is_watertight(vor, ring, interior[0])
-    assert len(ring) < len(cut)
+    assert is_watertight(vor, ring, interior[0])
 
 
 # --- validation, which is the other half of the value -------------------------
@@ -363,29 +362,49 @@ def test_the_flow_column_names_its_frame(barrier_run):
 
 
 @pytest.mark.slow
-def test_a_tighter_barrier_passes_less_water(canonical_run_fresh, crossing_line):
-    """The physical claim: that is what a barrier is for."""
+def test_a_barrier_across_the_grid_stops_the_flow_across_it(canonical_run, crossing_line, tmp_path):
+    """What a barrier is FOR. This used to sum |q| on the barrier's own faces -- near
+    zero at a tiny hydchr whatever faces were picked -- and passed on a barrier that
+    let 95% of the flow across (ledger 216). Here CHD holds the southern cells high
+    and the northern ones low, so every unit of CHD inflow crosses the trace."""
 
     import flopy
+    import numpy as np
 
-    model = canonical_run_fresh
-    faces = barrier_faces(model.vor, crossing_line)
+    vor = canonical_run.vor
+    y = np.asarray(vor.points)[:, 1]
+    low, high = np.quantile(y, [0.08, 0.92])
+    south = [int(c) for c in np.flatnonzero(y <= low)]
+    north = [int(c) for c in np.flatnonzero(y >= high)]
 
-    def total(hydchr):
-        if model.gwf.get_package("hfb") is not None:
-            model.gwf.remove_package("hfb")
-        flopy.mf6.ModflowGwfhfb(
-            model.gwf,
-            stress_period_data={0: [[[0, a], [0, b], hydchr] for a, b in faces]},
+    def inflow(pairs, label):
+        sim = flopy.mf6.MFSimulation(sim_name=label, sim_ws=str(tmp_path / label), exe_name="mf6")
+        flopy.mf6.ModflowTdis(sim)
+        flopy.mf6.ModflowIms(sim, complexity="SIMPLE")
+        gwf = flopy.mf6.ModflowGwf(sim, modelname=label, save_flows=True)
+        flopy.mf6.ModflowGwfdisv(gwf, nlay=1, top=100.0, botm=[0.0], **vor.get_disv_gridprops())
+        flopy.mf6.ModflowGwfnpf(gwf, k=1.0)
+        flopy.mf6.ModflowGwfic(gwf, strt=50.0)
+        flopy.mf6.ModflowGwfchd(
+            gwf,
+            stress_period_data={
+                0: [[(0, c), 90.0] for c in south] + [[(0, c), 10.0] for c in north]
+            },
         )
-        model.sim.write_simulation(silent=True)
-        success, _ = model.run_simulation()
-        assert success
-        flows = model.packages.hfb.results.q.get()
-        latest = flows[(flows["per"] == flows["per"].max())]
-        return float(latest["q_cell1_to_cell2"].abs().sum())
+        if pairs:
+            flopy.mf6.ModflowGwfhfb(
+                gwf, stress_period_data={0: [[(0, a), (0, b), 1e-10] for a, b in pairs]}
+            )
+        flopy.mf6.ModflowGwfoc(gwf, budget_filerecord=f"{label}.cbc", saverecord=[("BUDGET", "ALL")])
+        sim.write_simulation(silent=True)
+        success, report = sim.run_simulation(silent=True)
+        assert success, "\n".join(report[-20:])
+        chd = gwf.output.budget().get_data(text="CHD")[-1]
+        return float(chd["q"][chd["q"] > 0].sum())
 
-    assert total(1e-9) < total(1e-2)
+    open_flow = inflow([], "open")
+    assert open_flow > 0
+    assert inflow(barrier_faces(vor, crossing_line), "sealed") < 1e-4 * open_flow
 
 
 @pytest.mark.slow

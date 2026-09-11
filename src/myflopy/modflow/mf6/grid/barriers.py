@@ -18,13 +18,16 @@ checked against the ``ia``/``ja`` arrays read back from a model's own ``.disv.gr
 1247 pairs against 1247, both difference sets empty. So a pair this module accepts
 is a pair MODFLOW 6 will accept.
 
-**A closed wall is not the faces its ring crosses.** A ring passes *through* cells,
-so the crossed-face set has gaps at every cell the ring enters and leaves -- on the
-canonical 441-cell grid a 540x540 ring crossed 23 faces and left every cell still
-hydraulically connected. Sealing a region is a different question: it is the *cut*
-between the enclosed cell set and everything else (38 faces there, isolating 28
-cells). That is why :func:`enclosed_faces` exists beside :func:`barrier_faces`
-rather than as a flag on it.
+**A barrier cuts CONNECTIONS, not the faces its trace touches.** Flow runs from
+cell centre to cell centre, so a trace blocks exactly the connections whose
+centre-to-centre segment it crosses: :func:`barrier_faces`. The faces a trace
+passes THROUGH are the others -- between consecutive cells ALONG the fault -- and
+block nothing across it. Resolving to those left 68-100% of the cross-fault flow
+crossing on every grid it was measured on, until 2026-09-11 (ledger 216).
+
+A closed ring resolved that way is watertight too. :func:`enclosed_faces` stays
+for sealing a REGION: it decides inside by cell centroid and :func:`is_watertight`
+lets a caller refuse a cut that leaks.
 """
 
 from __future__ import annotations
@@ -109,25 +112,31 @@ def _as_geometry(barrier, *, crs=None):
     return barrier
 
 
-def barrier_faces(
-    vor,
-    barrier: Any,
-    *,
-    strict: bool = True,
-) -> list[tuple[int, int]]:
-    """Return the cell-pair faces a barrier line crosses.
+def barrier_faces(vor, barrier: Any) -> list[tuple[int, int]]:
+    """Return the cell pairs a barrier trace cuts: the connections it blocks.
+
+    A connection is cut when the segment joining its two cell centres -- the
+    points MODFLOW 6 connects -- crosses the trace. That is the whole rule, and it
+    is what a barrier means: the flow a trace can block is the flow that has to
+    cross it. It replaced "the faces the trace crosses", which is right only for a
+    trace drawn exactly along faces; a trace through cells crosses the faces
+    between consecutive cells ALONG the fault, and 68-100% of the cross-fault flow
+    still crossed (ledger 216).
+
+    **A centre lying ON the trace belongs to its left**, looking along the trace as
+    drawn. Without a side, both of that cell's connections across the trace touch
+    it only at an end and neither is cut -- on a Triangle grid, whose boundary
+    generators sit exactly on the bisected segments, that leaked 52%. Which side
+    is arbitrary; that it is fixed is not. A trace that merely ENDS at a centre or on
+    a connection separates nothing there, and cuts nothing there.
 
     Parameters
     ----------
     vor
-        A grid exposing ``gdf_vorPolys`` and ``adjacent_cells_idx``.
+        A grid exposing ``gdf_vorPolys``, ``adjacent_cells_idx`` and ``points``.
     barrier
         A ``LineString``, ``MultiLineString``, ``GeoSeries`` or ``GeoDataFrame``.
         Reprojected to the grid's CRS when it declares one.
-    strict
-        Ignore a crossing that only touches a face's END POINT. A trace digitised
-        *along* a Voronoi edge otherwise picks up both faces meeting that edge --
-        three faces where the modeller drew one.
 
     Returns
     -------
@@ -137,52 +146,84 @@ def barrier_faces(
 
     geometry = _as_geometry(barrier, crs=getattr(vor, "crs", None))
     if geometry is None or geometry.is_empty:
-        logger.warning("barrier geometry is empty; no faces crossed")
+        logger.warning("barrier geometry is empty; no connection cut")
         return []
 
-    # Only cells the line actually touches can own a crossed face, so the
-    # neighbour scan starts from them rather than from all ncpl cells.
+    centres = _cell_centres(vor)
+    ends = geometry.boundary
+    # A cut connection's segment lies in its two cells, so one of them touches the
+    # trace: the scan starts from those rather than from all ncpl cells.
     touched = vor.gdf_vorPolys.geometry.sindex.query(geometry, predicate="intersects")
     adjacency = vor.adjacent_cells_idx
 
-    faces: set[tuple[int, int]] = set()
+    seen: set[tuple[int, int]] = set()
+    cuts: list[tuple[int, int]] = []
     for cell in np.atleast_1d(touched):
         cell = int(cell)
         for neighbour in adjacency[cell]:
-            neighbour = int(neighbour)
-            pair = (min(cell, neighbour), max(cell, neighbour))
-            if pair in faces:
+            pair = (min(cell, int(neighbour)), max(cell, int(neighbour)))
+            if pair in seen:
                 continue
-            segment = shared_face_segment(vor, *pair)
-            if segment is None or not geometry.intersects(segment):
-                continue
-            if strict and not _crosses_interior(geometry, segment):
-                continue
-            faces.add(pair)
+            seen.add(pair)
+            if _cuts(geometry, ends, shp.Point(centres[pair[0]]), shp.Point(centres[pair[1]])):
+                cuts.append(pair)
 
-    logger.debug("barrier crosses %d face(s)", len(faces))
-    return sorted(faces)
+    logger.debug("barrier cuts %d connection(s)", len(cuts))
+    return sorted(cuts)
 
 
-def _crosses_interior(geometry, segment) -> bool:
-    """True when ``geometry`` meets ``segment`` somewhere other than its end points.
+def _cell_centres(vor) -> np.ndarray:
+    """The ``(ncpl, 2)`` points MODFLOW 6 connects: the DISV ``cell2d`` centres.
 
-    A barrier drawn along a cell edge touches the two faces meeting that edge at
-    a single shared vertex. Those are not crossings, and counting them turns one
-    drawn barrier into three.
+    That is ``vor.points`` -- the Voronoi generators -- where the grid has them;
+    otherwise the cell centroids, which are the same points on a Voronoi grid.
     """
 
-    try:
-        meeting = geometry.intersection(segment)
-    except GEOSException as error:
-        logger.debug("could not intersect barrier with a face; face skipped: %s", error)
-        return False
-    if meeting.is_empty:
-        return False
-    if meeting.length > FACE_TOLERANCE:
-        return True
-    ends = shp.MultiPoint([segment.coords[0], segment.coords[-1]])
-    return not meeting.within(ends.buffer(FACE_TOLERANCE))
+    points = getattr(vor, "points", None)
+    polys = vor.gdf_vorPolys.geometry
+    if points is not None and len(points) == len(polys):
+        return np.asarray(points, dtype=float)[:, :2]
+    centroids = polys.centroid
+    return np.column_stack([centroids.x.to_numpy(), centroids.y.to_numpy()])
+
+
+def _cuts(trace, ends, a, b) -> bool:
+    """Whether the connection from centre ``a`` to centre ``b`` crosses ``trace``."""
+
+    a_on, b_on = _on_trace(trace, ends, a), _on_trace(trace, ends, b)
+    if a_on and b_on:
+        return False  # it runs ALONG the fault; that flow is not across it
+    if a_on:
+        return _right_of(trace, a, b)
+    if b_on:
+        return _right_of(trace, b, a)
+    # ``crosses``, not ``intersects``: a trace that merely ENDS on a connection, or
+    # at a centre, separates nothing there.
+    return shp.LineString([a, b]).crosses(trace)
+
+
+def _on_trace(trace, ends, point) -> bool:
+    """A centre ON the trace and away from its ends -- the one that needs a side."""
+
+    return point.distance(trace) <= FACE_TOLERANCE and (
+        ends.is_empty or point.distance(ends) > FACE_TOLERANCE
+    )
+
+
+def _right_of(trace, anchor, other) -> bool:
+    """Whether ``other`` lies RIGHT of the trace where ``anchor`` sits on it.
+
+    ``anchor`` is a centre on the trace and so belongs to the left; its connection
+    to ``other`` is cut exactly when ``other`` is on the right.
+    """
+
+    part = min(shp.get_parts(trace), key=lambda piece: piece.distance(anchor))
+    station = part.project(anchor)
+    step = max(part.length * 1e-6, FACE_TOLERANCE)
+    behind = part.interpolate(max(station - step, 0.0))
+    ahead = part.interpolate(min(station + step, part.length))
+    dx, dy = ahead.x - behind.x, ahead.y - behind.y
+    return dx * (other.y - anchor.y) - dy * (other.x - anchor.x) < 0
 
 
 def enclosed_faces(vor, polygon: Any) -> tuple[list[tuple[int, int]], list[int]]:
