@@ -6983,3 +6983,11 @@ same day, which is the useful part of the result.
       - Three mutants: names recorded (survives, above), a full load reloading for
         an absent package (killed), core packages served from a partial load
         (killed).
+
+221. **Reopening a run printed at verbosity 0 (2026-09-11).** `_load_simulation`
+      floored its verbosity at 1, so FloPy's load chatter and myflopy's progress
+      lines printed the first time a reopened run touched a package -- although
+      `load_mf6_run(verbosity_level=0)` is the default, and asks for silence. The
+      floor is gone. `test_no_library_prints` could not see it: the print IS gated
+      on a flag, the flag was just overridden.
+      - One mutant, killed: the floor restored.

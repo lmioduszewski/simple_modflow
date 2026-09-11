@@ -104,3 +104,12 @@ def test_an_edit_to_a_core_package_reaches_the_files_too(flopy_named_workspace):
     model.run_simulation()
     written = " ".join((flopy_named_workspace / "named.oc").read_text().upper().split())
     assert "SAVE HEAD LAST" in written
+
+
+def test_a_reopened_run_is_quiet_at_verbosity_zero(flopy_named_workspace, capsys):
+    """The loader floored its verbosity at 1, so the default 0 printed anyway."""
+
+    model = mf.load_mf6_run(flopy_named_workspace)
+    capsys.readouterr()
+    model.packages.chd.inputs.head.get()
+    assert capsys.readouterr().out == ""

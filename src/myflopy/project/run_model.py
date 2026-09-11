@@ -514,7 +514,10 @@ class LoadedMf6Run(SimulationBase):
     ):
         """Load the FloPy simulation with the requested package subset."""
 
-        display_verbosity = self._verbosity_level if self._verbosity_level > 0 else 1
+        # The caller's level, never floored: `load_mf6_run(verbosity_level=0)` is the
+        # default and asks for silence, and a floor of 1 printed FloPy's load chatter
+        # the first time a reopened run touched a package.
+        display_verbosity = self._verbosity_level
 
         if load_only is None:
             _progress(display_verbosity, f"Loading full MF6 simulation from: {self.workspace}")
