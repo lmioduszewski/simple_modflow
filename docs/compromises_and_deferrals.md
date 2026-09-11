@@ -6726,3 +6726,36 @@ same day, which is the useful part of the result.
         because a draft of this change named a loop variable `empty`, shadowing
         the message parameter, and printed "False" in place of the consequence --
         caught by one test only, so a second now asserts it.
+
+212. **A line on a face counted twice; a point on a vertex, four times (2026-09-11).**
+      `GeoPackageSource._cell_shares` gave every cell a feature touched its own
+      piece of it. A line lying ON a face is in both cells' pieces, so its shares
+      summed to 2 and a `Spread` conductance doubled; a point on a face or a
+      vertex went to 2-4 cells, each at the WHOLE value -- a well on a vertex
+      pumped four times its rate. The tie rule was decided 2026-09-11:
+      - **A stretch of line on a face is split EVENLY between its two cells**, so
+        shares sum to one and a `Spread` total is conserved. The grid's outer edge
+        and a face whose far side is inactive have one cell, which keeps the whole
+        stretch. A face shared with two smaller cells (a hanging node) splits by
+        the length each shares. The split is found pairwise, but only among cells
+        whose piece runs along their own boundary -- usually none -- so a line off
+        every face pays nothing for it.
+      - **A point goes whole to the lowest-numbered active cell it touches**, one
+        per point of a MultiPoint. Lowest-numbered is arbitrary but deterministic,
+        and so would any other choice be; `edges_only` picks among edge cells.
+      - **An unsplit field still reaches both sides of a face at its whole value**
+        -- an elevation, a head. That is the documented broadcast, and the reason
+        `Spread` exists for extensive fields.
+      - **Shares now come back in cell order**, not spatial-index order.
+      - **Nine mutants, all killed:** no split on a face, a split by the whole
+        stretch, only neighbours-in-sort compared (a hanging node needs all
+        pairs), a point taking the highest cell, a point taking every cell (the
+        old code), a point ignoring activity, a point ignoring `edges_only`, a
+        MultiPoint keeping its first point only, and the usable cells left in
+        spatial-index order. The last one SURVIVED the first test set: the index
+        returned hits in cell order on every grid the tests built, and out of
+        order on 481 of 685 queries of a scrambled one -- so a test now numbers
+        its cells out of spatial order.
+      - **NOT done:** a line within floating noise of a face zigzags across it; its
+        length is conserved but falls to the two cells unevenly, as for any line
+        through two cells.

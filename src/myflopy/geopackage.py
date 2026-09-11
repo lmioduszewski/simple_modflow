@@ -467,7 +467,11 @@ class GeoPackageSource:
         """Active cells a feature covers, each with its fraction of the whole feature.
 
         The fraction is by length for a line, by area for a polygon, and 1.0 for a
-        point or anything with no extent -- there is nothing to divide. Fractions are
+        point or anything with no extent -- there is nothing to divide. A tie goes
+        ONE way (decided 2026-09-11): a stretch of line lying on a face is in both
+        cells' pieces, so it is split evenly between them and a line's shares sum to
+        one rather than two; a point on a face or vertex goes whole to the
+        lowest-numbered active cell it touches, not whole to each. Fractions are
         of the WHOLE feature, so they sum to less than one where part of it lies
         outside the active grid; :class:`Spread` decides what that means.
 
@@ -482,30 +486,37 @@ class GeoPackageSource:
         ``intersects`` over every cell, which was O(features x ncpl).
         """
 
-        polys = self.grid.gdf_vorPolys
-        candidates = polys.index[polys.sindex.query(geometry, predicate="intersects")]
-        if edges_only:
-            edge_cells = set(self.grid.get_grid_edge())
-            candidates = [cell for cell in candidates if cell in edge_cells]
-
-        if geometry is not None and geometry.geom_type == "GeometryCollection":
+        if geometry is None or geometry.is_empty:
+            return []
+        if geometry.geom_type == "GeometryCollection":
             if len(set(shapely.get_dimensions(shapely.get_parts(geometry)).tolist())) > 1:
                 raise ValueError(
                     "A GeometryCollection mixing points, lines and polygons has no single "
                     "measure to divide it by; write one feature per geometry type."
                 )
+        polys = self.grid.gdf_vorPolys
+        edge_cells = set(self.grid.get_grid_edge()) if edges_only else None
         measure = _extent(geometry)
+        if measure <= 0:
+            chosen = set()
+            for part in shapely.get_parts(geometry):
+                hits = self._usable_cells(
+                    polys.sindex.query(part, predicate="intersects"),
+                    layer=layer, edge_cells=edge_cells,
+                )
+                if hits:
+                    chosen.add(hits[0])
+            return [(cell, 1.0) for cell in sorted(chosen)]
+
         areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
         # A feature that is itself this thin is what was drawn, not a sliver of it.
         sliver = _SLIVER_WIDTH if areal and _mean_width(geometry) > _SLIVER_WIDTH else 0.0
-        shares: list[tuple[int, float]] = []
-        for cell in candidates:
-            cell = int(cell)
-            if not self._active(layer, cell):
-                continue
-            if measure <= 0:
-                shares.append((cell, 1.0))
-                continue
+        sizes: dict[int, float] = {}
+        on_faces: dict[int, Any] = {}
+        for cell in self._usable_cells(
+            polys.sindex.query(geometry, predicate="intersects"),
+            layer=layer, edge_cells=edge_cells,
+        ):
             polygon = polys.geometry.loc[cell]
             piece = geometry.intersection(polygon)
             if areal:
@@ -516,8 +527,30 @@ class GeoPackageSource:
                 size = float(piece.length)
                 if size <= 0:
                     continue
-            shares.append((cell, size / measure))
-        return shares
+                along = piece.intersection(polygon.boundary)
+                if along.length > 0:
+                    on_faces[cell] = along
+            sizes[cell] = size
+        # Pairwise, but only over cells whose piece runs along their own boundary:
+        # usually none, so a line off every face pays nothing for this.
+        faced = sorted(on_faces)
+        for i, first in enumerate(faced):
+            for second in faced[i + 1:]:
+                shared = float(on_faces[first].intersection(on_faces[second]).length)
+                if shared > 0:
+                    sizes[first] -= shared / 2.0
+                    sizes[second] -= shared / 2.0
+        return [(cell, size / measure) for cell, size in sizes.items() if size > 0]
+
+    def _usable_cells(self, hits, *, layer: int, edge_cells: set[int] | None) -> list[int]:
+        """The active cells among spatial-index ``hits``, lowest-numbered first."""
+
+        cells = (int(cell) for cell in self.grid.gdf_vorPolys.index[hits])
+        return sorted(
+            cell
+            for cell in cells
+            if (edge_cells is None or cell in edge_cells) and self._active(layer, cell)
+        )
 
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
         """Return a model/cell surface value for a mapped boundary cell.

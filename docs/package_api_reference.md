@@ -481,7 +481,9 @@ multiplies a conductance by the cell count (measured: 2.02x, on an unchanged gri
 `conductance=mf.Spread("conductance")` gives each cell its share — by length for a
 line, area for a polygon, and the whole value for a point, which has nothing to divide.
 A polygon covers a cell by AREA: one drawn along cell faces reaches only the cells
-inside it, not the neighbours it shares an edge with (ledger 210).
+inside it, not the neighbours it shares an edge with (ledger 210). A line lying ON a
+face is split evenly between its two cells, and a point on a face or vertex goes whole
+to the lowest-numbered active cell it touches (ledger 212).
 
 Runnable walkthrough: **`examples/mf6/notebooks/usg_export_to_new_model.ipynb`** —
 each written file, and the call that consumes it. It builds no model; it lays out the

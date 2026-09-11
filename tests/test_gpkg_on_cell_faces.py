@@ -22,7 +22,7 @@ import geopandas as gpd
 import numpy as np
 import pytest
 import shapely
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPoint, MultiPolygon, Point, box
 
 import myflopy as mf
 from myflopy.geopackage import GeoPackageSource, Spread
@@ -235,3 +235,146 @@ def test_a_collection_mixing_polygons_and_lines_is_refused(tmp_path):
     )
     with pytest.raises(ValueError, match="one feature per geometry type"):
         mf.chd.gpkg(_gpkg(tmp_path, mixed), layer="bc", context=_context(), nper=1)
+
+
+# --- lines and points on faces: the tie rule -------------------------------- #
+#
+# A line lying ON a face is in both cells' pieces, so its shares summed to 2: a
+# Spread conductance doubled. It is split evenly between the two cells now. A
+# point on a face or vertex touches two to four cells and each took the WHOLE
+# value; the lowest-numbered active one takes it now. Decided 2026-09-11.
+
+
+def _line_records(tmp_path, geometry, context=None, **fields):
+    return _records(
+        mf.drn.gpkg(
+            _gpkg(tmp_path, geometry), layer="bc", context=context or _context(), nper=1,
+            conductance=Spread("conductance"), **fields,
+        )
+    )
+
+
+def _by_cell(records, column=2):
+    return {record[0][1]: record[column] for record in records}
+
+
+def test_a_line_on_a_face_is_split_evenly_between_its_two_cells(tmp_path):
+    records = _line_records(tmp_path, LineString([(0.0, 25.0), (100.0, 25.0)]))
+    assert _by_cell(records) == pytest.approx({cell: 12.5 for cell in range(8)})
+
+
+def test_a_line_on_the_grid_edge_has_one_cell_per_stretch_and_keeps_its_length(tmp_path):
+    records = _line_records(tmp_path, LineString([(0.0, 0.0), (100.0, 0.0)]))
+    assert _by_cell(records) == pytest.approx({0: 25.0, 1: 25.0, 2: 25.0, 3: 25.0})
+
+
+def test_a_line_on_a_face_whose_far_side_is_inactive_stays_whole_on_the_near_side(tmp_path):
+    near_row_only = ModelContext(
+        grid=_context().grid, domain=np.array([[1, 1, 1, 1] + [0] * 12])
+    )
+    records = _line_records(tmp_path, LineString([(0.0, 25.0), (100.0, 25.0)]), near_row_only)
+    assert _by_cell(records) == pytest.approx({0: 25.0, 1: 25.0, 2: 25.0, 3: 25.0})
+
+
+def test_a_line_partly_on_a_face_conserves_its_total(tmp_path):
+    records = _line_records(tmp_path, LineString([(0.0, 25.0), (50.0, 25.0), (100.0, 40.0)]))
+    assert sum(record[2] for record in records) == pytest.approx(100.0)
+    assert sorted(_by_cell(records)) == [0, 1, 4, 5, 6, 7]
+
+
+def test_a_diagonal_through_vertices_gives_nothing_to_the_cells_it_only_touches(tmp_path):
+    records = _line_records(tmp_path, LineString([(0.0, 0.0), (100.0, 100.0)]))
+    assert _by_cell(records) == pytest.approx({0: 25.0, 5: 25.0, 10: 25.0, 15: 25.0})
+
+
+def test_a_face_shared_with_two_smaller_cells_is_still_split_by_length(tmp_path):
+    """A hanging node: one coarse cell against two fine ones across the same face."""
+
+    verts = np.array(
+        [[0, 0], [0, 2], [2, 2], [2, 1], [2, 0], [3, 0], [3, 1], [3, 2]], dtype=float
+    )
+    iverts = [[0, 1, 2, 3, 4], [4, 3, 6, 5], [3, 2, 7, 6]]
+    xcyc = np.array([[1.0, 1.0], [2.5, 0.5], [2.5, 1.5]])
+    grid = VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)
+    context = ModelContext(grid=grid, domain=np.ones((1, 3), dtype=int))
+    records = _line_records(tmp_path, LineString([(2.0, 0.0), (2.0, 2.0)]), context)
+    assert _by_cell(records) == pytest.approx({0: 50.0, 1: 25.0, 2: 25.0})
+
+
+def test_an_elevation_on_a_face_reaches_both_sides_unchanged(tmp_path):
+    """Only a Spread field is divided; an elevation is the same on either side."""
+
+    records = _line_records(tmp_path, LineString([(0.0, 25.0), (100.0, 25.0)]))
+    assert {record[1] for record in records} == {10.0}
+
+
+@pytest.mark.parametrize(
+    ("point", "cell"),
+    [(Point(12.5, 12.5), 0), (Point(25.0, 12.5), 0), (Point(25.0, 25.0), 0), (Point(75.0, 75.0), 10)],
+    ids=["interior", "face", "vertex", "vertex-of-four"],
+)
+def test_a_point_goes_whole_to_one_cell_the_lowest_numbered(tmp_path, point, cell):
+    records = _records(
+        mf.wel.gpkg(_gpkg(tmp_path, point), layer="bc", context=_context(), nper=1)
+    )
+    assert _by_cell(records, column=1) == pytest.approx({cell: -500.0})
+
+
+def test_a_point_skips_an_inactive_lowest_cell(tmp_path):
+    context = ModelContext(grid=_context().grid, domain=np.array([[0] + [1] * 15]))
+    records = _records(
+        mf.wel.gpkg(_gpkg(tmp_path, Point(25.0, 25.0)), layer="bc", context=context, nper=1)
+    )
+    assert _by_cell(records, column=1) == pytest.approx({1: -500.0})
+
+
+def test_each_point_of_a_multipoint_gets_its_own_cell(tmp_path):
+    records = _records(
+        mf.wel.gpkg(
+            _gpkg(tmp_path, MultiPoint([(25.0, 25.0), (75.0, 75.0)])), layer="bc",
+            context=_context(), nper=1,
+        )
+    )
+    assert _by_cell(records, column=1) == pytest.approx({0: -500.0, 10: -500.0})
+
+
+def test_edges_only_picks_the_lowest_numbered_edge_cell(tmp_path):
+    """On the face between cells 6 (interior) and 7 (edge): 6 is lower, 7 is the edge."""
+
+    records = _records(
+        mf.chd.gpkg(
+            _gpkg(tmp_path, Point(75.0, 37.5)), layer="bc", context=_context(), nper=1,
+            edges_only=True,
+        )
+    )
+    assert [record[0][1] for record in records] == [7]
+
+
+def test_the_lowest_numbered_cell_wins_whatever_order_the_index_returns(tmp_path):
+    """The spatial index hands hits back in tree order, not cell order (measured:
+    481 of 685 queries out of order on a scrambled 20x20), so the choice is sorted."""
+
+    slot_of = [5, 14, 0, 11, 7, 2, 13, 8, 1, 15, 4, 10, 3, 12, 9, 6]  # cell -> position
+    d = 25.0
+    verts = np.array([[i * d, j * d] for j in range(5) for i in range(5)], dtype=float)
+    iverts, xcyc = [], []
+    for slot in slot_of:
+        i, j = slot % 4, slot // 4
+        iverts.append([j * 5 + i, (j + 1) * 5 + i, (j + 1) * 5 + i + 1, j * 5 + i + 1])
+        xcyc.append([(i + 0.5) * d, (j + 0.5) * d])
+    grid = VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=np.array(xcyc))
+    cell_at = {slot: cell for cell, slot in enumerate(slot_of)}
+    vertices = [(i, j) for j in range(1, 4) for i in range(1, 4)]
+    expected = {
+        f"v{i}{j}": min(cell_at[(j - dj) * 4 + (i - di)] for dj in (0, 1) for di in (0, 1))
+        for i, j in vertices
+    }
+    path = tmp_path / "wells.gpkg"
+    gpd.GeoDataFrame(
+        {"name": list(expected), "layer": [1] * 9, "rate": [-500.0] * 9},
+        geometry=[Point(i * d, j * d) for i, j in vertices],
+        crs="EPSG:2927",
+    ).to_file(path, layer="bc", driver="GPKG")
+    context = ModelContext(grid=grid, domain=np.ones((1, 16), dtype=int))
+    records = _records(mf.wel.gpkg(path, layer="bc", context=context, nper=1))
+    assert {record[-1]: record[0][1] for record in records} == expected
