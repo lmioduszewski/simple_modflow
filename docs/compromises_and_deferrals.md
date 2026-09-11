@@ -7201,7 +7201,8 @@ same day, which is the useful part of the result.
       - **NOT covered: grid references.** They still resolve from the grid
         library, so editing a grid entry still changes what a reopened run
         rebuilds. The verified bug was about packages, and grids carry no
-        fingerprint for `drift()` to compare; flagged to the user as a sibling.
+        fingerprint for `drift()` to compare. The user chose not to copy grids
+        for now (2026-09-11).
       - `prepare_run(overwrite=True)` rewrites the copies it indexes and leaves
         any others in `_library/` unindexed, as it leaves the previous listing
         (design D5, ledger 191).
