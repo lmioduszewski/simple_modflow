@@ -7010,3 +7010,14 @@ same day, which is the useful part of the result.
         packages held NumPy scalars reads `edited` ONCE. The user's standing line is
         that old run records may break but MF6 files never; these are records.
       - Two mutants, killed: each normalization removed.
+
+223. **`load_mf6_run` opened the alphabetically first model, not the flow model (2026-09-11).**
+      With no `model_name=`, the loader took the stem of the first `*.nam` in sorted
+      order. In a coupled GWF+GWT/GWE/PRT run whose transport or tracking model
+      sorted first, it opened that model as if it were flow. It now takes the
+      first `gwf6` in `mfsim.nam`'s models block -- the order MF6 reads them -- and
+      the name files decide only where there is no `mfsim.nam`. The models-block
+      parser `_discover_model_type` already carried is factored out and shared
+      (`_declared_models`), so the two cannot read the block differently.
+      - Two mutants, killed: the model type ignored, and a model declared without
+        a name not taking its name file's stem.

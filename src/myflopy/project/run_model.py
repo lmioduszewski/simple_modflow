@@ -37,8 +37,47 @@ def _model_dir(workspace: Path, model_name: str) -> Path:
     return candidate if candidate.is_dir() else workspace
 
 
+def _declared_models(workspace: Path) -> list[tuple[str, str]]:
+    """``(type, name)`` for each model in ``mfsim.nam``'s models block, in its order.
+
+    ``<type>  <namefile>  [<name>]``: the name is optional in MF6 and defaults to
+    the name file's stem. An absent or unreadable ``mfsim.nam`` declares nothing.
+    """
+
+    namefile = Path(workspace) / "mfsim.nam"
+    try:
+        lines = namefile.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    models: list[tuple[str, str]] = []
+    in_models = False
+    for line in lines:
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered.startswith("begin") and "models" in lowered:
+            in_models = True
+            continue
+        if lowered.startswith("end") and "models" in lowered:
+            break
+        if not in_models or not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        if len(fields) >= 2:
+            models.append((fields[0].lower(), fields[2] if len(fields) >= 3 else Path(fields[1]).stem))
+    return models
+
+
 def _infer_model_name(workspace: Path) -> str:
-    """Infer the groundwater model name file stem for an MF6 workspace."""
+    """The FLOW model's name for an MF6 workspace: the first ``gwf6`` in ``mfsim.nam``.
+
+    The alphabetically first model name file used to win, and in a coupled run that
+    is as likely the GWT, GWE or PRT model -- ``load_mf6_run`` then opened transport
+    as if it were flow. The name files decide only without a ``mfsim.nam``.
+    """
+
+    for model_type, name in _declared_models(workspace):
+        if model_type == "gwf6":
+            return name
 
     name_files = sorted(path for path in workspace.glob("*.nam") if path.name.lower() != "mfsim.nam")
     if not name_files:
