@@ -1210,6 +1210,7 @@
       "modelgrid",
       "outputs",
       "package_names",
+      "package_types",
       "packages",
       "parallel",
       "particle_tracking",

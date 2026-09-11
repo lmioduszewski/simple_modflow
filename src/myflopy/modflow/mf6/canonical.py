@@ -73,7 +73,7 @@ class CanonicalModelContract:
         # `model.package_names`, not `model.gwf.package_names`: flopy deprecated
         # the latter in 3.9 and warns on every access. Our own property reads the
         # supported `get_package_list()`, which returns the same names uppercased.
-        packages = {str(name).lower() for name in model.package_names}
+        packages = {str(name).lower() for name in model.package_types}
         targets = set(model.targets.keys())
 
         if int(grid.nlay) != self.nlay:

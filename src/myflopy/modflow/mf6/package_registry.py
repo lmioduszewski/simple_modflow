@@ -618,3 +618,14 @@ __all__ = [
     "get_package_input_field_spec",
     "get_package_result_spec",
 ]
+
+
+def _package_type_name(package_type: str) -> str:
+    """An MF6 package type as a name file spells it: ``RCHA``/``EVTA`` are RCH/EVT.
+
+    FloPy gives array-form recharge and ET classes of their own; MF6 has ONE recharge
+    and ONE ET package, whose array form is an option inside the file.
+    """
+
+    upper = str(package_type).upper()
+    return {"RCHA": "RCH", "EVTA": "EVT"}.get(upper, upper)

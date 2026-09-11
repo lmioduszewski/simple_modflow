@@ -195,7 +195,7 @@ def test_summary_names_every_package_and_marks_what_can_be_drawn(canonical_model
     frame = canonical_model.packages.summary()
 
     assert list(frame.columns) == [
-        "package", "kind", "mappable", "fields", "results",
+        "package", "type", "kind", "mappable", "fields", "results",
     ]
     assert list(frame["package"]) == list(canonical_model.package_names), \
         "every package in the model gets a row, in model order"

@@ -1057,7 +1057,7 @@ class ModelPackages:
         Returns
         -------
         pandas.DataFrame
-            Columns ``package``, ``kind``, ``mappable``, ``fields``, ``results``
+            Columns ``package``, ``type``, ``kind``, ``mappable``, ``fields``, ``results``
             (plus ``records``, ``periods``, ``layers`` when ``detail='data'``).
 
         Raises
@@ -1072,8 +1072,13 @@ class ModelPackages:
             )
 
         rows = []
-        for raw in self.model.package_names:
-            name = str(raw).lower()
+        # (name, type) per package: two CHDs are two rows, and the registry and the
+        # explorer are looked up by what a package IS. A duck-typed model without
+        # the pairs lists its names as both.
+        pairs_of = getattr(self.model, "_package_pairs", None)
+        pairs = pairs_of() if callable(pairs_of) else [(raw, raw) for raw in self.model.package_names]
+        for raw, package_type in pairs:
+            name = str(package_type).lower()
             spec = get_package_explorer_spec(name)
             explorer = self._explorer_or_none(name)
 
@@ -1092,6 +1097,7 @@ class ModelPackages:
 
             rows.append({
                 "package": str(raw).upper(),
+                "type": str(package_type).upper(),
                 "kind": kind,
                 "mappable": self._is_mappable(explorer, kind, fields),
                 "fields": ", ".join(fields),
@@ -1099,7 +1105,7 @@ class ModelPackages:
             })
 
         frame = pd.DataFrame(rows).reindex(
-            columns=["package", "kind", "mappable", "fields", "results"]
+            columns=["package", "type", "kind", "mappable", "fields", "results"]
         )
         if detail == "fields":
             return frame

@@ -215,7 +215,8 @@ directions, and `import myflopy` must be silent.
 
 **Also don't call flopy APIs it has deprecated.** `tests/test_no_deprecated_flopy_calls.py`
 names them (`gwf.package_names`, `gwf.package_name_dict` — use `get_package_list()`, or
-myflopy's own `model.package_names`). Note `getattr(gwf, "package_name_dict", {})` still
+myflopy's own `model.package_names` -- the real names, one per package;
+`model.package_types` lists each type once, ledger 228). Note `getattr(gwf, "package_name_dict", {})` still
 warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
@@ -235,7 +236,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2699 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2705 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.

@@ -13,14 +13,15 @@ def valid_package_names_3ltr(model: SimulationBase) -> list | None:
     :param model: model object
     :return: list
     """
-    if isinstance(model, SimulationBase):
-        # `model.package_names` reads flopy's supported `get_package_list()`;
-        # `gwf.package_name_dict` has warned since flopy 3.9. It returns the
-        # same names uppercased, and every caller of this compares lowercase
-        # three-letter types, so the case is normalized here.
-        return [str(name).lower() for name in model.package_names]
-    else:
+    # Duck-typed. `SimulationBase` is imported for annotations only -- it sits in a
+    # higher layer -- so the `isinstance` this used to be raised NameError on every
+    # call, taking `package_name_validator` and the legacy datalists with it.
+    types = getattr(model, "package_types", None)
+    if types is None:
         return None
+    # TYPES, not names: every caller compares lowercase three-letter types, and a
+    # model whose CHD is named `chd_0` has no package NAMED `chd` (ledger 228).
+    return [str(name).lower() for name in types]
 
 
 def package_name_validator(model: SimulationBase, package: str):

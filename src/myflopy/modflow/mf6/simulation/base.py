@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
+from myflopy.modflow.mf6.package_registry import _package_type_name
 from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.simulation.accessors import (
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.accessors import ModelOutputs
 
 logger = get_logger(__name__)
+
 
 
 class SimulationBase:
@@ -366,6 +368,30 @@ class SimulationBase:
         """Sorted list of package names currently attached to the groundwater model."""
 
         return sorted(self.gwf.get_package_list())
+
+    @property
+    def package_types(self) -> list[str]:
+        """Each package TYPE once -- ``CHD``, ``NPF``, ``RCH`` (array recharge is RCH).
+
+        :attr:`package_names` are the packages' own names (``CHD_0``, ``CHD_1``);
+        this is what they are (ledger 228).
+        """
+
+        return sorted({_package_type_name(package.package_type) for package in self.gwf.packagelist})
+
+    def _package_pairs(self) -> list[tuple[str, str]]:
+        """``(name, type)`` for each of :attr:`package_names`, in its order.
+
+        Driven by the names, so ``packages.summary()`` keeps its contract -- a row per
+        listed package, in model order -- and gains each one's type. A listed name
+        with no package behind it is its own type.
+        """
+
+        types = {
+            str(package.package_name).upper(): _package_type_name(package.package_type)
+            for package in self.gwf.packagelist
+        }
+        return [(str(name).upper(), types.get(str(name).upper(), str(name).upper())) for name in self.package_names]
 
     @property
     def targets(self) -> TargetRegistry:

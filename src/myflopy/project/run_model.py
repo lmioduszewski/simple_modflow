@@ -13,7 +13,7 @@ import numpy as np
 
 from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
 
@@ -131,6 +131,85 @@ _PACKAGE_SUFFIX_TO_TYPE = dict(
 )
 _PACKAGE_TYPE_TO_SUFFIX = {value: key for key, value in _PACKAGE_SUFFIX_TO_TYPE.items()}
 _CORE_PACKAGE_TYPES = {"DIS", "DISU", "DISV", "OC"}
+
+
+def _model_namefile(workspace: Path, model_name: str) -> Path | None:
+    """The model's name file: from ``mfsim.nam``'s models block, else ``<model>.nam``."""
+
+    try:
+        lines = (Path(workspace) / "mfsim.nam").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    inside = False
+    for line in lines:
+        stripped = line.split("#", 1)[0].strip()
+        lowered = stripped.lower()
+        if lowered.startswith("begin") and "models" in lowered:
+            inside = True
+            continue
+        if lowered.startswith("end") and "models" in lowered:
+            break
+        fields = stripped.split()
+        if inside and len(fields) >= 2:
+            name = fields[2] if len(fields) >= 3 else Path(fields[1]).stem
+            if name.lower() == str(model_name).lower():
+                return Path(workspace) / fields[1]
+    candidate = _model_dir(workspace, model_name) / f"{model_name}.nam"
+    return candidate if candidate.exists() else None
+
+
+def _repeats(prefix: str, package_type: str) -> bool:
+    """Whether MF6 allows several packages of this type in a model -- FloPy's dfn says."""
+
+    cls = getattr(flopy.mf6, f"Modflow{prefix}{package_type.lower()}", None)
+    header = next((row for row in getattr(cls, "dfn", ()) if row and row[0] == "header"), ())
+    return "multi-package" in header
+
+
+def _discover_packages(workspace: Path, model_name: str, model_type: str) -> list[tuple[str, str]]:
+    """``(type, name)`` for each package in the model's NAME FILE, in its order.
+
+    The name file is the authority. Discovery used to match FILE SUFFIXES against the
+    registry's ten packages, and missed every GWT/GWE/PRT package, RCHA/EVTA, MAW,
+    CSUB and any custom filename (ledger 228). The type is the ftype without its
+    ``6`` -- an array recharge package is ``RCH6`` there, MF6 having one recharge
+    package. The name is the entry's own pname; an entry without one takes the name
+    MF6 and FloPy give it: ``CHD-1``, ``CHD-2`` for a type that may repeat, the bare
+    type otherwise.
+    """
+
+    namefile = _model_namefile(workspace, model_name)
+    if namefile is None:
+        return []
+    try:
+        lines = namefile.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    prefix = str(model_type)[:3].capitalize()
+    pairs: list[tuple[str, str]] = []
+    counts: dict[str, int] = {}
+    inside = False
+    for line in lines:
+        stripped = line.split("#", 1)[0].strip()
+        lowered = stripped.lower()
+        if lowered.startswith("begin") and "packages" in lowered:
+            inside = True
+            continue
+        if lowered.startswith("end") and "packages" in lowered:
+            break
+        if not inside or not stripped:
+            continue
+        fields = stripped.split()
+        package_type = fields[0].upper().removesuffix("6")
+        if len(fields) >= 3:
+            name = fields[2].upper()
+        elif _repeats(prefix, package_type):
+            counts[package_type] = counts.get(package_type, 0) + 1
+            name = f"{package_type}-{counts[package_type]}"
+        else:
+            name = package_type
+        pairs.append((package_type, name))
+    return pairs
 
 
 def _discover_package_types(workspace: Path, model_name: str) -> list[str]:
@@ -439,7 +518,13 @@ class LoadedMf6Run(SimulationBase):
             raise FileNotFoundError(f"Run workspace does not exist: {workspace}")
 
         model_name = _infer_model_name(workspace) if model_name is None else model_name
-        available_package_types = _discover_package_types(workspace, model_name)
+        pairs = _discover_packages(workspace, model_name, _discover_model_type(workspace, model_name))
+        if pairs:
+            available_package_types = list(dict.fromkeys(package_type for package_type, _ in pairs))
+        else:  # no name file to read: the file suffixes are all there is
+            available_package_types = _discover_package_types(workspace, model_name)
+            pairs = [(package_type, package_type) for package_type in available_package_types]
+        self._discovered_pairs = tuple(pairs)
         grid_type = _discover_grid_type(available_package_types)
 
         self.name = model_name
@@ -524,13 +609,27 @@ class LoadedMf6Run(SimulationBase):
 
     @property
     def package_names(self) -> list[str]:
-        """Recognized package names for the run workspace.
+        """The packages' own NAMES, as MF6 has them -- ``CHD_0``, ``RCHA_0``, ``NPF``.
 
-        This is discovered from package filenames and therefore stays cheap even
-        before any FloPy packages are loaded.
+        Read from the model's name file, so it stays cheap before any FloPy load and
+        agrees with the same model live. It returned TYPES until 2026-09-11, so a
+        reopened run and the live model disagreed (ledger 228); those are
+        :attr:`package_types`.
         """
 
-        return list(self._available_package_types)
+        return sorted(name for _, name in self._discovered_pairs)
+
+    @property
+    def package_types(self) -> list[str]:
+        """Each package TYPE once -- ``CHD``, ``NPF``, ``RCH`` (array recharge is RCH)."""
+
+        return sorted(set(self._available_package_types))
+
+    def _package_pairs(self) -> list[tuple[str, str]]:
+        """``(name, type)`` for each of :attr:`package_names`, in its order."""
+
+        types = {name: package_type for package_type, name in self._discovered_pairs}
+        return [(str(name).upper(), types.get(str(name).upper(), str(name).upper())) for name in self.package_names]
 
     def _summary_ncpl(self) -> int | None:
         """Return cached ``ncpl`` for a lightweight summary when possible."""
@@ -609,16 +708,16 @@ class LoadedMf6Run(SimulationBase):
         # TYPES, not names: `get_package_list()` answers `CHD_0` where a package is
         # named for FloPy's default, and every check below asks for `CHD`. Recording
         # names made each read of such a package reload the whole simulation.
-        self._loaded_package_types = {package.package_type.upper() for package in gwf.packagelist}
+        self._loaded_package_types = {_package_type_name(package.package_type) for package in gwf.packagelist}
         self._core_loaded = True
-        self._fully_loaded = mark_full or self._loaded_package_types >= set(self.package_names)
+        self._fully_loaded = mark_full or self._loaded_package_types >= set(self.package_types)
 
     def _ensure_core_loaded(self):
         """Ensure core grid/output infrastructure is available."""
 
         if self._core_loaded and self._gwf is not None:
             return
-        available = [name.lower() for name in self.package_names if name in _CORE_PACKAGE_TYPES]
+        available = [name.lower() for name in self.package_types if name in _CORE_PACKAGE_TYPES]
         # The grid type DISCOVERED from filenames, never the `grid_type`
         # property: that property falls back to inspecting `self.gwf`, and
         # `self.gwf` calls this method -- an infinite recursion the moment
@@ -628,7 +727,7 @@ class LoadedMf6Run(SimulationBase):
         discovered = getattr(self, "_grid_type_override", None)
         if discovered in {"dis", "disu", "disv"} and discovered not in available:
             available.insert(0, discovered)
-        if "oc" not in available and "OC" in self.package_names:
+        if "oc" not in available and "OC" in self.package_types:
             available.append("oc")
         self._load_simulation(load_only=available or None, mark_full=False, reason="core access")
 

@@ -261,7 +261,8 @@ release-group boundnames; without them it names the fix and offers
 
 ### Geometry, layers, context
 
-- `model.packages.summary()` — one row per package: `kind`, `mappable`, the input
+- `model.packages.summary()` — one row per package: its `package` name and `type`
+  (two packages of one type are two rows), `kind`, `mappable`, the input
   `fields` and `results` you can draw. Cheap by default (registry + package list,
   no package data read); `summary(detail="data")` adds `records`, `periods` and
   `layers` — the last of which tells you a package occupies no layer 0 *before*

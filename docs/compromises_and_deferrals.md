@@ -7097,3 +7097,35 @@ same day, which is the useful part of the result.
         units against DIS `LENGTH_UNITS` / TDIS `TIME_UNITS`.
       - Three mutants, killed: units not written, not read, and no fallback for an
         old file.
+
+228. **A model's package names and types, shown both -- live and reopened alike (2026-09-11).**
+      A live model's `package_names` were FloPy's NAMES (`CHD_0`); a reopened run's
+      were file-suffix TYPES (`CHD`), matched against the registry's ten packages, so
+      they missed every GWT/GWE/PRT package, array recharge, MAW, CSUB and any custom
+      filename. The same model said different things live and reopened, and code
+      that meant "is there a CHD?" asked a list of names. Decided 2026-09-11: show
+      both.
+      - **`package_names` are the packages' own names everywhere**; a reopened run
+        reads them from the model's NAME FILE, so it stays cheap before any FloPy
+        load and agrees with the live model.
+      - **`package_types` is new: each type once**, array recharge/ET folded into
+        RCH/EVT -- MF6 has one recharge package, and its name file lists an array
+        one as `RCH6`. `packages.summary()` gains a `type` column, one row per
+        package, still following `package_names` in order.
+      - **A name file entry without a pname gets the name MF6 and FloPy give it**:
+        `CHD-1`, `CHD-2` for a type FloPy's dfn marks `multi-package`, the bare type
+        otherwise -- tested equal to FloPy's own load of the same file.
+      - **Consumers that meant types read `package_types`**: the validators, the
+        canonical contract check, transport setup (`lak`/`sfr`/`uzf`/`mvr`), the
+        loader's own bookkeeping. MVR validation keeps names -- MVR records name
+        packages. The diff tier's prefix match (`chd_0` counts as `chd`) is left:
+        it already answers by type.
+      - **`valid_package_names_3ltr` raised NameError on every call**: it tested
+        `isinstance` against a class imported only for type checking (the layering
+        rule keeps it there), taking `package_name_validator` and the legacy
+        datalists with it. It is duck-typed now. Found by this entry's test.
+      - `api_snapshot.json` gains `package_types`; `test_package_explorer_registry`
+        pins the summary's columns, which gain `type`.
+      - Seven mutants, killed: pnames ignored, unnamed packages not numbered, array
+        recharge not folded, loaded names as types again, the validator reading
+        names, the NameError restored, and the summary's type column dropped.
