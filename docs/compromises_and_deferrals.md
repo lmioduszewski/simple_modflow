@@ -7076,3 +7076,24 @@ same day, which is the useful part of the result.
         what Phase 2 needs to carry runoff onto a new mesh.
       - Three mutants, killed: the old broadcast, an even split instead of by
         length, and a time series let through.
+
+227. **ModelContext units were dropped on every save (2026-09-11).**
+      `ModelSpec.to_dict` wrote only the context's `metadata`, and `from_dict` rebuilt
+      `ModelContext(metadata=...)`, so the `feet`/`days` dataclass defaults filled in
+      silently: a metres/seconds model came back as feet/days through `to_dict`,
+      JSON, YAML and `Project.save` alike. Ledger 180's refusal to serialize grids and
+      domains never covered two plain strings; they went with the arrays by
+      accident, not decision. The round-trip tests compared `to_dict` with
+      `to_dict`, which cannot see a field `to_dict` never writes.
+      - **Latent, not live, until now:** the only readers, SFR and LAK, turn units
+        into conversion floats at declaration, and those floats serialize. Grid-lazy
+        packages (Phase 2) read the context AFTER a reload, where this would have
+        become wrong numbers; a guard test pins that path (SFR on a reloaded
+        metres/seconds context keeps conversions of 1.0).
+      - **Written always**, not only when non-default. A file saved before this
+        has neither and loads as feet/days, which is what it meant.
+      - **NOT done:** `ModelContext.dates` is dropped the same way; the USG importer
+        builds its context without the model's units; nothing checks the context
+        units against DIS `LENGTH_UNITS` / TDIS `TIME_UNITS`.
+      - Three mutants, killed: units not written, not read, and no fallback for an
+        old file.

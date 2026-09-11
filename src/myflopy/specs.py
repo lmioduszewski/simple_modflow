@@ -2726,6 +2726,11 @@ class ModelSpec:
             "packages": [package.to_dict() for package in self.packages],
             "context": {
                 "metadata": _json_value(self.context.metadata),
+                # Two plain strings: the refusal to serialize grids and domains
+                # (ledger 180) never covered them. They went with the arrays, and a
+                # metres/seconds model came back as feet/days (ledger 227).
+                "length_units": self.context.length_units,
+                "time_units": self.context.time_units,
             },
         }
         if self.builder is not None:
@@ -2756,6 +2761,9 @@ class ModelSpec:
             ),
             context=ModelContext(
                 metadata=_spec_value(dict(context_data.get("metadata", {}))),
+                # A file saved before 227 has neither; it meant the defaults.
+                length_units=context_data.get("length_units", "feet"),
+                time_units=context_data.get("time_units", "days"),
             ),
             hooks=tuple(
                 PostBuildHook.from_dict(hook) for hook in data.get("hooks", ())

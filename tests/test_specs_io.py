@@ -200,3 +200,59 @@ def test_yaml_round_trip_preserves_stress_period_rows(tmp_path):
     built = revived.build_flopy(tmp_path)
     chd = built.simulation.get_model("gwf").get_package("chd")
     assert len(chd.stress_period_data.get_data()[0]) == 1
+
+
+# --- ModelContext units (ledger 227) ---------------------------------------- #
+
+
+def _si_model():
+    return mf.gwf(
+        "m",
+        context=mf.ModelContext(length_units="meters", time_units="seconds", metadata={"tag": "si"}),
+        packages=[
+            mf.dis(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=1.0, botm=0.0),
+            mf.npf(k=1.0),
+            mf.ic(strt=0.5),
+        ],
+    )
+
+
+def test_model_context_units_survive_a_dict_round_trip():
+    """They were dropped: a metres/seconds context reloaded as feet/days. Compared as
+    ATTRIBUTES -- to_dict against to_dict cannot see a field to_dict never writes."""
+
+    import json
+
+    back = mf.ModelSpec.from_dict(json.loads(json.dumps(_si_model().to_dict())))
+    assert (back.context.length_units, back.context.time_units) == ("meters", "seconds")
+    assert back.context.metadata == {"tag": "si"}
+
+
+def test_model_context_units_survive_a_simulation_yaml_round_trip():
+    back = mf.SimulationSpec.from_yaml(mf.simulation(_si_model(), name="si").to_yaml())
+    context = back.model("m").context
+    assert (context.length_units, context.time_units) == ("meters", "seconds")
+
+
+def test_a_file_saved_before_the_units_were_written_loads_as_feet_and_days():
+    data = _si_model().to_dict()
+    del data["context"]["length_units"], data["context"]["time_units"]
+    back = mf.ModelSpec.from_dict(data)
+    assert (back.context.length_units, back.context.time_units) == ("feet", "days")
+
+
+def test_a_builder_redeclared_on_a_reloaded_context_keeps_its_units():
+    """Latent until something reads the units AFTER a reload -- which grid-lazy
+    SFR/LAK will. SFR on metres/seconds wants conversions of 1.0, not 3.28/86400."""
+
+    import json
+    from dataclasses import replace
+
+    import numpy as np
+
+    from tests.test_sfr_builder import _builder, _grid
+
+    back = mf.ModelSpec.from_dict(json.loads(json.dumps(_si_model().to_dict())))
+    context = replace(back.context, grid=_grid(), domain=np.ones((1, 6), dtype=int))
+    options = _builder(context=context).build().options
+    assert (options["length_conversion"], options["time_conversion"]) == (1.0, 1.0)
