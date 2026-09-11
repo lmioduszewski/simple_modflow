@@ -18,6 +18,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_iterable_filter,
     split_cellid_columns,
 )
+from myflopy.modflow.mf6.package_registry import _package_type_name
 
 #: What "build a normalized table for this package on this model" can raise
 #: when the package is absent, empty, or in a form this tier cannot read.
@@ -66,7 +67,6 @@ def build_cell_package_input_table(
         ``cell`` columns plus the original package data fields.
     """
 
-    package = model.package(package_name)
     layer_values = _normalize_iterable_filter(layer)
     cell_values = _normalize_iterable_filter(cells)
     if per is None and layer_values is None and cell_values is None:
@@ -74,7 +74,61 @@ def build_cell_package_input_table(
         cached = _get_package_explorer_cache(model).get(cache_key)
         if cached is not None:
             return cached.copy()
-    frames: list[pd.DataFrame] = []
+    # EVERY package of the type -- two CHDs, a list RCH beside an array one -- each
+    # row tagged with its package's own name. Two same-type packages used to give 0
+    # rows (FloPy handed back a list, read as an array package with no fields) or
+    # the first package only, and an array RCH was never asked for (ledger 229).
+    frames = [
+        _one_package_table(
+            model, package, package_name, per=per, layer_values=layer_values, cell_values=cell_values
+        )
+        for package in _packages_of(model, package_name)
+    ]
+    frames = [frame for frame in frames if not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=["model", "package", "pname", "per", "layer", "cell"])
+
+    combined = pd.concat(frames, ignore_index=True)
+    for column in ("layer", "cell", "per"):
+        if column in combined.columns:
+            combined[column] = combined[column].astype(int)
+    combined = _coerce_numeric_like_columns(combined, exclude={"model", "package", "pname"})
+    if per is None and layer_values is None and cell_values is None:
+        _get_package_explorer_cache(model)[
+            ("cell_package_input_table", str(package_name).lower())
+        ] = combined.copy()
+    return combined
+
+
+def _packages_of(model, package_name) -> list:
+    """The packages a table for ``package_name`` covers.
+
+    A TYPE -- ``"rch"`` -- is every package of it, array form included: MF6 has one
+    recharge package, and ``RCHA`` is FloPy's class for its array form. Anything
+    else is one package's own NAME -- ``"rch_array"``. A duck-typed model with no
+    package list answers through ``model.package``, as before.
+    """
+
+    load_all = getattr(model, "load_all", None)
+    if callable(load_all):
+        load_all()
+    packagelist = getattr(getattr(model, "gwf", None), "packagelist", None)
+    if packagelist is None:
+        found = model.package(package_name)
+        return list(found) if isinstance(found, list) else [found]
+    wanted = str(package_name).upper()
+    typed = [package for package in packagelist if _package_type_name(package.package_type) == wanted]
+    if typed:
+        return typed
+    named = [package for package in packagelist if str(package.package_name).upper() == wanted]
+    if named:
+        return named
+    return [model.package(package_name)]  # raises, naming what is not there
+
+
+def _one_package_table(model, package, package_name, *, per, layer_values, cell_values) -> pd.DataFrame:
+    """One package's rows, each tagged with the package's own name."""
+
     if not hasattr(package, "stress_period_data"):
         # An array-form (READASARRAYS) package -- `mf.rch.array` / `mf.evt.array`,
         # or one loaded from a model that used them. It has no
@@ -82,7 +136,7 @@ def build_cell_package_input_table(
         # per column per period. Expanding them into the same tidy frame is what
         # lets the inputs tier, the diff tier and the group tier read an array
         # package at all -- without it they raise AttributeError.
-        return _array_package_input_table(
+        frame = _array_package_input_table(
             model,
             package,
             package_name,
@@ -90,39 +144,31 @@ def build_cell_package_input_table(
             layer_values=layer_values,
             cell_values=cell_values,
         )
-    if per is not None:
-        period_items = [(int(per), package.stress_period_data.get_data(key=int(per)))]
     else:
-        period_items = package.stress_period_data.get_data().items()
-    for period, data in period_items:
-        frame = pd.DataFrame(data).copy()
-        if frame.empty:
-            continue
-        frame = split_cellid_columns(frame)
-        if layer_values is not None and "layer" in frame.columns:
-            frame = frame[frame["layer"].isin(layer_values)]
-        if cell_values is not None and "cell" in frame.columns:
-            frame = frame[frame["cell"].isin(cell_values)]
-        if frame.empty:
-            continue
-        frame["package"] = str(package_name).lower()
-        frame["per"] = int(period)
-        frame["model"] = model.name
-        frames.append(frame)
-
-    if not frames:
-        return pd.DataFrame(columns=["model", "package", "per", "layer", "cell"])
-
-    combined = pd.concat(frames, ignore_index=True)
-    for column in ("layer", "cell", "per"):
-        if column in combined.columns:
-            combined[column] = combined[column].astype(int)
-    combined = _coerce_numeric_like_columns(combined, exclude={"model", "package"})
-    if per is None and layer_values is None and cell_values is None:
-        _get_package_explorer_cache(model)[
-            ("cell_package_input_table", str(package_name).lower())
-        ] = combined.copy()
-    return combined
+        if per is not None:
+            period_items = [(int(per), package.stress_period_data.get_data(key=int(per)))]
+        else:
+            period_items = package.stress_period_data.get_data().items()
+        frames: list[pd.DataFrame] = []
+        for period, data in period_items:
+            frame = pd.DataFrame(data).copy()
+            if frame.empty:
+                continue
+            frame = split_cellid_columns(frame)
+            if layer_values is not None and "layer" in frame.columns:
+                frame = frame[frame["layer"].isin(layer_values)]
+            if cell_values is not None and "cell" in frame.columns:
+                frame = frame[frame["cell"].isin(cell_values)]
+            if frame.empty:
+                continue
+            frame["package"] = str(package_name).lower()
+            frame["per"] = int(period)
+            frame["model"] = model.name
+            frames.append(frame)
+        frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frame.empty:
+        frame["pname"] = str(package.package_name).upper()
+    return frame
 
 
 

@@ -131,13 +131,10 @@ def _package_keys(model, package_name: str, *, per=None, layer=None):
     try:
         table = build_cell_package_input_table(model, package_name, per=per, layer=layer)
     except PACKAGE_TABLE_UNAVAILABLE:
-        # NOTE the asymmetry this leaves, which narrowing made visible:
-        # `_package_present` matches by PREFIX, so an array-form package
-        # (RCHA/EVTA on an externally loaded model) reports as present while its
-        # cell keys come back empty -- two such models compare as identical. The
-        # cell tier cannot read array-form packages at all; telling those apart
-        # needs a third state ("present, unreadable by this tier") rather than a
-        # wider except. Recorded in the ledger rather than fixed here.
+        # An array-form RCHA/EVTA used to be unreadable here while `_package_present`
+        # (a PREFIX match) reported it present, so two such models compared as
+        # identical. The table reads every package of the type now, array form
+        # included (ledger 229), so its cells are keys like any other.
         logger.debug(
             "no readable %s cells on %s", package_name,
             getattr(model, "name", model), exc_info=True,

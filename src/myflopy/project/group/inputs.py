@@ -54,7 +54,7 @@ class GroupPackageInputField(_GroupSpatialView):
         frame = self._parent.get(**kwargs)
         keep = [
             column
-            for column in ("model", "package", "per", "layer", "cell", self.field_name)
+            for column in ("model", "package", "pname", "per", "layer", "cell", self.field_name)
             if column in getattr(frame, "columns", [])
         ]
         return frame[keep] if keep else frame

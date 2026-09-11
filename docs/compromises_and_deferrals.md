@@ -2394,7 +2394,9 @@ same day, which is the useful part of the result.
        MODFLOW would have run happily on the wrong answer. This is a **behaviour
        change**: a build that silently produced bad drains now fails with a
        message naming the cell and pointing at `bottoms=`.
-     - **Compromise: one diff asymmetry is documented, not fixed.**
+     - **Compromise: one diff asymmetry is documented, not fixed.** CLOSED by
+       entry 229 (2026-09-11): the cell table reads every package of a type,
+       array form included, so an RCHA's cells are keys like any other.
        `_package_present` matches by PREFIX, so an array-form RCHA/EVTA on an
        externally loaded model reports as present while the cell tier -- which
        cannot read array-form packages at all -- yields no keys; two such models
@@ -7129,3 +7131,32 @@ same day, which is the useful part of the result.
       - Seven mutants, killed: pnames ignored, unnamed packages not numbered, array
         recharge not folded, loaded names as types again, the validator reading
         names, the NameError restored, and the summary's type column dropped.
+
+229. **Two packages of one type gave an empty table, or half of one (2026-09-11).**
+      `build_cell_package_input_table` asked `model.package(type)` for ONE package.
+      With two of a type under FloPy's default names, `get_package` returned a
+      LIST, which the builder read as an array package with no fields: 0 rows,
+      silently, for `packages.chd.inputs.head.get()` on a model with two CHDs.
+      With explicit names it returned the package NAMED like the type, dropping
+      the others; and an array recharge package (FloPy's `rcha`) was never asked
+      for at all -- measured, a third of the applied recharge missing from the
+      table while MF6's budget carried it. Decided 2026-09-11: include them all,
+      with a column saying which is which.
+      - **A table for a TYPE is every package of it, array form included** (RCHA
+        counts as RCH, per entry 228), one frame per package, stacked. Each row
+        carries **`pname`**, its package's own name. A token that is not a type
+        -- `"rch_array"` -- is one package by its own name.
+      - **The consumers keep or ignore it correctly**: the field explorer and the
+        group tier keep `pname` in the rows they return; `inputs.summary()` does
+        not count it as a value; the value-column pickers and the map hover
+        already filtered by dtype, and the hover now lists the contributing
+        packages per cell.
+      - **Where two packages share a cell, a map ADDS them**: the per-cell
+        aggregation was already `"sum"` -- which is what MF6 applies (tested:
+        list 1e-4 plus array 5e-5 on one cell maps as 1.5e-4).
+      - **Closes the diff-tier asymmetry recorded in the exception-narrowing
+        entry**: an array RCHA was "present" by prefix but yielded no cell keys, so
+        two such models compared as identical. The table reads it now.
+      - Mutants, killed: the first package only, array recharge not counted as
+        RCH, a package name preferred over its type, rows not tagged, and the field
+        explorer dropping `pname`.

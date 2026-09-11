@@ -110,7 +110,7 @@ class CellPackageInputsExplorer(FieldMappable):
         value_columns = [
             column
             for column in frame.columns
-            if column not in {"model", "package", "per", "layer", "cell"}
+            if column not in {"model", "package", "pname", "per", "layer", "cell"}
         ]
         return summarize_input_table(
             frame, label=f"{self.package_name}.inputs", value_columns=value_columns
@@ -201,7 +201,10 @@ class CellPackageInputFieldExplorer(SpatialView):
             raise KeyError(
                 f"Input field {self.field_name!r} is missing required columns: {missing}"
             )
-        return frame.loc[:, required_columns].copy()
+        # `pname` says which package a row came from, where a type has several
+        # (ledger 229); a table built without it simply lacks the column.
+        keep = required_columns[:2] + [c for c in ("pname",) if c in frame.columns] + required_columns[2:]
+        return frame.loc[:, keep].copy()
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary for this input field."""
