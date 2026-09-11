@@ -14,6 +14,7 @@ import os
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import myflopy as mf
@@ -871,4 +872,38 @@ def test_importing_myflopy_does_not_drag_in_the_pest_package():
     assert result.stdout.strip() == "False", (
         "import myflopy now loads the pest package; the run_record constants "
         "exist to avoid exactly that"
+    )
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        lambda: mf.oc(saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
+        lambda: mf.wel(
+            stress_period_data={0: [[(0, 1), -1.0, "north"], [(0, 2), -2.0, "north"]]},
+            boundnames=True,
+        ),
+        lambda: mf.wel(stress_period_data={0: [[(0, 1), np.float64(-1.5)]]}),
+    ],
+    ids=["shared-strings", "shared-boundname", "numpy-scalar"],
+)
+def test_a_json_round_trip_does_not_change_the_digest(package):
+    """What Project.save / load does to a package, and why drift() cried 'edited'."""
+
+    import json
+
+    from myflopy.specs import PackageSpec, package_digest
+
+    original = package()
+    back = PackageSpec.from_dict(json.loads(json.dumps(original.to_dict())))
+    assert package_digest(back) == package_digest(original)
+
+
+def test_an_edited_value_still_changes_the_digest():
+    """The normalization must not fold real differences away."""
+
+    from myflopy.specs import package_digest
+
+    assert package_digest(mf.wel(stress_period_data={0: [[(0, 1), np.float64(-1.5)]]})) != (
+        package_digest(mf.wel(stress_period_data={0: [[(0, 1), -2.5]]}))
     )

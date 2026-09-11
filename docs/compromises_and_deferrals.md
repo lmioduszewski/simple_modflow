@@ -6991,3 +6991,22 @@ same day, which is the useful part of the result.
       floor is gone. `test_no_library_prints` could not see it: the print IS gated
       on a flag, the flag was just overridden.
       - One mutant, killed: the floor restored.
+
+222. **Every saved project with shared strings or NumPy scalars drifted as 'edited' (2026-09-11).**
+      `package_digest` hashes a pickle of the package's canonical fields, and a
+      pickle records object IDENTITY: one object used twice is written once and
+      back-referenced, two equal objects are written twice. `_canonical` passed
+      leaves through unchanged, so a string shared across records -- OC's two
+      `"ALL"`, the boundname a GeoPackage feature puts on every one of its records
+      -- was one object before `Project.save` and several after, and the digest
+      changed. Separately, `np.float64` subclasses float, so JSON kept it and handed
+      back a plain `float`, which pickles differently. `runs.drift()` then reported
+      packages nobody touched as `edited`, in-process and in a fresh interpreter
+      alike: measured on OC, a boundnamed WEL, a NumPy-rate WEL, `drn.gpkg` and
+      `riv.gpkg`. The error only ran one way -- never a false `unchanged`.
+      - **Leaves are normalized**: a NumPy scalar becomes its Python value, and a
+        string is interned, so equal strings are always one object.
+      - **JUDGMENT CALL: no digest version.** A manifest recorded before this whose
+        packages held NumPy scalars reads `edited` ONCE. The user's standing line is
+        that old run records may break but MF6 files never; these are records.
+      - Two mutants, killed: each normalization removed.

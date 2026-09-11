@@ -14,6 +14,7 @@ import functools
 import hashlib
 import inspect
 import pickle
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -464,8 +465,23 @@ def _canonical(value: Any) -> Any:
 
     Lists and tuples keep their order (it is meaningful in a record list) but
     collapse to one type, since MF6 cannot tell a list of records from a tuple of
-    them. Everything else -- arrays, scalars, sources -- passes through.
+    them. Everything else -- arrays, scalars, sources -- passes through, except two
+    kinds of leaf the pickle would otherwise tell apart by representation:
+
+    - a NumPy scalar becomes its Python value -- ``np.float64`` subclasses float,
+      so JSON keeps it and hands back a plain ``float``, which pickles differently;
+    - a string is interned. A pickle records object IDENTITY: one object used
+      twice is written once and back-referenced, two equal objects are written
+      twice. A boundname a GeoPackage feature shares across its records, or OC's
+      two ``"ALL"``, is one object before ``Project.save`` and several after, and
+      every such package read as edited (ledger 222).
     """
+
+    numpy = sys.modules.get("numpy")
+    if numpy is not None and isinstance(value, numpy.generic):
+        return value.item()
+    if type(value) is str:
+        return sys.intern(value)
 
     if isinstance(value, dict):
         return tuple(
