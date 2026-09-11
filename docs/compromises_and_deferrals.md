@@ -6925,3 +6925,16 @@ same day, which is the useful part of the result.
         a myflopy message.
       - One mutant, killed: the flags left off (the NPF test fails, and so do the
         end-to-end PRT tests entry 219 adds).
+
+218. **Release points were written in the world frame on an offset grid (2026-09-11).**
+      MF6 reads a PRP record's x/y in the model's OWN frame. `PRTReleasePoints`
+      `.from_cells` wrote FloPy's cell centres, which are WORLD coordinates, and
+      `.from_points` wrote the caller's world points unchanged. On a grid whose
+      origin is not zero -- every USG import, since `to_mf6(local_origin=True)` is
+      the default -- the particles were placed 1,340,000 ft off the grid and the
+      run failed. Both convert with `modelgrid.get_local_coords` now;
+      `from_points` still TAKES world points, in the grid's CRS, and its docstring
+      says so.
+      - Tested on the synthetic USG model moved to State Plane (1,340,000,
+        650,000): a cell centred at (X0+5, Y0+5) is released at (5, 5).
+      - Two mutants, killed: each conversion removed.

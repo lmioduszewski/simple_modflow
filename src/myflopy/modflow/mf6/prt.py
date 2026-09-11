@@ -265,6 +265,10 @@ class PRTReleasePoints:
                 cellid = (int(layer), cell)
                 x = grid.xcellcenters[cell]
                 y = grid.ycellcenters[cell]
+            # FloPy's cell centres are WORLD coordinates; a PRP record is in the
+            # model's own frame. On an offset grid -- every USG import -- those are
+            # different places, and MF6 released the particles off the grid.
+            x, y = grid.get_local_coords(x, y)
             record: tuple[Any, ...] = (
                 irpt,
                 cellid,
@@ -288,7 +292,8 @@ class PRTReleasePoints:
         """Create release points from point geometries or an iterable of ``(x, y)``.
 
         ``group`` labels the points as one release group (or one label per point) --
-        see :meth:`from_cells`.
+        see :meth:`from_cells`. Points are WORLD coordinates, in the grid's CRS; they
+        are written in the model's own frame, which on an offset grid differs.
         """
 
         geometries = list(getattr(points, "geometry", points))
@@ -301,7 +306,10 @@ class PRTReleasePoints:
                 cellid = (int(layer), *(int(value) for value in cell)) if len(cell) == 2 else tuple(int(value) for value in cell)
             else:
                 cellid = (int(layer), int(cell))
-            record: tuple[Any, ...] = (irpt, cellid, float(x), float(y), float(local_z))
+            local_x, local_y = model.gwf.modelgrid.get_local_coords(float(x), float(y))
+            record: tuple[Any, ...] = (
+                irpt, cellid, float(local_x), float(local_y), float(local_z)
+            )
             rows.append(record if groups is None else (*record, groups[irpt]))
         return cls(tuple(rows))
 
