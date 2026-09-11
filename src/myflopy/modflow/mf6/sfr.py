@@ -15,6 +15,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point
+from shapely.ops import nearest_points
 
 from myflopy.advanced import sfr_spec
 from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH
@@ -527,11 +528,21 @@ class SFRBuilder:
 
         return MoverConnection(self.name, self._reach_at(str(stream_id), location))
 
-    def _point_for_location(self, stream_id: str, location: StreamLocation, *, other: str | None = None) -> Point:
+    def _point_for_location(
+        self,
+        stream_id: str,
+        location: StreamLocation,
+        *,
+        other: str | None = None,
+        toward: Point | None = None,
+    ) -> Point:
         """Resolve a stream location keyword/Point to a coordinate on the stream line.
 
         Supports an explicit ``Point``, ``upstream``/``downstream`` ends, and
         ``nearest``/``intersection`` against ``other`` (required for those).
+        ``nearest`` is where ``other`` MEETS this stream: ``toward`` -- the point
+        ``other`` itself resolved to, a tributary's outlet say -- projected onto
+        this line, or without it the nearest point between the two lines.
         """
 
         line = self.stream_table.loc[stream_id].geometry
@@ -550,16 +561,34 @@ class SFRBuilder:
                 if intersection.is_empty:
                     raise ValueError(f"Streams '{stream_id}' and '{other}' do not intersect.")
                 return intersection.representative_point()
-            return line.interpolate(line.project(other_line.representative_point()))
+            # This projected ``other_line.representative_point()`` -- for a two-vertex
+            # tributary its upstream START -- so a tributary joining the main stem
+            # mid-grid was connected to the main stem's LAST reach.
+            anchor = toward if toward is not None else nearest_points(other_line, line)[0]
+            return line.interpolate(line.project(anchor))
         raise ValueError(f"Unsupported stream location: {location!r}")
 
-    def _reach_at(self, stream_id: str, location: StreamLocation, *, other: str | None = None) -> int:
-        """The reach number on ``stream_id`` closest to the resolved ``location`` point."""
+    def _reach_at(
+        self,
+        stream_id: str,
+        location: StreamLocation,
+        *,
+        other: str | None = None,
+        toward: Point | None = None,
+    ) -> int:
+        """The reach number on ``stream_id`` at the resolved ``location`` point.
 
-        point = self._point_for_location(stream_id, location, other=other)
+        A point on the boundary between two reaches is as near one as the other.
+        The DOWNSTREAM reach takes it: water joining there enters that reach at its
+        upstream end, where the upstream reach would carry it along a stretch above
+        the confluence.
+        """
+
+        point = self._point_for_location(stream_id, location, other=other, toward=toward)
         reaches = self.reaches[self.reaches["stream_id"] == stream_id]
         distances = reaches.geometry.distance(point)
-        return int(distances.idxmin())
+        tied = distances[distances <= distances.min() + _SLIVER_WIDTH].index
+        return int(reaches.loc[tied, "sequence"].idxmax())
 
     @property
     def resolved_connections(self) -> tuple[tuple[int, int], ...]:
@@ -569,15 +598,15 @@ class SFRBuilder:
         for connection in self.network.connections:
             if connection.receiver is None:
                 continue
-            source = self._reach_at(
-                connection.source,
-                connection.source_location,
-                other=connection.receiver,
+            outlet = self._point_for_location(
+                connection.source, connection.source_location, other=connection.receiver
             )
+            source = self._reach_at(connection.source, outlet)
             receiver = self._reach_at(
                 connection.receiver,
                 connection.receiver_location,
                 other=connection.source,
+                toward=outlet,
             )
             pairs.append((source, receiver))
         return tuple(pairs)
@@ -589,8 +618,13 @@ class SFRBuilder:
         counts: dict[int, int] = {}
         resolved = []
         for diversion in self.diversions:
-            source = self._reach_at(diversion.source, diversion.source_location, other=diversion.receiver)
-            receiver = self._reach_at(diversion.receiver, diversion.receiver_location, other=diversion.source)
+            outlet = self._point_for_location(
+                diversion.source, diversion.source_location, other=diversion.receiver
+            )
+            source = self._reach_at(diversion.source, outlet)
+            receiver = self._reach_at(
+                diversion.receiver, diversion.receiver_location, other=diversion.source, toward=outlet
+            )
             idiv = counts.get(source, 0)
             counts[source] = idiv + 1
             resolved.append((diversion, source, receiver, idiv))

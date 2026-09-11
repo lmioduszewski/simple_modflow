@@ -6836,3 +6836,26 @@ same day, which is the useful part of the result.
       - **Five mutants, all killed:** no claim subtracted, the higher-numbered cell
         claiming, no noise floor, claims not accumulated, and a stretch claimed
         before the length check.
+
+215. **A tributary was connected where it started, not where it joined (2026-09-11).**
+      `receiver_location="nearest"` -- the default for every `StreamConnection`
+      and `StreamDiversion` -- projected the SOURCE stream's
+      `representative_point()` onto the receiver, and for a two-vertex tributary
+      that point is its upstream START. A tributary coming in from the east and
+      joining mid-grid was connected to the main stem's LAST reach: its water
+      entered downstream of the confluence and skipped every reach between. MF6
+      accepts the connection. Found by the critic of the vector-to-cell sweep.
+      - **The receiver is where the source DISCHARGES**: the source's own resolved
+        location -- its downstream end by default -- projected onto the receiver,
+        and without one the nearest point between the two lines. A stream running
+        beside the main stem and discharging at its end enters there, not wherever
+        the two lines happen to be nearest (tested).
+      - **At a reach boundary the DOWNSTREAM reach takes the water.** Water joining
+        at x=50 enters the reach in cell 6 at its upstream end; the reach in cell 5
+        would carry it along a stretch above the confluence. It was `idxmin`, the
+        lower reach number. A tie is anything within `_SLIVER_WIDTH`.
+      - **Diversions had the same bug and get the same fix:** water leaving the
+        main stem's downstream end was delivered to the canal's start.
+      - **Four mutants, all killed:** the representative point (the old code), ties
+        to the upstream reach, connections ignoring the outlet, and diversions
+        ignoring the outlet.
