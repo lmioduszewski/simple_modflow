@@ -6685,3 +6685,44 @@ same day, which is the useful part of the result.
       - **NOT in this entry:** a LINE on a face still counts in both cells and a
         POINT on a face or vertex still goes to 2-4 cells (the tie rule, next);
         features that miss the grid are still dropped silently.
+
+211. **A GeoPackage that landed nowhere built an empty package (2026-09-11).**
+      A feature that resolved to no active cell was dropped without a word, by
+      every `.gpkg` list BC and by `GeoPackageSource.k_array`. When EVERY feature
+      missed -- a source in another location, a file with no CRS, a
+      location-agnostic model placed at the origin -- the package came back
+      empty: MF6 rejects an empty list package at read time with a message about
+      the file rather than the cause, and with `maxbound=` runs without the
+      boundary at all, under normal termination. `k_array` returned its defaults
+      everywhere.
+      - **All missed: RAISES**, naming the file and layer, each feature and why
+        it missed (`outside the grid`, `only borders cells`, `on no active cell`,
+        `on no active grid-edge cell` under `edges_only=`, `no geometry`), both
+        extents, and both CRSs -- `the file has NO CRS` when it has none. A
+        location mismatch is found by comparing two boxes, so the message prints
+        them.
+      - **`only borders cells` is its own reason** because entry 210 created it: a
+        polygon on the grid's outer edge -- an ocean polygon on the coastline, with
+        `edges_only=True` -- reached the edge cells through the face-touch bug and
+        covers none of them. It says to draw the polygon overlapping the cells.
+      - **Some missed: WARNS, by name** (the first ten, then a count). A partial
+        miss can be deliberate -- one layer serving several grids -- so it is not
+        refused. Decided 2026-09-11: raise on empty, warn on partial, and no
+        `on_miss=` switch.
+      - **An empty layer raises too**; zero features make the same empty package.
+      - **CRS strictness was considered and rejected.** Location-agnostic models
+        sit at the origin in EPSG:2927 on purpose, and refusing a defaulted CRS
+        would block them. The guard is on the RESULT -- zero cells -- not on the
+        CRS.
+      - **`Spread`'s own "covers no active cell" warning is gone.** A feature with
+        no cells now stops before reaching it, so a partial miss is reported once
+        rather than twice; the branch was unreachable afterwards and was removed.
+      - **Twelve mutants, all killed:** a full miss that only warns, a partial
+        miss not warned, an empty layer passed, every miss called "outside", a
+        bordering polygon not named as such, the consequence left out of the
+        refusal, the no-CRS case unnamed, the source CRS not recorded,
+        `edges_only` not passed on, a missed feature still reaching `Spread` (a
+        second warning), and both `k_array` hooks. The consequence mutant exists
+        because a draft of this change named a loop variable `empty`, shadowing
+        the message parameter, and printed "False" in place of the consequence --
+        caught by one test only, so a second now asserts it.

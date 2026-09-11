@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2591 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2611 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -338,6 +338,12 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `models=` claims the rest, so one model needs `packages=[mf.ims(complexity=...)]`
   and no names. Solvers are re-ordered by model declaration (MF6 demands GWF's
   solution first). A model package in `packages=` RAISES.
+- **A `.gpkg` source that lands nowhere RAISES** (ledger 211, 2026-09-11). Every
+  feature off the grid, on inactive cells, or only bordering cells used to build an
+  EMPTY package -- MF6 rejects it naming the file, or under `maxbound=` runs without
+  it. The error prints both extents and both CRSs, because a location mismatch is two
+  boxes; a partial miss WARNS by name. A polygon covers a cell by AREA (ledger 210):
+  drawn along faces it reaches only the cells inside it, never its neighbours.
 - **Package-first surface**: `mf.gwf/gwt/gwe/prt`; `mf.disv` (+ `mf.dis`/`mf.disu`
   structured/unstructured passthroughs, viz stays DISV-only); `mf.ic/npf/sto/oc/tdis/ims`;
   list BCs `mf.chd/ghb/drn/riv/wel/rch/evt` each with `()` (direct data), `.gpkg(path, context=, nper=)`

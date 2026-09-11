@@ -109,7 +109,9 @@ Each list BC offers up to three forms; the record fields are its input nouns:
 - `()` — direct records: `mf.riv(stress_period_data={0: [[(0, 3), 100.0, 5.0, 98.0]]})`.
 - `.gpkg` — map GeoPackage features onto cells; field args accept a column name or a
   `CellSurfaceOffset` (surface-relative), e.g. `mf.drn.gpkg("seeps.gpkg", context=ctx,
-  nper=12, elevation=mf.CellSurfaceOffset("cell_top", offset=-2.0))`.
+  nper=12, elevation=mf.CellSurfaceOffset("cell_top", offset=-2.0))`. A source whose
+  features land on no active cell RAISES, naming both extents and both CRSs (the file
+  may have none); a feature that misses while others land is WARNED by name (ledger 211).
 - `.flopy` — raw FloPy escape hatch (the same records, no myflopy processing).
 
 **Domain-aware builder forms** (top-active cells picked from the model domain):

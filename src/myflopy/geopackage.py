@@ -377,6 +377,7 @@ class GeoPackageSource:
     layer_base: int = 1
     period_base: int = 0
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
+    _source_crs: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Coerce ``path`` and validate the file exists, a grid is present, and ``nper >= 1``."""
@@ -402,6 +403,7 @@ class GeoPackageSource:
         if self._gdf is None:
             kwargs = {} if self.layer is None else {"layer": self.layer}
             gdf = gpd.read_file(self.path, **kwargs)
+            self._source_crs = gdf.crs
             grid_crs = getattr(self.grid, "crs", None)
             if grid_crs is not None and gdf.crs is not None and gdf.crs != grid_crs:
                 gdf = gdf.to_crs(grid_crs)
@@ -526,6 +528,79 @@ class GeoPackageSource:
 
         return SurfaceResolver(self.context).surface_value(reference, layer=layer, cell=cell)
 
+    def _feature_label(self, index: Any, row) -> str:
+        """A feature as a user would recognise it: its name if it has one, else its row."""
+
+        if self.name_field is not None and self.name_field in row.index:
+            return repr(str(row[self.name_field]))
+        return f"#{index}"
+
+    def _where(self) -> str:
+        """Where the features are and where the grid is -- what an empty result is acted on with."""
+
+        grid_crs = getattr(self.grid, "crs", None)
+        if self._source_crs is None:
+            crs = f"the file has NO CRS, so its coordinates were read as the grid's ({grid_crs})"
+        elif grid_crs is not None and self._source_crs != grid_crs:
+            crs = f"the features were reprojected from {self._source_crs} to the grid's {grid_crs}"
+        else:
+            crs = f"both are in {self._source_crs}"
+        features = ", ".join(f"{v:,.1f}" for v in self.gdf.total_bounds)
+        grid = ", ".join(f"{v:,.1f}" for v in self.grid.gdf_vorPolys.total_bounds)
+        return f"The features span ({features}) and the grid ({grid}); {crs}."
+
+    def _refuse_or_report_misses(
+        self, missed: list[tuple[Any, Any]], *, empty: str, edges_only: bool = False
+    ) -> None:
+        """Raise when no feature lands on the grid; warn, naming them, when only some miss.
+
+        Both used to pass in silence. A source that lands NOWHERE -- another
+        location, a file with no CRS, a model placed at the origin -- came back as
+        an empty package, which MF6 rejects at read time naming the file rather
+        than the cause, or with ``maxbound=`` runs without, under normal
+        termination; ``k_array`` came back as its defaults. So that raises, with
+        both extents and both CRSs, which is what the mismatch is found by. A
+        PARTIAL miss can be deliberate (one layer serving several grids), so it
+        warns rather than refusing, but by name.
+        """
+
+        source = f"'{self.path.name}'" + (f" (layer {self.layer!r})" if self.layer else "")
+        total = len(self.gdf)
+        if total == 0:
+            raise ValueError(f"GeoPackage {source} has no features; {empty}.")
+        if not missed:
+            return
+        polys = self.grid.gdf_vorPolys
+        target = "active grid-edge cell" if edges_only else "active cell"
+        reasons = []
+        for index, row in missed:
+            geometry = row.geometry
+            no_geometry = geometry is None or geometry.is_empty
+            hits = [] if no_geometry else polys.index[polys.sindex.query(geometry, predicate="intersects")]
+            if no_geometry:
+                why = "no geometry"
+            elif len(hits) == 0:
+                why = "outside the grid"
+            elif geometry.area > 0 and all(
+                geometry.intersection(polys.geometry.loc[cell]).area <= 0 for cell in hits
+            ):
+                why = "only borders cells -- a polygon must overlap a cell to reach it"
+            else:
+                why = f"on no {target}"
+            reasons.append(f"{self._feature_label(index, row)} ({why})")
+        listing = ", ".join(reasons[:10])
+        if len(reasons) > 10:
+            listing += f", and {len(reasons) - 10} more"
+        if len(missed) == total:
+            raise ValueError(
+                f"No feature in GeoPackage {source} lands on an {target}; {empty}. "
+                f"{listing}. {self._where()}"
+            )
+        logger.warning(
+            "%d of %d features in GeoPackage %s land on no %s and are left out: %s",
+            len(missed), total, source, target, listing,
+        )
+
     def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int, share: float = 1.0):
         """Resolve one value spec for a cell.
 
@@ -574,9 +649,13 @@ class GeoPackageSource:
             )
 
         data = {period: [] for period in range(self.nper)}
+        missed: list[tuple[Any, Any]] = []
         for index, row in self.gdf.iterrows():
             layer = self._layer(row)
             shares = self._cell_shares(row.geometry, layer=layer, edges_only=edges_only)
+            if not shares:
+                missed.append((index, row))
+                continue
             if spreads:
                 shares = self._resolved_shares(shares, spreads, index)
             name = (
@@ -594,6 +673,12 @@ class GeoPackageSource:
                     if boundnames:
                         record.append(name)
                     data[period].append(record)
+        self._refuse_or_report_misses(
+            missed,
+            edges_only=edges_only,
+            empty="the package would have no records -- MF6 rejects it, or runs "
+            "without it under maxbound=",
+        )
         return data
 
     def _resolved_shares(self, shares, spreads: tuple[Spread, ...], index: Any):
@@ -611,11 +696,6 @@ class GeoPackageSource:
         covered = sum(share for _, share in shares)
         mode = spreads[0].mode
         warn_below = min(spread.warn_below for spread in spreads)
-        if covered <= 0:
-            logger.warning(
-                "feature %s covers no active cell; its spread fields contribute nothing", index
-            )
-            return shares
         if covered < warn_below:
             logger.warning(
                 "feature %s lies %.1f%% inside the active grid; with mode=%r its spread "
@@ -836,12 +916,17 @@ class GeoPackageSource:
             [[float(fallback[layer])] * self.grid.ncpl for layer in range(nlay)],
             dtype=float,
         )
-        for _, row in self.gdf.iterrows():
+        missed: list[tuple[Any, Any]] = []
+        for index, row in self.gdf.iterrows():
             layer = self._layer(row)
             if layer >= nlay:
                 raise ValueError(f"GeoPackage layer {layer} is outside nlay={nlay}.")
-            for cell in self._cells(row.geometry, layer=layer):
+            cells = self._cells(row.geometry, layer=layer)
+            if not cells:
+                missed.append((index, row))
+            for cell in cells:
                 result[layer, cell] = float(row[value])
+        self._refuse_or_report_misses(missed, empty="the K array would be its defaults everywhere")
         return result
 
 
