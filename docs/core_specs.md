@@ -454,13 +454,18 @@ baseline = project.reopen_run("baseline")
 
 baseline.spec                       # a real SimulationSpec, revived from the manifest
 baseline.build()                    # rebuildable without the original script
-variant = baseline.spec.derive("high_k").replace_package("flow", mf.npf(k=35.0))
+variant = baseline.spec.derive("high_k").with_packages(mf.npf(k=35.0), on="flow")
 project.prepare_run("high_k", variant)
 ```
 
 `reopen_run` attaches the project's build context, so a spec built from
-`mf.ref(...)` resolves its references against the package library. `mf.load_run`
-and `Run.reopen` have no library in scope, so their refs stay unresolved.
+`mf.ref(...)` resolves its references. Package references resolve to the run's
+**own copies**, which `prepare_run` writes into `<run>/_library/` (ledger 230), so
+editing the library afterwards does not change what the run rebuilds. Grid
+references still resolve against the grid library, and so does a run prepared
+before the copies existed -- that one warns when the library no longer holds what
+it ran with. `mf.load_run` and `Run.reopen` have no library in scope: package
+references resolve from the run's own copies and nothing else.
 
 Two cases stay **summary-only** — openable and inspectable, but not rebuildable:
 a manifest written before recipes existed, and a spec whose options embed a raw

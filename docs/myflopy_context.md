@@ -105,7 +105,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Run ledger, incl. workspaces with no manifest | ✅ | `project.runs` (`RunLibrary`) — one row per run under the project, `discovered` for a bare MF6 workspace, `unreadable` for a truncated manifest (ledger 185) |
 | What MF6 reported, vs what myflopy did | ✅ | `run.outcome` / `run.reconcile()` from `run_record.py`: `status` is myflopy's verb, `outcome` is MF6's verdict read from `mfsim.lst` — `normal`/`failed`/`incomplete`/`absent`/`superseded` (ledger 184, 191) |
 | Which runs an edit invalidated | ✅ | `project.runs.drift()` — each run records a content fingerprint of the LIBRARY packages it used, so editing one names the runs it affected (ledger 187) |
-| Rebuild or fork a run from a later session | ✅ | the manifest stores the full `SimulationSpec` recipe, so `reopen_run(...).build()` works with no build script (ledger 181) |
+| Rebuild or fork a run from a later session | ✅ | the manifest stores the full `SimulationSpec` recipe, so `reopen_run(...).build()` works with no build script (ledger 181), and builds from the run's own copy of its library packages, not the library as edited since (ledger 230) |
 | Partial project persistence | ✅ | `project.save()` returns a `SaveReport`, writing what it can and naming any simulation it skipped; `strict=True` restores all-or-nothing (ledger 193) |
 | Parallel model split (partition, MPI) | ✅ | `parallel.py` (`ParallelModelWorkflow`, `ParallelSplitRun`) |
 | Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |

@@ -187,7 +187,9 @@ MF6's verdict** read from `mfsim.lst`: `normal`/`failed`/`incomplete`/`absent`/
 (`prepare_run(overwrite=True)` reuses the directory — design D5, still open, ledger
 191). `run.reconcile()` adopts a verdict; it will not adopt a superseded one.
 **`project.runs.drift()`** says which library packages a run used have changed since,
-via a content fingerprint stored per run. `project.save()` returns a **`SaveReport`**,
+via a content fingerprint stored per run. A reopened run BUILDS from its own copy
+of those packages (`<run>/_library/`, ledger 230), so drift says the library moved
+on, not that the run can no longer be rebuilt as it ran. `project.save()` returns a **`SaveReport`**,
 not a path, and persists what it can rather than refusing the whole project.
 Runnable tour: `examples/mf6/notebooks/project_libraries_tour.ipynb` (executed by
 `tests/test_project_libraries_tour.py`, not merely source-checked).
@@ -236,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2710 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2722 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.

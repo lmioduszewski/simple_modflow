@@ -5705,7 +5705,9 @@ same day, which is the useful part of the result.
         resolves its `mf.ref` packages against the library. `mf.load_run` and
         `Run.reopen` deliberately do NOT -- there is no library in scope, and
         silently resolving against some other project would be worse than
-        leaving the refs unresolved.
+        leaving the refs unresolved. (2026-09-11: package refs now resolve from
+        the run's OWN copy first, in every route -- still never from a library
+        that is not the run's. Ledger 230.)
       - **An unrevivable recipe degrades rather than failing to open.** A builder
         whose module moved is caught by name (`ValueError`/`TypeError`/`KeyError`/
         `AttributeError`/`ImportError`), logged at WARNING, and the run opens
@@ -7160,3 +7162,59 @@ same day, which is the useful part of the result.
       - Mutants, killed: the first package only, array recharge not counted as
         RCH, a package name preferred over its type, rows not tagged, and the field
         explorer dropping `pname`.
+
+230. **A reopened run rebuilt from the library as edited since (2026-09-11).**
+      A run records its library packages by KEY, and `Project.reopen_run`
+      resolved those keys against the library as it stood when reopened. Edit
+      `npf/base` after a run, reopen the run in a later session and rebuild it,
+      and it came back with the NEW K -- silently, while its manifest still
+      carried the old fingerprint, so `drift()` and the rebuilt model disagreed.
+      The user chose to freeze at prepare time (2026-09-11).
+      - **`prepare_run` copies each library package the simulation references
+        into `<run>/_library/packages/`**, in the library's own format (JSON, or
+        a pickle for an array-bearing package), and the manifest's new
+        `package_snapshot` block maps each key to its copy. A rebuild resolves
+        `mf.ref` from those copies first, by every route: `reopen_run`,
+        `project.runs[key]`, and `mf.load_run`/`Run.reopen`, which could not
+        resolve a ref at all before. Ledger 181's rule stands: a run never
+        resolves against a library that is not its own.
+      - **Read at build time, never at reopen.** `project.runs` reopens every
+        manifest on each browse, and unpickling copies there would make browsing
+        pay for arrays nobody asked to build. A run prepared in this session
+        builds from the objects it copied and reads nothing back.
+      - **Cost: one more copy per run of each referenced package.** Small for a
+        JSON-able package; for an array one, the size of the library's pickle --
+        a 72x9,405 float64 recharge array is 5.4 MB. The run folder already holds
+        MF6's text input for the same package, which is larger.
+      - **Runs prepared before this have no copies**, and still resolve against
+        the library as it is now -- there is nothing else to build from. It is no
+        longer silent: rebuilding one WARNS, naming each key whose current
+        version differs from the fingerprint the run recorded, or that was never
+        fingerprinted. Writing or executing it then records the versions it used
+        and copies them, so from there on it is frozen like a new run and
+        `drift()` tells the truth about its inputs.
+      - **A missing or unreadable copy RAISES**, naming the run, key and file.
+        It is not replaced from the library, which may now hold something else.
+      - **A package that cannot be copied** (neither JSON-encodable nor
+        picklable) is left out with a WARNING, because `prepare_run` must not
+        fail over a copy; that key then behaves like an old run's.
+      - **NOT covered: grid references.** They still resolve from the grid
+        library, so editing a grid entry still changes what a reopened run
+        rebuilds. The verified bug was about packages, and grids carry no
+        fingerprint for `drift()` to compare; flagged to the user as a sibling.
+      - `prepare_run(overwrite=True)` rewrites the copies it indexes and leaves
+        any others in `_library/` unindexed, as it leaves the previous listing
+        (design D5, ledger 191).
+      - `_slug` is lossy, so two keys can share a file name. The index is by
+        key, and a clash gets `~2`, which no slug produces.
+      - `_save_package`'s JSON-or-pickle logic moved into `_persist_package`,
+        shared by the library and the run copies, so both hold one format.
+      - Fixed in passing: `docs/core_specs.md` still taught `replace_package`,
+        removed by ledger 204.
+      - Thirteen mutants, all killed: copies never used, the index dropped on
+        reopen or never written, the library winning the merge, the old-run
+        warning never or always given, `write` not recording, the missing- and
+        unreadable-copy checks removed, clash handling removed, a copy failure
+        uncaught, a fresh run reading its copies back, and `reopen_run` flagging
+        no keys.
+      - Found by the 2026-09-10 sweep, as bug 9 of 21.

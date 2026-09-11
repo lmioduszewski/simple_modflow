@@ -163,7 +163,9 @@ def read_listing_outcome(workspace: Path) -> ListingOutcome: ...
    packages are `mf.ref(...)` and the arrays live in the library. `reopen_run`
    attaches the project's build context so those refs resolve; `Run.reopen` and
    `mf.load_run` do not, having no library in scope. A spec embedding raw arrays
-   gets no recipe and stays summary-only. **BUILT — ledger 181.**
+   gets no recipe and stays summary-only. **BUILT — ledger 181.** Since ledger
+   230 a run also keeps its own copy of the library packages it references, and
+   every route rebuilds from that first.
 
 3. **`Run.outcome` reads `mfsim.lst`, view-only.** **BUILT — ledger 184.** It is
    never cached into the manifest at all: the listing is the authority and sits in

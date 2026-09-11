@@ -7,7 +7,7 @@ import pickle
 import re
 import warnings
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from html import escape
 from importlib import import_module
@@ -46,6 +46,8 @@ from myflopy.specs import (
 logger = get_logger(__name__)
 
 RUN_MANIFEST_NAME = "run.json"
+# A run's own copy of the library packages it references, beside its `_grid/`.
+RUN_LIBRARY_DIR = "_library"
 PROJECT_MANIFEST_NAME = "project.json"
 PROJECT_SPEC_NAME = "project_spec.json"
 
@@ -463,6 +465,195 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     }
 
 
+def _package_ref_keys(spec: SimulationSpec) -> list[str]:
+    """The library keys ``spec`` references by ``mf.ref``, each once, in order."""
+
+    entries = [
+        *spec.packages,
+        *(entry for model in spec.models for entry in model.packages),
+    ]
+    return list(
+        dict.fromkeys(entry.key for entry in entries if isinstance(entry, PackageRef))
+    )
+
+
+def _persist_package(
+    package: PackageSpec,
+    *,
+    spec_path: Path,
+    pickle_path: Path,
+    sidecar_path: Path,
+    root: Path,
+) -> bool:
+    """Write one package as readable JSON, pickling it when it carries arrays.
+
+    Shared by the project library and a run's own copy of it, so the two hold
+    packages in one format. The pickle is named in the JSON document relative to
+    ``root``. Returns whether it fell back to pickling.
+    """
+
+    try:
+        doc = package.to_dict()
+    except ValueError:
+        doc = None
+    if doc is not None:
+        _write_json(spec_path, doc)
+        return False
+    pickle_path.parent.mkdir(parents=True, exist_ok=True)
+    with pickle_path.open("wb") as handle:
+        pickle.dump(package, handle)
+    _write_json(sidecar_path, _artifact_versions())
+    _write_json(
+        spec_path,
+        {
+            "kind": "PackageSpec",
+            "name": package.name,
+            "method": "pickle",
+            "pickle_path": pickle_path.relative_to(root).as_posix(),
+        },
+    )
+    return True
+
+
+def _warn_artifact_versions(
+    kind: str, key: str, sidecar_path: Path, *, stacklevel: int
+) -> None:
+    """Warn if a pickled artifact was written under a different library stack."""
+
+    if not sidecar_path.exists():
+        return
+    stored = _read_json(sidecar_path)
+    current = _artifact_versions()
+    mismatched = {
+        name: (stored.get(name), current.get(name))
+        for name in current
+        if name in stored and stored[name] != current[name]
+    }
+    if mismatched:
+        warnings.warn(
+            f"Pickled {kind} '{key}' was written under different library "
+            f"versions {mismatched}. If it fails to load, rebuild it.",
+            stacklevel=stacklevel,
+        )
+
+
+def _revive_package(
+    key: str,
+    doc: dict[str, Any],
+    *,
+    root: Path,
+    sidecar_path: Path,
+    stacklevel: int,
+) -> PackageSpec:
+    """Reconstruct one package from the document :func:`_persist_package` wrote."""
+
+    if doc.get("method") == "pickle":
+        _warn_artifact_versions("package", key, sidecar_path, stacklevel=stacklevel)
+        with (root / doc["pickle_path"]).open("rb") as handle:
+            return pickle.load(handle)
+    return PackageSpec.from_dict(doc)
+
+
+def _write_package_snapshot(
+    workspace: Path,
+    packages: dict[str, PackageSpec],
+    *,
+    run_name: str,
+    existing: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Copy library packages into a run's own folder; return the manifest's index.
+
+    The index maps each key to its document, relative to the run folder, so a
+    reopened run finds a copy by KEY and never by guessing a file name: ``_slug``
+    is lossy, and ``"npf/high k"`` and ``"npf/high_k"`` would share one. A clash
+    gets ``~2``, ``~3``, which no slug can produce. ``existing`` is an index
+    already on disk, whose files are left alone.
+
+    A package that is neither JSON-encodable nor picklable is left out with a
+    WARNING: preparing a run must not fail over a copy. A key with no copy
+    resolves from the library when the run is rebuilt, which :meth:`Run.build`
+    reports if the library has changed.
+    """
+
+    taken = {relative.removesuffix(".json") for relative in (existing or {}).values()}
+    index: dict[str, str] = {}
+    for key, package in packages.items():
+        natural = Path(RUN_LIBRARY_DIR, "packages", *_package_key_parts(key))
+        stem, clash = natural, 1
+        while stem.as_posix() in taken:
+            clash += 1
+            stem = natural.with_name(f"{natural.name}~{clash}")
+        folder, name = workspace / stem.parent, stem.name
+        try:
+            _persist_package(
+                package,
+                spec_path=folder / f"{name}.json",
+                pickle_path=folder / f"{name}.pkl",
+                sidecar_path=folder / f"{name}.versions.json",
+                root=workspace,
+            )
+        except (pickle.PicklingError, TypeError, AttributeError) as error:
+            (folder / f"{name}.pkl").unlink(missing_ok=True)
+            logger.warning(
+                "Run '%s': library package '%s' could not be copied into the run "
+                "(%s). Rebuilding the run in a later session resolves it from the "
+                "library as it is then.",
+                run_name,
+                key,
+                error,
+            )
+            continue
+        taken.add(stem.as_posix())
+        index[key] = f"{stem.as_posix()}.json"
+    return index
+
+
+def _read_package_snapshot(
+    workspace: Path, index: dict[str, str], *, run_name: str
+) -> dict[str, PackageSpec]:
+    """Read a run's own copies of its library packages back, by key.
+
+    A missing or unreadable copy RAISES rather than falling back to the library:
+    the library may hold a different package by now, and building that silently
+    is the defect these copies exist to prevent.
+    """
+
+    packages: dict[str, PackageSpec] = {}
+    for key, relative in index.items():
+        path = workspace / relative
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Run '{run_name}' was prepared with its own copy of library "
+                f"package '{key}', and {path} is missing. It is not rebuilt from "
+                "the library instead, which may now hold a different package: "
+                "restore the file, or prepare a new run."
+            )
+        stem = path.name.removesuffix(".json")
+        try:
+            packages[key] = _revive_package(
+                key,
+                _read_json(path),
+                root=workspace,
+                sidecar_path=path.with_name(f"{stem}.versions.json"),
+                stacklevel=6,
+            )
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            ImportError,
+            EOFError,
+            pickle.UnpicklingError,
+        ) as error:
+            raise ValueError(
+                f"Run '{run_name}': its copy of library package '{key}' ({path}) "
+                f"could not be read back ({error}). It is not rebuilt from the "
+                "library instead, which may now hold a different package."
+            ) from error
+    return packages
+
+
 def _spec_from_recipe(
     recipe: dict[str, Any] | None, *, name: str
 ) -> SimulationSpec | None:
@@ -683,6 +874,12 @@ class RunLibrary(SpecLibrary["Run"]):
         recorded before digests existed. A missing fingerprint is not evidence
         of sameness, and reporting any of the last three as ``unchanged`` would
         be the same class of lie as ``status="written"`` reading as success.
+
+        A run keeps its own copy of these packages (``<run>/_library/``) and
+        rebuilds from it, so ``edited`` does not mean the run can no longer be
+        rebuilt as it ran: it means preparing it again from the library would
+        give a different model. Runs prepared before the copies existed are the
+        exception, and warn when they are rebuilt from a changed library.
         """
 
         import pandas as pd
@@ -902,6 +1099,11 @@ class Run:
     # records package KEYS, so without this, editing 'npf/base' afterwards leaves
     # every run claiming to have used it -- true of the key, false of the model.
     package_digests: dict[str, str] | None = field(default=None, repr=False)
+    # Where this run's OWN copy of each of those packages lives, relative to the
+    # run folder (``_library/packages/...``). A rebuild resolves ``mf.ref`` from
+    # these first, so editing the library later does not change what the run
+    # rebuilds. None for a run prepared before the copies existed.
+    package_snapshot: dict[str, str] | None = field(default=None, repr=False)
     # Each model's grid CRS as built: what a reopened run is drawn in. Unrecorded,
     # it fell back to EPSG:2927 whatever CRS the run had.
     model_crs: dict[str, str] | None = field(default=None, repr=False)
@@ -914,6 +1116,19 @@ class Run:
     # `_record_status` re-summarizes the spec on every status change, so the
     # not-re-runnable warning would fire three or four times for one run.
     _warned_unserializable: bool = field(default=False, init=False, repr=False)
+    # The copies once read -- or, for a run prepared in this session, the very
+    # objects that were copied, so a build reads nothing back.
+    _snapshot_specs: dict[str, PackageSpec] | None = field(
+        default=None, init=False, repr=False
+    )
+    # Keys ``Project.reopen_run`` found no copy of: they resolve from the library
+    # as it is NOW, and ``build`` checks them against the recorded fingerprints.
+    _library_keys: tuple[str, ...] = field(default=(), init=False, repr=False)
+    # What those keys resolved to at the last build, with fingerprints; ``write``
+    # records them once the inputs on disk are rebuilt from them.
+    _from_library: dict[str, tuple[PackageSpec, str | None]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Coerce ``workspace`` to a :class:`~pathlib.Path`."""
@@ -963,21 +1178,109 @@ class Run:
             return None
 
     def build(self) -> Run:
-        """Build this run's FloPy simulation from its specification."""
+        """Build this run's FloPy simulation from its specification.
+
+        Library references resolve to the run's OWN copies first (written into
+        ``<run>/_library/`` by ``prepare_run``), so a run reopened in a later
+        session builds what it was prepared with even after the library was
+        edited. A key it holds no copy of resolves from the build context's
+        library; on a run reopened through ``Project.reopen_run`` that WARNS
+        when the library's version is not the one the run recorded.
+        """
 
         if self.spec is None:
             raise ValueError("A reopened run without a spec cannot be rebuilt.")
         self.workspace.mkdir(parents=True, exist_ok=True)
+        build_context = self._context_for_build()
         self.built = self.spec.build_flopy(
             self.workspace,
-            build_context=self.build_context,
+            build_context=build_context,
         )
         self.simulation = self.built.simulation
         patch_simulation_plot(self.simulation)
         self.simulation.exe_name = self.executable
         self._model_views.clear()
+        self._from_library = self._check_library_fallback(build_context)
         self._record_status("built")
         return self
+
+    def _context_for_build(self) -> SpecBuildContext | None:
+        """The build context, with this run's own package copies taking precedence."""
+
+        if not self.package_snapshot:
+            return self.build_context
+        if self._snapshot_specs is None:
+            self._snapshot_specs = _read_package_snapshot(
+                self.workspace, self.package_snapshot, run_name=self.name
+            )
+        base = self.build_context or SpecBuildContext(
+            simulation_workspace=self.workspace,
+            grid_workspace=self.workspace / "_grid",
+        )
+        return replace(
+            base, package_specs={**base.package_specs, **self._snapshot_specs}
+        )
+
+    def _check_library_fallback(
+        self, build_context: SpecBuildContext | None
+    ) -> dict[str, tuple[PackageSpec, str | None]]:
+        """Fingerprint the keys that resolved from the CURRENT library; warn if moved.
+
+        Only the keys ``Project.reopen_run`` flagged -- those this run holds no
+        copy of. A key whose fingerprint differs from the recorded one, or that
+        was never fingerprinted, is not known to be what the run ran with.
+        """
+
+        if not self._library_keys or build_context is None:
+            return {}
+        recorded = self.package_digests or {}
+        resolved = {
+            key: (spec, package_digest(spec))
+            for key, spec in build_context.package_specs.items()
+            if key in self._library_keys
+        }
+        moved = [
+            key
+            for key, (_, digest) in resolved.items()
+            if digest is None or recorded.get(key) != digest
+        ]
+        if moved:
+            logger.warning(
+                "Run '%s' was rebuilt with library package(s) %s as they are NOW. "
+                "The run holds no copy of them -- it was prepared before runs "
+                "kept one, or they could not be copied -- and they differ from "
+                "what it was prepared with, or were never fingerprinted. Its "
+                "results on disk came from the earlier versions; writing or "
+                "executing it replaces them and records these. "
+                "project.runs.drift() compares the two.",
+                self.name,
+                ", ".join(repr(key) for key in moved),
+            )
+        return resolved
+
+    def _adopt_library_versions(self) -> None:
+        """Record what the rewritten inputs came from, and keep a copy from now on."""
+
+        packages = {key: spec for key, (spec, _) in self._from_library.items()}
+        copied = _write_package_snapshot(
+            self.workspace,
+            packages,
+            run_name=self.name,
+            existing=self.package_snapshot,
+        )
+        self.package_snapshot = {**(self.package_snapshot or {}), **copied}
+        self._snapshot_specs = {
+            **(self._snapshot_specs or {}),
+            **{key: packages[key] for key in copied},
+        }
+        self.package_digests = {
+            **(self.package_digests or {}),
+            **{key: digest for key, (_, digest) in self._from_library.items()},
+        }
+        self._library_keys = tuple(
+            key for key in self._library_keys if key not in copied
+        )
+        self._from_library = {}
 
     def write(self, silent=False) -> Path:
         """Write MF6 input files, building first when necessary.
@@ -987,6 +1290,8 @@ class Run:
             self.build()
         assert self.simulation is not None  # build() populates it
         self.simulation.write_simulation(silent=silent)
+        if self._from_library:
+            self._adopt_library_versions()
         self._record_status("written")
         return self.workspace
 
@@ -1038,6 +1343,8 @@ class Run:
             exe_name=self.executable,
             verbosity_level=verbosity_level,
         )
+        # Writing this simulation writes what was on disk, not a library rebuild.
+        self._from_library = {}
         patch_simulation_plot(self.simulation)
         self._model_views.clear()
         return self.simulation
@@ -1246,6 +1553,7 @@ class Run:
             else self.spec_block,
             "spec_recipe": self._spec_recipe_block(),
             "package_digests": self.package_digests,
+            "package_snapshot": self.package_snapshot,
             "crs": self._model_crs_block(),
             "metadata": self.metadata,
         }
@@ -1334,6 +1642,7 @@ class Run:
             spec_block=data.get("spec"),
             spec_recipe=data.get("spec_recipe"),
             package_digests=data.get("package_digests"),
+            package_snapshot=data.get("package_snapshot"),
             model_crs=data.get("crs"),
         )
         run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
@@ -1645,6 +1954,12 @@ class Project:
         files exist yet -- so you can inspect it with ``run.model(...)`` (and your
         plotting/explorer tools) before committing to ``run.execute()``.
 
+        Each library package the simulation references by ``mf.ref`` is copied
+        into ``<run>/_library/``, and the run rebuilds from those copies: editing
+        the library afterwards does not change what reopening this run in a
+        later session builds. ``project.runs.drift()`` still says when the
+        library has moved on from it.
+
         Parameters
         ----------
         name : str
@@ -1682,6 +1997,8 @@ class Project:
         if workspace.exists() and any(workspace.iterdir()) and not overwrite:
             raise FileExistsError(f"Run workspace already exists: {workspace}")
         workspace.mkdir(parents=True, exist_ok=True)
+        references = self._library_references(spec)
+        snapshot = _write_package_snapshot(workspace, references, run_name=name)
         run = Run(
             name=name,
             workspace=workspace,
@@ -1690,7 +2007,10 @@ class Project:
             metadata={} if metadata is None else dict(metadata),
             build_context=self._build_context(workspace),
             package_digests=self._package_digests(spec),
+            package_snapshot=snapshot,
         )
+        # Build from the very objects just copied, rather than reading them back.
+        run._snapshot_specs = {key: references[key] for key in snapshot}
         run.save_manifest()
         if build:
             run.build()
@@ -1722,15 +2042,23 @@ class Project:
         """Reopen one project-owned run by name.
 
         The run is given this project's build context, so a spec revived from the
-        manifest can resolve its ``mf.ref`` package references against the
-        library and be rebuilt or re-run. Reopening through :func:`load_run` or
-        :meth:`Run.reopen` instead yields a run whose refs are unresolved --
-        there is no library in scope to resolve them against.
+        manifest can resolve its ``mf.ref`` references and be rebuilt or re-run.
+        Package references resolve to the run's OWN copies, written by
+        :meth:`prepare_run`, so what it rebuilds does not follow later edits to
+        the library. A run prepared before those copies existed resolves against
+        the library as it is now, and warns on rebuild when that is not what it
+        recorded. Reopening through :func:`load_run` or :meth:`Run.reopen`
+        resolves package references from the run's copies and nothing else --
+        there is no library in scope.
         """
 
         run = Run.reopen(self.runs_dir / name, load=load)
         if run.spec is not None:
             run.build_context = self._build_context(run.workspace)
+            copied = run.package_snapshot or {}
+            run._library_keys = tuple(
+                key for key in _package_ref_keys(run.spec) if key not in copied
+            )
         return run
 
     def discover_runs(self, *, load: bool = False) -> list[Run]:
@@ -1783,18 +2111,21 @@ class Project:
         and still is.
         """
 
-        digests: dict[str, str | None] = {}
         library = self.packages.digests()  # cached until the library changes
-        entries = [
-            *spec.packages,
-            *(entry for model in spec.models for entry in model.packages),
-        ]
-        for entry in entries:
-            if not isinstance(entry, PackageRef):
-                continue
-            if entry.key in self.packages:
-                digests[entry.key] = library[entry.key]
-        return digests
+        return {key: library[key] for key in self._library_references(spec)}
+
+    def _library_references(self, spec: SimulationSpec) -> dict[str, PackageSpec]:
+        """The library packages ``spec`` references by ``mf.ref``, in order.
+
+        A ref whose key is not defined is left out, as :meth:`_package_digests`
+        does -- ``validate`` reports it.
+        """
+
+        return {
+            key: self.packages[key]
+            for key in _package_ref_keys(spec)
+            if key in self.packages
+        }
 
     def _library_digests(self) -> dict[str, str | None]:
         """Fingerprint the whole package library once, for a batch comparison."""
@@ -1923,28 +2254,13 @@ class Project:
         without recomputing. Returns whether it fell back to pickling.
         """
 
-        try:
-            doc = package.to_dict()
-        except ValueError:
-            doc = None
-        if doc is not None:
-            _write_json(self.layout.package_spec_path(key), doc)
-            return False
-        pickle_path = self.layout.package_pickle_path(key)
-        pickle_path.parent.mkdir(parents=True, exist_ok=True)
-        with pickle_path.open("wb") as handle:
-            pickle.dump(package, handle)
-        _write_json(self.layout.package_sidecar_path(key), _artifact_versions())
-        _write_json(
-            self.layout.package_spec_path(key),
-            {
-                "kind": "PackageSpec",
-                "name": package.name,
-                "method": "pickle",
-                "pickle_path": pickle_path.relative_to(self.root).as_posix(),
-            },
+        return _persist_package(
+            package,
+            spec_path=self.layout.package_spec_path(key),
+            pickle_path=self.layout.package_pickle_path(key),
+            sidecar_path=self.layout.package_sidecar_path(key),
+            root=self.root,
         )
-        return True
 
     def save(self, *, strict: bool = False) -> SaveReport:
         """Persist the project document, its simulations, and its package library.
@@ -2141,30 +2457,15 @@ class Project:
     def _load_package(self, key: str, doc: dict[str, Any]) -> PackageSpec:
         """Reconstruct one project package from its document."""
 
-        if doc.get("method") == "pickle":
-            self._warn_version_mismatch(
-                "package", key, self.layout.package_sidecar_path(key)
-            )
-            path = self.root / doc["pickle_path"]
-            with path.open("rb") as handle:
-                return pickle.load(handle)
-        return PackageSpec.from_dict(doc)
+        return _revive_package(
+            key,
+            doc,
+            root=self.root,
+            sidecar_path=self.layout.package_sidecar_path(key),
+            stacklevel=4,
+        )
 
     def _warn_version_mismatch(self, kind: str, key: str, sidecar_path: Path) -> None:
         """Warn if a pickled artifact was written under a different library stack."""
 
-        if not sidecar_path.exists():
-            return
-        stored = _read_json(sidecar_path)
-        current = _artifact_versions()
-        mismatched = {
-            name: (stored.get(name), current.get(name))
-            for name in current
-            if name in stored and stored[name] != current[name]
-        }
-        if mismatched:
-            warnings.warn(
-                f"Pickled {kind} '{key}' was written under different library "
-                f"versions {mismatched}. If it fails to load, rebuild it.",
-                stacklevel=3,
-            )
+        _warn_artifact_versions(kind, key, sidecar_path, stacklevel=4)

@@ -297,6 +297,16 @@ project.runs.drift()
 keys. A run reading `unchanged` throughout is reproducible from the library as it
 stands; anything else names exactly what to look at.
 
+**A run rebuilds from its own copy, not from the library** (ledger 230).
+`prepare_run` copies each library package the simulation references into
+`<run>/_library/`, and a rebuild resolves `mf.ref` from those copies first. So
+`edited` means the library has moved on -- preparing the run again from it would
+give a different model -- not that this run can no longer be rebuilt as it ran.
+A run prepared before the copies existed has nothing else to build from: it
+resolves against the library as it is now, warns naming each key that differs
+from what it recorded, and records the versions it used once its inputs are
+rewritten.
+
 Only `mf.ref` entries are fingerprinted — a package written inline is baked into
 the run's own recipe and cannot drift. Drift only reports; it never rewrites a
 run's stored history.
@@ -350,7 +360,9 @@ sweep, where `project.runs` is the curated ledger.
 The library is **cached**, so `project.runs["baseline"]` returns the same object
 twice; call `project.refresh_runs()` after executing a run from elsewhere.
 Opening one run by name stays `project.reopen_run(name)`, which also attaches the
-build context so a revived spec resolves its library references.
+build context so a revived spec resolves its library references -- from the
+run's own copies first. `mf.load_run` has no library in scope, so there package
+references resolve from those copies and nothing else.
 
 ## Persistence is opt-in
 
