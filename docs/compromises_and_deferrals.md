@@ -6959,3 +6959,27 @@ same day, which is the useful part of the result.
         scene now needs the model's grid to place the tracks, which is the fix, and
         at the origin that is the identity, so its pass-through assertion holds.
       - Two mutants, killed: the map's conversion and the scene's.
+
+220. **A reopened run reloaded on every read, and dropped your edits (2026-09-11).**
+      `LoadedMf6Run` recorded the package NAMES FloPy reports (`CHD_0`) and checked
+      the TYPE asked for (`CHD`) against them. On any workspace whose names are not
+      their types -- FloPy's defaults, a name file without pnames, a myflopy
+      `name=` override -- every read reloaded the whole simulation (one full load
+      per `get()`, 0.03-0.9 s measured, linear in input size), and so did probing a
+      package that is not there. A reload replaces the in-memory simulation, so an
+      edit made before one was silently dropped from the files `run_simulation`
+      wrote: a WEL rate of -999 written back as -50. myflopy's own runs name every
+      package for its type, so they escaped the per-read reload but not the
+      absent-package one.
+      - **A package request on a run that is not fully loaded triggers ONE full
+        load, and a full load never reloads**: a package still missing is absent,
+        and `package()` raises `AttributeError`. The partial `load_only` branch is
+        gone -- it also served core packages (OC, DIS) from a partial load that the
+        full load `run_simulation` needs then discarded, edits and all (tested on
+        OC). The fast core load behind `vor` and `modelgrid` stays.
+      - **Package TYPES are recorded.** With the early return, no reachable state
+        tells names from types -- the mutant restoring names SURVIVES -- but every
+        reader of that set compares types, so it holds types.
+      - Three mutants: names recorded (survives, above), a full load reloading for
+        an absent package (killed), core packages served from a partial load
+        (killed).

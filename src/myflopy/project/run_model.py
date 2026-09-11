@@ -543,7 +543,10 @@ class LoadedMf6Run(SimulationBase):
         self.nlay = int(np.asarray(gwf.modelgrid.botm).reshape(-1).size / _grid_ncpl(gwf.modelgrid))
         if self._idomain is None:
             self._idomain = _extract_idomain(gwf)
-        self._loaded_package_types = {name.upper() for name in gwf.get_package_list()}
+        # TYPES, not names: `get_package_list()` answers `CHD_0` where a package is
+        # named for FloPy's default, and every check below asks for `CHD`. Recording
+        # names made each read of such a package reload the whole simulation.
+        self._loaded_package_types = {package.package_type.upper() for package in gwf.packagelist}
         self._core_loaded = True
         self._fully_loaded = mark_full or self._loaded_package_types >= set(self.package_names)
 
@@ -572,29 +575,18 @@ class LoadedMf6Run(SimulationBase):
         normalized = self._normalize_package_names(package_names)
         if all(name.upper() in self._loaded_package_types for name in normalized):
             return
-
-        # For exploratory file-backed workflows, repeatedly reloading FloPy with a
-        # slightly larger ``load_only`` set is much slower than paying one full
-        # load once. After the initial core/grid load, the first non-core package
-        # request therefore upgrades the loaded run to a full package load.
-        missing_non_core = [
-            name for name in normalized
-            if name.upper() not in _CORE_PACKAGE_TYPES and name.upper() not in self._loaded_package_types
-        ]
-        if missing_non_core and not self._fully_loaded:
-            self._load_simulation(load_only=None, mark_full=True, reason="package access warm load")
+        # A full load holds every package in the workspace, so one still missing is
+        # ABSENT, not unloaded. Reloading for it replaced the in-memory simulation,
+        # and `run_simulation` then wrote the files back without the caller's edits.
+        if self._fully_loaded:
             return
 
-        target = {name.lower() for name in normalized}
-        target.update(name.lower() for name in self._loaded_package_types)
-        target.update(name.lower() for name in self.package_names if name in _CORE_PACKAGE_TYPES)
-        if self.grid_type in {"dis", "disu", "disv"}:
-            target.add(self.grid_type)
-        self._load_simulation(
-            load_only=sorted(target),
-            mark_full=False,
-            reason="package access",
-        )
+        # One FULL load, whatever was asked for. A package handed out is one the
+        # caller may edit, and `run_simulation` writes the full simulation -- so a
+        # package served from a partial load was dropped, edits and all, by the
+        # full load writing needs (an edited OC, measured). Growing `load_only` a
+        # package at a time also cost more than one full load.
+        self._load_simulation(load_only=None, mark_full=True, reason="package access")
 
     @property
     def vor(self) -> VoronoiGridPlus:
