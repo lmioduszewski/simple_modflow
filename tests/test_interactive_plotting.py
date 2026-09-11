@@ -778,8 +778,17 @@ def test_particle_tracking_scene_uses_flopy_vtk_and_pyvista(monkeypatch):
 
     monkeypatch.setattr(vtk_module, "Vtk", DummyVtk)
 
+    class DummyGrid:
+        # The scene places tracks with the model's own grid now (ledger 219); a grid
+        # at the origin makes that the identity, so the tracks pass through as given.
+        def get_coords(self, x, y):
+            return x, y
+
+    class DummyGwf:
+        modelgrid = DummyGrid()
+
     class DummyModel:
-        gwf = object()
+        gwf = DummyGwf()
 
     pathlines = pd.DataFrame(
         {"particleid": [0, 0], "time": [0.0, 1.0], "k": [0, 0], "x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]}

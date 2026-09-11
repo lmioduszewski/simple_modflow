@@ -674,7 +674,14 @@ class PRTPathlineView(_PRTDerivedView):
         traces, legended = [], set()
         for label, records in frame.groupby("particle", sort=True):
             records = records.sort_values("t", kind="stable")
-            lon, lat = self.model.vor.points_to_latlon(records["x"], records["y"])
+            # MF6 writes tracks in the model's OWN frame and the map is in the
+            # world's. On an offset grid (every USG import) drawing them raw put
+            # the tracks 282 miles away; FloPy's plot_pathline applies the same
+            # transform, which is why backend="mpl" was right.
+            x, y = self.model.gwf.modelgrid.get_coords(
+                records["x"].to_numpy(), records["y"].to_numpy()
+            )
+            lon, lat = self.model.vor.points_to_latlon(x, y)
             legend_label = labels.loc[records.index[0]]
             spec = pathline_hover(particle=str(label), unit=unit or None, fields=hover_fields)
             context = HoverContext(

@@ -73,3 +73,47 @@ def test_release_points_from_world_points_are_in_the_models_own_frame(offset_run
     (row,) = points.packagedata
     assert row[1] == (0, 1)
     assert (row[2], row[3]) == pytest.approx((15.0, 5.0))
+
+
+@pytest.fixture(scope="module")
+def offset_tracks(offset_run, tmp_path_factory):
+    """GWF run, then PRT from every layer-1 cell -- on the offset grid."""
+
+    success, report = offset_run.execute()
+    assert success, report
+    model = offset_run.model("tiny")
+    tracking = model.particle_tracking.prt(
+        workspace=tmp_path_factory.mktemp("prt"),
+        release_points=PRTReleasePoints.from_cells(model, [0, 1, 2, 3]),
+    )
+    return model, tracking.run(silent=True)
+
+
+def test_pathlines_are_drawn_on_the_grid_not_282_miles_away(offset_tracks):
+    """MF6's model-frame x/y were reprojected as if they were world (ledger 219)."""
+
+    import numpy as np
+    import shapely
+
+    model, result = offset_tracks
+    traces = [t for t in result.pathlines.map().fig.data if t.type == "scattermap"]
+    lon = np.concatenate([np.asarray(t.lon, float) for t in traces])
+    lat = np.concatenate([np.asarray(t.lat, float) for t in traces])
+    grid = model.vor.gdf_latlon.union_all().buffer(1e-9)
+    assert len(lon) > 0
+    assert shapely.contains_xy(grid, lon, lat).all()
+
+
+def test_the_3d_scene_puts_the_pathlines_inside_the_grid(offset_tracks):
+    """The grid mesh sat at x 1,340,000 and the pathline mesh at x 5..20."""
+
+    pytest.importorskip("pyvista")
+    from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
+
+    model, result = offset_tracks
+    scene = build_particle_tracking_scene(model, result.track_records)
+    grid_mesh, path_mesh = scene.meshes[0], scene.meshes[-1]
+    gx0, gx1, gy0, gy1 = grid_mesh.bounds[:4]
+    px0, px1, py0, py1 = path_mesh.bounds[:4]
+    assert gx0 - 1e-6 <= px0 <= px1 <= gx1 + 1e-6
+    assert gy0 - 1e-6 <= py0 <= py1 <= gy1 + 1e-6

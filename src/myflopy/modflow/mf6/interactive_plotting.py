@@ -8,7 +8,6 @@ kernel, or a web server.
 from __future__ import annotations
 
 import base64
-import copy
 import html
 import io
 import json
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from flopy.plot import PlotMapView
 
 from myflopy._optional import require
@@ -910,6 +910,25 @@ def export_head_layer_mosaic_slider_html(
     )
 
 
+def _tracks_in_world_frame(pathlines, modelgrid):
+    """A copy of PRT ``pathlines`` in the world frame the exported grid mesh is in.
+
+    MF6 writes tracks in the model's OWN frame. On an offset grid the grid mesh sat
+    at x 1,340,000 and the pathline mesh at x 5..20. Accepts what
+    ``Vtk.add_pathline_points`` does: a DataFrame, a record array, or a list of them.
+    """
+
+    if isinstance(pathlines, list):
+        return [_tracks_in_world_frame(part, modelgrid) for part in pathlines]
+    if isinstance(pathlines, pd.DataFrame):
+        frame = pathlines.copy()
+        frame["x"], frame["y"] = modelgrid.get_coords(frame["x"].to_numpy(), frame["y"].to_numpy())
+        return frame
+    records = np.array(pathlines, copy=True)
+    records["x"], records["y"] = modelgrid.get_coords(records["x"], records["y"])
+    return records
+
+
 def build_particle_tracking_scene(
     model: SimulationBase,
     pathlines,
@@ -960,7 +979,7 @@ def build_particle_tracking_scene(
         smooth=False,
     )
     vtk.add_model(model.gwf)
-    vtk.add_pathline_points(copy.deepcopy(pathlines))
+    vtk.add_pathline_points(_tracks_in_world_frame(pathlines, model.gwf.modelgrid))
     raw_meshes = vtk.to_pyvista()
     meshes = tuple(raw_meshes if isinstance(raw_meshes, list) else [raw_meshes])
     plotter = pv.Plotter(off_screen=off_screen)

@@ -6938,3 +6938,24 @@ same day, which is the useful part of the result.
       - Tested on the synthetic USG model moved to State Plane (1,340,000,
         650,000): a cell centred at (X0+5, Y0+5) is released at (5, 5).
       - Two mutants, killed: each conversion removed.
+
+219. **Pathlines were drawn 282 miles from an offset grid (2026-09-11).**
+      MF6 writes particle tracks in the model's own frame, and
+      `results.pathlines.map()` reprojected them as if they were world coordinates:
+      on an offset grid the tracks landed the length of the origin vector away --
+      282.1 miles for a (1,340,000, 650,000) ft origin -- off-screen, with no
+      warning. `mosaic` inherited it through `map`. The 3-D scene put the grid mesh
+      at x 1,340,000 and the pathline mesh at x 5..20. `backend="mpl"` was right
+      only because FloPy's `plot_pathline` applies the transform itself.
+      - Both convert with `modelgrid.get_coords` before drawing.
+      - **JUDGMENT CALL: `pathlines.get()` / `summary()` still return MF6's own
+        frame**, as MF6 wrote it -- the table was never wrong, the drawing was.
+        World columns, naming the frame the way the q sign convention does, are
+        deferred until something needs them.
+      - Tested end to end: GWF, then PRT released with `from_cells` on the offset
+        synthetic USG model; every map vertex lies on the grid, and the pathline
+        mesh inside the grid mesh.
+      - `test_interactive_plotting`'s scene stub gained a grid at the origin: the
+        scene now needs the model's grid to place the tracks, which is the fix, and
+        at the origin that is the identity, so its pass-through assertion holds.
+      - Two mutants, killed: the map's conversion and the scene's.

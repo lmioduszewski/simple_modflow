@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2665 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2667 passed / 4 skipped**, 2026-09-11): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -464,6 +464,9 @@ Three traps that cost a day and will cost it again:
   coordinates; on State Plane (~1.34e6 ft) it loses the precision and returns a **NaN
   budget while printing "Normal termination"**. Measured: 0/9405 cells finite as-is,
   9405/9405 shifted. `to_mf6(local_origin=True)` is the default -- do not turn it off.
+  So a converted model's own frame is NOT the world's: PRT release points and pathline
+  maps convert between the two (ledgers 218, 219), and the converted NPF saves the
+  specific discharge and saturation PRT reads (217).
 - **`complexity="MODERATE"` kills MF6 with SIGFPE** on a converted USG model; the
   default is `COMPLEX`. And SMS's delta-bar-delta/backtracking tuning IS carried over
   (it maps field-for-field) -- it is what made the original converge.
