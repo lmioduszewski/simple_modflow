@@ -221,3 +221,83 @@ def test_parameterize_accepts_one_per_cell_definition_for_either_family(tmp_path
 def test_zone_spec_is_on_the_public_surface():
     assert mf.ZoneSpec is ZoneSpec
     assert "ZoneSpec" in set(mf.__preferred__)
+
+
+# --- cells too small to hold a pixel centre (ledger 213) -------------------- #
+
+
+def _raster(path, band, *, bounds, crs, nodata=-9999):
+    minx, miny, maxx, maxy = bounds
+    height, width = band.shape
+    with rasterio.open(
+        path, "w", driver="GTiff", height=height, width=width, count=1, dtype="int32",
+        crs=crs, transform=from_origin(minx, maxy, (maxx - minx) / width, (maxy - miny) / height),
+        nodata=nodata,
+    ) as dst:
+        dst.write(band.astype("int32"), 1)
+    return path
+
+
+def test_a_cell_too_small_for_a_pixel_centre_takes_the_label_under_its_centroid(zone_model, tmp_path):
+    """rasterize burns a pixel only where its CENTRE lands, so a cell finer than the
+    raster held none and took zone 0 -- 24% of a refined grid, frozen."""
+
+    cells = zone_model.vor.gdf_vorPolys
+    band = np.array([[1, 3], [5, 7]])  # four pixels, each far larger than a cell
+    path = _raster(tmp_path / "coarse.tif", band, bounds=cells.total_bounds, crs=cells.crs)
+
+    spec = ZoneSpec.from_raster(path, zone_model)
+
+    centroids = cells.geometry.centroid
+    with rasterio.open(path) as src:
+        expected = np.array([band[src.index(x, y)] for x, y in zip(centroids.x, centroids.y)])
+    assert 0 not in spec.ids
+    assert np.array_equal(spec.values, expected)
+
+
+def test_a_centroid_off_the_raster_keeps_nodata_zone_without_a_declared_nodata(zone_model, tmp_path):
+    """rasterio samples its fill -- 0 -- off a raster that declares no nodata."""
+
+    cells = zone_model.vor.gdf_vorPolys
+    minx, miny, maxx, maxy = cells.total_bounds
+    middle = (minx + maxx) / 2
+    path = _raster(tmp_path / "west.tif", np.full((1, 1), 4), bounds=(minx, miny, middle, maxy),
+                   crs=cells.crs, nodata=None)
+
+    spec = ZoneSpec.from_raster(path, zone_model, nodata_zone=-1)
+
+    xc = cells.geometry.centroid.x.to_numpy()
+    assert set(spec.values[xc > middle + 1.0].tolist()) == {-1}
+    assert set(spec.values[xc < middle - 1.0].tolist()) == {4}
+
+
+def test_a_centroid_on_nodata_keeps_nodata_zone(zone_model, tmp_path):
+    cells = zone_model.vor.gdf_vorPolys
+    minx, _, maxx, _ = cells.total_bounds
+    band = np.array([[-9999, 3], [-9999, 3]])
+    path = _raster(tmp_path / "half.tif", band, bounds=cells.total_bounds, crs=cells.crs)
+
+    spec = ZoneSpec.from_raster(path, zone_model, nodata_zone=-1)
+
+    xc = cells.geometry.centroid.x.to_numpy()
+    middle = (minx + maxx) / 2
+    assert set(spec.values[xc < middle - 1.0].tolist()) == {-1}
+    assert set(spec.values[xc > middle + 1.0].tolist()) == {3}
+
+
+def test_the_majority_still_decides_a_cell_that_holds_pixel_centres(zone_model, tmp_path):
+    """One odd pixel under a centroid does not outvote the rest of the cell."""
+
+    cells = zone_model.vor.gdf_vorPolys
+    minx, miny, maxx, maxy = cells.total_bounds
+    band = np.ones((60, 60), dtype=int)
+    resolution = (maxx - minx) / 60, (maxy - miny) / 60
+    target = len(cells) // 2
+    centre = cells.geometry.iloc[target].centroid
+    band[int((maxy - centre.y) / resolution[1]), int((centre.x - minx) / resolution[0])] = 9
+    path = _raster(tmp_path / "fine.tif", band, bounds=(minx, miny, maxx, maxy), crs=cells.crs)
+
+    spec = ZoneSpec.from_raster(path, zone_model)
+
+    assert spec.values[target] == 1
+    assert 9 not in spec.ids

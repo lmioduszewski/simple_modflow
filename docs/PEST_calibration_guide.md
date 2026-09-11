@@ -65,7 +65,9 @@ cal.parameterize("k", style="zone", zones=mf.ZoneSpec.from_raster("hsu.tif", mod
 per distinct label. `ZoneSpec.from_raster` samples a categorical raster by **majority
 vote**, not by the area-weighted mean this library uses for surfaces — averaging zone
 ids is meaningless, and a cell straddling zones 1 and 3 would come out as zone 2, which
-it does not touch and may not exist. `from_polygons(gdf, column="hsu")` labels cells by
+it does not touch and may not exist. A cell smaller than a pixel takes the label under
+its centroid; only a cell off the raster, or on its no-data, gets `nodata_zone`
+(ledger 213). `from_polygons(gdf, column="hsu")` labels cells by
 the polygon they fall in; a plain array still works.
 
 You never have to think about SHAPE. pyEMU wants a per-cell array for array targets

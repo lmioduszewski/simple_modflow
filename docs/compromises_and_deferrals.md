@@ -6785,3 +6785,23 @@ same day, which is the useful part of the result.
       - **NOT done:** a line within floating noise of a face zigzags across it; its
         length is conserved but falls to the two cells unevenly, as for any line
         through two cells.
+
+213. **`ZoneSpec.from_raster` gave zone 0 to every cell too small to hold a pixel centre (2026-09-11).**
+      `_majority_sample` burns cell ids onto the raster grid and takes each cell's
+      most common label. `rasterize` burns a pixel only where its CENTRE falls in
+      a cell, so a cell finer than the raster's resolution held none and took
+      `nodata_zone`. That was documented, and wrong in effect: 24% of a refined
+      grid frozen at zone 0 -- on an array target a frozen parameter, on a list
+      target a spurious lumped zone. The surface sampler (`_area_weighted_sample`)
+      had the answer all along, a centroid fallback.
+      - **Such a cell now takes the label under its CENTROID.** The majority
+        still decides every cell that holds a pixel centre: one odd pixel under a
+        centroid does not outvote the rest of the cell (tested).
+      - **Bounds are checked rather than trusted to `rasterio.sample`**, which
+        returns its fill value -- 0 when the file declares no nodata -- for a
+        point off the raster: a real-looking label for a cell the raster never
+        covered. Off the raster, or on its no-data, a cell keeps `nodata_zone`.
+      - **Centroids are taken in the GRID's CRS, then reprojected** -- a centroid
+        computed in a geographic CRS is not the cell's centre.
+      - **Four mutants, all killed:** no fallback, no bounds check, nodata
+        ignored in the fallback, and the fallback overriding the majority.

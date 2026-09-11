@@ -97,8 +97,9 @@ class ZoneSpec:
         uses by default: averaging category ids is meaningless -- zones 1 and 3
         would average to 2, a zone the cell does not touch and may not exist.
 
-        Cells covering no pixel (smaller than the raster resolution, or outside
-        coverage) get ``nodata_zone``.
+        A cell too small to hold a pixel CENTRE takes the label under its
+        centroid, as the surface sampler does; a cell whose centroid is off the
+        raster, or on its no-data, gets ``nodata_zone``.
         """
 
         return cls(
@@ -153,7 +154,11 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
 
     Mirrors ``grid/surfaces.py``'s ``_area_weighted_sample`` -- burn cell ids
     onto the raster grid, then reduce per cell -- but reduces by MODE instead of
-    mean, which is the only meaningful reduction for categories.
+    mean, which is the only meaningful reduction for categories. ``rasterize``
+    burns a pixel only where its CENTRE falls in a cell, so a cell smaller than
+    the raster's resolution holds none; it takes the label under its centroid,
+    as the surface sampler's own fallback does. It used to take ``nodata_zone``,
+    which froze 24% of a refined grid at zone 0.
     """
 
     import rasterio
@@ -164,6 +169,7 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
     cells = model.vor.gdf_vorPolys
     ncpl = len(cells)
     values = np.full(ncpl, int(nodata_zone), dtype=int)
+    covered = np.zeros(ncpl, dtype=bool)
 
     with rasterio.open(raster_path) as src:
         polygons = cells.to_crs(src.crs) if (cells.crs and src.crs) else cells
@@ -182,41 +188,64 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
                 window = window.intersection(Window(0, 0, src.width, src.height))
             except WindowError:
                 window = None
-        if window is None or window.width < 1 or window.height < 1:
-            return values
-
-        band = src.read(1, window=window)
-        labels = rasterize(
-            (
-                (geom, index + 1)
-                for index, geom in enumerate(polygons.geometry.values)
-                if geom is not None and not geom.is_empty
-            ),
-            out_shape=band.shape,
-            transform=src.window_transform(window),
-            fill=0,
-            dtype="int32",
-        )
-        flat_cells = labels.ravel()
-        flat_band = band.ravel()
-        valid = flat_cells > 0
-        if src.nodata is not None:
-            valid &= flat_band != src.nodata
-        if not valid.any():
-            return values
-
-        cell_ids = flat_cells[valid] - 1
-        zone_ids = flat_band[valid].astype(np.int64)
-        # Mode per cell in one pass: count every (cell, zone) pair, then take
-        # each cell's most frequent zone. Offsetting by the minimum keeps
-        # negative category ids usable as bincount indices.
-        offset = zone_ids.min()
-        span = int(zone_ids.max() - offset) + 1
-        counts = np.bincount(cell_ids * span + (zone_ids - offset),
-                             minlength=ncpl * span).reshape(ncpl, span)
-        covered = counts.sum(axis=1) > 0
-        values[covered] = counts[covered].argmax(axis=1) + offset
+        if window is not None and window.width >= 1 and window.height >= 1:
+            band = src.read(1, window=window)
+            labels = rasterize(
+                (
+                    (geom, index + 1)
+                    for index, geom in enumerate(polygons.geometry.values)
+                    if geom is not None and not geom.is_empty
+                ),
+                out_shape=band.shape,
+                transform=src.window_transform(window),
+                fill=0,
+                dtype="int32",
+            )
+            flat_cells = labels.ravel()
+            flat_band = band.ravel()
+            valid = flat_cells > 0
+            if src.nodata is not None:
+                valid &= flat_band != src.nodata
+            if valid.any():
+                cell_ids = flat_cells[valid] - 1
+                zone_ids = flat_band[valid].astype(np.int64)
+                # Mode per cell in one pass: count every (cell, zone) pair, then take
+                # each cell's most frequent zone. Offsetting by the minimum keeps
+                # negative category ids usable as bincount indices.
+                offset = zone_ids.min()
+                span = int(zone_ids.max() - offset) + 1
+                counts = np.bincount(cell_ids * span + (zone_ids - offset),
+                                     minlength=ncpl * span).reshape(ncpl, span)
+                covered = counts.sum(axis=1) > 0
+                values[covered] = counts[covered].argmax(axis=1) + offset
+        missing = np.flatnonzero(~covered)
+        if missing.size:
+            centroids = cells.geometry.iloc[missing].centroid
+            if cells.crs and src.crs:
+                centroids = centroids.to_crs(src.crs)
+            values[missing] = _centroid_labels(src, centroids, nodata_zone=nodata_zone)
     return values
+
+
+def _centroid_labels(src, points, *, nodata_zone: int) -> np.ndarray:
+    """The label under each point; ``nodata_zone`` off the raster or on its no-data.
+
+    Bounds are checked here rather than left to ``src.sample``, which hands back
+    its fill value -- 0 when the file declares no nodata -- for a point off the
+    raster: a real-looking label for a cell the raster never covered.
+    """
+
+    xs, ys = points.x.to_numpy(), points.y.to_numpy()
+    left, bottom, right, top = src.bounds
+    inside = np.flatnonzero((xs >= left) & (xs < right) & (ys > bottom) & (ys <= top))
+    labels = np.full(len(xs), int(nodata_zone), dtype=int)
+    if inside.size:
+        sampled = np.array(
+            [value[0] for value in src.sample(zip(xs[inside], ys[inside], strict=True))]
+        )
+        keep = np.ones(len(sampled), dtype=bool) if src.nodata is None else sampled != src.nodata
+        labels[inside[keep]] = sampled[keep].astype(int)
+    return labels
 
 
 def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
