@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy._deprecation import deprecated_module_getattr
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.boundary_support import (
@@ -33,7 +34,7 @@ class DRNFromVector(Boundaries):
             vor: Vor = None,
             shp_gpkg: Path = None,
             uid: str = None,
-            crs: int = 2927,
+            crs: int = DEFAULT_EPSG,
             grid_type: str = 'disv',
             idomain: list[int] | pd.Series = None,
             idomain_path: Path = None,

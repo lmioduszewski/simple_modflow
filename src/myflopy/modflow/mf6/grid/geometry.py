@@ -9,6 +9,7 @@ import pandas as pd
 import shapely as shp
 from shapely.geometry import LineString, Polygon
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 
@@ -207,7 +208,7 @@ def get_vor_idx_from_geometry(
     vor,
     shp_to_query: shp = None,
     gdf_to_query: gpd.GeoDataFrame = None,
-    crs: str = "EPSG:2927",
+    crs: str = DEFAULT_CRS,
     crs_latlon: str = "EPSG:4326",
     name_col: str = None,
     predicate: str = "intersects",

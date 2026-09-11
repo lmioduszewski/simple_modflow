@@ -22,6 +22,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy.modflow.mf6.grid.geometry import geometry_first, reconcile_surfaces
 from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 
@@ -132,7 +133,7 @@ class Surface:
     clip: bool = True
     resolution: float = 4
     out: Path | None = None
-    epsg: str = "2927"
+    epsg: str = str(DEFAULT_EPSG)
     grass_kwargs: dict = field(default_factory=dict)
     #: Show GRASS's own per-step progress while interpolating. Deliberately NOT
     #: part of `grass_kwargs`: those feed the derived-raster cache signature, so
@@ -236,7 +237,7 @@ class Surface:
         region_vector: Path | str | None = None,
         resolution: float = 4,
         out: Path | str | None = None,
-        epsg: str = "2927",
+        epsg: str = str(DEFAULT_EPSG),
         units: str | None = None,
         clip: bool = True,
         progress: bool = False,

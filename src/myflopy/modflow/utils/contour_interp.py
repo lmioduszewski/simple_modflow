@@ -19,6 +19,7 @@ import sys
 import threading
 from pathlib import Path
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
@@ -274,7 +275,7 @@ class ContourSurfaceInterpolator:
         region_vector: Path | str | None = None,
         z_field: str = "Elev",
         resolution: float = 4,
-        epsg: str = "2927",
+        epsg: str = str(DEFAULT_EPSG),
         grass_bin: Path | str | None = None,
         grassdata: Path | str | None = None,
         location: str = "myflopy_interp",

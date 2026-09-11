@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy.modflow.mf6.observations import (
     ConcTargets,
     DrnFlowTargets,
@@ -45,7 +46,7 @@ class VectorParameterSource:
     zone_column: str | None = None
     group_column: str | None = None
     layer_column: str | None = None
-    crs: int | None = 2927
+    crs: int | None = DEFAULT_EPSG
     lower_bound_column: str | None = None
     upper_bound_column: str | None = None
 

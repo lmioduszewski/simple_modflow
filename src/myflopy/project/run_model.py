@@ -11,6 +11,7 @@ import flopy
 import geopandas as gpd
 import numpy as np
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -360,7 +361,7 @@ def load_mf6_run(
     """
 
     if crs is None:
-        crs = _recorded_crs(Path(workspace), model_name) or "EPSG:2927"
+        crs = _recorded_crs(Path(workspace), model_name) or DEFAULT_CRS
     _progress(verbosity_level, f"Opening workspace: {workspace}")
     return LoadedMf6Run(
         workspace=workspace,
@@ -424,7 +425,7 @@ class LoadedMf6Run(SimulationBase):
         *,
         workspace: Path,
         model_name: str | None = None,
-        crs: str = "EPSG:2927",
+        crs: str = DEFAULT_CRS,
         verbosity_level: int = 0,
     ):
         """Prepare a lazy, file-backed model view over a completed MF6 run ``workspace``.

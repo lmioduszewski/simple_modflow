@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy.modflow.mf6.boundaries import Boundaries
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ class KFromVector(Boundaries):
         vor: Vor = None,
         shp_gpkg: Path = None,
         uid: str = "name",
-        crs: int = 2927,
+        crs: int = DEFAULT_EPSG,
         idomain: list[int] | pd.Series = None,
         idomain_path: Path = None,
     ):

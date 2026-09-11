@@ -12,6 +12,7 @@ import geopandas as gpd
 import pandas as pd
 import shapely as shp
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
@@ -457,7 +458,7 @@ def _voronoi_options(
     for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters"):
         if key in options and key not in voronoi_options:
             voronoi_options[key] = options[key]
-    voronoi_options.setdefault("crs", spec.crs or options.get("crs", "EPSG:2927"))
+    voronoi_options.setdefault("crs", spec.crs or options.get("crs", DEFAULT_CRS))
     voronoi_options.setdefault("name", spec.name)
     for key in ("idomain_path", "rasters"):
         if key in voronoi_options:

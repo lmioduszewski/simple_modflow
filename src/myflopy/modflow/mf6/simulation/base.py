@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
@@ -1107,7 +1108,7 @@ class SimulationBase:
         self,
         other,
         *others,
-        crs: str = "EPSG:2927",
+        crs: str = DEFAULT_CRS,
         shared_grid: bool = False,
         verbosity_level: int = 0,
     ):

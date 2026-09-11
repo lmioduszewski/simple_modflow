@@ -17,6 +17,7 @@ import shapely as shp
 from flopy.utils.triangle import Triangle
 from flopy.utils.voronoi import VoronoiGrid
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity
 from myflopy.modflow.mf6.grid.geometry import (
@@ -180,7 +181,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def __init__(
         self,
         tri: Triangle = None,
-        crs: str = 'EPSG:2927',
+        crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
         qhull_options: str = None,
@@ -680,7 +681,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self,
         shp_to_query: shp = None,
         gdf_to_query: gpd.GeoDataFrame = None,
-        crs: str = "EPSG:2927",
+        crs: str = DEFAULT_CRS,
         crs_latlon: str = "EPSG:4326",
         name_col: str = None,
         predicate: str = "intersects",
@@ -978,7 +979,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def vor_from_disu(
         cls,
         disu_path: Path,
-        crs: str = 'EPSG:2927',
+        crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
         qhull_options: str = None,
@@ -1004,7 +1005,7 @@ class VoronoiGridPlus(VoronoiGrid):
         cls,
         gsf_path: Path,
         layer: int = 0,
-        crs: str = 'EPSG:2927',
+        crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
         qhull_options: str = None,

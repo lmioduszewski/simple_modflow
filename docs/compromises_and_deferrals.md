@@ -7040,3 +7040,20 @@ same day, which is the useful part of the result.
         block, `load_mf6_run` ignoring the manifest, and a reopened run forgetting
         the block on rewrite.
       - **NOT done:** the other ~19 hard-coded `2927` defaults -- the next LOW item.
+
+225. **The default CRS was spelled three ways at 19 sites (2026-09-11).**
+      `"EPSG:2927"` (11 sites), the integer `2927` (5, all legacy OO classes) and the
+      bare string `"2927"` (3, `epsg=` parameters): finding the default meant a grep,
+      and a new site could pick any spelling. They are now `DEFAULT_CRS` and
+      `DEFAULT_EPSG` in `myflopy/_defaults.py`, a layer-0 module, and
+      `tests/test_default_crs.py` fails naming any code-level `2927` elsewhere --
+      docstrings and comments excepted, since they document the value.
+      - **Every default keeps its value**, so no signature changed:
+        `api_snapshot.json` is identical. An editor now shows
+        `crs: str = DEFAULT_CRS` where it showed the literal.
+      - **The default itself is unchanged, and pinned by a test.**
+        Location-agnostic models sit at its origin on purpose, which gives a map a
+        clean blue background; a defaulted CRS is never refused or warned about.
+      - `import_layers.json` gains `myflopy._defaults` at layer 0 and moves
+        `modflow.utils.contour_interp` from 0 to 1, since it now imports it.
+      - Found by the 2026-09-10 sweep, as bug 18 of 21.

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy._defaults import DEFAULT_EPSG
 from myflopy._deprecation import deprecated_module_getattr
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.boundaries import Boundaries
@@ -37,7 +38,7 @@ class GHBFromVector(Boundaries):
             shp_gpkg: Path = None,
             line_shp: Path = None,
             uid: str = 'name',
-            crs: int = 2927,
+            crs: int = DEFAULT_EPSG,
             fields: list | slice = None,
             fields_to_pers: list = None,
             xlsx: Path = None,

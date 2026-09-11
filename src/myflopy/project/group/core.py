@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy._deprecation import deprecated_instance_getattr
 from myflopy.project.group._shared import _coerce_models, _grid_signature_for_model
 from myflopy.project.group.budget import GroupBudget
@@ -44,7 +45,7 @@ class ModelGroup:
         models,
         *,
         reference: str | None = None,
-        crs: str = "EPSG:2927",
+        crs: str = DEFAULT_CRS,
         verbosity_level: int = 0,
         shared_grid: bool = False,
     ):

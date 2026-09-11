@@ -48,6 +48,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, Polygon
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy.advanced import evt_spec, riv_spec
 from myflopy.modflow.mf6.canonical import (
     CANONICAL_MODEL_CONTRACT,
@@ -683,7 +684,7 @@ def _write_surface_water_inputs(workspace: Path, config: CanonicalModelConfig) -
 
     width = config.ncol * config.cell_size
     height = config.nrow * config.cell_size
-    crs = "EPSG:2927"
+    crs = DEFAULT_CRS
 
     def point(x_fraction: float, y_fraction: float) -> tuple[float, float]:
         """Model coordinates for a fractional ``(x, y)`` position (0-1) within the domain."""

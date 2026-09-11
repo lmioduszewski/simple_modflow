@@ -16,6 +16,7 @@ review the diff, commit the regenerated files together.
 ## Layer 0
 
 - `myflopy`
+- `myflopy._defaults`
 - `myflopy._deprecation`
 - `myflopy._logging`
 - `myflopy._optional`
@@ -52,7 +53,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.usg.export`
 - `myflopy.modflow.utils`
 - `myflopy.modflow.utils.animations`
-- `myflopy.modflow.utils.contour_interp`
 - `myflopy.modflow.utils.datatypes`
 - `myflopy.modflow.utils.datatypes.hover`
 - `myflopy.modflow.utils.datatypes.locs`
@@ -94,6 +94,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mp3du.particles`
 - `myflopy.modflow.usg.cln`
 - `myflopy.modflow.usg.packages`
+- `myflopy.modflow.utils.contour_interp`
 - `myflopy.modflow.utils.datatypes.datalists`
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
