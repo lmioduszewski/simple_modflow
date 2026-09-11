@@ -902,6 +902,9 @@ class Run:
     # records package KEYS, so without this, editing 'npf/base' afterwards leaves
     # every run claiming to have used it -- true of the key, false of the model.
     package_digests: dict[str, str] | None = field(default=None, repr=False)
+    # Each model's grid CRS as built: what a reopened run is drawn in. Unrecorded,
+    # it fell back to EPSG:2927 whatever CRS the run had.
+    model_crs: dict[str, str] | None = field(default=None, repr=False)
     built: BuiltSimulation | None = field(default=None, repr=False)
     simulation: Any | None = field(default=None, repr=False)
     build_context: SpecBuildContext | None = field(default=None, repr=False)
@@ -1243,8 +1246,21 @@ class Run:
             else self.spec_block,
             "spec_recipe": self._spec_recipe_block(),
             "package_digests": self.package_digests,
+            "crs": self._model_crs_block(),
             "metadata": self.metadata,
         }
+
+    def _model_crs_block(self) -> dict[str, str] | None:
+        """Each built model's grid CRS, or the block already on disk."""
+
+        if self.built is None:
+            return self.model_crs
+        recorded = {
+            name: str(built.context.grid.crs)
+            for name, built in self.built.models.items()
+            if getattr(built.context.grid, "crs", None) is not None
+        }
+        return recorded or self.model_crs
 
     def _spec_recipe_block(self) -> dict[str, Any] | None:
         """The rebuildable recipe for this run, or the one already on disk.
@@ -1318,6 +1334,7 @@ class Run:
             spec_block=data.get("spec"),
             spec_recipe=data.get("spec_recipe"),
             package_digests=data.get("package_digests"),
+            model_crs=data.get("crs"),
         )
         run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
         if load:

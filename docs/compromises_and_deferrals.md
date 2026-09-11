@@ -7021,3 +7021,22 @@ same day, which is the useful part of the result.
       (`_declared_models`), so the two cannot read the block differently.
       - Two mutants, killed: the model type ignored, and a model declared without
         a name not taking its name file's stem.
+
+224. **A reopened run was drawn in EPSG:2927 whatever CRS it ran in (2026-09-11).**
+      `run.json` recorded no CRS, and a reopened run's models came back through
+      `load_mf6_run`, whose `crs=` defaulted to EPSG:2927: a run built on a UTM grid
+      reopened labelled State Plane, and every map of it was drawn in the wrong
+      place.
+      - **The manifest records each model's grid CRS as built** -- a `"crs"` block,
+        `{model: crs}` -- and a reopened run carries it forward when its manifest
+        is rewritten.
+      - **`load_mf6_run(crs=None)` now means the CRS the run recorded, else
+        EPSG:2927.** A plain MF6 workspace with no manifest still opens at the
+        default, and location-agnostic models still sit at the origin there on
+        purpose. An explicit `crs=` still wins. `Run.model()` goes through
+        `load_mf6_run`, so it needed no change of its own.
+      - Old manifests have no block and open at EPSG:2927, as before.
+      - Four mutants, killed: the manifest omitting the CRS, reopening dropping the
+        block, `load_mf6_run` ignoring the manifest, and a reopened run forgetting
+        the block on rewrite.
+      - **NOT done:** the other ~19 hard-coded `2927` defaults -- the next LOW item.

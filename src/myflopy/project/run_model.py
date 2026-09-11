@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import hashlib
 from pathlib import Path
 from types import MethodType
@@ -308,11 +309,26 @@ def _extract_idomain(gwf) -> list[int] | None:
     return None
 
 
+def _recorded_crs(workspace: Path, model_name: str | None) -> str | None:
+    """The CRS a myflopy run recorded for ``model_name``, if it has a manifest.
+
+    ``run.json`` is ``workspace.RUN_MANIFEST_NAME``; the name is spelled here
+    because ``workspace`` imports this module.
+    """
+
+    try:
+        recorded = json.loads((workspace / "run.json").read_text(encoding="utf-8")).get("crs")
+        name = model_name or _infer_model_name(workspace)
+    except (OSError, ValueError):
+        return None
+    return (recorded or {}).get(name)
+
+
 def load_mf6_run(
     workspace: Path,
     *,
     model_name: str | None = None,
-    crs: str = "EPSG:2927",
+    crs: str | None = None,
     verbosity_level: int = 0,
 ):
     """Open any MF6 workspace as a lazy, file-backed model for inspection.
@@ -330,7 +346,9 @@ def load_mf6_run(
     model_name
         Which model to load (defaults to the first GWF model).
     crs
-        CRS to attach to the grid (default ``"EPSG:2927"``).
+        CRS to attach to the grid. By default the one a myflopy run recorded in
+        its ``run.json``, else ``"EPSG:2927"``. A reopened run used to take 2927
+        whatever CRS it had run in.
     verbosity_level
         ``0`` silent, higher prints progress.
 
@@ -341,6 +359,8 @@ def load_mf6_run(
     >>> heads = model.hds.array()
     """
 
+    if crs is None:
+        crs = _recorded_crs(Path(workspace), model_name) or "EPSG:2927"
     _progress(verbosity_level, f"Opening workspace: {workspace}")
     return LoadedMf6Run(
         workspace=workspace,
