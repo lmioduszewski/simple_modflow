@@ -2190,6 +2190,74 @@ class ModelContext:
     time_units: str = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
 
+def _layer_elevations(context: Any) -> Any:
+    """The ONE per-cell layer-elevation table every surface-aware builder reads.
+
+    Three builders asked three ways. SFR read ``grid.gdf_topbtm`` directly and
+    never looked at ``context.surfaces``; LAK and ``CellSurfaceOffset`` read
+    ``context.surfaces`` first. ``ModelContext(surfaces=vor.gdf_topbtm)`` captures
+    the frame OBJECT, so re-running a layer-build cell in a notebook -- which
+    re-publishes ``vor.gdf_topbtm`` -- left two packages in one model on different
+    elevations. Measured: SFR reach top 70.0 against ``CellSurfaceOffset`` 60.0,
+    truth 30.0, no exception, normal termination. The only route found to wrong
+    numbers in an MF6 input file.
+
+    ``context.surfaces`` wins when given, because it is what the caller said and
+    there is no way to tell a deliberate pin from a stale snapshot. What changes
+    is that every builder now agrees on it, and a DISAGREEMENT with the grid's
+    live table is announced rather than written into the model.
+
+    A ``LayerBuildResult`` is accepted and turned into the table -- it is a
+    documented ``surfaces`` value, and LAK used to die on it with
+    ``'LayerBuildResult' object has no attribute 'drop'``.
+    """
+
+    surfaces = context.surfaces
+    live = getattr(context.grid, "gdf_topbtm", None)
+    if surfaces is None:
+        return live
+    if not hasattr(surfaces, "columns") and hasattr(surfaces, "botm"):
+        surfaces = _elevation_table_from_layers(surfaces)
+    if live is not None and live is not surfaces and _elevations_disagree(surfaces, live):
+        logger.warning(
+            "ModelContext.surfaces and the grid's gdf_topbtm disagree -- the context "
+            "was most likely built before the layers were re-published (a notebook "
+            "cell re-run). Every surface-aware package in this model uses "
+            "context.surfaces; rebuild the ModelContext if the grid's table is the "
+            "one you meant."
+        )
+    return surfaces
+
+
+def _elevation_table_from_layers(layers: Any) -> Any:
+    """``{0: top, 1..nlay: bottoms}`` from a ``LayerBuildResult``, no geometry.
+
+    The same column contract ``LayerBuildResult.attach_to_grid`` publishes, built
+    without publishing it: resolving a builder's input must not mutate the grid.
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    columns = {0: np.asarray(layers.top, dtype=float).reshape(-1)}
+    for index, bottom in enumerate(np.asarray(layers.botm, dtype=float)):
+        columns[index + 1] = bottom.reshape(-1)
+    return pd.DataFrame(columns)
+
+
+def _elevations_disagree(first: Any, second: Any) -> bool:
+    """Whether two elevation tables carry different numbers, geometry ignored."""
+
+    import numpy as np
+
+    try:
+        a = first.select_dtypes("number").to_numpy(dtype=float)
+        b = second.select_dtypes("number").to_numpy(dtype=float)
+    except (AttributeError, TypeError, ValueError):  # not both tables -- cannot compare
+        return False
+    return a.shape != b.shape or not np.allclose(a, b, equal_nan=True)
+
+
 @dataclass(frozen=True, slots=True)
 class SpecBuildContext:
     """Filesystem + library context threaded through a spec build.

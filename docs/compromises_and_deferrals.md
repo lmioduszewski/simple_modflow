@@ -6576,3 +6576,38 @@ same day, which is the useful part of the result.
         `api_snapshot.json`. The behaviour change is real and the ratchet cannot
         see it. If that matters more than once, the fix is the `spec.signatures`
         block 197 describes.
+
+209. **SFR and LAK read layer elevations from different places (2026-09-10).**
+      The one route found to WRONG NUMBERS IN AN MF6 INPUT FILE, left open by
+      ledger 196. SFR's `_default_reach_tops` read `grid.gdf_topbtm` directly and
+      never looked at `context.surfaces`, although `SFRBuilder` carries the
+      context. LAK and `CellSurfaceOffset` read `context.surfaces` first.
+      `ModelContext(surfaces=vor.gdf_topbtm)` captures the frame OBJECT, so
+      re-running a layer-build cell in a notebook -- which re-publishes
+      `vor.gdf_topbtm` -- left two packages in ONE model on different elevations.
+      Measured: SFR reach top 70.0 against `CellSurfaceOffset` 60.0, truth 30.0,
+      no exception, normal termination.
+      - **One resolver, `specs._layer_elevations`,** called by all three. This
+        fixes the internal inconsistency, which is the part that wrote wrong
+        numbers.
+      - **`context.surfaces` still wins when given.** A deliberate pin and a
+        stale snapshot are indistinguishable at the call site, so neither is
+        overridden. What changed: every builder now agrees on it, and a
+        DISAGREEMENT with the grid's live table is logged at WARNING rather than
+        written into the model. Compared by value, not identity -- a `.copy()` is
+        not a stale snapshot, and warning on identity would cry wolf.
+      - **SFR now reads elevation columns by POSITION** among the numeric ones
+        (`[top, botm0, botm1, ...]`), not by label. It read `.loc[cell, 0]`, which
+        only worked because the grid's table happened to be integer-labelled;
+        reading `context.surfaces` would have made a unit-labelled table raise.
+      - **A `LayerBuildResult` in `surfaces` is converted**, without publishing it
+        onto the grid -- resolving a builder's input must not mutate the grid. It
+        is a documented `surfaces` value, and LAK used to die on it with
+        `'LayerBuildResult' object has no attribute 'drop'`.
+      - **Reach-top derivation from the grid had no test at all** before this;
+        `_default_reach_tops` appeared only in `api_snapshot.json`. Six mutants,
+        all die, including one that reinstates the original grid read.
+      - **NOT done:** the tolerant reader-side accessor decoding all six writer
+        layouts (ledger 196). With these three readers sharing one source and
+        the positional readers covered by the geometry-first getter, it is no
+        longer load-bearing.

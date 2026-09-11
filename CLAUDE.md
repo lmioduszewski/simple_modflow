@@ -235,7 +235,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2552 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2561 passed / 4 skipped**, 2026-09-10): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m42s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -388,8 +388,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   getter STORES what it normalized and returns that object, because returning a copy
   loses `vor.gdf_topbtm[2] = ...` silently. Geometry is found by **dtype**, not the name.
   Column *names* (int vs unit strings) were the wrong diagnosis: those raise loudly.
-  Still open there: `ModelContext.surfaces` is a captured reference the getter cannot
-  reach, and it is where the SFR-vs-context stale-snapshot divergence lives.
+  `ModelContext.surfaces` is a captured reference the getter cannot reach, so SFR, LAK
+  and `CellSurfaceOffset` all resolve through ONE function, `specs._layer_elevations`
+  (ledger 209): the context wins when given, and a disagreement with the grid's live
+  table WARNS. SFR used to read the grid while LAK read the context -- two packages in
+  one model on different elevations after a notebook cell re-run (70.0 vs 60.0).
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or

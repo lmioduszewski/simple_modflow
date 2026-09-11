@@ -22,6 +22,7 @@ from shapely.geometry.base import BaseGeometry
 
 from myflopy.advanced import lak_spec
 from myflopy.specs import (
+    _layer_elevations,
     ModelContext,
     PackageSpec,
     mf6_length_conversion,
@@ -601,9 +602,7 @@ class LAKBuilder:
     def _surfaces(self) -> pd.DataFrame:
         """The per-cell top/bottom elevation table (context surfaces, else the grid's), geometry dropped."""
 
-        surfaces = self.context.surfaces
-        if surfaces is None:
-            surfaces = getattr(self.grid, "gdf_topbtm", None)
+        surfaces = _layer_elevations(self.context)
         if surfaces is None:
             raise ValueError("ModelContext.surfaces or grid.gdf_topbtm is required.")
         return surfaces.drop(columns="geometry", errors="ignore")

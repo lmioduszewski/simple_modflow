@@ -18,6 +18,7 @@ from shapely.geometry import Point
 
 from myflopy.advanced import sfr_spec
 from myflopy.specs import (
+    _layer_elevations,
     ModelContext,
     PackageSpec,
     mf6_length_conversion,
@@ -634,12 +635,19 @@ class SFRBuilder:
         than the reach above it in the same stream.
         """
 
-        if getattr(self.grid, "gdf_topbtm", None) is None:
+        # The shared resolver, not `self.grid.gdf_topbtm`: SFR used to be the one
+        # builder that ignored `context.surfaces`, so it disagreed with LAK and
+        # CellSurfaceOffset in the same model whenever the context was stale.
+        surfaces = _layer_elevations(self.context)
+        if surfaces is None:
             raise ValueError("reach_top is required when grid surface elevations are unavailable.")
+        # Columns by POSITION among the numeric ones ([top, botm0, botm1, ...]),
+        # so a unit-labelled table reads the same as an integer-labelled one.
+        elevations = surfaces.select_dtypes("number")
         values = []
         for layer, cell in self.reaches["cellid"]:
             top_column = 0 if layer == 0 else layer
-            values.append(float(self.grid.gdf_topbtm.loc[cell, top_column]))
+            values.append(float(elevations.loc[cell].iloc[top_column]))
         for reaches in self.stream_reaches.values():
             previous = None
             for rno in reaches:

@@ -20,7 +20,7 @@ from myflopy.advanced import (
     wel_spec,
 )
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
-from myflopy.specs import ModelContext, PackageSpec
+from myflopy.specs import ModelContext, PackageSpec, _layer_elevations
 
 logger = get_logger(__name__)
 
@@ -178,9 +178,7 @@ class SurfaceResolver:
     def _surfaces(self):
         """The surface source for :class:`CellSurfaceOffset`: the context's, else the grid's top/botm."""
 
-        surfaces = self.context.surfaces
-        if surfaces is None:
-            surfaces = getattr(self.grid, "gdf_topbtm", None)
+        surfaces = _layer_elevations(self.context)
         if surfaces is None:
             raise ValueError(
                 "ModelContext.surfaces or grid.gdf_topbtm is required for CellSurfaceOffset."
