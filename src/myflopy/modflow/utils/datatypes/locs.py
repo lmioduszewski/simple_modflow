@@ -102,7 +102,6 @@ class ObservationLocations:
                 locs_dict = self.vor.get_vor_cells_as_dict(
                     locs=locs,
                     crs=self.vor.crs,
-                    predicate='contains',
                     loc_name_field=self.loc_name_field
                 )
                 # remove dict entries where the loc was not contained in a cell (outside the grid)

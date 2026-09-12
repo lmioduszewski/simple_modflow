@@ -445,7 +445,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -930,7 +930,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -1490,7 +1490,7 @@ class LakConnectionsExplorer:
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -2689,7 +2689,7 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -3025,7 +3025,7 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary

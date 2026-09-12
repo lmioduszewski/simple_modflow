@@ -733,7 +733,7 @@ class GridPlots:
         section_name : str, optional
             *(model only)* Legend name for the traces.
         clip : Path or geometry, optional
-            *(model only)* Restrict the section to cells intersecting this region.
+            *(model only)* Restrict the section to the cells this region covers.
         animation_kstpkpers : sequence of tuple, optional
             *(model only)* The periods ``.ani`` steps through; defaults to every
             output time.

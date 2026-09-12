@@ -503,7 +503,7 @@ class VoronoiGridPlus(VoronoiGrid):
     def get_vor_cells_as_series(
         self,
         overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries | Path = None,
-        predicate: str = 'intersects',
+        predicate: str | None = None,
         return_dict: bool = False,
         name_field: str = 'ExploName',
         layer: str | int | None = None,
@@ -528,7 +528,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self,
         locs: Path,
         crs: str = None,
-        predicate: str = 'intersects',
+        predicate: str | None = None,
         loc_name_field: str = None,
         return_gdf: bool = False,
         layer: str | int | None = None,

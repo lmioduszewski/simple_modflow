@@ -59,7 +59,6 @@ def get_obs_cells(
     obs_dict = heads.vor.get_vor_cells_as_dict(
         locs=locs,
         crs=crs,
-        predicate="contains",
         loc_name_field=loc_name_field,
     )
     obs_dict = sort_dict_by_keys(obs_dict)

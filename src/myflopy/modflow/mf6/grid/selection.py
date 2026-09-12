@@ -10,9 +10,53 @@ from shapely.geometry import Polygon
 
 from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.geometry import cell_shares, miss_reason
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 logger = get_logger(__name__)
+
+#: A column name no file carries, so a caller that names no field keeps the
+#: feature's own index as its key.
+_NO_NAME_FIELD = "__myflopy_unnamed__"
+
+
+def _measured_cells(gdf_vor_polys, geometries, names) -> pd.Series:
+    """The cells each feature actually reaches, by the shared coverage rule.
+
+    A polygon reaches the cells it COVERS by area, a line those it runs through,
+    and a point the one cell holding it, with the tie and sliver rules of ledgers
+    210-212. The spatial join this replaced took any touch, so a polygon drawn on
+    cell faces selected its neighbours as well: 9 cells for a polygon that was
+    exactly cell 5, and 4 for a point on a vertex.
+
+    A feature that reaches nothing is left out, as it always was, but it is named
+    in a warning rather than silently absent. This does not RAISE: an empty
+    selection is documented as a warning where it is drawn (``map(select=...)``),
+    and the callers that build model input raise for themselves.
+    """
+
+    cells = {}
+    missed = []
+    for index, geometry in geometries.items():
+        hits = [cell for cell, _share in cell_shares(gdf_vor_polys, geometry)]
+        if hits:
+            cells[index] = hits
+        else:
+            missed.append((index, geometry))
+    if missed:
+        labelled = not isinstance(names, list)
+        reasons = ", ".join(
+            f"{(names.loc[index] if labelled else index)!r} "
+            f"({miss_reason(gdf_vor_polys, geometry, target='cell')})"
+            for index, geometry in missed[:10]
+        )
+        if len(missed) > 10:
+            reasons += f", and {len(missed) - 10} more"
+        logger.warning(
+            "%d of %d features reach no grid cell and are left out: %s",
+            len(missed), len(geometries), reasons,
+        )
+    return pd.Series(cells, name="cells", dtype=object)
 
 
 def _layer_names(path: Path) -> list[str] | None:
@@ -65,13 +109,21 @@ def _read_locs(path: str | Path, layer: str | int | None = None) -> gpd.GeoDataF
 def get_vor_cells_as_series(
     gdf_vor_polys,
     overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries | Path = None,
-    predicate: str = 'intersects',
+    predicate: str | None = None,
     return_dict: bool = False,
     name_field: str = 'ExploName',
     layer: str | int | None = None,
 ) -> pd.Series | dict:
     """
-    Identify Voronoi cells matching a spatial predicate against provided geometries.
+    Identify the Voronoi cells each geometry reaches.
+
+    ``predicate=None`` -- the default -- selects by MEASURE: a polygon reaches the
+    cells it covers by area, a line those it runs through, and a point the one
+    cell holding it, under the tie and sliver rules of ledgers 210-212. Passing a
+    geopandas predicate (``'intersects'``, ``'contains'``, ...) keeps the raw
+    spatial join, which takes any touch, including a shared face or a single
+    vertex; it is the escape hatch for a caller that wants topology rather than
+    coverage.
 
     ``layer`` names which layer to read when ``overlapping_geometry`` is a path to
     a multi-layer file (a GeoPackage); ``None`` keeps GDAL's default of the first
@@ -126,9 +178,12 @@ def get_vor_cells_as_series(
         )
         geometries = geometries.to_crs(gdf_vor_polys.crs)
 
-    joined = gpd.sjoin(gdf_vor_polys, geometries.to_frame('geometry'), predicate=predicate, how='inner')
-    group_join = joined.groupby('index_right').apply(lambda frame: frame.index.to_list(), include_groups=False)
-    group_join.name = 'cells'
+    if predicate is None:
+        group_join = _measured_cells(gdf_vor_polys, geometries, names)
+    else:
+        joined = gpd.sjoin(gdf_vor_polys, geometries.to_frame('geometry'), predicate=predicate, how='inner')
+        group_join = joined.groupby('index_right').apply(lambda frame: frame.index.to_list(), include_groups=False)
+        group_join.name = 'cells'
     if not isinstance(names, list):
         names_idx = names.loc[group_join.index]
         group_join.index = names_idx
@@ -142,7 +197,7 @@ def get_vor_cells_as_dict(
     vor,
     locs: Path,
     crs: str = None,
-    predicate: str = 'intersects',
+    predicate: str | None = None,
     loc_name_field: str = None,
     return_gdf: bool = False,
     layer: str | int | None = None,
@@ -157,17 +212,16 @@ def get_vor_cells_as_dict(
     crs = vor.crs if crs is None else crs
     gdf_locs = _read_locs(locs, layer).to_crs(crs)
 
-    loc_vor_cell_dict = {}
-    for idx in gdf_locs.index:
-        location_name = idx if loc_name_field is None else gdf_locs.iloc[idx][loc_name_field]
-
-        vor_cells = get_vor_cells_as_series(vor.gdf_vorPolys, gdf_locs.geometry[idx], predicate)
-        if not isinstance(vor_cells, pd.Series):
-            logger.warning(
-                '%s does not intersect any grid cell; skipping it', location_name,
-            )
-            continue
-        loc_vor_cell_dict[location_name] = vor_cells.tolist()
+    # One call for the whole frame. Per feature, each miss was reported twice and
+    # the join's overhead was paid once each; the selector now names the misses.
+    cells = get_vor_cells_as_series(
+        vor.gdf_vorPolys,
+        gdf_locs,
+        predicate,
+        name_field=_NO_NAME_FIELD if loc_name_field is None else loc_name_field,
+    )
+    # The {name: [[cells]]} shape ledger 192 left alone.
+    loc_vor_cell_dict = {key: [value] for key, value in cells.items()}
 
     if return_gdf:
         return loc_vor_cell_dict, gdf_locs

@@ -341,7 +341,7 @@ def map(      # noqa: A001 - the verb IS `map`
     select : sequence of int, ndarray, str, Path or geometry, optional
         Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
         name of a registered model region (``"all_streams"``), a path to a
-        vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+        vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
         nothing (with a warning) when the selection is empty.
     select_style : {'outline', 'dim', 'both'}, default 'outline'
         How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -764,7 +764,7 @@ def section(
     section_name : str, optional
         *(model only)* Legend name for the traces.
     clip : Path or geometry, optional
-        *(model only)* Restrict the section to cells intersecting this region.
+        *(model only)* Restrict the section to the cells this region covers.
     animation_kstpkpers : sequence of tuple, optional
         *(model only)* The periods ``.ani`` steps through; defaults to every
         output time.
@@ -1045,7 +1045,7 @@ def surface(
     interpolator : str, optional
         Override the interpolation method by name.
     clip : Path or geometry, optional
-        Restrict the surface to cells intersecting this region. See also
+        Restrict the surface to the cells this region covers. See also
         ``.clipped_fig()`` on the result.
     crs : str, optional
         Override the grid's CRS.
@@ -1523,7 +1523,7 @@ class ModelPlots:
         select : sequence of int, ndarray, str, Path or geometry, optional
             Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
             name of a registered model region (``"all_streams"``), a path to a
-            vector file, or a shapely/GeoPandas geometry to intersect. Highlights
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
             nothing (with a warning) when the selection is empty.
         select_style : {'outline', 'dim', 'both'}, default 'outline'
             How the highlight is drawn. ``'outline'`` traces the dissolved boundary
@@ -1718,7 +1718,7 @@ class ModelPlots:
         section_name : str, optional
             *(model only)* Legend name for the traces.
         clip : Path or geometry, optional
-            *(model only)* Restrict the section to cells intersecting this region.
+            *(model only)* Restrict the section to the cells this region covers.
         animation_kstpkpers : sequence of tuple, optional
             *(model only)* The periods ``.ani`` steps through; defaults to every
             output time.
@@ -1918,7 +1918,7 @@ class ModelPlots:
         interpolator : str, optional
             Override the interpolation method by name.
         clip : Path or geometry, optional
-            Restrict the surface to cells intersecting this region. See also
+            Restrict the surface to the cells this region covers. See also
             ``.clipped_fig()`` on the result.
         crs : str, optional
             Override the grid's CRS.

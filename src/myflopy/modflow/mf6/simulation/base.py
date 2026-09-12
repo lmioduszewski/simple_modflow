@@ -940,7 +940,7 @@ class SimulationBase:
         name: str,
         geometry,
         *,
-        predicate: str = "intersects",
+        predicate: str | None = None,
         layer: int | list[int] | None = None,
         category: str = "selection",
         package: str | None = None,

@@ -7478,3 +7478,55 @@ same day, which is the useful part of the result.
         under the same command before any mutant counts.
       - Found by the 2026-09-11 sibling investigation, as the second half of the
         head-target decision; ledger 233 is the first.
+
+235. **The shared cell selector took any touch (2026-09-12).**
+      `get_vor_cells_as_series` joined geometries to cells with `intersects` and
+      no measure, so a polygon that was exactly cell 5 selected 9 cells, a
+      face-aligned block of four selected all 16, a point on a vertex selected 4,
+      and a diagonal line selected 10 where 4 are right. Everything that asks
+      "which cells does this shape pick?" goes through it: regions and
+      `map(select=...)`, mp3du particle release, cross-sections,
+      `adjust_top_btm_overlaps`, the legacy boundary classes' inactive-cell set,
+      and the observation-cell helpers.
+      - **The default is the measured rule** (ledgers 210-212, through the shared
+        `cell_shares` of 232): a polygon reaches the cells it covers by AREA, a
+        line those it runs through, a point the one cell holding it. An explicit
+        `predicate=` keeps the raw spatial join as a documented escape hatch -- no
+        in-repo caller needs it now, and leaving it costs nothing.
+      - **All five forwarders flipped too.** The default was restated at
+        `VoronoiGridPlus.get_vor_cells_as_series`/`_as_dict`,
+        `selection.get_vor_cells_as_dict`, `RegionRegistry.add_from_geometry` and
+        `SimulationBase.add_region_from_geometry`, so fixing the free function
+        alone would have reached almost nothing. A test pins every one, and each
+        has its own mutant.
+      - **An empty result is an empty Series**, not the empty GeoDataFrame callers
+        indexed as a Series one line later, and features that reach nothing are
+        named in a WARNING. The selector does not RAISE: an empty `map(select=)`
+        is documented as a warning, and the callers that build model input
+        (regions, particles) raise for themselves.
+      - **The two `contains` callers** -- `heads_observations.get_obs_cells` and
+        `datatypes/locs.py` -- dropped a point sitting on a face, since `contains`
+        is false for every cell there, and then logged that it did not intersect
+        the grid at all. They take the default now, and a ratchet test fails on a
+        `predicate='contains'` anywhere in `src/`.
+      - **`get_vor_cells_as_dict` asks once for the whole frame** rather than once
+        per feature, keeping the `{name: [[cells]]}` shape ledger 192 left alone.
+      - **What changes for callers**, on a 4x4 grid: a region from a cell-sized
+        polygon is 1 cell where it was 9; a particle release from one is 1
+        particle, not 9; a diagonal section crosses 4 cells, not 10, with no
+        duplicated stations; `adjust_top_btm_overlaps` moves one cell's bottom,
+        not nine. The legacy `Boundaries.inactive_cells` inherits the rule through
+        the wrapper default, which the user accepted on 2026-09-11.
+      - **Cost.** The rule measures per feature where the join was vectorised: the
+        investigation measured 300 boxes on 10,000 cells at 0.025 s joined against
+        1.43 s looped. A typical call carries a handful of features, and at ~441
+        cells the measured path is faster than the join's own overhead.
+        Vectorising the polygon case is left undone, and recorded here.
+      - `select=`/`clip=` wording in the plot reference was corrected and
+        `scripts/derive_docstrings.py` rerun (20 docstrings rewritten).
+      - **NOT done**: `get_grid_edge_cells`' own ring code (its own entry, next);
+        the three consumers that hand the selector a list of lists (build_idomain,
+        `InterpolatedSurface(clip=)`, `get_overlapping_area(shp_gpkg=)`), which the
+        user asked for next; and the deprecated `PrtPrp`.
+      - Ten mutants and an import probe, all killed.
+      - Found by the 2026-09-11 sibling investigation.
