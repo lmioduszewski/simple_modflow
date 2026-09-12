@@ -29,6 +29,11 @@ from shapely.geometry import Polygon, mapping
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.geometry import (
+    miss_reason,
+    selected_cells,
+    where_they_are,
+)
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
@@ -145,6 +150,39 @@ class InterpolatedSurface(Picture):
 
 
     @property
+    def clipped_cells(self) -> list[int] | None:
+        """The cells the ``clip=`` region covers, or ``None`` when there is no clip.
+
+        The selector answers one entry per FEATURE, each a LIST of cells, so
+        ``.to_list()`` handed ``.loc`` the label ``(5,)`` and EVERY clipped
+        surface raised ``KeyError``; :func:`selected_cells` flattens it.
+
+        Resolved here, once, rather than inside ``xs`` and ``ys`` so that ``zs``
+        reads the same cells whichever is asked for first -- reading ``zs`` on its
+        own took every cell in the grid while ``xs`` took the clipped ones, and the
+        two arrays then disagreed in length. Memoised, so the selector runs once
+        per surface rather than once per ``xs``/``ys``/``zs``.
+
+        A clip region that covers no cell RAISES: an empty point set reaches the
+        interpolator, which fails for a reason nothing connects back to the clip.
+        """
+
+        if not self.clip:
+            return None
+        if self._clipped_cells is None:
+            cells = selected_cells(self.vor.get_vor_cells_as_series(self.clip))
+            if not cells:
+                polys = self.vor.gdf_vorPolys
+                raise ValueError(
+                    "The clip region covers no grid cell "
+                    f"({miss_reason(polys, self.clip, target='grid cell')}), so there "
+                    "is nothing to interpolate. "
+                    + where_they_are(self.clip, polys, noun="clip bounds")
+                )
+            self._clipped_cells = cells
+        return self._clipped_cells
+
+    @property
     def interpolator(self):
         """The interpolation method used to build the surface raster."""
 
@@ -198,9 +236,8 @@ class InterpolatedSurface(Picture):
         """Cell-centroid x-coordinates (clipped to the clip region when set; cached)."""
 
         if self._xs is None:
-            if self.clip:
-                self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
-                xs = pd.Series(self.vor.centroids_x).loc[self._clipped_cells].to_numpy()
+            if self.clipped_cells is not None:
+                xs = pd.Series(self.vor.centroids_x).loc[self.clipped_cells].to_numpy()
             else:
                 xs = np.array(self.vor.centroids_x)
             self._xs = xs
@@ -211,9 +248,8 @@ class InterpolatedSurface(Picture):
         """Cell-centroid y-coordinates (clipped to the clip region when set; cached)."""
 
         if self._ys is None:
-            if self.clip:
-                self._clipped_cells = self.vor.get_vor_cells_as_series(self.clip).to_list()
-                ys = pd.Series(self.vor.centroids_y).loc[self._clipped_cells].to_numpy()
+            if self.clipped_cells is not None:
+                ys = pd.Series(self.vor.centroids_y).loc[self.clipped_cells].to_numpy()
             else:
                 ys = np.array(self.vor.centroids_y)
             self._ys = ys
@@ -227,7 +263,7 @@ class InterpolatedSurface(Picture):
         sentinels become NaN); layer surfaces read ``gdf_topbtm``. Cached.
         """
 
-        cells = slice(None) if self._clipped_cells is None else self._clipped_cells
+        cells = slice(None) if self.clipped_cells is None else self.clipped_cells
         if self._zs is None:
             if self.surf_type == 'hds':
                 """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""

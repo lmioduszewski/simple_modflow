@@ -9,7 +9,12 @@ import shapely as shp
 
 from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.grid.geometry import cell_shares, miss_reason
+from myflopy.modflow.mf6.grid.geometry import (
+    cell_shares,
+    miss_reason,
+    selected_cells,
+    where_they_are,
+)
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 logger = get_logger(__name__)
@@ -305,22 +310,20 @@ def _inactive_from_file(vor, path: Path) -> set[int]:
 
     features = read_shp_gpkg(path)
     series = get_vor_cells_as_series(vor.gdf_vorPolys, features)
-    cells = {int(cell) for group in series.tolist() for cell in group}
+    cells = set(selected_cells(series))
     if not cells:
         grid = vor.gdf_vorPolys
         raise ValueError(
             f"No feature in '{path.name}' covers a cell of this grid, so nothing "
-            f"would be inactive. The features span ({_bounds(features)}) and the "
-            f"grid ({_bounds(grid)}); the file is in {features.crs} and the grid "
-            f"in {grid.crs}."
+            "would be inactive. "
+            + where_they_are(
+                features,
+                grid,
+                source_crs=features.crs,
+                no_crs_subject="the file has NO CRS, so its coordinates",
+            )
         )
     return cells
-
-
-def _bounds(frame) -> str:
-    """A frame's extent, for a message about where things are."""
-
-    return ", ".join(f"{value:,.1f}" for value in frame.total_bounds)
 
 
 def _active_components(adjacency, active, inactive) -> list[set[int]]:

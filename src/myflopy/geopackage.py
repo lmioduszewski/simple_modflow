@@ -24,6 +24,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     cell_shares,
     domain_active,
     miss_reason,
+    where_they_are,
 )
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import ModelContext, PackageSpec, _layer_elevations
@@ -484,16 +485,13 @@ class GeoPackageSource:
     def _where(self) -> str:
         """Where the features are and where the grid is -- what an empty result is acted on with."""
 
-        grid_crs = getattr(self.grid, "crs", None)
-        if self._source_crs is None:
-            crs = f"the file has NO CRS, so its coordinates were read as the grid's ({grid_crs})"
-        elif grid_crs is not None and self._source_crs != grid_crs:
-            crs = f"the features were reprojected from {self._source_crs} to the grid's {grid_crs}"
-        else:
-            crs = f"both are in {self._source_crs}"
-        features = ", ".join(f"{v:,.1f}" for v in self.gdf.total_bounds)
-        grid = ", ".join(f"{v:,.1f}" for v in self.grid.gdf_vorPolys.total_bounds)
-        return f"The features span ({features}) and the grid ({grid}); {crs}."
+        return where_they_are(
+            self.gdf,
+            self.grid.gdf_vorPolys,
+            source_crs=self._source_crs,
+            grid_crs=getattr(self.grid, "crs", None),
+            no_crs_subject="the file has NO CRS, so its coordinates",
+        )
 
     def _refuse_or_report_misses(
         self, missed: list[tuple[Any, Any]], *, empty: str, edges_only: bool = False

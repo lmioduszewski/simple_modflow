@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.geometry import where_they_are
 
 logger = get_logger(__name__)
 
@@ -742,20 +743,18 @@ def _placement_note(features, model, *, label: str = "targets") -> str:
 
     ``label`` names them in the sentence (``"targets"``, ``"zones"``). The bounds
     are the SOURCE frame's own, in the CRS the sentence names, because a mismatch
-    is two boxes and reprojecting one of them first would hide it.
+    is two boxes and reprojecting one of them first would hide it. The wording
+    itself lives in ``grid.geometry.where_they_are``, so the GeoPackage source,
+    the selector and these observations all say it the same way.
     """
 
-    grid_crs = getattr(model.vor, "crs", None)
-    source_crs = features.crs if isinstance(features, gpd.GeoDataFrame) else None
-    if source_crs is None:
-        crs = f"the {label} carry NO CRS, so they were read as the grid's ({grid_crs})"
-    elif grid_crs is not None and source_crs != grid_crs:
-        crs = f"the {label} were reprojected from {source_crs} to the grid's {grid_crs}"
-    else:
-        crs = f"both are in {source_crs}"
-    spans = ", ".join(f"{value:,.1f}" for value in features.total_bounds)
-    grid = ", ".join(f"{value:,.1f}" for value in model.vor.gdf_vorPolys.total_bounds)
-    return f"The {label} span ({spans}) and the grid ({grid}); {crs}."
+    return where_they_are(
+        features,
+        model.vor.gdf_vorPolys,
+        noun=label,
+        source_crs=features.crs if isinstance(features, gpd.GeoDataFrame) else None,
+        grid_crs=getattr(model.vor, "crs", None),
+    )
 
 
 def _report_missed_features(

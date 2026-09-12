@@ -194,10 +194,18 @@ def get_grid_centroid(vor):
 
 def get_overlapping_area(vor, shp_gpkg=None, cell_list=None):
     """
-    Return the area of cells overlapping a geometry or explicit cell ids.
+    Return the area of the cells a geometry reaches, or of the cells named.
+
+    ``shp_gpkg`` goes through the shared selector, whose answer is one entry per
+    FEATURE, each a LIST of cells; :func:`selected_cells` flattens it. Handing
+    that list of lists to ``.loc`` asked pandas for the label ``(5,)``, so this
+    raised ``KeyError: None of [Index([(5,)], ...)] are in the [index]`` for
+    every geometry. A geometry reaching no cell covers no area, so the answer is
+    0.0, which is what an empty ``.loc`` already unions to -- and the selector
+    has already named the feature in a warning.
     """
     if shp_gpkg is not None:
-        cells = vor.get_vor_cells_as_series(shp_gpkg).to_list()
+        cells = selected_cells(vor.get_vor_cells_as_series(shp_gpkg))
     elif cell_list is not None:
         cells = cell_list
     else:
@@ -593,6 +601,79 @@ def miss_reason(polys, geometry, *, target: str = "active cell") -> str:
     return f"on no {target}"
 
 
+def selected_cells(selection) -> list[int]:
+    """The flat, sorted, unique cells a selector answer names.
+
+    :func:`myflopy.modflow.mf6.grid.selection.get_vor_cells_as_series` answers one
+    entry PER FEATURE, each a LIST of cells -- the shape ledger 192 kept, so that
+    a caller can still tell which feature reached what. A caller wanting only
+    "which cells" has to flatten it, and three of them did not: they handed the
+    list of lists straight to ``.loc``, which asked pandas for the label ``(5,)``
+    and raised on every input. Written once here rather than at each of the six
+    callers that want the flat answer.
+
+    Accepts the Series, a list of lists, or a flat list of cell ids, so a caller
+    that already holds ids can pass them through unchanged.
+    """
+
+    cells: list[int] = []
+    values = selection.tolist() if hasattr(selection, "tolist") else selection
+    for value in values:
+        if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+            cells.extend(int(cell) for cell in np.asarray(value).ravel())
+        elif value is not None:
+            cells.append(int(value))
+    return sorted(dict.fromkeys(cells))
+
+
+def _bounding_box(obj):
+    """A frame's ``total_bounds`` or a single geometry's ``bounds``, as one tuple."""
+
+    bounds = getattr(obj, "total_bounds", None)
+    return obj.bounds if bounds is None else bounds
+
+
+def where_they_are(
+    features,
+    polys,
+    *,
+    noun: str = "features",
+    source_crs=None,
+    grid_crs=None,
+    no_crs_subject: str | None = None,
+) -> str:
+    """Where the features are and where the grid is -- what an empty result is acted on with.
+
+    Ledger 211 refuses a source landing on NO cell, and the two bounding boxes
+    plus the two CRSs are what that is diagnosed from: a model placed at the
+    origin, a file read in degrees over a State Plane grid, a file carrying no CRS
+    at all. The answer is the same wherever the miss was found, so it is worded
+    once. ``features`` is anything with ``total_bounds`` -- a GeoDataFrame, a
+    GeoSeries -- or a single geometry, which has ``bounds``.
+
+    ``noun`` names the subject, plural, because each caller's differs
+    ("features", "targets", "clip bounds"); ``no_crs_subject`` replaces only the
+    opening of the no-CRS clause, for a caller whose subject there is the FILE
+    rather than what was read out of it. ``grid_crs`` defaults to the polygons'
+    own CRS, which is the grid's: a caller reading it off a grid OBJECT gets
+    ``None`` whenever that object carries no ``.crs``, and the sentence then said
+    "both are in ..." of a file that had in fact been reprojected.
+    """
+
+    if grid_crs is None:
+        grid_crs = getattr(polys, "crs", None)
+    if source_crs is None:
+        subject = no_crs_subject or f"the {noun} carry NO CRS, so they"
+        crs = f"{subject} were read as the grid's ({grid_crs})"
+    elif grid_crs is not None and source_crs != grid_crs:
+        crs = f"the {noun} were reprojected from {source_crs} to the grid's {grid_crs}"
+    else:
+        crs = f"both are in {source_crs}"
+    span = ", ".join(f"{v:,.1f}" for v in _bounding_box(features))
+    grid = ", ".join(f"{v:,.1f}" for v in _bounding_box(polys))
+    return f"The {noun} span ({span}) and the grid ({grid}); {crs}."
+
+
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
     """Adjust stacked surface elevations to preserve layer ordering.
 
@@ -676,16 +757,9 @@ def adjust_top_btm_overlaps(
     Lower selected bottoms so they overlap adjacent cell tops consistently.
     """
     elev_df = vor.reconcile_surfaces(min_sep=min_sep) if elev_df is None else elev_df
-    cells_to_adjust = vor.get_vor_cells_as_series(shp_path)
-    # get_vor_cells_as_series returns one row per geometry, each holding a LIST of
-    # intersected cell ids; flatten to unique individual cells.
-    cell_ids: list[int] = []
-    for value in cells_to_adjust:
-        if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
-            cell_ids.extend(int(cell) for cell in value)
-        else:
-            cell_ids.append(int(value))
-    cell_ids = sorted(dict.fromkeys(cell_ids))
+    # One entry per geometry, each a LIST of cells: `selected_cells` is the one
+    # copy of that flattening.
+    cell_ids = selected_cells(vor.get_vor_cells_as_series(shp_path))
     new_bottoms = {}
 
     for cell_id in cell_ids:

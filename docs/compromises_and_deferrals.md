@@ -7524,10 +7524,11 @@ same day, which is the useful part of the result.
         Vectorising the polygon case is left undone, and recorded here.
       - `select=`/`clip=` wording in the plot reference was corrected and
         `scripts/derive_docstrings.py` rerun (20 docstrings rewritten).
-      - **NOT done**: `get_grid_edge_cells`' own ring code (its own entry, next);
-        the three consumers that hand the selector a list of lists (build_idomain,
-        `InterpolatedSurface(clip=)`, `get_overlapping_area(shp_gpkg=)`), which the
-        user asked for next; and the deprecated `PrtPrp`.
+      - **NOT done at the time**: `get_grid_edge_cells`' own ring code (CLOSED by
+        entry 236); the three consumers that hand the selector a list of lists
+        (build_idomain, `InterpolatedSurface(clip=)`,
+        `get_overlapping_area(shp_gpkg=)`) (CLOSED by entry 240); and the
+        deprecated `PrtPrp`, which is still left alone.
       - Ten mutants and an import probe, all killed.
       - Found by the 2026-09-11 sibling investigation.
 
@@ -7892,4 +7893,142 @@ same day, which is the useful part of the result.
         the layer stored instead of the cell, `cell_shares` replaced by a bespoke
         `contains` scan, the nearest reach cell named as the farthest, and the CRS
         dropped from the miss message.
+      - Found by the 2026-09-11 sibling investigation.
+
+240. **Three callers read the cell selector's answer as a flat list, and so raised on every input (2026-09-12).**
+      `get_vor_cells_as_series` answers one entry per FEATURE, each a LIST of
+      cells -- the shape ledger 192 kept and ledger 235 made measured. Three
+      consumers read it as a flat list of cell ids, which ledger 235 named as not
+      done and the user asked for next. Each failed on EVERY geometry:
+      - **`build_idomain`**, through `assign_voronoi_cells_to_layers`
+        (`utils/datatypes/readers.py`), put `[[5]]` in each layer column and then
+        died with `TypeError: cannot use 'list' as a set element (unhashable type:
+        'list')`. So `SimulationBase(idomain_path=...)` had no working read at
+        all: `model.idomain`, `model.idomain_gdf` and `model.inactive_cells` every
+        one of them raised that, for every idomain file.
+      - **`InterpolatedSurface(clip=)`** (`grid/interpolated_surface.py`, in both
+        `xs` and `ys`) and **`get_overlapping_area(shp_gpkg=)`**
+        (`grid/geometry.py`) handed the list of lists to `.loc` and got
+        `KeyError: None of [Index([(5,)], dtype='object')] are in the [index]`.
+      - **One flattener, `selected_cells`**, in `grid/geometry.py` beside the
+        coverage rules ledger 232 extracted. Four callers had already written it
+        out for themselves and worked -- nine lines inside `adjust_top_btm_overlaps`
+        in that same file, a set comprehension in `_inactive_from_file`
+        (`grid/selection.py`, ledger 236, landed while this was being drafted),
+        another in `RegionRegistry.add_from_geometry` (`simulation/regions.py`),
+        and a fourth inside `build_idomain` itself, five lines above the code this
+        entry adds. With `choros._resolve_cells` that is five, so fixing
+        `get_overlapping_area` and the clipped surface in place would have made a
+        sixth and a seventh. All four of the working copies call it now;
+        `choros._resolve_cells` deliberately does not (below).
+        Measured after: a cell-sized idomain polygon makes exactly cell 5
+        inactive, a clipped surface's `xs` is `[37.5]`, `get_overlapping_area` is
+        625.0.
+      - **`build_idomain` asks the selector ONCE for the whole file**, not once
+        per row. Per row, a row landing off the grid is a WHOLE-input miss, so the
+        ledger-211 raise/warn policy fired on a single row; and the selector's
+        setup was paid again for every row and every layer column -- on a 400-cell
+        grid, 60 features over two layer columns measured 120 selector calls in
+        0.0494 s against 1 in 0.0132 s, 3.7x. Answers map back by POSITION,
+        not by index label: keyed by label, a frame carrying a repeated label gave
+        both of its rows one row's cells.
+      - **A file that lands on NO cell now raises** (ledger 211). It came back as
+        a domain with every cell active in every layer, so the model runs to
+        normal termination with the idomain doing nothing; the cause is almost
+        always a location or a CRS, so the message carries both extents and both
+        CRSs and each feature's reason from `miss_reason`. A PARTIAL miss keeps
+        the rest and is warned by the selector, by name -- including a file whose
+        layer-0 features land and whose only layer-1 feature misses, which is a
+        good file and must not be refused.
+      - **A domain now EXISTS where every read used to raise, and that reaches
+        other code.** `mp3du`'s `collect_inactive_cells` lists `TypeError` in its
+        own handler and fell through to the flopy `modelgrid.idomain` instead; it
+        now reads the polygon-derived set, which is what `get_start_cell_diagnostics`
+        counts its released-into-inactive-cells warning from, and the two can
+        disagree. Two details of that, measured on the 2-layer 16-cell fixture:
+        its docstring says "the model's top layer" but `SimulationBase.inactive_cells`
+        is layer-FLATTENED (`[5, 21]` for cell 5 of both layers), so ids >= ncpl
+        can never match a particle's cell and an inactive cell below layer 0 goes
+        uncounted -- true before this and not fixed here; and the source of truth
+        for that warning moves from the written DISV to the polygon file. Nothing
+        else in `src/` reads `SimulationBase.inactive_cells` or `.idomain`: the
+        legacy `Boundaries`/`recharge`/`kflow`/`drn` tier builds its own from
+        `idomain`/`idomain_path` and is untouched, and model BUILDING never asks
+        -- a package-first model's domain arrives as `ModelContext.domain`
+        (`simulation/base.py:175`), which never calls `build_idomain`.
+      - **The crash was hiding a second defect.** Under the pre-235 `intersects`
+        join a one-cell idomain polygon claimed 9 of the 16 cells on the test
+        grid; by the area rule it claims 1. Whatever these files were drawn for,
+        they would have deactivated their neighbours.
+      - **`InterpolatedSurface.clipped_cells` is a property**, resolved once and
+        memoised. `zs` read a cache that only `xs`/`ys` ever filled, so asking for
+        `zs` on its own took all 16 cells while a clipped `xs` was unobtainable at
+        all -- the stale cache would have survived the `KeyError` fix. A clip
+        covering no cell RAISES, rather than handing the interpolator an empty
+        point set to fail on for a reason nothing connects back to the clip.
+      - **The "where they are" wording was already THREE copies** --
+        `GeoPackageSource._where` (ledger 211), the observation targets' copy (233,
+        which entry 238 moved into `observations/_shared._placement_note`) and
+        `_inactive_from_file` (236) -- and the idomain refusal would have been a
+        fourth. Extracted as `where_they_are` in `grid/geometry.py`; all three
+        delegate. The first two print byte-identical words, which
+        `test_gpkg_misses.py` and `test_head_targets_on_faces.py` already pin.
+        236's differed and now says which of the three cases it is: it said "the
+        file is in X and the grid in Y", which reads as a mismatch even when they
+        are the same. `noun` and `no_crs_subject` are the whole of the difference
+        between the callers, and it takes a bare geometry as well as a frame,
+        which is what the clip refusal has. Its `grid_crs` defaults to the
+        POLYGONS' own CRS: a caller reading it off a grid OBJECT gets `None`
+        whenever that object carries no `.crs`, and the sentence then claimed
+        "both are in ..." of a file that had in fact been reprojected. Two sibling
+        modules also each had a private `_bounds`, one returning a formatted
+        string and one a tuple, in files where one imports the other; selection.py
+        no longer has one and geometry.py's is `_bounding_box`.
+      - **Ledger 235's NOT-done bullet is now false in part.** When this lands,
+        annotate it: "the three consumers that hand the selector a list of lists
+        (build_idomain, `InterpolatedSurface(clip=)`, `get_overlapping_area(shp_gpkg=)`),
+        which the user asked for next" becomes "... (FIXED in 240)". The rest of
+        that bullet stands -- the ring code was 236, and `PrtPrp` is still open.
+      - **NOT done.** `choros._resolve_cells` keeps its own flattening: it also
+        takes a boolean ncpl mask, a region name and bare cell ids, so it is a
+        superset rather than a copy, and `map(select=)` owns that file. The
+        deprecated `PrtPrp` (`mp3du/legacy_prt.py:138`) still reads the answer as
+        flat and is left broken, as 235 left it. `build_idomain` still returns a
+        wholly active domain when the `layer` column parses to no layer at all,
+        or when a feature names a layer the grid does not have -- neither is a
+        geometry miss and neither is refused. A feature whose `layer` is NULL
+        still kills `build_idomain` with `TypeError: catching classes that do not
+        inherit from BaseException is not allowed`, from the pre-existing
+        `except ValueError(f'...')` -- an exception INSTANCE, not a class -- at
+        `readers._parse_string_for_ints`; reproduced at HEAD and after, so it is
+        older than this and left where it is. `get_overlapping_area` answers 0.0
+        for a geometry reaching nothing rather than refusing: it is a
+        measurement, not model input, and the selector has already warned.
+        `collect_inactive_cells` is not clamped to layer 0 (above).
+      - 47 tests in `tests/test_selector_list_consumers.py`: each of the three
+        callers on a cell-sized polygon, on a polygon covering part of one cell
+        (the area rule decides), and from a file; `build_idomain` on a
+        layer-tagged file, per layer, on a partial miss, on a total miss, on a
+        file in another CRS (both the refusal's reprojection clause and a 4326
+        file that does land), and with no CRS; `SimulationBase(idomain_path=)` end
+        to end; and probes pinning the single copy of both helpers at each of
+        their callers.
+      - Thirty-two mutants and an import probe, all killed: the answer not
+        flattened, unsorted, not de-duplicated, a `None` coerced, only the first
+        cell of each feature kept; each of the three consumers reading it as flat
+        again and each of the four hand-written copies restored; the selector
+        asked per row, asked with the pre-235 touch join, answers mapped by label,
+        a row given cells for a layer it does not name, a missed row given cell 0;
+        the total-miss refusal removed, fired on a partial miss, its extents
+        dropped and its features unnamed; `zs` reading the stale cache, the memo
+        dropped, the clip miss accepted; the grid's extent dropped, a reprojected
+        source read as matching, the grid-CRS fallback removed, only a frame
+        locatable, the caller's no-CRS subject ignored at the helper and at the
+        call site, and each of the three existing copies of the wording restored.
+      - `tests/import_layers.json` and `docs/import_layering.md` are derived and
+        move `myflopy.modflow.mf6.simulation.indexing` from layer 1 to 2 (it now
+        imports `grid.geometry`). They are already stale by two entries that are
+        NOT this change -- `grid.selection` 1 -> 2 and `simulation.regions` 2 -> 3,
+        from 235/236 -- and `tests/test_import_layering.py` passes either way,
+        since it fails only on an import pointing UPWARD.
       - Found by the 2026-09-11 sibling investigation.

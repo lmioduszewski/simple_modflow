@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import shapely as shp
 
@@ -191,12 +192,25 @@ def assign_voronoi_cells_to_layers(
     # Identify which columns are layer columns (integers as strings)
     layer_columns = get_layer_col_names(gdf)
 
-    # Replace each value with voronoi cell indices where appropriate
+    # ONE selector call for the whole frame, never one per ROW. Asked per row, a
+    # row whose geometry lands off the grid is a WHOLE-input miss, so the
+    # selector's miss policy fired on a single row; and the spatial join was set
+    # up again for every row. Keyed by POSITION, so a frame carrying a repeated
+    # index still maps each answer back to the row it came from.
+    found = {
+        int(position): [int(cell) for cell in cells]
+        for position, cells in vor.get_vor_cells_as_series(
+            gdf.geometry.reset_index(drop=True)
+        ).items()
+    }
+    # The selector answers one entry PER FEATURE, each a LIST of cells. Read as a
+    # flat list of cells it put `[[5]]` in the column, and `build_idomain` then
+    # died with `TypeError: cannot use 'list' as a set element` on every file.
     for layer in layer_columns:
-        gdf[layer] = gdf.apply(
-            lambda row: list(vor.get_vor_cells_as_series(row.geometry)) if pd.notna(row[layer]) else None,
-            axis=1
-        )
+        column = np.empty(len(gdf), dtype=object)
+        for position, applies in enumerate(gdf[layer].notna()):
+            column[position] = list(found.get(position, ())) if applies else None
+        gdf[layer] = column
     if return_col_names:
         return gdf, layer_columns
     else:

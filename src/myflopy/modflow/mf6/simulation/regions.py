@@ -9,6 +9,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 
+from myflopy.modflow.mf6.grid.geometry import selected_cells
 from myflopy.modflow.mf6.grid.selection import get_vor_cells_as_series
 
 
@@ -291,7 +292,8 @@ class RegionRegistry:
         if not isinstance(cell_series, pd.Series) or cell_series.empty:
             raise ValueError(f"Geometry for region {name!r} does not intersect any model cells")
 
-        cells = sorted({int(cell) for group in cell_series.tolist() for cell in group})
+        # One entry per feature, each a LIST of cells: one flattener.
+        cells = selected_cells(cell_series)
         return self.add_from_cells(
             name,
             cells,
