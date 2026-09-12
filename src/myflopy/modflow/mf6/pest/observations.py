@@ -220,7 +220,8 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
         use_cols=use_cols,
         prefix=spec.prefix,
     )
-    mapping = spec.targets.match_to_model(project.model).loc[:, ["name", "layer", "cell"]]
+    labels = spec.targets.observation_labels(project.model)
+    mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
     mapping_path = project.template_workspace / f"{spec.prefix}_head_target_map.csv"
     mapping.to_csv(mapping_path, index=False)
     locations_snapshot = _point_locations_snapshot(project, spec.targets)
@@ -231,8 +232,14 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
     )
     values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
     _write_frame(values_snapshot, values_path)
-    target_frame = spec.targets.get().copy()
-    target_frame["col_label"] = target_frame["name"].astype(str).str.strip().str.lower()
+    # One row per (observation, time). pyEMU names an observation after the
+    # simulated CSV's COLUMN, so the pst rows must carry the label those columns
+    # do; an observed row whose target matched no cell drops out here instead of
+    # becoming a pst row for a column that does not exist.
+    target_frame = spec.targets.get().copy().merge(
+        labels.loc[:, ["name", "obsname"]], on="name", how="inner"
+    )
+    target_frame["col_label"] = target_frame["obsname"].astype(str).str.strip().str.lower()
     target_frame["row_label"] = _build_index_row_labels(
         target_frame["time"],
         simulated.columns[0],
@@ -293,7 +300,8 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
         prefix=spec.prefix,
     )
 
-    mapping = spec.targets.match_to_model(project.model).loc[:, ["name", "layer", "cell"]]
+    labels = spec.targets.observation_labels(project.model)
+    mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
     mapping_path = project.template_workspace / f"{spec.prefix}_conc_target_map.csv"
     mapping.to_csv(mapping_path, index=False)
 
@@ -311,8 +319,10 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
     values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
     _write_frame(values_snapshot, values_path)
 
-    target_frame = spec.targets.get().copy()
-    target_frame["col_label"] = target_frame["name"].astype(str).str.strip().str.lower()
+    target_frame = spec.targets.get().copy().merge(
+        labels.loc[:, ["name", "obsname"]], on="name", how="inner"
+    )
+    target_frame["col_label"] = target_frame["obsname"].astype(str).str.strip().str.lower()
     target_frame["row_label"] = _build_index_row_labels(
         target_frame["time"], simulated.columns[0]
     )

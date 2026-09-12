@@ -459,14 +459,34 @@ class HeadTargets:
         grid = ", ".join(f"{v:,.1f}" for v in model.vor.gdf_vorPolys.total_bounds)
         return f"The targets span ({targets}) and the grid ({grid}); {crs}."
 
+    def observation_labels(self, model) -> pd.DataFrame:
+        """The matched targets, each with the label its observation is known by.
+
+        ONE definition of that label, shared by the MF6 ``continuous`` records,
+        the simulated CSV's columns, the mapping the forward run reads, and the
+        pst rows. A name used once IS its label; a name used in two layers becomes
+        ``<name>_lay<layer>`` (then ``_c<cell>``), which is what the FloPy records
+        have always done.
+
+        The PEST side keyed on the bare name instead, so a well screened in two
+        layers was one column: the build pivoted ``first`` and read layer 0, the
+        forward run wrote each mapping row in turn and left layer 1, and the two
+        disagreed by whatever the layers differ by (5.0 against 1005.0 measured).
+        """
+
+        matches = self.match_to_model(model).copy()
+        matches["obsname"] = _ensure_unique_observation_names(matches)
+        return matches
+
     def simulated_heads(self, model) -> pd.DataFrame:
         """Return simulated heads for the target locations by stress period.
 
         The result is a wide table suitable for pyEMU list-style observation
-        setup: one row per stress period and one column per observation name.
+        setup: one row per stress period and one column per observation LABEL
+        (see :meth:`observation_labels`, which a repeated name disambiguates).
         """
 
-        matches = self.match_to_model(model)
+        matches = self.observation_labels(model)
         sim = _simulated_field_by_period(
             model,
             table_attribute=self._TABLE_ATTRIBUTE,
@@ -475,7 +495,10 @@ class HeadTargets:
         merged = matches.merge(sim, on=["layer", "cell"], how="left")
         wide = merged.pivot_table(
             index="per",
-            columns="name",
+            # The label, not the bare name: one column per (name, layer), so a
+            # two-screen well is two observations rather than one column whose
+            # value depended on which of its rows got there first.
+            columns="obsname",
             values="sim_head",
             aggfunc="first",
         ).reset_index()
@@ -570,8 +593,7 @@ class HeadTargets:
     ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
         """Return a FloPy ``continuous`` dict for MF6 head observations."""
 
-        matches = self.match_to_model(model).copy()
-        matches["obsname"] = _ensure_unique_observation_names(matches)
+        matches = self.observation_labels(model)
         records = [
             (str(row.obsname), str(kind).upper(), (int(row.layer), int(row.cell)))
             for row in matches.itertuples(index=False)

@@ -79,7 +79,12 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv):
             row = {"per": int(per)}
             for target in mapping.itertuples(index=False):
                 layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
-                row[str(target.name)] = float(layer_values[int(target.cell)])
+                # The mapping's own label: one column per (name, layer). Keyed on
+                # the bare name, two screens of one well overwrote each other here
+                # while the build read the other one. A mapping written before the
+                # label existed has no such column, and its name still serves.
+                label = str(getattr(target, "obsname", "") or target.name)
+                row[label] = float(layer_values[int(target.cell)])
             rows.append(row)
         pd.DataFrame(rows).to_csv(output_csv, index=False)
     finally:
@@ -113,7 +118,12 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv):
             row = {"per": int(per)}
             for target in mapping.itertuples(index=False):
                 layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
-                row[str(target.name)] = float(layer_values[int(target.cell)])
+                # The mapping's own label: one column per (name, layer). Keyed on
+                # the bare name, two screens of one well overwrote each other here
+                # while the build read the other one. A mapping written before the
+                # label existed has no such column, and its name still serves.
+                label = str(getattr(target, "obsname", "") or target.name)
+                row[label] = float(layer_values[int(target.cell)])
             rows.append(row)
         pd.DataFrame(rows).to_csv(output_csv, index=False)
     finally:

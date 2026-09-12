@@ -1866,8 +1866,11 @@ class IesResults:
                 )
                 if mapping_path.exists():
                     mapping = pd.read_csv(mapping_path)
+                    # The label when the mapping carries one (ledger 234): pyEMU's
+                    # observation names come from that, not from the bare name.
+                    label = "obsname" if "obsname" in mapping.columns else "name"
                     mapping["location"] = (
-                        mapping["name"].astype(str).str.strip().str.lower()
+                        mapping[label].astype(str).str.strip().str.lower()
                     )
                     # One row per location before merging: a snapshot listing a
                     # name twice (duplicated source row, two screens) would

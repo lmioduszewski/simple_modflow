@@ -379,7 +379,10 @@ or vertex, the lowest-numbered cell active in that target's own layer. Targets
 are reprojected to the grid's CRS first, a target on no active cell is left out
 and named in a warning, and none of them landing raises. A target given as a
 cell id is checked instead: an id the grid does not have, or one inactive in its
-layer, raises (ledger 233).
+layer, raises (ledger 233). A name used in TWO layers is two observations,
+`<name>_lay<layer>`: `targets.observation_labels(model)` is the one definition,
+and the MF6 records, the simulated CSV, the forward-run mapping and the pst all
+carry it (ledger 234).
 
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,

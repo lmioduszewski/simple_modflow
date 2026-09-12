@@ -7439,3 +7439,42 @@ same day, which is the useful part of the result.
         point, but that is `heads_observations.get_obs_cells`; here the predicate
         was `intersects` and the point was duplicated. Found by the 2026-09-11
         sibling investigation.
+
+234. **PEST read a two-screen well's simulated head from the wrong layer (2026-09-12).**
+      A target's observation identity was its bare NAME on the PEST side, while
+      MF6's own records had always disambiguated a repeated name as
+      `<name>_lay<layer>`. A well screened in two layers was therefore ONE
+      simulated column: the build pivoted `first` and read layer 0, the forward
+      run wrote each mapping row into that column and left layer 1 standing, and
+      the two disagreed by whatever the layers differ by -- 5.0 against 1005.0
+      measured. The user chose to key the mapping by (name, layer) (2026-09-11).
+      - **One definition of the label**: `HeadTargets.observation_labels(model)`,
+        built by `_ensure_unique_observation_names` -- the function the FloPy
+        records already used. A name used once IS its label, so nothing is renamed
+        in the ordinary case and existing pst files keep their observation names.
+      - It reaches all four places that keyed on the name: the simulated CSV's
+        columns, the MF6 `continuous` records, the mapping CSV the forward run
+        reads, and the pst rows -- pyEMU names an observation after the CSV's
+        column, so `col_label` had to follow. The residual map reads the same
+        label when the mapping carries one.
+      - **Concentration targets inherit it**, through the same two blocks in
+        `pest/observations.py`.
+      - A mapping written before the label existed has no such column, and its
+        name still serves, so a calibration prepared earlier keeps working.
+      - An observed row whose target matched no cell is now dropped from the pst
+        rows (an inner join) rather than becoming a row for a column that does not
+        exist.
+      - **The observed values stay keyed by name.** A well with two screens has one
+        measured series, so both of its observations compare against that series.
+        That is what keying by (name, layer) means here; splitting the measurements
+        per screen would need the values table to carry a layer, and it does not.
+      - Five mutants and an import probe, all killed: the build pivoting on the
+        name, the label being the name, the forward run keying on the name, the pst
+        rows keeping the name, and the mapping dropping the label.
+      - **A mutation harness can lie.** Two of these first read as killed because
+        the harness ran pytest in a stripped environment where
+        `tests/test_mf6_pest.py` failed at COLLECTION, and `-x` turned that into an
+        immediate non-zero exit for every mutant. It now asserts a passing baseline
+        under the same command before any mutant counts.
+      - Found by the 2026-09-11 sibling investigation, as the second half of the
+        head-target decision; ledger 233 is the first.
