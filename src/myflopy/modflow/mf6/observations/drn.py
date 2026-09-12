@@ -9,18 +9,26 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.domain import model_domain
+from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.modflow.mf6.observations._shared import (
     _clean_observation_output_values,
     _copy_frame,
     _default_compare_stats,
     _default_obs_csv_name,
     _find_named_observation_output,
+    _in_grid_crs,
     _normalize_compare_time,
     _normalize_named_series_values,
     _numeric_periods,
     _observation_label,
+    _placement_note,
+    _report_missed_features,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+
+logger = get_logger(__name__)
 
 
 def _normalize_drn_zone_locations(
@@ -85,25 +93,83 @@ def _normalize_drn_zone_locations(
     return frame
 
 
-def _resolve_drn_zone_cells(locations: pd.DataFrame, model) -> pd.DataFrame:
-    """Attach explicit cell lists to each DRN zone, intersecting polygons when needed."""
+def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd.DataFrame:
+    """Attach explicit cell lists to each DRN zone, resolving geometry against the grid.
+
+    A zone COVERS the cells it is drawn over, by the shared rule
+    (:func:`myflopy.modflow.mf6.grid.geometry.cell_shares`): a seepage polygon
+    reaches the cells whose AREA it overlaps, a drain trace the cells it runs
+    through, and a spring point the ONE cell holding it. The join here was
+    ``predicate="intersects"``, which is true of a shared edge and of a shared
+    corner, so on a 4x4 grid of 25 ft cells a zone drawn exactly on cell 5 claimed
+    ``[0, 1, 2, 4, 5, 6, 8, 9, 10]``, a point on a face claimed both its cells and
+    one on a vertex four. Worst of all, two zones abutting on the column of faces
+    at x=50 BOTH claimed ``[1, 2, 5, 6, 9, 10, 13, 14]``, so every drain in that
+    column was summed into two different observations and calibrated twice.
+
+    Only cells ACTIVE in the zone's own layer are kept, since MF6 writes neither a
+    DRN budget entry nor a DRN observation where there is no cell. Membership is
+    deliberately NOT restricted to cells that carry a drain: a zone is geometry,
+    resolved with no reference to the DRN package, and a covered cell with no
+    drain adds zero to the budget sum.
+
+    A zone given as SEVERAL ROWS is ONE zone, as the grouped join made it: its
+    cells are the union over its rows and it has missed only when EVERY row of it
+    has, which is also how the set is counted.
+
+    Misses follow ledger 211. A zone set that lands nowhere raises, naming both
+    extents and both CRSs, where an off-grid zone used to come back as ``[]`` and
+    its flow as a silent zero; a partial miss warns, by name, once per set rather
+    than once per call, because every consumer resolves the zones again.
+    """
 
     frame = locations.copy()
     if "cells" in frame.columns and frame["cells"].notna().all():
         return frame
     if not isinstance(frame, gpd.GeoDataFrame):
         raise ValueError("DrnFlowTargets polygon zones require a GeoDataFrame or GIS layer input.")
-    vor = model.vor.gdf_vorPolys.reset_index().rename(columns={"index": "cell"})
-    joined = gpd.sjoin(frame, vor.loc[:, ["cell", vor.geometry.name]], how="left", predicate="intersects")
-    cells = (
-        joined.groupby("name", dropna=False)["cell"]
-        .apply(lambda series: sorted({int(value) for value in series.dropna().tolist()}))
-        .rename("cells")
-        .reset_index()
-    )
-    merged = frame.drop(columns=["cells"], errors="ignore").merge(cells, on="name", how="left")
-    merged["cells"] = merged["cells"].apply(lambda value: [] if not isinstance(value, list) else value)
-    return merged
+    polys = model.vor.gdf_vorPolys
+    domain = model_domain(model, len(polys))
+    located = _in_grid_crs(frame, model)
+    layers = located["layer"] if "layer" in located.columns else pd.Series(0, index=located.index)
+    covered: dict[str, list[int]] = {}
+    reasons: dict[str, str] = {}
+    for name, layer, geometry in zip(located["name"], layers, located.geometry, strict=True):
+        key = str(name)
+        layer = 0 if pd.isna(layer) else int(layer)
+        hits = cell_shares(
+            polys,
+            geometry,
+            # Eligibility only. ``cell_shares`` sorts whatever this returns, so
+            # the lowest-numbered usable cell wins a tie without a second copy of
+            # that rule here.
+            usable=lambda cells, layer=layer: [
+                cell for cell in cells if domain_active(domain, layer, cell)
+            ],
+        )
+        if not hits:
+            reason = miss_reason(polys, geometry, target=f"active cell in layer {layer}")
+            reasons.setdefault(key, reason)
+        covered[key] = sorted(set(covered.get(key, ())) | {cell for cell, _share in hits})
+    # Counted by NAME, not by row. A multipart zone has one row per part, and
+    # accumulating the misses inside the loop said "1 of 2 DRN zones land on no
+    # active cell" of a single zone given as two rows -- naming the zone that had
+    # in fact landed, and which the frame still carried.
+    missed = [f"{key!r} ({reasons[key]})" for key, cells in covered.items() if not cells]
+    if missed:
+        _report_missed_features(
+            owner,
+            missed,
+            total=len(covered),
+            subject="DRN zone",
+            nothing_left="sum",
+            where=lambda: _placement_note(frame, model, label="zones"),
+            log=logger,
+        )
+    resolved = located.drop(columns=["cells"], errors="ignore").copy()
+    # A list per row, not the shared one: two rows of one zone must not alias.
+    resolved["cells"] = [list(covered[str(name)]) for name in resolved["name"]]
+    return resolved
 
 
 @dataclass
@@ -123,8 +189,9 @@ class DrnFlowTargets:
     ----------
     locations
         Seepage-zone definitions mapping ``name`` to its member drain cells --
-        a GeoDataFrame of points/polygons to spatially match, or a table with a
-        ``name`` column plus ``cell``/``node`` ids.
+        a GeoDataFrame of points/polygons, which reach the cells they COVER and
+        are active in the zone's layer, or a table with a ``name`` column plus
+        ``cell``/``node`` ids, which are taken as given.
     values
         Observed discharge table (long or wide). Optional (capture template).
     name_column, group_column, weight_column
@@ -182,9 +249,16 @@ class DrnFlowTargets:
         return self._locations.copy()
 
     def zone_definitions(self, model) -> pd.DataFrame:
-        """Resolve each zone's member cells against ``model`` (intersecting polygons if needed)."""
+        """Resolve each zone's member cells against ``model`` (covering geometry if needed).
 
-        return _resolve_drn_zone_cells(self._locations, model)
+        A zone reaches the cells it COVERS, active in its own layer -- the rule
+        ``.gpkg`` boundaries and head targets use -- and comes back in the GRID's
+        CRS, whatever the zone file's own was. See
+        :func:`_resolve_drn_zone_cells` for what that rule replaced and for what a
+        zone landing on nothing does.
+        """
+
+        return _resolve_drn_zone_cells(self._locations, model, owner=self)
 
     def get(self, model=None) -> pd.DataFrame:
         """Return the zone definitions (cells resolved when ``model`` is given), merged with values."""

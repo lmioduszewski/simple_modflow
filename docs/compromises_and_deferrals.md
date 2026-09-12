@@ -7362,7 +7362,7 @@ same day, which is the useful part of the result.
         which counts a 1-D idomain as active everywhere where this one reads it.
         Making the two agree is a behaviour change and is not in this entry.
         Neither are the other sites the sweep measured against these rules
-        (`observations/drn.py` seepage zones, `pest/zones.py`,
+        (`pest/zones.py`,
         `surfaces._cells_in_zone`, `PRTReleasePoints.from_points`,
         `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
         212's open line case -- that one is CLOSED by entry 237: the line branch
@@ -7430,9 +7430,7 @@ same day, which is the useful part of the result.
         the user chose to key the mapping by (name, layer), which is its own
         entry. `examples/mf6/demo_site/calibration.py` keeps a third copy of the
         rule that crashes on a face point: the file is UNTRACKED, so it is left to
-        the user (`scratchpad/ht/apply_demo_site.py` holds the change). DRN
-        seepage zones and the legacy `heads_observations`/`locs.py` `contains`
-        path keep their own defects, owned by other fixes.
+        the user (`scratchpad/ht/apply_demo_site.py` holds the change).
       - Ten mutants and an import probe, all killed: activity ignored, layer 0 for
         every target, a total miss only warning, misses ignored, no reprojection,
         a non-point accepted, both id checks dropped, and the once-only warning
@@ -7686,4 +7684,113 @@ same day, which is the useful part of the result.
         line, the all-slivers escape removed, a dropped sliver left in the face
         bookkeeping, that bookkeeping cleared entirely, and a sliver skipped outright
         as SFR does with no escape.
+      - Found by the 2026-09-11 sibling investigation.
+
+238. **A DRN seepage zone claimed every cell it touched (2026-09-12).**
+      `DrnFlowTargets.zone_definitions` resolved a zone's cells with a spatial
+      join on `intersects`, which is true of a shared edge and of a shared
+      corner. Measured on a 4x4 grid of 25 ft cells: a zone drawn exactly on
+      cell 5 gave `[0, 1, 2, 4, 5, 6, 8, 9, 10]` -- the cell and all eight
+      neighbours -- a point on the 4|5 face gave `[4, 5]`, a point on a vertex
+      gave `[5, 6, 9, 10]`, and a zone off the grid gave `[]` in silence, so its
+      simulated seepage was a zero that read as a real number. Worst: two zones
+      abutting on the column of faces at x=50 BOTH claimed
+      `[1, 2, 5, 6, 9, 10, 13, 14]` (12 cells each, 8 of them shared), so every
+      drain in that column was summed into two different observations and
+      calibrated against twice.
+      - **A zone COVERS its cells, through the rules ledger 232 extracted**: a
+        polygon by AREA, a trace by the cells it runs through, a point the ONE
+        cell holding it. The same five cases now give `[5]`, `[4]`, `[5]`, a
+        raise, and `[0, 1, 4, 5, 8, 9, 12, 13]` / `[2, 3, 6, 7, 10, 11, 14, 15]`
+        -- disjoint. The tie is `cell_shares`' own: this caller passes `usable`
+        and decides eligibility only, so the lowest-numbered cell wins however
+        the grid is numbered.
+      - **Only cells active in the ZONE's own layer count**, since MF6 writes
+        neither a DRN budget entry nor a DRN observation where there is no cell;
+        an idomain -1 passthrough is not active either. That makes `layer` mean
+        something for the first time, so it can now be WRONG: a zone declared in
+        layer 3 of a two-layer model raised nothing and resolved 9 cells against
+        layer 0, and now raises `Layer 3 is outside the model domain, which has
+        2 layers.` from the shared `domain_active`.
+      - **Zones are reprojected to the grid's CRS first**, as head targets are; a
+        zone file in degrees over a State Plane grid matched on raw degrees, and
+        geopandas said so in a `UserWarning` and returned `[]`. The frame handed
+        back is therefore in the GRID's CRS, not the source's (EPSG:4326 ->
+        EPSG:2927 measured) -- which `pest/observations.py` writes as the zones
+        GeoPackage snapshot, so that snapshot's CRS moves with it. The cell ids
+        beside it were resolved in that frame, and a snapshot whose geometry is
+        in another CRS than its own ids would be the next bug.
+      - **Misses follow ledger 211**: every zone missing raises, with both
+        extents and both CRSs, in the SOURCE frame's own coordinates (a mismatch
+        is two boxes; reprojecting one first would print two that agree); some
+        missing warns by name and leaves them out, once per set rather than once
+        per call, because all seven consumers in `drn.py` re-resolve the zones
+        (`get`/`summary`/`_obs_column_map`/`_compare_from_obs`/
+        `simulated_series`/`compare`/`to_flopy_obs`) and PEST's snapshot writer
+        an eighth. `pest/ies.py`'s `_parse_cell_list` still tolerates an empty
+        zone, which is now only the partial case.
+      - **A zone given as several rows is ONE zone**, as the grouped join made
+        it: the cells are unioned over its rows, and it counts as missing only
+        when EVERY row of it does. Accumulating misses per row instead -- the
+        first version of this fix -- warned `1 of 2 DRN zones land on no active
+        cell and are left out: 'seep'` about a zone that had landed and was still
+        in the frame, where the base code had silently got the union right. The
+        `total` is a count of NAMES for the same reason.
+      - **Membership is NOT restricted to cells that carry a drain**, and that is
+        this entry's decision rather than an oversight. A zone is geometry,
+        resolved with no reference to the DRN package -- which is also why the
+        rule can be tested against a model-like object with no packages. A
+        covered cell with no drain adds zero to the budget sum, and
+        `to_flopy_obs` still writes an MF6 `continuous` record for it; whether
+        MF6 rejects a DRN observation on a drainless cell was NOT measured (no
+        MF6 run), and the intersects rule was putting far more such cells into
+        every zone than the area rule can.
+      - **Three pieces came out of `heads.py` rather than being copied**:
+        `_in_grid_crs`, `_placement_note` (the extents-and-CRSs sentence, now
+        taking the noun so "targets" and "zones" share one wording) and
+        `_report_missed_features` (the raise-all/warn-some/warn-once shape).
+        `HeadTargets` delegates to all three, so ledger 233's messages are
+        unchanged byte for byte. The shared helper takes its `log` and its
+        `where` from the caller -- `log` required, so a miss is never reported
+        under `_shared`'s name, and `where` a callable, since only the raise uses
+        the sentence and the deduped path would otherwise scan both extents for
+        nothing. `geopackage.py`'s own `_where` is deliberately left alone: it
+        reads `self._source_crs` rather than a frame, and another fix is landing
+        in that file this week.
+      - **Cost.** The vectorised `sjoin` became a per-zone loop with a
+        per-candidate `.intersection`, as in ledgers 232 and 235: on a 100x100
+        grid (10,000 cells) with two zones covering 7,500 of them, 0.007 s ->
+        0.151 s per resolve, ~22x. Nothing caches it and seven methods re-resolve,
+        so a `compare()` on big areal zones pays it repeatedly. A typical seepage
+        zone is a handful of cells, where the loop is faster than the join's own
+        overhead; caching `zone_definitions` per (model, locations) is left
+        undone and recorded here.
+      - **This closes the `observations/drn.py` line in 232's "What still keeps
+        its own copy" list and the DRN half of 233's NOT-done bullet.** Both now
+        misdescribe the code, so both are struck where they name DRN seepage
+        zones (233's `heads_observations`/`locs.py` `contains` path was closed by
+        235 and its bullet left stale -- the convention here is that a NOT-done
+        bullet is a live index, not a historical record, so it is edited).
+      - `observations.drn` moves from import layer 1 to 2 (it now imports
+        `grid.geometry`/`grid.domain`); the map must be regenerated. That
+        regeneration also picks up `grid.selection` 1->2 and
+        `simulation.regions` 2->3, which ledger 235 left unregenerated and which
+        are NOT from this change.
+      - **NOT done**: `ZoneSpec.from_polygons` and `surfaces._cells_in_zone`
+        still assign by centroid, and `PRTReleasePoints.from_points` still takes
+        flopy's lowest cell2d -- each is its own entry. The canonical model
+        defines its seepage zones as explicit cell lists, and the only existing
+        geometry test (`test_mf6_pest.py`, a polygon inset to 0.95 of one cell)
+        still resolves to `[0]`, so no in-repo expectation moved.
+      - Twenty mutants and an import probe, all killed: the touch rule restored,
+        activity ignored, layer 0 for every zone, misses ignored, no
+        reprojection, the owner dropped from `zone_definitions`, explicit cell
+        lists re-resolved as geometry, the miss reason dropped, the miss reason
+        losing its layer, a total miss only warning, the once-only set dropped,
+        the placement label ignored, the placement note built from the
+        reprojected frame, the listing truncated to one name, the
+        nothing-to-sum wording flattened, the resolved frame keeping source-CRS
+        geometry, and four on the multipart zone (union dropped, first row wins,
+        misses per row, the set counted by row). Eight of these are an
+        adversarial review's own survivors against the first version of the tests.
       - Found by the 2026-09-11 sibling investigation.

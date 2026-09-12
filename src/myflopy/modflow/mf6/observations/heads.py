@@ -18,9 +18,12 @@ from myflopy.modflow.mf6.observations._shared import (
     _copy_frame,
     _default_obs_csv_name,
     _ensure_unique_observation_names,
+    _in_grid_crs,
     _load_locations,
     _normalize_identifier_series,
     _normalize_values_frame,
+    _placement_note,
+    _report_missed_features,
     _simulated_field_by_period,
 )
 from myflopy._logging import get_logger
@@ -398,15 +401,9 @@ class HeadTargets:
         """
 
         locations = self._locations
-        grid_crs = getattr(model.vor, "crs", None)
-        if (
-            not isinstance(locations, gpd.GeoDataFrame)
-            or grid_crs is None
-            or locations.crs is None
-            or locations.crs == grid_crs
-        ):
+        reprojected = _in_grid_crs(locations, model)
+        if reprojected is locations:
             return locations
-        reprojected = locations.to_crs(grid_crs)
         reprojected["x"] = reprojected.geometry.x
         reprojected["y"] = reprojected.geometry.y
         return reprojected
@@ -422,42 +419,20 @@ class HeadTargets:
         once per set of missed targets rather than once per call.
         """
 
-        listing = ", ".join(missed[:10])
-        if len(missed) > 10:
-            listing += f", and {len(missed) - 10} more"
-        if len(missed) == total:
-            raise ValueError(
-                f"No {self._FIELD_LABEL} target lands on an active cell, so there "
-                f"is nothing to compare against: {listing}. {self._where(model)}"
-            )
-        warned = getattr(self, "_warned_misses", None)
-        if warned is None:
-            warned = self._warned_misses = set()
-        if listing in warned:
-            return
-        warned.add(listing)
-        logger.warning(
-            "%d of %d %s targets land on no active cell and are left out: %s",
-            len(missed),
-            total,
-            self._FIELD_LABEL,
-            listing,
+        _report_missed_features(
+            self,
+            missed,
+            total=total,
+            subject=f"{self._FIELD_LABEL} target",
+            nothing_left="compare against",
+            where=lambda: self._where(model),
+            log=logger,
         )
 
     def _where(self, model) -> str:
         """Where the targets are and where the grid is -- what an empty match is acted on with."""
 
-        grid_crs = getattr(model.vor, "crs", None)
-        source_crs = self._locations.crs if isinstance(self._locations, gpd.GeoDataFrame) else None
-        if source_crs is None:
-            crs = f"the targets carry NO CRS, so they were read as the grid's ({grid_crs})"
-        elif grid_crs is not None and source_crs != grid_crs:
-            crs = f"the targets were reprojected from {source_crs} to the grid's {grid_crs}"
-        else:
-            crs = f"both are in {source_crs}"
-        targets = ", ".join(f"{v:,.1f}" for v in self._locations.total_bounds)
-        grid = ", ".join(f"{v:,.1f}" for v in model.vor.gdf_vorPolys.total_bounds)
-        return f"The targets span ({targets}) and the grid ({grid}); {crs}."
+        return _placement_note(self._locations, model)
 
     def observation_labels(self, model) -> pd.DataFrame:
         """The matched targets, each with the label its observation is known by.

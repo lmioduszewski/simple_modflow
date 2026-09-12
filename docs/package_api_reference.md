@@ -384,6 +384,17 @@ layer, raises (ledger 233). A name used in TWO layers is two observations,
 and the MF6 records, the simulated CSV, the forward-run mapping and the pst all
 carry it (ledger 234).
 
+A DRN seepage ZONE reaches the cells it COVERS -- a polygon by area, a trace by
+the cells it runs through, a point the one cell holding it -- active in the
+zone's own layer, and comes back in the grid's CRS whatever the zone file's was.
+It used to take every cell it touched, so a zone drawn on one cell claimed nine
+and two zones abutting on a column of faces both claimed that column, summing
+every drain in it into two observations; a zone off the grid came back empty and
+its flow as zero, and now raises (ledger 238). A zone given as several rows is
+one zone: its cells are the union, and it is reported missing only when every
+part of it misses. Zone membership is geometry only: a covered cell that carries
+no drain is still in the zone and adds zero.
+
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /

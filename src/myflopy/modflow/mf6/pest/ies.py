@@ -230,9 +230,10 @@ def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
 def _parse_cell_list(value) -> list[int]:
     """Parse a snapshotted ``"0,1,2"`` cell list, tolerating an empty zone.
 
-    `_resolve_drn_zone_cells` assigns ``[]`` to a zone that intersects nothing,
-    which the CSV snapshot round-trips as NaN (``str(nan) == "nan"``) while the
-    GeoPackage snapshot round-trips as ``""``. Both mean the same thing.
+    `_resolve_drn_zone_cells` assigns ``[]`` to a zone that covers no active cell
+    while other zones do (all of them missing raises, ledger 238), which the CSV
+    snapshot round-trips as NaN (``str(nan) == "nan"``) while the GeoPackage
+    snapshot round-trips as ``""``. Both mean the same thing.
     """
 
     if value is None or (isinstance(value, float) and np.isnan(value)):

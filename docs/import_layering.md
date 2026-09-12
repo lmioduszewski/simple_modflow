@@ -80,7 +80,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
 - `myflopy.modflow.mf6.heads_observations`
 - `myflopy.modflow.mf6.mf2Dplots`
-- `myflopy.modflow.mf6.observations.drn`
 - `myflopy.modflow.mf6.observations.lake` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations.sfr`
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
@@ -115,6 +114,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.headsplus` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.interactive_plotting`
 - `myflopy.modflow.mf6.kflow`
+- `myflopy.modflow.mf6.observations.drn`
 - `myflopy.modflow.mf6.observations.heads` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`

@@ -717,3 +717,98 @@ def _normalize_compare_time(frame: pd.DataFrame) -> pd.DataFrame:
     return result.drop(columns=["time_x", "time_y"], errors="ignore")
 
 
+def _in_grid_crs(features, model):
+    """``features`` in the GRID's CRS -- the same object when nothing converts.
+
+    The grid decides where a cell is, so a feature set read in whatever CRS its
+    file carries is converted before it is matched. Returning the SAME object
+    when there is nothing to convert is what lets a caller tell the two apart
+    without comparing CRSs itself.
+    """
+
+    grid_crs = getattr(getattr(model, "vor", None), "crs", None)
+    if (
+        not isinstance(features, gpd.GeoDataFrame)
+        or grid_crs is None
+        or features.crs is None
+        or features.crs == grid_crs
+    ):
+        return features
+    return features.to_crs(grid_crs)
+
+
+def _placement_note(features, model, *, label: str = "targets") -> str:
+    """Where the features are and where the grid is -- what an empty match is read with.
+
+    ``label`` names them in the sentence (``"targets"``, ``"zones"``). The bounds
+    are the SOURCE frame's own, in the CRS the sentence names, because a mismatch
+    is two boxes and reprojecting one of them first would hide it.
+    """
+
+    grid_crs = getattr(model.vor, "crs", None)
+    source_crs = features.crs if isinstance(features, gpd.GeoDataFrame) else None
+    if source_crs is None:
+        crs = f"the {label} carry NO CRS, so they were read as the grid's ({grid_crs})"
+    elif grid_crs is not None and source_crs != grid_crs:
+        crs = f"the {label} were reprojected from {source_crs} to the grid's {grid_crs}"
+    else:
+        crs = f"both are in {source_crs}"
+    spans = ", ".join(f"{value:,.1f}" for value in features.total_bounds)
+    grid = ", ".join(f"{value:,.1f}" for value in model.vor.gdf_vorPolys.total_bounds)
+    return f"The {label} span ({spans}) and the grid ({grid}); {crs}."
+
+
+def _report_missed_features(
+    owner,
+    missed: list[str],
+    *,
+    total: int,
+    subject: str,
+    nothing_left: str,
+    where,
+    log,
+) -> None:
+    """Ledger 211 for observation targets: raise on a total miss, warn on a partial one.
+
+    ``subject`` is the singular noun (``"head target"``, ``"DRN zone"``) and
+    ``nothing_left`` finishes "so there is nothing to ..."; ``total`` is how many
+    features were looked for, counted the same way ``missed`` is. A total miss
+    means the features and the model are in different places, so it raises rather
+    than handing back an empty set whose comparison is silently about nothing. A
+    PARTIAL miss can be deliberate -- one file serving several grids -- so it
+    warns, by name.
+
+    ``where`` is CALLED, and only for the raise, since the warning does not use
+    it: the placement note scans both extents, and the deduped path below returns
+    without ever needing the sentence. ``log`` is required rather than defaulted
+    to this module's logger, so a miss is always reported under the name of the
+    module that found it.
+
+    ``owner`` carries the once-only set: every consumer resolves the same features
+    again, so without it one miss is said once per call. Pass ``None`` where there
+    is nothing to remember it on, and every call warns.
+    """
+
+    listing = ", ".join(missed[:10])
+    if len(missed) > 10:
+        listing += f", and {len(missed) - 10} more"
+    if len(missed) == total:
+        raise ValueError(
+            f"No {subject} lands on an active cell, so there is nothing to "
+            f"{nothing_left}: {listing}. {where()}"
+        )
+    if owner is not None:
+        warned = getattr(owner, "_warned_misses", None)
+        if warned is None:
+            warned = set()
+            owner._warned_misses = warned
+        if listing in warned:
+            return
+        warned.add(listing)
+    log.warning(
+        "%d of %d %ss land on no active cell and are left out: %s",
+        len(missed),
+        total,
+        subject,
+        listing,
+    )
