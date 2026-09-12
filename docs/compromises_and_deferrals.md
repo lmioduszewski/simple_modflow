@@ -7379,3 +7379,63 @@ same day, which is the useful part of the result.
         not passed, the edge set resolved eagerly, a miss wording flattened,
         `miss_reason` ignoring its target, and two import probes.
       - Found by the 2026-09-11 sibling investigation.
+
+233. **A head target on a cell face became four observations (2026-09-12).**
+      `HeadTargets.match_to_model` joined its targets to cells with `intersects`
+      and never reduced the result, so a well on a shared face got 2 rows and one
+      on a vertex 4, all under one name. Measured on a 4x4 grid: `compare`
+      returned 5 rows for 2 targets, `stats` said n=5, `to_flopy_obs` wrote 5 MF6
+      records, and PEST disagreed with itself -- the build pivots `first` and read
+      cell 5 where the forward run takes the last row and read cell 10.
+      - **One cell per target, through the rules ledger 232 extracted**: the
+        lowest-numbered cell active in the target's OWN layer. The same vertex is
+        cell 1 in layer 0 and cell 0 in layer 1, so activity cannot be read at
+        layer 0 for every target; an idomain -1 passthrough is not active, since
+        MF6 writes no head there.
+      - **The tie is the shared helper's, not a second copy.** `cell_shares` sorts
+        whatever `usable` returns, so this caller decides eligibility only.
+      - **Targets are reprojected to the grid's CRS first.** Two wells whose cells
+        are 5 and 10 both resolved to cell 4 with their file in degrees over a
+        State Plane grid.
+      - **The nearest-cell snap is gone.** It moved an off-grid target onto the
+        grid at ANY distance with no log -- 1.45e6 ft for State Plane coordinates
+        on a grid at the origin -- and a target equidistant from two cells crashed
+        the whole call with a pandas ValueError, losing the targets that HAD
+        landed. Misses now follow ledger 211: all missing raises, with both
+        extents and both CRSs; some missing warns by name and leaves them out,
+        once per set rather than once per call, because every consumer calls
+        `match_to_model` again.
+      - **A non-point target is refused**: a polygon equal to one cell gave 9 rows
+        and a MultiPoint 2, at x/y in neither cell.
+      - **Explicit cell ids are validated** (user's decision, 2026-09-11): an id
+        the grid does not have raises, where it reached the value table as NaN and
+        dropped out of `stats` silently, and so does one inactive in its own
+        layer. An id is an assertion about the model, so it raises where a missed
+        point warns.
+      - **The domain is read from the discretization package**, through the new
+        `grid/domain.py` -- the loader's copy sat in `project.run_model`, the top
+        import layer, where nothing else could reach it. `SimulationBase.idomain`
+        is deliberately NOT consulted: it BUILDS a domain from an `idomain_path`
+        and raises `TypeError` when there is none, so asking it turns "no domain
+        declared" into an error. `observations.heads` moves to import layer 2 and
+        its importers one each; the map is regenerated.
+      - `domain_active`'s "GeoPackage layer ..." message is now caller-agnostic,
+        as ledger 232 said the second caller should make it.
+      - The PEST locations snapshot and its `n_locations` count now cover only
+        matched targets.
+      - **NOT done.** A name repeated in two layers still writes two mapping rows,
+        so a two-screen well's build and forward run still read different layers;
+        the user chose to key the mapping by (name, layer), which is its own
+        entry. `examples/mf6/demo_site/calibration.py` keeps a third copy of the
+        rule that crashes on a face point: the file is UNTRACKED, so it is left to
+        the user (`scratchpad/ht/apply_demo_site.py` holds the change). DRN
+        seepage zones and the legacy `heads_observations`/`locs.py` `contains`
+        path keep their own defects, owned by other fixes.
+      - Ten mutants and an import probe, all killed: activity ignored, layer 0 for
+        every target, a total miss only warning, misses ignored, no reprojection,
+        a non-point accepted, both id checks dropped, and the once-only warning
+        turned into never.
+      - The 2026-09-10 sweep described this site wrongly: `contains` DROPS a face
+        point, but that is `heads_observations.get_obs_cells`; here the predicate
+        was `intersects` and the point was duplicated. Found by the 2026-09-11
+        sibling investigation.

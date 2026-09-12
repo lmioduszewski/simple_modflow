@@ -228,7 +228,7 @@ def test_domain_active_reads_an_idomain_as_mf6_does(domain, layer, cell, active)
 
 
 def test_a_layer_beyond_the_domain_raises_rather_than_taking_the_last_one():
-    with pytest.raises(ValueError, match="layer 3 is outside domain with 1 layers"):
+    with pytest.raises(ValueError, match="Layer 3 is outside the model domain, which has 1 layers"):
         domain_active(np.ones((1, 16), dtype=int), 3, 0)
 
 

@@ -112,8 +112,11 @@ def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
 
     locations_frame = targets.locations_gdf.copy()
     if isinstance(locations_frame, gpd.GeoDataFrame):
+        # Only the targets that MATCHED: one left out of the mapping must not be
+        # written to the snapshot, or counted in `n_locations`, as if it were used.
+        matched = set(targets.match_to_model(project.model)["name"].astype(str))
         return locations_frame.loc[
-            :,
+            locations_frame["name"].astype(str).isin(matched),
             ["name", "layer", "group", "weight", locations_frame.geometry.name],
         ].copy()
     snapshot = targets.match_to_model(project.model).loc[

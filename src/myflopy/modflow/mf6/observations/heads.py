@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely.geometry import Point
 
 from myflopy.modflow.mf6.observations._shared import (
     _build_values_from_cells,
@@ -22,7 +23,12 @@ from myflopy.modflow.mf6.observations._shared import (
     _normalize_values_frame,
     _simulated_field_by_period,
 )
+from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.domain import model_domain
+from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.viz import mpl_axes
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -269,11 +275,25 @@ class HeadTargets:
         Returns
         -------
         pandas.DataFrame
-            One row per target location with mapped ``cell`` and ``layer``.
+            One row per MATCHED target location, with its ``cell`` and ``layer``.
+
+        Notes
+        -----
+        A point resolves to the ONE cell that holds it: on a shared face or
+        vertex, the lowest-numbered cell active in the target's own layer
+        (ledger 233). It used to reach every cell it touched -- two on a face,
+        four on a vertex -- so one well became four observations, and PEST's
+        build and its forward run read different cells for it.
+
+        Targets are reprojected to the grid's CRS first. One that lands on no
+        active cell is left out and named in a warning; if NONE of them land,
+        that raises, rather than handing back an observation set that is quietly
+        about somewhere else. A target given as a cell id is checked instead: an
+        id this grid does not have, or one inactive in its layer, raises.
         """
 
         if "cell" in self._locations.columns:
-            matches = self._locations.copy()
+            matches = self._validated_cells(model)
             if matches["x"].isna().any() or matches["y"].isna().any():
                 vor = model.vor.gdf_vorPolys.reset_index().rename(columns={"index": "cell"})
                 centroids = pd.DataFrame(
@@ -288,27 +308,156 @@ class HeadTargets:
                 matches.loc[:, ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]]
             )
 
-        vor = model.vor.gdf_vorPolys.reset_index().rename(columns={"index": "cell"})
-        joined = gpd.sjoin(
-            self._locations,
-            vor.loc[:, ["cell", vor.geometry.name]],
-            how="left",
-            predicate="intersects",
-        )
-        if joined["cell"].isna().any():
-            unmatched = joined["cell"].isna()
-            nearest = gpd.sjoin_nearest(
-                joined.loc[unmatched, self._locations.columns],
-                vor.loc[:, ["cell", vor.geometry.name]],
-                how="left",
+        return self._matched_from_geometry(model)
+
+    def _validated_cells(self, model) -> pd.DataFrame:
+        """The locations, with their explicit cell ids checked against the grid.
+
+        An id is an assertion about the model, so a wrong one raises rather than
+        being warned about the way a missed point is. Before this, an id the grid
+        did not have reached the value table as NaN and dropped out of ``stats``
+        silently, and an inactive id was read where MF6 writes no value.
+        """
+
+        matches = self._locations.copy()
+        ncpl = len(model.vor.gdf_vorPolys)
+        domain = model_domain(model, ncpl)
+        cells = matches["cell"].astype(int)
+        layers = matches["layer"].astype(int)
+        outside = [
+            f"{name!r} (cell {cell})"
+            for name, cell in zip(matches["name"], cells, strict=True)
+            if not 0 <= cell < ncpl
+        ]
+        if outside:
+            raise ValueError(
+                f"These {self._FIELD_LABEL} targets name cells this grid does not "
+                f"have (it has {ncpl}, numbered from 0): {', '.join(outside)}."
             )
-            joined.loc[unmatched, "cell"] = nearest["cell"].to_numpy()
-        joined["cell"] = joined["cell"].astype(int)
-        return _copy_frame(
-            joined.drop(columns=["index_right"]).loc[
-                :, ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]
-            ]
+        inactive = [
+            f"{name!r} (cell {cell}, layer {layer})"
+            for name, cell, layer in zip(matches["name"], cells, layers, strict=True)
+            if not domain_active(domain, layer, cell)
+        ]
+        if inactive:
+            raise ValueError(
+                f"These {self._FIELD_LABEL} targets name cells that are not active "
+                f"in their own layer, where MF6 writes no {self._FIELD_LABEL}: "
+                f"{', '.join(inactive)}."
+            )
+        return matches
+
+    def _matched_from_geometry(self, model) -> pd.DataFrame:
+        """Resolve each target's point to the one cell it sits in."""
+
+        polys = model.vor.gdf_vorPolys
+        locations = self._locations_in_grid_crs(model)
+        domain = model_domain(model, len(polys))
+        columns = ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]
+        rows: list[dict[str, Any]] = []
+        missed: list[str] = []
+        for _, row in locations.iterrows():
+            geometry = row.geometry
+            name = str(row["name"])
+            if geometry is not None and not geometry.is_empty and not isinstance(geometry, Point):
+                raise ValueError(
+                    f"{self._FIELD_LABEL.capitalize()} target {name!r} is a "
+                    f"{geometry.geom_type}. A {self._FIELD_LABEL} is measured at a "
+                    f"POINT: give its coordinates, or the cell it sits in."
+                )
+            layer = int(row["layer"])
+            hits = cell_shares(
+                polys,
+                geometry,
+                # Eligibility only. ``cell_shares`` sorts whatever this returns,
+                # so the lowest-numbered usable cell wins a tie without a second
+                # copy of that rule here.
+                usable=lambda cells, layer=layer: [
+                    cell for cell in cells if domain_active(domain, layer, cell)
+                ],
+            )
+            if not hits:
+                reason = miss_reason(polys, geometry, target=f"active cell in layer {layer}")
+                missed.append(f"{name!r} ({reason})")
+                continue
+            rows.append({column: row.get(column) for column in columns} | {"cell": hits[0][0]})
+        if missed:
+            self._report_missed(model, missed, total=len(locations))
+        frame = pd.DataFrame(rows, columns=columns)
+        frame["cell"] = frame["cell"].astype(int)
+        frame["layer"] = frame["layer"].astype(int)
+        return _copy_frame(frame)
+
+    def _locations_in_grid_crs(self, model) -> gpd.GeoDataFrame:
+        """The locations in the GRID's CRS, with x/y recomputed from them.
+
+        Targets are read in whatever CRS their file carries, and the grid decides
+        where a cell is. Before this, targets in degrees over a State Plane grid
+        were located by their raw degrees: two wells whose cells were 5 and 10
+        both resolved to cell 4.
+        """
+
+        locations = self._locations
+        grid_crs = getattr(model.vor, "crs", None)
+        if (
+            not isinstance(locations, gpd.GeoDataFrame)
+            or grid_crs is None
+            or locations.crs is None
+            or locations.crs == grid_crs
+        ):
+            return locations
+        reprojected = locations.to_crs(grid_crs)
+        reprojected["x"] = reprojected.geometry.x
+        reprojected["y"] = reprojected.geometry.y
+        return reprojected
+
+    def _report_missed(self, model, missed: list[str], *, total: int) -> None:
+        """Raise when no target lands on an active cell; warn, by name, when only some do.
+
+        A partial miss can be deliberate -- one target file serving several grids
+        -- so it warns. None of them landing means the targets and the model are
+        in different places, which is what the extents and CRSs in the message
+        are read for. Every consumer (``simulated_heads``, ``compare``, ``stats``,
+        ``to_flopy_obs``) calls ``match_to_model`` again, so the warning is said
+        once per set of missed targets rather than once per call.
+        """
+
+        listing = ", ".join(missed[:10])
+        if len(missed) > 10:
+            listing += f", and {len(missed) - 10} more"
+        if len(missed) == total:
+            raise ValueError(
+                f"No {self._FIELD_LABEL} target lands on an active cell, so there "
+                f"is nothing to compare against: {listing}. {self._where(model)}"
+            )
+        warned = getattr(self, "_warned_misses", None)
+        if warned is None:
+            warned = self._warned_misses = set()
+        if listing in warned:
+            return
+        warned.add(listing)
+        logger.warning(
+            "%d of %d %s targets land on no active cell and are left out: %s",
+            len(missed),
+            total,
+            self._FIELD_LABEL,
+            listing,
         )
+
+    def _where(self, model) -> str:
+        """Where the targets are and where the grid is -- what an empty match is acted on with."""
+
+        grid_crs = getattr(model.vor, "crs", None)
+        source_crs = self._locations.crs if isinstance(self._locations, gpd.GeoDataFrame) else None
+        if source_crs is None:
+            crs = f"the targets carry NO CRS, so they were read as the grid's ({grid_crs})"
+        elif grid_crs is not None and source_crs != grid_crs:
+            crs = f"the targets were reprojected from {source_crs} to the grid's {grid_crs}"
+        else:
+            crs = f"both are in {source_crs}"
+        targets = ", ".join(f"{v:,.1f}" for v in self._locations.total_bounds)
+        grid = ", ".join(f"{v:,.1f}" for v in model.vor.gdf_vorPolys.total_bounds)
+        return f"The targets span ({targets}) and the grid ({grid}); {crs}."
 
     def simulated_heads(self, model) -> pd.DataFrame:
         """Return simulated heads for the target locations by stress period.

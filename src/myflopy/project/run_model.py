@@ -12,6 +12,7 @@ import geopandas as gpd
 import numpy as np
 
 from myflopy._defaults import DEFAULT_CRS
+from myflopy.modflow.mf6.grid.domain import idomain_from_flopy
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -376,19 +377,6 @@ def _grid_ncpl(modelgrid) -> int:
     return int(np.asarray(modelgrid.xcellcenters, dtype=float).reshape(-1).size)
 
 
-def _extract_idomain(gwf) -> list[int] | None:
-    """Extract a flattened idomain list from DISV or DISU packages when present."""
-
-    for package_name in ("disu", "disv"):
-        package = getattr(gwf, package_name, None)
-        if package is None or getattr(package, "idomain", None) is None:
-            continue
-        values = np.asarray(package.idomain.array).reshape(-1)
-        if values.size and all(value is not None for value in values):
-            return values.astype(int).tolist()
-    return None
-
-
 def _recorded_crs(workspace: Path, model_name: str | None) -> str | None:
     """The CRS a myflopy run recorded for ``model_name``, if it has a manifest.
 
@@ -704,7 +692,7 @@ class LoadedMf6Run(SimulationBase):
         self.nper = int(sim.tdis.nper.data)
         self.nlay = int(np.asarray(gwf.modelgrid.botm).reshape(-1).size / _grid_ncpl(gwf.modelgrid))
         if self._idomain is None:
-            self._idomain = _extract_idomain(gwf)
+            self._idomain = idomain_from_flopy(gwf)
         # TYPES, not names: `get_package_list()` answers `CHD_0` where a package is
         # named for FloPy's default, and every check below asks for `CHD`. Recording
         # names made each read of such a package reload the whole simulation.

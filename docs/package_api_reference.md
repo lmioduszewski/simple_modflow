@@ -374,6 +374,13 @@ is involved. TOML is not supported (no null type; `tomllib` is 3.11+). Example:
 
 ### Observations & PEST
 
+A target given as a POINT resolves to the one cell holding it; on a shared face
+or vertex, the lowest-numbered cell active in that target's own layer. Targets
+are reprojected to the grid's CRS first, a target on no active cell is left out
+and named in a warning, and none of them landing raises. A target given as a
+cell id is checked instead: an id the grid does not have, or one inactive in its
+layer, raises (ledger 233).
+
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /

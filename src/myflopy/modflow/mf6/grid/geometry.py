@@ -428,10 +428,9 @@ def domain_active(domain, layer: int, cell: int) -> bool:
     if values.ndim == 1:
         return bool(values[cell] > 0)
     if layer >= values.shape[0]:
-        # Worded for the GeoPackage caller because it is still the only one; the
-        # fix that adds the second should generalize it rather than leave two.
         raise ValueError(
-            f"GeoPackage layer {layer} is outside domain with {values.shape[0]} layers."
+            f"Layer {layer} is outside the model domain, which has "
+            f"{values.shape[0]} layers."
         )
     return bool(values[layer, cell] > 0)
 
