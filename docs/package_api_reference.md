@@ -513,7 +513,15 @@ line, area for a polygon, and the whole value for a point, which has nothing to 
 A polygon covers a cell by AREA: one drawn along cell faces reaches only the cells
 inside it, not the neighbours it shares an edge with (ledger 210). A line lying ON a
 face is split evenly between its two cells, and a point on a face or vertex goes whole
-to the lowest-numbered active cell it touches (ledger 212).
+to the lowest-numbered active cell it touches (ledger 212). A line PIECE that is noise
+goes the way an areal one does (ledger 237): noise is under the 0.01 tolerance, in the
+grid's length unit, AND under 1% of the cell's own mean width — so a sub-unit lab-scale
+grid keeps its coverage, and a feature shorter than the tolerance in TOTAL is what was
+drawn and keeps every piece of itself. That is what stops a line ending ON a face and
+overshooting it by 1e-6 ft — what a CRS round trip does — from writing a second record
+for the cell beyond, at the same elevation and conductance; `mf.sfr` has dropped such a
+reach since ledger 214. The same rule serves the cell selector, so `map(select=<line>)`,
+a region and a line head target move with it, not only a `.gpkg` source.
 
 Runnable walkthrough: **`examples/mf6/notebooks/usg_export_to_new_model.ipynb`** —
 each written file, and the call that consumes it. It builds no model; it lays out the

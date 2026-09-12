@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2850 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2877 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -346,7 +346,12 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   EMPTY package -- MF6 rejects it naming the file, or under `maxbound=` runs without
   it. The error prints both extents and both CRSs, because a location mismatch is two
   boxes; a partial miss WARNS by name. A polygon covers a cell by AREA (ledger 210):
-  drawn along faces it reaches only the cells inside it, never its neighbours.
+  drawn along faces it reaches only the cells inside it, never its neighbours. A LINE
+  piece under the same 0.01 tolerance is noise too (ledger 237) -- and this is the
+  SHARED rule, so it moves `map(select=<line>)`, a region and a line head target as
+  well as a `.gpkg` source: a line ending on a face and overshooting by 1e-6 ft -- a CRS
+  round trip moves an end by 3e-7 -- wrote a full second record, where `mf.sfr` had
+  dropped the reach since ledger 214.
 - **A lakebed from bathymetry is `mf.lak(lake_bottom=<Surface>)`** (ledger 231,
   2026-09-11) -- `mf.Contours`/`mf.Raster`/algebra, a raster `Path` or `str`, or a
   cell-indexed Series. Sampled ONCE (it was one full-grid sample per cell read).

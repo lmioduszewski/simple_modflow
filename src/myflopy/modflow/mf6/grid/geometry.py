@@ -361,9 +361,12 @@ def geometry_first(gdf):
     return gdf[geo + [c for c in gdf.columns if c not in geo]]
 
 
-# An areal piece narrower than this, in the grid's length unit, is dropped. Almost
+# An areal piece narrower than this, in the grid's length unit, is dropped -- and a
+# LINE piece SHORTER than it, the same comparison SFR makes and the one branch that
+# had no floor until ledger 237. Almost
 # always it is a face-aligned edge whose coordinates were perturbed. A
-# perturbation is a WIDTH, so the test is the piece's mean width, not its share of
+# perturbation is a DISTANCE, so the test is the piece's own measure -- an areal
+# piece's mean width, a line piece's length -- and not its share of
 # the cell: a share rule caught a NAD83 round trip on 500 ft cells and missed it on
 # 300 ft ones. Measured: 3e-7 after a double-precision reprojection, 3.4e-4 after
 # NAD83 <-> NAD83(HARN), up to 5e-3 from vertices FloPy wrote at 9 significant
@@ -374,10 +377,11 @@ def geometry_first(gdf):
 # SHORTER than it, whatever min_reach_length says (ledger 214).
 _SLIVER_WIDTH = 0.01
 
-# ...and a sliver is also under this share of its cell. Noise is width / cell width
+# ...and a sliver is also under this share of its cell: an areal piece's width, or a
+# line piece's own LENGTH, against the cell's mean width. Noise is width / cell width
 # of a cell, under 1% on any cell wider than half a unit, so this changes nothing on
 # a real grid; without it a lab-scale grid (0.01-unit cells) lost ALL its coverage,
-# every piece being narrower than the tolerance.
+# every piece being narrower -- or, for a line, shorter -- than the tolerance.
 _SLIVER_SHARE = 0.01
 
 
@@ -461,9 +465,14 @@ def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
     face-adjacent cell along the edge they share -- a line, with no area -- and
     measuring that piece by its length admitted every neighbour of a polygon
     drawn on cell faces, at the full value for any field not wrapped in
-    ``Spread``: a K zone that was exactly one cell painted five. Pieces
-    narrower than ``_SLIVER_WIDTH`` and under ``_SLIVER_SHARE`` of their cell are
-    dropped for the same reason, unless every piece of the feature is one.
+    ``Spread``: a K zone that was exactly one cell painted five. A piece that is
+    noise is dropped for the same reason -- an areal piece NARROWER than
+    ``_SLIVER_WIDTH``, a line piece SHORTER than it, each also under
+    ``_SLIVER_SHARE`` of its cell's area or mean width -- unless every piece of the
+    feature is one, when they are the feature. The line floor is the one SFR has
+    applied to a reach since ledger 214: without it a line overshooting a face by
+    1e-6 wrote a full second record for the cell beyond, at the same elevation and
+    conductance, so a ``.gpkg`` DRN and an SFR built from one geometry disagreed.
 
     Candidates come from the spatial index rather than an elementwise
     ``intersects`` over every cell, which was O(features x ncpl).
@@ -485,8 +494,9 @@ def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
     # gpd.overlay leave (keep_geom_type=False) where a zone ran along the clip
     # edge, so refusing the collection refused their default output.
     areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
-    # A feature that is itself this thin is what was drawn, not a sliver of it.
-    thin_feature = areal and _mean_width(geometry) <= _SLIVER_WIDTH
+    # A feature that is itself this thin -- this SHORT, for a line -- is what was
+    # drawn, not a sliver of something larger.
+    thin_feature = (_mean_width(geometry) if areal else measure) <= _SLIVER_WIDTH
     sizes: dict[int, float] = {}
     slivers: set[int] = set()
     on_faces: dict[int, Any] = {}
@@ -507,6 +517,21 @@ def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
             size = float(piece.length)
             if size <= 0:
                 continue
+            # The floor the areal branch has had since ledger 210, worded for a
+            # length: a line ending ON a face that overshoots it by 1e-6 -- a CRS
+            # round trip moves an end by ~3e-7 -- gave the cell beyond a piece of
+            # 1e-6, and every field not wrapped in ``Spread`` is written whole, so
+            # that was a second DRN record at the same elevation and conductance.
+            # A length is measured against the CELL's own mean width -- half the
+            # side of a square cell -- never against its area or its perimeter, so
+            # a sub-unit grid, whose every piece is shorter than the tolerance,
+            # keeps the pieces that are a real part of a cell.
+            if (
+                not thin_feature
+                and size < _SLIVER_WIDTH
+                and size < _SLIVER_SHARE * _mean_width(polygon)
+            ):
+                slivers.add(cell)
             along = piece.intersection(polygon.boundary)
             if along.length > 0:
                 on_faces[cell] = along
@@ -516,6 +541,13 @@ def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
     if len(slivers) < len(sizes):
         for cell in slivers:
             del sizes[cell]
+            # ...and out of the face bookkeeping below, which would otherwise ask a
+            # dropped cell to hand back half of a stretch it no longer holds --
+            # KeyError on a line running a few thousandths along a face before
+            # turning into one of the two cells. Clearing the bookkeeping instead
+            # leaves an untouched pair sharing a face with the WHOLE stretch each,
+            # which is the doubling ledger 212 removed.
+            on_faces.pop(cell, None)
     # Pairwise, but only over cells whose piece runs along their own boundary:
     # usually none, so a line off every face pays nothing for this.
     faced = sorted(on_faces)

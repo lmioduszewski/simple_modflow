@@ -137,15 +137,19 @@ def test_min_share_drops_a_corner_clip(tmp_path, grid_and_context):
     """A cell the feature barely grazes is dropped rather than given a sliver."""
 
     grid, ctx = grid_and_context
-    # 99.5% in cell 1, a 0.5% nick of cell 2
-    path = _write(tmp_path, LineString([(1.01, 0.5), (2.005, 0.5)]), layer=1,
+    # Two whole cells, then a 0.02 nick of cell 2: 0.99% of the feature, so
+    # ``min_share`` drops it -- and 2% of the cell it nicks, twice the noise floor on
+    # a line piece, so that does not. The old nick was 0.005, which is under the floor
+    # and (measured: 0.004999999999999893 against a share guard of exactly 0.005, a
+    # margin of 1e-16) never reached ``min_share`` at all.
+    path = _write(tmp_path, LineString([(0.0, 0.5), (2.02, 0.5)]), layer=1,
                   elevation=10.0, cond=100.0)
     loose = mf.drn.gpkg(path, layer="bc", context=ctx, nper=1, elevation="elevation",
                         conductance=Spread("cond", min_share=0.0), boundnames=False)
     tight = mf.drn.gpkg(path, layer="bc", context=ctx, nper=1, elevation="elevation",
                         conductance=Spread("cond", min_share=0.01), boundnames=False)
-    assert len(_records(loose)) == 2
-    assert len(_records(tight)) == 1
+    assert len(_records(loose)) == 3
+    assert len(_records(tight)) == 2
 
 
 def test_spread_rejects_an_unknown_mode():

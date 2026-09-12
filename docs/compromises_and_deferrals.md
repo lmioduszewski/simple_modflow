@@ -6787,7 +6787,9 @@ same day, which is the useful part of the result.
         returned hits in cell order on every grid the tests built, and out of
         order on 481 of 685 queries of a scrambled one -- so a test now numbers
         its cells out of spatial order.
-      - **NOT done:** a line within floating noise of a face zigzags across it; its
+      - **NOT done, and CLOSED by entry 237** (a line piece under the noise floor is
+        dropped now, as SFR's has been since 214): a line within floating noise of a
+        face zigzags across it; its
         length is conserved but falls to the two cells unevenly, as for any line
         through two cells.
 
@@ -7363,9 +7365,9 @@ same day, which is the useful part of the result.
         (`observations/drn.py` seepage zones, `pest/zones.py`,
         `surfaces._cells_in_zone`, `PRTReleasePoints.from_points`,
         `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
-        212's open line case: the line branch still has no sliver floor, so a
-        line overshooting a face by 1e-6 reaches the far cell here while SFR
-        drops it.
+        212's open line case -- that one is CLOSED by entry 237: the line branch
+        carries the same noise floor now, so a line overshooting a face by 1e-6
+        no longer reaches the far cell here either.
       - 35 tests in `tests/test_cell_coverage_rules.py`, which pin the single
         copy by identity and by patching it, and exercise each rule directly on a
         4x4 grid. Twenty-three mutants, all killed: each delegation bypassed
@@ -7588,3 +7590,100 @@ same day, which is the useful part of the result.
         grid slips past the array check.
       - Found by the 2026-09-11 sibling investigation; the last of the three sites
         the user approved.
+
+237. **A line overshooting a face by 1e-6 ft wrote a second full record (2026-09-12).**
+      `cell_shares` has had a noise floor on its AREAL branch since ledger 210 -- a
+      piece narrower than `_SLIVER_WIDTH` (0.01) and under `_SLIVER_SHARE` of its
+      cell is a reprojection artefact, not coverage. Its LINE branch never had one.
+      Measured on the 4x4 grid of 25 ft cells with a DRN line from (37.5, 37.5) to
+      the face at x=25: ending exactly on the face, one record, cell 5; overshooting
+      into cell 4 by 1e-6 ft or by 1e-3 ft, a full SECOND record, `((0, 4), 10.0,
+      100.0)` -- the same elevation and the same conductance, because a field not
+      wrapped in `Spread` is written whole. On a State Plane grid a
+      2927 -> 4326 -> 2927 round trip moved the end by -2.95e-7 ft and did the same.
+      `SFRBuilder` on that same geometry kept one reach in cell 5, having had the
+      floor since ledger 214, so `.gpkg` and SFR disagreed about one line. The worst
+      measured case is the geometry of ledger 214's own SFR test: a diagonal drawn on
+      grid vertices, round-tripped through EPSG:4326 on a State Plane grid, clips three
+      corner cells by ~9e-7 ft and became **SEVEN DRN records where four are right**,
+      700.0 of conductance against 400.0. SFR gave 4 reaches on that same line.
+      - **The floor is the shared rule's now, worded for a length**: a line piece
+        SHORTER than `_SLIVER_WIDTH` and under `_SLIVER_SHARE` of its cell's mean
+        width is noise. The shape is the areal branch's, not a second rule -- the
+        same constants, the same share guard, and the same escape: if EVERY piece of
+        a feature is a sliver they ARE the feature and none is dropped, so a 0.017 ft
+        line across a vertex keeps both of its 0.0085 halves.
+      - **This is the SHARED rule, so it is not a `.gpkg` fix.** Everything ledger 235
+        routed through `get_vor_cells_as_series` moves with it -- regions and
+        `map(select=...)`, mp3du particle release, cross-sections,
+        `InterpolatedSurface(clip=)`, `adjust_top_btm_overlaps` and the legacy
+        `Boundaries.inactive_cells` set -- and so does
+        `observations/heads.py::match_to_model`, which calls `cell_shares` itself
+        (ledger 233), so a LINE `HeadTargets`/`ConcTargets` takes it too. Measured on
+        that same overshooting line, the selector answered `[[4, 5]]` and now `[[5]]`.
+      - **The share guard is what keeps a sub-unit grid whole**, as it does for a
+        polygon: on 0.02 ft cells a piece of 0.005 ft is half the cell's mean width --
+        a quarter of its side -- and is coverage, not noise. A length is measured
+        against the CELL's mean width, never against its perimeter, its area, or the
+        feature's own length; on those cells the four guards are 1e-4, 8e-4, 4e-6 and
+        whatever the feature is, so the choice decides real cases and each wrong one
+        has its own mutant. `thin_feature` extends to a line as its LENGTH, so a
+        0.009 ft feature split 0.006/0.003 across a face keeps both pieces instead of
+        only the longer one -- two thirds of a feature that is entirely what was drawn.
+      - **Ledger 212 is untouched**: a stretch of line lying ALONG a face is in both
+        cells and is still split evenly between them (0.125 each across 8 cells,
+        summing to 1). A dropped sliver leaves the face bookkeeping with its size,
+        which is not cosmetic -- without that, a line running 0.004 ft along a face
+        before turning into one of the two cells raised `KeyError` instead of giving
+        the whole length to the cell that kept it, and CLEARING that bookkeeping
+        instead leaves an untouched pair with the whole shared stretch each, which is
+        exactly the doubling ledger 212 removed (shares summing to 2.0).
+      - **Amends ledger 212's "NOT done"**, which recorded only "a line within
+        floating noise of a face zigzags across it". That is the case where the line
+        crosses and re-crosses; it did not cover a line that simply ends past the
+        face, which is what a CRS round trip and a centerline drawn to a grid vertex
+        produce. It also closes ledger 232's open bullet ("the line branch still has
+        no sliver floor, so a line overshooting a face by 1e-6 reaches the far cell
+        here while SFR drops it") -- amend both in place.
+      - **A share is still a fraction of the WHOLE feature**, so the dropped tip is
+        simply not applied: cell 5's share of the 1e-3 overshoot is 0.99992, not
+        renormalized to 1. That is `Spread`'s documented "clip", and the areal branch
+        does the same. Under `mode="retained"` the whole conductance now stays in
+        cell 5 (100.0) instead of leaking 0.008 into cell 4.
+      - **`Spread`'s own `min_share` hid this for a wrapped field** -- an 8e-8 share
+        is below its 1% default -- which is why the defect lived: it was visible only
+        on the plain unwrapped column, which is the default for every list BC, and on
+        `min_share=0.0`.
+      - **One existing test moved its geometry.**
+        `test_geopackage_spread.test_min_share_drops_a_corner_clip` nicked a cell of a
+        1-unit-cell strip by 0.005, and the margin there was ONE ulp: the nick measures
+        0.004999999999999893 against a share guard of exactly 0.005, so had GEOS
+        returned 0.005 + eps the piece would have been kept and the test would not have
+        moved at all. Both conditions must hold to call a piece a sliver, and on a grid
+        whose cells are about a unit wide the absolute floor and the share guard sit on
+        top of each other -- that is the price of an absolute tolerance, and the one SFR
+        has paid since ledger 214. The nick is 0.02 now (0.99% of a 2.02-long feature,
+        2% of the cell), so the test pins `min_share` rather than the floor.
+      - **NOT done**: the areal and line floors stay two branches of one function
+        rather than one expression, because the measures are not interchangeable (a
+        polygon is judged by its WIDTH, a line by its LENGTH) and collapsing them
+        would have to pick one. `LAKBuilder.lake_cells` still keeps any area > 0 with
+        no sliver rule at all, and `usg/export._adjacency` still uses `touches`;
+        both are their own sites. No `Spread` renormalization was added.
+      - **Cost: none measurable.** `_mean_width(polygon)` is evaluated only after
+        `size < _SLIVER_WIDTH` short-circuits, so a line whose pieces are ordinary
+        never computes it. A blast-radius sweep over 182 mixed geometries -- boxes,
+        cell-sized boxes, random lines, points, a point on a face and on a vertex, a
+        MultiPoint, a MultiLineString and a GeometryCollection -- is identical to
+        HEAD's, 0 cases differing; the cut-over on the 25 ft grid is clean at the
+        tolerance (0.0099 reaches one cell, 0.0101 two).
+      - 27 tests in `tests/test_line_slivers_on_faces.py`, 18 of which fail at HEAD.
+        Thirteen mutants and an import probe, all killed: no floor on a line piece
+        (the old code), the absolute floor dropped leaving the share guard alone, the
+        share guard dropped leaving the absolute floor alone, the guard taken against
+        the cell's perimeter, against its area, and against the feature's own length,
+        both comparisons flipped at their boundary, `thin_feature` not extended to a
+        line, the all-slivers escape removed, a dropped sliver left in the face
+        bookkeeping, that bookkeeping cleared entirely, and a sliver skipped outright
+        as SFR does with no escape.
+      - Found by the 2026-09-11 sibling investigation.

@@ -24,7 +24,7 @@ def _measured_cells(gdf_vor_polys, geometries, names) -> pd.Series:
 
     A polygon reaches the cells it COVERS by area, a line those it runs through,
     and a point the one cell holding it, with the tie and sliver rules of ledgers
-    210-212. The spatial join this replaced took any touch, so a polygon drawn on
+    210-212 and 237. The spatial join this replaced took any touch, so a polygon drawn on
     cell faces selected its neighbours as well: 9 cells for a polygon that was
     exactly cell 5, and 4 for a point on a vertex.
 
@@ -118,7 +118,7 @@ def get_vor_cells_as_series(
 
     ``predicate=None`` -- the default -- selects by MEASURE: a polygon reaches the
     cells it covers by area, a line those it runs through, and a point the one
-    cell holding it, under the tie and sliver rules of ledgers 210-212. Passing a
+    cell holding it, under the tie and sliver rules of ledgers 210-212 and 237. Passing a
     geopandas predicate (``'intersects'``, ``'contains'``, ...) keeps the raw
     spatial join, which takes any touch, including a shared face or a single
     vertex; it is the escape hatch for a caller that wants topology rather than
