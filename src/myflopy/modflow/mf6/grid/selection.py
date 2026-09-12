@@ -6,7 +6,6 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely as shp
-from shapely.geometry import Polygon
 
 from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
@@ -250,47 +249,176 @@ def get_model_boundary_polygons(gdf_vor_polys) -> dict:
     return dict(zip(boundary_polygons_idx, boundary_polygons, strict=False))
 
 
-def get_grid_edge_cells(vor, idomain: list = None, idomain_path: Path = None, include_interiors: bool = True) -> list:
+def _inactive_cells(vor, idomain, idomain_path) -> set[int]:
+    """The cells to treat as inactive, from a list of IDS or from a vector file.
+
+    An explicit argument wins, and ``idomain=[]`` means nothing is inactive: both
+    used to fall through to the grid's own ``idomain_path`` and quietly answer
+    about that instead.
     """
-    Get edge cells for the voronoi grid, optionally excluding inactive cells.
+
+    if idomain is not None and idomain_path is not None:
+        raise ValueError(
+            "Give idomain= (the INACTIVE cell ids) or idomain_path= (a vector file "
+            "covering them), not both."
+        )
+    ncpl = len(vor.adjacent_cells_idx)
+    if idomain is None and idomain_path is None:
+        idomain_path = getattr(vor, "idomain_path", None)
+    if idomain_path is not None:
+        return _inactive_from_file(vor, Path(idomain_path))
+    if idomain is None:
+        return set()
+
+    values = np.asarray(list(idomain))
+    if values.dtype == bool:
+        raise ValueError(
+            "idomain= is a list of INACTIVE cell ids, not a mask. Pass "
+            "np.flatnonzero(domain <= 0)."
+        )
+    if values.size == ncpl and set(np.unique(values)).issubset({-1, 0, 1}):
+        # The trap this parameter sets: MF6's idomain is an ARRAY of flags, the
+        # grid's own `idomain` property is the ACTIVE ids, and this is neither.
+        raise ValueError(
+            f"idomain= is a list of INACTIVE cell ids, but this is {ncpl} values of "
+            "-1/0/1, which reads as an MF6 idomain array. Pass "
+            "np.flatnonzero(domain <= 0)."
+        )
+    cells = {int(value) for value in values.reshape(-1)}
+    unknown = sorted(cell for cell in cells if not 0 <= cell < ncpl)
+    if unknown:
+        raise ValueError(
+            f"idomain= names cells this grid does not have (it has {ncpl}, numbered "
+            f"from 0): {unknown}."
+        )
+    return cells
+
+
+def _inactive_from_file(vor, path: Path) -> set[int]:
+    """The cells an idomain file's features COVER, by area (ledger 210).
+
+    Read as a frame, so the file's own CRS reaches the selector and is reprojected
+    to the grid's. The union this replaced dropped the CRS, and a file in another
+    one then raised ``KeyError: 0`` rather than saying where its features were.
+    A file with a layer column is read whole: the edge unions every layer.
     """
-    df = vor.gdf_vorPolys
-    idomain_path = vor.idomain_path if idomain_path is None else idomain_path
 
-    adj_lengths = np.fromiter((len(vor.adjacent_cells_idx[idx]) for idx in df.index), dtype=int)
-    face_counts = df.geometry.exterior.apply(lambda geom: len(geom.coords) - 1).to_numpy()
-    edge_mask = face_counts > adj_lengths
-    edges = df.index[edge_mask].tolist()
+    features = read_shp_gpkg(path)
+    series = get_vor_cells_as_series(vor.gdf_vorPolys, features)
+    cells = {int(cell) for group in series.tolist() for cell in group}
+    if not cells:
+        grid = vor.gdf_vorPolys
+        raise ValueError(
+            f"No feature in '{path.name}' covers a cell of this grid, so nothing "
+            f"would be inactive. The features span ({_bounds(features)}) and the "
+            f"grid ({_bounds(grid)}); the file is in {features.crs} and the grid "
+            f"in {grid.crs}."
+        )
+    return cells
 
-    if idomain_path or idomain:
-        if idomain_path:
-            idomain_geom = read_shp_gpkg(idomain_path).union_all()
-            icells = get_vor_cells_as_series(vor.gdf_vorPolys, idomain_geom)[0]
-        else:
-            icells = idomain
 
-        icell_set = set(icells)
-        remaining_cells = df.loc[~df.index.isin(icell_set)]
-        union_geom = remaining_cells.geometry.union_all()
+def _bounds(frame) -> str:
+    """A frame's extent, for a message about where things are."""
 
-        if isinstance(union_geom, Polygon):
-            edge_geoms = [union_geom.exterior]
-            interiors = union_geom.interiors if include_interiors else []
-        elif isinstance(union_geom, shp.MultiPolygon):
-            edge_geoms = [poly.exterior for poly in union_geom.geoms]
-            interiors = [ring for poly in union_geom.geoms for ring in poly.interiors] if include_interiors else []
-        else:
-            edge_geoms, interiors = [], []
+    return ", ".join(f"{value:,.1f}" for value in frame.total_bounds)
 
-        edge_cells = [pd.Series(get_vor_cells_as_series(vor.gdf_vorPolys, geom)[0]) for geom in edge_geoms]
-        if include_interiors and interiors:
-            edge_cells += [pd.Series(get_vor_cells_as_series(vor.gdf_vorPolys, ring)[0]) for ring in interiors]
 
-        flat = pd.concat(edge_cells)
-        flat.index = flat.values
+def _active_components(adjacency, active, inactive) -> list[set[int]]:
+    """The face-connected groups of active cells."""
 
-        logger.info('collecting grid edge cells, excluding inactive cells')
-        return flat.loc[~flat.index.isin(icell_set)].index.tolist()
+    seen: set[int] = set()
+    components = []
+    for seed in active:
+        if seed in seen:
+            continue
+        members = {seed}
+        seen.add(seed)
+        stack = [seed]
+        while stack:
+            cell = stack.pop()
+            for neighbour in adjacency[cell]:
+                if neighbour not in inactive and neighbour not in members:
+                    members.add(neighbour)
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        components.append(members)
+    return components
 
-    logger.info('collecting all grid edge cells')
-    return edges
+
+def _outer_edge_only(adjacency, outside, active, inactive) -> list[int]:
+    """Each active component's OUTER edge, dropping the cells that ring a hole.
+
+    A hole is what the outside cannot reach: per component, flood the rest of the
+    mesh inward from the cells bordering the outside, and a member whose only
+    inactive neighbours were never reached is ringing a hole of its own component.
+    An island inside a ring keeps its edge, because that edge is the island's own
+    outer boundary.
+    """
+
+    edge: list[int] = []
+    for members in _active_components(adjacency, active, inactive):
+        reached = {cell for cell in range(len(adjacency)) if cell not in members and outside[cell]}
+        stack = list(reached)
+        while stack:
+            cell = stack.pop()
+            for neighbour in adjacency[cell]:
+                if neighbour not in members and neighbour not in reached:
+                    reached.add(neighbour)
+                    stack.append(neighbour)
+        edge += [
+            cell for cell in members
+            if outside[cell] or any(neighbour in reached for neighbour in adjacency[cell])
+        ]
+    return sorted(edge)
+
+
+def get_grid_edge_cells(
+    vor,
+    idomain: list = None,
+    idomain_path: Path = None,
+    include_interiors: bool = True,
+) -> list:
+    """The ACTIVE cells on the model's edge, ascending and each once.
+
+    A cell is on the edge when it borders the outside of the mesh -- it has more
+    faces than it has neighbours -- or when one of its face-neighbours is
+    inactive. That is the same topological test this always used when given no
+    idomain; the branch that took one instead outlined the active area and asked
+    which cells its RING touched, which is where four defects came from:
+
+    - the inactive set came from a touch join, so a cell merely BORDERING the
+      inactive polygon counted as inactive. On a 6x6 grid a face-aligned strip
+      returned 14 cells against a true 16, having lost the true edge column and
+      gained four interior cells.
+    - a ring runs through vertices, so cells touching it at a single corner were
+      kept: an inactive corner cell added its diagonal neighbour.
+    - outer-ring and hole-ring hits were concatenated without de-duplication, so a
+      cell on both came back twice -- 36 entries for the 27 cells around a
+      one-cell hole, which the simple model's drain mode wrote as 36 DRN records
+      at 1.5x the intended conductance.
+    - ``vor.idomain_path`` overrode an explicit ``idomain=``, and ``idomain=[]``
+      fell through to it.
+
+    ``idomain`` is the list of INACTIVE cell ids -- not a mask, and not MF6's
+    array; both are refused, naming the conversion. ``idomain_path`` is a vector
+    file whose features cover the inactive cells, by AREA like every other source
+    (ledger 210), reprojected to the grid. Give one or the other, never both.
+    ``include_interiors=False`` keeps only each active component's outer edge,
+    dropping the cells that ring a hole inside it.
+    """
+
+    inactive = _inactive_cells(vor, idomain, idomain_path)
+    adjacency = vor.adjacent_cells_idx
+    counts = vor.gdf_vorPolys.geometry.exterior.apply(lambda geom: len(geom.coords) - 1).to_numpy()
+    outside = counts > np.fromiter((len(neighbours) for neighbours in adjacency), dtype=int)
+    active = [cell for cell in range(len(adjacency)) if cell not in inactive]
+
+    if not include_interiors:
+        logger.info('collecting outer grid edge cells')
+        return _outer_edge_only(adjacency, outside, active, inactive)
+
+    logger.info('collecting grid edge cells')
+    return [
+        cell for cell in active
+        if outside[cell] or any(neighbour in inactive for neighbour in adjacency[cell])
+    ]

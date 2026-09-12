@@ -7530,3 +7530,61 @@ same day, which is the useful part of the result.
         user asked for next; and the deprecated `PrtPrp`.
       - Ten mutants and an import probe, all killed.
       - Found by the 2026-09-11 sibling investigation.
+
+236. **Grid-edge cells came from a ring, and the ring was wrong four ways (2026-09-12).**
+      `get_grid_edge_cells` answers "which cells are on the model's edge". Given an
+      idomain it outlined the active area and asked which cells that outline
+      touched. Measured on a 6x6 grid of 25 ft cells:
+      - the inactive set came from the touch join (ledger 235's site), so a cell
+        merely BORDERING the inactive polygon counted as inactive: a face-aligned
+        strip returned 14 cells against a true 16, having lost the whole true edge
+        column and gained four interior cells;
+      - a ring runs through vertices, so a cell touching it at one corner was kept
+        -- inactive corner cell 35 added its diagonal 28, and a one-cell hole added
+        the hole's four diagonals;
+      - outer-ring and hole-ring hits were concatenated without de-duplication: 36
+        entries for the 27 cells around a one-cell hole;
+      - `vor.idomain_path` was consulted BEFORE an explicit `idomain=`, and
+        `idomain=[]` fell through to it.
+      What that cost: `mf.chd/ghb/drn/riv.gpkg(edges_only=True)` on a grid carrying
+      an idomain file wrote its boundary on the wrong cells, and
+      `mf.build_simple_model(boundary_mode='drain')` on such a grid wrote 36 DRN
+      records over 27 cells -- total conductance 3600 against 2400, with 7 interior
+      cells drained.
+      - **The fix is the rule the function already used with no idomain**: an
+        active cell is on the edge when it borders the outside (more faces than
+        neighbours) or when a face-neighbour is inactive. No ring, no geometry, no
+        duplicates, and no dependence on how a line lying on a face is selected.
+        The investigation's prototype of it matched a face oracle and a geometric
+        ring oracle exactly on six meshes of 441 to 30,444 cells.
+      - `include_interiors=False` keeps each active component's OUTER edge by
+        flooding the mesh inward from the outside: what the flood cannot reach is a
+        hole of that component. An island inside a ring keeps its edge, because
+        that edge is the island's own boundary.
+      - **`idomain=` is the list of INACTIVE cell ids** -- not a mask, and not MF6's
+        array. Both are refused now, naming `np.flatnonzero(domain <= 0)`: the
+        grid's own `idomain` property means the ACTIVE ids and MF6's means flags, so
+        one word carried three meanings and a 0/1 list was silently read as the ids
+        0 and 1. An id the grid does not have is refused by name.
+      - **An explicit argument wins**, `idomain=[]` means nothing is inactive, and
+        passing both raises.
+      - **An idomain FILE is read as a frame**, so its CRS reaches the selector and
+        is reprojected; the union this replaced dropped it, and a 4326 file raised
+        `KeyError: 0` rather than saying where its features were. Coverage is by
+        area (ledger 210): a 0.005 ft graze marks nothing, 40% of a cell marks it. A
+        file covering no cell raises, naming it with both extents and both CRSs.
+      - The edge set is found ONCE per `GeoPackageSource` now, not once per feature;
+        `get_grid_edge` walks every cell and reads the grid's idomain file.
+      - **NOT done**: what "edge" MEANS for `.gpkg(edges_only=True)` is unchanged --
+        the grid's own edge, not the model's per-layer domain; a file with a layer
+        column is unioned across layers; and `VoronoiGridPlus(idomain=)` /
+        `GridSpec.voronoi(idomain=)` are still accepted and dropped on the floor.
+      - The face-count test assumes shapely returns a LineString for a shared face.
+        A hanging node that one cell splits with a collinear vertex its neighbour
+        lacks would miscount; none were found on the six meshes checked.
+      - Eleven mutants and an import probe, all killed -- two of them only after
+        tests were added for the cases that let them live: an unsorted answer shows
+        only when two active components interleave, and a bool mask SHORTER than the
+        grid slips past the array check.
+      - Found by the 2026-09-11 sibling investigation; the last of the three sites
+        the user approved.

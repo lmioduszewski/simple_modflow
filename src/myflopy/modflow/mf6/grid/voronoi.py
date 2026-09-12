@@ -555,7 +555,14 @@ class VoronoiGridPlus(VoronoiGrid):
         return get_model_boundary_polygons(self.gdf_vorPolys)
 
     def get_grid_edge(self, idomain: list = None, idomain_path: Path = None, include_interiors: bool = True) -> list:
-        """Return cell IDs that lie on the active-model edge."""
+        """The active cells on the model's edge, ascending and each once.
+
+        ``idomain`` is the list of INACTIVE cell ids (a mask or an MF6 array is
+        refused, naming the conversion); ``idomain_path`` a vector file whose
+        features cover them, by area. Give one or the other; with neither, the
+        grid's own ``idomain_path`` is used when it has one, and otherwise every
+        cell is active. ``include_interiors=False`` drops the cells ringing a hole.
+        """
         return get_grid_edge_cells(
             self,
             idomain=idomain,

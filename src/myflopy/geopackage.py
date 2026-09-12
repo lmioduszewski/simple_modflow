@@ -353,6 +353,7 @@ class GeoPackageSource:
     layer_base: int = 1
     period_base: int = 0
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
+    _edge_cells: set[int] | None = field(default=None, init=False, repr=False)
     _source_crs: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -437,12 +438,23 @@ class GeoPackageSource:
             # Before the edge set, which walks every cell and reads the grid's own
             # idomain_path if it has one: a row with no geometry reaches nothing.
             return []
-        edge_cells = set(self.grid.get_grid_edge()) if edges_only else None
+        edge_cells = self._edge_set() if edges_only else None
         return cell_shares(
             self.grid.gdf_vorPolys,
             geometry,
             usable=lambda cells: self._usable_cells(cells, layer=layer, edge_cells=edge_cells),
         )
+
+    def _edge_set(self) -> set[int]:
+        """The grid's edge cells, found once per source rather than once per feature.
+
+        ``get_grid_edge`` walks every cell, and reads the grid's idomain file when
+        it has one, so a ten-feature source paid for all of that ten times.
+        """
+
+        if self._edge_cells is None:
+            self._edge_cells = set(self.grid.get_grid_edge())
+        return self._edge_cells
 
     def _usable_cells(self, cells, *, layer: int, edge_cells: set[int] | None) -> list[int]:
         """The active cells among ``cells``, lowest-numbered first."""
