@@ -8,7 +8,6 @@ from typing import Any, Protocol
 
 import geopandas as gpd
 import numpy as np
-import shapely
 
 from myflopy._logging import get_logger
 from myflopy.advanced import (
@@ -20,22 +19,18 @@ from myflopy.advanced import (
     riv_spec,
     wel_spec,
 )
-from myflopy.modflow.mf6.grid.geometry import _SLIVER_SHARE, _SLIVER_WIDTH, _mean_width
+from myflopy.modflow.mf6.grid.geometry import (
+    _extent,  # noqa: F401 -- re-exported: callers and tests import it from here
+    cell_shares,
+    domain_active,
+    miss_reason,
+)
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import ModelContext, PackageSpec, _layer_elevations
 
 logger = get_logger(__name__)
 
 SurfaceReference = str
-
-
-def _extent(geometry) -> float:
-    """A geometry's own measure: area for a polygon, length for a line, 0 for a point."""
-
-    if geometry is None or geometry.is_empty:
-        return 0.0
-    area = float(getattr(geometry, "area", 0.0) or 0.0)
-    return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
 
 
 def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):
@@ -394,28 +389,11 @@ class GeoPackageSource:
     def _active(self, layer: int, cell: int) -> bool:
         """Whether ``(layer, cell)`` can carry a boundary, per the context's idomain.
 
-        MF6 idomain is three-valued, not a flag: ``> 0`` active, ``0`` inactive, and
-        ``< 0`` **vertical passthrough** -- the cell is removed and flow passes
-        straight through it. A passthrough cell holds no boundary; MF6 refuses one
-        with ``Cell is outside active grid domain``.
-
-        So the test is ``> 0``, not truthiness. ``bool(-1)`` is ``True``, which put
-        347 DRN records into passthrough cells on a real model and failed the run at
-        read time -- a `LayerStack` using ``pinch="passthrough"`` produces these in
-        quantity (13,797 on the model in question).
+        The three-valued idomain rule itself is
+        :func:`myflopy.modflow.mf6.grid.geometry.domain_active`.
         """
 
-        domain = self.context.domain
-        if domain is None:
-            return True
-        values = np.asarray(domain)
-        if values.ndim == 1:
-            return bool(values[cell] > 0)
-        if layer >= values.shape[0]:
-            raise ValueError(
-                f"GeoPackage layer {layer} is outside domain with {values.shape[0]} layers."
-            )
-        return bool(values[layer, cell] > 0)
+        return domain_active(self.context.domain, layer, cell)
 
     def _layer(self, row) -> int:
         """The zero-based grid layer for a feature (from ``layer_field`` minus ``layer_base``)."""
@@ -447,97 +425,28 @@ class GeoPackageSource:
     ) -> list[tuple[int, float]]:
         """Active cells a feature covers, each with its fraction of the whole feature.
 
-        The fraction is by length for a line, by area for a polygon, and 1.0 for a
-        point or anything with no extent -- there is nothing to divide. A tie goes
-        ONE way (decided 2026-09-11): a stretch of line lying on a face is in both
-        cells' pieces, so it is split evenly between them and a line's shares sum to
-        one rather than two; a point on a face or vertex goes whole to the
-        lowest-numbered active cell it touches, not whole to each. Fractions are
-        of the WHOLE feature, so they sum to less than one where part of it lies
-        outside the active grid; :class:`Spread` decides what that means.
-
-        The FEATURE picks the measure, never the piece. A polygon meets each
-        face-adjacent cell along the edge they share -- a line, with no area -- and
-        measuring that piece by its length admitted every neighbour of a polygon
-        drawn on cell faces, at the full value for any field not wrapped in
-        :class:`Spread`: a K zone that was exactly one cell painted five. Pieces
-        narrower than ``_SLIVER_WIDTH`` and under ``_SLIVER_SHARE`` of their cell are
-        dropped for the same reason, unless every piece of the feature is one.
-
-        Candidates come from the spatial index rather than an elementwise
-        ``intersects`` over every cell, which was O(features x ncpl).
+        The measure, the tie rule and the sliver rule are
+        :func:`myflopy.modflow.mf6.grid.geometry.cell_shares`, so that every
+        caller asking which cells a geometry reaches answers alike. What belongs
+        to this source is WHICH cells are eligible -- one layer's active cells,
+        and only the grid edge under ``edges_only`` -- and both are resolved once
+        per feature here rather than per candidate.
         """
 
         if geometry is None or geometry.is_empty:
+            # Before the edge set, which walks every cell and reads the grid's own
+            # idomain_path if it has one: a row with no geometry reaches nothing.
             return []
-        polys = self.grid.gdf_vorPolys
         edge_cells = set(self.grid.get_grid_edge()) if edges_only else None
-        measure = _extent(geometry)
-        if measure <= 0:
-            chosen = set()
-            for part in shapely.get_parts(geometry):
-                hits = self._usable_cells(
-                    polys.sindex.query(part, predicate="intersects"),
-                    layer=layer, edge_cells=edge_cells,
-                )
-                if hits:
-                    chosen.add(hits[0])
-            return [(cell, 1.0) for cell in sorted(chosen)]
+        return cell_shares(
+            self.grid.gdf_vorPolys,
+            geometry,
+            usable=lambda cells: self._usable_cells(cells, layer=layer, edge_cells=edge_cells),
+        )
 
-        # A GeometryCollection is measured by its highest dimension: the lines in a
-        # polygon collection add no area. In practice they are what gpd.clip and
-        # gpd.overlay leave (keep_geom_type=False) where a zone ran along the clip
-        # edge, so refusing the collection refused their default output.
-        areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
-        # A feature that is itself this thin is what was drawn, not a sliver of it.
-        thin_feature = areal and _mean_width(geometry) <= _SLIVER_WIDTH
-        sizes: dict[int, float] = {}
-        slivers: set[int] = set()
-        on_faces: dict[int, Any] = {}
-        for cell in self._usable_cells(
-            polys.sindex.query(geometry, predicate="intersects"),
-            layer=layer, edge_cells=edge_cells,
-        ):
-            polygon = polys.geometry.loc[cell]
-            piece = geometry.intersection(polygon)
-            if areal:
-                size = float(piece.area)
-                if size <= 0:
-                    continue
-                if (
-                    not thin_feature
-                    and _mean_width(piece) < _SLIVER_WIDTH
-                    and size < _SLIVER_SHARE * float(polygon.area)
-                ):
-                    slivers.add(cell)
-            else:
-                size = float(piece.length)
-                if size <= 0:
-                    continue
-                along = piece.intersection(polygon.boundary)
-                if along.length > 0:
-                    on_faces[cell] = along
-            sizes[cell] = size
-        # Slivers go -- unless they are all there is, when they ARE the feature: a
-        # strip 0.015 wide centred on a face is two 0.0075 halves, and lost both.
-        if len(slivers) < len(sizes):
-            for cell in slivers:
-                del sizes[cell]
-        # Pairwise, but only over cells whose piece runs along their own boundary:
-        # usually none, so a line off every face pays nothing for this.
-        faced = sorted(on_faces)
-        for i, first in enumerate(faced):
-            for second in faced[i + 1:]:
-                shared = float(on_faces[first].intersection(on_faces[second]).length)
-                if shared > 0:
-                    sizes[first] -= shared / 2.0
-                    sizes[second] -= shared / 2.0
-        return [(cell, size / measure) for cell, size in sizes.items() if size > 0]
+    def _usable_cells(self, cells, *, layer: int, edge_cells: set[int] | None) -> list[int]:
+        """The active cells among ``cells``, lowest-numbered first."""
 
-    def _usable_cells(self, hits, *, layer: int, edge_cells: set[int] | None) -> list[int]:
-        """The active cells among spatial-index ``hits``, lowest-numbered first."""
-
-        cells = (int(cell) for cell in self.grid.gdf_vorPolys.index[hits])
         return sorted(
             cell
             for cell in cells
@@ -586,7 +495,8 @@ class GeoPackageSource:
         termination; ``k_array`` came back as its defaults. So that raises, with
         both extents and both CRSs, which is what the mismatch is found by. A
         PARTIAL miss can be deliberate (one layer serving several grids), so it
-        warns rather than refusing, but by name.
+        warns rather than refusing, but by name. Why each feature missed is
+        worded by :func:`myflopy.modflow.mf6.grid.geometry.miss_reason`.
         """
 
         source = f"'{self.path.name}'" + (f" (layer {self.layer!r})" if self.layer else "")
@@ -597,22 +507,11 @@ class GeoPackageSource:
             return
         polys = self.grid.gdf_vorPolys
         target = "active grid-edge cell" if edges_only else "active cell"
-        reasons = []
-        for index, row in missed:
-            geometry = row.geometry
-            no_geometry = geometry is None or geometry.is_empty
-            hits = [] if no_geometry else polys.index[polys.sindex.query(geometry, predicate="intersects")]
-            if no_geometry:
-                why = "no geometry"
-            elif len(hits) == 0:
-                why = "outside the grid"
-            elif geometry.area > 0 and all(
-                geometry.intersection(polys.geometry.loc[cell]).area <= 0 for cell in hits
-            ):
-                why = "only borders cells -- a polygon must overlap a cell to reach it"
-            else:
-                why = f"on no {target}"
-            reasons.append(f"{self._feature_label(index, row)} ({why})")
+        reasons = [
+            f"{self._feature_label(index, row)} "
+            f"({miss_reason(polys, row.geometry, target=target)})"
+            for index, row in missed
+        ]
         listing = ", ".join(reasons[:10])
         if len(reasons) > 10:
             listing += f", and {len(reasons) - 10} more"

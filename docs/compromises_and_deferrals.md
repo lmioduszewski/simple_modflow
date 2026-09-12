@@ -7310,3 +7310,72 @@ same day, which is the useful part of the result.
         mapping, `lake_top` treated as a bed, a Series missing a lake cell not
         raised, a Surface accepted for a per-lake input, and a bare cell Series
         refused.
+
+232. **The cell-coverage rules could only be reached through a GeoPackage (2026-09-11).**
+      Which cells a geometry reaches -- a polygon covers by AREA, a line lying on
+      a face splits evenly between its two cells, a point goes to the
+      lowest-numbered usable cell, a piece under `_SLIVER_WIDTH` is noise
+      (ledgers 210-212) -- was decided inside `GeoPackageSource._cell_shares`,
+      and `geopackage.py` is import layer 3. The three fixes queued behind this
+      one -- head targets, the shared cell selector, grid-edge cells -- touch
+      layer-1 modules that cannot import it, and each of the three reports
+      proposed its own extraction of the same code. Extracted ONCE, first, with
+      no behaviour change.
+      - **`cell_shares(polys, geometry, *, usable=None)`, `domain_active(domain,
+        layer, cell)` and `miss_reason(polys, geometry, *, target=)` now live in
+        `grid/geometry.py`**, beside `_SLIVER_WIDTH`, `_SLIVER_SHARE` and
+        `_mean_width`, which they already used. That module is layer 1, so
+        `observations`, `boundaries` and the grid selectors can reach it;
+        `geopackage.py` already imported it for the constants.
+      - **Eligibility stays the CALLER's, through `usable`.** It is handed the
+        cells a candidate touches and returns the ones that count, so a caller
+        needing an edge set or one layer's activity computes it once and closes
+        over it instead of deciding per candidate -- which is what
+        `GeoPackageSource` does with `edges_only` and the idomain.
+      - **The helper sorts what it is given, whoever chose it.** The spatial index
+        answers in tree order (all nine interior vertices of the scrambled test
+        grid) and a tie goes to the lowest-numbered cell, so with three callers
+        coming the tie rule cannot rest on each of them remembering to sort a set
+        before handing it back. No current caller is affected --
+        `GeoPackageSource._usable_cells` already sorted -- and the returned pairs
+        are now in cell order for every caller.
+      - **The edge set is resolved only once a feature reaches something.**
+        `get_grid_edge()` walks every cell and reads the grid's own
+        `idomain_path` if it has one, so a row with NO geometry must not pay for
+        it, and on a grid with a broken `idomain_path` would have begun raising
+        where it used to return nothing. Extracting had lifted that call above
+        the empty-geometry check; it sits below it again.
+      - **No separate point helper**, as one report proposed: `cell_shares` on a
+        point already returns `[(lowest usable cell, 1.0)]`.
+      - **Nothing changed in behaviour, including the messages.** `domain_active`
+        still raises `GeoPackage layer N is outside domain with M layers`, worded
+        for the only caller there is; whichever fix adds the second should
+        generalize the wording rather than leave two. `_extent` moved with them
+        and is re-exported from `myflopy.geopackage`, where
+        `tests/test_geopackage_spread.py` imports it.
+      - **Size**: `geopackage.py` 958 -> 857 lines, `geometry.py` 504 -> 672. The
+        difference is docstring: the rule now has to explain itself to callers
+        with no GeoPackage in sight.
+      - **What still keeps its own copy: `LAKBuilder._active`** (`lakes.py`),
+        which counts a 1-D idomain as active everywhere where this one reads it.
+        Making the two agree is a behaviour change and is not in this entry.
+        Neither are the other sites the sweep measured against these rules
+        (`observations/drn.py` seepage zones, `pest/zones.py`,
+        `surfaces._cells_in_zone`, `PRTReleasePoints.from_points`,
+        `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
+        212's open line case: the line branch still has no sliver floor, so a
+        line overshooting a face by 1e-6 reaches the far cell here while SFR
+        drops it.
+      - 35 tests in `tests/test_cell_coverage_rules.py`, which pin the single
+        copy by identity and by patching it, and exercise each rule directly on a
+        4x4 grid. Twenty-three mutants, all killed: each delegation bypassed
+        (`cell_shares`, `domain_active`, `miss_reason`), the candidate sort
+        dropped and the sort narrowed to the default, slivers never detected and
+        never dropped, the sliver SHARE guard dropped, a feature that is entirely
+        slivers emptied, the even split on a face removed, a polygon measured by
+        its pieces' length again, `_extent` preferring length, a point taking
+        every cell it touches and a point taking the highest, `> 0` as `!= 0` in
+        both idomain branches, the layer bound dropped, the eligibility closure
+        not passed, the edge set resolved eagerly, a miss wording flattened,
+        `miss_reason` ignoring its target, and two import probes.
+      - Found by the 2026-09-11 sibling investigation.

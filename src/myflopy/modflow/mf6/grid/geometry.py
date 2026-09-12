@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import numpy as np
@@ -392,6 +393,173 @@ def _mean_width(geometry) -> float:
         geometry = shp.union_all([part for part in shp.get_parts(geometry) if part.area > 0])
     perimeter = float(geometry.length)
     return 2.0 * float(geometry.area) / perimeter if perimeter > 0 else 0.0
+
+
+def _extent(geometry) -> float:
+    """A geometry's own measure: area for a polygon, length for a line, 0 for a point."""
+
+    if geometry is None or geometry.is_empty:
+        return 0.0
+    area = float(getattr(geometry, "area", 0.0) or 0.0)
+    return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
+
+
+def domain_active(domain, layer: int, cell: int) -> bool:
+    """Whether ``(layer, cell)`` can carry a boundary, per an MF6 idomain.
+
+    MF6 idomain is three-valued, not a flag: ``> 0`` active, ``0`` inactive, and
+    ``< 0`` **vertical passthrough** -- the cell is removed and flow passes
+    straight through it. A passthrough cell holds no boundary; MF6 refuses one
+    with ``Cell is outside active grid domain``.
+
+    So the test is ``> 0``, not truthiness. ``bool(-1)`` is ``True``, which put
+    347 DRN records into passthrough cells on a real model and failed the run at
+    read time -- a ``LayerStack`` using ``pinch="passthrough"`` produces these in
+    quantity (13,797 on the model in question).
+
+    A ``domain`` of ``None`` is a wholly active grid, and a one-dimensional one is
+    the same activity in every layer. A layer beyond a ``(nlay, ncpl)`` domain
+    raises rather than resolving against the last one.
+    """
+
+    if domain is None:
+        return True
+    values = np.asarray(domain)
+    if values.ndim == 1:
+        return bool(values[cell] > 0)
+    if layer >= values.shape[0]:
+        # Worded for the GeoPackage caller because it is still the only one; the
+        # fix that adds the second should generalize it rather than leave two.
+        raise ValueError(
+            f"GeoPackage layer {layer} is outside domain with {values.shape[0]} layers."
+        )
+    return bool(values[layer, cell] > 0)
+
+
+def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
+    """The cells a geometry reaches, each with its fraction of the whole feature.
+
+    ``polys`` is the grid's cell frame (``vor.gdf_vorPolys``), indexed by cell.
+    ``usable(cells)`` is handed the cells a candidate touches and returns the
+    eligible ones: it is how a caller keeps one layer's active cells, or only the
+    grid edge, computing that set ONCE and closing over it rather than deciding
+    per candidate. The default keeps every candidate. Either way the survivors are
+    SORTED before they are measured and the pairs come back in cell order, which
+    is load-bearing: the spatial index answers in tree order and a tie goes to the
+    lowest-numbered cell, so a caller handing its cells back as a set must not be
+    able to cost it that.
+
+    The fraction is by length for a line, by area for a polygon, and 1.0 for a
+    point or anything with no extent -- there is nothing to divide. A tie goes
+    ONE way (decided 2026-09-11): a stretch of line lying on a face is in both
+    cells' pieces, so it is split evenly between them and a line's shares sum to
+    one rather than two; a point on a face or vertex goes whole to the first
+    usable cell it touches, not whole to each. Fractions are of the WHOLE
+    feature, so they sum to less than one where part of it lies outside the
+    usable cells; ``myflopy.geopackage.Spread`` decides what that means.
+
+    The FEATURE picks the measure, never the piece. A polygon meets each
+    face-adjacent cell along the edge they share -- a line, with no area -- and
+    measuring that piece by its length admitted every neighbour of a polygon
+    drawn on cell faces, at the full value for any field not wrapped in
+    ``Spread``: a K zone that was exactly one cell painted five. Pieces
+    narrower than ``_SLIVER_WIDTH`` and under ``_SLIVER_SHARE`` of their cell are
+    dropped for the same reason, unless every piece of the feature is one.
+
+    Candidates come from the spatial index rather than an elementwise
+    ``intersects`` over every cell, which was O(features x ncpl).
+    """
+
+    if geometry is None or geometry.is_empty:
+        return []
+    measure = _extent(geometry)
+    if measure <= 0:
+        chosen = set()
+        for part in shp.get_parts(geometry):
+            hits = _usable_candidates(polys, part, usable)
+            if hits:
+                chosen.add(hits[0])
+        return [(cell, 1.0) for cell in sorted(chosen)]
+
+    # A GeometryCollection is measured by its highest dimension: the lines in a
+    # polygon collection add no area. In practice they are what gpd.clip and
+    # gpd.overlay leave (keep_geom_type=False) where a zone ran along the clip
+    # edge, so refusing the collection refused their default output.
+    areal = float(getattr(geometry, "area", 0.0) or 0.0) > 0
+    # A feature that is itself this thin is what was drawn, not a sliver of it.
+    thin_feature = areal and _mean_width(geometry) <= _SLIVER_WIDTH
+    sizes: dict[int, float] = {}
+    slivers: set[int] = set()
+    on_faces: dict[int, Any] = {}
+    for cell in _usable_candidates(polys, geometry, usable):
+        polygon = polys.geometry.loc[cell]
+        piece = geometry.intersection(polygon)
+        if areal:
+            size = float(piece.area)
+            if size <= 0:
+                continue
+            if (
+                not thin_feature
+                and _mean_width(piece) < _SLIVER_WIDTH
+                and size < _SLIVER_SHARE * float(polygon.area)
+            ):
+                slivers.add(cell)
+        else:
+            size = float(piece.length)
+            if size <= 0:
+                continue
+            along = piece.intersection(polygon.boundary)
+            if along.length > 0:
+                on_faces[cell] = along
+        sizes[cell] = size
+    # Slivers go -- unless they are all there is, when they ARE the feature: a
+    # strip 0.015 wide centred on a face is two 0.0075 halves, and lost both.
+    if len(slivers) < len(sizes):
+        for cell in slivers:
+            del sizes[cell]
+    # Pairwise, but only over cells whose piece runs along their own boundary:
+    # usually none, so a line off every face pays nothing for this.
+    faced = sorted(on_faces)
+    for i, first in enumerate(faced):
+        for second in faced[i + 1:]:
+            shared = float(on_faces[first].intersection(on_faces[second]).length)
+            if shared > 0:
+                sizes[first] -= shared / 2.0
+                sizes[second] -= shared / 2.0
+    return [(cell, size / measure) for cell, size in sizes.items() if size > 0]
+
+
+def _usable_candidates(polys, geometry, usable) -> list[int]:
+    """The cells the spatial index offers for a geometry, as ``usable`` allows them.
+
+    Sorted whoever chose them, so that the tie rule rests on this function rather
+    than on three callers each remembering it.
+    """
+
+    hits = polys.sindex.query(geometry, predicate="intersects")
+    cells = [int(cell) for cell in polys.index[hits]]
+    return sorted(cells if usable is None else usable(cells))
+
+
+def miss_reason(polys, geometry, *, target: str = "active cell") -> str:
+    """Why a feature reached no usable cell, worded once for every caller.
+
+    ``target`` names what was being looked for, so a search restricted to the
+    grid edge says ``"on no active grid-edge cell"``. ``"only borders cells"`` is
+    its own reason because the area rule created it (ledger 210): a polygon drawn
+    along the outer faces touches the edge cells and covers none of them.
+    """
+
+    if geometry is None or geometry.is_empty:
+        return "no geometry"
+    hits = polys.index[polys.sindex.query(geometry, predicate="intersects")]
+    if len(hits) == 0:
+        return "outside the grid"
+    if geometry.area > 0 and all(
+        geometry.intersection(polys.geometry.loc[cell]).area <= 0 for cell in hits
+    ):
+        return "only borders cells -- a polygon must overlap a cell to reach it"
+    return f"on no {target}"
 
 
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
