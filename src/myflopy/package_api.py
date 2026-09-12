@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 import flopy
 import geopandas as gpd
 import numpy as np
+from shapely.geometry import Point, Polygon
 
 from myflopy._logging import get_logger
 from myflopy.advanced import (
@@ -47,6 +48,7 @@ from myflopy.builders import (
 )
 from myflopy.geopackage import GeoPackageSource, RowValue
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
+from myflopy.modflow.mf6.grid.geometry import cell_shares
 from myflopy.modflow.mf6.lakes import (
     LAKBuilder,
     LakeConnection,
@@ -3894,7 +3896,8 @@ class _SFRPackage:
             options=options,
         )
         # Stash a serializable reach index so movers can be wired semantically
-        # (by stream outlet/head or by nearest reach to a coordinate) -- see
+        # (by stream outlet/head, or by the reach in the cell holding a
+        # coordinate) -- see
         # mf.sfr_connection.
         return builder.build().with_metadata(sfr_index=_sfr_mover_index(builder))
 
@@ -4756,19 +4759,121 @@ class _MVRPackage:
 
 
 def _sfr_mover_index(builder: SFRBuilder) -> dict[str, Any]:
-    """Serializable reach lookups for wiring movers semantically (see ``sfr_connection``)."""
+    """Serializable reach lookups for wiring movers semantically (see ``sfr_connection``).
+
+    ``cells`` is the grid cell each reach occupies, ``cell_rings`` those cells'
+    outlines and ``crs`` the frame they are drawn in -- which is what lets
+    ``sfr_connection(at=(x, y))`` put a point in its CELL by the shared rule
+    instead of comparing distances to reach centroids (ledger 239). Only the cells
+    the stream's reaches occupy are carried: on a 97x97 grid (9,409 cells) with a
+    97-reach stream the whole index is 9,992 bytes of JSON where the grid's own
+    outlines are 897,304 -- deep-copied by every fork and hashed by every
+    ``PackageLibrary.digests()`` -- and every cell that would add is one this
+    stream has no reach in.
+
+    Keys are strings throughout. ``PackageSpec.to_dict`` writes JSON, where an
+    integer key comes back a string, and ledger 179 promotes those back to ``int``
+    only for ``options``/``inputs``, never ``metadata`` -- so an int-keyed lookup
+    worked until the spec had been saved and reloaded.
+    """
 
     reaches = builder.reaches
+    polys = builder.grid.gdf_vorPolys
+    cells = {str(int(row.rno)): int(row.cellid[1]) for row in reaches.itertuples()}
+    rings = {
+        str(cell): [[float(x), float(y)] for x, y in polys.geometry.loc[cell].exterior.coords]
+        for cell in sorted(set(cells.values()))
+    }
     return {
         "package": builder.name,
         "outlets": {sid: int(builder.outlet_reach(sid)) for sid in builder.stream_ids},
         "heads": {sid: int(builder.stream_reaches[sid][0]) for sid in builder.stream_ids},
         "by_stream": {sid: [int(r) for r in builder.stream_reaches[sid]] for sid in builder.stream_ids},
-        "centroids": {
-            int(row.rno): [float(row.geometry.centroid.x), float(row.geometry.centroid.y)]
-            for row in reaches.itertuples()
-        },
+        "cells": cells,
+        "cell_rings": rings,
+        "bounds": [float(value) for value in polys.total_bounds],
+        "crs": None if polys.crs is None else str(polys.crs),
     }
+
+
+def _reach_at_point(index: Mapping[str, Any], stream_id: str, at: Any) -> int:
+    """The reach of ``stream_id`` whose grid CELL holds the point ``at``.
+
+    An ``(x, y)`` names a place on the grid, so the grid decides which cell it is
+    in -- :func:`myflopy.modflow.mf6.grid.geometry.cell_shares`, the same rule that
+    puts a head target or a GeoPackage feature in its cell -- and the reach follows
+    from the cell. Comparing the point to each reach piece's CENTROID instead chose
+    a reach the point was not in at all: on a 4x4 grid of 25 ft cells with reaches
+    in cells 4-6, a point 3 ft inside cell 5's own reach (9.5 ft from that reach's
+    centroid) picked cell 6's, whose 10 ft piece was centred 8 ft nearer
+    (ledger 239).
+
+    A point on the face between two of this stream's reaches lies in BOTH cells.
+    Ledger 215 gives the water at a reach boundary to the DOWNSTREAM reach -- it
+    enters there at that reach's upstream end, where the upstream reach would carry
+    it along a stretch above the confluence -- so the eligible set is narrowed to
+    that one cell before ``cell_shares``' general "lowest-numbered cell wins a tie"
+    can hand it upstream. ``SFRBuilder._reach_at`` states the same rule and cannot
+    be called here: it needs the reach GEOMETRY and the ``sequence`` column, and a
+    serialized index carries neither. Position in ``by_stream`` stands in for
+    ``sequence`` and is equal to it, because ``SFRBuilder.reaches`` sorts a
+    stream's pieces by projection along its line before numbering them.
+    """
+
+    if "cell_rings" not in index:
+        raise ValueError(
+            "This SFR reach index predates locating a point by cell; rebuild the spec "
+            "with mf.sfr(...) to use at=(x, y)."
+        )
+    reaches = index["by_stream"].get(stream_id)
+    if not reaches:
+        raise KeyError(f"No stream {stream_id!r}; have {sorted(index['by_stream'])}.")
+    x, y = (float(value) for value in at)
+    point = Point(x, y)
+    # ``by_stream`` runs upstream -> downstream, so a later reach overwrites an
+    # earlier one: where two reaches of one stream share a cell the downstream one
+    # takes it, which is ledger 215 again.
+    order = {int(rno): position for position, rno in enumerate(reaches)}
+    cell_reach = {int(index["cells"][str(int(rno))]): int(rno) for rno in reaches}
+
+    def usable(candidates: list[int]) -> list[int]:
+        """Which of these cells this stream's water may enter -- at a shared face, the downstream one."""
+
+        reaching = [cell for cell in candidates if cell in cell_reach]
+        if len(reaching) < 2:
+            return reaching
+        return [max(reaching, key=lambda cell: order[cell_reach[cell]])]
+
+    polys = gpd.GeoDataFrame(
+        geometry=[Polygon(ring) for ring in index["cell_rings"].values()],
+        index=[int(cell) for cell in index["cell_rings"]],
+    )
+    hits = cell_shares(polys, point, usable=usable)
+    if not hits:
+        minx, miny, maxx, maxy = index["bounds"]
+        frame = index.get("crs")
+        where = f" in {frame}" if frame else ""
+        if not (minx <= x <= maxx and miny <= y <= maxy):
+            raise ValueError(
+                f"No reach of stream {stream_id!r} at ({x}, {y}): that point is outside "
+                f"the grid, which spans ({minx}, {miny}) to ({maxx}, {maxy}){where} -- "
+                f"at= is a coordinate in the grid's own CRS."
+            )
+        listed = sorted(cell_reach)
+        shown = ", ".join(str(cell) for cell in listed[:10])
+        if len(listed) > 10:
+            shown += f", and {len(listed) - 10} more"
+        # Name the nearest reach cell: it is usually the reach the caller meant,
+        # and it is what the old nearest-centroid rule handed back in silence.
+        nearest = min(listed, key=lambda cell: polys.geometry.loc[cell].distance(point))
+        centre = polys.geometry.loc[nearest].centroid
+        raise ValueError(
+            f"No reach of stream {stream_id!r} at ({x}, {y}): the point is on no cell "
+            f"carrying one of its reaches, which are in cells {shown}. The nearest is "
+            f"cell {nearest}, holding reach {cell_reach[nearest]}, centred at "
+            f"({centre.x:g}, {centre.y:g})."
+        )
+    return cell_reach[hits[0][0]]
 
 
 def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream") -> MoverConnection:
@@ -4788,7 +4893,11 @@ def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream"
 
         - ``"downstream"`` / ``"outlet"`` (default) -- the stream's final reach;
         - ``"upstream"`` / ``"head"`` -- the stream's first reach;
-        - an ``(x, y)`` coordinate -- the reach of that stream nearest the point.
+        - an ``(x, y)`` coordinate -- the reach of that stream in the grid CELL
+          that holds the point, in the grid's own CRS. A point on the boundary
+          between two of its reaches goes to the DOWNSTREAM one (ledger 215); a
+          point on no cell this stream has a reach in raises, rather than
+          resolving to whichever reach happens to be nearest.
 
     Returns
     -------
@@ -4802,7 +4911,7 @@ def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream"
     >>> mf.mvr(nper=1, moves=(
     ...     mf.Move(mf.sfr_connection(sfr, "main_stem"),            # the stream outlet
     ...             mf.lak_connection(lak, "valley_lake")),))
-    >>> mf.sfr_connection(sfr, "main_stem", at=(1500.0, 800.0))     # nearest reach to a point
+    >>> mf.sfr_connection(sfr, "main_stem", at=(1500.0, 800.0))     # the reach whose cell holds it
     """
 
     index = sfr_spec.metadata.get("sfr_index")
@@ -4820,12 +4929,7 @@ def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream"
             raise KeyError(f"No stream {sid!r}; have {sorted(index['outlets'])}.")
         rno = index[key][sid]
     else:
-        x, y = at
-        centroids = index["centroids"]
-        candidates = index["by_stream"].get(sid)
-        if not candidates:
-            raise KeyError(f"No stream {sid!r}; have {sorted(index['by_stream'])}.")
-        rno = min(candidates, key=lambda r: (centroids[r][0] - x) ** 2 + (centroids[r][1] - y) ** 2)
+        rno = _reach_at_point(index, sid, at)
     return MoverConnection(index["package"], int(rno))
 
 

@@ -143,7 +143,7 @@ Throughout, two example models recur so the code stays concrete:
 - 10.2 `mf.sfr` — streams from a centerline: reaches, automatic connectivity, `StreamConnection`/`StreamDiversion`, inflow, unit conversions
 - 10.3 `mf.lak` — lakes from polygons: stage/bottom/leakance, `LakeOutlet`, `LakeTable`/`LakeTableBuilder` bathymetry, connection modes
 - 10.4 `mf.mvr` — the water mover: `mf.Move` + `MoverConnection`
-- 10.5 **Semantic movers** — `mf.sfr_connection(sfr, "main_stem")` / `mf.lak_connection(lak, "valley_lake")` instead of raw indices; coordinate-based endpoints
+- 10.5 **Semantic movers** — `mf.sfr_connection(sfr, "main_stem")` / `mf.lak_connection(lak, "valley_lake")` instead of raw indices; coordinate-based endpoints resolve through the cell holding the point
 - 10.6 MVR rules: moved packages must be declared and ordered before the mover (validation)
 - 10.7 Surface-water validation: `validate_surface_water_configuration`
 

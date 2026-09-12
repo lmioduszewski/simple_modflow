@@ -630,12 +630,20 @@ def test_semantic_mover_connections_resolve_reaches_and_lakes():
             "package": "sfr",
             "outlets": {"main": 7}, "heads": {"main": 2},
             "by_stream": {"main": [2, 3, 7]},
-            "centroids": {2: [0.0, 0.0], 3: [5.0, 0.0], 7: [10.0, 0.0]},
+            # Three 5 ft cells in a row, one reach in each. No "crs": an index
+            # without one still resolves, it just cannot name the frame on a miss.
+            "cells": {"2": 0, "3": 1, "7": 2},
+            "cell_rings": {
+                "0": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]],
+                "1": [[5.0, 0.0], [10.0, 0.0], [10.0, 5.0], [5.0, 5.0]],
+                "2": [[10.0, 0.0], [15.0, 0.0], [15.0, 5.0], [10.0, 5.0]],
+            },
+            "bounds": [0.0, 0.0, 15.0, 5.0],
         }},
     )
     assert sfr_connection(sfr_spec, "main").index == 7              # outlet (default)
     assert sfr_connection(sfr_spec, "main", at="upstream").index == 2
-    assert sfr_connection(sfr_spec, "main", at=(4.0, 0.0)).index == 3   # nearest reach
+    assert sfr_connection(sfr_spec, "main", at=(7.0, 2.5)).index == 3   # the reach in that cell
     assert sfr_connection(sfr_spec, "main").package == "sfr"
 
     lak_spec = PackageSpec(

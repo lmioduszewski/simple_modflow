@@ -178,7 +178,7 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
             lak,
             # MVR: move part of the main stem's OUTFLOW (its final reach, resolved
             # from geometry) into the lake -- no hard-coded reach numbers. Pass
-            # at=(x, y) instead to target the reach nearest a coordinate.
+            # at=(x, y) instead to target the reach in the cell holding a coordinate.
             mf.mvr(nper=nper, moves=(mf.Move(mf.sfr_connection(sfr, "main_stem"),
                                              mf.lak_connection(lak, "valley_lake"),
                                              value=0.5),)),

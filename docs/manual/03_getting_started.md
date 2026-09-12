@@ -283,7 +283,9 @@ flow = mf.gwf(
 > endpoints — `mf.sfr_connection(sfr, "main_stem")` and
 > `mf.lak_connection(lak, "valley_lake")` — resolve a stream's outlet reach and a
 > lake's number from names/geometry, so you never hand-code indices. Pass
-> `at=(x, y)` to target the reach nearest a coordinate.
+> `at=(x, y)` to target the reach in the grid cell that holds a coordinate — a
+> point on the boundary between two reaches goes to the downstream one, and a
+> point on no cell the stream has a reach in raises.
 
 ### Step 8 — simulation and run
 

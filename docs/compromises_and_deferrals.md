@@ -7794,3 +7794,102 @@ same day, which is the useful part of the result.
         misses per row, the set counted by row). Eight of these are an
         adversarial review's own survivors against the first version of the tests.
       - Found by the 2026-09-11 sibling investigation.
+
+239. **`sfr_connection(at=(x, y))` answered with the nearest reach CENTROID (2026-09-12).**
+      The coordinate form of the semantic mover endpoint took the minimum of
+      `(centroid_x - x)^2 + (centroid_y - y)^2` over the stream's reach pieces, so
+      it answered with whichever piece happened to be centred nearest rather than
+      the reach at the point. Measured on a 4x4 grid of 25 ft cells with a stream
+      along y = 37.5 (reaches 0-3 in cells 4-7):
+      - `at=(50, 37.5)`, the boundary between the reaches in cells 5 and 6,
+        answered reach 1 -- the UPSTREAM reach, the opposite of ledger 215. Both
+        centroids are 12.5 ft away, and `min` kept the first it saw. The 4|5 face
+        was the same: reach 0 where 1 is right.
+      - `at=(47, 37.5)`, 3 ft inside cell 5's own reach (9.5 ft from that reach's
+        centroid), answered reach 2. Cell 6's reach is 10 ft long and centred at
+        x = 55, 8 ft from the point, where cell 5's 25 ft reach is centred at 37.5.
+        Not a tie -- simply the wrong reach, and the point is not in that cell at
+        all.
+      - `at=(37.5, 12)`, a whole row of cells below the stream, answered reach 1,
+        and `at=(500, 500)`, off a 100x100 ft grid entirely, answered the outlet.
+        Both silently.
+      - **The grid decides which cell, and the reach follows from the cell**:
+        `cell_shares` (ledger 232), the same rule that puts a head target or a
+        GeoPackage feature in its cell. Reach centroids are gone from the index.
+      - **Ledger 215 is restated here, and that is not free.**
+        `SFRBuilder._reach_at` states the same rule and cannot be called: it needs
+        the reach GEOMETRY and the `sequence` column, and a serialized index
+        carries neither. `_reach_at_point` therefore orders by POSITION in
+        `by_stream`, which is equal to `sequence` because `SFRBuilder.reaches`
+        sorts a stream's pieces by projection along its line before numbering them
+        -- an equivalence nothing pins today, and the thing to check if either
+        side is ever reordered. The narrowing itself goes through `cell_shares`'
+        `usable` hook: eligibility is "cells carrying a reach of THIS stream", and
+        where the point sits on the face between two of them the set is cut to the
+        DOWNSTREAM one, because the helper's general lowest-numbered-cell tie would
+        otherwise hand the water upstream. Where two reaches of one stream share a
+        cell the downstream one takes it for the same reason -- `reaches` emits one
+        reach per (stream, cell) today, so that arm is pinned with a hand-built
+        index rather than a grid.
+      - **"Downstream" means down the STREAM, not up the cell numbers.** Every
+        left-to-right fixture makes the two agree, so a reversed stream
+        (`LineString([(100, 37.5), (0, 37.5)])`, reaches 0-3 in cells 7-4) is what
+        pins the rule: there `at=(50, 37.5)` is reach 2 and `at=(25, 37.5)` reach 3,
+        where "largest cell id" answers 1 and 2.
+      - **A point on the face between a reach cell and a cell without one takes
+        the reach cell**, which is what `usable` means and the shape
+        `observations/heads.py` already has for inactive cells.
+      - **A miss raises.** Outside the grid names the point, the grid's extent and
+        the grid's CRS -- ledger 211's shape, and a bare `(x, y)` in the wrong
+        frame is the commonest way to land there. Inside the grid but on no cell
+        carrying a reach names the stream's reach cells AND the nearest of them
+        with its centre, which is usually the reach the caller meant and is what
+        the old rule handed back in silence. `miss_reason` is deliberately not
+        used: it words a miss against the GRID, and would say "outside the grid"
+        for a point that is inside it but off the stream.
+      - **The index carries the reach cells' outlines, not the grid's.** Measured
+        on a 97x97 grid (9,409 cells) with a 97-reach stream: 9,992 bytes of JSON
+        for the whole index against 897,304 for the grid's own outlines -- which
+        every fork deep-copies and every `PackageLibrary.digests()` hashes -- and
+        every cell it would add is one the stream has no reach in. Building the
+        index costs 4 ms once the reach table exists, which `mf.sfr` has already
+        built by then (15 ms from cold, 11 of it the reach table itself); a lookup
+        costs ~2 ms.
+      - **Its keys are strings now, and that fixed a second live bug.**
+        `PackageSpec.to_dict` writes JSON, where an integer key comes back a
+        string, and ledger 179 deliberately promotes those back to `int` only for
+        `options`/`inputs`, never for `metadata`. So the int-keyed `centroids`
+        lookup raised `KeyError: 0` on ANY saved-and-reloaded spec -- through
+        `to_dict`/`from_dict` as much as through YAML. The round trip is pinned
+        through the real seam, not a bare `json.dumps`.
+      - An index written before this change still answers `"downstream"` /
+        `"upstream"`, and says what to rebuild for `at=(x, y)`.
+      - **Two tracked sentences taught the old rule and are corrected**: the
+        comment above `with_metadata(sfr_index=...)` in `package_api.py` and line
+        181 of `examples/mf6/package_first_full_stack.py`. The example is patched
+        only where `examples/` exists, since the tree this draft was proven on does
+        not carry it.
+      - **NOT done.** `SFRBuilder.connection(stream_id, Point(...))` still resolves
+        by distance to the reach GEOMETRY with the ledger-215 tie. Measured on the
+        same fixture, the two public routes now AGREE wherever the point is on the
+        grid -- `Point(47, 37.5)` -> 1, the 5|6 boundary -> 2, a point on the 1|5
+        face -> 1 -- so the centroid half of the defect is genuinely absent there.
+        The SILENT-MISS half is not: `sfr.connection("s0", Point(37.5, 12))` still
+        answers reach 1 and `Point(500, 500)` still answers reach 3. It is left
+        alone because the same `_reach_at` serves the network's own resolved ends,
+        projections and intersections, where the point is on the line by
+        construction, so making it refuse an off-stream point is a change to the
+        network builder rather than to this endpoint. `at=` still takes an
+        `(x, y)` pair only, not a shapely `Point`. A cell polygon with a hole would
+        lose it to `.exterior`; no Voronoi/DISV grid builds one.
+      - Seventeen mutants and an import probe, all killed: no downstream
+        narrowing, the upstream reach at a boundary, a miss falling back to the
+        outlet, off-grid not told from off-stream, a shared cell going upstream,
+        the whole grid in the index, integer keys, an old index undetected, any
+        stream's reach cell being eligible, downstream-most read as
+        highest-numbered cell, coordinates truncated to whole units, the off-grid
+        test excluding the grid's own edge, cell ids paired with the wrong rings,
+        the layer stored instead of the cell, `cell_shares` replaced by a bespoke
+        `contains` scan, the nearest reach cell named as the farthest, and the CRS
+        dropped from the miss message.
+      - Found by the 2026-09-11 sibling investigation.
