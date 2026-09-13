@@ -309,6 +309,54 @@ _SPEC_FACTORIES = {
 }
 
 
+def _finite(value, *, field: RowValue, label: str, source: str):
+    """Return ``value`` if it is a real number, else say which feature is unusable.
+
+    A GeoPackage NULL reads back as ``None``, and neither path this guards used to
+    look: ``k_array`` did ``float(row[value])``, which makes a NaN, and the boundary
+    record kept the ``None``, which numpy casts to NaN when FloPy builds the
+    recarray. Either way a non-finite number reached a written MF6 package under
+    normal termination -- NaN K in NPF, or a NaN head in a CHD record -- and MF6
+    answers a NaN budget while reporting success. The legacy ``KFromVector`` filled
+    a null with the layer default (``fillna``, kflow.py); substituting a number for
+    a value the user did not give is its own guess, so this names the row instead.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, float, np.integer, np.floating)):
+        found = "empty (a GeoPackage NULL)" if value is None else f"{value!r}"
+        raise ValueError(
+            f"GeoPackage {source}: feature {label} has no usable number for "
+            f"{_field_name(field)} -- it is {found}. MF6 would be written a "
+            "non-finite value and report success. Fill the attribute, or drop the "
+            "feature from the layer."
+        )
+    if not np.isfinite(value):
+        raise ValueError(
+            f"GeoPackage {source}: feature {label} has {value} for "
+            f"{_field_name(field)}. MF6 would be written a non-finite value and "
+            "report success. Fix the attribute, or drop the feature from the layer."
+        )
+    return value
+
+
+def _field_name(field: RowValue) -> str:
+    """How to name the value spec that produced a bad number, in an error."""
+
+    if isinstance(field, Spread):
+        return f"'{field.field}' (spread)"
+    if isinstance(field, CellSurfaceOffset):
+        # A surface reference resolves to a number the file did not hold, so name the
+        # columns it DID read -- a null offset is what makes the sum non-finite.
+        columns = [c for c in (field.offset, field.minimum) if isinstance(c, str)]
+        named = f"the {field.reference} surface reference"
+        if columns:
+            named += " (fields " + ", ".join(repr(c) for c in columns) + ")"
+        return named
+    if isinstance(field, (list, tuple)):
+        return "its per-period fields " + ", ".join(repr(str(f)) for f in field)
+    return repr(str(field))
+
+
 def _metadata_value(value: RowValue):
     """Return a manifest-friendly representation of one value specification.
 
@@ -559,21 +607,40 @@ class GeoPackageSource:
             len(missed), total, source, target, listing,
         )
 
-    def _value(self, row, value: RowValue, *, period: int, layer: int, cell: int, share: float = 1.0):
-        """Resolve one value spec for a cell.
+    def _value(
+        self,
+        row,
+        value: RowValue,
+        *,
+        period: int,
+        layer: int,
+        cell: int,
+        share: float = 1.0,
+        label: str = "",
+    ):
+        """Resolve one value spec for a cell, refusing a value MF6 cannot use.
 
         ``share`` is the cell's fraction of the feature and is used only by
         :class:`Spread`; everything else resolves the same value for every cell,
         which is what an elevation or a head should do.
+
+        The result is checked by :func:`_finite`, because a GeoPackage NULL used to
+        travel all the way into the written package as a NaN (ledger 247).
         """
 
         if isinstance(value, CellSurfaceOffset):
-            return value.resolve(self, row, layer=layer, cell=cell)
-        if isinstance(value, Spread):
-            return float(_period_value(row, value.field, period)) * share
-        if isinstance(value, (int, float)):
-            return value
-        return _period_value(row, value, period)
+            resolved = value.resolve(self, row, layer=layer, cell=cell)
+        elif isinstance(value, Spread):
+            raw = _finite(
+                _period_value(row, value.field, period),
+                field=value, label=label, source=f"'{self.path.name}'",
+            )
+            resolved = float(raw) * share
+        elif isinstance(value, (int, float)):
+            resolved = value
+        else:
+            resolved = _period_value(row, value, period)
+        return _finite(resolved, field=value, label=label, source=f"'{self.path.name}'")
 
     def _boundary_data(
         self,
@@ -624,7 +691,10 @@ class GeoPackageSource:
             for period in self._periods(row):
                 for cell, share in shares:
                     values = [
-                        self._value(row, field, period=period, layer=layer, cell=cell, share=share)
+                        self._value(
+                            row, field, period=period, layer=layer, cell=cell,
+                            share=share, label=self._feature_label(index, row),
+                        )
                         for field in fields
                     ]
                     record = [(layer, cell), *values]
@@ -882,8 +952,15 @@ class GeoPackageSource:
             cells = self._cells(row.geometry, layer=layer)
             if not cells:
                 missed.append((index, row))
+                continue
+            painted = _finite(
+                row[value],
+                field=value,
+                label=self._feature_label(index, row),
+                source=f"'{self.path.name}'",
+            )
             for cell in cells:
-                result[layer, cell] = float(row[value])
+                result[layer, cell] = float(painted)
         self._refuse_or_report_misses(missed, empty="the K array would be its defaults everywhere")
         return result
 

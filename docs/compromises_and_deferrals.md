@@ -8716,3 +8716,47 @@ same day, which is the useful part of the result.
       outer ring, the per-layer edge, a flat `(ncpl,)` domain, a `-1` passthrough
       cell as a hole, both precedence directions, one walk per layer, and that a
       layer past the domain still names itself. Seven mutants, all killed.
+
+247. **A GeoPackage NULL became a non-finite number in a written MF6 package, by two routes (2026-09-13).**
+      Found while auditing the legacy builders for deprecation, as the one thing
+      `KFromVector`'s `fillna` did that the modern path did not.
+      - **`GeoPackageSource.k_array`** did `result[layer, cell] = float(row[value])`.
+        A null `k` attribute reads back as `None` or NaN, and `float()` of either is
+        NaN, so the zone painted **NaN into the K array**, which reached `mf.npf` and
+        a written NPF with no non-finite guard anywhere between. Measured on a 4x4
+        grid, one zone with a real K and one with a null: cell 5 = `nan`, where the
+        legacy `KFromVector.to_array` gave 1.0 (its `fillna` per layer, kflow.py).
+      - **Every list BC** -- `_value` returned `_period_value(row, field, period)`
+        raw, so a null stayed `None` all the way into the record. Measured: a GHB
+        with null head and conductance produced `[(0, 0), None, None, 'a']`, and
+        numpy casts that `None` to NaN when FloPy builds the recarray. So a NaN head
+        or conductance is written, and MF6 answers a **NaN budget while reporting
+        Normal termination** -- the same failure mode as the State Plane precision
+        loss in ledger 159, and as hard to attribute.
+      Both are guarded by one function now, `_finite`, at the single point every
+      resolved value passes through, so chd/ghb/drn/riv/wel/rch/evt and `k_array`
+      cannot disagree about it. It refuses a null, a NaN, an infinity, a string and a
+      bool (`bool` is an `int` subclass, and `True` is not an elevation), and the
+      error names the feature as a user would recognise it, the field, and what was
+      found. `_field_name` spells out which field: a `Spread` says `(spread)`, a
+      per-period list names every column, and a `CellSurfaceOffset` names the OFFSET
+      and MINIMUM columns it read rather than the surface reference -- a null offset
+      is what makes that sum non-finite, and blaming `cell_bottom` would send the
+      reader to the wrong place.
+      **Refusing rather than defaulting is a deliberate divergence from the legacy
+      behaviour.** `KFromVector` substituted the layer default for a null; that is a
+      guess at a number the user never supplied, and it makes a mis-typed zone
+      invisible rather than loud. A feature that ALSO lands nowhere still reports the
+      MISS (ledger 211), because location explains more than the null does -- which
+      needed its own test in `k_array`: a mutant dropping that `continue` survived
+      the list-BC version of the test, since `_boundary_data` already skipped a
+      missed feature and `k_array` did not.
+      NOT done: `KFromVector`'s `defaults=None`, which leaves unpainted cells NaN so
+      you can SEE what the zones missed. It is a real capability with no modern
+      spelling (`k_array`'s `defaults` is required), but it is the OPPOSITE of this
+      entry's rule and does not belong in a commit whose premise is refusing
+      non-finite values. It stays on the gap list from the deprecation audit.
+      `tests/test_gpkg_null_values.py` (17 tests) pins both routes, each refused
+      type, the per-field message, the miss precedence in both loops, and the
+      controls that an int, a scalar and a real K still pass. Nine mutants, all
+      killed.

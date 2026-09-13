@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3111 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3128 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -352,6 +352,26 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   well as a `.gpkg` source: a line ending on a face and overshooting by 1e-6 ft -- a CRS
   round trip moves an end by 3e-7 -- wrote a full second record, where `mf.sfr` had
   dropped the reach since ledger 214.
+- **A `.gpkg` NULL raises too, naming the row** (ledger 247, 2026-09-13). A null
+  attribute reached a written package as a NON-FINITE number by two separate
+  routes: `k_array` did `float(row[value])`, which makes NaN, and a boundary record
+  kept the `None`, which numpy casts to NaN when FloPy builds the recarray. MF6 then
+  answers a NaN budget while reporting normal termination. Every resolved value is
+  checked now -- one funnel for chd/ghb/drn/riv/wel/rch/evt and `k_array` -- and the
+  error names the feature, the field and what it found (a NaN offset column on a
+  `CellSurfaceOffset` names the COLUMN, not the surface). The legacy `KFromVector`
+  filled a null with the layer default; substituting a number the user never gave is
+  its own silent guess, so this refuses instead. A feature that ALSO lands nowhere
+  reports the miss (ledger 211), which explains more.
+- **`edges_only=` is the edge of the ACTIVE domain, per layer** (ledger 246,
+  2026-09-13). `_edge_set` called `get_grid_edge()` with no argument, so only a grid
+  carrying its own `idomain_path` was ever honoured -- a `ModelContext(domain=...)`
+  array, the documented route and what `LayerStack` produces, never reached the edge
+  test, though the same class already honours it per cell. On a 5x5 grid with one
+  inactive cell the package wrote 16 cells where the active edge is 20, dropping the
+  hole's four face-neighbours; with the outer ring inactive it refused the source
+  outright. The context's domain WINS over the grid's file (ledger 209's precedence);
+  with none given the file still decides.
 - **A lake COVERS its cells, by area** (ledger 241, 2026-09-12) -- `mf.lak` kept
   every cell its polygon grazed and had its own activity test. A one-cell lake
   round-tripped 2927 -> 4326 -> 2927 became 4 cells (extras overlapping by 7.41e-6,
