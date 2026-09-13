@@ -8666,3 +8666,53 @@ same day, which is the useful part of the result.
         silenced, truncated or stripped of its extents sentence, the wrong miss
         target, and the shared selector's own delegation cut.
       - Found by the 2026-09-11 sibling investigation.
+
+246. **`edges_only=` on a GeoPackage source could not see the model's own idomain (2026-09-13).**
+      `GeoPackageSource._edge_set` called `self.grid.get_grid_edge()` with **no
+      argument**, so the only active domain that ever reached the edge test was the
+      one a grid happened to carry as its own `idomain_path`. A
+      `ModelContext(domain=...)` array -- the documented package-first route, and
+      what `LayerStack` produces -- was never consulted, even though the very same
+      class already honours it per cell in `_active`. So `mf.chd/ghb/drn.gpkg(...,
+      edges_only=True)` asked about the GEOMETRIC rim of the mesh while every other
+      question it asked was about the ACTIVE domain.
+      Ledger 236 had already settled what an edge cell is: a cell bordering the
+      outside of the mesh, **or one whose face-neighbour is inactive**. That fix
+      landed in `get_grid_edge_cells`; this caller never passed it the domain, so
+      for a `.gpkg` source the fix did nothing. Measured on a 5x5 grid of 25 ft
+      cells with one inactive cell:
+      - the package wrote **16 cells** where the active-domain edge is **20** --
+        the four face-neighbours of the hole, silently missing, so a CHD boundary
+        drawn around an active area stopped at the outer ring and left the hole's
+        rim open;
+      - with the **outer ring** inactive instead, the intersection of the geometric
+        rim with the active set is EMPTY, so the source was **refused outright**
+        (ledger 211's "no feature lands on an active grid-edge cell") on a model
+        whose active edge is its nine interior cells. A correct request looked like
+        a mislocated file.
+      - the only workaround was `vor.idomain_path = Path(...)`, an undocumented
+        back-channel on the grid, and it needed a vector file even when the domain
+        was already in hand as an array.
+      **The edge is now resolved per LAYER**, because activity is: `_active` is
+      per-layer, so an edge that was not made every `edges_only` answer wrong in
+      any model whose layers differ. Two features in two layers now get two
+      different edges from one source. The cache is keyed by layer for the reason
+      it existed at all -- `get_grid_edge` walks every cell, and a ten-feature
+      source used to pay for that ten times -- so the cost is one walk per distinct
+      layer used, not per feature.
+      **The context's domain WINS over the grid's `idomain_path`** when both exist:
+      it is the model's declared domain, the same precedence `specs._layer_elevations`
+      settled for surfaces in ledger 209. With no context domain nothing is passed,
+      so a grid built from an idomain file keeps working exactly as before -- that
+      is the compatibility seam, and it is tested.
+      NOT done, deliberately: no warning when a context domain and a grid
+      `idomain_path` disagree. Ledger 209 warns on that class of conflict for
+      elevations, but detecting it here means running `_inactive_from_file` -- a
+      full selector pass over the grid -- purely to compare, on every source that
+      has both, which is the cost `_edge_set` caches to avoid. The precedence is
+      documented on the method instead.
+      `tests/test_gpkg_edges_only_domain.py` (11 tests) pins the hole ring, the
+      corner-only exclusion (a shared vertex is not a shared face), the inactive
+      outer ring, the per-layer edge, a flat `(ncpl,)` domain, a `-1` passthrough
+      cell as a hole, both precedence directions, one walk per layer, and that a
+      layer past the domain still names itself. Seven mutants, all killed.

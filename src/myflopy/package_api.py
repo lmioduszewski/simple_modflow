@@ -1959,7 +1959,8 @@ class _CHDPackage:
 
     - ``mf.chd(stress_period_data=...)`` -- direct MF6 records;
     - ``mf.chd.gpkg(path, context=, nper=)`` -- build records from GeoPackage
-      features mapped onto cells (``edges_only=True`` keeps just boundary cells);
+      features mapped onto cells (``edges_only=True`` keeps just the active
+      domain's edge cells);
     - ``mf.chd.flopy(...)`` -- the FloPy-native form.
 
     Examples
@@ -2082,7 +2083,9 @@ class _CHDPackage:
         name : str, default "chd"
             Package name.
         edges_only : bool, default False
-            Keep only cells on the grid boundary (a domain-edge head condition).
+            Keep only cells on the edge of the ACTIVE domain -- bordering the
+            outside of the mesh, or an inactive cell -- read from ``context``
+            per layer (a domain-edge head condition).
         boundnames : bool, default True
             Enable named boundaries.
         **options
@@ -2282,7 +2285,8 @@ class _GHBPackage:
         name : str, default "ghb"
             Package name.
         edges_only : bool, default False
-            Keep only grid-boundary cells (a far-field underflow condition).
+            Keep only cells on the edge of the ACTIVE domain, per layer (a
+            far-field underflow condition).
         boundnames : bool, default True
             Enable named boundaries.
         **options
@@ -2466,7 +2470,7 @@ class _DRNPackage:
         name : str, default "drn"
             Package name.
         edges_only : bool, default False
-            Keep only grid-boundary cells.
+            Keep only cells on the edge of the ACTIVE domain, per layer.
         boundnames : bool, default True
             Enable named boundaries.
         **options
@@ -2674,7 +2678,7 @@ class _RIVPackage:
         name : str, default "riv"
             Package name.
         edges_only : bool, default False
-            Keep only grid-boundary cells.
+            Keep only cells on the edge of the ACTIVE domain, per layer.
         boundnames : bool, default True
             Enable named boundaries.
         **options

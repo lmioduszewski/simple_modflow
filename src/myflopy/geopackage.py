@@ -354,7 +354,7 @@ class GeoPackageSource:
     layer_base: int = 1
     period_base: int = 0
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
-    _edge_cells: set[int] | None = field(default=None, init=False, repr=False)
+    _edge_cells: dict[int, set[int]] = field(default_factory=dict, init=False, repr=False)
     _source_crs: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -439,23 +439,47 @@ class GeoPackageSource:
             # Before the edge set, which walks every cell and reads the grid's own
             # idomain_path if it has one: a row with no geometry reaches nothing.
             return []
-        edge_cells = self._edge_set() if edges_only else None
+        edge_cells = self._edge_set(layer) if edges_only else None
         return cell_shares(
             self.grid.gdf_vorPolys,
             geometry,
             usable=lambda cells: self._usable_cells(cells, layer=layer, edge_cells=edge_cells),
         )
 
-    def _edge_set(self) -> set[int]:
-        """The grid's edge cells, found once per source rather than once per feature.
+    def _edge_set(self, layer: int) -> set[int]:
+        """One layer's ACTIVE-domain edge cells, found once per layer.
 
-        ``get_grid_edge`` walks every cell, and reads the grid's idomain file when
-        it has one, so a ten-feature source paid for all of that ten times.
+        ``edges_only`` means the edge of the ACTIVE domain -- a cell ringing an
+        inactive hole is on it (ledger 236) -- so ``get_grid_edge`` has to be told
+        which cells are inactive. It was called with no argument, which left it
+        the grid's own ``idomain_path`` and nothing else: a ``ModelContext``
+        domain, the documented package-first route, never reached the edge test.
+        On a 5x5 grid with one inactive cell that wrote 16 cells where the active
+        edge is 21, and with the outer ring inactive it refused the source
+        outright rather than using the ring inside it.
+
+        The edge is per LAYER because activity is (``_active`` already is), and
+        the answer is cached per layer because ``get_grid_edge`` walks every cell:
+        a ten-feature source used to pay for all of that ten times.
+
+        The context's idomain is the model's declared domain, so it WINS over the
+        grid's ``idomain_path``; a grid built from such a file still works, because
+        with no context domain nothing is passed and that fallback stands.
         """
 
-        if self._edge_cells is None:
-            self._edge_cells = set(self.grid.get_grid_edge())
-        return self._edge_cells
+        if layer not in self._edge_cells:
+            domain = self.context.domain
+            inactive = (
+                None
+                if domain is None
+                else [
+                    cell
+                    for cell in range(self.grid.ncpl)
+                    if not domain_active(domain, layer, cell)
+                ]
+            )
+            self._edge_cells[layer] = set(self.grid.get_grid_edge(idomain=inactive))
+        return self._edge_cells[layer]
 
     def _usable_cells(self, cells, *, layer: int, edge_cells: set[int] | None) -> list[int]:
         """The active cells among ``cells``, lowest-numbered first."""
