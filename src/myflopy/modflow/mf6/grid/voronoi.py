@@ -688,12 +688,21 @@ class VoronoiGridPlus(VoronoiGrid):
         self,
         shp_to_query: shp = None,
         gdf_to_query: gpd.GeoDataFrame = None,
-        crs: str = DEFAULT_CRS,
+        crs: str = None,
         crs_latlon: str = "EPSG:4326",
         name_col: str = None,
-        predicate: str = "intersects",
+        predicate: str | None = None,
     ) -> dict:
-        """Map external geometry to intersecting Voronoi cell IDs."""
+        """The cells each feature of a query layer COVERS, keyed by feature.
+
+        By measure, through the shared rule: a polygon reaches the cells it covers
+        by area, a line those it runs through, a point the one cell holding it. An
+        explicit ``predicate=`` keeps the raw any-touch answer this used to
+        default to, asked of the cell first as the shared selector asks it. Cells
+        are found in THIS grid's frame -- ``crs`` names only the frame of a query
+        that carries none -- and ``crs_latlon`` has no job left; see
+        :func:`~myflopy.modflow.mf6.grid.geometry.get_vor_idx_from_geometry`.
+        """
         return geometry_get_vor_idx_from_geometry(
             self,
             shp_to_query=shp_to_query,
@@ -708,9 +717,13 @@ class VoronoiGridPlus(VoronoiGrid):
         self,
         gdf_to_query: gpd.GeoDataFrame = None,
         idx: int = 0,
-        predicate: str = "intersects",
+        predicate: str | None = None,
     ) -> list:
-        """Return intersecting cell IDs for one row of a GeoDataFrame."""
+        """The cells ONE row of a query frame covers, flat and ascending.
+
+        The same measured rule as :meth:`get_vor_idx_from_geometry`, which this
+        asks for that single row; ``idx`` is positional.
+        """
         return geometry_get_vor_idx_from_geometry_idx(
             self,
             gdf_to_query=gdf_to_query,

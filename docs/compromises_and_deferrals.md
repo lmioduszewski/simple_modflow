@@ -7364,7 +7364,8 @@ same day, which is the useful part of the result.
         sweep measured against these rules
         (`pest/zones.py`,
         `surfaces._cells_in_zone`, `PRTReleasePoints.from_points` (CLOSED by entry
-        242), `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
+        242), `get_vor_idx_from_geometry` (CLOSED by entry 245), the demo site's
+        `_cells_for`), nor ledger
         212's open line case -- that one is CLOSED by entry 237: the line branch
         carries the same noise floor now, so a line overshooting a face by 1e-6
         no longer reaches the far cell here either.
@@ -8540,4 +8541,128 @@ same day, which is the useful part of the result.
       - **Entry 237 deferred this site by name** ("and `usg/export._adjacency`
         still uses `touches`; both are their own sites"); that clause is struck
         above, and `LAKBuilder.lake_cells` remains the one it still names.
+      - Found by the 2026-09-11 sibling investigation.
+
+245. **Two public grid selectors took any touch, one answered about EPSG:2927 whatever frame the grid was in, and under an explicit predicate the pair asked opposite questions (2026-09-12).**
+      `vor.get_vor_idx_from_geometry` and `vor.get_vor_idx_from_geometry_idx`
+      (`grid/geometry.py`, forwarded from `VoronoiGridPlus`) are the "which cells
+      does this shape pick?" pair a user's own script reaches for. Both asked the
+      spatial index with a bare `intersects`, and the first also forced
+      `crs=DEFAULT_CRS` and then compared in EPSG:4326. Measured on the 4x4 grid of
+      25 ft cells, and on the same grid built in EPSG:32610:
+      - a polygon that was exactly cell 5 came back as **9 cells** from both,
+        `[0, 1, 2, 4, 5, 6, 8, 9, 10]`;
+      - a point on the vertex shared by 5, 6, 9 and 10 came back as **all four**;
+      - a point on the face between 4 and 5 had the two **disagreeing**: `[4, 5]`
+        from the index one, taking both cells, against `[5]` from the dict one, which
+        reached that through 2927 and then 4326 -- right by accident, on rounding;
+      - on the **UTM grid** the cell-5 polygon came back as `[4, 5, 8, 9]` from the
+        dict one -- a frame the grid was never in, one cell of four of them right --
+        and as the same 9 cells from the other;
+      - the reprojection detour **dropped** cells as well as adding them: a line
+        running the length of the face between rows 0 and 1 came back from the dict
+        one as `[0, 1, 2, 3, 4, 7]`, having lost 5 and 6 outright, where the rule
+        gives all eight; and a corner-to-corner diagonal came back as 7 cells there
+        and as 10 from the index one, against a true 4;
+      - a query in any CRS **other than the grid's** (a cell-5 polygon handed over
+        in degrees) came back **EMPTY** from the index one, degrees measured against
+        feet, and as six cells from the dict one;
+      - a query carrying **no CRS** raised `Cannot transform naive geometries` from
+        the dict one, while the index one answered its 9 cells -- it never looked at
+        a CRS at all;
+      - a **filtered** frame -- `gdf.iloc[[2]]`, label 2 -- raised `IndexError:
+        single positional indexer is out-of-bounds`, because keys were taken by
+        label and rows by position.
+      - **An explicit `predicate=` was two different questions under one name.** A
+        predicate is asked of a PAIR, and the two functions handed the spatial index
+        its sides opposite ways round: the dict one asked `predicate(cell, feature)`,
+        which is what `get_vor_cells_as_series`' own `sjoin` asks, and the index one
+        asked `predicate(feature, cell)`. Measured with a box strictly inside cell 5:
+        `predicate='contains'` gave `[5]` from the dict one and the selector, and
+        `[]` from the index one. The symmetric default hid it for years. Fixing this
+        onto the INDEX one's orientation would have inverted a public answer and left
+        two grid selectors disagreeing about one word, so both now ask it the
+        selector's way, of the cell first.
+      - **Both go through the shared rule now** (`cell_shares`, ledger 232, with
+        `selected_cells` flattening the single-row answer): a polygon reaches the
+        cells it COVERS by area, a line those it runs through, a point the one cell
+        holding it. `predicate=` still asks for the raw index answer, as the
+        selector's does, and the two now agree on an asymmetric one: over a box
+        holding cells 5, 6, 9 and 10, `predicate='within'` gave `[5]` from the dict
+        function (the lat/lon detour bulging three cells out of the box that
+        contained them) against the selector's `[5, 6, 9, 10]`, which is what both
+        answer now.
+      - **`_idx` asks its sibling for that one row**, so the two cannot drift apart
+        again. That is what makes a point on a face one answer instead of two.
+      - **The grid decides where a cell is.** No forced CRS: a query carrying one is
+        reprojected to the grid's, a query carrying none is read as the grid's.
+        `crs=` defaults to None and keeps the only job it has left -- naming the
+        frame of a query that carries none, a file of degrees with no CRS written
+        into it. Passed **alongside** a query that carries its own frame it cannot
+        act, so it warns instead of being dropped in silence; naming the frame the
+        query already has is redundant, not wrong, and stays quiet.
+      - **`to_grid_crs` is that reconcile, extracted into `grid/geometry.py`** beside
+        the other shared rules, and `get_vor_cells_as_series` delegates to it: its
+        inline block was the only copy, and these two would have been the second and
+        third. It returns a NEW object rather than stamping a frame on the caller's,
+        which the in-place `geometries.crs = ...` did through the `.geometry` view it
+        was handed -- measured: a naive GeoDataFrame handed to the selector came back
+        carrying `EPSG:2927`, and now comes back as it went in. Nothing in the suite
+        or in `examples/` depended on the write-through, but a script that wrote that
+        frame out afterwards was getting a georeferenced file by side effect.
+      - **`crs_latlon` was the comparison frame and has no job left.** It stays in the
+        signature so an existing call still works, and REFUSES any other value rather
+        than being accepted and ignored -- a parameter that cannot act. Measuring in
+        degrees over a grid in feet is the defect, not a setting. It is read as a
+        CRS, not compared as a string: `4326` is an int geopandas accepts and did
+        accept here, and a string test would have refused the default value spelled
+        another way.
+      - **A miss keeps its key**, with an empty list, which is the shape this always
+        returned and what a caller's dict comprehension indexes; it is named in a
+        warning with its reason from `miss_reason`. When EVERY feature misses, the
+        warning carries `where_they_are`'s extents-and-CRS sentence -- the failure
+        this site actually produced was a CRS mismatch, and "outside the grid" for
+        every feature is not the diagnosis, two boxes and two CRSs are. The selector
+        leaves such a feature out instead, and that is the one difference left
+        between them -- flattened, the two agree on every input, including a miss.
+      - **A plain `pandas.DataFrame` with a `geometry` column is coerced**, not
+        refused: it reached the index function and answered (9 cells, any touch), so
+        routing both through geopandas' CRS machinery would have broken a caller that
+        worked, with `AttributeError: 'Series' object has no attribute 'set_crs'` a
+        couple of frames from the call. A query with no geometry at all is named the
+        way the selector names a bad `overlapping_geometry`.
+      - **Nothing in the repo depended on the old answers**: neither function has an
+        internal caller. The only in-repo assertions on them, in
+        `test_mf6_refactor_smoke.py`, are an interior point and a polygon covering
+        two whole cells, which the measured rule answers identically.
+      - **NOT done, deliberately: deprecating either name.** Pointing both at
+        `get_vor_cells_as_series` is the obvious follow-up -- between them they add
+        only a dict keyed by a name column and a flat single-row answer, and the
+        selector with `selected_cells` covers both -- but deprecating a public,
+        documented method is the user's call, not this fix's. For the same reason the
+        two dead parameters stay in the signature (`crs_latlon` refused, `crs`
+        narrowed), and `_idx` gains no `crs=` of its own, so a naive query there is
+        read as the grid's frame rather than one it can name.
+      - **Also not done**: vectorising the measured rule (ledger 235's cost note
+        stands); the rest of the list entry 232 left -- `pest/zones.py`,
+        `surfaces._cells_in_zone`, `PRTReleasePoints.from_points` and the demo site's
+        `_cells_for`; and one defect found in passing and left where it is --
+        `get_vor_cells_as_series(predicate=...)` whose join matches NOTHING returns an
+        empty GeoDataFrame rather than the documented per-feature Series, so
+        `selected_cells` on it raises `ValueError: invalid literal for int() with base
+        10: 'geometry'`. That is `selection.py`'s predicate branch, not this site, and
+        other drafts are landing in that file.
+      - 48 tests in `tests/test_vor_idx_selection.py`, every expectation worked out
+        from row/column arithmetic; the four entry points are asked the same question
+        and compared with each other and with the shared selector, including under
+        two predicates that are each other's inverse. Twenty-six mutants and an
+        import probe, all killed: each default flipped back at all four entry points,
+        the predicate asked the old way round, the answer left in the grid frame's own
+        order, row positions returned as cell ids, the reconcile skipped, the
+        reprojection dropped or silenced, the assumed frame ignored or ignored
+        silently, a naive query left naive, a plain frame left uncoerced, keys taken
+        by position, the `crs_latlon` guard removed or reduced to a string compare,
+        the escape hatch disabled, the single-row answer left nested, the miss warning
+        silenced, truncated or stripped of its extents sentence, the wrong miss
+        target, and the shared selector's own delegation cut.
       - Found by the 2026-09-11 sibling investigation.

@@ -13,6 +13,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     cell_shares,
     miss_reason,
     selected_cells,
+    to_grid_crs,
     where_they_are,
 )
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
@@ -173,14 +174,9 @@ def get_vor_cells_as_series(
         names = list(range(len(geometries)))
     assert len(names) == len(geometries), 'length of names must match length of geometries'
 
-    if geometries.crs is None:
-        geometries.crs = gdf_vor_polys.crs
-    elif geometries.crs != gdf_vor_polys.crs:
-        logger.warning(
-            'geometries are in %s but the grid is in %s; reprojecting them to '
-            'match the grid', geometries.crs, gdf_vor_polys.crs,
-        )
-        geometries = geometries.to_crs(gdf_vor_polys.crs)
+    # One copy of the reconcile, shared with the two get_vor_idx_* selectors, which
+    # forced a CRS of their own and so answered about the wrong place.
+    geometries = to_grid_crs(geometries, gdf_vor_polys)
 
     if predicate is None:
         group_join = _measured_cells(gdf_vor_polys, geometries, names)

@@ -10,8 +10,10 @@ import pandas as pd
 import shapely as shp
 from shapely.geometry import LineString, Polygon
 
-from myflopy._defaults import DEFAULT_CRS
+from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
+logger = get_logger(__name__)
 
 
 def get_voronoi_polygons(vor) -> list[Polygon]:
@@ -213,38 +215,102 @@ def get_overlapping_area(vor, shp_gpkg=None, cell_list=None):
     return vor.gdf_vorPolys.loc[cells].union_all().area
 
 
+#: The frame ``get_vor_idx_from_geometry`` used to compare in, kept only so its
+#: ``crs_latlon`` default still means "unchanged". Cells are found in the grid's
+#: own frame now.
+_LATLON_FRAME = "EPSG:4326"
+
+
 def get_vor_idx_from_geometry(
     vor,
     shp_to_query: shp = None,
     gdf_to_query: gpd.GeoDataFrame = None,
-    crs: str = DEFAULT_CRS,
-    crs_latlon: str = "EPSG:4326",
+    crs: str = None,
+    crs_latlon: str = _LATLON_FRAME,
     name_col: str = None,
-    predicate: str = "intersects",
+    predicate: str | None = None,
 ) -> dict:
+    """The cells each geometry in a query layer reaches, keyed by feature.
+
+    ``predicate=None`` -- the default -- selects by MEASURE, through the shared
+    :func:`cell_shares`: a polygon reaches the cells it COVERS by area, a line
+    those it runs through, and a point the ONE cell holding it (the lowest-numbered
+    where it sits on a face or a vertex). Passing a geopandas predicate
+    (``'intersects'``, ``'contains'``, ...) keeps the raw spatial-index answer,
+    which takes any touch; it is the same escape hatch
+    :func:`~myflopy.modflow.mf6.grid.selection.get_vor_cells_as_series` offers, and
+    asked the way that selector asks it -- of the CELL first, so ``'contains'``
+    means "cells CONTAINING the feature". This asked the index the other way round
+    from its own ``_idx`` twin, so one name covered two questions and only a
+    symmetric predicate hid it.
+
+    The bare ``'intersects'`` this defaulted to answered about cells a feature only
+    borders. On a 4x4 grid of 25 ft cells: a polygon that was exactly cell 5 came
+    back as 9 cells, and a point on the vertex shared by 5, 6, 9 and 10 as all
+    four.
+
+    **The grid decides where a cell is.** This forced ``crs=DEFAULT_CRS`` and then
+    compared in EPSG:4326, so it answered about the wrong place for any grid in
+    another frame -- on a UTM grid the cell-5 polygon came back as cells 4, 5, 8
+    and 9 -- while a query already in the grid's frame made two reprojections it
+    never needed. A query carrying its own CRS is reprojected to the grid's now, as
+    the selector does (:func:`to_grid_crs`); ``crs`` names the frame a query
+    carrying NONE is read in, defaulting to the grid's, where a naive geometry used
+    to raise ``Cannot transform naive geometries``. Passed alongside a query that
+    carries its own frame it cannot act, and says so rather than being dropped.
+
+    ``crs_latlon`` was that comparison frame and has no job left -- measuring in
+    degrees over a grid in feet is the defect, not a setting. It is still accepted,
+    so an existing call keeps working, and REFUSES any other value rather than
+    quietly answering about the grid's frame instead of the one asked for. It is
+    read as a CRS, not as a string, so ``4326`` and ``"epsg:4326"`` are still the
+    default value spelled differently.
+
+    Keys are ``name_col``'s values, or each feature's own index label, taken by
+    POSITION: a FILTERED frame works now, where ``gdf.iloc[[2]]`` carries the label
+    2, was read as row 2 of a one-row frame, and raised ``IndexError: single
+    positional indexer is out-of-bounds`` on every subset. A plain
+    ``pandas.DataFrame`` with a ``geometry`` column is coerced, because that
+    reached the ``_idx`` twin and worked.
+
+    A feature reaching no cell keeps its key with an empty list -- the shape this
+    always returned -- and is named in a warning with its reason; when EVERY
+    feature misses, the warning carries the extents and both CRSs
+    (:func:`where_they_are`), which is what the historical failure here -- a
+    cell-sized polygon in degrees over a grid in feet -- is diagnosed from. The
+    selector leaves such a feature out instead; that is the one difference left
+    between them.
     """
-    Determine intersecting Voronoi cells for each geometry in a query layer.
-    """
-    if shp_to_query:
-        gdf_query = read_shp_gpkg(shp_to_query).to_crs(crs)
+
+    if crs_latlon is not None and not _is_latlon(crs_latlon):
+        raise ValueError(
+            f"crs_latlon={crs_latlon!r} cannot act: cells are found in the grid's own "
+            f"frame ({getattr(vor, 'crs', None)}), never in a lat/lon one -- comparing "
+            "in EPSG:4326 is what answered about the wrong place. Drop crs_latlon; pass "
+            "crs= to name the frame of a query that carries none."
+        )
+    if shp_to_query is not None:
+        gdf_query = read_shp_gpkg(shp_to_query)
     elif gdf_to_query is not None:
-        gdf_query = gdf_to_query.to_crs(crs)
+        gdf_query = gdf_to_query
     else:
         raise ValueError('Provide shp_to_query or gdf_to_query')
 
+    polys = vor.gdf_vorPolys
+    source = _query_geometries(gdf_query)
+    source_crs = crs if source.crs is None else source.crs
+    geometries = to_grid_crs(source, polys, assume_crs=crs)
+    keys = list(gdf_query[name_col]) if name_col is not None else list(geometries.index)
+
     vor_idx_dict = {}
-    latlon_vor = vor.gdf_vorPolys["geometry"].to_crs(crs_latlon)
-    latlon_query = gdf_query.to_crs(crs_latlon)
-
-    for idx in latlon_query.index:
-        cell_intersections = (
-            gpd.GeoSeries(latlon_query.iloc[idx]["geometry"])
-            .sindex.query(latlon_vor, predicate=predicate)[0]
-            .tolist()
-        )
-        key = gdf_query.iloc[idx][name_col] if name_col is not None else idx
-        vor_idx_dict[key] = cell_intersections
-
+    missed = []
+    for key, geometry in zip(keys, geometries, strict=True):
+        cells = _reached_cells(polys, geometry, predicate)
+        vor_idx_dict[key] = cells
+        if not cells:
+            missed.append((key, geometry))
+    if missed:
+        _report_misses(polys, source, keys, missed, source_crs)
     return vor_idx_dict
 
 
@@ -252,16 +318,114 @@ def get_vor_idx_from_geometry_idx(
     vor,
     gdf_to_query: gpd.GeoDataFrame = None,
     idx: int = 0,
-    predicate: str = "intersects",
+    predicate: str | None = None,
 ) -> list[int]:
+    """The cells ONE row of a query frame reaches: flat, ascending, each once.
+
+    ``idx`` is positional. The rule is :func:`get_vor_idx_from_geometry`'s -- which
+    this asks for that one row, so the pair cannot drift apart -- flattened by
+    :func:`selected_cells`.
+
+    This kept a bare ``'intersects'`` of its own: the cell-5 polygon came back as 9
+    cells, the point on a vertex as 4, a point on the face between 4 and 5 as BOTH
+    of them. It also read the query in the GRID's frame while its sibling
+    reprojected to EPSG:2927 and compared in EPSG:4326, so the two disagreed --
+    ``[4, 5]`` here against ``[5]`` there for that face point, and for a query in
+    any other CRS, EMPTY here (degrees measured against feet) against six cells
+    there. Under an explicit ``predicate`` they asked the spatial index opposite
+    ways round as well, so ``'contains'`` meant "cells containing the feature"
+    there and "cells inside it" here; both now ask it the way the shared selector
+    does.
     """
-    Determine intersecting Voronoi cells for a single geometry in a GeoDataFrame.
-    """
-    return (
-        vor.gdf_vorPolys["geometry"]
-        .sindex.query(gdf_to_query['geometry'].iloc[idx], predicate=predicate, sort=True)
-        .tolist()
+
+    answer = get_vor_idx_from_geometry(
+        vor, gdf_to_query=gdf_to_query.iloc[[idx]], predicate=predicate,
     )
+    return selected_cells(list(answer.values()))
+
+
+def _is_latlon(crs) -> bool:
+    """Whether ``crs_latlon`` still names EPSG:4326, however it was spelled.
+
+    Read as a CRS rather than compared as a string: ``4326`` is an int geopandas
+    accepts and a ``pyproj.CRS`` for it does not ``str()`` to the literal, so a
+    string test would refuse the default value under another spelling. Normalised
+    through a geopandas object rather than by importing pyproj, which is
+    geopandas' dependency and not one this project declares; an unreadable value
+    raises pyproj's own ``CRSError``, which names it better than a guess here
+    could.
+    """
+
+    return gpd.GeoSeries([], crs=crs).crs == gpd.GeoSeries([], crs=_LATLON_FRAME).crs
+
+
+def _query_geometries(gdf_query) -> gpd.GeoSeries:
+    """The query's geometries as a GeoSeries, whatever frame they arrived in.
+
+    A plain ``pandas.DataFrame`` carrying a ``geometry`` column of shapely objects
+    reached ``get_vor_idx_from_geometry_idx`` and worked, so it is coerced rather
+    than broken: a bare ``Series`` has no CRS to reconcile and failed with
+    ``AttributeError: 'Series' object has no attribute 'set_crs'`` several frames
+    away from the call. A query with no geometry at all is named here, the way the
+    shared selector names a bad ``overlapping_geometry``.
+    """
+
+    geometries = getattr(gdf_query, "geometry", None)
+    if geometries is None:
+        raise ValueError(
+            "the query must carry geometry -- a GeoDataFrame, a GeoSeries, or a frame "
+            "with a 'geometry' column of shapely objects -- got a "
+            f"{type(gdf_query).__name__} with none."
+        )
+    if isinstance(geometries, gpd.GeoSeries):
+        return geometries
+    return gpd.GeoSeries(geometries)
+
+
+def _reached_cells(polys, geometry, predicate: str | None) -> list[int]:
+    """The cells one geometry reaches: by measure, or by a caller's own predicate.
+
+    One spelling for both public selectors, and the SELECTOR's ORIENTATION for the
+    predicate branch. ``get_vor_cells_as_series`` joins the cells to the query, so
+    a predicate there reads of the cell first: ``'contains'`` means "cells
+    CONTAINING the feature". The pair handed the spatial index its two sides
+    opposite ways -- one of them asking ``contains(feature, cell)`` -- so one name
+    asked two different questions, and only a symmetric predicate hid it.
+
+    Cells come back sorted whatever order the index answered in, because a grid
+    frame need not be held in cell order.
+    """
+
+    if predicate is None:
+        return [cell for cell, _share in cell_shares(polys, geometry)]
+    hits = gpd.GeoSeries([geometry]).sindex.query(polys.geometry, predicate=predicate)[0]
+    return sorted(int(cell) for cell in polys.index[hits])
+
+
+def _report_misses(polys, source, keys, missed, source_crs) -> None:
+    """Name the features that reached nothing -- and where they are when NONE did.
+
+    Ledger 211's policy for a warning rather than a raise, worded as
+    :func:`miss_reason` and :func:`where_they_are` word it everywhere else. The
+    extents-and-CRS sentence is added only when every feature missed, which is
+    where it is the diagnosis: the historical failure at this site was a CRS
+    mismatch, a cell-sized polygon in degrees over a grid in feet. Its bounds are
+    the SOURCE frame's own, as every other caller passes them, because a mismatch
+    is two boxes and reprojecting one of them first hides it.
+    """
+
+    reasons = ', '.join(
+        f"{key!r} ({miss_reason(polys, geometry, target='cell')})"
+        for key, geometry in missed[:10]
+    )
+    if len(missed) > 10:
+        reasons += f", and {len(missed) - 10} more"
+    message = '%d of %d features reach no grid cell and come back empty: %s'
+    args = [len(missed), len(keys), reasons]
+    if len(missed) == len(keys):
+        message += ' %s'
+        args.append(where_they_are(source, polys, source_crs=source_crs))
+    logger.warning(message, *args)
 
 
 def set_k_vor(vor, k_dict: dict = None, k_default=100) -> list:
@@ -414,6 +578,52 @@ def _extent(geometry) -> float:
         return 0.0
     area = float(getattr(geometry, "area", 0.0) or 0.0)
     return area if area > 0 else float(getattr(geometry, "length", 0.0) or 0.0)
+
+
+def to_grid_crs(geometries, polys, *, assume_crs=None):
+    """Put a query in the GRID's frame, because the grid decides where a cell is.
+
+    The one copy of the reconcile every selector needs. A query carrying its own
+    CRS is reprojected to the grid's, saying so; a query carrying NONE is read as
+    the grid's -- or as ``assume_crs`` where a caller offers one, which is the only
+    surviving job of ``get_vor_idx_from_geometry``'s ``crs=``. Left in another
+    frame a query answers about another place: a cell-sized polygon handed over in
+    degrees against a grid in feet reached NO cell at all, and one measured in
+    EPSG:2927 over a UTM grid reached cells 4, 5, 8 and 9 where 5 was the whole
+    truth.
+
+    ``assume_crs`` over a query that carries its OWN frame cannot act, so it is
+    ignored with a warning rather than silently: a parameter that reads as the
+    frame a query will be measured in, and is not, is the defect this function
+    exists to close.
+
+    Returns a NEW object rather than stamping a frame on the caller's:
+    ``geometries.crs = ...`` wrote through the ``.geometry`` view it was handed.
+    Neither side georeferenced is left alone -- raw coordinates against raw
+    coordinates is what that caller has, and it is not this function's place to
+    refuse it.
+    """
+
+    grid_crs = getattr(polys, "crs", None)
+    source_crs = getattr(geometries, "crs", None)
+    if source_crs is None:
+        assumed = grid_crs if assume_crs is None else assume_crs
+        if assumed is None:
+            return geometries
+        geometries = geometries.set_crs(assumed, allow_override=True)
+        source_crs = geometries.crs
+    elif assume_crs is not None and source_crs != assume_crs:
+        logger.warning(
+            'the geometries carry their own CRS (%s), so %s -- the frame named for '
+            'a query that carries none -- is ignored', source_crs, assume_crs,
+        )
+    if grid_crs is None or source_crs == grid_crs:
+        return geometries
+    logger.warning(
+        'geometries are in %s but the grid is in %s; reprojecting them to '
+        'match the grid', source_crs, grid_crs,
+    )
+    return geometries.to_crs(grid_crs)
 
 
 def domain_active(domain, layer: int, cell: int) -> bool:
