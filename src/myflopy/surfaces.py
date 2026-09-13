@@ -23,7 +23,11 @@ import geopandas as gpd
 import numpy as np
 
 from myflopy._defaults import DEFAULT_EPSG
-from myflopy.modflow.mf6.grid.geometry import geometry_first, reconcile_surfaces
+from myflopy.modflow.mf6.grid.geometry import (
+    centroid_zones,
+    geometry_first,
+    reconcile_surfaces,
+)
 from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
 
 # Surfaces defined relative to the surface immediately above them.
@@ -95,7 +99,13 @@ def _length_factor(from_units: str, to_units: str) -> float:
 def _cells_in_zone(vor, zone) -> np.ndarray:
     """Boolean per-cell mask: True where the cell centroid lies inside ``zone``.
 
-    ``zone`` is a shapely geometry (in the grid CRS) or a path to a vector file.
+    ``zone`` is a shapely geometry (in the grid CRS) or a path to a vector file,
+    whose rows are unioned into one zone. The zone is CLOSED -- a centroid exactly
+    on its edge is inside it, through the shared
+    :func:`~myflopy.modflow.mf6.grid.geometry.centroid_zones` rule. It used to be
+    ``within``'s strict inside, so a zone whose edge ran along a row of centroids
+    reached none of that row: ``box(0, 0, 100, 37.5)`` on a 4x4 grid of 25 ft cells
+    selected cells 0-3 and not 4-7 (ledger 243).
     """
 
     if isinstance(zone, (str, Path)):
@@ -106,7 +116,7 @@ def _cells_in_zone(vor, zone) -> np.ndarray:
         geom = gdf.union_all()
     else:
         geom = zone
-    return vor.gdf_vorPolys.geometry.centroid.within(geom).to_numpy()
+    return centroid_zones(vor.gdf_vorPolys, [geom]) >= 0
 
 
 @dataclass(frozen=True)
@@ -461,7 +471,8 @@ class Surface:
     def where(cls, zone, inside, outside) -> Surface:
         """Use ``inside`` for cells whose centroid is in ``zone``, else ``outside``.
 
-        ``zone`` is a shapely geometry or a path to a vector file.
+        ``zone`` is a shapely geometry or a path to a vector file. A centroid
+        exactly ON the zone's edge counts as inside it (ledger 243).
         """
         return cls(
             kind="where", zone=zone, operands=(cls._coerce(inside), cls._coerce(outside))

@@ -42,7 +42,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.model_lookup`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
-- `myflopy.modflow.mf6.pest.zones`
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.runtime`
@@ -81,7 +80,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.package_tables`
 - `myflopy.modflow.mf6.parallel`
-- `myflopy.modflow.mf6.pest.native_parameters`
 - `myflopy.modflow.mf6.simulation.packages`
 - `myflopy.modflow.mp3du.legacy_prt`
 - `myflopy.modflow.mp3du.particles`
@@ -112,7 +110,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations._shared`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
-- `myflopy.modflow.mf6.pest.pilot_points`
+- `myflopy.modflow.mf6.pest.zones`
 - `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.indexing`
@@ -133,6 +131,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.lake` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations.sfr`
 - `myflopy.modflow.mf6.package_results`
+- `myflopy.modflow.mf6.pest.native_parameters`
 - `myflopy.modflow.mf6.recharge`
 - `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.simplemodel`
@@ -150,6 +149,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.conc`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.ies`
+- `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.usg`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
 

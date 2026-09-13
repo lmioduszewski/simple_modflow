@@ -42,6 +42,8 @@ from typing import Any
 
 import numpy as np
 
+from myflopy.modflow.mf6.grid.geometry import centroid_zones, where_they_are
+
 __all__ = ["ZoneSpec", "resolve_zone_array"]
 
 
@@ -113,9 +115,23 @@ class ZoneSpec:
         """Zones from a polygon layer: each cell takes the polygon it falls in.
 
         ``column`` names the integer label field; without it, polygons are
-        numbered ``1..n`` in row order. Cells in no polygon get ``nodata_zone``;
-        cells in several take the first match, which is why overlapping zone
+        numbered ``1..n`` in row order. Cells in no polygon get ``nodata_zone``.
+
+        A cell falls in the zone holding its CENTROID, and a zone is CLOSED -- a
+        centroid exactly on a zone's edge is in it (:func:`centroid_zones`). It
+        used to be ``within``'s strict inside, so a boundary drawn along a row of
+        centroids left that row in no zone: pyEMU gives a zone ``<= 0`` no
+        multiplier, and the row went uncalibrated in silence (ledger 243). A
+        cell in several zones takes the FIRST ROW, which is why overlapping zone
         polygons are a modelling mistake rather than something to resolve here.
+
+        A row whose LABEL is missing -- a NULL attribute in the file -- is not a
+        zone: its cells fall to whichever other row covers them, or to
+        ``nodata_zone``. Casting that label would make it
+        ``-9223372036854775808``, a number pyEMU calibrates like any other.
+        A layer reaching NO cell warns, with both extents and both CRSs, since
+        array targets skip ``nodata_zone`` entirely and would be parameterizing
+        nothing.
         """
 
         import geopandas as gpd
@@ -127,25 +143,41 @@ class ZoneSpec:
                 f"Zone column {column!r} is not in the polygon layer; it has "
                 f"{sorted(frame.columns)}."
             )
-        labels = (
-            frame[column].to_numpy() if column is not None
-            else np.arange(1, len(frame) + 1)
-        )
+        if column is not None:
+            given = frame[column]
+            labels, unlabelled = given.to_numpy(), given.isna().to_numpy()
+        else:
+            labels = np.arange(1, len(frame) + 1)
+            unlabelled = np.zeros(len(frame), dtype=bool)
 
         cells = model.vor.gdf_vorPolys
+        source_crs = frame.crs
         if frame.crs is not None and cells.crs is not None and frame.crs != cells.crs:
             # Reprojection preserves row order, so `labels` still lines up.
             frame = frame.to_crs(cells.crs)
 
         values = np.full(len(cells), int(nodata_zone), dtype=int)
-        centroids = gpd.GeoDataFrame(geometry=cells.geometry.centroid, crs=cells.crs)
-        joined = gpd.sjoin(centroids, frame.assign(_zone=labels)[["_zone", frame.geometry.name]],
-                           how="left", predicate="within")
-        # A centroid inside two overlapping polygons produces two rows; keep the
-        # first so the result stays one label per cell.
-        joined = joined[~joined.index.duplicated(keep="first")]
-        matched = joined["_zone"].notna().to_numpy()
-        values[matched] = joined.loc[matched, "_zone"].to_numpy().astype(int)
+        # A row whose LABEL is missing is not a zone. It keeps its POSITION, so
+        # `labels` still lines up, but is handed no geometry, which the shared rule
+        # never matches: casting the missing label instead gives every one of its
+        # cells -9223372036854775808, a label pyEMU calibrates (ledger 243).
+        geometries = [
+            None if missing else geometry
+            for geometry, missing in zip(frame.geometry, unlabelled, strict=True)
+        ]
+        rows = centroid_zones(cells, geometries)
+        matched = rows >= 0
+        values[matched] = np.asarray(labels)[rows[matched]].astype(int)
+        if not matched.any():
+            warnings.warn(
+                f"No cell centroid falls in any zone of {source}, so every cell is "
+                f"zone {int(nodata_zone)} and array targets would be parameterizing "
+                f"nothing. "
+                + where_they_are(frame, cells, noun="zone polygons",
+                                 source_crs=source_crs, grid_crs=cells.crs),
+                UserWarning,
+                stacklevel=2,
+            )
         return cls(values=values, source=source)
 
 

@@ -68,7 +68,11 @@ ids is meaningless, and a cell straddling zones 1 and 3 would come out as zone 2
 it does not touch and may not exist. A cell smaller than a pixel takes the label under
 its centroid; only a cell off the raster, or on its no-data, gets `nodata_zone`
 (ledger 213). `from_polygons(gdf, column="hsu")` labels cells by
-the polygon they fall in; a plain array still works.
+the polygon they fall in — by the cell's **centroid**, and a zone is closed, so a
+centroid exactly on a zone's edge is in it and a boundary drawn along a row of
+centroids does not leave that row unparameterized (ledger 243); a cell covered by
+two zones takes the first row, a polygon whose label is NULL is not a zone at all,
+and a layer that reaches no cell says so. A plain array still works.
 
 You never have to think about SHAPE. pyEMU wants a per-cell array for array targets
 (`k`, `k33`, `porosity`) and a `(layer, cell)` array for list targets (`recharge`,

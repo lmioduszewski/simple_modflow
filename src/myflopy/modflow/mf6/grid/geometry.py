@@ -447,6 +447,57 @@ def domain_active(domain, layer: int, cell: int) -> bool:
     return bool(values[layer, cell] > 0)
 
 
+def centroid_zones(polys, zones) -> np.ndarray:
+    """Which of ``zones`` holds each cell's CENTROID, as a row position; -1 for none.
+
+    The centroid rule, in the one place both its callers can read it. A ZONE labels
+    a WHOLE cell -- a K zone for PEST, a layer's extent for a surface -- so it is
+    decided by the cell's centre, deliberately, and not by area (ledgers 118, 213):
+    ``cell_shares`` is the area rule and is NOT what this does.
+
+    A zone is CLOSED: a centroid lying exactly ON its edge is in it. ``within``
+    excludes a boundary, and a boundary is drawn along a row of centroids more
+    often than anywhere else, since a grid's centroids are where its data is. Two
+    zones split at y=37.5 on a 4x4 grid of 25 ft cells -- the line through the
+    row-1 centroids -- left that row in NO zone, while a split at y=37.4 gave it
+    the upper one.
+
+    Where two zones share that edge, or overlap anywhere, the FIRST ROW wins. That
+    is what the callers' docstrings always claimed and what neither delivered: the
+    winner came out of the spatial index's own tree order, so on a two-zone frame
+    whose rows were reversed the same zone still won.
+
+    ``polys`` is the grid's cell frame (``vor.gdf_vorPolys``) and the answer is
+    positional over its rows, matching the per-cell arrays both callers build
+    beside it. ``zones`` is a GeoDataFrame, a GeoSeries, or a plain sequence of
+    geometries, in the grid's CRS -- reprojecting is the caller's, since only it
+    knows what its row labels mean. A row whose geometry is MISSING or empty never
+    matches, which a caller may lean on: blanking a row's geometry takes it out of
+    the running while keeping every later row's position.
+    """
+
+    geometries = np.asarray(
+        list(zones.geometry if hasattr(zones, "geometry") else zones), dtype=object
+    )
+    rows = np.full(len(polys), -1, dtype=int)
+    if geometries.size == 0:
+        return rows
+    # `covers` is evaluated input-to-tree -- zone.covers(centroid) -- so the CELLS go
+    # in the tree. The index keeps this off an O(ncpl x nzones) elementwise test, and
+    # it never matches a row whose geometry is missing or empty, so neither needs
+    # filtering out first.
+    zone_hits, cell_hits = polys.geometry.centroid.sindex.query(
+        geometries, predicate="covers"
+    )
+    # The lowest matching row per cell, in one pass: the index answers in tree order,
+    # so a tie must not be left to whichever pair came back first.
+    winner = np.full(len(polys), geometries.size, dtype=int)
+    np.minimum.at(winner, cell_hits, zone_hits)
+    found = winner < geometries.size
+    rows[found] = winner[found]
+    return rows
+
+
 def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
     """The cells a geometry reaches, each with its fraction of the whole feature.
 

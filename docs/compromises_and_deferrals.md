@@ -8290,3 +8290,130 @@ same day, which is the useful part of the result.
         `hits[-1]`, since `cell_shares` answers a single-part point with exactly one
         pair.
       - Found by the 2026-09-11 sibling investigation.
+
+243. **A zone boundary drawn through a row of cell centroids left that row in no zone (2026-09-12).**
+      Both zone assignments -- `ZoneSpec.from_polygons` for PEST and
+      `surfaces._cells_in_zone` for a layer surface -- asked whether a cell's
+      centroid was `within` the zone polygon, which is FALSE for a centroid lying
+      exactly ON the polygon's edge. A grid's centroids are where its data is, so
+      that edge is where a boundary gets drawn. Measured on a 4x4 grid of 25 ft
+      cells: two zones split at `y=37.5`, the line through the row-1 centroids,
+      gave cells 4-7 the `nodata_zone` label 0, while a split at `y=37.4` gave them
+      zone 2 -- and pyEMU gives a zone `<= 0` no multiplier (this module's own
+      docstring), so that row of the model went uncalibrated under a definition
+      that names it. Worse, a LONE zone `box(0, 0, 12.5, 100)`, whose east edge is
+      the column-0 centroid line, selected NO cell at all: an all-nodata `ZoneSpec`,
+      in silence, nothing calibrated. On the surface side
+      `_cells_in_zone(grid, box(0, 0, 100, 37.5))` selected `[0, 1, 2, 3]` and not
+      `[4, 5, 6, 7]`, and those four cells took the OUTSIDE elevation -- 2.0 ft
+      where the zone said 15.0 -- which feeds `Surface.where`, hence botm, and
+      through pinch-out idomain.
+      - **The CENTROID rule is kept, deliberately.** A zone labels a WHOLE cell --
+        a K zone, a layer's extent -- so its centre decides (ledgers 118, 213), and
+        `cell_shares`' area rule is emphatically not what a zone wants: a zone
+        drawn 0.1 ft short of the centroid line covers 49.6% of those cells by area
+        and must still not label them. `tests/test_zone_edges.py` pins that, so the
+        next reader cannot "fix" this by reaching for the area rule.
+      - **A zone is CLOSED**: a centroid exactly on its edge is in it, outer
+        boundary and shared boundary alike, corners included. With two zones
+        sharing the line every centroid lands in exactly one; with one zone the
+        boundary belongs to the only zone there is, which is why `box(0, 0, 12.5, 100)`
+        now reaches the column it was drawn along.
+      - **`covered_by` alone would NOT have been deterministic**, which is the part
+        the obvious one-word fix misses. Both docstrings claimed a cell in several
+        zones "takes the first match"; with `covered_by` the winner comes out of the
+        spatial index's own tree order instead. Measured over 600 random frames of
+        2-5 axis-aligned boxes whose corners are snapped to centroid lines (seed 11,
+        this grid): the naive `sjoin` + first-match disagreed with the first row on
+        433 of them, and an independent draw by the review measured 232 of 600 -- the
+        count is the generator's, the disagreement is not. On a plain two-zone split
+        it depends on which row is written first: rows lower-then-upper agree, and in
+        the other order cells 4-7 took the SECOND row's label. So the shared rule
+        reduces the index's pairs with `np.minimum.at` and the FIRST ROW wins by
+        construction -- reversing the rows now swaps the shared row's label, and
+        nothing else. Under `within` the join happened to agree with row order (0 of
+        600 in both draws), so the tie is new only in the sense that the boundary
+        case is what makes it reachable at all.
+      - **One rule, one place**: `centroid_zones` in `grid/geometry.py`, beside
+        `cell_shares`, which it deliberately is not. It answers ROW POSITIONS
+        (-1 for none), because one caller maps them to labels and the other to a
+        boolean mask, and both were already positional over `gdf_vorPolys`. Two
+        copies of the predicate were two chances to fix one of them; an identity
+        probe pins that neither keeps its own. This closes the `pest/zones.py` and
+        `surfaces._cells_in_zone` entries in 232's "what still keeps its own copy"
+        list only in that sense -- they share one rule now, and it is NOT
+        `cell_shares`. 238's NOT-done bullet ("still assign by centroid") stays
+        literally true and is deliberately kept, so it is left standing.
+      - **A row whose LABEL is null is not a zone.** The old `sjoin` dropped it
+        through a `notna` filter and the rewrite had to keep that: indexing the
+        label array and casting gives `int(nan)` = `-9223372036854775808`, which
+        `ZoneSpec.__post_init__`'s NaN guard cannot see and pyEMU calibrates like
+        any other id. A NULL integer attribute is what `gpd.read_file` hands back as
+        `nan` from a real `.gpkg`, so this is a file away, not a contrivance. The row
+        keeps its POSITION (so `labels` still lines up) but is handed no geometry,
+        which the shared rule never matches -- measured `[0]*4 + [2]*12` where the
+        naive rewrite gave `[-9223372036854775808]*8 + [2]*8`. Found by an
+        adversarial review of this entry's own first draft, which is why it is
+        recorded here rather than in the NOT-done list.
+      - **A polygon zone layer that reaches NO cell now warns**, with both extents
+        and both CRSs (the shared `where_they_are` wording, ledger 211). It is a
+        warning and not a refusal because `nodata_zone` is a legitimate "leave
+        alone" id, but silence was wrong: for ARRAY targets (`k`, `k33`,
+        `porosity` -- the headline zone use) `resolve_zone_array` returns before its
+        zone-0 warning, so an all-nodata map parameterized nothing and said nothing
+        -- a frame with `crs=None` that is really in another CRS gets no
+        reprojection and lands exactly there. A PARTIAL miss stays silent: most zone
+        layers cover part of a model on purpose. A test pins the silence as well as
+        the warning.
+      - **The array and raster routes do not move**, verified value for value:
+        `from_array` is untouched, and `from_raster` majority-votes pixels with a
+        centroid fallback (ledger 213) and asks no polygon predicate anywhere -- a
+        test pins its output and a source probe pins the absence. A raster label
+        boundary cannot be made to run along a centroid line without halving the
+        cell, which is a majority TIE rather than a predicate question.
+      - **Nothing in the repo's own expectations moved.** `test_pest_zones.py`
+        splits its polygons at the middle of the canonical grid's bounds, which no
+        centroid sits on (had one, the pre-fix `spec.ids` would already have
+        carried the nodata label and that test would have been failing); the
+        canonical PEST notebooks zone by raster or array. 1158 tests across the
+        zone, surface, layer, geometry, coverage-rule and PEST modules pass
+        unchanged. The swap is also not a cost but a saving: on 10,000 cells x 50 band
+        zones the old `sjoin(within)` measured 10.9 ms per resolve against the shared
+        rule's 5.2 ms (min of three, one process; a separate run measured 9 and 4).
+      - **NOT done.** `_cells_in_zone` keeps its `union_all()` of a multi-row vector
+        file -- one zone, no labels, so there is no row order to be deterministic
+        about; a test now pins the union rather than leaving the choice untested.
+        `_cells_in_zone` also does not warn when a zone reaches nothing: it answers
+        a mask that a `Surface` pairs with an `outside=` value, so an empty zone is
+        a whole-grid `outside`, not an absence. Two candidate mutants turned out
+        EQUIVALENT and were dropped rather than reported as survivors: filtering
+        null/empty geometry rows inside the shared rule, and short-circuiting an
+        empty zone set -- shapely's index matches neither a `None` nor an empty
+        geometry and accepts an empty query array, so the filter came out of the
+        first draft and the early return is kept only because it saves building
+        centroids and an index for nothing. A third, the review's own R7 (the
+        reduction rewritten as last-write-wins over reversed pairs), is equivalent
+        given that shapely returns its pairs sorted by input index -- the first-row
+        PROPERTY is pinned, its independence from query order is not.
+      - `tests/import_layers.json` and `docs/import_layering.md` are derived and
+        move three modules a layer DEEPER: `pest.zones` 0 -> 2 (it now imports
+        `grid.geometry`), and with it `pest.native_parameters` 1 -> 3 and
+        `pest.pilot_points` 2 -> 4. Until they are regenerated
+        `test_import_layering.py` reads the new import as pointing UPWARD and fails;
+        `tests/deferred_import_allowlist.json`, `tests/api_snapshot.json` and the
+        docstring splice are all unchanged.
+      - Twenty-two mutants and an import probe, all killed: the strict interior
+        restored, the shared edge given to the last row, the tie left to the index's
+        order, no-zone reading as row 0, the unmatched sentinel counted as a match, a
+        GeoDataFrame not unwrapped to its geometry, the cell POLYGON in the tree
+        instead of its centroid, the touch rule on those polygons, the query pair
+        unpacked the other way round, row 0's cells dropped, zones no longer
+        reprojected, zones and cells swapped at the call, labels read one row off,
+        the whole PEST route reverted to its sjoin copy, the missing label cast
+        anyway, the missing label never detected, the nothing-landed warning
+        silenced, that warning fired on a partial miss, that warning without its
+        extents-and-CRS sentence, the surface mask back on `within` and with its
+        first zone dropped, and a multi-row zone file reduced to its first row. Six
+        of these are an adversarial review's own mutants, one of which survived the
+        first version of these tests.
+      - Found by the 2026-09-11 sibling investigation.
