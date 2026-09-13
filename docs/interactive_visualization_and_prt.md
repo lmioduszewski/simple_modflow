@@ -143,6 +143,15 @@ result.export_3d_html("prt_pathlines.html", vertical_exaggeration=5)
 grid and TDIS timing, references the GWF head and budget outputs through FMI,
 and writes a PRT track CSV.
 
+`PRTReleasePoints.from_points(model, points)` releases at coordinates instead of
+cell centres. Each point resolves to the ONE cell holding it — on a shared face or
+vertex, the lowest-numbered cell **active in `layer=`** — and a frame in another
+CRS is reprojected to the grid's first. A point on no active cell is left out and
+named in a warning; none of them landing raises, naming both extents and both CRSs
+(ledger 242). It used to take FloPy's lowest CELL2D, which reads no idomain, and
+FloPy's PRP then refused the package for a cellid the caller never wrote. World
+coordinates in, model-frame coordinates written (ledger 218).
+
 ### Release groups and derived cell maps
 
 Label the release points and the run's trajectories roll up into per-cell views

@@ -18,10 +18,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import flopy
+import geopandas as gpd
 import pandas as pd
+import shapely as shp
+
+from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.domain import model_domain
+from myflopy.modflow.mf6.grid.geometry import (
+    cell_shares,
+    domain_active,
+    miss_reason,
+    where_they_are,
+)
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+
+logger = get_logger(__name__)
 
 
 def _mfdata_value(value, default=None):
@@ -125,6 +138,126 @@ def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
             idomain=_mfdata_value(dis.idomain),
         )
     raise NotImplementedError("Canonical PRT currently supports GWF DIS and DISV grids.")
+
+
+def _cell_frame(model: SimulationBase):
+    """The model's cell polygons indexed by cell id, or ``None`` for another grid kind.
+
+    ``None`` wherever the shared coverage rule cannot speak the model's cell ids:
+    a structured (DIS) grid, whose cell is ``(row, col)``, and a model carrying no
+    ``vor``, which has no cell frame at all. Those keep FloPy's own ``intersect``.
+
+    The frame is the ``vor``'s, and it is the WORLD frame in every path myflopy
+    builds one: a USG import's comes from the .gsf in world coordinates while its
+    DISV declares the origin the mesh was shifted by, and a reopened run's is
+    rebuilt from ``modelgrid.verts``, which has the offset applied. The model's
+    OWN frame is reached from there by ``get_local_coords`` (ledger 218) -- a
+    different conversion, and still the one a PRP record is written with.
+    """
+
+    if getattr(model.gwf.modelgrid, "grid_type", None) != "vertex":
+        return None
+    return getattr(getattr(model, "vor", None), "gdf_vorPolys", None)
+
+
+def _release_frame(points) -> gpd.GeoSeries:
+    """The release locations as a GeoSeries, whatever form they were given in.
+
+    Point geometries, a GeoDataFrame or GeoSeries of them, or bare ``(x, y)``
+    pairs -- which carry no CRS, and are read as the grid's exactly as they always
+    have been. One frame, so the miss message can report where the points are.
+    """
+
+    geometries = list(getattr(points, "geometry", points))
+    coords = [
+        (float(point.x), float(point.y))
+        if hasattr(point, "x")
+        else (float(point[0]), float(point[1]))
+        for point in geometries
+    ]
+    return gpd.GeoSeries(
+        [shp.Point(x, y) for x, y in coords], crs=getattr(points, "crs", None)
+    )
+
+
+def _in_grid_crs(given: gpd.GeoSeries, polys) -> gpd.GeoSeries:
+    """The release points in the grid's own CRS, which is what cells are resolved in.
+
+    Every other myflopy source reprojects to it (the GeoPackage source, SFR, the
+    observation targets); without it a frame read in degrees over a State Plane
+    grid lands on no cell at all, and a reader of the refusal would be told the
+    points are somewhere they are not. This is the WORLD frame either way -- the
+    model's own frame is a separate conversion, applied to every record below.
+    """
+
+    grid_crs = getattr(polys, "crs", None)
+    if given.crs is None or grid_crs is None or given.crs == grid_crs:
+        return given
+    return given.to_crs(grid_crs)
+
+
+def _flopy_cellid(grid, point, layer: int) -> tuple[int, ...]:
+    """The cellid FloPy's own ``intersect`` puts a point in (structured grids only).
+
+    Knows nothing about idomain and answers with the lowest CELL2D on a shared
+    face, which is the defect ledger 242 fixed for DISV. It is kept for the grids
+    the shared rule cannot index, where it is the only answer available.
+    """
+
+    cell = grid.intersect(float(point.x), float(point.y))
+    if isinstance(cell, tuple):
+        return (
+            (int(layer), *(int(value) for value in cell))
+            if len(cell) == 2
+            else tuple(int(value) for value in cell)
+        )
+    return (int(layer), int(cell))
+
+
+def _refuse_or_report_missed(polys, given: gpd.GeoSeries, missed, *, layer: int) -> None:
+    """Ledger 211 for release points: raise when none land, warn by name when some do.
+
+    Neither miss used to be reported HERE, and both were reported badly later. A
+    point resolved into an inactive cell was written, and FloPy's PRP refused the
+    package from ``_check_valid_cellids`` -- ``Cellid (0, 4) is outside of the
+    active model grid``, raised while ``PRTProject`` is built, naming a cellid the
+    caller never wrote and neither the point that produced it nor the active
+    neighbour the point also touches (measured: that neighbour releases and
+    tracks). A point off the grid raised FloPy's ``point given is outside of the
+    model area``, which said neither where the grid is nor which CRS either side is
+    in, and took the other ninety-nine points of a well file with it. A point that
+    lands nowhere now leaves no record: a PARTIAL miss can be deliberate -- one
+    well file serving several grids -- so it warns, naming the points by their
+    position in the input and the coordinates they were GIVEN as. Nothing landing
+    means the points and the model are in different places, which is what the two
+    extents and the two CRSs in the message are read for.
+
+    ``missed`` pairs each point's index with its LOCATED geometry, since that is
+    the frame ``miss_reason`` measures against the grid in.
+    """
+
+    target = f"active cell in layer {layer}"
+    reasons = [
+        f"#{index} ({given.iloc[index].x:,.1f}, {given.iloc[index].y:,.1f}) "
+        f"({miss_reason(polys, point, target=target)})"
+        for index, point in missed
+    ]
+    listing = ", ".join(reasons[:10])
+    if len(reasons) > 10:
+        listing += f", and {len(reasons) - 10} more"
+    if len(missed) == len(given):
+        raise ValueError(
+            f"No release point lands on an {target}, so the PRP package would "
+            f"release no particles: {listing}. "
+            + where_they_are(given, polys, noun="release points", source_crs=given.crs)
+        )
+    logger.warning(
+        "%d of %d release points land on no %s and are left out: %s",
+        len(missed),
+        len(given),
+        target,
+        listing,
+    )
 
 
 @dataclass(frozen=True)
@@ -237,6 +370,14 @@ class PRTReleasePoints:
         PRTReleasePoints
             Pass it to ``model.particle_tracking.prt(release_points=...)``.
 
+        Notes
+        -----
+        The cell ids are TAKEN, not resolved: this neither range-checks them nor
+        reads idomain, so an inactive cell is written and FloPy's PRP refuses the
+        package later, naming the cellid. :meth:`from_points` resolves a POINT,
+        and that one applies the shared coverage rule -- lowest cell active in
+        ``layer`` (ledger 242).
+
         Examples
         --------
         >>> rp = mf.PRTReleasePoints.from_cells(model, cells=[100, 120, 140],
@@ -292,25 +433,69 @@ class PRTReleasePoints:
         """Create release points from point geometries or an iterable of ``(x, y)``.
 
         ``group`` labels the points as one release group (or one label per point) --
-        see :meth:`from_cells`. Points are WORLD coordinates, in the grid's CRS; they
-        are written in the model's own frame, which on an offset grid differs.
+        see :meth:`from_cells`. Points are WORLD coordinates, in the grid's CRS (a
+        frame in another one is reprojected to it); they are written in the model's
+        own frame, which on an offset grid differs.
+
+        Notes
+        -----
+        A point resolves to the ONE cell that holds it: on a shared face or
+        vertex, the lowest-numbered cell ACTIVE in ``layer`` (ledger 242). FloPy's
+        ``modelgrid.intersect`` answers with the lowest CELL2D and knows nothing
+        about idomain, so a point on the face between an inactive cell and an
+        active one resolved to the inactive cell, and one on a vertex to whichever
+        of its four cells is numbered lowest. That cost the run, late and
+        obscurely: FloPy's PRP checks every cellid, so ``PRTProject`` raised
+        ``Cellid (0, 4) is outside of the active model grid`` -- an id the caller
+        never wrote -- where the active neighbour the point also touches releases
+        and tracks.
+
+        A point landing on no active cell is left out and named in a warning, and
+        ``irpt`` is renumbered over the survivors as :meth:`merge` does, because
+        MF6 wants release-point numbers 1..NRELEASEPTS with none missing. If NONE
+        of them land that raises, naming both extents and both CRSs (ledger 211),
+        where FloPy's own refusal named only the point. One point off the grid used
+        to end the whole call.
+
+        A structured (DIS) grid keeps FloPy's ``intersect``, and with it FloPy's
+        own refusal: the shared rule is indexed by cell id and a DIS cell is
+        ``(row, col)``, so neither the activity rule nor the miss handling above
+        reaches a structured model.
         """
 
-        geometries = list(getattr(points, "geometry", points))
-        groups = cls._resolve_groups(group, len(geometries))
-        rows = []
-        for irpt, point in enumerate(geometries):
-            x, y = (point.x, point.y) if hasattr(point, "x") else point[:2]
-            cell = model.gwf.modelgrid.intersect(float(x), float(y))
-            if isinstance(cell, tuple):
-                cellid = (int(layer), *(int(value) for value in cell)) if len(cell) == 2 else tuple(int(value) for value in cell)
+        given = _release_frame(points)
+        groups = cls._resolve_groups(group, len(given))
+        grid = model.gwf.modelgrid
+        polys = _cell_frame(model)
+        located = given if polys is None else _in_grid_crs(given, polys)
+        domain = None if polys is None else model_domain(model, len(polys))
+        rows: list[tuple[Any, ...]] = []
+        missed: list[tuple[int, Any]] = []
+        for index, point in enumerate(located):
+            if polys is None:
+                cellid: tuple[int, ...] = _flopy_cellid(grid, point, layer)
             else:
-                cellid = (int(layer), int(cell))
-            local_x, local_y = model.gwf.modelgrid.get_local_coords(float(x), float(y))
+                hits = cell_shares(
+                    polys,
+                    point,
+                    # Eligibility only. ``cell_shares`` sorts whatever this
+                    # returns, so the lowest-numbered active cell wins a tie
+                    # without a second copy of that rule here.
+                    usable=lambda cells: [
+                        cell for cell in cells if domain_active(domain, layer, cell)
+                    ],
+                )
+                if not hits:
+                    missed.append((index, point))
+                    continue
+                cellid = (int(layer), int(hits[0][0]))
+            local_x, local_y = grid.get_local_coords(float(point.x), float(point.y))
             record: tuple[Any, ...] = (
-                irpt, cellid, float(local_x), float(local_y), float(local_z)
+                len(rows), cellid, float(local_x), float(local_y), float(local_z)
             )
-            rows.append(record if groups is None else (*record, groups[irpt]))
+            rows.append(record if groups is None else (*record, groups[index]))
+        if missed:
+            _refuse_or_report_missed(polys, given, missed, layer=layer)
         return cls(tuple(rows))
 
 

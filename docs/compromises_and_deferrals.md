@@ -7363,8 +7363,8 @@ same day, which is the useful part of the result.
         one reads it -- CLOSED by entry 241. Neither were the other sites the
         sweep measured against these rules
         (`pest/zones.py`,
-        `surfaces._cells_in_zone`, `PRTReleasePoints.from_points`,
-        `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
+        `surfaces._cells_in_zone`, `PRTReleasePoints.from_points` (CLOSED by entry
+        242), `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
         212's open line case -- that one is CLOSED by entry 237: the line branch
         carries the same noise floor now, so a line overshooting a face by 1e-6
         no longer reaches the far cell here either.
@@ -7778,8 +7778,8 @@ same day, which is the useful part of the result.
         `simulation.regions` 2->3, which ledger 235 left unregenerated and which
         are NOT from this change.
       - **NOT done**: `ZoneSpec.from_polygons` and `surfaces._cells_in_zone`
-        still assign by centroid, and `PRTReleasePoints.from_points` still takes
-        flopy's lowest cell2d -- each is its own entry. The canonical model
+        still assign by centroid, and `PRTReleasePoints.from_points` took flopy's
+        lowest cell2d (CLOSED by entry 242) -- each is its own entry. The canonical model
         defines its seepage zones as explicit cell lists, and the only existing
         geometry test (`test_mf6_pest.py`, a polygon inset to 0.95 of one cell)
         still resolves to `[0]`, so no in-repo expectation moved.
@@ -8164,4 +8164,129 @@ same day, which is the useful part of the result.
         `is_empty`, the miss count counting the missing set as its own denominator,
         membership filtered by idomain through `usable=`, and the raise moved out of
         `validate()` into the property.
+      - Found by the 2026-09-11 sibling investigation.
+
+242. **PRT release points ignored idomain and took the lowest cell on a face (2026-09-12).**
+      `PRTReleasePoints.from_points` located every point with FloPy's
+      `modelgrid.intersect`, which answers with the lowest CELL2D and reads no
+      idomain. Measured on a 4x4 grid of 25 ft cells with cells 0 and 4 inactive in
+      layer 0:
+      - a point on the face between cells 4 and 5, `(25, 37.5)`, gave cellid
+        `(0, 4)` -- the INACTIVE cell -- where the rule gives `(0, 5)`;
+      - a point on the vertex shared by cells 0, 1, 4 and 5, `(25, 25)`, gave
+        `(0, 0)`, also inactive, where the rule gives `(0, 1)`.
+      - **What that cost, measured with MF6 (the 2026-09-11 investigation could
+        not: it needs a run).** Nothing was silent, and nothing was wrong in the
+        output either -- it never got that far. FloPy's PRP validates each cellid
+        against idomain, so `PRTProject(...)` raised
+        `MFDataException: Cellid (0, 4) is outside of the active model grid` from
+        `_check_valid_cellids`, naming an id the caller never wrote and neither the
+        point that produced it nor the active neighbour that point equally touches.
+        The same point in cell 5 runs: 3 track records, normal termination. So the
+        defect's shape is a late, unattributable refusal of a release the grid could
+        perfectly well have accepted, one cell over.
+      - **The fix is `cell_shares` + `domain_active` (ledger 232), the shape
+        `observations/heads.py::match_to_model` has had since 233**: eligibility
+        ("active in the release layer") goes in through the `usable` hook, and the
+        helper's own sort decides the tie, so the lowest-numbered ACTIVE cell wins
+        without a second copy of that rule here. The release `layer=` is what
+        activity is read in, so one point resolves differently per layer, and a
+        passthrough (`idomain = -1`) is not active.
+      - **It is also 400-500x faster**, which was not the point but is the larger
+        number: one spatial-index query per point replaces FloPy's per-point scan of
+        every cell. 200 points on a 100x100 (10,000-cell) DISV grid, same points both
+        sides, 7.5 s -> 0.016 s (the old side measured 6.5-8.7 s across runs on a
+        machine running other agents' work, the new side 0.015-0.017 s). It scales
+        per point: the cost was in `intersect`, called once per release.
+      - **Ledger 211 reaches release points too.** A point landing on no active cell
+        is left out and named in a warning, with `irpt` renumbered over the
+        survivors the way `merge` already renumbers across sets -- MF6 wants
+        1..NRELEASEPTS with none missing -- and group labels stay indexed by the
+        point GIVEN, not by the record written. When NONE of them land it raises,
+        with both extents and both CRSs. The reason is measured where the point
+        LANDED and the coordinates named are the ones the caller GAVE, which is the
+        only way a reprojected point that misses reads as "on no active cell"
+        rather than "outside the grid". That raise/warn split RELAXES a hard
+        failure into a warning: FloPy's `intersect` raises `point given is outside
+        of the model area` for an off-grid point, so one bad row in a well file used
+        to cost the other ninety-nine. The house rule (211, 233, 238) is that a
+        partial miss can be deliberate -- one file serving several grids -- so it
+        warns by name; this follows it rather than keeping FloPy's all-or-nothing.
+      - **Points are reprojected to the grid's CRS first**, as every other myflopy
+        source does. Without it the new refusal would fire on a perfectly good frame
+        read in degrees, and `where_they_are`'s sentence -- which says the points
+        WERE reprojected -- would have been false.
+      - **The frame handling of ledger 218 is untouched, and pinned.** Cells are
+        resolved in the WORLD frame (the `vor`'s, which is the world frame in every
+        path myflopy builds one: a USG import's comes from the .gsf while its DISV
+        declares the origin the mesh was shifted by, and a reopened run's is rebuilt
+        from `modelgrid.verts`, offset applied), and the record is still written in
+        the model's own frame through `get_local_coords`. Three tests on an offset
+        grid at (1,340,000, 650,000) hold the halves apart: a point inside a cell
+        (only the frame can fail it), a point on a face (either can), and the grid's
+        OWN coordinates, which must reach no cell because the frame is not guessed.
+        218's line saying `from_points` "TAKES world points, in the grid's CRS" is
+        now half of the story -- a frame in another CRS is converted to it first.
+      - **A third copy of the ledger-211 raise/warn wrapper, deliberately.**
+        `_refuse_or_report_missed` is the third after
+        `observations/_shared.py::_report_missed_features` and
+        `geopackage.py::_refuse_or_report_misses`, and the judgment is: reusing
+        `_shared`'s would cost the layer. Its wording is fixed at "lands on an
+        active cell" with no layer, and the layer is exactly what makes a release
+        point's miss actionable (a mutant that drops it fails two tests); its
+        `%ss` pluralisation cannot take a subject carrying one, and its `owner`
+        dedupe exists for observation views that resolve the same features per
+        call, which a release set does not. Promoting a layer-aware version into
+        `grid/geometry.py` beside `miss_reason`/`where_they_are` is the real fix and
+        wants its own pass, with all three callers in it. Same for `_in_grid_crs`,
+        now a third spelling after `_shared._in_grid_crs` and
+        `heads._locations_in_grid_crs`: `_shared`'s returns anything that is not a
+        GeoDataFrame unchanged, so a GeoSeries of release points would have been
+        located in its own degrees and nothing would have said so.
+      - **NOT done: `from_cells`.** It still trusts the ids it is given, measured on
+        the same grid: cell 4 (inactive) is written as `(0, 4)` in silence and fails
+        later exactly as above; `cells=[-1]` wraps to cell 15's centre and writes
+        cellid `(0, -1)`, which FloPy then refuses with `Invalid cellid (0, -1)`
+        (its -1 case wants EVERY element of the cellid to be -1), so the wrong cell
+        is silent only until the package is built; `cells=[99]` on a 16-cell grid
+        raises numpy's `IndexError: index 99 is out of bounds for axis 0 with size
+        16`, which does not name the grid. The rules approved for this pass cover
+        resolving a GEOMETRY; refusing an explicit cell id is
+        `heads.py::_validated_cells`' rule (233), and applying it here would refuse
+        release sets that build today. Its docstring now says it takes the ids as
+        given and points at `from_points`. It is its own entry.
+      - **NOT done: structured (DIS) grids**, which keep FloPy's `intersect` -- and
+        with it FloPy's own all-or-nothing refusal, so NEITHER half of this reaches
+        a structured model, the activity or the ledger-211 message. The shared rule
+        is indexed by cell id and a DIS cell is `(row, col)`; `grid/domain.py`'s
+        reader does not read a DIS idomain either (it looks at DISV/DISU), so the
+        activity half could not be honoured there without widening a helper three
+        other callers share. `_cell_frame` returns `None` for that grid kind and for
+        a model carrying no `vor`, and two tests pin what DIS still does, FloPy's
+        `point given is outside of the model area` included, so half of it cannot be
+        changed by accident. PRT supports DIS and DISV only (`_copy_grid_to_prt`),
+        so DISU never arises.
+      - `myflopy.modflow.mf6.prt` moves from import layer 0 to 2 (it now imports
+        `grid.geometry` at L1 and `grid.domain` at L0); `tests/import_layers.json`
+        carries the one changed line and `docs/import_layering.md` must be
+        regenerated with `scripts/derive_import_layers.py`. The deferred-import
+        allowlist and `tests/api_snapshot.json` do not move, and
+        `scripts/derive_docstrings.py` has nothing to rewrite.
+      - Twenty tests in `tests/test_prt_release_points_on_faces.py`; 15 of them fail
+        on the unfixed tree. Twenty-two mutants and an import probe, all killed:
+        activity never consulted, activity read in layer 0 for every release,
+        activity by truthiness (so a passthrough counts), the domain never read, the
+        domain left flat (so the layer stops mattering), the shared rule replaced by
+        a strict containment scan (which loses every face point), the grid kind
+        unchecked, the cell frame never found, the record left in world coordinates,
+        x and y swapped reading the input, a GeoDataFrame read as a plain iterable
+        (so its column names), no reprojection, `local_z` not the caller's, misses
+        passing in silence, a miss falling back to the cell the activity filter
+        rejected, a total miss only warning, the raise dropping both extents and both
+        CRSs, the miss reason dropping its layer, the miss reason measured in the
+        source frame, the listing truncated to one, `irpt` keeping the input
+        position, and group labels shifting onto the surviving records. One mutant
+        was retired as EQUIVALENT rather than left as a survivor -- `hits[0]` ->
+        `hits[-1]`, since `cell_shares` answers a single-part point with exactly one
+        pair.
       - Found by the 2026-09-11 sibling investigation.

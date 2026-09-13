@@ -43,7 +43,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.pest.zones`
-- `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.runtime`
@@ -114,6 +113,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
 - `myflopy.modflow.mf6.pest.pilot_points`
+- `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*

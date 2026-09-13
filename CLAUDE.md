@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2986 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3006 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -359,6 +359,24 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   with its own vertical connection. `LAKBuilder.lake_cells` is `cell_shares` now and
   `_active` is `domain_active` -- a 1-D idomain masks the lake per cell where it was
   ignored, and a layer past the domain names itself. A lake on no cell follows 211.
+- **A PRT release point goes in the cell ACTIVE in its layer** (ledger 242,
+  2026-09-12). `PRTReleasePoints.from_points` located points with flopy's
+  `modelgrid.intersect`, which answers with the lowest CELL2D and reads no idomain:
+  with cells 0 and 4 inactive in layer 0, a point on the 4|5 face resolved to cell 4
+  and one on the 0/1/4/5 vertex to cell 0. Nothing silent came of it -- flopy's PRP
+  checks every cellid, so `PRTProject` died with `Cellid (0, 4) is outside of the
+  active model grid`, an id the caller never wrote, where the active neighbour the
+  point also touches releases and tracks. It is `cell_shares` + `domain_active` now
+  -- the same rule as a head target -- so a tie goes to the lowest cell ACTIVE in
+  `layer=`; a point off the grid raises with both extents and both CRSs while a
+  partial miss warns by name (ledger 211, where flopy's `intersect` named only the
+  point and ended the whole call), and a frame in another CRS is reprojected first.
+  What is WRITTEN is still the model's own frame (ledger 218). **Both halves are
+  DISV-only**: a structured (DIS) grid keeps flopy's `intersect` AND flopy's
+  all-or-nothing refusal, because the shared rule is indexed by cell id and a DIS
+  cell is `(row, col)`. `from_cells` trusts the ids it is given. One sindex query
+  per point also replaces flopy's per-point scan of every cell -- 200 points on a
+  10,000-cell grid, 7.5 s -> 0.016 s.
 - **A lakebed from bathymetry is `mf.lak(lake_bottom=<Surface>)`** (ledger 231,
   2026-09-11) -- `mf.Contours`/`mf.Raster`/algebra, a raster `Path` or `str`, or a
   cell-indexed Series. Sampled ONCE (it was one full-grid sample per cell read).

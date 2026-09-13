@@ -246,6 +246,29 @@ for the points that had none (`PRP000000002`) — it appears as an ordinary grou
 A release with no groups at all leaves `name` blank throughout, and the views fall
 back to per-particle coloring.
 
+**`from_points` puts each point in the cell ACTIVE in its release layer** (ledger
+242, 2026-09-12). It located points with FloPy's `modelgrid.intersect`, which
+answers with the lowest CELL2D and reads no idomain: with cells 0 and 4 inactive
+in layer 0, a point on the 4|5 face resolved to cell 4 and one on the 0/1/4/5
+vertex to cell 0 — and FloPy's PRP then refused the whole package, `Cellid (0, 4)
+is outside of the active model grid`, naming an id the caller never wrote (the
+active neighbour the point also touches releases and tracks). It now uses the
+shared coverage rule — the same one a head target and a `.gpkg` feature resolve
+by — so a point on a face or vertex takes the lowest-numbered cell active in
+`layer=`, a frame in another CRS is reprojected to the grid's first, a point
+landing on no active cell is left out and named in a warning (`irpt` renumbered
+over the survivors, as `merge` does), and none of them landing raises with both
+extents and both CRSs (ledger 211) where FloPy named only the point. It is also
+much faster, since one spatial-index query replaces FloPy's per-point scan of
+every cell: 200 points on a 10,000-cell grid, 7.5 s → 0.016 s. The coordinates
+WRITTEN are still the model's own frame, which on an offset grid is not the
+world's (ledger 218). `from_cells` trusts the cell ids it is given — it neither
+range-checks them nor reads idomain. A **structured (DIS) grid keeps FloPy's
+`intersect`, and with it FloPy's own refusal**: the shared rule is indexed by cell
+id and a DIS cell is `(row, col)`, so neither half of this — not the activity, not
+the ledger-211 miss message — reaches a structured model, where one off-grid point
+still raises `point given is outside of the model area` and ends the call.
+
 **Reading a finished PRT run (§6.3B/§6.3C, 2026-07-25).** Trajectories are not a
 per-cell field, so `PRTRunResults` exposes four view nouns that answer the normal
 verbs (`get`/`summary`/`plot`/`map`/`mosaic`, `prt_maps.py`) — one keeping the
