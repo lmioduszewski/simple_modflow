@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3028 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3052 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -534,6 +534,21 @@ Four measured facts drive the design, and each is a trap if forgotten:
   segment per source cell, and every conductance gets a **`*_per_ft` twin**: rebuild as
   `cond_per_ft x new length`. It is NOT a leakance -- `corr(cond, cell area) ~ 0` over
   205 DRN records, and GHB is one constant per family across a 249,000x area spread.
+  **A chain is joined by a shared FACE** (ledger 244, 2026-09-12) -- `grid.shared_face`,
+  the rule the HFB views resolve a barrier's own face against (and pair-for-pair the older
+  `adjacent_cells_idx` on every mesh measured), not `touches`, which a single shared
+  VERTEX satisfies. On a structured or quadtree mesh that measured a diagonal
+  staircase of six 25 ft cells at 145.71 ft where it occupies 125.0 -- three of its
+  segments 30.18 ft long inside 25 ft cells -- and made a 2x2 block a clique whose walk
+  stepped across the corner (85.36 ft, `conductance_per_ft` 3.31 against 4.00). It changes
+  nothing on a Voronoi mesh, whose vertices are 3-valent, which is why ledger 169 did not
+  see it. A cell left ALONE ON ITS CHAIN -- nothing shares a face with it, or it is a
+  branch arm the open walk could not reach -- keeps the degenerate segment a lone cell
+  always had (`length_ft` 0, and a NaN `*_per_ft` where the package HAS one -- CHD carries
+  no extensive column), so the export counts them
+  (`cells_alone_on_a_chain`), warns, and points at the POINT layer. `mf.Spread` is
+  unaffected -- the feature total comes back exact either way, on the same mesh and on a
+  4x finer one; it is the README's per-foot hand recipe that goes NaN.
 - **A repeated period is written once** -- 72 periods, 12-month cycle, 11 distinct
   recharge arrays. `periods.csv` is the index.
 - **A CLN stream bed IS the old model top** (max |diff| 0.00003 ft on all three creeks),

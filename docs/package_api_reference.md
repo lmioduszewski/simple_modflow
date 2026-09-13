@@ -586,7 +586,19 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   in-set neighbour counts of 1.87–2.52, against 4–6 for anything areal), and splitting a
   cell in two leaves the elevation alone while doubling the conductance. Rebuild it as
   `cond_per_ft × length in the new cell` and the feature total is preserved. Do **not**
-  treat it as a leakance — `corr(cond, cell area) ≈ 0` over 205 DRN records.
+  treat it as a leakance — `corr(cond, cell area) ≈ 0` over 205 DRN records. The chain
+  those lengths come from is joined by a shared **face** — `grid.shared_face`, the rule the
+  HFB views resolve a barrier's own face against, and pair-for-pair the older
+  `adjacent_cells_idx` on every mesh measured (ledger 244). A shared *vertex* is
+  not a connection, so on a structured or quadtree mesh a diagonal staircase of six 25 ft
+  cells measures the 125.0 ft it occupies rather than 145.71, and a 2x2 block is a ring
+  (75.0 ft, `conductance_per_ft` 4.00) rather than a clique whose walk crossed the corner
+  (85.36 ft, 3.31); a Voronoi mesh is unaffected, its vertices being 3-valent. A cell left
+  alone on its chain — nothing shares a face with it, or it is a branch arm the open walk
+  could not reach — has `length_ft` 0 and a NaN twin, counted in the manifest as
+  `cells_alone_on_a_chain` with a note and a logged warning; take those cells from the
+  point layer. Reading the layer with `conductance=mf.Spread("conductance")` recovers the
+  feature total exactly either way — it is the per-foot hand recipe that goes NaN.
 - **A repeated period is written once.** Ten Trails is 72 periods and a strict 12-month
   cycle, so recharge is 11 distinct arrays, not 72; `periods.csv` is the index.
 

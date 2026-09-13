@@ -13,7 +13,12 @@ Three ideas run through it.
 every list BC is a chain of cells one cell wide: mean in-set neighbour counts of
 1.87 (DRN), 1.94 (GHB) and 2.52 (CHD), against 4-6 for anything areal. So they
 are written as line segments, one per source cell, which partition the feature
-exactly and re-resolve onto any mesh.
+exactly and re-resolve onto any mesh. **Neighbour means a shared face**, the
+adjacency MODFLOW 6 itself connects: on a structured or quadtree mesh a cell pair
+meeting at one corner is no more joined than two cells a mile apart, and a chain
+drawn through a corner claims length the feature does not occupy. A cell left alone
+on its chain -- nothing shares a face with it, or the open walk could not reach it
+through a branch -- is counted and reported rather than left to be discovered.
 
 **Conductance is the field that breaks.** Split a drain cell in two and the
 elevation is unchanged while the conductance is not. Every conductance column is
@@ -221,21 +226,55 @@ def _grid_crs(model: UsgModel) -> str:
     return str(crs)
 
 
-def _adjacency(cells: list[int], polys) -> dict[int, set[int]]:
-    """Which of ``cells`` touch which, as an adjacency map."""
+def _adjacency(cells: list[int], grid) -> dict[int, set[int]]:
+    """Which of ``cells`` share a FACE with which, as an adjacency map.
 
+    Adjacency here is MODFLOW 6's: a shared **edge**, not a shared corner. Two
+    cells meeting at a single vertex -- every diagonal step of a structured or
+    quadtree mesh -- are not neighbours, because nothing flows across a corner
+    and no one-cell-wide feature runs through one. ``grid.shared_face`` is the
+    test -- the rule the HFB views already resolve a barrier's own face against,
+    so "adjacent" means one thing across the package. It agrees pair-for-pair
+    with the older ``grid.adjacent_cells_idx`` on every mesh measured (a 16-cell
+    square mesh; a 441-cell irregular Voronoi, 2,494 pairs, 0 differences) and
+    additionally handles a face interrupted into a MultiLineString and a face
+    tolerance, which a bare ``isinstance(intersection, LineString)`` does not.
+
+    The spatial index only proposes candidate pairs; the face test decides.
+
+    Parameters
+    ----------
+    cells
+        Zero-based plan cell indices, the subset to relate.
+    grid
+        The model's grid. Needs ``gdf_vorPolys`` *and* ``shared_face`` -- a
+        stand-in exposing only the polygon frame is not enough here.
+    """
+
+    polys = grid.gdf_vorPolys
     subset = polys.iloc[cells]
-    touch = subset.sindex.query(subset.geometry, predicate="touches")
+    candidates = subset.sindex.query(subset.geometry, predicate="intersects")
     adjacent: dict[int, set[int]] = {c: set() for c in cells}
-    for a, b in zip(*touch, strict=False):
-        adjacent[cells[a]].add(cells[b])
+    for a, b in zip(*candidates, strict=False):
+        if a == b:
+            continue
+        left, right = cells[a], cells[b]
+        if grid.shared_face(left, right) is not None:
+            adjacent[left].add(right)
     return adjacent
 
 
-def _chains(cells: list[int], polys) -> list[list[int]]:
-    """Order a set of touching cells into open chains, one per component."""
+def _chains(cells: list[int], grid) -> list[list[int]]:
+    """Order a set of face-sharing cells into open chains, one per component.
 
-    adjacent = _adjacency(cells, polys)
+    Two cells meeting only at a corner are not connected, so each is its own
+    chain. So is a branch arm the open walk below cannot extend through -- a
+    chain has two ends and a branch point has three or more. Either way a cell
+    alone on its chain gets the degenerate segment :func:`_segment_line` gives a
+    lone cell, and :func:`_export_boundaries` counts and reports them.
+    """
+
+    adjacent = _adjacency(cells, grid)
     members = set(cells)
     chains, seen = [], set()
     for start in cells:
@@ -265,7 +304,7 @@ def _chains(cells: list[int], polys) -> list[list[int]]:
         leftover = [c for c in component if c not in used]
         if leftover:
             logger.debug("chain from cell %d left %d branch cell(s) over", start, len(leftover))
-            chains.extend(_chains(leftover, polys) if len(leftover) > 1 else [leftover])
+            chains.extend(_chains(leftover, grid) if len(leftover) > 1 else [leftover])
     return chains
 
 
@@ -324,6 +363,13 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
     The ``*_lines`` layers carry the same values plus ``conductance_per_ft`` and are
     written for reading and for a future length-splitting resolver; they are not the
     build path today.
+
+    A chain runs between cells that share a **face**. A cell alone on its chain --
+    nothing else in the feature shares a face with it, or it is a branch arm the open
+    walk could not extend through -- keeps the degenerate segment a lone cell has
+    always had: ``length_ft`` 0, and a NaN ``*_per_ft`` twin where the package has
+    one. The count goes into the manifest as ``cells_alone_on_a_chain``, with a note
+    and a warning pointing at the point layer.
     """
 
     import geopandas as gpd
@@ -354,8 +400,31 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "geometry": "Point",
         }
         lines.to_file(path, layer=f"{package}_lines", driver="GPKG")
+        # Count the CHAINS of one cell, not the zero lengths: the two agree on any
+        # frame this writes, but the chain is what the sentence below is about, and
+        # a cell alone on its chain is not necessarily one with no face neighbour --
+        # a branch arm the open walk could not extend through lands here too.
+        alone = int((lines.groupby(["layer", "chain"]).size() == 1).sum())
+        per_ft = [c for c in lines.columns if c.endswith("_per_ft")]
+        # CHD carries no extensive column, so it has no twin to go NaN.
+        twins = f" and their {' and '.join(per_ft)} is NaN" if per_ft else ""
+        if alone:
+            logger.warning(
+                "%s: %d of %d source cell(s) are alone on their chain -- no face neighbour "
+                "in the feature, or a branch the open walk could not extend through -- so "
+                "their segment has no length%s; take those cells from the '%s' point layer",
+                package, alone, len(lines), twins, package,
+            )
+            manifest.notes.append(
+                f"{ftype}: {alone} of {len(lines)} source cell(s) are alone on their chain -- "
+                "either no other cell of the feature shares a face with them (a shared corner "
+                "is not a MODFLOW connection), or they are a branch the open walk could not "
+                f"extend through. Their line segment has zero length{twins}; build those cells "
+                f"from the '{package}' point layer, which is exact for one cell."
+            )
         manifest.layers[f"boundaries.gpkg:{package}_lines"] = {
             "features": int(len(lines)),
+            "cells_alone_on_a_chain": alone,
             "what": f"{ftype} as lines -- BUILD FROM THIS, continuous cell coverage",
             "consumed_by": (
                 f"mf.{package}.gpkg(path, layer='{package}_lines', context=ctx, nper=nper, "
@@ -400,6 +469,9 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
 
     Both frames hold one row per source cell and the same values; they differ only
     in geometry and in the ``*_per_ft`` twins, which are meaningless on a point.
+
+    The chains come from face adjacency (see :func:`_adjacency`), so a corner-only
+    contact starts a new chain rather than extending one through the corner.
     """
 
     import geopandas as gpd
@@ -425,7 +497,7 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     for layer, block in first.groupby("layer"):
         values = block.set_index("cell")
         cells = list(np.unique(block["cell"].to_numpy()))
-        for chain_id, walk in enumerate(_chains(cells, polys)):
+        for chain_id, walk in enumerate(_chains(cells, model.grid)):
             points = [polys.geometry.iloc[c].centroid for c in walk]
             for index, cell in enumerate(walk):
                 line = _segment_line(points, index)
@@ -1262,8 +1334,11 @@ def _readme(model: UsgModel, manifest: ExportManifest) -> str:
         "",
         "# A line BC on a new grid: conductance comes from the per-foot twin, so the",
         "# feature total survives a change of discretization.",
-        'drn = gpd.read_file("boundaries.gpkg", layer="drn_segments")',
-        "#   cond_new = drn.cond_per_ft * (length of the segment inside each new cell)",
+        'drn = gpd.read_file("boundaries.gpkg", layer="drn_lines")',
+        "#   cond_new = drn.conductance_per_ft * (length of the segment in each new cell)",
+        "#   A segment of length 0 is a cell alone on its chain -- nothing shares a face",
+        "#   with it, or the walk could not reach it through a branch. Its per-foot twin",
+        "#   is NaN, so take that cell from the point layer. The manifest counts them.",
         "```",
         "",
         "## Interpolating a stream profile onto finer reaches",

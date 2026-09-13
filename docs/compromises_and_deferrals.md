@@ -7668,7 +7668,7 @@ same day, which is the useful part of the result.
         polygon is judged by its WIDTH, a line by its LENGTH) and collapsing them
         would have to pick one. `LAKBuilder.lake_cells` kept any area > 0 with no
         sliver rule at all (CLOSED by entry 241), and `usg/export._adjacency` still
-        uses `touches`, which is its own site. No `Spread` renormalization was added.
+        used `touches` (CLOSED by entry 244). No `Spread` renormalization was added.
       - **Cost: none measurable.** `_mean_width(polygon)` is evaluated only after
         `size < _SLIVER_WIDTH` short-circuits, so a line whose pieces are ordinary
         never computes it. A blast-radius sweep over 182 mixed geometries -- boxes,
@@ -8416,4 +8416,128 @@ same day, which is the useful part of the result.
         first zone dropped, and a multi-row zone file reduced to its first row. Six
         of these are an adversarial review's own mutants, one of which survived the
         first version of these tests.
+      - Found by the 2026-09-11 sibling investigation.
+
+244. **A USG export chained cells that shared only a corner (2026-09-12).**
+      `usg/export._adjacency` asked the spatial index for `predicate="touches"`,
+      which is true of a shared edge and equally true of a single shared vertex.
+      The chain it builds is what decides every exported `length_ft` and every
+      `*_per_ft` twin, so on a structured or quadtree mesh -- both of which
+      MODFLOW-USG writes and a `.gsf` describes -- the lengths were wrong wherever
+      a feature ran diagonally. Measured on a 4x4 mesh of 25 ft cells, one DRN
+      record of 100.0 per cell:
+      - a **diagonal staircase** `[0, 1, 5, 6, 10, 11]` -- what a diagonal drain on
+        a structured grid actually is, every step a real shared face -- walked
+        `[0, 1, 5, 10, 11, 6]` with two corner jumps and measured **145.71 ft**
+        where it occupies 125.0, three of its six segments 30.18 ft long inside a
+        25 ft cell, `conductance_per_ft` 3.3137 where a straight run gives 4.00;
+      - the **pure diagonal** `[0, 5, 10, 15]`, which shares no face at all, came
+        back as ONE chain of **106.07 ft** against the 75.0 four such cells span,
+        with `per_ft` 5.66/2.83/2.83/5.66;
+      - the **2x2 block** `[0, 1, 4, 5]` came back a **clique** (every cell
+        neighbouring all three others), so the walk stepped 1 -> 4 across the
+        corner at (25, 25): 12.5/30.18/30.18/12.5 = **85.36 ft**, `per_ft` 3.31 on
+        two of four. A 30.18 ft segment inside a 25 ft cell is the defect in one
+        number.
+      - **Adjacency is now a shared FACE**, through `grid.shared_face` -- the rule
+        the HFB views already resolve a barrier's own face against, so no second
+        copy of it was written. It agrees pair-for-pair with the older
+        `adjacent_cells_idx` on every mesh measured (16-cell square; 441-cell
+        irregular Voronoi, 2,494 pairs, 0 differences) while additionally handling
+        a face interrupted into a MultiLineString -- measured, an 11 ft contact a
+        bare `isinstance(intersection, LineString)` calls no contact at all -- and
+        a face tolerance. The spatial index now only PROPOSES: the prefilter is
+        `intersects` rather than `touches` because `touches` excludes a pair whose
+        polygons overlap, which a degenerate mesh produces; `shared_face` decides,
+        and on a 1e-3 overlap it says adjacent while reporting the 1e-3 sliver
+        rather than the 25 ft contact -- right for this adjacency, worth knowing
+        for anything that uses the segment. The same cases now give: the staircase
+        in order at **125.0 ft** with `per_ft` 8/4/4/4/4/8 and no NaN, the diagonal
+        as four one-cell chains, the block as a RING (75.0 ft, `per_ft` 4.00 --
+        what four cells in a straight line give), the straight run `[0, 1, 2, 3]`
+        unchanged at 75.0 and 8/4/4/8, and a quadtree coarse cell keeping both fine
+        cells against its face while dropping the one diagonally off its corner
+        (`{0: [1, 2]}`, was `{0: [1, 2, 3]}`).
+      - **Nothing moves on a Voronoi mesh, which is why this survived ledger 169.**
+        Over the canonical 441-cell irregular Voronoi grid the two rules are
+        identical: 2,494 directed pairs each, 0 differing in either direction, mean
+        degree 5.655 both ways -- a Voronoi vertex is 3-valent, so a corner-only
+        contact is degenerate. The neighbour counts ledger 169 rests on (1.87 DRN /
+        1.94 GHB / 2.52 CHD) therefore stand, and a re-export of Ten Trails is
+        unchanged. `test_usg_export.py`'s expectations do not move either: its DRN
+        runs along one row, and a straight run is the case that was always right.
+      - **The documented rebuild does not break; the per-foot hand recipe does.**
+        Reading the written `*_lines` layer back the way the manifest says --
+        `mf.drn.gpkg(..., conductance=mf.Spread("conductance"))` -- recovers the
+        feature total EXACTLY before and after, on the same mesh and on a 4x finer
+        one (400.0 / 600.0 / 500.0 on all four shapes). What changes is which cells
+        it occupies: the diagonal goes from 400.0 spread over 12 fine cells along a
+        path MODFLOW never connected to 4 records on the cells that actually hold
+        the old centres, and the staircase from 30 fine cells to 36.
+      - **A cell alone on its chain is now REPORTED, not silent.** It keeps the
+        degenerate line `_segment_line` has always given a lone cell -- `length_ft`
+        0, and a NaN `*_per_ft` where the package has one -- and `pandas.sum` skips
+        NaN, so the README's `per_ft x length` check reads a smaller total rather
+        than failing. So the export counts them, logs a `logger.warning`, and
+        writes `cells_alone_on_a_chain` plus a manifest note pointing at the POINT
+        layer, which is exact for one cell. Two things the sentence had to get
+        right: the count is of one-cell CHAINS, because a cell can be alone on its
+        chain and still share a face -- a **branch arm the open walk could not
+        extend through** lands there (a plus-cross `[1, 4, 5, 6, 9]` leaves two,
+        both face-sharing with the centre) -- and the `*_per_ft` clause appears
+        only where an extensive column exists, which **CHD has not** (`_EXTENSIVE`
+        is `{cond, q}`; CHD carries heads), CHD being the most branched package
+        ledger 169 measured at 2.52.
+      - **Which direction the report moves is shape-dependent, and the loss it
+        exposes is older than this change.** On a 20x20 mesh, a 12-cell spine with
+        4 one-cell spurs: HEAD 2 cells alone and 1400.0 of 1600.0 recovered from
+        the twin, now 3 and 1300.0. With 2 spurs it goes the other way -- HEAD 2
+        alone and 1200.0 of 1400.0, now **0 and 1400.0**, the invariant restored.
+        The corner links did not only lengthen a chain; they gave the open walk
+        shortcuts that stranded face-connected cells. HEAD already lost 100.0 of
+        500.0 on a 2x2 block with one cell hanging off it, silently: what is new
+        is the warning.
+      - **NOT done: no geometry is invented for a lone cell.** Giving it a real
+        line means choosing a length AND a direction for a feature that occupies
+        one cell -- the cell's mean width is available, the direction is not, and
+        the only non-arbitrary direction (toward the corner-touching cells) would
+        reintroduce as geometry exactly the connection just refused as adjacency.
+        That is a design call about what a one-cell feature MEANS, so it is
+        reported instead. Nor was `_chains`' arbitrary walk order pinned (a ring
+        has no ends, so `component[0]` starts it and a set's iteration order picks
+        the direction); the tests assert every step of a walk is a real shared face
+        rather than an exact sequence. `_chains`' leftover recursion -- a
+        pre-existing approximation of a branched feature -- is untouched.
+      - **Cost: 3.3 ms -> 22.3 ms** for `_adjacency` on a 200-cell BC over a
+        10,000-cell structured grid (3.5 -> 24.0 ms for the whole `_chains` build),
+        paid once per package per layer per export. The prefilter keeps the work on
+        the subset rather than reaching for the grid's full cached adjacency, which
+        would walk all 10,000 cells to answer about 200.
+      - Also fixed in passing: the README the export WRITES told the reader to read
+        layer `drn_segments` and multiply `drn.cond_per_ft`. The export writes
+        `drn_lines` and `conductance_per_ft`, so the recipe raised `KeyError` on
+        both names.
+      - 24 tests in `tests/test_usg_export_adjacency.py`, 21 of which fail at HEAD
+        (13 of those reach `_adjacency`/`_chains` through the new grid argument, so
+        at HEAD they fail on the call as well as on the answer). They build the mesh
+        and a one-layer `UsgModel` by hand, so no MODFLOW-USG model is written and
+        CI needs none. Twenty-one mutants and an import probe, all killed: the face
+        test dropped (the `touches` bug restored), inverted, replaced by each of the
+        two hand-rolled copies, taken as a length with `>= 0` so a corner's zero
+        passes; self-pairs unskipped; neighbours recorded as subset positions; the
+        prefilter narrowed to `contains`; the recursion and `_bc_frames` each handed
+        the polygon frame again; a one-cell leftover DROPPED, which loses a BC
+        record silently; a lone cell given an invented 1 ft line; and on the report
+        side the count flipped, taken on the point frame, the warning's two counts
+        swapped, a per-foot twin promised where there is none, the branch cause
+        struck from the note leaving a false claim, the warning demoted to debug,
+        the note dropped, the count dropped, and the report emitted
+        unconditionally. Two mutants are recorded as EQUIVALENT and expected to
+        survive: dropping the prefilter (same answer, O(n^2) face tests) and
+        counting zero-length rows instead of one-cell chains (equal on every frame
+        this writes -- counting chains is what makes the sentence about them true
+        rather than accidentally true).
+      - **Entry 237 deferred this site by name** ("and `usg/export._adjacency`
+        still uses `touches`; both are their own sites"); that clause is struck
+        above, and `LAKBuilder.lake_cells` remains the one it still names.
       - Found by the 2026-09-11 sibling investigation.
