@@ -646,9 +646,23 @@ class VoronoiGridPlus(VoronoiGrid):
         self,
         raster_files: Path | list[Path | int] = None,
         labels: str | list[str] = None,
+        *,
+        method: str = "area",
+        nodata: float | None = None,
+        gaps: str = "warn",
     ) -> gpd.GeoDataFrame | None:
-        """Sample raster values at Voronoi cell centroids."""
-        return surface_get_raster_vals_at_centroids(self, raster_files=raster_files, labels=labels)
+        """Sample raster values at Voronoi cell centroids.
+
+        ``method``, ``nodata`` and ``gaps`` are
+        :func:`~myflopy.modflow.mf6.grid.surfaces.get_raster_vals_at_centroids`'s;
+        the first two were unreachable from here, which also put ``gaps`` --
+        what to do about a cell the raster gave no value for -- out of reach
+        of the scope a user samples from.
+        """
+        return surface_get_raster_vals_at_centroids(
+            self, raster_files=raster_files, labels=labels,
+            method=method, nodata=nodata, gaps=gaps,
+        )
 
     def get_gdf_topbtm_multilyr(self, rasters: list, labels: list = None):
         """Build top/bottom surfaces for one or more layers from rasters."""

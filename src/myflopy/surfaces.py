@@ -771,6 +771,10 @@ class Surface:
         gdf = get_raster_vals_at_centroids(
             vor, [self.resolve_source(refresh=refresh)], [0], method=method,
             nodata=self.nodata,
+            # A raster covering part of the model is normal here: `fill="propagate"`
+            # inherits the rest from the surface above, and the pinch-out rules turn
+            # what is left into idomain. Warning per cell would be noise.
+            gaps="ignore",
         )
         vals = gdf[0].to_numpy(dtype=float)
         if self.fill == "propagate":

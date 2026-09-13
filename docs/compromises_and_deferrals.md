@@ -8760,3 +8760,58 @@ same day, which is the useful part of the result.
       type, the per-field message, the miss precedence in both loops, and the
       controls that an int, a scalar and a real K still pass. Nine mutants, all
       killed.
+
+248. **A cell the raster gave no value for came back as a bare NaN, with nothing said (2026-09-13).**
+      Reported from a real remap: copying initial heads from one model onto a
+      different DISV grid, one cell of ~18,000 sampled to NaN, and the only way the
+      user found out was by looking. They patched it by hand
+      (`strt_sampled.loc[17832] = strt_sampled.loc[18205]`). Nothing was wrong with
+      the patch; the problem is that `get_raster_vals_at_centroids` returns a frame
+      whose NaN is indistinguishable from a real value until MF6 reports success and
+      hands back a NaN budget.
+      **The root cause is structural, not a fluke.** `InterpolatedSurface` builds its
+      raster with `scipy.griddata(..., method='cubic')` and **no `fill_value`**, so
+      the result is NaN everywhere outside the **convex hull of the input points** --
+      and the input points are the source grid's CELL CENTROIDS. A model's outer
+      cells extend past their own centroids, so such a raster is blank in a rim about
+      half a cell wide around the entire footprint. Every boundary cell of a
+      different grid can land in it. One cell was luck; a different mesh gives dozens.
+      (`_area_weighted_sample` already falls back to the centroid for a cell holding
+      no pixel CENTRE, which is why only the truly-off-the-data cells survived.)
+      `gaps=` now says what to do, and defaults to being loud:
+      - `"warn"` (default) keeps the NaN and warns, naming the count, the column and
+        the first ten cells, and saying what a NaN does to an MF6 run;
+      - `"nearest"` takes each gap from its nearest valued cell by centroid distance
+        (a `cKDTree` over the cells that have values) and logs how many and which --
+        the library doing what the reporter did by hand;
+      - `"raise"` refuses;
+      - `"ignore"` keeps the NaN silently.
+      **`"ignore"` exists because gaps are legitimate mid-pipeline, and `Surface.sample`
+      passes it.** A raster covering part of a model is normal for a layer surface:
+      `Surface(fill="propagate")` inherits the rest from the surface above and the
+      pinch-out rules turn what is left into idomain. Warning per cell there would
+      have made the default useless through noise, which is the usual way a warning
+      like this dies. `get_gdf_topbtm_multilyr` deliberately does NOT opt out -- a NaN
+      in `gdf_topbtm` is a NaN cell elevation.
+      **A raster that covers NO cell raises**, reporting both extents and both CRSs
+      the way an off-grid vector source does (ledger 211) -- but only when the two
+      extents are actually **disjoint**. An all-no-data column where the extents DO
+      overlap is a blank raster, not a misplaced one, and gets the ordinary report:
+      the first version claimed a location mismatch for both, which sent a one-cell
+      test grid sitting on a single no-data pixel looking for a CRS bug. `_disjoint`
+      answers "no" whenever it cannot know (a missing CRS, a transform that fails),
+      because its only job is to decide whether to make that stronger claim.
+      Also fixed, and the reason `gaps=` would otherwise have been unreachable from
+      the scope a user samples from: `VoronoiGridPlus.get_raster_vals_at_centroids`
+      forwarded **neither `method=` nor `nodata=`**, so the grid method could not ask
+      for centroid sampling or override an undeclared sentinel either.
+      NOT done: `InterpolatedSurface` still writes a hull-limited raster. Extrapolating
+      past the hull is a modelling choice (nearest, or an RBF that runs away), and the
+      honest fix for remapping between grids is not a raster at all -- it is an area
+      overlay on the source grid's own cell POLYGONS, which has no hull and no rim.
+      That is Phase 2's `sim.with_grid`/`import_run` work, and this entry is the
+      stopgap that makes the rim visible until then.
+      `tests/test_raster_sampling_gaps.py` (16 tests) pins each mode, the per-column
+      independence, the constant-column exemption, both all-no-data branches, the two
+      forwarded parameters, the `Surface` opt-out, and the interpolated-rim case end
+      to end. Ten mutants, all killed.

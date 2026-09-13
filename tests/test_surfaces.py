@@ -463,7 +463,10 @@ def test_area_weighted_excludes_nodata(tmp_path):
     vor = _poly_vor([box(0, 1, 3, 4)])  # 3x3 block; center pixel is nodata
 
     area = get_raster_vals_at_centroids(vor, [path], ["z"], method="area")["z"].to_numpy()
-    cent = get_raster_vals_at_centroids(vor, [path], ["z"], method="centroid")["z"].to_numpy()
+    # The centroid sits on the nodata pixel, so this cell has no value -- which the
+    # sampler now says out loud (ledger 248) rather than handing back a bare NaN.
+    with pytest.warns(UserWarning, match="gave no value for 1 of 1 cells"):
+        cent = get_raster_vals_at_centroids(vor, [path], ["z"], method="centroid")["z"].to_numpy()
 
     assert area[0] == pytest.approx(50.0)   # mean of the 8 valid pixels
     assert np.isnan(cent[0])                # centroid sits on the nodata pixel

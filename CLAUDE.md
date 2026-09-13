@@ -223,7 +223,7 @@ warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
-needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; ten
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; eleven
 survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
 `pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
 `tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3128 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3144 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -352,6 +352,24 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   well as a `.gpkg` source: a line ending on a face and overshooting by 1e-6 ft -- a CRS
   round trip moves an end by 3e-7 -- wrote a full second record, where `mf.sfr` had
   dropped the reach since ledger 214.
+- **Sampling a raster onto cells: `gaps=` says what a MISSING cell means** (ledger
+  248, 2026-09-13). `get_raster_vals_at_centroids` handed back NaN for a cell off
+  the raster's data with nothing said, and a NaN in `strt` or `gdf_topbtm` makes MF6
+  report success and return a NaN budget. Default `"warn"` names the cells;
+  `"nearest"` takes each from its nearest valued cell; `"raise"` refuses; `"ignore"`
+  is for a caller whose next stage fills them, which is why `Surface.sample` passes
+  it -- a partial raster is NORMAL for a layer surface (`fill="propagate"`,
+  pinch-out), and warning there would have drowned the default.
+  **The motivating trap: `InterpolatedSurface` writes a hull-limited raster.**
+  `griddata` fills only the CONVEX HULL of its input points, and those points are the
+  source grid's CELL CENTROIDS -- so a raster interpolated from one model is blank in
+  a rim half a cell wide around the whole footprint, and a different grid's boundary
+  cells land in it. For remapping between grids the real answer is an area overlay on
+  the source cells' POLYGONS (Phase 2), not a raster round trip. A raster covering NO
+  cell raises with both extents and both CRSs -- but only when they are actually
+  disjoint; all-no-data where they overlap is a blank raster, not a misplaced one.
+  `vor.get_raster_vals_at_centroids` forwards `method=`/`nodata=`/`gaps=` now; it
+  forwarded none of them.
 - **A `.gpkg` NULL raises too, naming the row** (ledger 247, 2026-09-13). A null
   attribute reached a written package as a NON-FINITE number by two separate
   routes: `k_array` did `float(row[value])`, which makes NaN, and a boundary record

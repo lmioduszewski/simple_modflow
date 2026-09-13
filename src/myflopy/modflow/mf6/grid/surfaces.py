@@ -10,6 +10,7 @@ from rasterio.errors import WindowError
 from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from rasterio.warp import transform as warp_transform
+from rasterio.warp import transform_bounds
 from rasterio.windows import Window, from_bounds
 
 from myflopy._logging import get_logger
@@ -129,6 +130,120 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
     return mean
 
 
+GAP_MODES = ("warn", "ignore", "nearest", "raise")
+
+
+def _fill_nearest(values: np.ndarray, xs, ys, missing: np.ndarray) -> np.ndarray:
+    """Copy each gap's value from the nearest cell that HAS one, by centroid distance."""
+
+    from scipy.spatial import cKDTree           # heavy; only this mode needs it
+
+    have = np.flatnonzero(np.isfinite(values))
+    tree = cKDTree(np.column_stack([np.asarray(xs)[have], np.asarray(ys)[have]]))
+    _distance, nearest = tree.query(
+        np.column_stack([np.asarray(xs)[missing], np.asarray(ys)[missing]])
+    )
+    filled = values.copy()
+    filled[missing] = values[have[nearest]]
+    return filled
+
+
+def _disjoint(vor, src) -> bool:
+    """Whether the raster and the grid do not overlap at all, in the raster's CRS.
+
+    Only asked to decide whether an all-no-data column should be reported as a
+    misplaced file. Unknowable without both CRSs, and a transform can fail on a
+    projection a point set survives, so either way the answer is "not disjoint" --
+    the caller then gives the ordinary per-cell report, which is true regardless.
+    """
+
+    grid_crs = getattr(vor, "crs", None)
+    if grid_crs is None or src.crs is None:
+        return False
+    left, bottom, right, top = vor.gdf_vorPolys.total_bounds
+    try:
+        gl, gb, gr, gt = transform_bounds(grid_crs, src.crs, left, bottom, right, top)
+    except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+        # Deliberately broad, and it only ever downgrades an error message. This
+        # reaches pyproj (CRSError, ProjError), rasterio (CRSError), and a plain
+        # ValueError for a projection that cannot represent the grid's corners --
+        # and a bare EPSG string that geopandas accepts is a caller input, not a bug
+        # (see `normalize_crs`). Failing here must not hide the real complaint.
+        logger.debug("could not compare raster and grid extents", exc_info=True)
+        return False
+    rl, rb, rr, rt = src.bounds
+    return gl >= rr or gr <= rl or gb >= rt or gt <= rb
+
+
+def _resolve_gaps(values, vor, src, xs, ys, *, label, raster_path, gaps: str) -> np.ndarray:
+    """Say something about the cells a raster gave no value for -- or fill them.
+
+    ``rasterio`` yields the no-data value for a point outside coverage, which this
+    module turns into NaN, and the area sampler already falls back to the centroid
+    for a cell holding no pixel CENTRE. What was left was a cell whose centroid is
+    off the raster's data as well: it came back NaN, and the frame was handed over
+    with nothing said. An interpolated surface makes this the normal case rather
+    than the odd one -- ``griddata`` fills only the CONVEX HULL of its input points,
+    so a raster written from one grid's CELL CENTROIDS has no data in a rim half a
+    cell wide around the whole model, and every boundary cell of a DIFFERENT grid
+    can land in it. Sampled into ``strt`` or ``gdf_topbtm``, that NaN reaches MF6.
+
+    Gaps are legitimate mid-pipeline -- ``Surface(fill="propagate")`` inherits them
+    from the surface above -- so the caller says which it is. ``"ignore"`` is for
+    those; the default ``"warn"`` is for a caller reading values off a grid, who
+    has no later stage to catch them.
+    """
+
+    if gaps not in GAP_MODES:
+        raise ValueError(f"Unknown gaps mode {gaps!r}; expected one of {GAP_MODES}.")
+    values = np.asarray(values, dtype=float)
+    missing = np.flatnonzero(~np.isfinite(values))
+    if missing.size == 0 or gaps == "ignore":
+        return values
+
+    if missing.size == values.size and _disjoint(vor, src):
+        # Nothing landed AND the two do not even overlap: a location or CRS mismatch,
+        # reported as two boxes the way an off-grid vector source is (ledger 211).
+        # Every cell being no-data where the extents DO overlap is a different thing
+        # -- a raster that is blank here -- and falls through to the ordinary report,
+        # because claiming a mismatch would send the reader looking for the wrong bug.
+        raise ValueError(
+            f"Raster '{raster_path}' gave no value for ANY of the {values.size} cells "
+            f"of this grid, so column {label!r} would be entirely no-data. The raster "
+            f"covers {tuple(round(b, 2) for b in src.bounds)} in {src.crs}; the grid "
+            f"covers {tuple(round(b, 2) for b in vor.gdf_vorPolys.total_bounds)} in "
+            f"{getattr(vor, 'crs', None)}. Check they are the same place in the same CRS."
+        )
+
+    listing = ", ".join(str(cell) for cell in missing[:10])
+    if missing.size > 10:
+        listing += f", and {missing.size - 10} more"
+    if gaps == "raise":
+        raise ValueError(
+            f"Raster '{raster_path}' gave no value for {missing.size} of "
+            f"{values.size} cells in column {label!r}: {listing}. Pass "
+            "gaps='nearest' to take each one from its nearest valued cell, or "
+            "gaps='warn' to receive them as NaN."
+        )
+    if gaps == "nearest":
+        filled = _fill_nearest(values, xs, ys, missing)
+        logger.info(
+            "column %r: filled %d of %d cells from the nearest valued cell (%s)",
+            label, missing.size, values.size, listing,
+        )
+        return filled
+
+    warnings.warn(
+        f"Raster '{raster_path}' gave no value for {missing.size} of {values.size} "
+        f"cells in column {label!r}, which are NaN: {listing}. A NaN reaching an MF6 "
+        "input makes MF6 report success and return a NaN budget. Pass gaps='nearest' "
+        "to take each from its nearest valued cell, gaps='raise' to refuse, or "
+        "gaps='ignore' if a later stage fills them.",
+        stacklevel=3,
+    )
+    return values
+
+
 def get_raster_vals_at_centroids(
     vor,
     raster_files: Path | list[Path | int | float] | None = None,
@@ -136,6 +251,7 @@ def get_raster_vals_at_centroids(
     *,
     method: str = "area",
     nodata: float | None = None,
+    gaps: str = "warn",
 ) -> gpd.GeoDataFrame | None:
     """Sample raster values or constants onto Voronoi cells.
 
@@ -146,6 +262,25 @@ def get_raster_vals_at_centroids(
     ``nodata`` overrides each raster's declared no-data value, for files that use
     a sentinel without recording it in the header. It applies to every raster in
     the call, so pass one raster at a time when they differ.
+
+    ``gaps`` decides what happens to a cell the raster gave no value for, which
+    used to be handed back as NaN with nothing said -- see :func:`_resolve_gaps`:
+
+    ``"warn"`` (default)
+        Keep the NaN and warn, naming the cells.
+    ``"nearest"``
+        Take each gap from its nearest valued cell, by centroid distance, and log
+        which. This is the fix for sampling a raster interpolated from another
+        grid's centroids, whose data stops half a cell inside the model edge.
+    ``"raise"``
+        Refuse the sample.
+    ``"ignore"``
+        Keep the NaN silently -- for a caller whose next stage fills them, which is
+        what ``Surface(fill="propagate")`` and the pinch-out rules do.
+
+    A raster that covers NO cell of the grid raises whatever the mode, except
+    ``"ignore"``: that is a location or CRS mismatch, and the error prints both
+    extents and both CRSs.
     """
     if raster_files is None:
         logger.warning('no raster files provided; there are no surfaces to sample')
@@ -196,7 +331,10 @@ def get_raster_vals_at_centroids(
                 sampled = _centroid_sample(
                     src, vor_crs, xs, ys, raster_path, nodata=nodata
                 )
-            centroid_vals[label] = sampled
+            centroid_vals[label] = _resolve_gaps(
+                sampled, vor, src, xs, ys,
+                label=label, raster_path=raster_path, gaps=gaps,
+            )
 
     for label, val in numeric_vals.items():
         centroid_vals[label] = float(val)

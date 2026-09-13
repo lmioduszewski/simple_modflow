@@ -64,6 +64,13 @@ ALLOWED_BROAD = {
     # Does not swallow: re-raises every failure to load the optional GRASS
     # SYSTEM dependency as one actionable ImportError, cause attached.
     "modflow/utils/contour_interp.py:_grass_modules",
+    # Comparing a raster's extent with the grid's reaches pyproj (CRSError,
+    # ProjError), rasterio (its own CRSError) and a plain ValueError for a
+    # projection that cannot represent the grid's corners -- and a bare EPSG string
+    # geopandas accepts is a caller input, not a bug. It only ever decides whether
+    # to make the STRONGER claim that a raster is misplaced, so failing to know
+    # must not hide the ordinary per-cell complaint (ledger 248).
+    "modflow/mf6/grid/surfaces.py:_disjoint",
 }
 
 
