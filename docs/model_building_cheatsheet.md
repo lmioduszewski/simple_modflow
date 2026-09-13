@@ -1130,6 +1130,13 @@ raster is sampled onto the grid **once** — it used to be once per cell read, t
 whole grid each time: 5 samples for a 2-cell pond. `units="meters"` on a Surface
 converts to the model's units, and a relative Surface measures from the model top.
 
+**A lake covers its cells by AREA** (ledger 241) -- a polygon drawn along cell
+faces reaches only the cells inside it, and a sliver of a cell, which a CRS round
+trip leaves, is dropped unless the whole lake is that thin (a detached part of a
+multipart lake is judged on its own, so one narrower than 0.01 ft goes too). Every
+lake cell gets its own vertical connection, so a spurious one moves the budget. A
+lake covering no cell raises, with both extents and both CRSs.
+
 **Only the lake's own cells need a value.** The neighbours each step is measured
 against are land: where the source has nothing for one — a raster clipped to the
 lake, a Series of lake cells — it sits at the model top. Two adjustments WARN: a

@@ -4000,8 +4000,15 @@ class _LAKPackage:
     ) -> PackageSpec:
         """Build a LAK package from lake geometry (delegates to ``LAKBuilder``).
 
-        Lake cells are taken from the polygon footprint(s); ``connection_modes`` picks
-        how the bed connections are generated per lake:
+        Lake cells are the ones each polygon footprint COVERS, by AREA -- the
+        shared rule a ``.gpkg`` boundary and a head target are resolved with: a
+        lake drawn along cell faces reaches only the cells inside it, and an
+        overlap that is a sliver of a cell (a CRS round trip leaves these) is
+        noise and is dropped, unless the whole lake is that thin. In a MULTIPART
+        lake that reaches per part, so a detached part narrower than the floor
+        goes with the slivers. A lake covering no cell RAISES, naming why and
+        giving both extents and both CRSs.
+        ``connection_modes`` picks how the bed connections are generated per lake:
 
         * ``"bathy"`` (default; alias ``"automatic"``) -- natural lakes. Needs a
           *per-cell* ``lake_bottom`` -- the bathymetry (see ``lake_bottom`` below).

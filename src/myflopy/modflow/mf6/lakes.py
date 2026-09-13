@@ -21,6 +21,12 @@ from rasterio.features import geometry_mask
 from shapely.geometry.base import BaseGeometry
 
 from myflopy.advanced import lak_spec
+from myflopy.modflow.mf6.grid.geometry import (
+    cell_shares,
+    domain_active,
+    miss_reason,
+    where_they_are,
+)
 from myflopy.specs import (
     _layer_elevations,
     ModelContext,
@@ -384,6 +390,10 @@ class LAKBuilder:
     _lake_cells: dict[str, list[int]] | None = field(
         default=None, init=False, repr=False, compare=False
     )
+    # The CRS the lakes arrived in, kept because ``lake_table`` reprojects them to
+    # the grid's: a miss is diagnosed from the two frames, and after that
+    # reprojection the frame on hand can only report the grid's own.
+    _source_crs: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate a grid is present and ``nper >= 1``, and freeze tables/outlets."""
@@ -426,6 +436,7 @@ class LAKBuilder:
                 raise ValueError("At least one lake geometry is required.")
             records = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
 
+        object.__setattr__(self, "_source_crs", records.crs)
         grid_crs = getattr(self.grid, "crs", None)
         if grid_crs is not None and records.crs is not None and records.crs != grid_crs:
             records = records.to_crs(grid_crs)
@@ -442,6 +453,20 @@ class LAKBuilder:
             raise ValueError(f"Lake IDs must be unique: {', '.join(duplicates)}")
         if any(geometry.geom_type not in {"Polygon", "MultiPolygon"} for geometry in records.geometry):
             raise ValueError("Lake geometries must be Polygon or MultiPolygon.")
+        # A lake reaches its cells by AREA, and the shared rule falls back to
+        # LENGTH for a geometry with none -- so a collapsed outline (a digitizing
+        # error, a polygon clipped to nothing) would come back as the two cells
+        # along it rather than as the miss it is.
+        flat = [
+            str(lake_id)
+            for lake_id, geometry in zip(ids, records.geometry, strict=True)
+            if geometry.area <= 0.0
+        ]
+        if flat:
+            raise ValueError(
+                f"Lake geometry has no area: {', '.join(flat)}. A lake covers cells "
+                "by area, so a collapsed or zero-width outline connects to nothing."
+            )
 
         records = records.copy()
         records["lake_id"] = ids
@@ -479,18 +504,41 @@ class LAKBuilder:
 
     @property
     def lake_cells(self) -> dict[str, list[int]]:
-        """Map each lake ID to the grid cells its polygon covers (cached; intersection is costly)."""
+        """Map each lake ID to the grid cells its polygon COVERS (cached; intersection is costly).
 
-        # Cached: each access does a full-grid geometry intersection per lake, and
+        A lake covers a cell by AREA, through the shared rule
+        :func:`myflopy.modflow.mf6.grid.geometry.cell_shares` -- the same one a
+        ``.gpkg`` boundary, a head target and a region are resolved with. Every
+        cell whose overlap was above zero used to count, and each of those becomes
+        a full LAK cell with its own vertical connection, so a lake drawn exactly
+        on one cell of a State Plane grid and round-tripped through EPSG:4326 grew
+        from 1 cell to 4 -- the extras overlapping by 7.41e-06, 9.07e-14 and
+        7.41e-06 square feet -- and one grown by 1e-06 ft reached all nine cells
+        around it. That changes the lake's sidewall topology and its budget. A
+        piece narrower than ``_SLIVER_WIDTH`` and under ``_SLIVER_SHARE`` of its
+        cell is noise and goes, UNLESS every piece of the lake is that thin, when
+        they are the lake. That measure is per PIECE, so a multipart lake whose
+        detached part is itself narrower than the floor loses that part's cell
+        (measured: a 15 x 0.005 ft satellite of a one-cell lake, 0.075 square feet,
+        goes; a 1 x 1 ft pond and a 15 x 0.1 ft strip stay) -- the price of one
+        rule for every caller, and the same answer a ``.gpkg`` zone of that shape
+        gets.
+
+        Shares are discarded here: LAK connects to a cell or it does not, and
+        nothing about a connection is apportioned by how much of the lake sits in
+        one. Which LAYER each cell connects in is still
+        :meth:`_layer_containing`'s, against that cell's own elevations.
+        """
+
+        # Cached: each access does a geometry intersection per candidate cell, and
         # connection building reads this once per lake cell -- recomputing it there
         # made an automatic build over a large lake O(cells x lakes x grid) and hang.
         if self._lake_cells is not None:
             return self._lake_cells
-        polygons = self.grid.gdf_vorPolys.geometry
+        polys = self.grid.gdf_vorPolys
         result = {}
         for lake_id, row in self.lake_table.iterrows():
-            intersections = polygons.intersection(row.geometry)
-            result[lake_id] = [int(cell) for cell in intersections.index[intersections.area > 0.0]]
+            result[lake_id] = [cell for cell, _share in cell_shares(polys, row.geometry)]
         object.__setattr__(self, "_lake_cells", result)
         return result
 
@@ -647,13 +695,17 @@ class LAKBuilder:
         return surfaces.drop(columns="geometry", errors="ignore")
 
     def _active(self, layer: int, cell: int) -> bool:
-        """Whether ``(layer, cell)`` is active in the context's idomain (True if none set)."""
+        """Whether ``(layer, cell)`` is active in the context's idomain (True if none set).
 
-        domain = self.context.domain
-        if domain is None:
-            return True
-        values = np.asarray(domain)
-        return values.ndim < 2 or bool(values[layer, cell] > 0)
+        The three-valued idomain rule itself is
+        :func:`myflopy.modflow.mf6.grid.geometry.domain_active`. This used to be a
+        second copy of it that differed twice: a ONE-dimensional domain counted as
+        active everywhere, so a lake connected through cells the model had switched
+        off; and a layer beyond a ``(nlay, ncpl)`` domain raised ``IndexError``
+        rather than naming the layer.
+        """
+
+        return domain_active(self.context.domain, layer, cell)
 
     def _layer_containing(self, cell: int, elevation: float, only_layer: int | None = None) -> int | None:
         """The active layer whose top/bottom bracket ``elevation`` at ``cell`` (or ``None``).
@@ -1122,12 +1174,53 @@ class LAKBuilder:
             result[lake_id] = table.build() if isinstance(table, LakeTableBuilder) else table
         return result
 
+    def _refuse_lakes_off_the_grid(self) -> None:
+        """Raise when a lake covers no grid cell, saying why and where (ledger 211).
+
+        A lake with no cells carries no LAK connection, which MF6 refuses, so ANY
+        lake missing raises -- there is no partial-miss tier here as there is for a
+        ``.gpkg`` source, where one layer can deliberately serve several grids. The
+        message carries why each lake missed
+        (:func:`~myflopy.modflow.mf6.grid.geometry.miss_reason`) and both extents
+        with both CRSs
+        (:func:`~myflopy.modflow.mf6.grid.geometry.where_they_are`), because a
+        location mismatch is two boxes. It used to be ``Lakes do not intersect the
+        grid: <names>``, which named the lake and nothing that would find it.
+
+        Only TWO of ``miss_reason``'s answers can come back here -- "outside the
+        grid" and "only borders cells" -- because a lake is areal and nothing
+        filters its cells: if any candidate overlaps the lake by area,
+        ``cell_shares`` keeps it (a piece that is a sliver is dropped only while
+        another piece is not), so an empty answer means no overlap at all. Its
+        ``target`` names what a RESTRICTED search was looking for, and this one is
+        unrestricted, so the default stands and its wording is never printed.
+        """
+
+        table = self.lake_table
+        missing = [lake_id for lake_id, cells in self.lake_cells.items() if not cells]
+        if not missing:
+            return
+        polys = self.grid.gdf_vorPolys
+        reasons = ", ".join(
+            f"'{lake_id}' ({miss_reason(polys, table.loc[lake_id, 'geometry'])})"
+            for lake_id in missing
+        )
+        raise ValueError(
+            f"{len(missing)} of {len(table)} lakes cover no grid cell, so they would "
+            f"carry no LAK connection: {reasons}. "
+            + where_they_are(
+                table.geometry,
+                polys,
+                noun="lakes",
+                source_crs=self._source_crs,
+                grid_crs=getattr(self.grid, "crs", None),
+            )
+        )
+
     def validate(self) -> None:
         """Validate generated LAK inputs before building the package spec."""
 
-        if any(not cells for cells in self.lake_cells.values()):
-            missing = [lake_id for lake_id, cells in self.lake_cells.items() if not cells]
-            raise ValueError(f"Lakes do not intersect the grid: {', '.join(missing)}")
+        self._refuse_lakes_off_the_grid()
         if any(not isinstance(outlet, LakeOutlet) for outlet in self.outlets):
             raise ValueError("outlets must contain LakeOutlet objects.")
         for outlet in self.outlets:

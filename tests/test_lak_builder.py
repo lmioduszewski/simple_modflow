@@ -22,6 +22,7 @@ from myflopy import (
     PackageSpec,
     SimulationSpec,
 )
+from myflopy.modflow.mf6 import lakes as lakes_module
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
 
@@ -242,7 +243,7 @@ def _wide_lake_builder() -> LAKBuilder:
 
 
 def test_lake_cells_is_cached_not_recomputed_per_cell():
-    """lake_cells does a full-grid intersection per lake; building connections must
+    """lake_cells resolves cell coverage once per lake; building connections must
     not recompute it once per lake cell (that O(cells x lakes x grid) blowup hung
     automatic builds over large lakes)."""
     builder = _wide_lake_builder()
@@ -251,18 +252,21 @@ def test_lake_cells_is_cached_not_recomputed_per_cell():
     # Cached: repeated access returns the same object (no recompute).
     assert builder.lake_cells is builder.lake_cells
 
-    original = gpd.GeoSeries.intersection
+    # Counted on the shared coverage rule, which is where the intersections are
+    # done now -- per candidate cell, and on shapely geometries rather than a
+    # GeoSeries, so counting GeoSeries.intersection reads zero either way.
+    original = lakes_module.cell_shares
     calls = {"n": 0}
 
-    def counting_intersection(self, *args, **kwargs):
+    def counting_cell_shares(*args, **kwargs):
         calls["n"] += 1
-        return original(self, *args, **kwargs)
+        return original(*args, **kwargs)
 
     object.__setattr__(builder, "_lake_cells", None)  # force one recompute
-    with mock.patch.object(gpd.GeoSeries, "intersection", counting_intersection):
+    with mock.patch.object(lakes_module, "cell_shares", counting_cell_shares):
         _ = builder.connections  # calls _sidewall_connections for every lake cell
 
-    # One intersection for the single lake -- NOT one per lake cell.
+    # One resolve for the single lake -- NOT one per lake cell.
     assert calls["n"] == 1
 
 

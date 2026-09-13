@@ -152,6 +152,20 @@ lak = mf.lak(context=ctx, nper=nper, lakes="pond.gpkg", lake_id_field="name",
 A flat-bottomed basin is `connection_modes="rectangular"`, with one `lake_bottom`
 and a `lake_top` per lake.
 
+**Which cells a lake covers.** By AREA, through the shared rule (ledger 241 -- the
+same `cell_shares` behind `.gpkg` boundaries and head targets): a lake polygon
+drawn along cell faces reaches only the cells inside it, and an overlap that is a
+sliver of a cell -- what a CRS round trip leaves -- is noise and is dropped,
+unless every piece of the lake is that thin. A MULTIPART lake is measured per
+part, so a detached part narrower than the floor (0.01 ft) goes with the slivers
+while a 1 ft pond stays. Each lake cell becomes a full LAK cell with its own
+vertical connection, so a spurious one changes the lake's sidewall topology and
+its budget. A lake covering no cell RAISES, naming why and giving both extents and
+both CRSs (ledger 211) -- from `validate()`, so reading `LAKBuilder.lake_cells` to
+see WHICH lake missed still answers `{"pond": []}`. (A lake polygon with no area
+at all -- a collapsed outline -- is refused earlier, on the first read of
+`lake_table`.)
+
 ### GWT / GWE transport packages
 
 Thin factories (same shape as `mf.ic`), for solute-transport (GWT) and

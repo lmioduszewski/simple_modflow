@@ -7358,10 +7358,10 @@ same day, which is the useful part of the result.
       - **Size**: `geopackage.py` 958 -> 857 lines, `geometry.py` 504 -> 672. The
         difference is docstring: the rule now has to explain itself to callers
         with no GeoPackage in sight.
-      - **What still keeps its own copy: `LAKBuilder._active`** (`lakes.py`),
-        which counts a 1-D idomain as active everywhere where this one reads it.
-        Making the two agree is a behaviour change and is not in this entry.
-        Neither are the other sites the sweep measured against these rules
+      - **What still kept its own copy at the time: `LAKBuilder._active`**
+        (`lakes.py`), which counted a 1-D idomain as active everywhere where this
+        one reads it -- CLOSED by entry 241. Neither were the other sites the
+        sweep measured against these rules
         (`pest/zones.py`,
         `surfaces._cells_in_zone`, `PRTReleasePoints.from_points`,
         `get_vor_idx_from_geometry`, the demo site's `_cells_for`), nor ledger
@@ -7666,9 +7666,9 @@ same day, which is the useful part of the result.
       - **NOT done**: the areal and line floors stay two branches of one function
         rather than one expression, because the measures are not interchangeable (a
         polygon is judged by its WIDTH, a line by its LENGTH) and collapsing them
-        would have to pick one. `LAKBuilder.lake_cells` still keeps any area > 0 with
-        no sliver rule at all, and `usg/export._adjacency` still uses `touches`;
-        both are their own sites. No `Spread` renormalization was added.
+        would have to pick one. `LAKBuilder.lake_cells` kept any area > 0 with no
+        sliver rule at all (CLOSED by entry 241), and `usg/export._adjacency` still
+        uses `touches`, which is its own site. No `Spread` renormalization was added.
       - **Cost: none measurable.** `_mean_width(polygon)` is evaluated only after
         `size < _SLIVER_WIDTH` short-circuits, so a line whose pieces are ordinary
         never computes it. A blast-radius sweep over 182 mixed geometries -- boxes,
@@ -8031,4 +8031,137 @@ same day, which is the useful part of the result.
         NOT this change -- `grid.selection` 1 -> 2 and `simulation.regions` 2 -> 3,
         from 235/236 -- and `tests/test_import_layering.py` passes either way,
         since it fails only on an import pointing UPWARD.
+      - Found by the 2026-09-11 sibling investigation.
+
+241. **A lake kept every cell it grazed, and LAK had its own activity test (2026-09-12).**
+      `LAKBuilder.lake_cells` took any cell whose overlap with the lake polygon had
+      an area above zero, with no noise floor at all -- the last site that kept an
+      overlap ABOVE ZERO with no floor, which is the clause ledger 237 left open.
+      (It is not the last site off the shared rule: 232's list is still live, and
+      `VoronoiGridPlus.get_vor_idx_from_geometry` is looser still -- it defaults to
+      `predicate="intersects"`, keeping every cell a geometry merely TOUCHES.)
+      Measured on a 4x4 grid of 25 ft cells: a lake drawn exactly on cell 5 gave
+      `[5]`, but the same lake on a State Plane grid round tripped 2927 -> 4326 ->
+      2927 gave `[4, 5, 8, 9]`, the extras overlapping by 7.41e-06, 9.07e-14 and
+      7.41e-06 ft2; via EPSG:2285 `[5, 6, 9, 10]`, extras 1.41e-04, 8.58e-03 and
+      1.94e-09 ft2; and grown by 1e-06 ft, all nine cells around it. Each of those
+      becomes a **full LAK cell with its own vertical connection**, so the lake's
+      sidewall topology and its budget moved with the projection the polygon had
+      been digitized in, under normal termination.
+      - **A lake COVERS its cells, through the rules ledger 232 extracted.**
+        `lake_cells` is `cell_shares(polys, geometry)` now -- the same rule behind a
+        `.gpkg` boundary, a head target, a DRN zone and a region -- and the four
+        cases above all give `[5]`. Shares are discarded at the call: LAK connects
+        to a cell or it does not, and nothing about a connection is apportioned by
+        how much of the lake sits in one. Which LAYER each cell connects in is
+        still `_layer_containing`'s, against that cell's own elevations.
+      - **The floor is the PIECE's width, not its share of the lake**, which is
+        what keeps a real clip. A lake reaching 0.1 ft into the next cell covers it
+        (2.5 ft2, 0.4% of the lake and 0.4% of the cell, but a strip 0.0996 ft wide
+        -- ten times `_SLIVER_WIDTH`), and a lake that is ITSELF that thin keeps
+        every piece: a 0.004 ft strip centred on the 1|5 face is two 0.002 ft
+        halves, and a rule that dropped them would have emptied it.
+      - **A multipart lake is measured per PART, and that is the one place a cell a
+        modeller MEANT can go.** Measured: a one-cell lake with a detached
+        15 x 0.005 ft satellite (0.075 ft2, mean width 0.005) was `[5, 15]` and is
+        `[5]` -- the satellite's cell is gone, silently, because the lake as a whole
+        is 9.6 ft wide so the whole-feature escape does not cover it. A detached
+        1 x 1 ft pond and a 15 x 0.1 ft strip both stay, and a multipart lake whose
+        every part is thin keeps them all, so the loss is confined to parts that are
+        themselves noise and a lake can never go from some cells to none this way.
+        Accepted rather than special-cased: it is the answer a `.gpkg` zone of that
+        shape already gets, and a second rule for lakes is what this entry removes.
+        Pinned by test, and stated in `docs/package_api_reference.md`.
+      - **`LAKBuilder._active` is `domain_active`**, closing 232's "What still keeps
+        its own copy" line. It differed twice: a ONE-dimensional idomain counted as
+        active EVERYWHERE, so a lake connected through cells the model had switched
+        off (measured: `_active(0, 4)` True on a flat domain whose cell 4 is 0, now
+        False, and a lake on a switched-off cell raises `bottom does not intersect
+        active cell` where it used to build); and a layer beyond a `(nlay, ncpl)`
+        domain raised `IndexError: index 3 is out of bounds for axis 0 with size 1`
+        rather than `Layer 3 is outside the model domain, which has 1 layers.` The
+        `-1` passthrough was already read correctly in the 2-D branch and still is.
+      - **A lake reaching no cell follows ledger 211**: `1 of 1 lakes cover no grid
+        cell, so they would carry no LAK connection: 'pond' (outside the grid). The
+        lakes span (...) and the grid (...); both are in EPSG:2927.` It was `Lakes
+        do not intersect the grid: pond`, which named the lake and nothing that
+        would find it. **There is no partial tier** as there is for a `.gpkg`
+        source, where one layer can deliberately serve several grids: a lake with no
+        cells carries no connection, which MF6 refuses, so ANY lake missing raises
+        and the message counts them (`1 of 2 ...`, naming only the one that missed).
+        The raise stays in `validate()`, not in `lake_cells`, so reading
+        `.lake_cells` to diagnose a miss still answers `{'pond': []}`. No `target=`
+        is passed to `miss_reason`: a lake is areal and nothing filters its cells,
+        so only "outside the grid" and "only borders cells" can come back and the
+        argument would be text no run can print.
+      - **The source CRS is now captured before `lake_table` reprojects** (a new
+        `_source_crs`, as `GeoPackageSource` has), because the sentence is about two
+        frames and the frame on hand had already been moved to the grid's -- it
+        would have said "both are in EPSG:2927" of a file read in degrees.
+      - **A collapsed lake outline is refused by name**, and that is this entry's
+        own decision rather than a reported defect: `_extent` falls back to LENGTH
+        for a geometry with no area, so `box(25, 25, 25, 50)` -- still a `Polygon`,
+        so the existing geometry-type check passes -- came back as the two cells
+        along that face instead of as the miss the old area test made it. `Lake
+        geometry has no area: <names>` is raised from `lake_table`, beside the type
+        check.
+      - **No lake anywhere on disk moves a cell.** Measured old rule against new:
+        the canonical valley lake at 21x21 (33 cells), 50x50 (130), 22x16 (25) and
+        the default 100x100 (541); the demo site's `lake.gpkg` on its 4,107-cell GIS
+        grid (60); and the Ten Trails USG export's four lakes on the 18,107-cell
+        DISV mesh of `runs/from_usg` -- Keevie 47, Black Diamond 22, Horseshoe 18,
+        Marjorie 15, **0 cells dropped**, matching that run's own written
+        `tentrails.lak` exactly (161/69/64/44 connections). Those polygons are
+        dissolved OLD CLN cells on a mesh drawn later, which is the case this rule
+        was most likely to bite; shifting them 1, 8 and 68 ft across that mesh drops
+        nothing either. Horseshoe is why the floor is two conditions and not an area
+        tolerance: its smallest overlap is 0.107 ft2, 1.9e-06 of its cell -- under
+        the share guard -- but 0.118 ft wide, so it is a real clip and is kept. So
+        no expectation changed, no notebook output moves, and ledger 169's "249
+        fringe cells over four lakes" stands.
+      - **Ledger 231's bathymetry route is untouched and asks for LESS**: it raises
+        where a per-cell `lake_bottom` Series misses a lake cell, and the cells this
+        drops were exactly the edge clips its "no data at N of the M cells" warning
+        was about.
+      - **Cost: this is slower, as in 232/235/238.** One vectorised
+        `GeoSeries.intersection` over the whole grid became a per-candidate loop:
+        0.63 -> 0.94 ms for the canonical lake at 21x21, 2.04 -> 3.35 ms at 50x50,
+        and 8.1 -> 22.4 ms (2.8x) for a 999-cell reservoir covering half the 50x50
+        grid. It is cached per builder and read once per lake, so a build pays it
+        once; `test_lak_builder.py`'s cache test had to change instrument (it
+        counted `GeoSeries.intersection` calls, and the shared rule intersects
+        shapely geometries), not intent.
+      - **The extents are printed in the GRID's frame, where 238 prints the
+        source's.** `lake_table` normalizes the lakes once, on read, and keeps no
+        second copy to measure -- so a lake file in degrees reports
+        `(1,146,072.9, 795,811.0, ...)` against the grid's `(0.0, 0.0, 100.0,
+        100.0)`. The two boxes still disagree, which is what the sentence is for,
+        and the clause names the reprojection; holding the source geometry (or
+        reprojecting back inside the error path) for a tidier box was not worth the
+        state. Ledger 211's own site (`geopackage.py`'s `_where`) prints the
+        reprojected frame too. If a third caller wants source-frame extents, that
+        belongs in `where_they_are`, not here.
+      - **Amends 232 and 237 in place**, as 237 did to 212: 232's "What still keeps
+        its own copy: `LAKBuilder._active`" sentence goes, and 237's NOT-done clause
+        loses its `LAKBuilder.lake_cells` half (`usg/export._adjacency` still uses
+        `touches` and is still its own site).
+      - **NOT done**: `lake_cells` passes no `usable` -- membership is geometry
+        alone, with no reference to idomain, and a lake cell inactive in every layer
+        still raises from `_vertical_connection` naming the cell, which is a better
+        error than silently dropping it. Nothing WARNS about a dropped sliver: the
+        shared rule drops them in silence for every other caller and a per-lake
+        warning here would be the only one. And no MF6 run was made: what a lake
+        losing three sliver cells does to the LAK budget was not measured, only what
+        it does to the connection set (four lake cells to one).
+      - Twenty mutants and an import probe, all killed: the area-above-zero rule
+        restored, the delegation bypassed with the touch rule, membership by share
+        of the lake, cell order reversed, the cache dropped, `domain_active`
+        bypassed, the layer bound dropped, idomain read as truthiness, the miss
+        never raising, only a total miss raising, the miss reason dropped, the
+        extents and CRSs dropped, the source CRS read off the reprojected frame,
+        the source CRS captured after it instead of before, the source CRS never
+        captured, a collapsed outline accepted, the zero-area guard narrowed to
+        `is_empty`, the miss count counting the missing set as its own denominator,
+        membership filtered by idomain through `usable=`, and the raise moved out of
+        `validate()` into the property.
       - Found by the 2026-09-11 sibling investigation.

@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**2964 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**2986 passed / 4 skipped**, 2026-09-12): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -352,6 +352,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   well as a `.gpkg` source: a line ending on a face and overshooting by 1e-6 ft -- a CRS
   round trip moves an end by 3e-7 -- wrote a full second record, where `mf.sfr` had
   dropped the reach since ledger 214.
+- **A lake COVERS its cells, by area** (ledger 241, 2026-09-12) -- `mf.lak` kept
+  every cell its polygon grazed and had its own activity test. A one-cell lake
+  round-tripped 2927 -> 4326 -> 2927 became 4 cells (extras overlapping by 7.41e-6,
+  9.07e-14 and 7.41e-6 ft2) and one grown by 1e-6 ft became 9, each a full LAK cell
+  with its own vertical connection. `LAKBuilder.lake_cells` is `cell_shares` now and
+  `_active` is `domain_active` -- a 1-D idomain masks the lake per cell where it was
+  ignored, and a layer past the domain names itself. A lake on no cell follows 211.
 - **A lakebed from bathymetry is `mf.lak(lake_bottom=<Surface>)`** (ledger 231,
   2026-09-11) -- `mf.Contours`/`mf.Raster`/algebra, a raster `Path` or `str`, or a
   cell-indexed Series. Sampled ONCE (it was one full-grid sample per cell read).
