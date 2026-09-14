@@ -9439,3 +9439,25 @@ same day, which is the useful part of the result.
     - Tests: `tests/test_hover_integration.py` -- the pair both ways with the
       sibling's own values checked against the array, the bold/plain styling the
       request named, the unset-`k22` skip, `sto`, and `ic.strt` unchanged.
+
+260. **A surfaces-only elevation table pushed a map's own values out of sight
+    (2026-09-14).**
+    - Reported the same day as 259: with `show_layer_elevs=True`, `k33` rendered
+      BELOW the five-row elevation table rather than beside `k`. "The k and k33
+      values should be together."
+    - `HoverSpec._effective_blocks` PREPENDED whichever `LayerTable` it synthesized,
+      ahead of the spec's own blocks. For a head map that is right -- the table is
+      the primary value read across the layers, so it belongs against the value it
+      elaborates. For a surfaces-only table it is not: that table carries no reading
+      of the mapped field at all. It is the grid's layer frame, context of the same
+      kind as the `layer` row beside it, and going first it separated a value from
+      its own siblings by five rows.
+    - So the two cases now differ, on the distinction that was already there and
+      unused: a per-layer table OF THE PRIMARY stays first; a surfaces-only table is
+      appended last, after the spec's own blocks and before the footer. The head
+      hover is byte-identical; only maps that carry no per-layer field move.
+    - Not done: no per-block ordering knob on `HoverSpec`. The two positions follow
+      from what the block IS, and a spec that has to be told where its own context
+      goes has moved the decision to every caller.
+    - Test: `test_the_sibling_sits_with_the_value_even_when_elevations_are_shown`
+      pins the adjacency and that the elevations still follow.

@@ -367,17 +367,25 @@ class HoverSpec:
         return replace(self, blocks=self.blocks + (Fields(title=title, fields=tuple(names), inline=True),))
 
     def _effective_blocks(self, ctx: HoverContext) -> list[HoverBlock]:
-        """The blocks to render, prepending an auto layer/surface table when needed.
+        """The blocks to render, with an auto layer/surface table folded in.
 
         When ``layers="all"`` (or surfaces are requested) and the primary field has
-        per-layer data, a :class:`LayerTable` is synthesized ahead of the user's
-        explicit ``blocks``; surface-only requests still get a Top/bottom table.
+        per-layer data, a :class:`LayerTable` is synthesized AHEAD of the user's
+        explicit ``blocks``: it is the primary value read across the layers, so it
+        belongs against the value it elaborates.
+
+        A surfaces-ONLY table goes LAST instead. It carries no reading of the
+        mapped field -- it is the grid's layer frame, context of the same kind as
+        the `layer` row beside it -- and putting it first pushed a map's own
+        sibling values (`k33` under `k`) below a five-row elevation table, which
+        is where a reader stops looking for them (reported 2026-09-14).
         """
 
         blocks: list[HoverBlock] = []
         primary = self.primary
         want_layers = primary in ctx.layer_fields and self.layers in ("active+strip", "all")
         want_surfaces = bool(self.surfaces)
+        surfaces_only = None
         if primary in ctx.layer_fields and (self.layers == "all" or want_surfaces):
             blocks.append(
                 # the head-below-bottom dagger is head physics: on only for heads,
@@ -390,8 +398,10 @@ class HoverSpec:
                 )
             )
         elif want_surfaces and ctx.botm is not None:
-            blocks.append(LayerTable(fields=("__surface__",), surfaces=True))
+            surfaces_only = LayerTable(fields=("__surface__",), surfaces=True)
         blocks.extend(self.blocks)
+        if surfaces_only is not None:
+            blocks.append(surfaces_only)
         return blocks
 
     def render(self, ctx: HoverContext) -> tuple[list, str, dict]:

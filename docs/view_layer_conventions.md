@@ -147,7 +147,9 @@ takes, at every scope, verb and noun alike:
   read at the same layer, and a sibling with no finite values is dropped — FloPy
   answers `npf.k22` with a live object on every model and its `.array` is `None`
   on the many that never set it, which otherwise rendered a row of blanks under
-  a real field name.
+  a real field name. They sit directly under the coloured value: a
+  surfaces-only elevation table is grid CONTEXT and renders last, so it cannot
+  push a map's own sibling values out of sight (ledger 260).
 - **`show_layer_elevs=` / `hover_surfaces=`** put the grid's layer frame in the
   hover — the model top and each layer's bottom at that cell. They are **Tier 1**
   as of ledger 258: the elevations come from the GRID, not from the mapped

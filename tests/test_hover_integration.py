@@ -338,3 +338,20 @@ def test_storage_arrays_pair_the_same_way_and_a_lone_array_is_unchanged(canonica
 
     assert "sy" in _hover_labels(canonical_run.packages.sto.ss.map())
     assert _hover_labels(canonical_run.packages.ic.strt.map()) == ["cell", "strt", "layer"]
+
+
+@pytest.mark.slow
+def test_the_sibling_sits_with_the_value_even_when_elevations_are_shown(canonical_run):
+    """Reported 2026-09-14: `k33` appeared BELOW the five-row elevation table,
+    which is where a reader stops looking for it. A surfaces-only table carries
+    no reading of the mapped field -- it is the grid's frame, context of the same
+    kind as the `layer` row -- so it goes last; a per-layer table of the primary
+    ITSELF still goes first, against the value it elaborates."""
+
+    labels = _hover_labels(canonical_run.packages.npf.k.map(layer=1, show_layer_elevs=True))
+    assert labels.index("k33") == labels.index("k") + 1, labels
+    assert labels.index("k33") < labels.index("Top"), labels
+    # the head map is unchanged: its layer table IS the primary across layers
+    head = canonical_run.hds.map(show_layer_elevs=True).get_choropleth().hovertemplate
+    assert head.index("Top") < head.index("Period") if "Period" in head else True
+    assert "bot" in head
