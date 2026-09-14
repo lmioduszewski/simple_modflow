@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from myflopy.specs import ModelContext, PackageSpec
+from myflopy.grid_identity import pin_metadata
 
 CellId = tuple[int, int]
 
@@ -216,4 +217,6 @@ class _ArealBuilder:
         """Validate stored configuration and return its package spec."""
 
         self.validate()
-        return self._make_spec(self.stress_period_data).with_metadata(**self._build_metadata())
+        return self._make_spec(self.stress_period_data).with_metadata(
+            **pin_metadata(self.context), **self._build_metadata()
+        )

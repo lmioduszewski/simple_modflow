@@ -7,6 +7,7 @@
  "myflopy.advanced": 2,
  "myflopy.builders": 2,
  "myflopy.geopackage": 3,
+ "myflopy.grid_identity": 0,
  "myflopy.grid_spec_resolver": 5,
  "myflopy.layers": 6,
  "myflopy.library": 2,

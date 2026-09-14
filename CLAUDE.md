@@ -270,7 +270,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3365 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3372 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -351,8 +351,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   old cell numbers against the new geometry under **Normal termination** -- a lazy CHD
   raised `IndexError` on a finer grid and resolved to ZERO cells on a coarser one.
   `ModelSpec.build` now compares the built DISV's `ncpl`/`nvert`/cell centres, the
-  context `domain` (cells AND layers), `surfaces`, and every `stress_period_data`
-  cellid against the grid, and raises listing all of it at once. **The cell-centre test
+  context `domain` (cells AND layers), and every `stress_period_data`
+  cellid against the grid (NOT `surfaces` -- that check was removed during review,
+  because `surfaces` has no reliable "rows are cells" invariant), and raises listing all of it at once. **The cell-centre test
   is index-aligned after removing each cloud's own centroid**, with a tolerance of a
   thousandth of a cell taken from the data. Three traps, each of which it got wrong
   first: a Voronoi cell's DISV centre is **not** its polygon centroid (38.9 length units
@@ -368,8 +369,8 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   (SFR's `packagedata[1]` is a cellid, LAK's is a stage). To move a model to a new grid
   today, re-declare its GIS packages; lazy resolution is planned work.
   **A resolved package also carries a PIN** (ledger 250, 2026-09-13) -- `grid_pin(grid)`,
-  a hash of the mesh's CONNECTIVITY (cell count, vertex count, each cell's vertex-index
-  list in cell order) and nothing continuous. That closes the range check's gap: a
+  a hash of the mesh's CONNECTIVITY (the cell count and each cell's canonical vertex
+  ring; NOT the vertex count, which FloPy computes at write time) and nothing continuous. That closes the range check's gap: a
   package resolved on a small grid and rebuilt on a larger one has every cellid in range
   and every one naming a different cell. Being connectivity-only makes it exact where
   geometry needs a tolerance -- the same mesh at fewer decimals, in float32, or shifted

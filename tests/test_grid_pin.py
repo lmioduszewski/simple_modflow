@@ -209,3 +209,85 @@ def test_the_pin_survives_a_round_trip(source):
         context=ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int)),
     )
     assert PackageSpec.from_dict(chd.to_dict()).metadata[GRID_PIN] == chd.metadata[GRID_PIN]
+
+
+# ------------------------------------------------- the advanced builders (ledger 264)
+
+
+def test_the_areal_builders_pin_their_grid(tmp_path):
+    """`mf.rch(context=)` resolves per-cell records through RCHBuilder, not a .gpkg.
+
+    Measured before this: built on a 36-cell grid, recharge landed on the wrong 16
+    cells and MF6 ran to completion.
+    """
+
+    grid = _grid(4, 4)
+    rch = mf.rch(
+        context=ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int)),
+        nper=1, recharge=1e-3,
+    )
+    assert rch.metadata[GRID_PIN] == grid_pin(grid)
+
+
+def test_a_package_from_an_advanced_builder_is_refused_on_another_mesh(tmp_path):
+    small, big = _grid(4, 4), _grid(6, 6)
+    rch = mf.rch(
+        context=ModelContext(grid=small, domain=np.ones((1, small.ncpl), dtype=int)),
+        nper=1, recharge=1e-3,
+    )
+    with pytest.raises(ValueError, match=r"package 'rch' was resolved against a different mesh"):
+        _model(big, "wrong", tmp_path, extra=(rch,))
+
+
+def test_pin_metadata_is_empty_without_a_pinnable_grid():
+    """A builder with no context, or a context with no grid, stamps nothing."""
+
+    from myflopy.grid_identity import pin_metadata
+
+    assert pin_metadata(None) == {}
+    assert pin_metadata(ModelContext()) == {}
+    grid = _grid(3, 3)
+    assert pin_metadata(ModelContext(grid=grid)) == {GRID_PIN: grid_pin(grid)}
+
+
+def test_a_model_with_no_grid_at_all_still_compares_package_pins(tmp_path, source):
+    """The guard's LIVE hole: no grid object and no recorded pin.
+
+    `mf.gwf(name, packages=[...])` with no context is used by this repo's own
+    examples. The built DISV can answer for the mesh, which is what gives the package
+    pins something to compare against -- measured before: BUILT CLEAN.
+    """
+
+    small = _grid(6, 6)
+    chd = mf.chd.gpkg(
+        source, layer="chd", nper=1, head="head",
+        context=ModelContext(grid=small, domain=np.ones((1, small.ncpl), dtype=int)),
+    )
+    big = _grid(12, 12)
+    model = mf.gwf(
+        "m",
+        context=ModelContext(domain=np.ones((1, big.ncpl), dtype=int)),   # no grid
+        packages=[
+            mf.disv(nlay=1, top=10.0, botm=[0.0], **big.get_disv_gridprops()),
+            mf.npf(k=1.0), mf.ic(strt=5.0), chd, mf.oc(head_filerecord="m.hds"),
+        ],
+    )
+    sim = mf.simulation(model, name="nogrid",
+                        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with pytest.raises(ValueError, match=r"was resolved against a different mesh"):
+        sim.build_flopy(tmp_path / "ws")
+
+
+def test_the_recorded_pin_is_consulted_before_the_disv_s_own(tmp_path):
+    """Order matters: taking the DISV's fingerprint first makes it agree with itself.
+
+    That mistake was made and caught here -- it silently disabled the reload check
+    added in ledger 257 while every other test still passed.
+    """
+
+    from myflopy.grid_identity import _discretization_complaints
+
+    built = _model(_grid(6, 6), "ord", tmp_path).built_model("m").model
+    stale = ModelContext(metadata={GRID_PIN: "0000deadbeef0000"})
+    complaints = _discretization_complaints(built, stale, [])
+    assert any("is not the mesh this model was declared against" in c for c in complaints)

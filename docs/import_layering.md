@@ -20,6 +20,7 @@ review the diff, commit the regenerated files together.
 - `myflopy._deprecation`
 - `myflopy._logging`
 - `myflopy._optional`
+- `myflopy.grid_identity`
 - `myflopy.modflow`
 - `myflopy.modflow.calcs`
 - `myflopy.modflow.mf6._typechecking`

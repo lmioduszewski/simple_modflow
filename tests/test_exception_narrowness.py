@@ -76,16 +76,16 @@ ALLOWED_BROAD = {
     # reading its gridprops reaches flopy, numpy and any property it computes lazily.
     # This one only ever WEAKENS a guard: a comparison that cannot run must not become
     # the error the user sees in place of the real complaint (ledger 249).
-    "specs.py:_discretization_complaints",
+    "grid_identity.py:_discretization_complaints",
     # Same reason one line up, and the same rule: a pin that cannot be taken means
     # "unpinned", never an error at the caller. Reading a grid's connectivity reaches
     # flopy, numpy and any property it computes lazily (ledger 250).
-    "specs.py:grid_pin",
+    "grid_identity.py:grid_pin",
     # Same rule one line up, from the other side: reading a BUILT FloPy package's data
     # reaches flopy's own exception hierarchy and numpy, and a fingerprint that cannot
     # be taken means "unpinned" -- never an error at a caller who asked for a build
     # (ledger 257).
-    "specs.py:disv_pin",
+    "grid_identity.py:disv_pin",
     # A grid on a context is whatever object a caller put there, so reading its
     # geometry for a snapshot reaches flopy, numpy and any lazy property. Losing the
     # grid costs the snapshot its grid and nothing else (ledger 251).

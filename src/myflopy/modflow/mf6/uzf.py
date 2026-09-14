@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from myflopy.advanced import uzf_spec
+from myflopy.grid_identity import pin_metadata
 from myflopy.specs import ModelContext, PackageSpec
 
 CellId = tuple[int, int]
@@ -335,6 +336,7 @@ class UZFBuilder:
             **dict(self.options),
         )
         return package.with_metadata(
+            **pin_metadata(self.context),
             builder="UZFBuilder",
             cell_selection=self.cells if isinstance(self.cells, str) else "explicit",
             uzf_cells=list(self.uzf_cells),

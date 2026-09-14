@@ -1264,15 +1264,30 @@ class Run:
                     for name, built in (getattr(self.built, "models", {}) or {}).items()
                 },
             )
-        except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+        except Exception as error:  # noqa: BLE001 - see below; the tuple cannot be closed
             # Deliberately broad. This walks a spec built from arbitrary user
             # objects and writes to a filesystem, so it reaches numpy, json, and
             # every OSError a full disk or a read-only directory produces. The
             # model is already built and about to run; refusing that because a
             # convenience snapshot failed would be the worse outcome by far.
+            # `warnings.warn`, not `logger.warning`: `_logging` attaches a
+            # NullHandler to the myflopy root, which suppresses Python's fallback
+            # stderr handler -- so a library log line prints NOTHING unless the
+            # application configured logging. This failure is the moment a run stops
+            # being rebuildable, and it hid a real defect through five commits while
+            # `prepare_run` had already announced the opposite. It uses the same
+            # channel `_warn_artifact_versions` uses for the same reason.
             logger.warning(
                 "run %r built but could not be frozen, so it will not be rebuildable "
                 "from its own snapshot", self.name, exc_info=True,
+            )
+            warnings.warn(
+                f"Run {self.name!r} built but its frozen snapshot could not be "
+                f"written ({error}), so it is not rebuildable from its own folder. "
+                "The run itself is unaffected and will execute normally; "
+                f"reopen_run({self.name!r}) will need the manifest's recipe instead, "
+                "and has none if this model carries inline arrays.",
+                stacklevel=3,
             )
 
     @property

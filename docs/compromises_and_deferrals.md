@@ -8928,10 +8928,19 @@ same day, which is the useful part of the result.
       is decidable but partial: a package resolved on a SMALL grid and rebuilt on a LARGER
       one has every cellid in range and every one naming a different cell. That case built
       and ran, and 249 pinned the gap in a test rather than hiding it. This closes it for
-      every package the library resolved itself.
-      `grid_pin(grid)` fingerprints a mesh's **connectivity** -- the cell count, the vertex
-      count, and each cell's own vertex-index list **in cell order** -- and nothing
-      continuous. That choice is what makes it exact where comparing coordinates needs a
+      the seven `.gpkg` list BCs. (**AMENDED 2026-09-14:** this entry said "for every
+      package the library resolved itself", which was false -- `mf.rch(context=)` and
+      `mf.evt(context=)` resolve per-cell records through `RCHBuilder`, not
+      `GeoPackageSource`, and carried no pin: built on a 36-cell grid, recharge landed on
+      the wrong 16 cells and MF6 ran to completion. `mf.sfr`, `mf.lak` and `mf.uzf` were
+      deferred by name here and were equally unprotected. Ledger 264 pins all of them
+      through one shared `pin_metadata`.)
+      `grid_pin(grid)` fingerprints a mesh's **connectivity** -- the cell count and each
+      cell's own vertex ring **in cell order** -- and nothing continuous. (**AMENDED
+      2026-09-14:** as first written it also hashed the VERTEX COUNT, and this entry and
+      three other places said so. Ledger 257 removed it, because FloPy computes `NVERT`
+      at write time and a correct package then fingerprinted differently from its own
+      grid; the rings were canonicalised at the same time.) That choice is what makes it exact where comparing coordinates needs a
       tolerance, and it is the opposite trade from 249's geometry test:
       - the same mesh written to fewer decimals, rendered float32, or shifted to a local
         origin (`to_mf6(local_origin=True)`, ledgers 159/218) pins the **same**, with no
@@ -9615,3 +9624,54 @@ same day, which is the useful part of the result.
       but that a test fixture is an ASSUMPTION, and this one was load-bearing and
       unstated. Anything that serializes, fingerprints or freezes a grid is now expected
       to run against `triangulated_grid` too.
+
+264. **The guards told the truth only in the circumstances they were tested in (2026-09-14).**
+      A repair pass over ledgers 249-257, prompted by an audit. Four defects, one
+      extraction, three false claims.
+      - **A failed freeze was completely silent.** `_logging` attaches a `NullHandler` to
+        the `myflopy` root, which suppresses Python's fallback stderr handler -- so a
+        library `logger.warning()` prints **nothing** unless the application configured
+        logging. `Run._freeze` caught everything and logged at WARNING, so a run whose
+        snapshot failed reported `status="built"`, `frozen=None`, and said nothing --
+        while `prepare_run` had already announced the run was rebuildable from it. That
+        is the mechanism that hid ledger 263's bug through five commits. It now also
+        `warnings.warn`s, the channel `_warn_artifact_versions` already used for exactly
+        this reason.
+      - **The guard still evaporated LIVE.** Ledger 257 closed the save/load path. A model
+        whose context has no grid AND no recorded pin -- `mf.gwf(name, packages=[...])`,
+        which this repo's own examples use -- still left `model_pin` as `None`, so the
+        package-pin loop never ran: a CHD resolved on a 4x4 grid BUILT CLEAN on an 8x8
+        model. The built DISV answers for the mesh when the context cannot.
+        **The fix was made wrong first, and that is worth recording**: taking the DISV's
+        fingerprint BEFORE the recorded pin makes it agree with itself and silently
+        disabled 257's reload check, while every other test still passed. Three tests
+        now fail on that ordering.
+      - **Eleven of eighteen grid-bound helpers carried no pin.** Ledger 250 claimed it
+        closed the gap "for every package the library resolved itself"; it closed it for
+        the seven `.gpkg` forms. Measured: `mf.rch(context=)` resolves per-cell records
+        through `RCHBuilder`, and built on a 36-cell grid put recharge on **the wrong 16
+        cells with MF6 running to completion**. `pin_metadata(context)` is now the one
+        place a builder stamps its mesh, spread into the existing `with_metadata` calls
+        in `uzf.py`, `sfr.py` and `areal.py` (rch/evt, list and array forms).
+        NOT pinned, with reasons: `mf.hfb` is FACE-indexed -- its records are cell PAIRS
+        and it has no cellid column -- and `mf.mvr` carries package names and indices
+        rather than cells and holds no context at all. Both need the symbolic form the
+        plan already names, which is separate work.
+      - **Three claims were false.** The build guard does not compare `context.surfaces`
+        (removed during 249's own review, for want of a "rows are cells" invariant) --
+        CLAUDE.md said it did. The pin does not hash the vertex count (257 removed it,
+        because FloPy computes `NVERT` at write time) -- ledger 250, CLAUDE.md and
+        `grid_pin`'s own docstring all said it did. And 250's scope claim above. All
+        corrected in place.
+      - **`myflopy/grid_identity.py`**, extracted from `specs.py` unchanged: the ten mesh
+        functions plus `GRID_PIN` and `DROPPED_CONTEXT_FIELDS`, 362 lines that referenced
+        exactly three names from the rest of the file, two of which they owned.
+        `specs.py` had grown 3,293 -> 3,913 lines in four days against its own docstring
+        promising "intentionally small" spec classes; it is 3,568 now. Everything is
+        re-exported from `specs`, so no caller changed.
+      **What the audit said about HOW this happened, which is the part worth keeping:**
+      `_json_value` was written 120 lines below a `_canonical` that already handled numpy
+      scalars correctly and whose docstring names the exact hazard, and three more
+      normalizers elsewhere in `src/` were already right. The failure was not sprawl but
+      new code not consulting what the file already knew. Grep for an existing helper
+      before writing one; test a claim before writing it down.

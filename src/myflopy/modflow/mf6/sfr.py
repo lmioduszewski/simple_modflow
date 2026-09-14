@@ -18,6 +18,7 @@ from shapely.geometry import Point
 from shapely.ops import nearest_points
 
 from myflopy.advanced import sfr_spec
+from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH
 from myflopy.specs import (
     _layer_elevations,
@@ -929,6 +930,7 @@ class SFRBuilder:
             **dict(self.options),
         )
         return package.with_metadata(
+            **pin_metadata(self.context),
             builder="SFRBuilder",
             stream_ids=list(self.stream_ids),
             connections=[
