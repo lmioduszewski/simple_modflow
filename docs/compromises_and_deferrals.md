@@ -8982,7 +8982,13 @@ same day, which is the useful part of the result.
       `project/freeze.py` writes the resolved simulation to `<run>/.myflopy/frozen.npz` at
       the end of `Run.build` -- structure as JSON, every array beside it, plus the grid's
       vertices, cells, CRS and layer elevations. A reopened run thaws that and reads no
-      source file. **AMENDED 2026-09-13, same day:** as first committed that last claim
+      source file. **AMENDED AGAIN 2026-09-14: none of this worked on a real grid until
+      ledger 263.** `freeze_simulation` ends at `lifted.to_dict()`, and `_json_value`
+      refused the `numpy.int64` vertex indices flopy's `VoronoiGrid` emits -- so no
+      snapshot was written at all, `Run._freeze` swallowed the failure as a warning, and
+      the run reported success. Every test here used a hand-built grid whose `iverts`
+      are python ints, which is the one shape that cannot show it.
+      **AMENDED 2026-09-13, same day:** as first committed that last claim
       was only true of a model whose grid was already built. A declared `ModelSpec`
       carries the grid RECIPE, and `ModelSpec.build` resolves it into a LOCAL context --
       so freezing `Run.spec` captured no grid at all for a DEFERRED grid, and left the
@@ -9569,3 +9575,43 @@ same day, which is the useful part of the result.
       declared thicknesses (so a scrambled or reversed frame fails), the surface
       columns on `cells`, the nothing-written refusal, the layer name, and a
       created parent directory.
+
+263. **Every test grid was the one shape that hid the bug, so three commits shipped broken (2026-09-14).**
+      `_json_value` passes `str`, `int`, `float` and `bool` and raises on everything
+      else. `numpy.float64` **subclasses** `float`, so a grid's coordinates sailed
+      through; `numpy.int64` does **not** subclass `int`, so its vertex indices raised.
+      flopy's own `VoronoiGrid` emits exactly that mix -- measured on one cell:
+      `['int', 'float64', 'float64', 'int', 'int64', 'int', 'int', 'int', 'int64']`.
+      So on a grid a user actually builds, `SimulationSpec.to_dict()` raised, the
+      manifest wrote `spec_recipe=None`, `freeze_simulation` died at its own
+      `lifted.to_dict()`, `Run._freeze` swallowed that as a warning, `run.frozen` was
+      `None`, and reopening the run raised "neither a rebuildable recipe nor a frozen
+      snapshot" -- while the run itself executed under **Normal termination**.
+      **Ledger 251 therefore did not do what it says on any real model**, and 249, 256
+      and 257 were all validated against a grid that could not exhibit the failure.
+      That entry is amended below rather than left standing.
+      **The cause was the FIXTURE, not the feature.** `rectangular_voronoi` hand-builds
+      its `iverts` from python `range` objects, so every cell is a plain `int` and every
+      cell has the same width. It is the grid behind essentially every test in the
+      suite. 3,315 tests passed while the thing they were written to prove did not work
+      outside them.
+      - `tests/conftest.py` gains **`triangulated_grid`**, a session-scoped grid built
+        through `GridSpec.voronoi` the way a model is. `tests/test_real_grid_round_trip.py`
+        runs serialization, freeze, reopen, fingerprinting and save/load against it.
+        **Five of its seven tests fail with this fix reverted.**
+      - `test_the_fixture_really_is_the_awkward_shape` asserts the fixture still yields
+        numpy ints AND cells of differing widths. Without it a future flopy release
+        could normalise its output and turn the whole module back into a duplicate of
+        the canonical-grid tests, silently.
+      **The fix is one clause, and it is a correction rather than an accommodation.** A
+      numpy scalar IS a number; whether one reached the raise was an accident of
+      subclassing, which the float64/int64 asymmetry proves. `_json_value` now converts
+      any 0-d value exposing `.item()` -- the scalar protocol -- and recurses, so
+      `int64`, `float32`, `bool_` and a 0-d array all land as true Python primitives.
+      No numpy import was needed and no other refusal was relaxed: an ndarray still
+      raises, which is what ledger 193's refusal is about.
+      **What this says about the rest of the work.** Every guard, pin and snapshot added
+      in 249-257 was measured against one grid shape. The lesson is not "add a fixture"
+      but that a test fixture is an ASSUMPTION, and this one was load-bearing and
+      unstated. Anything that serializes, fingerprints or freezes a grid is now expected
+      to run against `triangulated_grid` too.

@@ -60,6 +60,38 @@ _CANONICAL_PROFILES = {
 
 
 @pytest.fixture(scope="session")
+def triangulated_grid(tmp_path_factory):
+    """A grid built the way a real model builds one, via ``GridSpec.voronoi``.
+
+    Every other grid in this suite comes from ``rectangular_voronoi``, which hand-
+    builds its ``iverts`` from python ``range`` objects. A grid that flopy actually
+    triangulates does not: its ``cell2d`` vertex indices are a MIX of ``int`` and
+    ``numpy.int64``, and its cells have differing vertex counts.
+
+    That difference was invisible and expensive. ``_json_value`` passed ``np.float64``
+    (which subclasses ``float``) and refused ``np.int64`` (which does not subclass
+    ``int``), so every real Voronoi model failed to serialize -- no ``spec_recipe``,
+    no frozen snapshot, and a reopened run that could not be rebuilt -- while 3,315
+    tests on the hand-built grid passed. Anything that serializes, fingerprints or
+    freezes a grid should be tested against THIS one too.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    import myflopy as mf
+
+    workspace = tmp_path_factory.mktemp("triangulated")
+    boundary = workspace / "boundary.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["domain"]}, geometry=[box(0.0, 0.0, 600.0, 600.0)], crs=2927
+    ).to_file(boundary)
+    return mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=40_000.0
+    ).resolve(workspace=workspace / "grid")
+
+
+@pytest.fixture(scope="session")
 def canonical_config():
     """Return the session's canonical-model profile (default: testing)."""
 

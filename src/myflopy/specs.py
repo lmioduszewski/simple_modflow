@@ -368,6 +368,17 @@ def _json_value(value: Any) -> Any:
         return {str(key): _json_value(item) for key, item in value.items()}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
+        # A numpy SCALAR, which is a number and always was. Whether one reached here
+        # at all was an accident of numpy's type hierarchy: `np.float64` subclasses
+        # `float` and sailed through the line above, while `np.int64` does not
+        # subclass `int` and raised -- so a grid whose vertex indices happened to be
+        # int64 could not be serialized while one whose coordinates were float64
+        # could. flopy's own VoronoiGrid emits exactly that mix, so every real
+        # Voronoi model failed to serialize while the hand-built test grid, whose
+        # iverts are python ints, passed. `.item()` is the scalar protocol, so this
+        # covers int64, float32 and bool_ alike, and a 0-d array with them.
+        return _json_value(value.item())
     raise ValueError(
         f"Value of type {type(value).__module__}.{type(value).__name__} "
         "cannot be serialized in a spec."

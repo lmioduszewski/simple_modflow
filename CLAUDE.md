@@ -270,7 +270,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3315 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3365 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -284,6 +284,14 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50
   profile via `SIMPLE_MODFLOW_CANONICAL_PROFILE=validation`.
 - Tour/verify interactively: `examples/mf6/notebooks/canonical_fast_tour.ipynb`.
+- **A test grid is an ASSUMPTION, and `rectangular_voronoi` is the wrong one for
+  anything that SERIALIZES, FINGERPRINTS or FREEZES a grid** (ledger 263). It hand-builds
+  `iverts` from `range`, so every vertex index is a python `int` and every cell has the
+  same width. A real `GridSpec.voronoi` grid mixes `int` and `numpy.int64` and has ragged
+  cells -- and `_json_value` passed `np.float64` (a `float` subclass) while refusing
+  `np.int64` (not an `int` subclass), so real models could not be serialized, frozen or
+  rebuilt while 3,315 tests passed. Use the session-scoped **`triangulated_grid`** fixture
+  in `tests/conftest.py` for that class of test.
 
 ## What this project is
 A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
