@@ -11,7 +11,7 @@ def test_choro_plot_returns_figure_without_calling_show():
     choro._fig = figure
     choro.add_choropleth = lambda: None
     choro.add_contours = lambda: None
-    choro._locs = None
+    choro._features = []
     choro._overlays = []
     choro.hillshade_path = None
     # `.fig` also draws the `select=` highlight (ledger 160). Stubbed rather than
@@ -647,6 +647,13 @@ def test_plotly_head_map_animation_keeps_all_frames_and_slider(monkeypatch, tmp_
     choro.fit_bounds = True
     choro.bounds_padding = 0.05
     choro.zoom = 13
+    # `.ani` rebuilds the shared colour axis through `_trace_color_kwargs`
+    # (ledger 252), which reads the log flag and the trace kwargs. Stubbed
+    # rather than defended against with getattr: a half-built Choro should fail
+    # loudly there, not silently animate with the wrong limits.
+    choro.logscale = False
+    choro.kwargs = {}
+    choro.overlay_traces = lambda: []   # `.ani` carries the overlays into each frame
     choro.get_choropleth = lambda: go.Choropleth(
         z=np.array([float(choro.kstpkper[1]), float(choro.kstpkper[1] + 1)]),
         locations=["a", "b"],

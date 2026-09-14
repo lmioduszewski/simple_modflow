@@ -87,6 +87,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.usg.packages`
 - `myflopy.modflow.utils.contour_interp`
 - `myflopy.modflow.utils.datatypes.datalists`
+- `myflopy.modflow.utils.datatypes.features`
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
 - `myflopy.project.components`

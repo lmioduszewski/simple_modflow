@@ -1164,7 +1164,7 @@ same day, which is the useful part of the result.
     - Accepted: a redundant key on the plotly side, in exchange for one code path that
       is correct on both.
 
-69. **Diverging parameter-field scales ship as explicit STOPS, never as the name
+69. **[CLOSED by entry 253 -- names now render from Plotly's own stops on both backends; the stops rule stands for its orientation, not for safety.] Diverging parameter-field scales ship as explicit STOPS, never as the name
     `'RdBu'`.**
     - What: `_red_white_blue_diverging_colorscale()` (new, `package_plotting.py`) is
       derived by reversing its blue-white-red sibling.
@@ -1178,7 +1178,7 @@ same day, which is the useful part of the result.
       flipping the table would silently re-color every one of those static maps. That
       is its own change with its own review — see 70.
 
-70. **The signed-`q` maps still render mirrored between backends (pre-existing, NOT
+70. **[CLOSED by entry 253 -- a named `RdBu` no longer renders mirrored.] The signed-`q` maps still render mirrored between backends (pre-existing, NOT
     fixed in 6.4A).**
     - What: `package_registry` declares `colorscale="RdBu"` for `q` on rch/chd/drn/ghb/
       riv/wel/evt/sfr/lak. Because of the table entry in 69, `results.q.map(backend='mpl')`
@@ -1197,7 +1197,7 @@ same day, which is the useful part of the result.
       `lak.py`). That half is **fixed** (ledger 87); the per-package `q` scales listed
       above are still open.
 
-71. **Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
+71. **[CLOSED by entry 252 for the decade colorbar -- `viz.mosaic` relabels a log grid itself; the centering half still needs `diff=True`.] Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
     - What: `_log_decade_colorbar` puts real-unit ticks (`0.1x`, `1x`, `10x`) on a log
       map, and the `change` policy centers it with symmetric `zmin`/`zmax`.
       `viz.mosaic` moves every panel onto a shared `coloraxis` and **discards both**:
@@ -1268,7 +1268,7 @@ same day, which is the useful part of the result.
     - Pinned by six tests over a real `pyemu.Pst` (the existing `_stub_ies_results` has
       no `pestpp_options`, so it raises `AttributeError` before reaching the defect).
 
-74. **`logscale` maps read in log10 units unless the caller relabels the colorbar
+74. **[CLOSED by entry 252 -- every log map now reads in real units on both backends.] `logscale` maps read in log10 units unless the caller relabels the colorbar
     (pre-existing, fixed only for `plot_field`).**
     - What: nothing in `choros.py` sets `tickvals`/`ticktext`, so **every** `Choro`
       built with `logscale=True` labels its colorbar `-3 … 2` for a field that runs
@@ -9047,3 +9047,168 @@ same day, which is the useful part of the result.
       failed freeze never fails a build. The whole-directory comparison ignores FloPy's
       header line, which stamps the wall-clock SECOND and made the first version of that
       test flaky at 3-5%.
+
+## Map colour scales and custom geometry (2026-09-13)
+
+252. **`logscale=True` now reads in real units everywhere, and its limits are DATA
+    units (2026-09-13).**
+    - What: ledger 74 recorded that every `logscale` map labelled its colorbar in
+      log10 units (`-3 … 2` for a field running 0.001 to 100) while its hover showed
+      real values, and that only the PEST field maps relabelled it. The fix is now
+      where 74 said it belonged -- on `Choro`, which knows it is log-scaled. The
+      trace still carries `log10(value)` (Plotly has no log colour axis) and
+      `Choro._trace_color_kwargs` puts decade ticks labelled in real units on it
+      through ONE helper, `viz.log_decade_colorbar`, which `Choro`, `viz.mosaic`
+      and `ies._log_decade_colorbar` all call. `plot_mpl` draws a log map through
+      `matplotlib.colors.LogNorm` over the DATA-unit values (`Choro.linear_zs`), so
+      its colorbar is a true log axis; caller `tickvals`/`ticktext` are raised to
+      data units and applied by `plot_mpl` itself (`_apply_caller_colorbar_ticks`),
+      which is what keeps the PEST change map's `0.1x / 1x / 10x`. `viz.mosaic`
+      relabels a grid of log panels from the pooled limits by itself and REFUSES
+      to pool a log panel with a linear one (one axis cannot mean both). `Choro.ani`
+      rebuilds the labels over the SHARED frame range. `contours=True` on a log map
+      contours the real field, not the exponents.
+    - **`zmin`/`zmax`/`zmid` are now DATA units under `logscale=True`** (user
+      decision, 2026-09-13): `zmin=1e-4, zmax=10` means K from 0.0001 to 10, matching
+      the bar and the hover; a non-positive limit raises at the call. This is a
+      behaviour change for any caller who passed log10 limits before -- the only
+      in-repo one, `ies._field_map_policy("change")`, now returns `10 ** ±half` and
+      `zmid=1.0`, and its tests moved with it. Stored notebook outputs of log maps
+      (the concern 74 raised) change on re-run: their colorbars now read real units.
+    - Compromises: matplotlib's own decade labels are mathtext (`10^{-3}`) unless a
+      caller passes ticks, while the Plotly bar writes `0.001`; the two read the same
+      numbers in different typography. Fewer than three whole decades in range gives
+      five evenly spaced real-unit labels rather than one or two ticks. A `colorbar=`
+      given to a mosaic still wins over the automatic relabel, and `ies.
+      _log_decade_colorbar_for_mosaic` stays as the explicit spelling. `SliderAnimation`
+      (the `png` animate backend) inherits the `LogNorm` picture frame by frame and
+      was not separately measured.
+    - Revisit: if a caller needs a symmetric log scale for SIGNED fields (a
+      `symlog`), that is a new option, not a change to this one. Ledger 71's mosaic
+      question and 74's "why not fixed generally" are closed by this entry.
+    - Tests: `tests/test_map_colorscale_and_features.py` (logscale section) plus the
+      updated `test_colorscale_policy.py` expectations (`test_mf6_pest.py`'s held
+      unchanged, which is the point: a PEST caller sees the same picture).
+    - **Review pass, same day** (three-lens adversarial review, ledger 255): the
+      LEGACY hover (`hover_dict`, taken by a bare-grid map with no `hover_spec`) still
+      listed the log10 exponent under `zs` -- now `linear_zs`; the NOUN-tier static
+      composers (`SpatialView._mpl_mosaic` / `_mpl_animation`) read `choro.zs` through a
+      hard-coded linear `viridis`, so a static log mosaic read `-3 ... 2` under a real-unit
+      label -- now `_mpl_shared_scale`: the panel's own colorscale, `linear_zs`, a
+      `LogNorm` for log panels, and a refusal to mix; `plot.animate` frames of log maps
+      are now pooled onto one shared colour axis (as `.ani` already was) so the restyle
+      HTML export keeps its decade labels on every frame; an infinite limit and a
+      non-positive `plot_mpl(vmin=)` are refused at the call; a whole decade past a
+      million is written out (`1000000`), not `1e+06`.
+
+253. **Every Plotly colorscale name is accepted, and the static colormap is built from
+    Plotly's own stops (2026-09-13).**
+    - What: `Choro.colorscale` validated against a hand-written list of eighteen
+      names and warned-then-drew `earth` for `"Turbo"`, `"Plasma"`, `"viridis_r"` and
+      the other ~80 Plotly ships. It now validates through
+      `plotly.colors.get_colorscale` (`viz.plotly_colorscale_stops`, re-exported by
+      `choros`): every named
+      scale, case-insensitively, with `_r` reversing one. `mpl_colormap_for` builds
+      a `LinearSegmentedColormap` from the SAME stops for a name as it already did
+      for explicit stops, which retires the plotly-to-matplotlib hand table that
+      mapped `'rdbu'` to matplotlib's REVERSED colormap and every other name to
+      `gist_earth` -- ledger 69/70's mirrored-diverging wart is gone (user decision:
+      "derive from Plotly's own stops", 2026-09-13).
+    - Consequence: the STATIC output of any map that passed a NAME changes. `earth`
+      was `gist_earth` and is now Plotly's own brown-to-blue ramp; `Hot`/`Jet`/`Blues`
+      now render as Plotly draws them rather than as matplotlib's same-named maps;
+      a named `RdBu` is no longer mirrored. Interactive output is unchanged.
+    - Kept deliberately: an unknown name still WARNS and falls back to `earth` --
+      the deliberate inverse of `_field_map_policy`, which raises -- because a typo
+      in a notebook cell should cost a warning, not the figure. The "ship the exchange
+      scales as STOPS" rule also stays, for a different reason than before: the
+      helpers own the ORIENTATION (which end is gaining), which a name cannot carry.
+    - Compromise: `mpl_colormap_for(name)` now returns a `Colormap` object rather
+      than a matplotlib name string; every caller passes it to `cmap=`, which takes
+      both, and `viz.mpl_color` parses Plotly's `rgb(...)` spelling for it. The three
+      helpers live in `viz` (layer 0) so the noun-tier static composers import them at
+      module level rather than adding to the deferred-import ratchet.
+    - Tests: `test_every_plotly_named_colorscale_is_accepted`,
+      `test_the_static_colormap_is_built_from_the_plotly_stops`,
+      `test_an_unknown_colorscale_name_warns_and_falls_back_to_earth`.
+
+254. **`locs=` is deprecated for `features=`, and the retired spelling is drawn
+    through the new engine (2026-09-13).**
+    - What: `map(features=...)` at every scope -- the free verb, `model.plot`,
+      `vor.plot`, `stack.plot.map(basemap=True)` and every noun, through
+      `NOUN_MAP_PARAMS` -- takes a vector file path, a `GeoDataFrame`/`GeoSeries`, a
+      shapely geometry, a `myflopy.plot.Feature` spec (`name`/`layer`/`color`/
+      `width`/`size`/`fill`/`opacity`/`label`/`hover`/`crs`/`show_legend`), or a
+      list/dict of those. `utils/datatypes/features.py` is ONE resolver
+      (`resolve_features`: read, CRS-place, WGS84, colour, hover columns) and TWO
+      renderers (`feature_traces` for Plotly, `draw_features_mpl` for matplotlib),
+      so the backends cannot disagree about a layer. One `Scattermap` per layer and
+      geometry kind sharing a `legendgroup`, so a 500-well file is one legend entry
+      and not 500; hover is `<b>label</b>` plus the attribute columns; colours come
+      from `viz.category_colors`, so "Wells" is the same colour on every figure.
+      Resolved eagerly in `Choro.__init__` (a missing file or unknown GeoPackage layer
+      raises at the call, like `select=`); rides `overlay_traces()`, so `mosaic`,
+      `animate` and `.ani` keep it.
+    - `locs=` (user decision: deprecate, 2026-09-13) is a *behaviour* deprecation
+      (`since` 0.2.0; not an alias, so not in `__compatibility__`): removed from every
+      `def` line and from `NOUN_MAP_PARAMS`, caught in the `**kwargs` tail by
+      `Choro.__init__`, warned with `warn_deprecated("myflopy.plot.map(locs=)",
+      "features=")`, and drawn as a `Feature` named "locations". `Choro.locs`,
+      `add_locs` and `_locs_traces` are GONE (policy D12: nothing an editor reads may
+      echo the retired spelling). **Its picture changed**: a legend entry, a house
+      colour and an attribute hover instead of unlabelled black markers; LineStrings
+      are drawn (they were skipped); the per-row `ExploName` trace names are gone (the
+      name is in the hover instead); a `str` path now works (it used to warn and draw
+      nothing). `test_real_choro_overlays_survive_composition` moved to `features=`.
+    - Deliberately NOT offered, each with a reason: `symbol=` for markers (Maplibre
+      symbols need the basemap's sprite icons and ignore `size`/`color` on anything
+      but `circle`, so the parameter would act on one style and not another); text
+      labels on the map (`mode="text"` clutters a wells file; the label heads the
+      hover instead); `features=` on `plot.grid` (the 2-D mesh draws in grid
+      coordinates with no CRS, which is its point); a hole in a FILLED polygon is not
+      cut out (the outline trace draws every ring, the fill trace covers the
+      exterior; a pond with an island fills over the island); hover on a filled
+      polygon fires only at its vertices (Plotly); the hover lists at most
+      `MAX_HOVER_COLUMNS = 12` attribute columns (an INFO log says so; `hover=[...]`
+      chooses); a bare multi-layer GeoPackage path reads the first layer with GDAL's
+      own `UserWarning`, as `select=` does; `plot_mpl` still ignores raw
+      `add_overlay` traces (Plotly objects). A `Feature.crs=` given for a source that
+      ALREADY declares a different CRS raises rather than overriding: a silent
+      override misplaces every well.
+    - Revisit triggers: a request for well symbols by type (then a marker-symbol
+      column mapped through Maplibre sprites, with the `circle` caveat documented);
+      a request to label features on the map; ponds with islands.
+    - Tests: `tests/test_map_colorscale_and_features.py` (features section and the
+      retired-spelling section, incl. the signature guard); `derive_docstrings.py`
+      re-run so every noun documents `features` and none documents `locs`.
+    - **Review pass, same day** (ledger 255): the engine imported the grid package's
+      vector reader at module level, and that package's `__init__` imports the
+      choropleth, which imports the engine -- a cycle invisible to the suite (conftest
+      primes the package) and to the static acyclicity test (which drops package-init
+      edges), but fatal to `import myflopy.modflow.utils.datatypes.choros` in a fresh
+      interpreter. The reader is now local to the engine and a subprocess test imports
+      both modules cold. Also fixed: `_split` read the column LABELLED `geometry`
+      rather than the ACTIVE geometry column (a frame after `set_geometry` drew its
+      stale, un-reprojected column on Plotly and the right one on matplotlib); hover
+      values are HTML-escaped, `None`/`NA`/`NaT` count as missing and booleans print as
+      such; `_unique` re-checks its own suffixes; the retired option's layer never
+      clobbers a caller's own dict key; nested `GeometryCollection`s explode fully on
+      matplotlib; `Feature(color=)` is validated at construction against what BOTH
+      backends parse; `.ani` now carries every overlay (features, contours, highlight)
+      into each frame -- it never had, for any overlay -- so the claim above is true;
+      the deprecation warning is attributed to the first frame outside `myflopy`, so a
+      notebook under the stock warning filters actually shows it.
+
+255. **Review-pass findings NOT acted on, 2026-09-13.**
+    - `Feature.color` narrowed to what matplotlib parses (hex, `rgb()`/`rgba()`, CSS
+      names): Plotly also takes `hsl()`, which the static backend cannot; refusing at the
+      call beats failing at render on one backend.
+    - Signed-exchange nouns (`results.q`, the surface-water exchanges, the group maps)
+      default symmetric `zmin`/`zmax`/`zmid=0`; with a caller's `logscale=True` the
+      choropleth now refuses those defaults with a message naming a limit the caller
+      never typed. Left as is: a signed field has no log scale, the refusal is right, and
+      the message now says the limits may be the noun's own policy. Revisit if a
+      magnitude-of-q map is asked for.
+    - A hole in a FILLED polygon is still covered by the fill (outline draws the ring);
+      hover on a filled polygon fires only at vertices; markers have no `symbol=`.
+    - Ledger 71's symmetric-centering half (`diff=True`) is unchanged.

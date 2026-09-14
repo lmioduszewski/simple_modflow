@@ -509,10 +509,10 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
 }
 
 # The policy for grouped difference maps: diverging, negative red / positive
-# blue. Explicit STOPS, not the name "RdBu" this used to be -- that name maps to
-# matplotlib's REVERSED "RdBu_r" (choros.py `_PLOTLY_TO_MPL_CMAP`), so every diff
-# map built from it drew red and blue swapped between `Choro.plot()` and
-# `Choro.plot_mpl()`. Ledger 69/70.
+# blue. Explicit STOPS, not the name "RdBu" this used to be: the stops carry
+# the ORIENTATION (which end is red), which a bare name cannot. (A retired hand
+# table once also sent the name to matplotlib's REVERSED colormap -- ledger
+# 69/70, closed by 253 -- so this was doubly necessary then.)
 #
 # Stated here rather than imported from `package_plotting`: this registry is the
 # low-level source of per-package truth and must not depend on a drawing module
@@ -595,11 +595,12 @@ def get_package_result_spec(package_name: str, result_name: str) -> ResultSpec |
 def get_default_group_compare_colorscale() -> list[list[object]]:
     """Return the default diverging colorscale for grouped difference maps.
 
-    Explicit STOPS, not the name ``'RdBu'`` this used to return. The name maps to
-    matplotlib's ``'RdBu_r'`` (``choros.py`` ``_PLOTLY_TO_MPL_CMAP``), so every
-    difference map built from it rendered with red and blue SWAPPED between
-    ``Choro.plot()`` and ``Choro.plot_mpl()`` -- a diff map that says "lower" on
-    one backend and "higher" on the other. Compromise ledger 69/70.
+    Explicit STOPS, not the name ``'RdBu'`` this used to return: the stops state
+    which end is red, which is the policy, and a bare name cannot carry it.
+    (Until ledger 253 a hand table also sent the name to matplotlib's REVERSED
+    colormap, so a named diff map read "lower" on one backend and "higher" on
+    the other -- ledger 69/70. Names now render from Plotly's own stops on both
+    backends; the orientation reason stands.)
     """
 
     return [list(stop) for stop in _GROUP_COMPARE_DEFAULT_COLORSCALE]

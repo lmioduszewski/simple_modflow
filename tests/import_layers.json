@@ -123,6 +123,7 @@
  "myflopy.modflow.utils.datatypes": 0,
  "myflopy.modflow.utils.datatypes.choros": 2,
  "myflopy.modflow.utils.datatypes.datalists": 1,
+ "myflopy.modflow.utils.datatypes.features": 1,
  "myflopy.modflow.utils.datatypes.hover": 0,
  "myflopy.modflow.utils.datatypes.locs": 0,
  "myflopy.modflow.utils.datatypes.modelgrid": 0,

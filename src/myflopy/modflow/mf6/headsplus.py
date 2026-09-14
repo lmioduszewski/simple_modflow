@@ -493,7 +493,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         select_style: str = "outline",
         select_color: str | None = None,
         # -- overlays --------------------------------------------------------
-        locs=None,
+        features=None,
         hillshade_path=None,
         bgs: bool = False,
         # -- framing ---------------------------------------------------------
@@ -545,12 +545,18 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
             color. With neither, the range comes from the data.
         colorscale : str or list of (float, str), optional
-            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
-            scale** -- names round-trip through a plotly-to-matplotlib table that
-            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
-            renders mirrored between backends (ledger 69/70).
+            Any Plotly colorscale name -- ``'earth'`` (the default), ``'Viridis'``,
+            ``'Turbo'``, ``'RdBu'``, ...; append ``_r`` to reverse one -- or explicit
+            ``[[position, color], ...]`` stops. The static backend builds its
+            colormap from the same stops, so a name renders the same way on both.
+            An unknown name warns and falls back to ``'earth'``.
         logscale : bool, default False
-            Color on a log scale. Non-positive values are masked.
+            Color on a log10 scale, for a field that spans orders of magnitude
+            (hydraulic conductivity, recharge). The colorbar is labelled in real
+            units at whole decades on both backends and the hover keeps the real
+            values. ``zmin``/``zmax`` (and a ``zmid``) are then in DATA units --
+            ``zmin=1e-4, zmax=10`` -- and a non-positive limit raises. Non-positive
+            values draw as gaps.
         contours : bool or str, default False
             Overlay contour lines. ``True`` contours the mapped values; a string
             names a different field to contour instead.
@@ -598,9 +604,17 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         select_color : str, optional
             Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
             when the default red collides with a red-blue diverging colorscale.
-        locs : Path or GeoDataFrame, optional
-            Point locations to mark -- wells, observations, samples. A path is read
-            as a vector file.
+        features : path, GeoDataFrame, geometry, Feature, or list/dict of those, optional
+            Custom geometry drawn over the cells -- wells, pond footprints, a
+            boundary. A path to any vector file GeoPandas reads (name a GeoPackage
+            layer with ``Feature(path, layer=...)``), a ``GeoDataFrame`` or
+            ``GeoSeries``, a shapely geometry, or a :class:`myflopy.plot.Feature`
+            carrying its own ``color``/``width``/``size``/``fill``/``label``/
+            ``hover``. A list draws several layers; a dict names them. Points
+            become markers, lines polylines, polygons outlines (or fills). Each
+            layer gets a legend entry, a stable house color and a hover listing its
+            attribute columns. A source without a CRS is taken to be in the grid's.
+            Drawn by both backends and kept by ``mosaic`` and ``animate``.
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         bgs : bool, default False
@@ -690,7 +704,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             select=select,
             select_style=select_style,
             select_color=select_color,
-            locs=locs,
+            features=features,
             hillshade_path=hillshade_path,
             bgs=bgs,
             fit_bounds=fit_bounds,

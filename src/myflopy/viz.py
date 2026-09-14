@@ -39,6 +39,7 @@ Plotly equivalent to defer to.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,10 @@ __all__ = [
     "HIGHLIGHT_WIDTH",
     "PALETTE",
     "category_colors",
+    "log_decade_colorbar",
+    "mpl_color",
+    "mpl_colormap_for",
+    "plotly_colorscale_stops",
     "plot_cross_section",
 ]
 
@@ -393,8 +398,57 @@ def _build_frame_figure(frames, *, title=None):
         shared = shared_map_view(pictures)
         if shared:
             layout["map"] = shared
+        _pool_frame_color_axis(figure, pictures)
     figure.update_layout(**layout)
     return figure
+
+
+def _pool_frame_color_axis(figure, pictures) -> None:
+    """One shared colour axis for a choropleth animation (mirrors ``Choro.ani``).
+
+    Without it every frame autoscales its own range: a colour in one frame
+    means something else in the next, the bar jumps, and the restyle HTML
+    export -- which restyles only ``z`` -- keeps frame 0's decade labels over a
+    range that has moved, so a log frame in another decade band shows none.
+    Explicit ``zmin``/``zmax`` on the first frame's cell trace (already in trace
+    space) win over the pooled range. Log-scaled frames get decade labels over
+    the pooled range, under any ``colorbar`` keys the first picture's caller
+    gave; mixing log and linear frames raises, as ``mosaic`` does.
+    """
+
+    import numpy as np
+
+    cells = [figure.data[0], *(frame.data[0] for frame in figure.frames)]
+    if any(getattr(trace, "z", None) is None for trace in cells):
+        return
+    log_flags = {bool(getattr(picture, "logscale", False)) for picture in pictures}
+    if len(log_flags) > 1:
+        raise ValueError(
+            "animate cannot pool log-scaled and linear maps onto one color axis; "
+            "give every frame the same logscale=."
+        )
+    parts = [np.asarray(trace.z, dtype=float) for trace in cells[1:]]
+    parts = [values[np.isfinite(values)] for values in parts]
+    finite = np.concatenate(parts) if parts else np.asarray([])
+    first = cells[1]
+    cmin = first.zmin if first.zmin is not None else (float(finite.min()) if finite.size else None)
+    cmax = first.zmax if first.zmax is not None else (float(finite.max()) if finite.size else None)
+    colorbar = first.colorbar.to_plotly_json() if first.colorbar is not None else {}
+    if log_flags == {True} and cmin is not None and cmax is not None:
+        caller = getattr(pictures[0], "kwargs", {}).get("colorbar")
+        caller = {} if caller is None else (
+            caller if isinstance(caller, dict) else caller.to_plotly_json()
+        )
+        colorbar = {**colorbar, **log_decade_colorbar(cmin, cmax), **caller}
+    coloraxis = {"colorscale": first.colorscale, "colorbar": colorbar}
+    if cmin is not None and cmax is not None:
+        coloraxis.update(cmin=cmin, cmax=cmax, cauto=False)
+    for trace in cells:
+        trace.coloraxis = "coloraxis"
+        trace.colorscale = None
+        trace.zmin = None
+        trace.zmax = None
+    figure.update_layout(coloraxis=coloraxis)
 
 
 
@@ -857,6 +911,146 @@ def _map_sync_post_script(subplot_ids) -> str:
     )
 
 
+_RGB_PATTERN = re.compile(r"rgba?\(([^)]*)\)")
+
+
+def mpl_color(color: str):
+    """A matplotlib-acceptable color for ``color``, Plotly ``rgb(...)`` included.
+
+    Matplotlib refuses Plotly's ``rgb(214,39,40)`` spelling outright, which is
+    how a highlight color that worked on one backend raised on the other. Hex and
+    named colors pass straight through as an ``(r, g, b[, a])`` tuple; anything
+    matplotlib cannot parse raises ``ValueError``.
+    """
+
+    from matplotlib.colors import to_rgba
+
+    match = _RGB_PATTERN.fullmatch(str(color).strip())
+    if match:
+        channels = [float(c) for c in match.group(1).split(",")]
+        rgb = tuple(c / 255.0 for c in channels[:3])
+        alpha = channels[3] if len(channels) > 3 else 1.0
+        return (*rgb, alpha)
+    return to_rgba(color)
+
+
+def plotly_colorscale_stops(colorscale):
+    """``[(position, color), ...]`` for a NAMED Plotly colorscale, or ``None``.
+
+    Any of Plotly's named scales, case-insensitively, with an ``_r`` suffix
+    reversing it (``"viridis_r"``). ``None`` for a name Plotly does not know,
+    so a caller can decide between warning and raising.
+    """
+
+    import plotly.colors as pc
+    from plotly.exceptions import PlotlyError
+
+    try:
+        stops = pc.get_colorscale(str(colorscale))
+    except PlotlyError:
+        return None
+    return [(float(pos), color) for pos, color in stops]
+
+
+def mpl_colormap_for(colorscale):
+    """The matplotlib colormap that renders exactly as a Plotly ``colorscale``.
+
+    Shared so that anything drawn *over* a static choropleth -- residual
+    markers, category points -- colors on the same ramp as the cells beneath
+    it. Building a second colormap at the call site is how a point and the
+    cell under it end up different colors for the same value.
+
+    Both a name and explicit ``[[position, color], ...]`` stops become a
+    ``LinearSegmentedColormap`` built from Plotly's OWN stops for that scale, so
+    the two backends of one map agree by construction. This replaced a
+    hand-written name table that mapped ``'rdbu'`` to matplotlib's REVERSED
+    colormap and sent every other name to ``gist_earth`` (ledger 69/70): a
+    named diverging scale rendered mirrored between backends, and
+    ``colorscale="Turbo"`` was silently brown on the static picture. An
+    unknown name falls back to ``'earth'``, as the ``Choro`` setter does.
+    """
+
+    from matplotlib.colors import LinearSegmentedColormap
+
+    if isinstance(colorscale, (list, tuple)):
+        stops = [(float(pos), color) for pos, color in colorscale]
+        name = "choro_custom"
+    else:
+        stops = plotly_colorscale_stops(colorscale)
+        name = f"plotly_{colorscale}"
+        if stops is None:
+            stops = plotly_colorscale_stops("earth")
+            name = "plotly_earth"
+    return LinearSegmentedColormap.from_list(
+        name, [(pos, mpl_color(color)) for pos, color in stops]
+    )
+
+
+def log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
+    """Colorbar ticks for a log10-scaled trace, labelled in REAL units.
+
+    Plotly has no log color axis: a ``logscale`` map colours ``log10(value)``, so
+    the bar would read ``-3 ... 2`` for a field that runs 0.001 to 100 -- the
+    same numbers the hover shows, off by orders of magnitude. ``low``/``high``
+    are the trace's own limits, in log10 space; the returned ``tickvals`` sit at
+    whole decades inside them and the ``ticktext`` says what each decade IS.
+
+    Fewer than three whole decades in range gives a bar with one or two ticks,
+    which reads as broken, so that case falls back to five evenly spaced labels
+    (still in real units). ``unit`` is appended to every label -- ``"x"`` for a
+    ratio map. The one helper behind ``Choro``, ``viz.mosaic`` and the PEST field
+    maps, so the three cannot label the same field three ways.
+    """
+
+    import numpy as np
+
+    low, high = float(low), float(high)
+    if not np.isfinite([low, high]).all():
+        return {}
+    decades = [
+        decade for decade in range(int(np.floor(low)), int(np.ceil(high)) + 1)
+        if low <= decade <= high
+    ]
+    ticks = [float(d) for d in decades] if len(decades) >= 3 else [
+        float(t) for t in np.linspace(low, high, 5)
+    ]
+    return {
+        "tickvals": ticks,
+        "ticktext": [_decade_label(tick, unit) for tick in ticks],
+    }
+
+
+def _decade_label(tick: float, unit: str) -> str:
+    """``10 ** tick`` written the way a reader expects: ``1000000``, not ``1e+06``.
+
+    A whole decade is written out in full -- ``0.00001`` and ``1000000`` alike,
+    since ``:g`` reverts to exponent notation past six digits either way; a
+    non-integer tick (the evenly spaced fallback) keeps three significant
+    figures.
+    """
+
+    tick = float(tick)
+    value = 10.0 ** tick
+    if tick.is_integer():
+        text = f"{value:.0f}" if tick >= 0 else f"{value:.{int(-tick)}f}"
+    else:
+        text = f"{value:.3g}"
+    return f"{text}{unit}"
+
+
+def _log_colorbar_for_mosaic(low, high) -> dict:
+    """``mosaic``'s default colorbar callback for a grid of log-scaled panels.
+
+    The pooled limits are only known inside ``mosaic``, hence the callback form;
+    they are ``None`` when no panel has finite data, and then there is nothing
+    to label.
+    """
+
+    if low is None or high is None:
+        return {}
+    return log_decade_colorbar(low, high)
+
+
 def mosaic(
     panels,
     *,
@@ -903,8 +1097,11 @@ def mosaic(
         Colorbar settings for the shared map color axis -- a dict of Plotly
         ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
         Panels are pooled onto one ``coloraxis``, which discards each panel's
-        own ``colorbar``; without this a log-scaled mosaic silently reads in
-        log10 units. The callable form exists because the useful labels depend
+        own ``colorbar``. When every map panel is log-scaled and this is not
+        given, the pooled bar is relabelled in real units at whole decades
+        automatically (:func:`myflopy.viz.log_decade_colorbar`); mixing
+        log-scaled and linear map panels raises, since one axis cannot mean
+        both. The callable form exists because other useful labels also depend
         on the pooled limits, and those are only known here -- e.g.
         ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
         Ignored when no panel is a map.
@@ -960,6 +1157,24 @@ def mosaic(
                 f"Cannot compose a panel of type {type(panel).__name__}; pass "
                 "Choro maps or Plotly figures."
             )
+
+    # A log-scaled panel carries log10 values, a linear one real values; pooled
+    # onto ONE color axis they would share a scale that means two different
+    # things, with a colorbar that can only be labelled for one of them.
+    log_flags = {
+        bool(getattr(panel, "logscale", False))
+        for (_label, panel), kind in zip(normalized, kinds, strict=False)
+        if kind == "map"
+    }
+    if len(log_flags) > 1:
+        raise ValueError(
+            "mosaic cannot pool log-scaled and linear maps onto one color axis; "
+            "give every map panel the same logscale=."
+        )
+    if colorbar is None and log_flags == {True}:
+        # The panels' own decade ticks are discarded with their colorbars when
+        # they are pooled, so they are rebuilt here from the pooled limits.
+        colorbar = _log_colorbar_for_mosaic
 
     ncols = min(int(ncols), len(normalized)) or 1
     nrows = -(-len(normalized) // ncols)

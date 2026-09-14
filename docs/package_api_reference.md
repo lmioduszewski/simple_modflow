@@ -757,6 +757,24 @@ vor.plot.map(values, select=cells, select_style="dim")   # fade the rest instead
 vor.plot.map(select=cells, select_color="#0072B2")       # avoid a red colorscale
 ```
 
+**Custom geometry over a map** — `features=` is an option on `map` at the same
+scopes (ledger 254): a vector file path, a `GeoDataFrame`, a shapely geometry,
+a `mf.plot.Feature(...)` carrying its styling, or a list/dict of those. One
+legend entry and an attribute hover per layer, drawn by both backends and kept
+by `mosaic`/`animate`. `locs=` is deprecated in its favour.
+
+```python
+model.plot.map(layer=0, features="wells.gpkg")                       # first layer of the file
+model.plot.map(layer=0, features=mf.plot.Feature("site.gpkg", layer="ponds", fill=True))
+model.packages.npf.k.map(logscale=True, features={"Wells": wells_gdf, "Boundary": boundary})
+```
+
+**Log colour scales** — `logscale=True` on any map colours `log10(value)` but
+labels the colorbar in real units at whole decades on both backends; the hover
+keeps the real value and `zmin`/`zmax`/`zmid` are given in DATA units
+(`model.packages.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). `colorscale=`
+takes any Plotly name (`_r` reverses it) or explicit stops (ledger 252/253).
+
 
 Six verbs cover every picture. They exist as free functions and bound to the
 objects, and the bound form calls the free one, so the two cannot diverge.

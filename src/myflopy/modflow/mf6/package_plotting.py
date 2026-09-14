@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from myflopy.viz import Fig, _build_frame_figure, mpl_axes, subplots
+from myflopy.viz import Fig, _build_frame_figure, mpl_axes, mpl_colormap_for, subplots
 from myflopy.viz import mosaic as viz_mosaic
 
 if TYPE_CHECKING:
@@ -100,6 +100,47 @@ def resolve_noun_hover(hover, trace_kwargs: dict):
     return legacy if hover is None else hover
 
 
+def _mpl_shared_scale(choros, *, diff: bool):
+    """``(arrays, cmap, norm)`` for a static mosaic/animation of ``Choro`` panels.
+
+    The per-panel values are the DATA-unit ones (``linear_zs``); the shared
+    norm is symmetric about zero for a diff surface, a ``LogNorm`` over the
+    pooled positive range when every panel is log-scaled, else linear over the
+    pooled finite range. The colormap is the first panel's own colorscale
+    (``mpl_colormap_for``, from Plotly's stops) so the static composer draws
+    what the interactive one draws -- it used to hard-code ``viridis`` over the
+    raw log10 exponents, so a static log mosaic read ``-3 ... 2`` under a label
+    naming real units (ledger 252). Mixing log and linear panels raises, as
+    ``viz.mosaic`` does: one bar cannot mean both.
+    """
+
+    from matplotlib import colors as mcolors
+
+    log_flags = {bool(getattr(choro, "logscale", False)) for choro in choros}
+    if len(log_flags) > 1:
+        raise ValueError(
+            "cannot share one color scale between log-scaled and linear panels; "
+            "give every panel the same logscale=."
+        )
+    logscale = log_flags == {True}
+    arrays = [np.asarray(choro.linear_zs, dtype=float) for choro in choros]
+    if logscale:
+        arrays = [np.where(values > 0, values, np.nan) for values in arrays]
+    finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
+    finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+    if diff:
+        absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
+        return arrays, "RdBu", mcolors.Normalize(vmin=-absmax, vmax=absmax)
+    cmap = mpl_colormap_for(getattr(choros[0], "colorscale", "earth"))
+    if logscale:
+        vmin = float(np.nanmin(finite)) if finite.size else 0.1
+        vmax = float(np.nanmax(finite)) if finite.size else 10.0
+        return arrays, cmap, mcolors.LogNorm(vmin=vmin, vmax=vmax)
+    vmin = float(np.nanmin(finite)) if finite.size else 0.0
+    vmax = float(np.nanmax(finite)) if finite.size else 1.0
+    return arrays, cmap, mcolors.Normalize(vmin=vmin, vmax=vmax)
+
+
 def _apply_backend(choro, backend: str = "plotly"):
     """Return a ``Choro`` as an interactive Plotly figure or a static mpl one.
 
@@ -144,14 +185,14 @@ def _red_white_blue_diverging_colorscale() -> list[list[object]]:
     """Return the diff-map orientation as STOPS: red at ``zmin``, blue at ``zmax``.
 
     The same endpoint colors as :func:`_blue_white_red_diverging_colorscale`,
-    reversed -- the "negative red, positive blue" rule that
-    ``get_default_group_compare_colorscale() == 'RdBu'`` declares for difference
-    maps. It exists as stops rather than as that NAME because
-    ``_PLOTLY_TO_MPL_CMAP['rdbu']`` is ``'RdBu_r'`` (choros.py:36), the REVERSED
-    colormap, so a named diverging scale renders mirrored between
-    ``Choro.plot()`` and ``Choro.plot_mpl()``. Stops survive both backends: the
-    colorscale setter passes lists through, and ``plot_mpl`` rebuilds them with
-    ``LinearSegmentedColormap.from_list``.
+    reversed -- the "negative red, positive blue" rule
+    ``get_default_group_compare_colorscale()`` declares for difference maps. It
+    exists as stops rather than as a NAME because the helpers own the
+    ORIENTATION -- which end is red is a policy decision a bare name cannot
+    carry. (Until ledger 253 there was a second reason: a hand table sent the
+    name ``'rdbu'`` to matplotlib's REVERSED colormap, so a named diverging
+    scale rendered mirrored between backends. Names now render from Plotly's
+    own stops on both, so only the orientation reason remains.)
 
     Derived from its sibling rather than restating the hexes, so the two
     orientations cannot drift apart.
@@ -506,7 +547,7 @@ NOUN_MAP_PARAMS = (
     "contour_width", "contour_name", "contour_clip", "contour_resolution",
     "contour_method",
     "select", "select_style", "select_color",
-    "locs", "hillshade_path",
+    "features", "hillshade_path",
     "fit_bounds", "bounds_padding",
     "hover",
     "backend",
@@ -1646,11 +1687,12 @@ class SpatialView:
         """Render ``Choro`` panels as a matplotlib grid sharing one color scale + colorbar.
 
         Diff surfaces get a symmetric ``RdBu`` scale centered at zero; other
-        surfaces get a ``viridis`` scale spanning the panels' finite value range.
+        surfaces take the first panel's own ``colorscale`` over the panels'
+        pooled finite range -- through a ``LogNorm`` in DATA units when the
+        panels are log-scaled, so the shared bar reads real units (ledger 252).
         """
 
         from matplotlib import cm
-        from matplotlib import colors as mcolors
 
         labels = [label for label, _ in panels]
         choros = [choro for _, choro in panels]
@@ -1659,16 +1701,7 @@ class SpatialView:
         ncols = min(int(ncols), len(choros)) or 1
         nrows = int(np.ceil(len(choros) / ncols))
         fig, axes = mpl_axes(nrows, ncols, figsize=(5.0 * ncols, 4.5 * nrows), squeeze=False)
-        arrays = [np.asarray(choro.zs, dtype=float) for choro in choros]
-        finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
-        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
-        if self._spatial_is_diff():
-            absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
-            vmin, vmax, cmap = -absmax, absmax, "RdBu"
-        else:
-            vmin = float(np.nanmin(finite)) if finite.size else 0.0
-            vmax = float(np.nanmax(finite)) if finite.size else 1.0
-            cmap = "viridis"
+        arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
         for axis, label, choro, values in zip(axes.flat, labels, choros, arrays, strict=False):
             gdf = choro.vor.gdf_vorPolys.copy()
             gdf["_spatial_value"] = values
@@ -1676,8 +1709,7 @@ class SpatialView:
                 column="_spatial_value",
                 ax=axis,
                 cmap=cmap,
-                vmin=vmin,
-                vmax=vmax,
+                norm=norm,
                 linewidth=0.2,
                 edgecolor="#666666",
             )
@@ -1686,7 +1718,7 @@ class SpatialView:
             axis.set_aspect("equal")
         for axis in axes.flat[len(choros):]:
             axis.set_visible(False)
-        mappable = cm.ScalarMappable(norm=mcolors.Normalize(vmin=vmin, vmax=vmax), cmap=cmap)
+        mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
         mappable.set_array([])
         fig.colorbar(
             mappable,
@@ -1895,7 +1927,9 @@ class SpatialView:
         """Build a matplotlib ``FuncAnimation`` over ``[(label, Choro), ...]`` map frames.
 
         Uses one fixed color scale across all frames (symmetric ``RdBu`` for diff
-        surfaces, ``viridis`` otherwise).
+        surfaces; otherwise the first frame's own ``colorscale`` over the pooled
+        range, through a ``LogNorm`` in data units when the frames are
+        log-scaled).
         """
 
         from matplotlib.animation import FuncAnimation
@@ -1904,16 +1938,7 @@ class SpatialView:
             raise ValueError("animate requires at least one frame.")
         labels = [str(label) for label, _ in frames]
         choros = [choro for _, choro in frames]
-        arrays = [np.asarray(choro.zs, dtype=float) for choro in choros]
-        finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
-        finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
-        if self._spatial_is_diff():
-            absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
-            vmin, vmax, cmap = -absmax, absmax, "RdBu"
-        else:
-            vmin = float(np.nanmin(finite)) if finite.size else 0.0
-            vmax = float(np.nanmax(finite)) if finite.size else 1.0
-            cmap = "viridis"
+        arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
         fig, axis = mpl_axes(1, 1, figsize=(7.0, 6.0))
 
         def _draw(index):
@@ -1926,8 +1951,7 @@ class SpatialView:
                 column="_spatial_value",
                 ax=axis,
                 cmap=cmap,
-                vmin=vmin,
-                vmax=vmax,
+                norm=norm,
                 linewidth=0.2,
                 edgecolor="#666666",
             )

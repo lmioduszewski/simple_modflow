@@ -432,8 +432,8 @@ def test_real_choro_overlays_survive_composition(canonical_run):
     """The bug ledger 62 records: a mosaic of contoured maps lost its contours.
 
     Exercised on a real ``Choro`` rather than a fake, so it pins what
-    ``overlay_traces()`` actually collects -- contour polylines and location
-    markers, not just whatever a test double chooses to return.
+    ``overlay_traces()`` actually collects -- contour polylines and feature
+    layers, not just whatever a test double chooses to return.
     """
 
     import geopandas as gpd
@@ -441,22 +441,26 @@ def test_real_choro_overlays_survive_composition(canonical_run):
 
     vor = canonical_run.vor
     centroid = vor.gdf_vorPolys.geometry.iloc[0].centroid
-    locs = gpd.GeoDataFrame(
+    sites = gpd.GeoDataFrame(
         {"ExploName": ["well A", "a transect"]},
         geometry=[
             Point(centroid.x, centroid.y),
-            # a geometry type the marker overlay does not draw: skipped, not fatal
             LineString([(centroid.x, centroid.y), (centroid.x + 10.0, centroid.y)]),
         ],
         crs=vor.crs,
     )
-    choro = canonical_run.plot.map(layer=0, contours=True, contour_levels=3, locs=locs)
+    choro = canonical_run.plot.map(
+        layer=0, contours=True, contour_levels=3, features={"sites": sites}
+    )
 
     overlays = choro.overlay_traces()
     names = [trace.name for trace in overlays]
-    assert "well A" in names, names
-    assert "a transect" not in names  # LineString skipped
-    contours = [trace for trace in overlays if trace.mode == "lines"]
+    # One layer, two geometry kinds: a marker trace and a line trace, both
+    # carrying the layer's name (one legend entry between them).
+    assert names.count("sites") == 2, names
+    modes = {trace.mode for trace in overlays if trace.name == "sites"}
+    assert modes == {"markers", "lines"}
+    contours = [trace for trace in overlays if trace.mode == "lines" and trace.name != "sites"]
     assert contours, names
     assert all(trace.type == "scattermap" for trace in overlays)
 

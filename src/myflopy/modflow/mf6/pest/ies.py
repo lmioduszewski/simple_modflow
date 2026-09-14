@@ -47,6 +47,7 @@ from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
     residual_hover,
 )
+from myflopy.viz import log_decade_colorbar
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
 _PRIOR_COLOR = viz.PALETTE.prior
@@ -79,28 +80,15 @@ def _normalize_backend(backend: str) -> str:
 
 
 def _log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
-    """Relabel a log10 colorbar in real units, with ticks at whole decades.
+    """Decade ticks in real units for a log10 colorbar; ``low``/``high`` in log10.
 
-    Nothing in ``Choro`` sets ``tickvals``/``ticktext``, so a ``logscale`` map is
-    otherwise read in log10 units -- a colorbar running -1 to 1 for a field that
-    actually runs 0.1 to 10. This rides ``Choro``'s trace kwargs. It does NOT
-    survive :func:`myflopy.viz.mosaic`, whose shared coloraxis carries no
-    colorbar key (compromise ledger 71).
+    Since 2026-09-13 ``Choro`` labels every log map this way itself
+    (:func:`myflopy.viz.log_decade_colorbar`), so this is only still passed for
+    the ``change`` map, whose ``unit="x"`` suffix the default cannot know. It is
+    the same helper, so the two cannot label one field two ways.
     """
 
-    decades = [
-        decade for decade in range(int(np.floor(low)), int(np.ceil(high)) + 1)
-        if low <= decade <= high
-    ]
-    # Fewer than three whole decades in range gives a colorbar with one or two
-    # ticks, which reads as broken; fall back to five evenly spaced labels.
-    ticks = [float(d) for d in decades] if len(decades) >= 3 else [
-        float(t) for t in np.linspace(low, high, 5)
-    ]
-    return {
-        "tickvals": ticks,
-        "ticktext": [f"{10.0 ** tick:.3g}{unit}" for tick in ticks],
-    }
+    return log_decade_colorbar(low, high, unit=unit)
 
 
 def _log_decade_colorbar_for_mosaic(low, high) -> dict:
@@ -109,7 +97,8 @@ def _log_decade_colorbar_for_mosaic(low, high) -> dict:
     A mosaic pools its panels onto one shared color axis, so the real-unit ticks
     have to be computed from the limits *it* resolved, not from any one panel's
     (compromise ledger 71). ``viz.mosaic`` leaves the limits unset when no panel
-    has finite data, hence the guard.
+    has finite data, hence the guard. ``viz.mosaic`` now does this by itself for
+    a grid of log-scaled panels; kept as the explicit spelling.
     """
 
     if low is None or high is None:
@@ -159,14 +148,19 @@ def _field_map_policy(stat: str, values) -> dict[str, object]:
         return {
             "colorscale": _red_white_blue_diverging_colorscale(),
             "logscale": True,
-            # Symmetric zmin/zmax in LOG space is what actually centers this map:
-            # plot_mpl reads self._zmin/_zmax and never consults the trace kwargs,
-            # so zmid alone would center the plotly map and leave matplotlib
-            # autoscaled. zmid is belt, not braces.
-            "zmin": -half,
-            "zmax": half,
-            "zmid": 0.0,
-            "colorbar": _log_decade_colorbar(-half, half, unit="x"),
+            # Limits in DATA units (a log map's zmin/zmax/zmid are, since
+            # 2026-09-13): symmetric about 1 in ratio space, which Choro maps
+            # to symmetric log10 limits about 0. Both backends read them, so
+            # zmid alone would not do -- it centers the Plotly map only.
+            "zmin": 10.0 ** -half,
+            "zmax": 10.0 ** half,
+            "zmid": 1.0,
+            # Ticks at the positions Choro will actually send: log10 of the
+            # data-unit limits, which round-trips ±half by an ulp for most
+            # values -- a tick an ulp outside the range is a tick Plotly drops.
+            "colorbar": _log_decade_colorbar(
+                float(np.log10(10.0 ** -half)), float(np.log10(10.0 ** half)), unit="x"
+            ),
         }
     if key in ("mean", "base"):
         # The only array-family targets field() can reach are k/k33 --
@@ -206,14 +200,16 @@ def _field_map_policy(stat: str, values) -> dict[str, object]:
 
 
 def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
-    """Put a log map's real-unit ticks on the matplotlib colorbar.
+    """Put a log map's ``tickvals``/``ticktext`` on the matplotlib colorbar.
 
-    ``Choro.plot_mpl`` builds its colorbar through geopandas and exposes no tick
-    hook, so a log-scaled static map would label its colorbar ``-3 … 2`` while
-    the interactive one reads ``0.001 … 100`` — the same field, two readings, and
-    the static one silently off by orders of magnitude. Applied only when the
-    effective ``logscale`` is on, so an explicit ``logscale=False`` override does
-    not get decade labels over linear values.
+    ``Choro.plot_mpl`` draws a log map through a ``LogNorm`` since 2026-09-13,
+    so its colorbar is a real log axis in DATA units and already reads in
+    decades; ``plot_mpl`` also applies caller ticks itself. This stays as the
+    explicit spelling for the ``change`` map's ``x`` suffix: the ``tickvals``
+    are the trace's log10 positions, so they are raised back to data units
+    before being set. Applied only when the effective ``logscale`` is on, so an
+    explicit ``logscale=False`` override does not get decade labels over linear
+    values.
     """
 
     tickvals = (colorbar or {}).get("tickvals")
@@ -223,8 +219,9 @@ def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
     if not tickvals or not ticktext or len(figure.axes) < 2:
         return
     axis = figure.axes[-1]
-    axis.set_yticks(list(tickvals))
+    axis.set_yticks([10.0 ** float(tick) for tick in tickvals])
     axis.set_yticklabels([str(text) for text in ticktext])
+    axis.minorticks_off()
 
 
 def _parse_cell_list(value) -> list[int]:
@@ -1672,11 +1669,12 @@ class IesResults:
             target, stat=stat, which=which, layer=layer, **choropleth_kwargs
         )
         if _normalize_backend(backend) == "matplotlib":
-            # No cmap=: plot_mpl derives it from the policy colorscale (stops
-            # become a LinearSegmentedColormap, "earth" becomes "gist_earth") and
-            # vmin/vmax default to the policy's zmin/zmax, so the colors and the
-            # limits agree between backends. The tick LABELS do not come for
-            # free -- plot_mpl has no colorbar hook, hence the relabel.
+            # No cmap=: plot_mpl builds it from the policy colorscale (stops and
+            # names alike become a LinearSegmentedColormap from Plotly's own
+            # stops) and vmin/vmax default to the policy's zmin/zmax, so the
+            # colors and the limits agree between backends. plot_mpl also puts
+            # the policy's own ticks on its log colorbar; the relabel below is
+            # the explicit spelling of that same step, and idempotent over it.
             figure = choro.plot_mpl(title=heading)
             if resolved.get("logscale"):
                 _relabel_log_colorbar(figure, resolved.get("colorbar"))

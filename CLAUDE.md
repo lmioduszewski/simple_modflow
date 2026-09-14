@@ -113,6 +113,22 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**Log colour scales and custom geometry are OPTIONS on `map`, at EVERY scope**
+(ledger 252–254, 2026-09-13). `logscale=True` colours log10 but LABELS the
+colorbar in real units at whole decades on both backends (`viz.log_decade_colorbar`;
+a `LogNorm` on mpl); `zmin`/`zmax`/`zmid` are then DATA units (`zmin=1e-4,
+zmax=10`), a non-positive one raises, contours use the real field, and `mosaic`
+relabels a grid of log panels itself while refusing to pool log with linear.
+`colorscale=` takes ANY Plotly name (`_r` reverses) or stops, and the static
+backend builds its colormap from Plotly's own stops, so a name renders the same
+on both (the mirrored-`RdBu` hand table is gone). `features=` draws
+wells/ponds/boundaries over the cells: a path, GeoDataFrame, geometry,
+`mf.plot.Feature(...)` (`layer`/`color`/`width`/`size`/`fill`/`label`/`hover`/`crs`),
+or a list/dict of those — one legend entry and an attribute hover per layer,
+drawn by both backends, kept by `mosaic`/`animate`, resolved eagerly so a bad
+path raises at the call. Engine: `utils/datatypes/features.py`. **`locs=` is
+DEPRECATED** (warns, drawn as a layer named "locations") and is named on no
+signature — do not reintroduce it.
 **Never give a picture verb a bare `**kwargs`** (8.8, 2026-08-24): PyCharm and
 Pylance are STATIC — they read the `def` line and never run the module, so
 `__doc__`, `__signature__` and `functools.wraps` reach `help()` and reach no

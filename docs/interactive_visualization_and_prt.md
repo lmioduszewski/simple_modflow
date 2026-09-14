@@ -37,7 +37,21 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
 - **Colorscales follow one policy:** diverging red/white/blue only for signed
   gaining/losing "q"-like fields (gaining = blue) and for diff maps
   (negative = red, positive = blue); everything else uses the house
-  brown-to-blue `earth` scale.
+  brown-to-blue `earth` scale. Override with `colorscale=` — any Plotly name
+  (`'Viridis'`, `'Turbo'`, `'RdBu_r'`, …) or explicit stops; the static
+  backend draws the same ramp.
+- **Fields spanning orders of magnitude take `logscale=True`** (hydraulic
+  conductivity, recharge, travel time): the cells are coloured by `log10`, but
+  the colorbar is labelled in real units at whole decades on both backends,
+  the hover keeps the real value, and `zmin`/`zmax` are given in data units
+  (`model.packages.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). A mosaic
+  of log maps relabels its pooled bar by itself.
+- **Custom geometry is `features=`** on every map: a GeoPackage/shapefile
+  path (`plot.Feature(path, layer="wells")` for a named layer), a
+  `GeoDataFrame`, a shapely geometry, or a dict naming several layers
+  (`features={"Wells": wells_gdf, "Pond": plot.Feature(pond, fill=True)}`).
+  Each layer gets a legend entry, a stable colour and an attribute hover, on
+  both backends and through `mosaic`/`animate`. `locs=` is deprecated.
 - **Every interactive figure is a house `viz.Fig`** (never a bare
   `go.Figure`): maps, mosaics, and `animate` figures all carry the house
   template (`dragmode="pan"`, styled axes/fonts) and the interaction config

@@ -13,21 +13,45 @@ import base64
 import mimetypes
 from pathlib import Path
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import plotly.graph_objs as go
 import rasterio
-import shapely as shp
 from pandas import IndexSlice as idxx
 from PIL import Image
 from rasterio.errors import RasterioError
 from rasterio.warp import transform_bounds
 
+from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.utils.animations import Animation
-from myflopy.viz import HIGHLIGHT_DIM_OPACITY, HIGHLIGHT_WIDTH, PALETTE, Fig, Picture
+from myflopy.modflow.utils.datatypes.features import (
+    Feature,
+    combine_features,
+    draw_features_mpl,
+    feature_traces,
+    resolve_features,
+)
+from myflopy.viz import (
+    HIGHLIGHT_DIM_OPACITY,
+    HIGHLIGHT_WIDTH,
+    PALETTE,
+    Fig,
+    Picture,
+    log_decade_colorbar,
+    mpl_color,
+    mpl_colormap_for,
+    plotly_colorscale_stops,
+)
+
+__all__ = [
+    "Choro",
+    "ChoroplethHillshadeBackground",
+    "mpl_color",
+    "mpl_colormap_for",
+    "plotly_colorscale_stops",
+]
 
 logger = get_logger(__name__)
 
@@ -42,38 +66,9 @@ _SURFACES_UNAVAILABLE = (
     OSError, RasterioError,
 )
 
-# Map the Plotly colorscale names this class understands to the nearest
-# matplotlib colormap, so plot_mpl() honors a Choro's configured colorscale.
-_PLOTLY_TO_MPL_CMAP = {
-    "earth": "gist_earth", "viridis": "viridis", "cividis": "cividis",
-    "blues": "Blues", "reds": "Reds", "greens": "Greens", "greys": "Greys",
-    "hot": "hot", "jet": "jet", "rainbow": "rainbow", "electric": "plasma",
-    "portland": "turbo", "rdbu": "RdBu_r", "bluered": "coolwarm",
-    "picnic": "coolwarm", "ylgnbu": "YlGnBu", "ylorrd": "YlOrRd",
-}
-
-
-def mpl_colormap_for(colorscale):
-    """The matplotlib colormap equivalent to a Plotly ``colorscale``.
-
-    Shared so that anything drawn *over* a static choropleth -- residual
-    markers, category points -- colors on the same ramp as the cells beneath
-    it. Building a second colormap at the call site is how a point and the
-    cell under it end up different colors for the same value.
-
-    Explicit color stops become a ``LinearSegmentedColormap``; a name is looked
-    up in :data:`_PLOTLY_TO_MPL_CMAP`. Note that table maps ``'rdbu'`` to the
-    REVERSED matplotlib colormap, so a diverging scale passed by name renders
-    mirrored between backends -- pass stops (compromise ledger 69/70).
-    """
-
-    if isinstance(colorscale, (list, tuple)):
-        from matplotlib.colors import LinearSegmentedColormap
-
-        return LinearSegmentedColormap.from_list(
-            "choro_custom", [(float(pos), color) for pos, color in colorscale]
-        )
-    return _PLOTLY_TO_MPL_CMAP.get(str(colorscale).lower(), "gist_earth")
+# `mpl_colormap_for` / `plotly_colorscale_stops` / `mpl_color` live in
+# `myflopy.viz` (layer 0) so the noun-tier composers can import them at module
+# level; they stay reachable here because this is where callers learned them.
 
 
 def _content_aware_hover(name_dict: dict[str, list]):
@@ -140,6 +135,29 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 # mask MODFLOW's 1e30 sentinel, and label the layer-hover table by value name.
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
+
+
+def _stacklevel_outside_package() -> int:
+    """The ``stacklevel`` that pins a warning on the first frame outside ``myflopy``.
+
+    Counted from the CALLER of this helper. A deprecation reaches ``Choro``
+    through a different number of frames from every scope (free verb, bound
+    verb, noun), so no constant is right; and a warning attributed to library
+    code is one Python's stock filters suppress in a notebook or script, which
+    makes it a deprecation nobody hears.
+    """
+
+    import sys
+
+    level = 1
+    frame = sys._getframe(1)
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "")
+        if not (module == "myflopy" or module.startswith("myflopy.")):
+            return level
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 def _resolve_cells(select, *, vor, model=None):
@@ -243,7 +261,7 @@ class Choro(Picture):
             show_mounding: bool = False,
             hover_heads: bool = True,
             hover_ks: bool = False,
-            locs: Path = None,
+            features=None,
             rch_scale: float = None,
             bgs: bool = False,
             hillshade_path: Path = None,
@@ -294,11 +312,16 @@ class Choro(Picture):
         :param show_mounding: if True, colorscale will be mounding over given Layer
         :param hover_heads: boolean to show heads on hover.
         :param hover_ks: boolean to show Kh on hover.
-        :param locs: specify the path of a shapefile or geopackage with location points to show on choropleth
+        :param features: custom geometry drawn over the cells -- a vector file path, a
+        GeoDataFrame, a shapely geometry, a :class:`~myflopy.plot.Feature`, or a
+        list/dict of those (see :func:`myflopy.plot.map`).
         :param rch_scale: value to scale z-values in choropleth. For example to convert units in recharge to another L/T
         :param bgs: if True, will take precedence, and will plot water levels in given Layer relative to top of model
         :param hillshade_path: path to hillshade raster.
-        :param colorscale: colorscale to use for choropleth. Default is 'earth'.
+        :param colorscale: any Plotly colorscale name (``_r`` reverses), or explicit
+        ``[[position, color], ...]`` stops. Default is 'earth'.
+        :param logscale: colour ``log10(value)``; the colorbar is labelled in real
+        units at whole decades, and ``zmin``/``zmax``/``zmid`` are given in DATA units.
         """
 
         self._vor = None
@@ -319,7 +342,6 @@ class Choro(Picture):
         self._custom_hover = custom_hover
         self._custom_zs = custom_zs
         self._zmin = zmin
-        self._locs = None
         self._overlays = []
         self._zmax = zmax
         self.zoom = zoom
@@ -331,7 +353,6 @@ class Choro(Picture):
         self.show_mounding = show_mounding
         self.hover_heads = hover_heads
         self.hover_ks = hover_ks
-        self.locs = locs
         self.rch_scale = rch_scale
         self.bgs = bgs
         self._show_mounding_above_ground = False
@@ -342,7 +363,21 @@ class Choro(Picture):
             self._show_mounding_above_ground = True
             self.layer = 0
         self._colorscale = None
-        self.logscale = logscale
+        self.logscale = bool(logscale)
+        if self.logscale:
+            # The limits are in DATA units, converted to log10 for the trace,
+            # so a zero or negative one has no place on the scale. Refused here
+            # rather than drawn as NaN limits, which Plotly renders as an
+            # autoscaled map that quietly ignores what was asked for.
+            for label, value in (("zmin", zmin), ("zmax", zmax), ("zmid", kwargs.get("zmid"))):
+                if value is not None and not (np.isfinite(float(value)) and float(value) > 0):
+                    raise ValueError(
+                        f"{label}={value!r} cannot be drawn on a log scale: with "
+                        "logscale=True the color limits are in data units and must "
+                        "be finite and positive. (A signed field's symmetric limits "
+                        "come from the noun's own policy -- a log scale cannot draw "
+                        "a signed field; map its magnitude instead.)"
+                    )
         self.contours = contours
         self.contour_values = contour_values
         self.contour_levels = contour_levels
@@ -363,7 +398,21 @@ class Choro(Picture):
         self._hover_layers = hover_layers
         self._hover_surfaces = hover_surfaces
         self._hover_fields = hover_fields
+        legacy_locations = kwargs.pop("locs", None)
+        if legacy_locations is not None:
+            # Behavior deprecation, not an alias: the retired spelling reaches
+            # here through every scope's **kwargs tail and is drawn through
+            # the features engine, so it keeps working while nothing an editor
+            # reads still offers it.
+            warn_deprecated(
+                "myflopy.plot.map(locs=)", "features=", since="0.2.0",
+                stacklevel=_stacklevel_outside_package() + 1,
+            )
+            features = combine_features(features, Feature(legacy_locations, name="locations"))
         self.kwargs = kwargs
+        # Resolved HERE, like `select=` below, so a missing file or an unknown
+        # layer raises at the call rather than from a notebook's display hook.
+        self._features = resolve_features(features, crs=getattr(self.vor, "crs", None))
 
         if select_style not in ("outline", "dim", "both"):
             raise ValueError(
@@ -528,7 +577,9 @@ class Choro(Picture):
         if self.contour_values is not None:
             return self._cell_vector(self.contour_values, "contour values")
         if self.contours is True:
-            return self._cell_vector(self.zs, "choropleth values")
+            # DATA units, not the log10 the trace carries: a contour labelled
+            # "-2" on a log K map is a reading nobody asked for.
+            return self._cell_vector(self.linear_zs, "choropleth values")
         contour_key = str(self.contours).lower()
         if contour_key in {"top", "model_top", "model top"}:
             return self._top_vector()
@@ -711,7 +762,7 @@ class Choro(Picture):
         else:
             self._hover_dict.update(
                 {
-                    'zs': self.zs
+                    'zs': self.linear_zs
                 }
             )
         if self._custom_hover:
@@ -777,13 +828,17 @@ class Choro(Picture):
         return np.where(np.isfinite(scaled), scaled, np.nan).tolist()
 
     @property
-    def zs(self):
-        """Defines the z values of the choropleth plot, which will be represented by a varying colorscale"""
+    def linear_zs(self):
+        """The mapped values in DATA units, one per cell, before any log transform.
+
+        What the hover, the contours and the static backend's ``LogNorm`` read.
+        :attr:`zs` is this, log10-transformed when ``logscale`` is on, because
+        Plotly has no log color axis and the trace must carry the transformed
+        numbers itself.
+        """
+
         if self.custom_zs is not None:
-            # ``logscale`` used to be dropped on this branch, so every custom map
-            # that offered it silently drew a linear scale (found while adding the
-            # PRT travel-time map, plan 6.3B).
-            return self._logscaled(self.custom_zs) if self.logscale else self.custom_zs
+            return self.custom_zs
 
         if self._depvar_attr is not None and self.model is not None:
             if self.show_mounding is True:
@@ -819,19 +874,58 @@ class Choro(Picture):
         else:
             zs = self.vor.gdf_vorPolys.index.to_list()
 
-        if self.logscale:
-            # `_logscaled`, not a bare `np.log10`: this branch reads heads (or a
-            # package field) whose series can arrive object-dtype, and the raw
-            # ufunc then raises "loop of ufunc does not support argument 0 of
-            # type float which has no callable log10 method" -- so
-            # `model.hds.map(logscale=True)` failed outright while the
-            # `custom_zs` branch beside it, which already used the helper,
-            # worked. The helper also blanks non-positive values to NaN instead
-            # of letting -inf drag the shared colour range to negative infinity
-            # and blank the whole map.
-            zs = self._logscaled(zs)
-
         return zs
+
+    @property
+    def zs(self):
+        """The z values the cell TRACE carries: :attr:`linear_zs`, log10 when ``logscale``.
+
+        `_logscaled`, not a bare `np.log10`: the head branch reads a series that
+        can arrive object-dtype, and the raw ufunc then raises "loop of ufunc
+        does not support argument 0 of type float which has no callable log10
+        method" -- so `model.hds.map(logscale=True)` failed outright while the
+        `custom_zs` branch beside it, which already used the helper, worked. The
+        helper also blanks non-positive values to NaN instead of letting -inf
+        drag the shared colour range to negative infinity and blank the whole map.
+        """
+
+        values = self.linear_zs
+        return self._logscaled(values) if self.logscale else values
+
+    def _trace_color_kwargs(self):
+        """``(color_kwargs, trace_kwargs)`` for the cell trace, honouring ``logscale``.
+
+        The caller's ``zmin``/``zmax``/``zmid`` are in DATA units. Linear, they
+        pass straight through. Log-scaled, they are converted to log10 to match
+        the trace's values, and the colorbar gets ticks at whole decades labelled
+        in real units -- under any ``colorbar`` keys the caller supplied, so a
+        title or a unit suffix wins. Without this a log map read ``-3 ... 2`` for
+        a field running 0.001 to 100 (ledger 74).
+        """
+
+        lo, hi = self._zmin, self._zmax
+        trace_kwargs = dict(self.kwargs)
+        if not self.logscale:
+            return {"zmin": lo, "zmax": hi}, trace_kwargs
+        lo = None if lo is None else float(np.log10(lo))
+        hi = None if hi is None else float(np.log10(hi))
+        if trace_kwargs.get("zmid") is not None:
+            trace_kwargs["zmid"] = float(np.log10(trace_kwargs["zmid"]))
+        color_kwargs = {"zmin": lo, "zmax": hi}
+        values = np.asarray(self.zs, dtype=float)
+        finite = values[np.isfinite(values)]
+        low = lo if lo is not None else (float(finite.min()) if finite.size else None)
+        high = hi if hi is not None else (float(finite.max()) if finite.size else None)
+        caller = trace_kwargs.pop("colorbar", None)
+        if low is not None and high is not None:
+            colorbar = log_decade_colorbar(low, high)
+            if caller is not None:
+                caller = caller if isinstance(caller, dict) else caller.to_plotly_json()
+                colorbar = {**colorbar, **caller}
+            color_kwargs["colorbar"] = colorbar
+        elif caller is not None:
+            color_kwargs["colorbar"] = caller
+        return color_kwargs, trace_kwargs
 
     @property
     def output_rch_zs(self):
@@ -881,24 +975,26 @@ class Choro(Picture):
 
     @colorscale.setter
     def colorscale(self, colorscale):
-        """Set the colorscale: a named Plotly scale (validated) or explicit ``[[pos, color], ...]`` stops.
+        """Set the colorscale: any named Plotly scale, or explicit ``[[pos, color], ...]`` stops.
 
-        Named strings are matched case-insensitively against the supported set and
-        fall back to ``'earth'`` with a warning if unknown. A list/tuple of stops
+        Every name Plotly knows is accepted, case-insensitively, and an ``_r``
+        suffix reverses it (``"Viridis_r"``); an unknown name falls back to
+        ``'earth'`` with a warning that lists the options. Until 2026-09-13 this
+        checked against a hand-written list of eighteen names, so
+        ``colorscale="Turbo"`` warned and drew ``earth``. A list/tuple of stops
         (e.g. the gaining/losing blue-white-red scale) passes straight through to Plotly.
         """
 
-        valid_colorscales = [
-            'Blackbody', 'Bluered', 'Blues', 'Cividis', 'Earth', 'Electric',
-            'Greens', 'Greys', 'Hot', 'Jet', 'Picnic', 'Portland', 'Rainbow',
-            'RdBu', 'Reds', 'Viridis', 'YlGnBu', 'YlOrRd']
         if isinstance(colorscale, str):
-            if colorscale.lower() in [scale.lower() for scale in valid_colorscales]:
+            if plotly_colorscale_stops(colorscale) is not None:
                 self._colorscale = colorscale
             else:
+                import plotly.colors as pc
+
                 logger.warning(
-                    'colorscale %r not recognized, using "earth" instead; '
-                    'options are %s', colorscale, valid_colorscales,
+                    'colorscale %r is not a Plotly colorscale name, using "earth" '
+                    'instead; the names are %s (append "_r" to reverse one)',
+                    colorscale, ", ".join(pc.named_colorscales()),
                 )
                 self._colorscale = 'earth'
         elif isinstance(colorscale, (list, tuple)):
@@ -907,37 +1003,10 @@ class Choro(Picture):
             self._colorscale = [list(stop) for stop in colorscale]
 
     @property
-    def locs(self):
-        """The location-marker GeoDataFrame (WGS84) overlaid on the map, or ``None``."""
+    def features(self):
+        """The resolved ``features=`` layers drawn over the cells (WGS84), possibly empty."""
 
-        return self._locs
-
-    @locs.setter
-    def locs(self, locs):
-        """Set overlay locations from a shapefile/GeoPackage ``Path`` or a GeoDataFrame.
-
-        The features are read (if a path) and reprojected to EPSG:4326; an
-        unreadable or unrecognized value leaves ``locs`` unset with a printed warning.
-        """
-
-        if locs is not None:
-            if isinstance(locs, Path):
-                try:
-                    gdf = gpd.read_file(locs)
-                    gdf = gdf.to_crs(epsg=4326)  # convert to lat/lon
-                    locations = gdf
-                except ValueError:
-                    logger.warning('could not read locations from %s', locs)
-            elif isinstance(locs, gpd.GeoDataFrame):
-                locs = locs.to_crs(epsg=4326)
-                locations = locs
-            else:
-                logger.warning(
-                    'locs must be a path or a GeoDataFrame, not %s; no location '
-                    'overlay will be drawn', type(locs).__name__,
-                )
-                locations = None
-            self._locs = locations
+        return list(self._features)
 
     def update_layout(self):
         """Apply the default map style, center, and (fitted or fixed) zoom to ``self._fig``."""
@@ -1100,7 +1169,7 @@ class Choro(Picture):
         ]
 
     def overlay_traces(self):
-        """Every non-cell trace this map carries: contours, locations, overlays.
+        """Every non-cell trace this map carries: contours, features, highlight, overlays.
 
         Built fresh and detached from :attr:`fig`, so a composer can place them in
         its own subplot cell without disturbing this map.
@@ -1108,7 +1177,7 @@ class Choro(Picture):
 
         return [
             *self._contour_traces(),
-            *self._locs_traces(),
+            *self._feature_traces(),
             *self._highlight_traces(),
             *self._overlays,
         ]
@@ -1256,6 +1325,7 @@ class Choro(Picture):
         if self._select_cells and self.select_style in ("dim", "both"):
             extra["selectedpoints"] = tuple(self._select_cells)
             extra["unselected"] = {"marker": {"opacity": HIGHLIGHT_DIM_OPACITY}}
+        color_kwargs, trace_kwargs = self._trace_color_kwargs()
         choropleth = go.Choroplethmap(
             geojson=self.vor.latlon,
             featureidkey="id",
@@ -1264,65 +1334,27 @@ class Choro(Picture):
             hovertemplate=hover_template,
             customdata=custom_data,
             colorscale=self.colorscale,
-            zmax=self._zmax,
-            zmin=self._zmin,
+            **color_kwargs,
             **extra,
-            **self.kwargs,
+            **trace_kwargs,
         )
         return choropleth
 
-    def _locs_traces(self, name_field='ExploName'):
-        """Build -- without adding -- the location-marker traces for this map.
+    def _feature_traces(self):
+        """Build -- without adding -- the ``features=`` overlay traces for this map.
 
-        ``name_field`` names the attribute column used for the trace label (falling
-        back to the row index); points become markers and polygons become outlines.
-        Geometry types that are neither (lines, collections) are skipped rather
-        than raising, so a composer can always ask a map for its overlays.
+        One legend entry per feature layer; points are markers, lines and
+        polygon rings are polylines, filled polygons add a fill beneath their
+        outline. Built by :func:`~myflopy.modflow.utils.datatypes.features
+        .feature_traces` from the layers resolved at construction, so a composer
+        can always ask a map for its overlays.
         """
 
-        if self.locs is None:
-            return []
-        traces = []
-        for idx, row in self.locs.iterrows():
-            try:
-                name = row[name_field]
-            except LookupError:
-                # LookupError, not KeyError: `name_field` is caller-supplied
-                # (`add_locs(name_field=...)`), and on a pandas row an INTEGER
-                # key that misses raises IndexError via the positional
-                # fallback, not KeyError. Falling back to the row index is the
-                # documented behaviour for both.
-                name = idx
-            geom = row.geometry
-            if isinstance(geom, shp.Polygon):
-                coords = geom.exterior.xy
-                mode = 'lines'
-            elif isinstance(geom, shp.Point):
-                coords = geom.xy
-                mode = 'markers'
-            else:
-                continue
-            traces.append(
-                go.Scattermap(
-                    mode=mode,
-                    lat=coords[1].tolist(),
-                    lon=coords[0].tolist(),
-                    name=name,
-                    marker_color='black',
-                    showlegend=False,
-                )
-            )
-        return traces
-
-    def add_locs(self, name_field='ExploName'):
-        """Overlay each location feature as a labeled point/line trace on ``self._fig``."""
-
-        for trace in self._locs_traces(name_field):
-            self._fig.add_trace(trace)
+        return feature_traces(self._features)
 
     @property
     def fig(self):
-        """The assembled figure: cells + contours + location markers + overlays + hillshade.
+        """The assembled figure: cells + contours + feature layers + overlays + hillshade.
 
         **Assembled once.** `add_choropleth()` and friends append traces
         unconditionally, so before plan 8.1 -- when this was the `.choropleth`
@@ -1335,8 +1367,8 @@ class Choro(Picture):
         if not self._assembled:
             self.add_choropleth()
             self.add_contours()
-            if self.locs is not None:
-                self.add_locs()
+            for trace in self._feature_traces():
+                self._fig.add_trace(trace)
             # Above the cells and contours, below caller-supplied overlays, so a
             # PRT pathline still draws on top of the highlight.
             for trace in self._highlight_traces():
@@ -1386,26 +1418,43 @@ class Choro(Picture):
             if finite_values.size:
                 zmin = min(zmin, float(finite_values.min()))
                 zmax = max(zmax, float(finite_values.max()))
+            # The cell trace PLUS everything drawn over it, rebuilt per period
+            # so contours follow the field. Until 2026-09-13 a frame carried
+            # only the cells, so `.ani` silently dropped every overlay --
+            # features, contours, the select= highlight -- that the static
+            # picture and `plot.animate` both kept.
             frames.append(
                 go.Frame(
-                    data=[choropleth],
+                    data=[choropleth, *self.overlay_traces()],
                     name=str(per),
                     baseframe=str(periods[0]),
                 )
             )
 
         if frames:
-            requested_zmin = getattr(self, "_zmin", None)
-            requested_zmax = getattr(self, "_zmax", None)
+            # Trace-space limits: log10 of the data-unit request on a log map.
+            requested = self._trace_color_kwargs()[0]
+            requested_zmin = requested.get("zmin")
+            requested_zmax = requested.get("zmax")
             shared_zmin = requested_zmin if requested_zmin is not None else zmin
             shared_zmax = requested_zmax if requested_zmax is not None else zmax
             base_data = copy.deepcopy(frames[0].data[0])
+            colorbar = base_data.colorbar.to_plotly_json()
+            if self.logscale and np.isfinite([shared_zmin, shared_zmax]).all():
+                # The first frame's decades span only ITS range; the shared axis
+                # spans every frame, so the labels are rebuilt over that range,
+                # still under any colorbar keys the caller gave.
+                caller = self.kwargs.get("colorbar")
+                caller = {} if caller is None else (
+                    caller if isinstance(caller, dict) else caller.to_plotly_json()
+                )
+                colorbar = {**colorbar, **log_decade_colorbar(shared_zmin, shared_zmax), **caller}
             coloraxis = {
                 "colorscale": base_data.colorscale,
                 "cmin": shared_zmin,
                 "cmax": shared_zmax,
                 "cauto": False,
-                "colorbar": base_data.colorbar.to_plotly_json(),
+                "colorbar": colorbar,
             }
             for trace in [base_data, *(frame.data[0] for frame in frames)]:
                 trace.coloraxis = "coloraxis"
@@ -1417,7 +1466,7 @@ class Choro(Picture):
             coloraxis = None
 
         self._fig = Fig(
-            data=[base_data],
+            data=[base_data, *copy.deepcopy(list(frames[0].data[1:]))] if frames else [],
             frames=frames,
             layout=go.Layout(
                 coloraxis=coloraxis,
@@ -1440,7 +1489,7 @@ class Choro(Picture):
         # The animation figure IS this Choro's figure from here on. Without this,
         # `_assembled` stays False and the next `.fig` access -- which is what
         # `.show()`, `.html()` and `.save()` all go through -- appends the static
-        # choropleth, contours, locs and overlays ON TOP of the animation.
+        # choropleth, contours, features and overlays ON TOP of the animation.
         self._assembled = True
         self.update_layout()
 
@@ -1463,9 +1512,15 @@ class Choro(Picture):
         """Render this choropleth with matplotlib -- the static counterpart to
         :meth:`plot` (Plotly), mirroring ``GridSection.plot_mpl`` / ``.plot``.
 
-        Colors the Voronoi cells by the same ``zs`` the interactive map uses
+        Colors the Voronoi cells by the same values the interactive map uses
         (``custom_zs`` when provided, otherwise the resolved heads / Kh /
         recharge for this ``type``), so a single ``Choro`` gives both backends.
+        A ``logscale`` map colours the DATA-unit values through a
+        ``matplotlib.colors.LogNorm``, so its colorbar is a real log axis in
+        real units rather than a linear bar of log10 exponents; ``vmin``/``vmax``
+        are then in data units too. Feature layers (``features=``) and the
+        ``select=`` outline are drawn; caller-registered ``add_overlay`` traces
+        are Plotly objects and are not.
 
         Parameters
         ----------
@@ -1492,9 +1547,8 @@ class Choro(Picture):
         """
 
 
-        values = np.asarray(self.zs, dtype=float)
+        values = np.asarray(self.linear_zs, dtype=float)
         gdf = self.vor.gdf_vorPolys.copy()
-        gdf["_choro"] = values
 
         if ax is None:
             fig, ax = mpl_axes(figsize=(7, 6))
@@ -1505,8 +1559,33 @@ class Choro(Picture):
             cmap = mpl_colormap_for(self.colorscale)
         vmin = self._zmin if vmin is None else vmin
         vmax = self._zmax if vmax is None else vmax
-        gdf.plot(column="_choro", ax=ax, cmap=cmap, legend=colorbar,
-                 vmin=vmin, vmax=vmax, edgecolor=edgecolor, **plot_kwargs)
+        style = {"cmap": cmap, "legend": colorbar, "edgecolor": edgecolor}
+        if self.logscale:
+            from matplotlib.colors import LogNorm
+
+            for label, value in (("vmin", vmin), ("vmax", vmax)):
+                if value is not None and not (np.isfinite(float(value)) and float(value) > 0):
+                    raise ValueError(
+                        f"{label}={value!r} cannot be drawn on a log scale: with "
+                        "logscale=True the color limits are in data units and must "
+                        "be finite and positive."
+                    )
+            # Non-positive values have no logarithm and draw as gaps, exactly as
+            # the interactive map blanks them.
+            values = np.where(values > 0, values, np.nan)
+            positive = values[np.isfinite(values)]
+            if positive.size:
+                if vmin is None:
+                    vmin = float(positive.min())
+                if vmax is None:
+                    vmax = float(positive.max())
+                style["norm"] = LogNorm(vmin=vmin, vmax=vmax)
+        else:
+            style.update(vmin=vmin, vmax=vmax)
+        gdf["_choro"] = values
+        gdf.plot(column="_choro", ax=ax, **style, **plot_kwargs)
+        if self.logscale and colorbar and len(fig.axes) > 1:
+            self._apply_caller_colorbar_ticks(fig.axes[-1])
 
         # `outline_regions` and `select=` draw the same picture, so they go
         # through the same resolver -- otherwise the two backends of one map
@@ -1527,11 +1606,35 @@ class Choro(Picture):
                 linewidth=HIGHLIGHT_WIDTH / 2,
             )
 
+        if self._features:
+            draw_features_mpl(self._features, ax, crs=gdf.crs)
+
         ax.set_aspect("equal")
         ax.set_axis_off()
         if title:
             ax.set_title(title)
         return fig
+
+    def _apply_caller_colorbar_ticks(self, axis) -> None:
+        """Put caller-supplied log ``colorbar`` ticks on the static colorbar too.
+
+        A ``colorbar={"tickvals": ..., "ticktext": ...}`` given to a log map is
+        in the TRACE's log10 positions (a PEST change map labels its decades
+        ``0.1x / 1x / 10x``). The static colorbar is a real log axis in data
+        units, so the positions are raised back to data units before they are
+        set. Without caller ticks matplotlib's own decade labels stand.
+        """
+
+        caller = self.kwargs.get("colorbar")
+        if caller is None:
+            return
+        caller = caller if isinstance(caller, dict) else caller.to_plotly_json()
+        tickvals, ticktext = caller.get("tickvals"), caller.get("ticktext")
+        if not tickvals or not ticktext:
+            return
+        axis.set_yticks([10.0 ** float(tick) for tick in tickvals])
+        axis.set_yticklabels([str(text) for text in ticktext])
+        axis.minorticks_off()
 
     def dash_selector(self):
         """Launch an interactive Dash app for box/lasso-selecting cells on the map.

@@ -125,9 +125,10 @@ def test_change_maps_diverge_red_for_decrease_symmetrically_about_one():
 
     assert policy["logscale"] is True
     assert policy["colorscale"] == [[0.0, red], [0.5, white], [1.0, blue]]
-    # symmetric in LOG space: a halving and a doubling sit equally either side.
-    assert policy["zmin"] == -policy["zmax"]
-    assert policy["zmid"] == 0.0
+    # Limits in DATA units (a log map's are), symmetric about 1 in ratio space:
+    # a halving and a doubling sit equally either side of the middle.
+    assert policy["zmin"] == pytest.approx(1.0 / policy["zmax"])
+    assert policy["zmid"] == 1.0
     # a decade colorbar, so the reader sees ratios and not log10 units
     assert policy["colorbar"]["ticktext"] == ["0.1x", "1x", "10x"]
 
@@ -141,7 +142,7 @@ def test_degenerate_change_fields_still_get_a_defined_range():
 
     for values in ([1.0, 1.0], [np.nan, np.nan]):
         policy = _field_map_policy("change", values)
-        assert (policy["zmin"], policy["zmax"]) == (-1.0, 1.0)
+        assert (policy["zmin"], policy["zmax"]) == pytest.approx((0.1, 10.0))
 
 
 def test_an_undefined_ratio_cannot_widen_the_color_range_or_warn():
@@ -153,8 +154,10 @@ def test_an_undefined_ratio_cannot_widen_the_color_range_or_warn():
         warnings.simplefilter("error", RuntimeWarning)
         policy = _field_map_policy("change", [np.inf, -np.inf, np.nan, 2.0])
 
-    # the range comes from the one finite value (log10(2)), not from inf
-    assert policy["zmax"] == pytest.approx(np.log10(2.0))
+    # the range comes from the one finite value (a 2x change, so limits of
+    # 0.5x and 2x in DATA units), not from inf
+    assert policy["zmax"] == pytest.approx(2.0)
+    assert policy["zmin"] == pytest.approx(0.5)
 
 
 def test_an_unknown_field_stat_raises_instead_of_silently_defaulting():
@@ -173,9 +176,10 @@ def test_field_map_policy_survives_the_real_choropleth_front_door():
 
     The same lesson as ``test_every_exchange_map_puts_blue_on_gaining`` below --
     a helper-only test proves arithmetic while the real map renders inverted.
-    This one specifically catches that ``Choro``'s plotly-to-matplotlib table maps
-    ``'rdbu'`` to the REVERSED colormap, so a diverging scale passed as a NAME
-    renders mirrored between the two backends. Stops survive both.
+    This one caught that ``Choro``'s old plotly-to-matplotlib table mapped
+    ``'rdbu'`` to the REVERSED colormap (ledger 69/70, retired by 253); it now
+    pins that the policy's stops, limits and decade labels all reach BOTH
+    backends of the real front door.
     """
 
     vor = _two_cell_vor()
@@ -202,19 +206,21 @@ def test_field_map_policy_survives_the_real_choropleth_front_door():
     assert "k change" in trace.hovertemplate
     assert trace.customdata is not None
 
-    # matplotlib: the SAME low-end color and the SAME limits
+    # matplotlib: the SAME low-end color and the SAME limits -- in DATA units,
+    # because the static backend draws a log map through a LogNorm (ledger 252)
     collection = choro.plot_mpl().axes[0].collections[0]
-    assert collection.get_clim() == (trace.zmin, trace.zmax)
+    assert collection.get_clim() == pytest.approx((10.0 ** trace.zmin, 10.0 ** trace.zmax))
     assert to_hex(collection.get_cmap()(0.0)) == red
 
 
 def test_a_log_map_reads_in_real_units_on_both_backends():
     """A log map's colorbar must not be labeled in log10 units on either backend.
 
-    ``plot_mpl`` builds its colorbar through geopandas with no tick hook, so
-    without an explicit relabel a static K map reads ``-3 … 2`` where the
-    interactive one reads ``0.001 … 100`` — the same field, off by orders of
-    magnitude, with nothing on the figure to say so.
+    ``plot_mpl`` used to build a LINEAR colorbar over log10 values, so without
+    an explicit relabel a static K map read ``-3 … 2`` where the interactive
+    one read ``0.001 … 100`` — the same field, off by orders of magnitude, with
+    nothing on the figure to say so. It now draws through a ``LogNorm`` and
+    applies caller ticks itself; the explicit relabel stays idempotent over it.
     """
 
     values = [0.001, 100.0]
@@ -264,13 +270,16 @@ def test_the_grid_accessor_accepts_what_the_function_accepts():
     8.4 deleted -- ``vor.plot.map`` takes ``**kwargs`` and forwards them, so
     there is no second parameter list to drift. What still needs pinning is the
     passthrough itself: ``zmid`` is named nowhere in myflopy and reaches the
-    trace only by riding ``**choro_kwargs``.
+    trace only by riding ``**choro_kwargs``. On a log map it is given in DATA
+    units and lands on the trace as log10 (ledger 252).
     """
 
     choro = _two_cell_vor().plot.map(
-        values=[1.0, 2.0], colorscale="earth", logscale=True, zmid=0.0
+        values=[1.0, 2.0], colorscale="earth", logscale=True, zmid=1.0
     )
     assert choro.get_choropleth().zmid == 0.0
+    linear = _two_cell_vor().plot.map(values=[1.0, 2.0], colorscale="earth", zmid=1.5)
+    assert linear.get_choropleth().zmid == 1.5
 
 
 def test_category_colors_are_policy_and_stable_across_figures(isolated_category_colors):

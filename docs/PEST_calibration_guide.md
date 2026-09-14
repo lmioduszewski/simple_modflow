@@ -298,8 +298,9 @@ the statistic, not the parameter:
 - `stat="mean"` / `"base"` — absolute conductivity, which spans decades, so it is
   drawn on a **log** scale with the colorbar relabeled back into real units
   (`0.001`, `0.01`, …) on *both* backends. A cell whose K is exactly 0 has no
-  logarithm and draws as a gap. (That relabel is `plot_field`'s own work — a log
-  `Choro` built by hand labels its colorbar in log10 units.)
+  logarithm and draws as a gap. (Since ledger 252 every log map reads this way,
+  hand-built or by policy; `plot_field`'s only extra is the `x` suffix on the
+  `change` map's ratios.)
 - `stat="std"` — a spread in model units, drawn **linear**: a posterior standard
   deviation is legitimately zero wherever the ensemble collapsed, and those are
   precisely the cells this map exists to show.

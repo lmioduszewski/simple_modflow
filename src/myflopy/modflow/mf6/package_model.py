@@ -342,7 +342,7 @@ class HfbResultsExplorer:
         select_style: str = "outline",
         select_color: str | None = None,
         # -- overlays and framing --------------------------------------------
-        locs=None,
+        features=None,
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
@@ -388,12 +388,18 @@ class HfbResultsExplorer:
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
             color. With neither, the range comes from the data.
         colorscale : str or list of (float, str), optional
-            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
-            scale** -- names round-trip through a plotly-to-matplotlib table that
-            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
-            renders mirrored between backends (ledger 69/70).
+            Any Plotly colorscale name -- ``'earth'`` (the default), ``'Viridis'``,
+            ``'Turbo'``, ``'RdBu'``, ...; append ``_r`` to reverse one -- or explicit
+            ``[[position, color], ...]`` stops. The static backend builds its
+            colormap from the same stops, so a name renders the same way on both.
+            An unknown name warns and falls back to ``'earth'``.
         logscale : bool, default False
-            Color on a log scale. Non-positive values are masked.
+            Color on a log10 scale, for a field that spans orders of magnitude
+            (hydraulic conductivity, recharge). The colorbar is labelled in real
+            units at whole decades on both backends and the hover keeps the real
+            values. ``zmin``/``zmax`` (and a ``zmid``) are then in DATA units --
+            ``zmin=1e-4, zmax=10`` -- and a non-positive limit raises. Non-positive
+            values draw as gaps.
         contours : bool or str, default False
             Overlay contour lines. ``True`` contours the mapped values; a string
             names a different field to contour instead.
@@ -441,9 +447,17 @@ class HfbResultsExplorer:
         select_color : str, optional
             Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
             when the default red collides with a red-blue diverging colorscale.
-        locs : Path or GeoDataFrame, optional
-            Point locations to mark -- wells, observations, samples. A path is read
-            as a vector file.
+        features : path, GeoDataFrame, geometry, Feature, or list/dict of those, optional
+            Custom geometry drawn over the cells -- wells, pond footprints, a
+            boundary. A path to any vector file GeoPandas reads (name a GeoPackage
+            layer with ``Feature(path, layer=...)``), a ``GeoDataFrame`` or
+            ``GeoSeries``, a shapely geometry, or a :class:`myflopy.plot.Feature`
+            carrying its own ``color``/``width``/``size``/``fill``/``label``/
+            ``hover``. A list draws several layers; a dict names them. Points
+            become markers, lines polylines, polygons outlines (or fills). Each
+            layer gets a legend entry, a stable house color and a hover listing its
+            attribute columns. A source without a CRS is taken to be in the grid's.
+            Drawn by both backends and kept by ``mosaic`` and ``animate``.
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
@@ -462,13 +476,14 @@ class HfbResultsExplorer:
             anything else raises rather than being ignored.
 
             The switch changes the RENDERER, never the subject: both backends draw
-            this same map. Two differences are worth knowing before you rely on
-            one. The Matplotlib branch draws in **model coordinates** with no
-            basemap, so ``bgs`` and ``zoom`` have nothing to act on there; and a
-            NAMED diverging colorscale renders mirrored between the two, because the
-            name round-trips through a plotly-to-matplotlib table that maps
-            ``'rdbu'`` to the reversed colormap -- pass explicit stops when the
-            direction carries meaning (ledger 69/70).
+            this same map, and a ``colorscale`` -- named or as stops -- renders the
+            same ramp on each (the static colormap is built from Plotly's own
+            stops). One difference is worth knowing before you rely on it: the
+            Matplotlib branch draws in **model coordinates** with no basemap, so
+            ``bgs`` and ``zoom`` have nothing to act on there, while ``features``,
+            the ``select`` outline and a log colorbar all carry across. Pass explicit
+            stops for a diverging scale when the direction carries meaning: the
+            stops state which end is red, which a bare name cannot (ledger 253).
 
             ``backend='mpl'`` and ``.plot_mpl()`` on the returned picture are the
             same renderer reached two ways. Prefer the parameter: it is the spelling
@@ -526,7 +541,7 @@ class HfbResultsExplorer:
             select=select,
             select_style=select_style,
             select_color=select_color,
-            locs=locs,
+            features=features,
             hillshade_path=hillshade_path,
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
@@ -764,7 +779,7 @@ class HfbPackageExplorer:
         select_style: str = "outline",
         select_color: str | None = None,
         # -- overlays and framing --------------------------------------------
-        locs=None,
+        features=None,
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
@@ -811,12 +826,18 @@ class HfbPackageExplorer:
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
             color. With neither, the range comes from the data.
         colorscale : str or list of (float, str), optional
-            A Plotly colorscale name, or explicit stops. **Pass stops for a diverging
-            scale** -- names round-trip through a plotly-to-matplotlib table that
-            maps ``'rdbu'`` to the REVERSED colormap, so a named diverging scale
-            renders mirrored between backends (ledger 69/70).
+            Any Plotly colorscale name -- ``'earth'`` (the default), ``'Viridis'``,
+            ``'Turbo'``, ``'RdBu'``, ...; append ``_r`` to reverse one -- or explicit
+            ``[[position, color], ...]`` stops. The static backend builds its
+            colormap from the same stops, so a name renders the same way on both.
+            An unknown name warns and falls back to ``'earth'``.
         logscale : bool, default False
-            Color on a log scale. Non-positive values are masked.
+            Color on a log10 scale, for a field that spans orders of magnitude
+            (hydraulic conductivity, recharge). The colorbar is labelled in real
+            units at whole decades on both backends and the hover keeps the real
+            values. ``zmin``/``zmax`` (and a ``zmid``) are then in DATA units --
+            ``zmin=1e-4, zmax=10`` -- and a non-positive limit raises. Non-positive
+            values draw as gaps.
         contours : bool or str, default False
             Overlay contour lines. ``True`` contours the mapped values; a string
             names a different field to contour instead.
@@ -864,9 +885,17 @@ class HfbPackageExplorer:
         select_color : str, optional
             Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
             when the default red collides with a red-blue diverging colorscale.
-        locs : Path or GeoDataFrame, optional
-            Point locations to mark -- wells, observations, samples. A path is read
-            as a vector file.
+        features : path, GeoDataFrame, geometry, Feature, or list/dict of those, optional
+            Custom geometry drawn over the cells -- wells, pond footprints, a
+            boundary. A path to any vector file GeoPandas reads (name a GeoPackage
+            layer with ``Feature(path, layer=...)``), a ``GeoDataFrame`` or
+            ``GeoSeries``, a shapely geometry, or a :class:`myflopy.plot.Feature`
+            carrying its own ``color``/``width``/``size``/``fill``/``label``/
+            ``hover``. A list draws several layers; a dict names them. Points
+            become markers, lines polylines, polygons outlines (or fills). Each
+            layer gets a legend entry, a stable house color and a hover listing its
+            attribute columns. A source without a CRS is taken to be in the grid's.
+            Drawn by both backends and kept by ``mosaic`` and ``animate``.
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
@@ -885,13 +914,14 @@ class HfbPackageExplorer:
             anything else raises rather than being ignored.
 
             The switch changes the RENDERER, never the subject: both backends draw
-            this same map. Two differences are worth knowing before you rely on
-            one. The Matplotlib branch draws in **model coordinates** with no
-            basemap, so ``bgs`` and ``zoom`` have nothing to act on there; and a
-            NAMED diverging colorscale renders mirrored between the two, because the
-            name round-trips through a plotly-to-matplotlib table that maps
-            ``'rdbu'`` to the reversed colormap -- pass explicit stops when the
-            direction carries meaning (ledger 69/70).
+            this same map, and a ``colorscale`` -- named or as stops -- renders the
+            same ramp on each (the static colormap is built from Plotly's own
+            stops). One difference is worth knowing before you rely on it: the
+            Matplotlib branch draws in **model coordinates** with no basemap, so
+            ``bgs`` and ``zoom`` have nothing to act on there, while ``features``,
+            the ``select`` outline and a log colorbar all carry across. Pass explicit
+            stops for a diverging scale when the direction carries meaning: the
+            stops state which end is red, which a bare name cannot (ledger 253).
 
             ``backend='mpl'`` and ``.plot_mpl()`` on the returned picture are the
             same renderer reached two ways. Prefer the parameter: it is the spelling
@@ -950,7 +980,7 @@ class HfbPackageExplorer:
             select=select,
             select_style=select_style,
             select_color=select_color,
-            locs=locs,
+            features=features,
             hillshade_path=hillshade_path,
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,

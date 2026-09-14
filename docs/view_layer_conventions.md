@@ -119,6 +119,40 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### Colour scales and custom geometry are options on `map`
+
+Rule 1 in practice (ledger 252–254, 2026-09-13). Three options every map
+takes, at every scope, verb and noun alike:
+
+- **`logscale=True`** colours `log10(value)` — Plotly has no log colour axis —
+  but the picture READS in real units: the colorbar is labelled at whole
+  decades (`0.001 … 100`) on both backends, the hover keeps the real value,
+  contours are drawn on the real field, and `zmin`/`zmax`/`zmid` are given in
+  DATA units (`zmin=1e-4, zmax=10`; a non-positive one raises). The static
+  backend draws through a `LogNorm`, so its colorbar is a true log axis. The
+  one helper behind the labels is `viz.log_decade_colorbar`; `Choro`,
+  `mosaic` and the PEST field maps all call it. Caller `colorbar=` keys ride on
+  top, which is how the PEST change map keeps its `0.1x / 1x / 10x`.
+- **`colorscale=`** takes any Plotly name (`'earth'`, `'Viridis'`, `'Turbo'`,
+  `'RdBu_r'`, …) or explicit stops; the matplotlib colormap is built from the
+  same stops. An unknown name warns and draws `earth` — the deliberate inverse
+  of `_field_map_policy`, which raises, because a typo in a notebook cell
+  should cost a warning and not the figure.
+- **`features=`** draws custom geometry over the cells — wells, pond
+  footprints, a boundary. A vector file path, a `GeoDataFrame`/`GeoSeries`, a
+  shapely geometry, a `myflopy.plot.Feature` carrying its styling
+  (`name`/`layer`/`color`/`width`/`size`/`fill`/`opacity`/`label`/`hover`/`crs`),
+  or a list or dict of those. Points are markers, lines polylines, polygons
+  outlines or fills; each layer is ONE legend entry (one `legendgroup`, however
+  many geometry kinds it holds) with a stable colour from `category_colors` and
+  a hover listing its attribute columns. A source with no CRS is taken to be in
+  the grid's. Resolved eagerly, like `select=`, so a missing file raises at the
+  call; rides `overlay_traces()`, so `mosaic` and `animate` keep it; drawn by
+  `plot_mpl` too. The engine is `utils/datatypes/features.py` — one resolver,
+  two renderers, so the backends cannot disagree about what a layer is.
+  `locs=` is DEPRECATED: it warns, is named on no signature, and is drawn as a
+  layer called "locations" through the same engine.
+
 ### Two spellings, one implementation
 
 ```python
@@ -316,14 +350,17 @@ Rules that hold for all of them:
   writing hex literals or hardcoding one orientation, so discrete and continuous
   renderings cannot drift apart — and so a package's colours cannot disagree
   with its declared sign.
-- **A diverging scale ships as STOPS, never as a name.** `Choro`'s
-  plotly→matplotlib table maps `'rdbu'` to `'RdBu_r'` — the *reversed* colormap —
-  so a map built with `colorscale='RdBu'` renders mirrored between `plot()` and
-  `plot_mpl()`: red means "less" in one and "more" in the other. Pass the stop
-  list from a helper (`_blue_white_red_diverging_colorscale`,
-  `_red_white_blue_diverging_colorscale`) and both backends agree. Also note that
-  `zmid` reaches only the Plotly trace; what centers a diverging map on *both*
-  backends is symmetric `zmin`/`zmax`.
+- **The exchange scales ship as STOPS from their helpers, because the helpers
+  own the ORIENTATION** (`_blue_white_red_diverging_colorscale`,
+  `_red_white_blue_diverging_colorscale`): which end is gaining is a policy
+  decision, and a bare name cannot carry it. Names themselves are safe since
+  2026-09-13 (ledger 253): `colorscale=` accepts every Plotly name (`_r`
+  reverses one) and `plot_mpl` builds its colormap from Plotly's own stops for
+  that name, so `'RdBu'` renders the same way on both backends. Before that a
+  hand table mapped `'rdbu'` to matplotlib's *reversed* colormap and every
+  other name to `gist_earth` (ledger 69/70). Also note that `zmid` reaches only
+  the Plotly trace; what centers a diverging map on *both* backends is
+  symmetric `zmin`/`zmax`.
 - **Derived maps that no registry describes pin their scale at the source.**
   `package_registry` is keyed by package/field *name*, so a quantity it does not
   name — a PRT travel time, a *statistic* of a calibrated parameter field — keeps
@@ -335,19 +372,23 @@ Rules that hold for all of them:
   discards each panel's limits AND its colorbar.** That pooling is what makes
   small multiples comparable, so do not fight it per panel: pass
   `viz.mosaic(..., colorbar=...)`, either a dict or a `(cmin, cmax) -> dict`
-  callable when the labels depend on the pooled range (a log mosaic's real-unit
-  decades can only be computed once the shared limits are known — see
-  `ies._log_decade_colorbar_for_mosaic`). For a *diverging* quantity also pass
+  callable when the labels depend on the pooled range. A grid of `logscale`
+  panels no longer needs it — `mosaic` rebuilds the real-unit decades from the
+  pooled limits itself (`viz.log_decade_colorbar`), and REFUSES to pool a log
+  panel with a linear one, since one axis cannot mean both (ledger 252). For a
+  *diverging* quantity also pass
   `diff=True`, or the neutral point lands wherever the pooled data happens to put
   it. Better still, refuse the combination that needs it: `plot_field_mosaic`
   accepts only stats that *have* a prior and a posterior form, which makes the
   trap unreachable rather than merely documented. Ledger 71.
 - **Anything drawn OVER a static map takes its colormap from the same place the
-  cells did** — `choros.mpl_colormap_for(colorscale)`. Building a second
+  cells did** — `viz.mpl_colormap_for(colorscale)` (re-exported by `choros`,
+  built from Plotly's own stops for names and explicit stops alike). Building a second
   colormap at the call site is how an overlaid point and the cell beneath it end
   up different colors for the same value. Note the Plotly and matplotlib overlay
-  paths are genuinely different: `plot_mpl` ignores `Choro` overlays entirely and
-  draws in **model coordinates**, while the Plotly path needs
+  paths are genuinely different: `plot_mpl` draws `features=` layers and the
+  `select=` outline but ignores raw `add_overlay` traces (they are Plotly
+  objects), and it draws in **model coordinates**, while the Plotly path needs
   `vor.points_to_latlon`. Supporting both is ~10 lines; dropping the static one
   leaves a figure that silently shows the base map and none of its data.
   **A picture whose subject IS an overlay must therefore draw it itself under

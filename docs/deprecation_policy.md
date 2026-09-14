@@ -96,7 +96,13 @@ never call a deprecated alias, and tests must exercise aliases explicitly.
 
 Behavior deprecations (warned, not aliases): loading MP3DU executables from
 inside the package (`since` 0.1.0) — use `tools/mp3du/` or
-`MYFLOPY_MP3DU_DIR`.
+`MYFLOPY_MP3DU_DIR`; the `locs=` option on every `map` verb and noun
+(`since` 0.2.0, removable in 0.4.0) — use `features=`. A deprecated
+*parameter* cannot hide behind `__getattr__`, so it is removed from every
+`def` line and the noun tier's `NOUN_MAP_PARAMS`, caught in the `**kwargs`
+tail by `Choro.__init__`, warned there, and drawn through the `features=`
+engine; `tests/test_map_colorscale_and_features.py::test_locs_is_no_longer_named_by_any_map_signature`
+is the guard.
 
 **Not deprecated, despite the similar name:** the `GHB` class in
 `modflow/mf6/simulation/packages.py` (re-exported by
