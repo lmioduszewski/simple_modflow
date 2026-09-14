@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3215 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3217 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -347,6 +347,10 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   refuses `ndarray`, so a model with an inline `k` wrote `spec_recipe=None` and could
   not be rebuilt AT ALL. Measured on a real Ten Trails run: **2.78 MB against a 1,023
   MB run, 0.27%** -- binary beats MF6's ~15 characters per number. Unconditional.
+  **The snapshot WINS over the manifest's recipe on reopen**, and it holds the grid the
+  build RESOLVED: a declared `ModelSpec` carries the grid RECIPE, so freezing the spec
+  captured no grid for a DEFERRED one and a reopened run went back to its boundary
+  GeoPackage and died there. Prepare the run again to re-resolve.
   **ONE FILE, not a directory**, because `os.replace` of a file is atomic and a
   directory needed two steps and a shared staging name. **Stamped with its run name
   and discarded by `prepare_run` when a directory is reused** -- without that, a

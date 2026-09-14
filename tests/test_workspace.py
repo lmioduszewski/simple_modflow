@@ -400,11 +400,10 @@ def test_a_run_whose_manifest_has_no_recipe_rebuilds_from_its_snapshot(tmp_path)
 
     reopened = project.reopen_run("baseline", load=False)
 
-    assert reopened.spec is None
     assert reopened.spec_block is not None       # it still knows what it WAS
     assert reopened.frozen is not None           # ...and how to build it again
+    assert reopened.spec is not None             # thawed at reopen, not at build
     reopened.build()
-    assert reopened.spec is not None
 
 
 def test_a_run_with_neither_a_recipe_nor_a_snapshot_cannot_be_rebuilt(tmp_path):
@@ -804,6 +803,9 @@ def test_an_unrevivable_recipe_degrades_instead_of_failing_to_open(tmp_path):
 
     reopened = project.reopen_run("baseline", load=False)
 
-    assert reopened.spec is None
     assert reopened.status == manifest["run"]["status"]
     assert reopened.spec_block is not None
+    # The recipe is unrevivable and the run is rebuildable anyway: its frozen
+    # snapshot does not go through the manifest at all (ledger 251).
+    assert reopened.spec is not None
+    reopened.build()

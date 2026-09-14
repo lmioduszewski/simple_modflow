@@ -393,3 +393,66 @@ def test_a_freeze_failure_does_not_fail_a_build(tmp_path, caplog, monkeypatch):
     assert run.built is not None
     assert "could not be frozen" in caplog.text
     assert run.frozen is None
+
+
+def test_a_deferred_grid_run_rebuilds_without_its_boundary_file(tmp_path):
+    """The snapshot must cover the GRID recipe too, not only the packages.
+
+    A declared ``ModelSpec`` carries the grid RECIPE, and ``ModelSpec.build``
+    resolves it into a LOCAL context -- so freezing the declared spec captured no
+    grid at all for exactly the models whose grid is expensive, and left the recipe
+    in place, sending a reopened run back to the boundary file it should no longer
+    need. Measured before the fix: ``pyogrio.errors.DataSourceError`` naming the
+    deleted file and no myflopy frame at all.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.workspace import Project
+
+    gis = tmp_path / "gis"
+    gis.mkdir()
+    boundary = gis / "domain.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927
+    ).to_file(boundary)
+
+    model = mf.gwf(
+        "m", packages=[mf.npf(k=1.0), mf.ic(strt=5.0), mf.oc(head_filerecord="m.hds")]
+    ).with_grid(
+        mf.GridSpec.voronoi(
+            boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=40000.0
+        )
+    )
+    sim = mf.simulation(
+        model, name="def", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])]
+    )
+    project = Project(tmp_path / "proj", name="p")
+    project.add_simulation(sim)
+    run = project.prepare_run("r1", "def")
+    run.built.simulation.write_simulation(silent=True)
+    resolved = run.built.models["m"].context.grid.ncpl
+
+    boundary.unlink()                       # the source is gone for good
+
+    reopened = Project(tmp_path / "proj", name="p").reopen_run("r1")
+    reopened.build()
+    assert reopened.spec.models[0].context.grid.ncpl == resolved
+    assert reopened.spec.models[0].grid is None      # the recipe is spent, not re-run
+
+
+def test_the_snapshot_wins_over_the_manifest_recipe(tmp_path):
+    """A recipe re-resolves; a snapshot is what the run actually built."""
+
+    from myflopy.workspace import Project
+
+    project = Project(tmp_path / "proj", name="p")
+    sim, _k, _strt = _array_simulation(_grid())
+    project.add_simulation(sim)
+    run = project.prepare_run("r1", "arr")
+    run.built.simulation.write_simulation(silent=True)
+
+    reopened = Project(tmp_path / "proj", name="p").reopen_run("r1")
+    assert reopened.frozen is not None
+    assert reopened.spec is not None              # thawed, not revived from a recipe

@@ -8982,7 +8982,19 @@ same day, which is the useful part of the result.
       `project/freeze.py` writes the resolved simulation to `<run>/.myflopy/frozen.npz` at
       the end of `Run.build` -- structure as JSON, every array beside it, plus the grid's
       vertices, cells, CRS and layer elevations. A reopened run thaws that and reads no
-      source file. Measured on a real Ten Trails run: **2.78 MB against 22.2 MB of MF6
+      source file. **AMENDED 2026-09-13, same day:** as first committed that last claim
+      was only true of a model whose grid was already built. A declared `ModelSpec`
+      carries the grid RECIPE, and `ModelSpec.build` resolves it into a LOCAL context --
+      so freezing `Run.spec` captured no grid at all for a DEFERRED grid, and left the
+      recipe in place. A reopened run went straight back to its boundary and refinement
+      GeoPackages and died on `pyogrio.errors.DataSourceError` naming the missing file,
+      with the snapshot sitting beside it and no myflopy frame in the traceback. Freeze
+      now takes the contexts the build RESOLVED (`Run.built.models[...].context`), the
+      thaw clears `ModelSpec.grid` because the snapshot's grid is authoritative, and
+      **the snapshot WINS over the manifest's recipe on reopen** -- a recipe is
+      instructions and re-running them re-resolves, while the snapshot is what the run
+      actually built. Prepare the run again to re-resolve. Found by a scoping workflow
+      asking a different question entirely. Measured on a real Ten Trails run: **2.78 MB against 22.2 MB of MF6
       input and a 1,023 MB run -- 0.27%**, because binary beats MF6's ~15 characters per
       number and a repetitive array compresses to nothing (`tentrails.rch_pond`, 597,636
       numbers, 9.53 MB of text to 10 KB). Unconditional, on the user's call.

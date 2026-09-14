@@ -678,8 +678,9 @@ def _spec_from_recipe(
         return SimulationSpec.from_dict(recipe)
     except (ValueError, TypeError, KeyError, AttributeError, ImportError) as error:
         logger.warning(
-            "Run '%s': stored spec could not be revived (%s); "
-            "the run opens read-only and cannot be rebuilt.",
+            "Run '%s': stored spec could not be revived (%s); the manifest's recipe "
+            "is unusable. The run still opens, and rebuilds from its frozen snapshot "
+            "if it has one.",
             name,
             error,
         )
@@ -1200,6 +1201,8 @@ class Run:
             # to be the end of the road. Its frozen snapshot holds the resolved
             # simulation, arrays and all, and reads no source file.
             thawed = thaw_simulation(self.workspace, run_name=self.name)
+            if thawed is not None:
+                logger.info("run %r rebuilt from its frozen snapshot", self.name)
             if thawed is None:
                 raise ValueError(
                     f"Run {self.name!r} has neither a rebuildable recipe nor a frozen "
@@ -1210,7 +1213,6 @@ class Run:
                     "the run again to make it rebuildable."
                 )
             self.spec = thawed
-            logger.info("run %r rebuilt from its frozen snapshot", self.name)
         self.workspace.mkdir(parents=True, exist_ok=True)
         build_context = self._context_for_build()
         self.built = self.spec.build_flopy(
@@ -1238,7 +1240,17 @@ class Run:
         if self.spec is None:
             return
         try:
-            freeze_simulation(self.spec, self.workspace, run_name=self.name)
+            freeze_simulation(
+                self.spec,
+                self.workspace,
+                run_name=self.name,
+                # The contexts the build RESOLVED, not the ones the spec declared: a
+                # deferred grid only exists on the former.
+                contexts={
+                    name: built.context
+                    for name, built in (getattr(self.built, "models", {}) or {}).items()
+                },
+            )
         except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
             # Deliberately broad. This walks a spec built from arbitrary user
             # objects and writes to a filesystem, so it reaches numpy, json, and
@@ -1699,6 +1711,14 @@ class Run:
             model_crs=data.get("crs"),
         )
         run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
+        # The frozen snapshot WINS over the manifest's recipe. A recipe is a set of
+        # instructions and re-running them re-resolves: a deferred grid goes back to
+        # its boundary and refinement files, and a lazy package would go back to its
+        # sources. The snapshot is what this run actually built, so a reopened run
+        # rebuilds what it RAN. To re-resolve, prepare the run again (ledger 251).
+        thawed = thaw_simulation(workspace, run_name=run.name)
+        if thawed is not None:
+            run.spec = thawed
         if load:
             run.open()
         return run

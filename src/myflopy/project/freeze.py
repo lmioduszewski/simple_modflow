@@ -312,12 +312,24 @@ def _open(path: Path) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
 
 
 def freeze_simulation(
-    spec: SimulationSpec, workspace: Path | str, *, run_name: str | None = None
+    spec: SimulationSpec,
+    workspace: Path | str,
+    *,
+    run_name: str | None = None,
+    contexts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write ``spec`` to ``<workspace>/.myflopy/frozen.npz`` and return a summary.
 
     ``run_name`` is stamped in, so a thaw can refuse a snapshot belonging to another
     run rather than rebuilding somebody else's model.
+
+    ``contexts`` maps model name to the context the build RESOLVED, and is what makes
+    a deferred grid survive. A declared ``ModelSpec`` carries the grid RECIPE, not a
+    grid: ``ModelSpec.build`` resolves it into a local context and hands that to the
+    built model, leaving the spec's own ``context.grid`` as ``None``. Freezing the
+    declared spec therefore captured no grid at all for exactly the models whose grid
+    is expensive to rebuild -- and left the recipe in place, so a reopened run went
+    back to the boundary and refinement files it was supposed to no longer need.
     """
 
     workspace = Path(workspace)
@@ -339,8 +351,9 @@ def freeze_simulation(
         ),
     )
     grids, domains, surfaces = {}, {}, {}
+    resolved = contexts or {}
     for model in spec.models:
-        context = model.context
+        context = resolved.get(model.name, model.context)
         grids[model.name] = _grid_block(
             getattr(context, "grid", None), store, f"grid.{model.name}"
         )
@@ -467,6 +480,13 @@ def thaw_simulation(
             replace(
                 model,
                 context=context,
+                # The snapshot's grid is authoritative, so drop the RECIPE that would
+                # rebuild one. `ModelSpec.build` prefers `self.grid` and re-resolves it
+                # unconditionally -- reading the boundary and refinement files again --
+                # so leaving it in place meant a deferred-grid run still died on a
+                # missing source with the snapshot sitting right there. A reopened run
+                # rebuilds what it RAN; re-resolving is what a new prepare_run is for.
+                grid=None if grid is not None else model.grid,
                 packages=tuple(_drop_package(p, arrays) for p in model.packages),
             )
         )
