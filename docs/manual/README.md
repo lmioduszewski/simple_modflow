@@ -84,14 +84,14 @@ Throughout, two example models recur so the code stays concrete:
 - 4.3 The object hierarchy: `Project → SimulationSpec → ModelSpec → ModelContext → packages`
 - 4.4 Geometry rides on the *model*, not the project (`model.myflopy_context`)
 - 4.5 Immutability and composition (frozen specs; `with_*` copy-on-write)
-- 4.6 Model variants & reusable, swappable packages — package/grid libraries, `mf.ref`/`mf.grid_ref`, `derive` + `replace_package`/`replace_grid`, lineage, and what re-maps on a grid swap
+- 4.6 Model variants & reusable, swappable packages — package/grid libraries, `mf.ref`/`mf.grid_ref`, `derive` + `with_packages`/`replace_grid`, lineage, and why a grid swap re-maps nothing yet
 - 4.7 The build lifecycle: spec → `build(context)` → FloPy objects → write → run
 - 4.8 The `mf.*` import surface (preferred vs. compatibility exports)
 
 **5. The Spec System** — *[05_specs.md](05_specs.md)*
 - 5.1 `PackageSpec` — a serializable description of one FloPy package; the three forms (`()`, `.gpkg()`, `.flopy()`)
 - 5.2 `ModelSpec` — one GWF/GWT/GWE/PRT model; `mf.gwf/gwt/gwe/prt`
-- 5.3 `SimulationSpec` — tdis + ims + models + exchanges; `.model()`, `.with_model()`, `.with_package()`
+- 5.3 `SimulationSpec` — tdis + ims + models + exchanges; `.model()`, `.with_model()`, `.with_packages()`
 - 5.4 `ModelContext` — grid, surfaces, dates, domain, metadata (edit with `dataclasses.replace`)
 - 5.5 `PackageRef` / `GridRef` and the `ref` / `grid_ref` helpers (library reuse)
 - 5.6 `PostBuildHook` — attach observations, validation, or extra FloPy objects after the build

@@ -8815,3 +8815,110 @@ same day, which is the useful part of the result.
       independence, the constant-column exemption, both all-no-data branches, the two
       forwarded parameters, the `Surface` opt-out, and the interpolated-rim case end
       to end. Ten mutants, all killed.
+
+249. **A model built against a grid its packages had never seen ran anyway (2026-09-13).**
+      Phase 2 commit **A1**, the first of the reconciled plan. `SimulationSpec.replace_grid`
+      swaps a model's grid and leaves every package's baked cellids, connection data and
+      dimension counts on the old mesh -- and nothing anywhere looked. `ModelSpec.build`
+      resolved the grid, built the packages, and returned, with no cross-check between the
+      two. MF6 then applied the previous grid's cell numbers to the new geometry and
+      reported **Normal termination**. Measured on that path (2026-09-10): a lazy CHD
+      raised `IndexError` on a finer grid and resolved to **zero cells** on a coarser one,
+      and a lazy disv beside one eager `drn.gpkg` ran the DRN on the old grid's cell
+      numbers.
+      `_discretization_complaints` now runs at the end of `ModelSpec.build` and raises
+      listing EVERY disagreement at once -- one build, one error, rather than one fix per
+      rebuild. It compares the built DISV's `ncpl`, its `nvert`, and its cell centres
+      against the context grid; the context `domain`'s shape in cells AND in layers; and
+      every leading cellid in each enabled package's `stress_period_data` against
+      `nlay`/`ncpl`.
+      **The cell-centre comparison was wrong twice before it was right, and an
+      adversarial review caught the second one.**
+      - A Voronoi cell's DISV centre is **not** its polygon centroid: measured **38.9
+        length units apart** on one 4x4 grid, so comparing `cell2d` against
+        `vor.centroids` fires on every model ever built. The comparison is against the
+        grid's own `get_disv_gridprops()` instead -- the same definition on both sides,
+        measured exactly 0.0 on a match.
+      - A converted model's frame is deliberately **not** the world's:
+        `to_mf6(local_origin=True)` shifts to a local origin because MF6 loses DISV
+        conductance precision on State Plane coordinates (ledgers 159, 218), so the
+        synthetic USG fixture's centres sit **1.34e+06 length units** from its grid's.
+        Five `test_prt_offset.py` tests failed on the first version.
+      - The fix for that was **sorted distances from each cloud's own centroid**, chosen
+        to survive rotation as well as translation -- and sorting threw away the one
+        thing a cellid means. **A renumbered mesh passed it.** Measured by the review on
+        a 10x10 grid: a permuted `cell2d` moved the mean cell **509.4 length units** and
+        the worst **1106.0**, every package cellid pointed somewhere else, and the build
+        was clean. Mirroring and an x/y axis swap passed for the same reason. The
+        comparison is now **index-aligned after removing each cloud's own centroid**,
+        which is exactly translation-invariant -- so the local-origin case still passes --
+        and is not order-invariant. Rotation between `cell2d` and the grid is not a shape
+        this toolkit produces (the local-origin shift only translates, and `angrot` lives
+        in the DISV options rather than in `cell2d`), so nothing was bought with that
+        blind spot.
+      - **The tolerance is a thousandth of a CELL, not an absolute distance.** A fixed
+        1e-3 refused the same mesh written to a hundredth of a foot (centres move 0.005)
+        and a float32 rendering at State Plane (the float32 step is already ~0.06 there),
+        while on a grid in DEGREES the same number is ~110 m and a genuinely displaced
+        mesh passed. The scale comes from the data: `sqrt(extent_area / ncpl)`.
+      **A guard must not become the error it exists to prevent**, and four ways it did
+      were found by review, each reproduced:
+      - `int(disv.nvert.get_data())` raised `TypeError` on a DISV that leaves NVERT to
+        FloPy -- which FloPy computes at write time, so the model is correct and the
+        written file says `NVERT 34` while `get_data()` is `None`;
+      - `props['nvert']` raised `KeyError` on a grid whose gridprops omit it, which
+        FloPy's own `get_gridprops_vertexgrid()` does;
+      - `int(grid_ncpl)` raised `TypeError` on a grid whose `ncpl` is per-layer, as a
+        FloPy `UnstructuredGrid`'s is;
+      - a **disabled** package was still scanned, so a package that never reached the
+        model blocked the build.
+      Every dimension is read through `_as_int`, which answers `None` rather than raising,
+      and each comparison is skipped when either side is unknown.
+      **The `context.surfaces` check was REMOVED rather than fixed.** It keyed on
+      `.shape[0]` meaning "rows are cells", and `surfaces` is documented loosely -- "
+      `vor.gdf_topbtm` or equivalent" -- so it legitimately arrives as a frame, a
+      `LayerBuildResult`, or an array laid out `(nlay, ncpl)`. The check refused
+      documented values with a message about a table, and there is no reliable invariant
+      to replace it with. `specs._layer_elevations` is where surfaces are interpreted and
+      where a disagreement belongs.
+      **Deliberate limits, each a reason rather than an oversight:**
+      - **A stale cellid that still falls inside a LARGER new grid is not caught.** A
+        range check cannot see it. The grid PIN in commit A2 -- a hash of the mesh a
+        package's cell numbers refer to -- closes it, and this entry is explicitly the
+        decidable half. `test_a_refined_swap_is_the_documented_gap` pins the gap so that
+        making it raise later is a deliberate change with its own entry.
+      - **Advanced packages are not cellid-checked.** `_cellids_in` reads a record's
+        LEADING tuples of ints -- one for a list BC, two for an HFB, which sits on a face
+        between a pair -- and stops at the first non-cellid element, so it never reaches
+        the value fields. It does not walk `packagedata`/`connectiondata`, where the
+        position differs per package: SFR's `packagedata[1]` is a cellid, LAK's is a
+        stage, and SFR's `connectiondata` holds reach numbers that would read as cells.
+      - **A package attached by a post-build HOOK is not checked.** The guard runs before
+        the hooks so that a stale grid is reported by name rather than as whatever a hook
+        raises first, and a hook attaches FloPy objects directly rather than as specs, so
+        its cellids are outside what this can read.
+      - **DIS and DISU are not checked**: `ncpl` is a DISV concept.
+      - **A `(1, ncpl)` domain on a multi-layer model is refused** even though the flat
+        `(ncpl,)` spelling of the same intent is accepted. That reads as inconsistent
+        until you read `domain_active`: a two-dimensional domain is indexed per layer and
+        raises for any layer past its rows, so a one-row domain on a three-layer model is
+        broken for every consumer. Refusing it here reports it once, by name, instead of
+        deferring it to whichever package asks first.
+      - **`ValueError`, not a named exception**, so A1 adds no public name and needs no
+        `api_snapshot` regeneration. A named error can arrive with the pin.
+      **Docs corrected, and one of them was actively dangerous.** `docs/project_workflow.md`
+      and `docs/manual/04_architecture.md` both stated that GIS-driven packages "re-map onto
+      whatever grid resolves, because they are evaluated against the model grid at build
+      time". They are not: every `.gpkg` helper resolves its cells at DECLARATION. So the
+      docs promised precisely the operation that silently produced a wrong model, with a
+      tip recommending it. Both now say nothing re-maps, that a stale swap is refused, and
+      that lazy resolution is planned work. Nine retired `with_package` / `replace_package`
+      spellings were corrected across five files at the same time; the occurrences in this
+      ledger and in CLAUDE.md are the historical record of ledger 204 and stay.
+      `tests/test_build_grid_consistency.py` (33 tests) pins all four reproductions, the
+      renumbering, mirroring, rounded-coordinate and float32 cases, both defensive reads,
+      the disabled package, a bare-list `stress_period_data`, both halves of a barrier
+      pair, the reader stopping before the value fields, the cap-and-count message, both
+      context-domain shapes, and a model with no DISV at all. Twenty-one mutants, all
+      killed -- one of which is the sorted-radii version itself, so the renumbering hole
+      cannot reopen unnoticed.

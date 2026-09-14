@@ -223,7 +223,7 @@ warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
-needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; eleven
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; twelve
 survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
 `pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
 `tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3144 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3177 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -304,6 +304,29 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
+- **A grid swap re-maps NOTHING, and a stale one is now REFUSED** (ledger 249,
+  2026-09-13). Every `.gpkg` helper resolves its cells at DECLARATION, so
+  `sim.replace_grid(...)` changes the grid and leaves every package's cellids,
+  connection data and dimension counts on the old mesh. Nothing looked, and MF6 ran the
+  old cell numbers against the new geometry under **Normal termination** -- a lazy CHD
+  raised `IndexError` on a finer grid and resolved to ZERO cells on a coarser one.
+  `ModelSpec.build` now compares the built DISV's `ncpl`/`nvert`/cell centres, the
+  context `domain` (cells AND layers), `surfaces`, and every `stress_period_data`
+  cellid against the grid, and raises listing all of it at once. **The cell-centre test
+  is index-aligned after removing each cloud's own centroid**, with a tolerance of a
+  thousandth of a cell taken from the data. Three traps, each of which it got wrong
+  first: a Voronoi cell's DISV centre is **not** its polygon centroid (38.9 length units
+  apart on one 4x4 grid -- compare against the grid's own `get_disv_gridprops()`); a
+  converted model's frame is deliberately not the world's (1.34e+06 apart on the USG
+  fixture, the State Plane offset), so the test must be translation-invariant; and
+  **sorting to gain rotation-invariance threw away cell ORDER**, which is the only thing
+  a cellid means -- a renumbered mesh moved the mean cell 509 length units and built
+  clean. An absolute tolerance also refused the same mesh written to a hundredth of a
+  foot, and float32 at State Plane. **It is a range check, not a proof**: a stale cellid
+  that still falls inside a LARGER new grid passes, which the grid pin closes; advanced
+  packages are not cellid-checked because the cellid's position differs per package
+  (SFR's `packagedata[1]` is a cellid, LAK's is a stage). To move a model to a new grid
+  today, re-declare its GIS packages; lazy resolution is planned work.
 - **Registering an existing key RAISES** (ledger 208, 2026-09-10):
   `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
   replace silently while `packages.fork` refused the same collision — the guarded

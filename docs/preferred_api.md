@@ -158,7 +158,7 @@ baseline = mf.SimulationSpec(
 )
 
 npf = baseline.model("flow").package("npf")
-high_k_flow = baseline.model("flow").with_package(
+high_k_flow = baseline.model("flow").with_packages(
     npf.with_options(k=k * 2.0)
 )
 high_k = baseline.with_model(high_k_flow)

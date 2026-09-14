@@ -2496,6 +2496,237 @@ class BuiltModel:
             raise KeyError(f"Built model has no package named '{name}'.") from error
 
 
+def _as_int(value):
+    """``value`` as an int, or ``None`` when it is not one number.
+
+    Every dimension this guard reads can legitimately be absent or non-scalar:
+    FloPy computes ``NVERT`` at write time and ``nvert.get_data()`` is ``None``
+    until then, and a FloPy ``UnstructuredGrid`` reports ``ncpl`` PER LAYER. An
+    ``int()`` on either raises, which would make a guard the error it exists to
+    prevent.
+    """
+
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cellids_in(options: dict[str, Any]):
+    """Every ``(layer, cell)``-shaped cellid in a package's stress-period data.
+
+    A record's LEADING tuples of ints are its cellids: one for a list BC, two for
+    an HFB, which sits on the face between a pair. Reading them all is still
+    unambiguous -- a tuple of ints in front of a record cannot be anything else --
+    and it is what lets a stale barrier be caught on either side.
+
+    It stops at the first non-cellid element, so it never reaches the value fields,
+    and it deliberately does NOT walk ``packagedata``/``connectiondata``, where the
+    cellid's position differs per package (SFR's ``packagedata[1]`` is a cellid,
+    LAK's is a stage, and SFR's ``connectiondata`` holds reach numbers that would
+    read as cells). Guessing there would refuse correct models; advanced-package
+    topology is what the grid PIN is for, not a range check.
+    """
+
+    import numpy as np
+
+    data = options.get("stress_period_data")
+    # A dict of periods is the usual shape, but a bare list of records is accepted
+    # by the helpers and written by FloPy, and used to bypass this entirely.
+    if isinstance(data, dict):
+        blocks = data.values()
+    elif isinstance(data, (list, tuple)):
+        blocks = (data,)
+    else:
+        return
+
+    def _cellid(value):
+        """``value`` as a cellid tuple, or ``None`` if it is not one."""
+
+        if not isinstance(value, (list, tuple)) or len(value) not in (2, 3):
+            return None
+        if any(
+            isinstance(part, bool) or not isinstance(part, (int, np.integer))
+            for part in value
+        ):
+            return None
+        return tuple(int(part) for part in value)
+
+    for records in blocks:
+        if not isinstance(records, (list, tuple)):
+            continue
+        for record in records:
+            if not isinstance(record, (list, tuple)):
+                continue
+            for element in record:
+                cellid = _cellid(element)
+                if cellid is None:
+                    break
+                yield cellid
+
+
+def _mesh_scale(points) -> float:
+    """A typical cell size for ``points``, for a tolerance that travels.
+
+    An absolute tolerance cannot work here. The same mesh written to a hundredth of
+    a foot, or rendered float32 at State Plane coordinates where the float32 step is
+    already ~0.06 ft, differs from itself by more than any fixed epsilon -- while on
+    a grid in DEGREES that same epsilon is ~110 m, and a genuinely displaced mesh
+    passes. So the tolerance is a thousandth of a cell, and the cell comes from the
+    data.
+    """
+
+    import numpy as np
+
+    span = points.max(axis=0) - points.min(axis=0)
+    area = float(span[0]) * float(span[1])
+    if area <= 0.0 or len(points) == 0:
+        return float(np.max(np.abs(points))) or 1.0
+    return float(np.sqrt(area / len(points)))
+
+
+def _mesh_residual(built, wanted) -> float:
+    """How far the two cell-centre clouds disagree once their frames are aligned.
+
+    Compared INDEX-ALIGNED, after removing each cloud's own centroid. That is exactly
+    translation-invariant, which is what a converted model needs: ``to_mf6`` shifts to
+    a local origin because MF6 loses DISV conductance precision on State Plane
+    coordinates, so the DISV is written in the model's frame while the grid stays in
+    the world's (ledgers 159, 218) -- 1.34e+06 length units apart on the synthetic USG
+    fixture, and the same mesh.
+
+    It is NOT invariant to cell order, and that is the point. An earlier version
+    compared each point's distance from its own centroid, sorted, to survive rotation
+    too -- and sorting threw away the one thing a cellid means. A renumbered mesh
+    passed it while every package's cellid pointed somewhere else: measured on a
+    10x10 grid, cell 5 moved 865.7 length units, the mean cell moved 517.6, and the
+    build was clean. Mirroring and an x/y axis swap passed for the same reason.
+    Rotation between ``cell2d`` and the grid is not a shape the toolkit produces --
+    the local-origin shift only translates, and ``angrot`` lives in the DISV options
+    rather than in ``cell2d`` -- so there is nothing to buy with that blind spot.
+    """
+
+    import numpy as np
+
+    return float(
+        np.max(np.abs((built - built.mean(axis=0)) - (wanted - wanted.mean(axis=0))))
+    )
+
+
+def _discretization_complaints(model, context, packages) -> list[str]:
+    """Every way a built model's discretization disagrees with what it was declared against.
+
+    The failure this exists to stop is silent. ``replace_grid`` swaps a grid and
+    leaves every package's baked cellids, connection data and dimension counts on
+    the old mesh; nothing looked, so MF6 ran the old cell numbers against the new
+    geometry and reported Normal termination. Measured on that path: a lazy CHD
+    raised ``IndexError`` on a finer grid and resolved to ZERO cells on a coarser
+    one, and a lazy disv beside one eager ``drn.gpkg`` ran the DRN on the previous
+    grid's cell numbers.
+
+    A range check is not a correctness proof -- old cellids that all happen to fall
+    inside a new, larger grid pass it. That gap is what the grid pin closes; this
+    catches the part that is decidable from the built model alone, which is the part
+    that is silent today.
+    """
+
+    import numpy as np
+
+    complaints: list[str] = []
+    disv = model.get_package("disv") if hasattr(model, "get_package") else None
+    ncpl = nlay = None
+    if disv is not None:
+        ncpl = _as_int(disv.ncpl.get_data())
+        nlay = _as_int(disv.nlay.get_data())
+        grid = getattr(context, "grid", None)
+        grid_ncpl = _as_int(getattr(grid, "ncpl", None)) if grid is not None else None
+        if ncpl is not None and grid_ncpl is not None and grid_ncpl != ncpl:
+            complaints.append(
+                f"the DISV package has ncpl={ncpl} but the model's context grid has "
+                f"{grid_ncpl} cells -- the discretization and the grid are not the "
+                "same mesh"
+            )
+        elif grid is not None and ncpl is not None:
+            try:
+                props = grid.get_disv_gridprops()
+            except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+                # Deliberately broad, and it only ever WEAKENS this guard. The grid is
+                # whatever object a caller put on the context -- a user's own builder
+                # result, a reconstructed grid with no triangulation -- so the failures
+                # reach flopy, numpy, and any property it computes lazily. A guard that
+                # cannot compare must not become the error the user sees.
+                logger.debug("could not read gridprops for the consistency guard", exc_info=True)
+                props = None
+            built_nvert = _as_int(disv.nvert.get_data())
+            grid_nvert = _as_int((props or {}).get("nvert"))
+            if built_nvert is not None and grid_nvert is not None and built_nvert != grid_nvert:
+                complaints.append(
+                    f"the DISV package has nvert={built_nvert} but the context grid has "
+                    f"{grid_nvert} vertices -- two meshes can share every cell centre and "
+                    "still have different cell boundaries"
+                )
+            elif props is not None:
+                # Same cell COUNT is not the same mesh: a 3x2 and a 2x3 grid both have 6.
+                # Compared against the grid's own gridprops rather than its polygon
+                # centroids, because a Voronoi cell's DISV centre is not its centroid --
+                # measured 38.9 length units apart on one 4x4 grid, which would condemn
+                # every model.
+                built = np.array(
+                    [[r[1], r[2]] for r in disv.cell2d.get_data()], dtype=float
+                )
+                wanted = np.array([[r[1], r[2]] for r in props["cell2d"]], dtype=float)
+                if built.shape == wanted.shape and built.size:
+                    residual = _mesh_residual(built, wanted)
+                    tolerance = 1e-3 * _mesh_scale(wanted)
+                    if residual > tolerance:
+                        complaints.append(
+                            "the DISV package and the context grid have the same cell "
+                            f"count but different geometry -- once both frames are "
+                            f"aligned their cell centres still differ by up to "
+                            f"{residual:g} length units, against a tolerance of "
+                            f"{tolerance:g}. A renumbering counts: cellid N means a "
+                            "different cell in each mesh"
+                        )
+
+    domain = getattr(context, "domain", None)
+    if domain is not None and ncpl is not None:
+        shape = np.asarray(domain).shape
+        if shape and shape[-1] != ncpl:
+            complaints.append(
+                f"the model's context domain is shaped {shape}, which is {shape[-1]} "
+                f"cells, against the built DISV's ncpl={ncpl}"
+            )
+        elif len(shape) > 1 and nlay is not None and shape[0] != nlay:
+            complaints.append(
+                f"the model's context domain is shaped {shape}, which is {shape[0]} "
+                f"layers, against the built DISV's nlay={nlay}. A two-dimensional "
+                "domain answers per layer, so this one cannot answer for the layers it "
+                "has no row for -- for one activity in every layer, give it as a flat "
+                "(ncpl,) array"
+            )
+
+    if ncpl is not None:
+        for package in packages:
+            stale = sorted(
+                {
+                    cellid
+                    for cellid in _cellids_in(package.options)
+                    if cellid[-1] >= ncpl or (nlay is not None and cellid[0] >= nlay)
+                }
+            )
+            if stale:
+                listing = ", ".join(str(cellid) for cellid in stale[:5])
+                if len(stale) > 5:
+                    listing += f", and {len(stale) - 5} more"
+                complaints.append(
+                    f"package {package.name!r} holds {len(stale)} cellid(s) this model's "
+                    f"grid does not have (nlay={nlay}, ncpl={ncpl}): {listing}"
+                )
+    return complaints
+
+
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
     """Definition of one GWF, GWT, GWE, or PRT model.
@@ -2700,6 +2931,22 @@ class ModelSpec:
             for package in packages
             if (built := package.build(model)) is not None
         }
+        # Before the hooks, so that a stale grid is reported by name rather than as
+        # whatever a hook happens to raise first. A hook attaches FloPy objects
+        # directly to the model rather than as specs, so cellids it adds are outside
+        # what this can read -- the grid pin is what will cover those.
+        complaints = _discretization_complaints(
+            model, context, [p for p in packages if p.name in built_packages]
+        )
+        if complaints:
+            raise ValueError(
+                f"Model {self.name!r} does not agree with the grid it was built "
+                "against:\n  - " + "\n  - ".join(complaints) + "\nThis is refused "
+                "rather than run: cell numbers resolved on another mesh are still valid "
+                "numbers, so MF6 applies them to the new geometry and reports normal "
+                "termination. Re-declare the packages against this grid, or correct the "
+                "context value named above."
+            )
         hook_results = {
             hook.name: hook.run(model, built_packages, context) for hook in self.hooks
         }

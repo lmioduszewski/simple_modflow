@@ -16,7 +16,7 @@ The core specification API organizes those constructors without hiding them.
   such as `cor()`, `hds`, `bud()`, `packages`, and `outputs`.
 - `BuiltSimulation` is the lower-level container for raw FloPy objects.
 
-Specs are immutable. Methods such as `with_package()` return a changed copy,
+Specs are immutable. Methods such as `with_packages()` return a changed copy,
 which makes scenario variants explicit without mutating the baseline.
 
 ## Package Builder Contract
@@ -124,7 +124,7 @@ transport_solver = ims(name="transport_solver", models=("transport",), complexit
 Package alternatives are ordinary values:
 
 ```python
-high_k_flow = flow.with_package(flow_npf.with_options(k=100.0))
+high_k_flow = flow.with_packages(flow_npf.with_options(k=100.0), slot="npf")
 high_k_simulation = simulation.with_model(high_k_flow)
 ```
 
@@ -242,7 +242,7 @@ sfr = SFRBuilder(
     mover=True,
 )
 
-flow = flow.with_package(sfr.build())
+flow = flow.with_packages(sfr.build())
 ```
 
 Automatic mode connects a stream's downstream endpoint to another stream
@@ -310,7 +310,7 @@ lak = LAKBuilder(
     mover=True,
 )
 
-flow = flow.with_package(lak.build())
+flow = flow.with_packages(lak.build())
 ```
 
 `"automatic"` (now spelled `"bathy"`) builds natural-lake bottom and shoreline

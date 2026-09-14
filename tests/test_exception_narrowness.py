@@ -71,6 +71,12 @@ ALLOWED_BROAD = {
     # to make the STRONGER claim that a raster is misplaced, so failing to know
     # must not hide the ordinary per-cell complaint (ledger 248).
     "modflow/mf6/grid/surfaces.py:_disjoint",
+    # `context.grid` is whatever object a caller put there -- a user's own builder
+    # result, or a grid reconstructed from a run folder with no triangulation -- so
+    # reading its gridprops reaches flopy, numpy and any property it computes lazily.
+    # This one only ever WEAKENS a guard: a comparison that cannot run must not become
+    # the error the user sees in place of the real complaint (ledger 249).
+    "specs.py:_discretization_complaints",
 }
 
 

@@ -170,7 +170,7 @@ The model and simulation specs compose the same way:
 
 ```python
 # ModelSpec: add or replace a package in its slot, swap the grid or context.
-flow2 = flow.with_package(npf_high)            # replace npf; everything else reused
+flow2 = flow.with_packages(npf_high, slot="npf")   # replace npf; everything else reused
 flow3 = flow.with_grid(other_grid)
 flow4 = flow.with_context(other_ctx)
 
@@ -246,7 +246,7 @@ that references it picks up the change at the next build.
 
 ### Derive a variant and swap one piece
 
-To make a scenario, **derive** a named copy of a simulation and `replace_package`
+To make a scenario, **derive** a named copy of a simulation and `with_packages`
 and/or `replace_grid`. Everything you don't touch is reused, and the edit is
 recorded in `simulation.lineage`:
 
@@ -254,7 +254,7 @@ recorded in `simulation.lineage`:
 refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
-    .replace_package("flow", mf.ref("npf/high_k"))   # swap a package by key
+    .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")   # swap a package by key
     .replace_grid("flow",   mf.grid_ref("refined"))  # swap the grid
 )
 project.add_simulation(refined_hk)
@@ -262,13 +262,13 @@ project.run("refined_hk", "refined_hk")
 ```
 
 `derive`/`replace_*` are the high-level, library-aware idioms. They are sugar over
-the copy-on-write methods from §4.5 — under the hood `replace_package` does
-`sim.with_model(model.with_package(...))` and appends a lineage entry. When you are
+the copy-on-write methods from §4.5 — under the hood `with_packages` rebuilds the
+model through `dataclasses.replace` and appends a lineage entry. When you are
 working with concrete specs rather than library keys, the low-level form is just as
 valid:
 
 ```python
-high_k_flow = baseline.model("flow").with_package(
+high_k_flow = baseline.model("flow").with_packages(
     baseline.model("flow").package("npf").with_options(k=100.0)
 )
 high_k = baseline.with_model(high_k_flow)
@@ -276,20 +276,26 @@ high_k = baseline.with_model(high_k_flow)
 
 ### What re-maps on a grid swap — and what doesn't
 
-Swapping the grid in a variant is powerful, but only **source-driven** inputs
-follow the new grid automatically:
+**Nothing re-maps today.** This section used to say that GIS-driven packages
+re-resolve against whatever grid the variant uses. They do not: `mf.rch.gpkg`,
+`mf.drn.gpkg`, K-from-vector and the rest resolve their cells when you **declare**
+them, and the resulting records hold that grid's cell numbers. `replace_grid`
+swaps the grid and leaves every one of them behind.
 
-- ✅ **Re-maps.** GIS-driven packages (`mf.rch.gpkg`, `mf.drn.gpkg`,
-  K-from-vector, …) are evaluated against the model grid *at build time*, so they
-  re-resolve onto whatever grid the variant uses.
-- ❌ **Does not re-map.** Inputs tied to concrete cell IDs or raw per-cell arrays
-  (a `chd` with explicit `(layer, cell)` records, an `npf` carrying a NumPy `k`
-  array sized to the old grid) are bound to the grid they were written for.
+- ❌ **Bound to the grid they were declared against.** GIS-driven packages, a `chd`
+  with explicit `(layer, cell)` records, an `npf` carrying a NumPy `k` array sized
+  to the old grid — all of it.
+- 🛑 **And a stale swap is now refused.** Since 2026-09-13 `ModelSpec.build`
+  compares the built DISV, the context domain and surfaces, and every package's
+  cellids against the grid the model is being built on, and raises naming what is
+  stale. Before that it built and ran: MF6 applied the old cell numbers to the new
+  geometry and reported Normal termination, and a lazy CHD resolved to zero cells
+  on a coarser grid.
 
-> **Tip.** If you expect to swap grids, keep swappable inputs **source-driven**
-> (GeoPackage/raster sources) rather than materialized arrays. That single habit is
-> what makes grid-refinement scenarios painless. See
-> [Chapter 12, §12.5](12_projects_runs.md).
+> **To move a model to a new grid**, re-declare its GIS packages against the new
+> grid. Lazy-at-declaration resolution — which would make the swap work as this
+> section once claimed — is planned work, and the refusal above is what keeps the
+> gap honest until it lands. See [Chapter 12, §12.5](12_projects_runs.md).
 
 ---
 

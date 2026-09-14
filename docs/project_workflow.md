@@ -50,17 +50,25 @@ reused. The change is recorded in `simulation.lineage`.
 refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
-    .replace_package("flow", mf.ref("npf/high_k"))   # swap a package
-    .replace_grid("flow", mf.grid_ref("refined"))    # swap the grid
+    .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")  # swap a package
+    .replace_grid("flow", mf.grid_ref("refined"))                # swap the grid
 )
 project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
 ```
 
-GIS-driven packages (`mf.rch.gpkg(...)`, `mf.drn.gpkg(...)`, `K`-from-vector,
-etc.) re-map onto whatever grid resolves, because they are evaluated against
-the model grid at build time. Inputs tied to concrete cell IDs or raw per-cell
-arrays do **not** re-map — keep swappable inputs source-driven.
+**Swapping the grid does not re-map the packages.** GIS-driven helpers
+(`mf.rch.gpkg(...)`, `mf.drn.gpkg(...)`, `K`-from-vector, …) resolve their cells when
+you **declare** them, not when the model builds, so their records carry the cell
+numbers of the grid that was on the context at declaration. `replace_grid` changes
+the grid and leaves those records alone.
+
+Since 2026-09-13 that is refused rather than run: `ModelSpec.build` compares the
+built DISV, the context domain and every package's cellids against the grid, and
+raises naming what is stale. It used to build and run — MF6 applied the old cell
+numbers to the new geometry and reported Normal termination. To move a model to a
+new grid today, re-declare its GIS packages against the new grid. Lazy resolution,
+which makes the swap work as this section once promised, is planned work.
 
 ## Coupled (multi-model) runs
 
