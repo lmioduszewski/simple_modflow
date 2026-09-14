@@ -223,7 +223,7 @@ warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
-needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; twelve
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; thirteen
 survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
 `pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
 `tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3177 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3191 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -327,6 +327,19 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   packages are not cellid-checked because the cellid's position differs per package
   (SFR's `packagedata[1]` is a cellid, LAK's is a stage). To move a model to a new grid
   today, re-declare its GIS packages; lazy resolution is planned work.
+  **A resolved package also carries a PIN** (ledger 250, 2026-09-13) -- `grid_pin(grid)`,
+  a hash of the mesh's CONNECTIVITY (cell count, vertex count, each cell's vertex-index
+  list in cell order) and nothing continuous. That closes the range check's gap: a
+  package resolved on a small grid and rebuilt on a larger one has every cellid in range
+  and every one naming a different cell. Being connectivity-only makes it exact where
+  geometry needs a tolerance -- the same mesh at fewer decimals, in float32, or shifted
+  to a local origin pins the SAME, a renumbering does not, and a mesh stretched without
+  renumbering pins the same (the geometry test catches that; the two are complementary).
+  It rides in `metadata`, so it is serialized and forked but **excluded from
+  `package_digest`** -- the records already encode the grid, and digesting the pin would
+  report every stored run as drifted on the day it landed. Stamped once in
+  `GeoPackageSource._metadata`, which all seven list BCs reach. **A hand-written package
+  stays unpinned**: you cannot pin cell numbers the caller typed. sfr/lak/uzf pin in C1.
 - **Registering an existing key RAISES** (ledger 208, 2026-09-10):
   `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
   replace silently while `packages.fork` refused the same collision — the guarded

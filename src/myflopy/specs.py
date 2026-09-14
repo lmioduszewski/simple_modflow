@@ -2514,6 +2514,52 @@ def _as_int(value):
         return None
 
 
+#: Where a resolved package records the mesh its cell numbers refer to. It rides in
+#: ``metadata`` rather than in a field of its own because it is provenance -- it says
+#: where the records came from, not what they build -- which also keeps it out of
+#: ``package_digest`` (the records already encode the grid, so digesting the pin as well
+#: would report every stored run as drifted for no change in what it builds).
+GRID_PIN = "grid_pin"
+
+
+def grid_pin(grid) -> str | None:
+    """A fingerprint of a mesh's cell NUMBERING, or ``None`` if it cannot be taken.
+
+    Hashes the connectivity -- the cell count, the vertex count, and each cell's own
+    vertex-index list in cell order -- and nothing continuous. That is what makes it
+    exact where comparing coordinates needs a tolerance: the same mesh written to
+    fewer decimal places, rendered float32, or shifted to a local origin all hash the
+    same, while a renumbering does not. A renumbering is the thing that matters,
+    because cell numbering is the whole meaning of a cellid.
+
+    It deliberately says nothing about vertex POSITIONS, so a mesh stretched without
+    being renumbered pins the same -- its cellids still name the same cells, and
+    `_discretization_complaints`' geometry test is what notices the stretch.
+    """
+
+    if grid is None:
+        return None
+    try:
+        props = grid.get_disv_gridprops()
+        cell2d = props["cell2d"]
+        payload = repr(
+            (
+                _as_int(props.get("ncpl")) or len(cell2d),
+                _as_int(props.get("nvert")),
+                tuple(tuple(int(part) for part in row[3:]) for row in cell2d),
+            )
+        )
+    except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+        # Deliberately broad, and it only ever weakens a guard. `grid` is whatever
+        # object a caller put on a context -- a user's builder result, a grid
+        # rebuilt from a run folder with no triangulation -- so reading its
+        # connectivity reaches flopy, numpy and any property it computes lazily. A
+        # pin that cannot be taken means "unpinned", never an error at the caller.
+        logger.debug("could not fingerprint a grid for pinning", exc_info=True)
+        return None
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 def _cellids_in(options: dict[str, Any]):
     """Every ``(layer, cell)``-shaped cellid in a package's stress-period data.
 
@@ -2635,12 +2681,12 @@ def _discretization_complaints(model, context, packages) -> list[str]:
     import numpy as np
 
     complaints: list[str] = []
+    grid = getattr(context, "grid", None)
     disv = model.get_package("disv") if hasattr(model, "get_package") else None
     ncpl = nlay = None
     if disv is not None:
         ncpl = _as_int(disv.ncpl.get_data())
         nlay = _as_int(disv.nlay.get_data())
-        grid = getattr(context, "grid", None)
         grid_ncpl = _as_int(getattr(grid, "ncpl", None)) if grid is not None else None
         if ncpl is not None and grid_ncpl is not None and grid_ncpl != ncpl:
             complaints.append(
@@ -2706,6 +2752,18 @@ def _discretization_complaints(model, context, packages) -> list[str]:
                 "has no row for -- for one activity in every layer, give it as a flat "
                 "(ncpl,) array"
             )
+
+    model_pin = grid_pin(grid)
+    if model_pin is not None:
+        for package in packages:
+            pin = (package.metadata or {}).get(GRID_PIN)
+            if pin is not None and pin != model_pin:
+                complaints.append(
+                    f"package {package.name!r} was resolved against a different mesh: "
+                    f"its records are pinned to grid {pin}, and this model's grid is "
+                    f"{model_pin}. Cell numbers do not carry between meshes, and a "
+                    "number that happens to be in range is still the wrong cell"
+                )
 
     if ncpl is not None:
         for package in packages:

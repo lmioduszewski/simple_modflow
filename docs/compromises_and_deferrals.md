@@ -8922,3 +8922,52 @@ same day, which is the useful part of the result.
       context-domain shapes, and a model with no DISV at all. Twenty-one mutants, all
       killed -- one of which is the sorted-radii version itself, so the renumbering hole
       cannot reopen unnoticed.
+
+250. **A package resolved on one mesh and built on another was only caught when the numbers went out of range (2026-09-13).**
+      Phase 2 commit **A2**. Ledger 249 range-checks cellids against the built grid, which
+      is decidable but partial: a package resolved on a SMALL grid and rebuilt on a LARGER
+      one has every cellid in range and every one naming a different cell. That case built
+      and ran, and 249 pinned the gap in a test rather than hiding it. This closes it for
+      every package the library resolved itself.
+      `grid_pin(grid)` fingerprints a mesh's **connectivity** -- the cell count, the vertex
+      count, and each cell's own vertex-index list **in cell order** -- and nothing
+      continuous. That choice is what makes it exact where comparing coordinates needs a
+      tolerance, and it is the opposite trade from 249's geometry test:
+      - the same mesh written to fewer decimals, rendered float32, or shifted to a local
+        origin (`to_mf6(local_origin=True)`, ledgers 159/218) pins the **same**, with no
+        epsilon to choose;
+      - a **renumbering** pins differently, which is the case that matters, because cell
+        numbering is the entire meaning of a cellid;
+      - a mesh **stretched without being renumbered** pins the same. Its cellids do still
+        name the same cells; the geometry test in 249 is what notices the stretch. The two
+        checks are complementary and neither subsumes the other.
+      **The pin rides in `metadata`, not in a new field.** It is provenance -- it says
+      where the records came from, not what they build -- and `metadata` is already
+      serialized by `to_dict`/`from_dict`, deep-copied by `fork_package`, and **excluded
+      from `package_digest`**. That exclusion is the load-bearing part: the records already
+      encode the grid they were resolved on, so a re-resolution changes the digest through
+      them. Digesting the pin as well would add nothing to change detection and would
+      report **every stored run as drifted** the moment this landed, for no change in what
+      any package builds.
+      Stamped in `GeoPackageSource._metadata`, which every one of the seven list BCs
+      reaches, so one line pins `chd`/`ghb`/`drn`/`riv`/`wel`/`rch`/`evt`.
+      **A hand-written package stays unpinned, deliberately.** `mf.chd(stress_period_data=
+      {...})` names no source mesh -- the caller typed the cell numbers and the library was
+      never told what they meant -- so there is nothing to pin, and 249's range check plus
+      its documented gap remain exactly as necessary as before. A pin can only speak for
+      records the library resolved.
+      **Deferred from the plan's commit 5, deliberately:** the `recipe` field,
+      the `concrete_for` dispatcher and `model.myflopy_resolved`. Each is plumbing whose
+      only consumer is the lazy `.gpkg` path in commit B2, and landing a field that nothing
+      reads is how dead code arrives. They come with B2. Worth recording from the
+      2026-09-13 survey: the recipe **cannot** ride in the existing `PackageSpec.inputs`
+      field, which looked like a free slot -- `inputs` is splatted into the builder as
+      kwargs at build time, so it works only where the builder is a myflopy function, and
+      a spec built by a bare FloPy class (most list BCs) raises `TypeError`.
+      `mf.sfr`/`mf.lak`/`mf.uzf` are not pinned yet; they resolve through their own
+      builders rather than through `GeoPackageSource`, and their pins land with C1.
+      `tests/test_grid_pin.py` (14 tests) pins the fingerprint's stability, that two meshes
+      differ and two instances of one mesh agree, the local-origin and renumbering cases,
+      an unreadable grid answering `None` rather than raising, the stamp, the refusal and
+      its two-hash message, both controls, the unpinned hand-written package, the digest
+      exclusion, and the `to_dict` round trip. Nine mutants, all killed.

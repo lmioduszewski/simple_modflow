@@ -27,7 +27,13 @@ from myflopy.modflow.mf6.grid.geometry import (
     where_they_are,
 )
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
-from myflopy.specs import ModelContext, PackageSpec, _layer_elevations
+from myflopy.specs import (
+    GRID_PIN,
+    ModelContext,
+    PackageSpec,
+    _layer_elevations,
+    grid_pin,
+)
 
 logger = get_logger(__name__)
 
@@ -743,6 +749,9 @@ class GeoPackageSource:
         """Return serializable provenance for a generated model input."""
 
         return {
+            # The mesh these records' cell numbers refer to. Every list BC reaches
+            # this one method, so pinning here pins all seven.
+            GRID_PIN: grid_pin(self.grid),
             "source_type": "geopackage",
             "source_path": str(self.path),
             "source_layer": self.layer,
