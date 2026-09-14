@@ -383,10 +383,14 @@ def test_run_model_method_is_typed_for_ide_completion():
     assert Run.model.__annotations__["return"] == "SimulationBase"
 
 
-def test_a_run_whose_manifest_has_no_recipe_cannot_be_rebuilt(tmp_path):
-    """Manifests written before recipes existed -- and runs whose spec embedded a
-    raw array -- carry a readable summary only. Those stay summary-only: openable
-    and inspectable, but not rebuildable, which is the pre-recipe status quo."""
+def test_a_run_whose_manifest_has_no_recipe_rebuilds_from_its_snapshot(tmp_path):
+    """A missing recipe is no longer the end of the road (ledger 251).
+
+    The manifest's recipe is one of two routes back to a buildable simulation. The
+    other is the frozen snapshot written at build time, which holds the resolved
+    spec including the arrays ``to_dict`` refuses -- so a run whose recipe is gone,
+    or was never writable, still rebuilds from its own folder.
+    """
 
     project = Project(tmp_path / "demo")
     run = project.prepare_run("baseline", _tiny_flow_spec())
@@ -398,7 +402,27 @@ def test_a_run_whose_manifest_has_no_recipe_cannot_be_rebuilt(tmp_path):
 
     assert reopened.spec is None
     assert reopened.spec_block is not None       # it still knows what it WAS
-    with pytest.raises(ValueError, match="without a spec cannot be rebuilt"):
+    assert reopened.frozen is not None           # ...and how to build it again
+    reopened.build()
+    assert reopened.spec is not None
+
+
+def test_a_run_with_neither_a_recipe_nor_a_snapshot_cannot_be_rebuilt(tmp_path):
+    """Runs prepared before snapshots existed stay summary-only: openable, not buildable."""
+
+    import shutil
+
+    project = Project(tmp_path / "demo")
+    run = project.prepare_run("baseline", _tiny_flow_spec())
+    manifest = json.loads(run.manifest_path.read_text())
+    manifest.pop("spec_recipe")
+    run.manifest_path.write_text(json.dumps(manifest))
+    shutil.rmtree(run.workspace / ".myflopy")
+
+    reopened = project.reopen_run("baseline", load=False)
+
+    assert reopened.frozen is None
+    with pytest.raises(ValueError, match="neither a rebuildable recipe nor a frozen"):
         reopened.build()
 
 

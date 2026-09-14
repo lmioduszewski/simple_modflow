@@ -8971,3 +8971,67 @@ same day, which is the useful part of the result.
       an unreadable grid answering `None` rather than raising, the stamp, the refusal and
       its two-hash message, both controls, the unpinned hand-written package, the digest
       exclusion, and the `to_dict` round trip. Nine mutants, all killed.
+
+251. **A run whose packages held an array could not be rebuilt at all (2026-09-13).**
+      Phase 2 commit **A3**. A run's manifest stores a recipe, `SimulationSpec.to_dict()`,
+      and a recipe cannot hold an array -- `to_dict` refuses `numpy.ndarray` outright. So
+      a model carrying an inline `k` or `strt` wrote `spec_recipe=None`, `reopen_run(name)
+      .spec` came back `None`, and `Run.build` raised "A reopened run without a spec cannot
+      be rebuilt". Everything expressed as `mf.ref` survived, because those arrays live in
+      the package library; everything inline did not.
+      `project/freeze.py` writes the resolved simulation to `<run>/.myflopy/frozen.npz` at
+      the end of `Run.build` -- structure as JSON, every array beside it, plus the grid's
+      vertices, cells, CRS and layer elevations. A reopened run thaws that and reads no
+      source file. Measured on a real Ten Trails run: **2.78 MB against 22.2 MB of MF6
+      input and a 1,023 MB run -- 0.27%**, because binary beats MF6's ~15 characters per
+      number and a repetitive array compresses to nothing (`tentrails.rch_pond`, 597,636
+      numbers, 9.53 MB of text to 10 KB). Unconditional, on the user's call.
+      **The first version of this was defective in six ways, all found by an adversarial
+      review before it was committed. They are recorded because each was a plausible
+      design, not a slip.**
+      - **A stale snapshot rebuilt the previous model in silence.** `prepare_run(
+        overwrite=True)` reuses a run directory (D5, ledger 191) and nothing invalidated
+        the snapshot, which carried no run name and no stamp -- so re-preparing a run and
+        rebuilding it returned the OLD simulation. That was a REGRESSION: the same path
+        used to raise. It is now stamped with its run name, refused on a mismatch, and
+        DISCARDED by `prepare_run` whenever a directory is reused, so a run staged with
+        `build=False` holds no answer it was never asked for.
+      - **An object-dtype array froze and could never be thawed.** `savez` is permissive
+        and stores one by PICKLING; `load` is strict and refuses a pickle, which is right,
+        because reading one can execute code. FloPy's own list-BC recarray is exactly that
+        shape -- `[('cellid', 'O'), ('head', '<f8'), ('boundname', 'O')]`, a tuple and a
+        string -- so the snapshot reported success and the rebuild died on a bare numpy
+        message naming neither the run nor the package. `_refuse_object_array` now refuses
+        at FREEZE time, naming the model, the package, the option and the offending
+        fields, which is where it can be acted on.
+      - **`context.surfaces` was dropped silently**, and the rebuilt grid had no
+        `gdf_topbtm`, so both arms of `specs._layer_elevations` -- the single function SFR,
+        LAK and `CellSurfaceOffset` resolve elevations through (ledger 209) -- came back
+        `None`. A straight rebuild is byte-identical, so nothing announced it; the loss
+        only appeared when editing a thawed run. The elevations are carried now, numeric
+        columns in the npz and geometry restored in FIRST position (ledger 196).
+      - **A thawed run never received the project's build context.** `reopen_run` set it
+        only `if run.spec is not None` -- false for exactly the runs the snapshot exists
+        to rescue -- so every `mf.grid_ref` and any `mf.ref` without a per-run copy failed.
+      - **The write was not atomic**, though the docstring said it was: `rmtree` then
+        `os.replace` is two operations, and two concurrent builds shared one staging name,
+        so a loser could delete a good snapshot and fail to replace it. The snapshot is
+        ONE FILE now, and `os.replace` of a file is a single atomic step.
+      - **`_lift` was not invertible on its own output.** A caller's dict shaped like the
+        array token was consumed by `_drop` and came back as an unrelated array, or raised
+        blaming the snapshot for the caller's data. Such a dict is escaped now.
+      NOT carried, and stated rather than hidden: `ModelContext.dates`, which `to_dict`
+      does not serialize either and which no resolved package reads. Snapshots are format
+      **2**; format 1 was never released.
+      What survived the review unchanged is worth recording too: eleven
+      build/write/freeze/thaw/write comparisons came back identical across every file, and
+      a thawed run still resolves `mf.ref` from its own `<run>/_library/` copies, so it
+      builds what the library path would (ledger 230 holds).
+      `tests/test_frozen_runs.py` (21 tests) pins the round trip, dtype preservation,
+      cellids and period keys, the grid pinning identically (ledger 250) -- the first
+      version stored polygon centroids and landed 24.18 length units off its own DISV,
+      which ledger 249's guard caught immediately -- the surfaces, the domain's VALUES not
+      merely its shape, both refusals, the token escape, the single-file write, and that a
+      failed freeze never fails a build. The whole-directory comparison ignores FloPy's
+      header line, which stamps the wall-clock SECOND and made the first version of that
+      test flaky at 3-5%.

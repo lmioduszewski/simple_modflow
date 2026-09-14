@@ -1160,6 +1160,7 @@
       "build",
       "execute",
       "flopy_model",
+      "frozen",
       "load",
       "manifest_path",
       "model",

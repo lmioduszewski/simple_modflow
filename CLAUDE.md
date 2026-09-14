@@ -223,7 +223,7 @@ warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
-needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; thirteen
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; seventeen
 survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
 `pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
 `tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
@@ -238,7 +238,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3191 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3215 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -340,6 +340,22 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   report every stored run as drifted on the day it landed. Stamped once in
   `GeoPackageSource._metadata`, which all seven list BCs reach. **A hand-written package
   stays unpinned**: you cannot pin cell numbers the caller typed. sfr/lak/uzf pin in C1.
+- **A run keeps a FROZEN SNAPSHOT, so it rebuilds without its sources** (ledger 251,
+  2026-09-13). `<run>/.myflopy/frozen.npz`, written at the end of `Run.build`: the
+  resolved spec as JSON, every array beside it, plus the grid's vertices, cells, CRS
+  and layer elevations. It exists because a recipe cannot hold an array -- `to_dict`
+  refuses `ndarray`, so a model with an inline `k` wrote `spec_recipe=None` and could
+  not be rebuilt AT ALL. Measured on a real Ten Trails run: **2.78 MB against a 1,023
+  MB run, 0.27%** -- binary beats MF6's ~15 characters per number. Unconditional.
+  **ONE FILE, not a directory**, because `os.replace` of a file is atomic and a
+  directory needed two steps and a shared staging name. **Stamped with its run name
+  and discarded by `prepare_run` when a directory is reused** -- without that, a
+  re-prepared run thawed and rebuilt the PREVIOUS simulation in silence.
+  **An object-dtype array is REFUSED at freeze time**, naming the package and the
+  offending fields: `savez` stores one by pickling and `load` refuses a pickle, and
+  FloPy's own list-BC recarray is that shape (a cellid is a tuple, a boundname a
+  string), so writing it produced a snapshot nothing could ever read. Not carried:
+  `ModelContext.dates`.
 - **Registering an existing key RAISES** (ledger 208, 2026-09-10):
   `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
   replace silently while `packages.fork` refused the same collision — the guarded

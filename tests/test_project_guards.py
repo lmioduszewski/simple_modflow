@@ -141,5 +141,5 @@ def test_a_run_whose_spec_cannot_be_stored_warns_once(project, caplog):
         run.save_manifest()
         run.save_manifest()
 
-    assert caplog.text.count("is not re-runnable") == 1
+    assert caplog.text.count("has no rebuildable recipe") == 1
     assert "reopen_run('baseline').spec will be None" in caplog.text

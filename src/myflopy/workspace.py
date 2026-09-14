@@ -28,6 +28,12 @@ from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outc
 if TYPE_CHECKING:
     import pandas as pd
 from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.project.freeze import (
+    discard_snapshot,
+    freeze_simulation,
+    frozen_summary,
+    thaw_simulation,
+)
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
     BuiltSimulation,
@@ -1189,7 +1195,22 @@ class Run:
         """
 
         if self.spec is None:
-            raise ValueError("A reopened run without a spec cannot be rebuilt.")
+            # A run whose packages carried inline arrays has no recipe -- `to_dict`
+            # refuses an ndarray, so `spec_recipe` was written as None and this used
+            # to be the end of the road. Its frozen snapshot holds the resolved
+            # simulation, arrays and all, and reads no source file.
+            thawed = thaw_simulation(self.workspace, run_name=self.name)
+            if thawed is None:
+                raise ValueError(
+                    f"Run {self.name!r} has neither a rebuildable recipe nor a frozen "
+                    "snapshot, so it cannot be rebuilt -- it is openable and "
+                    "inspectable, but summary-only. A run is in this state when it was "
+                    "prepared before snapshots existed, when it was staged with "
+                    "build=False and never built, or when freezing it failed. Prepare "
+                    "the run again to make it rebuildable."
+                )
+            self.spec = thawed
+            logger.info("run %r rebuilt from its frozen snapshot", self.name)
         self.workspace.mkdir(parents=True, exist_ok=True)
         build_context = self._context_for_build()
         self.built = self.spec.build_flopy(
@@ -1201,8 +1222,39 @@ class Run:
         self.simulation.exe_name = self.executable
         self._model_views.clear()
         self._from_library = self._check_library_fallback(build_context)
+        self._freeze()
         self._record_status("built")
         return self
+
+    def _freeze(self) -> None:
+        """Snapshot the resolved simulation beside the run, best effort.
+
+        At BUILD rather than at ``prepare_run``, which saves its manifest before
+        anything is resolved. A failure here must never fail a build that worked:
+        the snapshot is what makes the run rebuildable LATER, and losing it costs
+        that and nothing else.
+        """
+
+        if self.spec is None:
+            return
+        try:
+            freeze_simulation(self.spec, self.workspace, run_name=self.name)
+        except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+            # Deliberately broad. This walks a spec built from arbitrary user
+            # objects and writes to a filesystem, so it reaches numpy, json, and
+            # every OSError a full disk or a read-only directory produces. The
+            # model is already built and about to run; refusing that because a
+            # convenience snapshot failed would be the worse outcome by far.
+            logger.warning(
+                "run %r built but could not be frozen, so it will not be rebuildable "
+                "from its own snapshot", self.name, exc_info=True,
+            )
+
+    @property
+    def frozen(self) -> dict[str, Any] | None:
+        """What this run's frozen snapshot holds, or ``None`` when it has none."""
+
+        return frozen_summary(self.workspace)
 
     def _context_for_build(self) -> SpecBuildContext | None:
         """The build context, with this run's own package copies taking precedence."""
@@ -1594,12 +1646,13 @@ class Run:
             if not self._warned_unserializable:
                 self._warned_unserializable = True
                 logger.warning(
-                    "Run '%s' is not re-runnable: its spec could not be stored as "
-                    "a rebuildable recipe (%s). The manifest keeps a readable "
-                    "summary only, and reopen_run('%s').spec will be None. "
+                    "Run '%s' has no rebuildable recipe: its spec could not be "
+                    "stored as one (%s), so the manifest keeps a readable summary "
+                    "only and reopen_run('%s').spec will be None. It is still "
+                    "re-runnable from the frozen snapshot written at build time. "
                     "Register array-bearing packages with "
                     "project.add_package(key, spec) and reference them with "
-                    "mf.ref(key) to keep the recipe serializable.",
+                    "mf.ref(key) if you want the recipe itself to serialize.",
                     self.name,
                     error,
                     self.name,
@@ -1997,6 +2050,12 @@ class Project:
         if workspace.exists() and any(workspace.iterdir()) and not overwrite:
             raise FileExistsError(f"Run workspace already exists: {workspace}")
         workspace.mkdir(parents=True, exist_ok=True)
+        # A reused directory keeps whatever the PREVIOUS simulation froze there, and a
+        # snapshot that outlives its simulation rebuilds the wrong model in silence.
+        # Dropping it here also leaves a run staged with build=False holding no answer
+        # it was never asked for (ledger 251).
+        if discard_snapshot(workspace):
+            logger.debug("discarded run %r's previous frozen snapshot", name)
         references = self._library_references(spec)
         snapshot = _write_package_snapshot(workspace, references, run_name=name)
         run = Run(
@@ -2053,8 +2112,12 @@ class Project:
         """
 
         run = Run.reopen(self.runs_dir / name, load=load)
+        # Unconditionally: a run whose manifest holds no recipe rebuilds from its
+        # frozen snapshot instead, and that spec needs the same context to resolve
+        # `mf.grid_ref` and any reference it holds no copy of. Guarding this on
+        # `spec is not None` left exactly the runs the snapshot rescues without one.
+        run.build_context = self._build_context(run.workspace)
         if run.spec is not None:
-            run.build_context = self._build_context(run.workspace)
             copied = run.package_snapshot or {}
             run._library_keys = tuple(
                 key for key in _package_ref_keys(run.spec) if key not in copied

@@ -81,6 +81,23 @@ ALLOWED_BROAD = {
     # "unpinned", never an error at the caller. Reading a grid's connectivity reaches
     # flopy, numpy and any property it computes lazily (ledger 250).
     "specs.py:grid_pin",
+    # A grid on a context is whatever object a caller put there, so reading its
+    # geometry for a snapshot reaches flopy, numpy and any lazy property. Losing the
+    # grid costs the snapshot its grid and nothing else (ledger 251).
+    "project/freeze.py:_grid_block",
+    # Same reasoning: `surfaces` is documented as "gdf_topbtm or equivalent" and may
+    # be a frame, a LayerBuildResult or a bare array, so reading it reaches pandas,
+    # geopandas and numpy. Losing it costs the snapshot its elevations, nothing more.
+    "project/freeze.py:_surfaces_block",
+    # The "what have I got?" verb, reached from `Run.frozen`. A corrupt or truncated
+    # file reaches numpy, zipfile and json, and reporting it as unreadable IS the
+    # answer -- an inspection accessor must not raise (ledger 251).
+    "project/freeze.py:frozen_summary",
+    # The snapshot is what makes a run rebuildable LATER. It walks a spec built from
+    # arbitrary user objects and writes to a filesystem, so it reaches numpy, json and
+    # every OSError a full disk produces -- and the model is already built and about
+    # to run. Failing that build because a convenience snapshot failed is worse.
+    "workspace.py:_freeze",
 }
 
 

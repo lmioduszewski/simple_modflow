@@ -30,6 +30,7 @@
  "myflopy.modflow.utils.datatypes.choros": 1,
  "myflopy.modflow.utils.datatypes.xsections": 2,
  "myflopy.package_api": 3,
+ "myflopy.project.freeze": 2,
  "myflopy.project.group._shared": 1,
  "myflopy.project.group.core": 1,
  "myflopy.project.group.spatial": 1,
