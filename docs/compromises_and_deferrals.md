@@ -9212,3 +9212,60 @@ same day, which is the useful part of the result.
     - A hole in a FILLED polygon is still covered by the fill (outline draws the ring);
       hover on a filled polygon fires only at vertices; markers have no `symbol=`.
     - Ledger 71's symmetric-centering half (`diff=True`) is unchanged.
+
+256. **A saved project was a set of references into whatever directory it was authored in (2026-09-14).**
+      Phase 2 commit **A4**. `Project.save(bundle_sources=True)` copies every file the
+      project's GRIDS are built from into `<root>/inputs/`, repoints the saved recipes at
+      those copies, and repoints the LIVE registry too -- otherwise a later plain `save()`
+      writes the original paths back and quietly un-bundles the project. `SaveReport`
+      gains `bundled`, the `(from, to)` pairs.
+      **GRIDS ONLY, and that is a measurement rather than a scope cut.** The plan's text
+      for this commit was "copy every source a RECIPE names", which assumed the recipe
+      field deferred from A2. A scoping workflow measured the premise instead of
+      assuming it, and it is false in both directions:
+      - **Package sources are eager, unread, and mostly unrecorded.** An instrumented
+        `gpd.read_file`/`rasterio.open`/`open` recorder scoped to `PackageSpec.build`
+        saw **zero reads across 306 passing tests**; a project whose GeoPackage was
+        DELETED loaded in a fresh process and rebuilt with all 11 CHD records intact;
+        `metadata['source_path']` (written by ledger 250) is read by **nothing**; and
+        `mf.sfr(streams=)`, `mf.lak`, `mf.hfb.gpkg` and `mf.uzf` record no path at all.
+        Bundling those today copies files nothing opens. That half belongs with the
+        commit that makes package resolution lazy.
+      - **Grid sources are live.** `ModelSpec.build` re-resolves its `GridSpec` on EVERY
+        build, so boundary/refinement/breaklines/points/script/`inputs`/`pickle_path` are
+        read every time. `rasters` and `idomain_path` are read LATER still -- the first
+        `gdf_topbtm`, the first edge query -- and are bundled too, because a project that
+        builds and then dies on its first cross-section is not archived.
+      **The anchoring half is a prerequisite, not a bonus.** Bundling stores paths
+      RELATIVE to the project root, and a relative source is anchored by
+      `grid_spec_resolver._source_path` to `SpecBuildContext.project_root` -- which
+      `Project.reopen_run` sets and `Run.reopen`/`load_run` did not, because
+      `Run._context_for_build` returned `None` outright when a run had no package
+      snapshot. So the same run rebuilt from a different working directory looked for
+      `inputs/domain.gpkg` beside wherever the interpreter happened to be, and died on a
+      raw `pyogrio.errors.DataSourceError`. A run now RECORDS its project root in its
+      manifest and anchors to that. A manifest written before this simply has none, and
+      behaves as it did.
+      Judgment calls, each deliberate:
+      - **A source marked `external=True` IS bundled**, and the flag is cleared on the
+        copy. `external` means "never anchor to the project root", which was true while
+        the file lived outside it and is false once a copy is inside. Asking for a bundle
+        is asking for self-containment; the copy is reported rather than silent.
+      - **A name already taken in `inputs/` by DIFFERENT bytes gets a digest suffix.**
+        Checked against the directory, not just this call's bookkeeping: each grid is
+        bundled separately and a project may be saved twice, and an in-memory map alone
+        let two grids collide -- measured, two `domain.gpkg` sources landing on one file
+        with the survivor answering for both.
+      - **A directory source is copied whole** (`shutil.copytree`): a `.gdb` is a
+        directory, and copying only its "file" bundles nothing.
+      - **A missing source is reported, not fatal.** The resolver already names a missing
+        source at build; refusing to save the project because one file moved would lose
+        everything else it would have written.
+      NOT done: no de-duplication of identical content under different names, and no size
+      accounting. A bundled Ten Trails project would copy ~22 MB of vector and raster
+      input beside a 9.5 GB run tree, so neither has earned its complexity yet.
+      `tests/test_bundled_sources.py` (13 tests) pins the delete-the-source round trip,
+      the project-relative rewrite, both tiers (library grid and a `GridSpec` inline on a
+      model), that a later plain `save()` cannot undo it, the basename collision, a source
+      already inside `inputs/`, a missing source, a directory source, the complete list of
+      named paths, the two lazy option paths, and both anchoring cases.

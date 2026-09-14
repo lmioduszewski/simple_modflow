@@ -117,6 +117,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
+- `myflopy.project.bundle`
 - `myflopy.project.freeze` *(deferred imports: 2)*
 - `myflopy.surfaces` *(deferred imports: 4)*
 

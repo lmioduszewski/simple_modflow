@@ -139,6 +139,7 @@
  "myflopy.package_api": 5,
  "myflopy.plot": 7,
  "myflopy.project": 13,
+ "myflopy.project.bundle": 2,
  "myflopy.project.components": 1,
  "myflopy.project.freeze": 2,
  "myflopy.project.group": 12,

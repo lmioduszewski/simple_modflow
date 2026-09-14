@@ -28,6 +28,7 @@ from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outc
 if TYPE_CHECKING:
     import pandas as pd
 from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.project.bundle import bundle_grid_sources
 from myflopy.project.freeze import (
     discard_snapshot,
     freeze_simulation,
@@ -1047,6 +1048,9 @@ class SaveReport:
     grids: int = 0
     pickled: int = 0
     skipped: tuple[tuple[str, str], ...] = ()
+    #: Files copied into ``inputs/`` by ``save(bundle_sources=True)``, as
+    #: ``(from, to)`` pairs. Empty unless bundling was asked for.
+    bundled: tuple[tuple[str, str], ...] = ()
 
     def __fspath__(self) -> str:
         """The project spec path, so a report can stand in for one in ``open``/``Path``."""
@@ -1102,6 +1106,9 @@ class Run:
     # it can say what a run contained but never rebuild it. This is what lets a
     # run reopened in a later session be rebuilt, re-run, or forked.
     spec_recipe: dict[str, Any] | None = field(default=None, repr=False)
+    #: The project root a relative source path anchors to, when the run is reopened
+    #: without its ``Project``.
+    project_root: Path | None = field(default=None, repr=False)
     # What each library package MEANT when this run was prepared. The manifest
     # records package KEYS, so without this, editing 'npf/base' afterwards leaves
     # every run claiming to have used it -- true of the key, false of the model.
@@ -1272,12 +1279,25 @@ class Run:
         """The build context, with this run's own package copies taking precedence."""
 
         if not self.package_snapshot:
-            return self.build_context
+            if self.build_context is not None:
+                return self.build_context
+            # No Project in scope -- `Run.reopen` or `load_run`. The run still knows
+            # which project it belongs to, and a RELATIVE grid source has to anchor
+            # to that: without it the resolver falls back to the current working
+            # directory, so the same run rebuilt from a different directory looked
+            # for `inputs/domain.gpkg` beside wherever the interpreter happened to
+            # be. Bundling makes relative paths the normal case (ledger 256).
+            return (
+                SpecBuildContext(project_root=self.project_root)
+                if self.project_root is not None
+                else None
+            )
         if self._snapshot_specs is None:
             self._snapshot_specs = _read_package_snapshot(
                 self.workspace, self.package_snapshot, run_name=self.name
             )
         base = self.build_context or SpecBuildContext(
+            project_root=self.project_root,
             simulation_workspace=self.workspace,
             grid_workspace=self.workspace / "_grid",
         )
@@ -1615,6 +1635,12 @@ class Run:
             "spec": _spec_summary(self.spec)
             if self.spec is not None
             else self.spec_block,
+            # The project this run belongs to, so a relative grid source anchors to
+            # it when the run is reopened WITHOUT its Project. Without this,
+            # `Run.reopen`/`load_run` resolved a relative path against the current
+            # working directory -- which bundling makes load-bearing, since a bundled
+            # recipe stores `inputs/<file>` (ledger 256).
+            "project_root": str(self.project_root) if self.project_root else None,
             "spec_recipe": self._spec_recipe_block(),
             "package_digests": self.package_digests,
             "package_snapshot": self.package_snapshot,
@@ -1709,6 +1735,9 @@ class Run:
             package_digests=data.get("package_digests"),
             package_snapshot=data.get("package_snapshot"),
             model_crs=data.get("crs"),
+            project_root=(
+                Path(data["project_root"]) if data.get("project_root") else None
+            ),
         )
         run.spec = _spec_from_recipe(run.spec_recipe, name=run.name)
         # The frozen snapshot WINS over the manifest's recipe. A recipe is a set of
@@ -2087,6 +2116,7 @@ class Project:
             build_context=self._build_context(workspace),
             package_digests=self._package_digests(spec),
             package_snapshot=snapshot,
+            project_root=self.root,
         )
         # Build from the very objects just copied, rather than reading them back.
         run._snapshot_specs = {key: references[key] for key in snapshot}
@@ -2345,7 +2375,7 @@ class Project:
             root=self.root,
         )
 
-    def save(self, *, strict: bool = False) -> SaveReport:
+    def save(self, *, strict: bool = False, bundle_sources: bool = False) -> SaveReport:
         """Persist the project document, its simulations, and its package library.
 
         Persistence is opt-in. Returns a :class:`SaveReport` naming what was
@@ -2367,7 +2397,20 @@ class Project:
         Packages are unaffected by a skipped simulation: :meth:`_save_package`
         already pickles a package whose ``to_dict`` raises, so an array-bearing
         package persists either way.
+
+        ``bundle_sources=True`` copies every file the project's GRIDS are built from
+        into ``inputs/`` and repoints the saved recipes at those copies, so the
+        project is an archive rather than a set of references into the directory it
+        was authored in. It repoints the LIVE registry too: otherwise a later plain
+        ``save()`` would write the original paths back and quietly un-bundle the
+        project. Package sources are deliberately not bundled -- they are resolved
+        eagerly, so a saved package holds records rather than a path, and copying
+        them would archive files nothing opens.
         """
+
+        bundled: list[tuple[str, str]] = []
+        if bundle_sources:
+            bundled = self._bundle_grid_sources()
 
         issues = self.validate()
         if issues and strict:
@@ -2469,7 +2512,47 @@ class Project:
             grids=len(self.grids),
             pickled=pickled,
             skipped=tuple(skipped),
+            bundled=tuple(bundled),
         )
+
+    def _bundle_grid_sources(self) -> list[tuple[str, str]]:
+        """Copy every grid source into ``inputs/`` and repoint the project at it.
+
+        Both tiers: the grid library, and a ``GridSpec`` written inline on a model.
+        A ``GridRef`` is followed to its library entry rather than copied twice, and
+        a ``method='object'`` grid has no sources -- it is already pickled whole.
+        """
+
+        inputs = self.layout.inputs_dir
+        inputs.mkdir(parents=True, exist_ok=True)
+        copied: list[tuple[str, str]] = []
+
+        def _bundle(spec: GridSpec) -> GridSpec:
+            if spec.method == "object":
+                return spec
+            result, report = bundle_grid_sources(
+                spec, root=self.root, inputs_dir=inputs, project_root=self.root
+            )
+            copied.extend((item["from"], item["to"]) for item in report["copied"])
+            return result
+
+        for key, grid in list(self.grids.items()):
+            if isinstance(grid, GridSpec):
+                self.grids[key] = _bundle(grid)
+
+        for name, simulation in list(self.simulations.items()):
+            models = tuple(
+                replace(model, grid=_bundle(model.grid))
+                if isinstance(model.grid, GridSpec)
+                else model
+                for model in simulation.models
+            )
+            if models != simulation.models:
+                self.simulations[name] = replace(simulation, models=models)
+
+        if copied:
+            logger.info("bundled %d grid source file(s) into %s", len(copied), inputs)
+        return copied
 
     @staticmethod
     def _restore_layout(root: Path) -> ProjectLayout | None:

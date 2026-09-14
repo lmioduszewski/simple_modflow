@@ -254,7 +254,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3217 passed / 4 skipped**, 2026-09-13): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3297 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -376,6 +376,21 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   FloPy's own list-BC recarray is that shape (a cellid is a tuple, a boundname a
   string), so writing it produced a snapshot nothing could ever read. Not carried:
   `ModelContext.dates`.
+- **`project.save(bundle_sources=True)` makes a project an ARCHIVE** (ledger 256,
+  2026-09-14) -- it copies every file the project's GRIDS are built from into
+  `inputs/`, repoints the saved recipes AND the live registry (a later plain `save()`
+  would otherwise write the original paths back), and reports the pairs in
+  `SaveReport.bundled`. **Grids only, measured not assumed**: package sources resolve
+  EAGERLY, so a saved package holds records rather than a path -- zero file reads
+  inside `PackageSpec.build` across 306 tests, a project rebuilds with its GeoPackage
+  deleted, and `metadata['source_path']` is read by nothing. A `GridSpec` is the
+  opposite: `ModelSpec.build` re-resolves it on EVERY build. `rasters=` and
+  `idomain_path=` are bundled too even though they are read later still (the first
+  `gdf_topbtm`, the first edge query). An `external=True` source IS bundled and the
+  flag cleared -- it meant "never anchor", which stops being true once a copy is
+  inside. **A run now records its project root**, because bundling stores RELATIVE
+  paths and `Run.reopen`/`load_run` had no `project_root`, so a relative source
+  resolved against the current working directory.
 - **Registering an existing key RAISES** (ledger 208, 2026-09-10):
   `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
   replace silently while `packages.fork` refused the same collision — the guarded
