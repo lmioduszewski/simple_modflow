@@ -11,9 +11,9 @@ import numpy as np
 import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
-from myflopy.modflow.mf6.package_registry import _package_type_name
 from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.package_registry import _package_type_name
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
     get_all_conc,
@@ -608,7 +608,15 @@ class SimulationBase:
 
         return field_reader(self)
 
-    def to_xugrid(self, *, layers=None, times=None, name: str = "head", masked: bool = True):
+    def to_xugrid(
+        self,
+        *,
+        layers=None,
+        times=None,
+        name: str = "head",
+        masked: bool = True,
+        surfaces: bool = False,
+    ):
         """Export simulated heads as an xugrid ``(time, layer, cell)`` object.
 
         Convenience that stacks this model's saved heads across all layers and
@@ -636,9 +644,19 @@ class SimulationBase:
         >>> uda = model.to_xugrid()
         >>> uda.isel(time=-1, layer=0).ugrid.plot()       # water table map
         >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")  # share all layers
+
+        ``surfaces=True`` also attaches the grid's layer frame (``top``,
+        ``botm_1`` ...), one flat variable per layer. For QGIS, flatten the field
+        in the same call -- a mesh dataset there is one value per face, and a
+        variable that still carries ``time`` or ``layer`` is dropped silently:
+
+        >>> uds = model.to_xugrid(surfaces=True)
+        >>> uds.isel(time=-1, layer=0).ugrid.to_netcdf("model.nc")
         """
 
-        return self.hds.to_xugrid(layers=layers, times=times, name=name, masked=masked)
+        return self.hds.to_xugrid(
+            layers=layers, times=times, name=name, masked=masked, surfaces=surfaces
+        )
 
     @property
     def plot(self) -> ModelPlots:
@@ -777,25 +795,25 @@ class SimulationBase:
         return [tuple(int(value) for value in pair) for pair in self._get_budget_reader().get_kstpkper()]
 
     @property
-    def lak(self) -> "flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]":
+    def lak(self) -> flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]:
         """Return the MF6 LAK package attached to this model."""
 
         return self.package("lak")
 
     @property
-    def uzf(self) -> "flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]":
+    def uzf(self) -> flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]:
         """Return the MF6 UZF package attached to this model."""
 
         return self.package("uzf")
 
     @property
-    def sfr(self) -> "flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]":
+    def sfr(self) -> flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]:
         """Return the MF6 SFR package attached to this model."""
 
         return self.package("sfr")
 
     @property
-    def rch(self) -> "flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]":
+    def rch(self) -> flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]:
         """Return the MF6 RCH package attached to this model."""
 
         return self.package("rch")
@@ -810,37 +828,37 @@ class SimulationBase:
     # this list is complete against the registry, so forgetting one fails.
 
     @property
-    def chd(self) -> "flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]":
+    def chd(self) -> flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]:
         """Return the MF6 CHD package attached to this model."""
 
         return self.package("chd")
 
     @property
-    def drn(self) -> "flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]":
+    def drn(self) -> flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]:
         """Return the MF6 DRN package attached to this model."""
 
         return self.package("drn")
 
     @property
-    def ghb(self) -> "flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]":
+    def ghb(self) -> flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]:
         """Return the MF6 GHB package attached to this model."""
 
         return self.package("ghb")
 
     @property
-    def riv(self) -> "flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]":
+    def riv(self) -> flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]:
         """Return the MF6 RIV package attached to this model."""
 
         return self.package("riv")
 
     @property
-    def wel(self) -> "flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]":
+    def wel(self) -> flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]:
         """Return the MF6 WEL package attached to this model."""
 
         return self.package("wel")
 
     @property
-    def evt(self) -> "flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]":
+    def evt(self) -> flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]:
         """Return the MF6 EVT package attached to this model."""
 
         return self.package("evt")

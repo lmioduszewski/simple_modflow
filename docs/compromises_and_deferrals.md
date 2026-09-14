@@ -9461,3 +9461,56 @@ same day, which is the useful part of the result.
       goes has moved the decision to every caller.
     - Test: `test_the_sibling_sits_with_the_value_even_when_elevations_are_shown`
       pins the adjacency and that the elevations still follow.
+
+261. **The xugrid export carried no layer elevations (2026-09-14).**
+    - Asked: "can I export to xugrid and have all layer elevations attached to show
+      in QGIS?" Measured first, and the answer was no on both halves.
+      `model.to_xugrid()` returned the head field alone, and nothing anywhere in the
+      export path read `gdf_topbtm`. The elevations could be attached by hand
+      through `vor.to_xugrid({...})`, which is what this entry turns into a
+      parameter.
+    - `to_xugrid(surfaces=True)` on `VoronoiGridPlus`, `HeadsPlus` and
+      `SimulationBase` now attaches the layer frame, built by a new
+      `VoronoiGridPlus.layer_surface_fields()`: `top` and `botm_1` ... `botm_n`,
+      read positionally from the geometry-first `gdf_topbtm` (column 1 is the top,
+      `2 + n` the bottom of layer n -- the convention the hover and the cross
+      sections already use, and the one that survives the two different column
+      NAMINGS `attach_to_grid()` and `LayerStack.to_disv()` publish).
+    - **One variable PER LAYER, and that shape is the whole point.** A mesh dataset
+      in QGIS is one value per face (optionally per time), so a variable still
+      carrying a `layer` dimension has no place in that data model -- and QGIS drops
+      it SILENTLY. Measured through the QGIS 4.2.2 Python bindings on the
+      development machine, loading the written NetCDF through MDAL: a `(nlay, ncpl)`
+      `botm` produced a valid mesh layer with NO elevation datasets listed at all,
+      while the flattened form listed `top` and every `botm_<n>` as face datasets
+      with the CRS carried. The same run retired a guess worth recording: the UGRID
+      `location="face"` / `mesh=` attributes, which xugrid does not write on these
+      variables, turn out NOT to matter -- MDAL matches on the face dimension, and
+      tagging them by hand changed nothing.
+    - **The field is still layered, deliberately.** `surfaces=True` does not reshape
+      the heads: `(time, layer, cell)` is what differencing and aggregation want.
+      For QGIS the documented recipe is one call --
+      `model.to_xugrid(surfaces=True).isel(time=-1, layer=0)` -- which flattens the
+      field and cannot touch the elevations, since they carry neither dimension.
+      Verified in QGIS: head plus all five elevation datasets.
+    - Compromises and deliberate omissions:
+      - `surfaces=True` changes the RETURN TYPE to `UgridDataset` (from
+        `UgridDataArray` for a single field). Unavoidable -- there is more than one
+        variable -- and documented on all three methods; the default is untouched,
+        so no existing call changes shape.
+      - An explicit `data` entry WINS over a derived surface of the same name,
+        rather than raising on the collision: explicit beats derived, and a caller
+        passing their own `top` means it.
+      - A grid with no surfaces RAISES rather than returning a quietly emptier
+        file -- the caller asked for something that is not there.
+      - QGIS also lists `mesh2d_nFaces`, the face-index coordinate, as a spurious
+        dataset group. That is xugrid's writer and MDAL's reader between them; not
+        worth a myflopy workaround.
+      - No GeoPackage export verb was added. Cell polygons plus elevation columns
+        already open in QGIS as an ordinary vector layer (verified, 441 features,
+        every attribute visible) and that is three lines of GeoPandas; a verb for it
+        would be a second way to do something the grammar does not own.
+    - Tests: `tests/test_to_xugrid.py` -- the flat shape and the declared
+      thicknesses (so a transposed or reversed frame fails), the refusal with no
+      surfaces, the Dataset return, the explicit-value precedence, the model-level
+      export, and the `isel` round trip through NetCDF.

@@ -117,6 +117,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Interactive HTML viz (sliders, cross-sections, particle scenes) | ✅ | `interactive_plotting.py` |
 | Adaptive time stepping (ATS; zero-based `ats=` periods) | ✅ | `simulation/discretization.py` (`TemporalDiscretization(ats=...)`) |
 | xarray/ugrid interchange (`to_xugrid`, NetCDF-ready) | ✅ | `grid/voronoi.py` `VoronoiGridPlus.to_xugrid`, `headsplus.py` `HeadsPlus.to_xugrid` (extra: `xugrid`) |
+| Layer elevations on the exported mesh, QGIS-readable | ✅ | `to_xugrid(surfaces=True)` on the grid and the model attaches `top` + `botm_<n>` as FLAT per-layer variables (`vor.layer_surface_fields()`). One per layer because a QGIS mesh dataset is one value per face and a layered array is dropped silently; `.isel(time=-1, layer=0)` flattens the field alongside. Verified against QGIS 4.2.2 — ledger 261, 2026-09-14 |
 | Canonical model contract (standardized signals) | ✅ | `canonical.py`, `canonical_example.py`; profiles: full 100×100, `validation()` 50×50, `testing()` 21×21 (smallest contract-complete; the test suite's shared session fixture + `canonical_fast_tour.ipynb`) |
 
 ### Visualization front door, grammar, hover, colors

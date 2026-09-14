@@ -359,7 +359,15 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             values[np.abs(values) > 1.0e29] = np.nan
         return values
 
-    def to_xugrid(self, *, layers=None, times=None, name: str | None = None, masked: bool = True):
+    def to_xugrid(
+        self,
+        *,
+        layers=None,
+        times=None,
+        name: str | None = None,
+        masked: bool = True,
+        surfaces: bool = False,
+    ):
         """Export the simulated field across layers and time as an xugrid object.
 
         Stacks the saved field into a single ``(time, layer, cell)``
@@ -383,13 +391,21 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             Variable name for the field (default: this reader's ``value_name``).
         masked
             Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN`` (default).
+        surfaces
+            Also attach the grid's layer frame -- ``top`` and ``botm_1`` ...
+            ``botm_n``, one FLAT variable per layer
+            (:meth:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus.layer_surface_fields`)
+            -- and return a ``UgridDataset`` rather than a ``UgridDataArray``.
+            For QGIS, reduce the field to one value per cell in the same breath;
+            see the Notes.
 
         Returns
         -------
-        xugrid.UgridDataArray
+        xugrid.UgridDataArray or xugrid.UgridDataset
             Dims ``("time", "layer", <face_dim>)``, with ``kstp``/``kper`` as
             coordinates on the ``time`` axis and the zero-based layer index on
-            ``layer``.
+            ``layer``. With ``surfaces=True`` a ``UgridDataset`` carrying that
+            field plus one flat elevation variable per layer.
 
         Raises
         ------
@@ -409,11 +425,29 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         and passing ``ax=`` (see Examples). The same applies to NetCDF if you only
         want one slice -- though the full 3-D array also writes fine.
 
+        **Writing a file QGIS can read.** A mesh dataset there is one value per
+        face, so QGIS DROPS a variable that still carries ``time`` or ``layer``,
+        and drops it silently -- measured against QGIS 4.2.2, which listed no
+        elevation datasets for a layered array and all of them once flattened.
+        The elevations ``surfaces=True`` attaches are already flat; the field is
+        not, so reduce it on the way out::
+
+            model.to_xugrid(surfaces=True).isel(time=-1, layer=0).ugrid.to_netcdf("model.nc")
+
+        ``isel`` leaves the flat elevation variables untouched -- they carry
+        neither dimension -- so that one call flattens the field and keeps the
+        whole layer frame.
+
         Examples
         --------
         >>> uda = model.to_xugrid()                  # (time, layer, cell)
         >>> uda.isel(time=-1, layer=0).ugrid.plot()  # one map: last time, top layer
         >>> uda.isel(time=-1).ugrid.to_netcdf("heads.nc")   # share all layers
+
+        Heads and the layer frame, flattened for QGIS:
+
+        >>> uds = model.to_xugrid(surfaces=True)            # head + top + botm_n
+        >>> uds.isel(time=-1, layer=0).ugrid.to_netcdf("model.nc")
 
         Plot every layer as its own subplot:
 
@@ -463,7 +497,14 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             },
             name=name,
         )
-        return xu.UgridDataArray(array, grid)
+        if not surfaces:
+            return xu.UgridDataArray(array, grid)
+        dataset = xr.Dataset({name: array})
+        for field, values in self.vor.layer_surface_fields().items():
+            dataset[field] = xr.DataArray(
+                np.asarray(values, dtype=float), dims=(face_dim,)
+            )
+        return xu.UgridDataset(dataset, grids=[grid])
 
     def map(
         self,

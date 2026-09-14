@@ -38,13 +38,13 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_around_point as geometry_generate_grid_around_point,
 )
-from myflopy.modflow.mf6.grid.geometry import geometry_first
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_coordinates as geometry_generate_grid_coordinates,
 )
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_polygons as geometry_generate_grid_polygons,
 )
+from myflopy.modflow.mf6.grid.geometry import geometry_first
 from myflopy.modflow.mf6.grid.geometry import (
     get_centroids as geometry_get_centroids,
 )
@@ -828,7 +828,67 @@ class VoronoiGridPlus(VoronoiGrid):
             crs=self.crs,
         )
 
-    def to_xugrid(self, data=None, *, name: str = "data", layer_dim: str = "layer"):
+    def layer_surface_fields(self) -> dict[str, np.ndarray]:
+        """The layer frame as FLAT per-cell arrays: ``top``, ``botm_1`` ... ``botm_n``.
+
+        One variable PER LAYER, deliberately, rather than a single
+        ``(nlay, ncpl)`` array. A mesh dataset in QGIS is one value per face
+        (optionally per time); a variable carrying an extra ``layer`` dimension
+        has no place in that model and QGIS drops it **silently** -- measured
+        against QGIS 4.2.2, which listed no elevation datasets at all for a
+        layered array and every one of them once flattened. Naming them this way
+        is what makes :meth:`to_xugrid` ``surfaces=True`` usable there.
+
+        Read positionally from :attr:`gdf_topbtm`, which is geometry-first by
+        contract (ledger 196): column 1 is the model top and column ``2 + n`` the
+        bottom of layer ``n``. The same convention the hover and the cross
+        sections use, and it survives the two different column NAMINGS that
+        ``attach_to_grid()`` and ``LayerStack.to_disv()`` publish.
+
+        Returns
+        -------
+        dict of str to ndarray
+            ``{"top": (ncpl,), "botm_1": (ncpl,), ...}``, one entry per layer.
+
+        Raises
+        ------
+        ValueError
+            If this grid carries no layer surfaces, rather than returning an
+            empty mapping -- a caller asking for surfaces that are not there has
+            a problem to fix, not a quietly emptier file.
+
+        Examples
+        --------
+        >>> vor.layer_surface_fields()["botm_1"]        # layer 1's floor, per cell
+        >>> vor.to_xugrid(surfaces=True)                # the same, on the mesh
+        """
+
+        frame = self.gdf_topbtm
+        if frame is None:
+            raise ValueError(
+                "this grid carries no layer surfaces (gdf_topbtm is None). Attach "
+                "them with LayerBuildResult.attach_to_grid(), or build the grid "
+                "with rasters= so they are sampled."
+            )
+        nlay = int(frame.shape[1]) - 2
+        if nlay < 1:
+            raise ValueError(
+                f"gdf_topbtm has {frame.shape[1]} column(s); a geometry, a top and "
+                "at least one layer bottom are needed."
+            )
+        fields = {"top": np.asarray(frame.iloc[:, 1], dtype=float)}
+        for index in range(nlay):
+            fields[f"botm_{index + 1}"] = np.asarray(frame.iloc[:, 2 + index], dtype=float)
+        return fields
+
+    def to_xugrid(
+        self,
+        data=None,
+        *,
+        name: str = "data",
+        layer_dim: str = "layer",
+        surfaces: bool = False,
+    ):
         """Export this DISV grid (and optional per-cell data) as an xugrid object.
 
         Builds a UGRID 2-D unstructured-mesh representation of the Voronoi grid --
@@ -859,12 +919,22 @@ class VoronoiGridPlus(VoronoiGrid):
             ``dict``). Defaults to ``"data"``.
         layer_dim
             Dimension name given to the first axis of 2-D ``(nlay, ncpl)`` inputs.
+        surfaces
+            Also attach this grid's layer frame -- ``top`` and ``botm_1`` ...
+            ``botm_n``, one FLAT variable per layer
+            (:meth:`layer_surface_fields`). This is the form QGIS can read: a
+            mesh dataset there is one value per face, so a layered array is
+            dropped silently. A ``data`` entry of the same name wins, so you can
+            override a surface with your own. Forces a ``UgridDataset`` return,
+            since there is more than one variable. Raises if the grid has no
+            surfaces attached.
 
         Returns
         -------
         xugrid.UgridDataArray | xugrid.UgridDataset
-            A ``UgridDataArray`` when ``data`` is a single array, otherwise a
-            ``UgridDataset`` (also for ``data=None`` -- topology only).
+            A ``UgridDataArray`` when ``data`` is a single array and
+            ``surfaces`` is False, otherwise a ``UgridDataset`` (also for
+            ``data=None`` -- topology only).
 
         Raises
         ------
@@ -890,6 +960,10 @@ class VoronoiGridPlus(VoronoiGrid):
         >>> k_2d = np.vstack([k_layer0, k_layer1])
         >>> uds = vor.to_xugrid({"head": heads_2d, "k": k_2d})
         >>> uds.ugrid.to_netcdf("model.nc")       # share; isel a layer to plot
+
+        >>> # the layer frame, flat, so QGIS lists every elevation as a dataset
+        >>> vor.to_xugrid(surfaces=True).ugrid.to_netcdf("grid.nc")
+        >>> vor.to_xugrid(model.hds.array(layer=0), name="head", surfaces=True)
         """
 
         try:
@@ -930,11 +1004,19 @@ class VoronoiGridPlus(VoronoiGrid):
                 )
             return xr.DataArray(array, dims=dims, name=varname)
 
-        if data is None:
-            return xu.UgridDataset(grids=[grid])
+        # Surfaces FIRST, so an explicit `data` entry of the same name wins: what
+        # the caller handed over beats what the grid derived.
+        fields: dict = dict(self.layer_surface_fields()) if surfaces else {}
         if isinstance(data, dict):
+            fields.update(data)
+        elif data is not None:
+            fields[name] = data
+
+        if not fields:
+            return xu.UgridDataset(grids=[grid])
+        if surfaces or isinstance(data, dict):
             dataset = xr.Dataset(
-                {key: _face_dataarray(values, key) for key, values in data.items()}
+                {key: _face_dataarray(values, key) for key, values in fields.items()}
             )
             return xu.UgridDataset(dataset, grids=[grid])
         return xu.UgridDataArray(_face_dataarray(data, name), grid)
