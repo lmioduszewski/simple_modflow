@@ -239,7 +239,7 @@ warns: reading the attribute is what warns, so the default only covers absence.
 
 ## Catching exceptions? Name them (plan 7.3, 2026-07-31)
 **No bare `except:` anywhere** — it swallows `KeyboardInterrupt`. **`except Exception`
-needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; seventeen
+needs a `# noqa: BLE001` and a comment saying why the set cannot be closed**; eighteen
 survive on that basis (flopy's `utils/voronoi.py` has a literal `raise Exception(...)`;
 `pickle.dump` walks an unbounded graph; `__dir__`/`__repr__` must never raise).
 `tests/test_exception_narrowness.py` pins the allowlist EXACTLY — adding a broad catch
@@ -254,7 +254,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3297 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3315 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -391,6 +391,20 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   inside. **A run now records its project root**, because bundling stores RELATIVE
   paths and `Run.reopen`/`load_run` had no `project_root`, so a relative source
   resolved against the current working directory.
+- **A saved project keeps a 16-character GRID FINGERPRINT, because it cannot keep the
+  grid** (ledger 257, 2026-09-14). `ModelSpec.to_dict` cannot carry `context.grid`,
+  `domain` or `surfaces` -- inlining them was refused in ledger 193 (floods
+  `Project.validate`, breaks `to_yaml`, ~3.3 MB per model at 9,405 cells) -- and it
+  dropped them SILENTLY, which undid both new guards: a model that raised live BUILT
+  CLEAN after `save()` + `load()`, and a package pin survived the save and was never
+  compared. `to_dict` records `grid_pin` into the context metadata, and
+  `disv_pin(disv)` takes the same fingerprint off a BUILT package, so the guard still
+  compares a reloaded model against its mesh. **What the fingerprint cannot see:**
+  connectivity-only means a rescale, a mirror or a unit conversion passes -- the save
+  warning and the refusal both say so. `SaveReport.context_dropped` names what was
+  lost. **To keep the FULL check across a save**, register the grid and use
+  `mf.gwf(..., grid=mf.grid_ref(key))`, which is serialized on the model and resolved
+  at build time.
 - **Registering an existing key RAISES** (ledger 208, 2026-09-10):
   `add_package`/`add_grid`/`add_simulation` take `overwrite=False`. They used to
   replace silently while `packages.fork` refused the same collision — the guarded

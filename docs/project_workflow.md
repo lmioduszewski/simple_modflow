@@ -391,6 +391,25 @@ later.run("refined_hk", "refined_hk", overwrite=True)
 `Path`. `pickled` is the number worth watching: a pickled entry is a cache, not
 an archive. `skipped` pairs each unpersisted simulation with the reason.
 
+`context_dropped` pairs each model with the context fields a project file cannot
+hold -- `grid`, `domain`, `surfaces` -- which reload as `None`. That is not new
+behaviour, but it used to be silent, and it matters: the build-time grid check and
+the per-package grid pins have nothing to compare against once the grid is gone. A
+16-character fingerprint of the cell NUMBERING is recorded and compared instead, so
+a different mesh is still caught; one with the same connectivity and different
+coordinates (a rescale, a mirror, a unit conversion) is not. To keep the full check,
+register the grid and reference it:
+
+```python
+project.add_grid("coarse", vor)
+flow = mf.gwf("flow", grid=mf.grid_ref("coarse"), packages=[...])
+```
+
+A `GridRef` is serialized on the model itself and resolved at build time, so it
+survives the round trip where a grid object on the context does not.
+
+`bundled` lists the files `save(bundle_sources=True)` copied into `inputs/`.
+
 ### Serialization boundary
 
 `save()` persists what it can and reports the rest. A simulation it cannot

@@ -2522,6 +2522,25 @@ def _as_int(value):
 GRID_PIN = "grid_pin"
 
 
+def _canonical_ring(vertices) -> tuple[int, ...]:
+    """One form for a cell's vertex ring, whichever way it was written down.
+
+    ``[0, 1, 2, 3]``, ``[1, 2, 3, 0]`` and ``[0, 3, 2, 1]`` are the same polygon --
+    rotated, and wound the other way. Hashing them raw made the fingerprint mean
+    "this serialization of this mesh" rather than "this mesh", so two identical
+    meshes could disagree and a correct model was refused after a reload. Rotating to
+    the lowest index and taking the lesser of the two windings gives one answer.
+    """
+
+    ring = [int(part) for part in vertices]
+    if not ring:
+        return ()
+    start = ring.index(min(ring))
+    forward = tuple(ring[start:] + ring[:start])
+    backward = (forward[0], *reversed(forward[1:]))
+    return min(forward, backward)
+
+
 def grid_pin(grid) -> str | None:
     """A fingerprint of a mesh's cell NUMBERING, or ``None`` if it cannot be taken.
 
@@ -2542,11 +2561,14 @@ def grid_pin(grid) -> str | None:
     try:
         props = grid.get_disv_gridprops()
         cell2d = props["cell2d"]
+        # `nvert` is deliberately NOT hashed: FloPy computes it at write time when a
+        # caller leaves it out, so `disv.nvert.get_data()` is None on a perfectly
+        # correct package -- and folding it in made that model fingerprint differently
+        # from its own grid. The vertex indices already carry the connectivity.
         payload = repr(
             (
                 _as_int(props.get("ncpl")) or len(cell2d),
-                _as_int(props.get("nvert")),
-                tuple(tuple(int(part) for part in row[3:]) for row in cell2d),
+                tuple(_canonical_ring(row[4:]) for row in cell2d),
             )
         )
     except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
@@ -2556,6 +2578,35 @@ def grid_pin(grid) -> str | None:
         # connectivity reaches flopy, numpy and any property it computes lazily. A
         # pin that cannot be taken means "unpinned", never an error at the caller.
         logger.debug("could not fingerprint a grid for pinning", exc_info=True)
+        return None
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def disv_pin(disv) -> str | None:
+    """:func:`grid_pin`'s fingerprint, taken from a BUILT DISV package.
+
+    The same connectivity hash, read off the package instead of the grid, so a model
+    whose context no longer holds a grid object can still be checked against the mesh
+    it was declared on. FloPy pads every ``cell2d`` row out to the widest cell, so the
+    trailing ``None`` vertices have to go: ``ncvert`` says how many of the ``icvert``
+    fields are real, and including the padding would make the answer depend on the
+    widest cell in the grid rather than on this cell.
+    """
+
+    if disv is None:
+        return None
+    try:
+        rows = []
+        for row in disv.cell2d.get_data():
+            count = int(row[3])
+            rows.append(_canonical_ring(row[4 + i] for i in range(count)))
+        payload = repr((_as_int(disv.ncpl.get_data()), tuple(rows)))
+    except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
+        # Deliberately broad, and it only ever weakens a guard. This reads a FloPy
+        # package's data, which reaches flopy's own exception hierarchy and numpy; a
+        # fingerprint that cannot be taken means "unpinned", never an error at a
+        # caller who asked for a build.
+        logger.debug("could not fingerprint a built DISV", exc_info=True)
         return None
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
@@ -2754,6 +2805,24 @@ def _discretization_complaints(model, context, packages) -> list[str]:
             )
 
     model_pin = grid_pin(grid)
+    if model_pin is None:
+        # A reloaded model has no grid object: `ModelSpec.to_dict` cannot carry one,
+        # so every check above is skipped and this guard used to evaporate on a save
+        # and load -- a mismatched model that raised live built clean afterwards, and
+        # a package pin survived the round trip and was then never compared. The
+        # recorded pin is 16 characters and restores both (ledger 257).
+        model_pin = (getattr(context, "metadata", None) or {}).get(GRID_PIN)
+        built_pin = disv_pin(disv)
+        if model_pin is not None and built_pin is not None and built_pin != model_pin:
+            complaints.append(
+                "the DISV package is not the mesh this model was declared against: it "
+                f"fingerprints as {built_pin} and the model recorded {model_pin}. The "
+                "grid object itself is not carried across a save, so the cell NUMBERING "
+                "is all that could be compared here -- a mesh with the same "
+                "connectivity and different coordinates would have passed. Declare the "
+                "model with mf.gwf(..., grid=mf.grid_ref(key)) to get the full geometry "
+                "check back"
+            )
     if model_pin is not None:
         for package in packages:
             pin = (package.metadata or {}).get(GRID_PIN)
@@ -2783,6 +2852,44 @@ def _discretization_complaints(model, context, packages) -> list[str]:
                     f"grid does not have (nlay={nlay}, ncpl={ncpl}): {listing}"
                 )
     return complaints
+
+
+#: Context fields that ``ModelSpec.to_dict`` cannot carry, and that something reads.
+#: ``dates`` is deliberately absent: nothing in the library reads it, so losing it
+#: costs nothing and warning about it would be noise.
+DROPPED_CONTEXT_FIELDS = ("grid", "domain", "surfaces")
+
+
+def dropped_context_fields(context) -> tuple[str, ...]:
+    """Which of a context's unserializable fields are set, and so will be lost."""
+
+    return tuple(
+        name
+        for name in DROPPED_CONTEXT_FIELDS
+        if getattr(context, name, None) is not None
+    )
+
+
+def _context_metadata(context) -> dict[str, Any]:
+    """A context's metadata, plus the grid fingerprint that outlives its grid.
+
+    The grid itself is not serialized -- inlining one was considered and refused
+    (ledger 193) because it floods ``Project.validate`` and breaks ``to_yaml``, and it
+    measures ~3.3 MB per model at 9,405 cells. Sixteen characters of it survive
+    instead, which is enough for the build-time guard to tell one mesh from another.
+    """
+
+    metadata = dict(getattr(context, "metadata", None) or {})
+    grid = getattr(context, "grid", None)
+    if grid is not None:
+        # A present grid IS the declaration, so it overwrites any pin carried in from
+        # an earlier load. Refusing to refresh froze the first pin ever written: a
+        # project loaded, re-gridded and saved again recorded the fingerprint of a
+        # mesh it no longer contained, and was then refused forever.
+        pin = grid_pin(grid)
+        if pin is not None:
+            metadata[GRID_PIN] = pin
+    return metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -3030,10 +3137,12 @@ class ModelSpec:
             "options": _json_value(self.options),
             "packages": [package.to_dict() for package in self.packages],
             "context": {
-                "metadata": _json_value(self.context.metadata),
+                "metadata": _json_value(_context_metadata(self.context)),
                 # Two plain strings: the refusal to serialize grids and domains
-                # (ledger 180) never covered them. They went with the arrays, and a
-                # metres/seconds model came back as feet/days (ledger 227).
+                # (ledger 193 -- 227 and this comment both cited 180, which ledger
+                # 194's renumbering had already moved) never covered them. They went
+                # with the arrays, and a metres/seconds model came back as feet/days
+                # (ledger 227).
                 "length_units": self.context.length_units,
                 "time_units": self.context.time_units,
             },

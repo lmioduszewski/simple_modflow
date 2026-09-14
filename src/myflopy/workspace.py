@@ -37,6 +37,7 @@ from myflopy.project.freeze import (
 )
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
+    dropped_context_fields,
     BuiltSimulation,
     GridRef,
     GridSpec,
@@ -1051,6 +1052,11 @@ class SaveReport:
     #: Files copied into ``inputs/`` by ``save(bundle_sources=True)``, as
     #: ``(from, to)`` pairs. Empty unless bundling was asked for.
     bundled: tuple[tuple[str, str], ...] = ()
+    #: Context fields that could not be written, as ``(model, field)`` pairs. A grid,
+    #: a domain and a surfaces table are not serializable (ledger 193), and were
+    #: dropped in silence until ledger 257 -- so ``skipped=0`` read as "nothing was
+    #: lost" while a model's build-time grid guard quietly stopped applying.
+    context_dropped: tuple[tuple[str, str], ...] = ()
 
     def __fspath__(self) -> str:
         """The project spec path, so a report can stand in for one in ``open``/``Path``."""
@@ -2412,6 +2418,8 @@ class Project:
         if bundle_sources:
             bundled = self._bundle_grid_sources()
 
+        dropped = self._report_dropped_contexts()
+
         issues = self.validate()
         if issues and strict:
             raise ValueError(
@@ -2513,7 +2521,40 @@ class Project:
             pickled=pickled,
             skipped=tuple(skipped),
             bundled=tuple(bundled),
+            context_dropped=tuple(dropped),
         )
+
+    def _report_dropped_contexts(self) -> list[tuple[str, str]]:
+        """Name the context fields this save cannot write, once per save.
+
+        Warned HERE rather than in ``ModelSpec.to_dict``: ``to_dict`` is called by
+        ``validate``, by ``_why_unserializable``, by ``to_yaml`` and by the save
+        itself, so a warning there fires three or four times for one save -- the same
+        de-duplication problem ledger 227 hit with its own warning.
+        """
+
+        dropped = [
+            (f"{name}.{model.name}", field)
+            for name, simulation in self.simulations.items()
+            for model in simulation.models
+            for field in dropped_context_fields(model.context)
+        ]
+        if dropped:
+            fields = sorted({field for _model, field in dropped})
+            models = sorted({model for model, _field in dropped})
+            logger.warning(
+                "Saving %r: %d model context(s) carry %s, which a project file cannot "
+                "hold -- they reload as None (%s). Register the grid with "
+                "project.add_grid(key, grid) and declare the model as "
+                "mf.gwf(..., grid=mf.grid_ref(key)), which persists and resolves at "
+                "build time, so the full build-time geometry check and the per-package "
+                "grid pins still apply. Without that, a fingerprint of the cell "
+                "NUMBERING is recorded and compared instead: a different mesh is still "
+                "caught, but one with the same connectivity and different coordinates "
+                "-- a rescale, a mirror, a unit conversion -- is not.",
+                self.name, len(models), " and ".join(fields), ", ".join(models[:5]),
+            )
+        return dropped
 
     def _bundle_grid_sources(self) -> list[tuple[str, str]]:
         """Copy every grid source into ``inputs/`` and repoint the project at it.

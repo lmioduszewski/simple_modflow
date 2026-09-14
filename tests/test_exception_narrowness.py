@@ -81,6 +81,11 @@ ALLOWED_BROAD = {
     # "unpinned", never an error at the caller. Reading a grid's connectivity reaches
     # flopy, numpy and any property it computes lazily (ledger 250).
     "specs.py:grid_pin",
+    # Same rule one line up, from the other side: reading a BUILT FloPy package's data
+    # reaches flopy's own exception hierarchy and numpy, and a fingerprint that cannot
+    # be taken means "unpinned" -- never an error at a caller who asked for a build
+    # (ledger 257).
+    "specs.py:disv_pin",
     # A grid on a context is whatever object a caller put there, so reading its
     # geometry for a snapshot reaches flopy, numpy and any lazy property. Losing the
     # grid costs the snapshot its grid and nothing else (ledger 251).

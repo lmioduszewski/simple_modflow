@@ -9269,3 +9269,71 @@ same day, which is the useful part of the result.
       model), that a later plain `save()` cannot undo it, the basename collision, a source
       already inside `inputs/`, a missing source, a directory source, the complete list of
       named paths, the two lazy option paths, and both anchoring cases.
+
+257. **A model's grid guard evaporated when the project was saved and loaded (2026-09-14).**
+      Phase 2 commit **A5a**. `ModelSpec.to_dict` cannot carry `context.grid`,
+      `.domain` or `.surfaces`, and dropped them in SILENCE -- and every branch of
+      `_discretization_complaints` (ledger 249) is gated on the context holding them.
+      Measured: a model whose DISV has 16 cells against a 25-cell context grid RAISES
+      live, and after `Project.save()` + `Project.load()` the same simulation **builds
+      clean**. `save()` reported `skipped=()`. The per-package grid pin (ledger 250) is
+      worse -- it SURVIVES the save and is then never compared, because
+      `model_pin = grid_pin(None)` is `None` and the comparison loop never runs. So the
+      two guards that had just landed were both undone by an ordinary save and reload.
+      **Sixteen characters fix it.** `disv_pin(disv)` takes the same connectivity
+      fingerprint from a BUILT DISV package that `grid_pin(grid)` takes from a grid, and
+      `to_dict` records the grid's pin into `context.metadata`. With no grid object the
+      guard compares the built DISV against the recorded pin. Inlining the grid stays
+      refused: ledger **193** considered and refused it because it floods
+      `Project.validate` and breaks `to_yaml`, and it measures ~3.3 MB per model at
+      9,405 cells (grid 1.17 MB + domain 0.25 + surfaces 1.93).
+      **The refusal was real but the citation was STALE, in two places.** This code and
+      ledger 227 both cited "ledger 180", which ledger **194**'s renumbering had already
+      moved to 193 -- and both citations were written five days AFTER that renumbering,
+      so 194's "those citations moved" could not have covered them. 180 today is the
+      docstring generator. Both fixed. Worth recording: the DROP itself was never a
+      decision at all. It dates from an untitled bulk commit (796294e, 2026-06-17) with
+      the four fields absent from day one; 193 is a later refusal-to-FIX, scoped "for
+      this pass".
+      **Four defects in the first version of this, all found by adversarial review
+      before commit, all reproduced:**
+      - **A recorded pin FROZE.** `if grid is not None and GRID_PIN not in metadata`
+        meant the first pin ever written outlived its mesh: load, re-grid the model
+        coherently, save -- the file still named the ORIGINAL mesh, and the model was
+        then refused forever, naming a grid the project no longer contained. A present
+        grid is the declaration and now always wins.
+      - **`nvert` was hashed, and FloPy computes it at write time.** A DISV that leaves
+        it out has `nvert.get_data() is None`, so a correct model fingerprinted
+        differently from its own grid and was refused after a reload. It is out of BOTH
+        payloads now; the vertex indices already carry the connectivity.
+      - **The fingerprint meant "this serialization of this mesh", not "this mesh".** A
+        vertex ring rotated, or wound the other way, is the same polygon -- and hashing
+        the raw list made two identical meshes disagree, so the reloaded guard REFUSED
+        what the live guard accepts. That is worse than a weaker check. `_canonical_ring`
+        rotates to the lowest index and takes the lesser winding.
+      - **The save warning overclaimed.** It said "a swapped mesh is still caught"; a
+        mesh with the same connectivity and different coordinates -- a rescale, a
+        mirror, a feet-to-metres conversion -- is NOT caught, because `grid_pin` hashes
+        connectivity only, which is exactly what makes it frame-free (ledger 250). The
+        warning and the refusal both say so now, and a test pins the blind spot. It also
+        counted `(model, field)` PAIRS as model contexts.
+      `SaveReport.context_dropped` records the `(model, field)` pairs, so `skipped=0`
+      stops reading as "nothing was lost". The warning is emitted from `Project.save`
+      rather than from `to_dict`, which is called by `validate`, by
+      `_why_unserializable`, by `to_yaml` and by the save itself -- the same
+      de-duplication problem ledger 227 hit with its own warning.
+      NOT reported: `context.dates`. Nothing in the library reads it (`grep -rn '\.dates'
+      src/myflopy/` outside the vendored tree returns zero), so losing it costs nothing
+      and naming it would be noise -- the same reasoning ledger 251 gave for leaving it
+      out of the frozen snapshot.
+      **A5b, `LayerStack` serialization, moves to sit with B1** and is NOT in this
+      commit. It has no consumer until `with_grid` must rebuild a stack on a new mesh,
+      and B1 is what decides its open questions -- above all whether `default_pinch`
+      rides in the recipe, since it rewrites the whole idomain and lives on the
+      `build()` call, so a round-tripped stack does not determine its own arrays.
+      Shipping it now would repeat the dead-code mistake the plan already declined when
+      it moved `recipe`/`concrete_for` to B2.
+      `tests/test_context_across_a_save.py` (17 tests) pins the fingerprint equivalence,
+      the reloaded refusal and its control, the message, the re-grid case, the
+      nvert-less DISV, the ring canonicalisation, the coordinate blind spot, a model
+      saved before pins existed, and both halves of the drop report.
