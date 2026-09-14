@@ -1243,16 +1243,36 @@ class Choro(Picture):
             ).tolist()
         layer_fields: dict[str, list] = {}
         top = botm = None
-        if self.model is not None and (self._depvar_attr is not None or self.hover_heads):
+        reads_field = self.model is not None and (
+            self._depvar_attr is not None or self.hover_heads
+        )
+        if reads_field:
             heads = []
             for lyr in range(self.nlay):
                 lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
                 heads.append([np.nan if h == 1e30 else h for h in lyr_heads])
             layer_fields[self._value_name] = heads
+        # The layer elevations are the GRID's, not the mapped field's, so they
+        # are fetched whenever the resolved spec asks for them -- not only when
+        # this map happens to read heads. Gating them on the heads branch is
+        # what made `show_layer_elevs=True` INERT on every input and static-array
+        # map (`npf.k`, `drn.inputs.cond`, ...): each passes `hover_heads=False`,
+        # so the flag reached the spec, the spec asked for surfaces, and the
+        # context had no elevations to hand it. Reported 2026-09-14 against
+        # `packages.npf.k.mosaic(show_layer_elevs=True)`.
+        #
+        # Still GATED rather than unconditional: `gdf_topbtm` is lazy, and
+        # building it samples rasters, so a map that does not ask must not pay.
+        if reads_field or self._wants_surfaces():
             try:
                 topbtm = self.vor.gdf_topbtm
+                # The layer count comes from the FRAME when there is no model to
+                # ask -- `nlay` dereferences `model.gwf`, and a bare grid that
+                # carries surfaces can still show them. Columns are
+                # `[cell, top, botm0, botm1, ...]`.
+                nlay = self.nlay if self.model is not None else topbtm.shape[1] - 2
                 top = topbtm.iloc[:, 1].to_list()
-                botm = [topbtm.iloc[:, 2 + i].to_list() for i in range(self.nlay)]
+                botm = [topbtm.iloc[:, 2 + i].to_list() for i in range(nlay)]
             except _SURFACES_UNAVAILABLE:
                 # `gdf_topbtm` is often LAZY -- building it samples rasters
                 # through rasterio/pyproj/geopandas, so the reachable set runs
@@ -1276,6 +1296,16 @@ class Choro(Picture):
             step=step,
             date=date,
         )
+
+    def _wants_surfaces(self) -> bool:
+        """Whether the resolved hover spec asks for the grid's layer elevations.
+
+        Read BEFORE the context is built, because it decides whether the context
+        pays for `gdf_topbtm` at all. Safe to call from `_build_hover_context`:
+        `_resolved_hover_spec` only merges dataclasses and never builds a context.
+        """
+
+        return bool(getattr(self._resolved_hover_spec(), "surfaces", False))
 
     def _resolved_hover_spec(self):
         """Merge the base spec with any call-site sugar (hover/hover_layers/...).

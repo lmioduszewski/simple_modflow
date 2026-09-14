@@ -129,6 +129,22 @@ drawn by both backends, kept by `mosaic`/`animate`, resolved eagerly so a bad
 path raises at the call. Engine: `utils/datatypes/features.py`. **`locs=` is
 DEPRECATED** (warns, drawn as a layer named "locations") and is named on no
 signature — do not reintroduce it.
+**The COMPOSERS name the map options too** (ledger 258, 2026-09-14).
+`mosaic`/`animate` are defined ONCE on `SpatialView`, and they now name all 23
+per-panel drawing options plus `backend`, with descriptions spliced from
+`plot.map` — so `packages.npf.k.mosaic(logscale=True, features=..., show_layer_elevs=True)`
+completes in an editor. Only options the caller actually SET are forwarded
+(`_explicit_options`), and they are REFUSED on `kind="plot"`/`"section"`. They
+rotted because `test_noun_signatures.py` discovers subjects by a body mentioning
+`plot.map(`/`_choropleth_factory`, which a composer's never does; it sweeps them
+explicitly now.
+**`show_layer_elevs`/`hover_surfaces` are Tier 1** (same ledger): the layer frame
+is the GRID's, so they act on a K or conductance map, not just on heads. They
+were inert everywhere but heads because `Choro._build_hover_context` fetched the
+elevations inside its heads branch and every noun passes `hover_heads=False`;
+and `HoverSpec._effective_blocks` answered a surfaces-only request with a
+`LayerTable(fields=("__surface__",))` whose key nothing populated. Both fixed.
+The elevations are still fetched ONLY when a map asks — `gdf_topbtm` is lazy.
 **Never give a picture verb a bare `**kwargs`** (8.8, 2026-08-24): PyCharm and
 Pylance are STATIC — they read the `def` line and never run the module, so
 `__doc__`, `__signature__` and `functools.wraps` reach `help()` and reach no

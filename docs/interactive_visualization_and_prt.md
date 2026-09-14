@@ -46,6 +46,10 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   the hover keeps the real value, and `zmin`/`zmax` are given in data units
   (`model.packages.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). A mosaic
   of log maps relabels its pooled bar by itself.
+- **Layer elevations on hover are `show_layer_elevs=True`** on any map, not just
+  heads: the model top and each layer's bottom at that cell
+  (`packages.npf.k.map(show_layer_elevs=True)`). They merge into the per-layer
+  table where the map has one, and render alone where it does not.
 - **Custom geometry is `features=`** on every map: a GeoPackage/shapefile
   path (`plot.Feature(path, layer="wells")` for a named layer), a
   `GeoDataFrame`, a shapely geometry, or a dict naming several layers

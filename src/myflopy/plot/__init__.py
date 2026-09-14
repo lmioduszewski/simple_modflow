@@ -99,6 +99,7 @@ from myflopy.modflow.mf6.package_plotting import (
     NOUN_INERT_PARAMS,
     NOUN_MAP_PARAMS,
     NOUN_REFUSED_PARAMS,
+    SpatialView,
     _apply_backend,
     as_mpl_figure,
     normalize_backend,
@@ -2905,6 +2906,22 @@ def _inherit_noun_docs() -> None:
     #: every colour exactly where it was (measured: `custom_zs` identical,
     #: figure not).
     inherit_map_docs(UzfInput.map, keep=tier1 | {"per"})
+
+    #: The COMPOSERS, spliced once on the mixin every noun inherits them from.
+    #: They name the same per-panel drawing options as `map` and forward them to
+    #: every panel, so they take the same reference -- minus `backend`, which the
+    #: composer documents itself (it chooses the renderer for the whole figure,
+    #: not per panel), and minus the selectors each documents in its own
+    #: Parameters block.
+    #:
+    #: Until 2026-09-14 neither was spliced or even discovered: the noun sweep in
+    #: `tests/test_noun_signatures.py` keys on a body that mentions `plot.map(`
+    #: or `_choropleth_factory`, and a composer's body mentions neither -- it
+    #: goes through `_facet_panels`. So `mosaic` named eleven parameters, none of
+    #: them drawing options, and an editor showed a caller nothing (ledger 258).
+    composer = set(NOUN_MAP_PARAMS) - {"backend"}
+    inherit_map_docs(SpatialView.mosaic, keep=composer)
+    inherit_map_docs(SpatialView.animate, keep=composer)
 
 
 _inherit_verb_docs(ModelPlots)

@@ -22,7 +22,6 @@ run's normalized record table.
 
 from __future__ import annotations
 
-import inspect
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -38,6 +37,7 @@ from myflopy.modflow.mf6.package_plotting import (
     NOUN_MAP_PARAMS,
     SpatialView,
     _apply_backend,
+    _explicit_options,
     as_mpl_figure,
     build_cell_input_map_payload,
     refuse_noun_parameters,
@@ -491,39 +491,6 @@ class PRTTravelTimeView(_PRTDerivedView):
         return fig
 
 
-def _explicit_options(local_vars: dict, method, names) -> dict:
-    """The named parameters in ``names`` a caller actually SET, by value.
-
-    ``PRTPathlineView.map`` used to read its ``**base_kwargs`` tail three times
-    -- to refuse base-map options on the Matplotlib branch, to refuse them on an
-    already-built base, and to forward them -- so naming those parameters (plan
-    8.8) would have emptied the tail and silently disabled all three checks. This
-    reconstructs the same information from the named parameters instead, by
-    comparing each against the default in the method's OWN signature, so the two
-    cannot drift.
-
-    A numpy array compared against ``None`` returns an elementwise array whose
-    truth value raises; an array is never a default, so that is "supplied".
-    """
-
-    defaults = {
-        name: parameter.default
-        for name, parameter in inspect.signature(method).parameters.items()
-    }
-    supplied = {}
-    for name in names:
-        if name not in local_vars:
-            continue
-        value, default = local_vars[name], defaults.get(name, inspect.Parameter.empty)
-        try:
-            differs = value is not default and bool(value != default)
-        except ValueError:
-            differs = True
-        if differs:
-            supplied[name] = value
-    return supplied
-
-
 class PRTPathlineView(_PRTDerivedView):
     """The trajectories themselves: particle tracks drawn over the model map.
 
@@ -758,6 +725,8 @@ class PRTPathlineView(_PRTDerivedView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **base_kwargs,
@@ -896,6 +865,12 @@ class PRTPathlineView(_PRTDerivedView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a

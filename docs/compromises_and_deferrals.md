@@ -9337,3 +9337,67 @@ same day, which is the useful part of the result.
       the reloaded refusal and its control, the message, the re-grid case, the
       nvert-less DISV, the ring canonicalisation, the coordinate blind spot, a model
       saved before pins existed, and both halves of the drop report.
+258. **`show_layer_elevs` was inert on every map but heads, and the composers named
+    no drawing options at all (2026-09-14).**
+    - Reported against `packages.npf.k.mosaic(logscale=True, features=[...],
+      show_layer_elevs=True)`: everything drew except the elevations. Two defects,
+      one behind the other, plus a third that hid both from the editor.
+    - **(a) The elevations were fetched inside the heads branch.**
+      `Choro._build_hover_context` built `top`/`botm` from `vor.gdf_topbtm` only
+      when `self._depvar_attr is not None or self.hover_heads`. Every input,
+      record and static-array noun passes `hover_heads=False`, so the flag reached
+      the spec, the spec asked for surfaces, and the context had no elevations to
+      hand it. The layer frame is the GRID's and has nothing to do with the mapped
+      field, so it is now fetched whenever the resolved spec asks -- `_wants_surfaces()`
+      -- and still ONLY then, because `gdf_topbtm` is lazy and samples rasters. A map
+      with no model falls back to the frame's own width for `nlay`, since `nlay`
+      dereferences `model.gwf`.
+    - **(b) The surfaces-only table could never render.** `HoverSpec._effective_blocks`
+      answers a surfaces request on a map with no per-layer field by appending
+      `LayerTable(fields=("__surface__",), surfaces=True)` -- and `"__surface__"`
+      appeared exactly ONCE in the repository, at that line. Nothing has ever
+      populated it, so `LayerTable.build` returned at `if not arrays: return`.
+      `LayerTable` now falls back to `_build_surfaces_only`: a `Top` row and one row
+      per layer, active layer accented, the same shape as the full table minus the
+      field column. Where a per-layer field DOES exist the elevations still merge
+      into that table as a second column, unchanged.
+    - **(c) Tier move.** `show_layer_elevs` and `hover_surfaces` left
+      `LAYER_FIELD_MAP_PARAMS` for `NOUN_MAP_PARAMS`: measured live on every spatial
+      noun once (a) and (b) landed, so hiding them was the defect the tier comment
+      itself names. Named on 15 noun signatures and forwarded explicitly.
+      `hover_layers` STAYED in Tier 2 -- it needs a per-layer FIELD, which a record
+      noun does not carry, and it is still measured inert there (0 rows).
+    - **(d) The composers named no drawing options.** `SpatialView.mosaic` named 11
+      parameters and `animate` 9, none of them drawing options, so
+      `mosaic(logscale=True, ...)` showed a caller nothing in an editor -- the
+      user's actual complaint. Both now name all 23 per-panel options plus
+      `backend` (34 and 32 named), with descriptions spliced from `plot.map` and
+      their own `See Also`/`Examples`. Defined once on the mixin, so one signature
+      serves every noun.
+      - Only options the caller actually SET are forwarded, via `_explicit_options`
+        (moved down from `prt_maps` to `package_plotting`, where both callers reach
+        it): a default riding along would override each noun's own colour policy on
+        every panel.
+      - They are REFUSED, not ignored, on `kind="plot"`/`"section"`, which draw no
+        choropleth (`refuse_panel_drawing_options`). The `**kwargs` tail still rides
+        to the section branch, which has drawing options of its own -- which is also
+        why both composers keep a tail, taking `UNDOCUMENTED_TAILS` from 15 to 17.
+    - **Why (d) rotted, structurally:** `tests/test_noun_signatures.py::_discovered`
+      keys on a method body that mentions `plot.map(` or `_choropleth_factory`. A
+      composer's body mentions neither -- it goes through `_facet_panels` /
+      `_frame_panels` -- so the whole composer tier was invisible to the 8.8
+      enforcement by construction, in both directions. The file now sweeps them
+      explicitly (named / documented in the SOURCE literal / forwards only what was
+      set / refuses non-map kinds).
+    - Compromises: the fenced splice emits no `.. end generated` marker when the
+      generated block is LAST, so a composer's own `See Also`/`Examples` must sit
+      BEFORE the fence in the source or the next regeneration swallows them (cost a
+      round trip). `SpatialView.section` was NOT converted -- it forwards to the
+      section builder, not to a choropleth, and none of these options apply.
+      `mosaic(kind="section")` still passes section options through an undocumented
+      tail. The PRT derived views (`travel_time`/`endpoints`/`capture`) define their
+      own `map` with no `**kwargs` tail and were untouched.
+    - Tests: `tests/test_hover_integration.py` (five cases: both spellings on a
+      static-array map, record nouns, the head map's merged table unchanged, the
+      not-fetched-unless-asked guard, and every mosaic panel) and the composer
+      section of `tests/test_noun_signatures.py`.

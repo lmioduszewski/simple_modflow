@@ -385,3 +385,123 @@ def test_a_noun_shows_examples_of_ITSELF(name, rel, line, fn, source):
     assert not refused, (
         f"{rel}:{line} {name} documents a call it would raise on: {refused}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The COMPOSERS (ledger 258, 2026-09-14)
+#
+# `mosaic`/`animate` were outside this file's sweep by construction:
+# `_discovered()` keys on a body that mentions `plot.map(` or
+# `_choropleth_factory`, and a composer's body mentions neither -- it goes
+# through `_facet_panels`/`_frame_panels`. So while every noun's `map` was
+# converted in 8.8, `mosaic` named eleven parameters, none of them drawing
+# options, and `packages.npf.k.mosaic(logscale=True, features=...)` showed a
+# caller nothing in an editor. They are defined ONCE, on the mixin, so one
+# assertion covers every noun that inherits them.
+# ---------------------------------------------------------------------------
+
+COMPOSERS = ("mosaic", "animate")
+
+#: NumPy section heads, for reading a Parameters block out of a docstring.
+_SECTION_HEADS = {
+    "Parameters", "Other Parameters", "Returns", "Yields", "Raises", "Warns",
+    "See Also", "Notes", "References", "Examples",
+}
+
+
+def _composer(verb: str):
+    from myflopy.modflow.mf6.package_plotting import SpatialView
+
+    return getattr(SpatialView, verb)
+
+
+@pytest.mark.parametrize("verb", COMPOSERS)
+def test_a_composer_names_every_per_panel_drawing_option(verb):
+    """A composer forwards the map options to each panel, so it must name them."""
+
+    from myflopy.modflow.mf6.package_plotting import PANEL_DRAWING_PARAMS
+
+    named = {
+        name for name, p in inspect.signature(_composer(verb)).parameters.items()
+        if p.kind is p.KEYWORD_ONLY
+    }
+    missing = [p for p in PANEL_DRAWING_PARAMS if p not in named]
+    assert not missing, f"SpatialView.{verb} forwards but never names {missing}"
+    assert "backend" in named, f"SpatialView.{verb} must name its renderer switch"
+
+
+@pytest.mark.parametrize("verb", COMPOSERS)
+def test_a_composer_documents_every_parameter_it_names(verb):
+    """Checked on the SOURCE literal -- what a static reader actually gets."""
+
+    method = _composer(verb)
+    source = pathlib.Path(inspect.getsourcefile(method)).read_text()
+    tree = ast.parse(source)
+    fn = next(
+        f
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "SpatialView"
+        for f in node.body
+        if isinstance(f, ast.FunctionDef) and f.name == verb
+    )
+    doc = ast.get_docstring(fn) or ""
+    assert len(doc) > 2000, f"SpatialView.{verb}'s source docstring is a stub"
+
+    documented = set()
+    lines, inside = doc.splitlines(), False
+    for index, line in enumerate(lines):
+        head = line.strip()
+        underlined = (
+            index + 1 < len(lines)
+            and lines[index + 1].strip()
+            and set(lines[index + 1].strip()) == {"-"}
+        )
+        if head in _SECTION_HEADS and underlined:
+            inside = head in ("Parameters", "Other Parameters")
+            continue
+        if inside and line and not line[0].isspace():
+            for part in line.split(":")[0].split(","):
+                part = part.strip().lstrip("*")
+                if part.isidentifier():
+                    documented.add(part)
+    named = [a.arg for a in fn.args.kwonlyargs]
+    missing = sorted(set(named) - documented)
+    assert not missing, f"SpatialView.{verb} names but never documents {missing}"
+
+
+@pytest.mark.parametrize("verb", COMPOSERS)
+def test_a_composer_forwards_only_what_the_caller_set(verb):
+    """Defaults must NOT ride along: a panel keeps its noun's own colour policy
+    unless the caller overrode it. `_explicit_options` compares against this
+    method's own signature, so the two cannot drift."""
+
+    from myflopy.modflow.mf6.package_plotting import (
+        PANEL_DRAWING_PARAMS,
+        _explicit_options,
+    )
+
+    method = _composer(verb)
+    defaults = {
+        name: p.default
+        for name, p in inspect.signature(method).parameters.items()
+        if p.kind is p.KEYWORD_ONLY
+    }
+    assert _explicit_options(dict(defaults), method, PANEL_DRAWING_PARAMS) == {}
+    supplied = {**defaults, "logscale": True, "zmin": 0.5}
+    assert _explicit_options(supplied, method, PANEL_DRAWING_PARAMS) == {
+        "logscale": True, "zmin": 0.5,
+    }
+
+
+@pytest.mark.parametrize("verb", COMPOSERS)
+@pytest.mark.parametrize("kind", ["plot", "section"])
+def test_a_composer_refuses_map_options_on_a_kind_that_draws_no_map(verb, kind):
+    """Naming them made the mistake reachable from an editor, so it is answered
+    rather than dropped into a tail the series branch never reads."""
+
+    from myflopy.modflow.mf6.package_plotting import refuse_panel_drawing_options
+
+    with pytest.raises(TypeError, match=r"draws no choropleth"):
+        refuse_panel_drawing_options(kind, verb, {"logscale": True})
+    # nothing set, nothing to refuse
+    assert refuse_panel_drawing_options(kind, verb, {}) is None

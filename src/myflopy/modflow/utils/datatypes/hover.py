@@ -210,20 +210,29 @@ class LayerTable(HoverBlock):
     mark_dry: bool = True
 
     def build(self, asm, ctx, spec) -> None:
-        """Emit the per-layer table (head column, optional bottom column + Top row).
+        """Emit the per-layer table (field column, optional bottom column + Top row).
 
         Builds NBSP-padded columns so numbers right-align, bolds the active layer,
         and appends a dagger to dry cells when ``mark_dry`` and surfaces are shown.
-        Does nothing if the primary field has no per-layer arrays in ``ctx``.
+        With no per-layer arrays for the primary field this falls back to the
+        ELEVATIONS ALONE -- the layer frame is the grid's, so a map of K or of a
+        conductance can show it even though it carries no per-layer field of its
+        own. Does nothing when there is neither.
         """
 
         primary = self.fields[0]
         arrays = ctx.layer_fields.get(primary)
+        show_bot = self.surfaces and ctx.botm is not None
         if not arrays:
+            # `_effective_blocks` asks for this with `fields=("__surface__",)`, a
+            # key nothing populates -- so until 2026-09-14 this returned here and
+            # `show_layer_elevs=True` silently drew nothing on every map without a
+            # per-layer field.
+            if show_bot:
+                self._build_surfaces_only(asm, ctx, spec)
             return
         nlay = len(arrays)
         unit = spec.unit(primary)
-        show_bot = self.surfaces and ctx.botm is not None
         botm = ctx.botm if show_bot else None
 
         head_cols = [
@@ -269,6 +278,42 @@ class LayerTable(HoverBlock):
 
         if unit:
             asm.text(f'<span style="color:{spec.style.muted};font-size:10px">{unit}</span><br>')
+
+    def _build_surfaces_only(self, asm, ctx, spec) -> None:
+        """Emit the grid's layer elevations with no field column beside them.
+
+        The same shape as the full table -- a ``Top`` row then one row per layer,
+        right-aligned, active layer accented -- minus the per-layer values, which
+        this map does not have. What ``show_layer_elevs=True`` means on an input,
+        static-array or derived map.
+        """
+
+        botm = ctx.botm
+        nlay = len(botm)
+        bot_cols = [
+            _pad_right([format_number(v, precision=spec.precision) for v in botm[layer]])
+            for layer in range(nlay)
+        ]
+        asm.text(
+            f'<span style="color:{spec.style.muted};font-size:10px">'
+            f'{NBSP * 4}bot</span><br>'
+        )
+        if ctx.top is not None:
+            top_col = _pad_right([format_number(v, precision=spec.precision) for v in ctx.top])
+            asm.text(f'<span style="color:{spec.style.muted}">Top</span>{NBSP}{NBSP}')
+            asm.value(top_col, muted=spec)
+            asm.text("<br>")
+        for layer in range(nlay):
+            is_active = layer == ctx.active_layer
+            color = spec.style.accent if is_active else spec.style.muted
+            open_span = "<b>" if is_active else ""
+            close_span = "</b>" if is_active else ""
+            asm.text(
+                f'<span style="color:{color}">{open_span}L{layer + 1}{close_span}</span>'
+                f'{NBSP}{NBSP}'
+            )
+            asm.value(bot_cols[layer], muted=None if is_active else spec)
+            asm.text("<br>")
 
     @staticmethod
     def _mark_dry(formatted: list[str], heads, botm) -> list[str]:

@@ -162,3 +162,88 @@ def test_mosaic_hover_sugar_threads_through_without_leaking(canonical_run):
     )
     lak_traces = [t for t in lak.data if getattr(t, "type", "") == "choroplethmap"]
     assert lak_traces and all("Lake exchange" in t.hovertemplate for t in lak_traces)
+
+
+# ---------------------------------------------------------------------------
+# `show_layer_elevs` on a map that carries no per-layer field (ledger 258).
+#
+# Reported 2026-09-14: `packages.npf.k.mosaic(logscale=True, features=[...],
+# show_layer_elevs=True)` drew everything asked for EXCEPT the elevations. Two
+# defects, one behind the other. `Choro._build_hover_context` fetched `top`/
+# `botm` inside its HEADS branch, so every input and static-array map -- each of
+# which passes `hover_heads=False` -- reached the renderer with no elevations at
+# all. And `HoverSpec._effective_blocks` answered a surfaces-only request with
+# `LayerTable(fields=("__surface__",))`, a key nothing has ever populated, so
+# `LayerTable.build` returned at its first line. The layer frame is the GRID's;
+# it has nothing to do with the mapped field.
+# ---------------------------------------------------------------------------
+
+
+def _elevation_rows(choro) -> list[str]:
+    """The `Top` / `L<n>` rows the rendered hover template carries."""
+
+    import re
+
+    template = choro.get_choropleth().hovertemplate
+    text = re.sub(r"<[^>]+>", "", template.replace("<br>", "\n"))
+    return [line for line in text.splitlines() if re.match(r"^\s*(Top|L\d)", line.strip())]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("flag", ["show_layer_elevs", "hover_surfaces"])
+def test_a_static_array_map_can_show_the_grids_layer_elevations(canonical_run, flag):
+    """`npf.k` carries one value per cell, no per-layer field -- and the
+    elevations are still the grid's, so both spellings draw them."""
+
+    nlay = int(canonical_run.vor.gdf_topbtm.shape[1] - 2)
+    rows = _elevation_rows(canonical_run.packages.npf.k.map(**{flag: True}))
+    assert len(rows) == nlay + 1, rows          # a Top row plus one per layer
+    assert rows[0].strip().startswith("Top")
+    assert not _elevation_rows(canonical_run.packages.npf.k.map()), "on by default"
+
+
+@pytest.mark.slow
+def test_a_record_noun_map_can_show_them_too(canonical_run):
+    """The same holds for a package's period table reduced to one value per cell."""
+
+    assert _elevation_rows(canonical_run.packages.drn.inputs.cond.map(show_layer_elevs=True))
+    assert _elevation_rows(canonical_run.packages.drn.results.q.map(show_layer_elevs=True))
+
+
+@pytest.mark.slow
+def test_a_head_map_still_merges_them_into_its_per_layer_table(canonical_run):
+    """The regression guard: where there IS a per-layer field, the elevations
+    stay a COLUMN of that table rather than becoming a table of their own."""
+
+    trace = canonical_run.hds.map(show_layer_elevs=True).get_choropleth()
+    assert "Top" in trace.hovertemplate and "bot" in trace.hovertemplate
+    # The head column and the bottom column, side by side on each table row --
+    # TWO values, where a surfaces-only table has one. (The head hover also
+    # carries an inline "active+strip" summary row, which is not one of these.)
+    rows = _elevation_rows(canonical_run.hds.map(show_layer_elevs=True))
+    paired = [r for r in rows if r.strip().startswith("L") and r.count("%{customdata[") == 2]
+    assert len(paired) >= 2, rows
+    assert [r for r in rows if r.strip().startswith("Top")]
+
+
+@pytest.mark.slow
+def test_the_elevations_are_not_fetched_unless_a_map_asks(canonical_run):
+    """`gdf_topbtm` is lazy and samples rasters, so a map that does not ask must
+    not pay for it. Asserted on the CONTEXT, which is where the cost is."""
+
+    asked = canonical_run.packages.npf.k.map(show_layer_elevs=True)._build_hover_context()
+    plain = canonical_run.packages.npf.k.map()._build_hover_context()
+    assert asked.botm is not None and asked.top is not None
+    assert plain.botm is None and plain.top is None
+
+
+@pytest.mark.slow
+def test_every_mosaic_panel_carries_the_elevations_and_its_own_active_layer(canonical_run):
+    """The reported call. Each panel is a different layer, so each bolds its own
+    row -- which is only meaningful because the table reaches every panel."""
+
+    mosaic = canonical_run.packages.npf.k.mosaic(logscale=True, show_layer_elevs=True)
+    panels = [t for t in mosaic.data if getattr(t, "z", None) is not None]
+    assert len(panels) > 1
+    for trace in panels:
+        assert "Top" in trace.hovertemplate, "a panel lost its layer elevations"

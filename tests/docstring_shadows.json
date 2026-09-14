@@ -55,6 +55,15 @@
   "layer",
   "per"
  ],
+ "SpatialView.animate": [
+  "backend",
+  "title"
+ ],
+ "SpatialView.mosaic": [
+  "ncols",
+  "sync_views",
+  "title"
+ ],
  "StackPlots.grid": [
   "backend"
  ],

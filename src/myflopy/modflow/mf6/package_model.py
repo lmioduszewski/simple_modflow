@@ -348,6 +348,8 @@ class HfbResultsExplorer:
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -467,6 +469,12 @@ class HfbResultsExplorer:
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -546,6 +554,8 @@ class HfbResultsExplorer:
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             **trace_kwargs,
         )
         if table.empty:
@@ -785,6 +795,8 @@ class HfbPackageExplorer:
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -905,6 +917,12 @@ class HfbPackageExplorer:
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -985,6 +1003,8 @@ class HfbPackageExplorer:
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             **trace_kwargs,
         )
 

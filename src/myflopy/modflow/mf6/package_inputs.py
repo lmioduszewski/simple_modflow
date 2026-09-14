@@ -251,6 +251,8 @@ class CellPackageInputFieldExplorer(SpatialView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -383,6 +385,12 @@ class CellPackageInputFieldExplorer(SpatialView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -463,6 +471,8 @@ class CellPackageInputFieldExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(
                 self.field_name,
                 extra_fields=_sibling_input_fields(self.package_name, self.field_name),
@@ -589,6 +599,8 @@ class UzfFieldInputsExplorer(SpatialView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -736,6 +748,12 @@ class UzfFieldInputsExplorer(SpatialView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -817,6 +835,8 @@ class UzfFieldInputsExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(
                 self.field_name,
                 extra_fields=_sibling_input_fields(self.package_name, self.field_name),
@@ -1120,6 +1140,8 @@ class StaticArrayFieldExplorer(SpatialView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -1253,6 +1275,12 @@ class StaticArrayFieldExplorer(SpatialView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -1333,6 +1361,8 @@ class StaticArrayFieldExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(
                 self.field_name,
                 extra_fields=_sibling_input_fields(self.package_name, self.field_name),

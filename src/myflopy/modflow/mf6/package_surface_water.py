@@ -339,6 +339,8 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -483,6 +485,12 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -568,6 +576,8 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=sfr_hover(),
             zmin=zmin,
             zmax=zmax,
@@ -833,6 +843,8 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -983,6 +995,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -1072,6 +1090,8 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=lak_hover(),
             zmin=zmin,
             zmax=zmax,
@@ -1418,6 +1438,8 @@ class LakConnectionsExplorer:
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -1558,6 +1580,12 @@ class LakConnectionsExplorer:
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -1638,6 +1666,8 @@ class LakConnectionsExplorer:
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(value_column),
             zmin=zmin,
             zmax=zmax,
@@ -2625,6 +2655,8 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -2772,6 +2804,12 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -2864,6 +2902,8 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=surface_water_hover(),
             zmin=zmin,
             zmax=zmax,
@@ -2990,6 +3030,8 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         bounds_padding: float = 0.05,
         # -- hover -----------------------------------------------------------
         hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
         # -- renderer --------------------------------------------------------
         backend: str = "plotly",
         **trace_kwargs,
@@ -3123,6 +3165,12 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the map. ``'plotly'`` returns the interactive
             ``Choro`` picture -- pan, zoom, hover, a basemap. ``'mpl'`` returns a
@@ -3209,6 +3257,8 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(self.field_name),
             zmin=zmin,
             zmax=zmax,

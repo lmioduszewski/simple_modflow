@@ -138,6 +138,17 @@ takes, at every scope, verb and noun alike:
   same stops. An unknown name warns and draws `earth` — the deliberate inverse
   of `_field_map_policy`, which raises, because a typo in a notebook cell
   should cost a warning and not the figure.
+- **`show_layer_elevs=` / `hover_surfaces=`** put the grid's layer frame in the
+  hover — the model top and each layer's bottom at that cell. They are **Tier 1**
+  as of ledger 258: the elevations come from the GRID, not from the mapped
+  field, so they act on a K map, a conductance map and a head map alike. They
+  used to be Tier 2 and inert everywhere but heads, because
+  `Choro._build_hover_context` fetched the elevations inside its heads branch and
+  every noun passes `hover_heads=False`. Still **fetched only when asked**:
+  `gdf_topbtm` is lazy and samples rasters. Where the map DOES have a per-layer
+  field the elevations merge into that table as a second column; where it does
+  not, they render alone. `hover_layers` stayed Tier 2 — it needs a per-layer
+  field, which a record noun does not carry.
 - **`features=`** draws custom geometry over the cells — wells, pond
   footprints, a boundary. A vector file path, a `GeoDataFrame`/`GeoSeries`, a
   shapely geometry, a `myflopy.plot.Feature` carrying its styling
@@ -152,6 +163,27 @@ takes, at every scope, verb and noun alike:
   two renderers, so the backends cannot disagree about what a layer is.
   `locs=` is DEPRECATED: it warns, is named on no signature, and is drawn as a
   layer called "locations" through the same engine.
+
+### The composers name the map options too
+
+`mosaic` and `animate` forward every per-panel drawing option to each panel, so
+(8.8, ledger 258) they NAME them: `packages.npf.k.mosaic(logscale=True,
+features=wells, show_layer_elevs=True)` completes in an editor and carries a
+description for each. They are defined ONCE, on `SpatialView`, so every noun
+inherits one signature and one spliced docstring.
+
+Two rules keep that honest. Only the options a caller actually **set** are
+forwarded (`_explicit_options` compares against the composer's own signature),
+so a panel otherwise keeps its noun's colour policy. And they are **refused, not
+ignored**, on `kind="plot"` / `kind="section"`, which draw no choropleth — the
+`**kwargs` tail still rides to the section branch, which has drawing options of
+its own.
+
+Why this rotted: `tests/test_noun_signatures.py` discovers its subjects by
+looking for a body that mentions `plot.map(` or `_choropleth_factory`. A
+composer's body mentions neither — it goes through `_facet_panels` — so while
+every noun's `map` was converted in 8.8, `mosaic` named eleven parameters, none
+of them drawing options. The file now sweeps the composers explicitly.
 
 ### Two spellings, one implementation
 

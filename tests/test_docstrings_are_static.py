@@ -52,7 +52,7 @@ IDS = [f"{cls}.{verb}" for _module, cls, verb in TARGETS]
 #: Pinned, in both directions. Discovery that finds nothing passes everything,
 #: and discovery that quietly loses one method is exactly how a docstring goes
 #: stale unwatched -- so a change to this number has to be deliberate.
-EXPECTED = 29
+EXPECTED = 31
 
 
 def test_the_sweep_finds_every_spliced_method_and_no_others():
@@ -354,7 +354,11 @@ def test_prose_inside_a_parameter_list_is_refused():
 #: Nouns that accept `**trace_kwargs` without documenting it. PRE-EXISTING and
 #: left alone -- the noun tier deliberately says less about the Plotly tail than
 #: the verb tier does. Pinned so the number cannot grow unnoticed.
-UNDOCUMENTED_TAILS = 15
+#:
+#: 15 -> 17 on 2026-09-14 (ledger 258): `SpatialView.mosaic`/`.animate` joined
+#: the spliced set, and each keeps a `**kwargs` tail of its own -- the section
+#: branch has drawing options this composer does not name.
+UNDOCUMENTED_TAILS = 17
 
 
 def test_every_spliced_method_documents_what_it_accepts():

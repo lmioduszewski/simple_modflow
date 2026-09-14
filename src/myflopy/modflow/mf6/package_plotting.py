@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -98,6 +99,44 @@ def resolve_noun_hover(hover, trace_kwargs: dict):
 
     legacy = trace_kwargs.pop("hover_spec", None)
     return legacy if hover is None else hover
+
+
+def _explicit_options(local_vars: dict, method, names) -> dict:
+    """The named parameters in ``names`` a caller actually SET, by value.
+
+    Lives here rather than with its first caller because the composers need it
+    too: ``mosaic``/``animate`` name the same drawing parameters and must forward
+    only what the caller actually set, or a default would override the noun's own
+    colour policy on every panel.
+
+    ``PRTPathlineView.map`` used to read its ``**base_kwargs`` tail three times
+    -- to refuse base-map options on the Matplotlib branch, to refuse them on an
+    already-built base, and to forward them -- so naming those parameters (plan
+    8.8) would have emptied the tail and silently disabled all three checks. This
+    reconstructs the same information from the named parameters instead, by
+    comparing each against the default in the method's OWN signature, so the two
+    cannot drift.
+
+    A numpy array compared against ``None`` returns an elementwise array whose
+    truth value raises; an array is never a default, so that is "supplied".
+    """
+
+    defaults = {
+        name: parameter.default
+        for name, parameter in inspect.signature(method).parameters.items()
+    }
+    supplied = {}
+    for name in names:
+        if name not in local_vars:
+            continue
+        value, default = local_vars[name], defaults.get(name, inspect.Parameter.empty)
+        try:
+            differs = value is not default and bool(value != default)
+        except ValueError:
+            differs = True
+        if differs:
+            supplied[name] = value
+    return supplied
 
 
 def _mpl_shared_scale(choros, *, diff: bool):
@@ -549,15 +588,23 @@ NOUN_MAP_PARAMS = (
     "select", "select_style", "select_color",
     "features", "hillshade_path",
     "fit_bounds", "bounds_padding",
-    "hover",
+    "hover", "show_layer_elevs", "hover_surfaces",
     "backend",
 )
 
 #: Extra parameters only a PER-LAYER field (heads, concentration, temperature)
 #: can honour. Measured inert on record nouns -- see the note above.
+#:
+#: `show_layer_elevs`/`hover_surfaces` LEFT this tier on 2026-09-14 (ledger 258).
+#: They read the GRID's layer frame, not the mapped field, so there was never a
+#: reason they could not act on a K or conductance map -- and they did not, only
+#: because `Choro._build_hover_context` fetched the elevations inside its heads
+#: branch. With that fixed they are measured live on every spatial noun, so they
+#: moved to Tier 1. `hover_layers` stayed: it needs a per-layer FIELD, which a
+#: record noun does not carry, and it is still measured inert there.
 LAYER_FIELD_MAP_PARAMS = (
     "kstpkper", "per_timestep", "bgs",
-    "hover_layers", "hover_surfaces", "show_layer_elevs", "show_mounding",
+    "hover_layers", "show_mounding",
 )
 
 #: Parameters a noun must REFUSE rather than forward. Each contradicts what a
@@ -568,6 +615,32 @@ LAYER_FIELD_MAP_PARAMS = (
 #:   `custom_hover`/`hover_heads`/`hover_ks` -- the legacy hover path. A noun
 #:     always passes `hover_spec=`, which beats them, so they were dead.
 NOUN_REFUSED_PARAMS = ("values", "type", "custom_hover", "hover_heads", "hover_ks")
+
+#: The per-PANEL drawing options the composers name and forward to each panel's
+#: `map`. `backend` is excluded deliberately: on a composer it chooses the
+#: renderer for the WHOLE figure, and a panel is always a `Choro`.
+PANEL_DRAWING_PARAMS = tuple(name for name in NOUN_MAP_PARAMS if name != "backend")
+
+
+def refuse_panel_drawing_options(kind: str, verb: str, options: dict) -> None:
+    """Raise if map-drawing options were passed to a non-map composer kind.
+
+    `mosaic(kind="plot", logscale=True)` used to drop `logscale` into a
+    `**kwargs` tail that the series branch never reads -- accepted, ignored, and
+    the figure came back linear with nothing said. Naming the parameters (8.8)
+    makes the mistake reachable from an editor, so it has to be answered.
+
+    Only the NAMED drawing options are refused; the `**kwargs` tail still rides
+    to the section branch, which has drawing options of its own.
+    """
+
+    if not options:
+        return
+    raise TypeError(
+        f"{verb}(kind={kind!r}) draws no choropleth, so it cannot honour "
+        f"{sorted(options)}. Those are map options -- use kind='map', or drop them."
+    )
+
 
 #: Reachable on a noun but measured NOT to act, so deliberately not offered:
 #:   `hover_fields` -- the noun sets `hover_spec`, which supersedes it.
@@ -1474,6 +1547,7 @@ class SpatialView:
     def mosaic(
         self,
         *,
+        # -- what is faceted, and how ------------------------------------------
         kind: str = "map",
         by: str | None = None,
         per=None,
@@ -1481,10 +1555,39 @@ class SpatialView:
         model=None,
         cells=None,
         agg: str | None = None,
-        backend: str = "plotly",
         ncols: int = 3,
         title: str | None = None,
         sync_views: bool = True,
+        # -- colour of each panel ---------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours ----------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting -------------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing -----------------------------------------------
+        features=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover ---------------------------------------------------------------
+        hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
+        # -- renderer -------------------------------------------------------------
+        backend: str = "plotly",
         **kwargs,
     ):
         """Faceted grid of panels sharing one scale.
@@ -1494,17 +1597,179 @@ class SpatialView:
         ``by`` picks the facet axis -- maps: ``"layer"``/``"model"``; series:
         ``"model"``/``"layer"``/an entity (``"lake"``, ``"reach"``); sections:
         ``"model"``/``"period"``. Defaults to the surface's natural axis.
-        For ``kind="map"``, ``sync_views`` (default ``True``) frames every panel
-        to one shared extent so the maps line up; set it ``False`` to fit each
-        map to its own data. It is ignored for non-map kinds.
+
+        **Every drawing option of ``map`` is named here and reaches each panel**
+        (8.8, 2026-09-14): a mosaic of K over layers is
+        ``mosaic(logscale=True, features=wells, show_layer_elevs=True)``. Only the
+        options a caller actually SET are forwarded, so a panel keeps its noun's
+        own colour policy otherwise. They are refused, not ignored, on
+        ``kind="plot"``/``"section"``, which draw no choropleth.
+
+        Parameters
+        ----------
+        kind : {'map', 'plot', 'section'}, default 'map'
+            What each panel is: a choropleth, a series plot, or a cross section.
+        by : str, optional
+            Facet axis. Maps: ``'layer'`` or ``'model'``; series: ``'model'``,
+            ``'layer'`` or an entity (``'lake'``, ``'reach'``); sections:
+            ``'model'`` or ``'period'``. Defaults to this surface's natural axis.
+        per : int, optional
+            Stress period held constant across the panels (0-based).
+        layer : int or sequence of int, optional
+            The layer faceted over (``by='layer'``), or held constant otherwise.
+            Defaults to every layer this field has data for.
+        model : str or sequence of str, optional
+            The model faceted over (``by='model'``), or held constant otherwise.
+            Groups and diffs only.
+        cells : sequence of int, optional
+            Restrict series panels to these cells. ``kind='plot'`` only.
+        agg : str, optional
+            How several rows per period are reduced for a series panel
+            (``'sum'``/``'mean'``/...). ``kind='plot'`` only.
+        ncols : int, default 3
+            Grid width; rows grow as needed.
+        title : str, optional
+            Overall figure title. Defaults to a label naming the field and axis.
+        sync_views : bool, default True
+            Pan and zoom every map panel together. Panels always START on one
+            shared extent so the small multiples line up; this controls the live
+            linking only, and is ignored for non-map kinds.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Which renderer draws the GRID of panels -- not each panel, which is
+            always built as a ``Choro`` first. ``'plotly'`` returns one house
+            ``viz.Fig`` of linked subplots; ``'mpl'`` a single static
+            :class:`matplotlib.figure.Figure` whose panels share one colorbar
+            (a log-scaled mosaic gets a log axis in real units). It earns its
+            keep here: a composer has no intermediate picture to call
+            ``.plot_mpl()`` on.
+
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
+        zmin, zmax : float, optional
+            Fixed color-scale limits. Set both to hold the scale steady across
+            frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+            color. With neither, the range comes from the data.
+        colorscale : str or list of (float, str), optional
+            Any Plotly colorscale name -- ``'earth'`` (the default), ``'Viridis'``,
+            ``'Turbo'``, ``'RdBu'``, ...; append ``_r`` to reverse one -- or explicit
+            ``[[position, color], ...]`` stops. The static backend builds its
+            colormap from the same stops, so a name renders the same way on both.
+            An unknown name warns and falls back to ``'earth'``.
+        logscale : bool, default False
+            Color on a log10 scale, for a field that spans orders of magnitude
+            (hydraulic conductivity, recharge). The colorbar is labelled in real
+            units at whole decades on both backends and the hover keeps the real
+            values. ``zmin``/``zmax`` (and a ``zmid``) are then in DATA units --
+            ``zmin=1e-4, zmax=10`` -- and a non-positive limit raises. Non-positive
+            values draw as gaps.
+        contours : bool or str, default False
+            Overlay contour lines. ``True`` contours the mapped values; a string
+            names a different field to contour instead.
+        contour_values : sequence of float, optional
+            Contour a supplied array rather than the mapped one.
+        contour_levels : int or float or list of float, default 10
+            A count of levels, a fixed interval, or explicit level values.
+        contour_color : str, default 'black'
+            Line colour for the contour trace.
+        contour_width : float, default 1.5
+            Line width for the contour trace.
+        contour_name : str, optional
+            Legend name for the contour trace.
+        contour_clip : bool, default True
+            Clip contours to the active domain instead of the full grid extent.
+        contour_resolution : int, default 150
+            Grid size used to build the contours, per axis. Higher is smoother and
+            slower. **Only acts under ``contour_method="cubic"``**, which is the one
+            that interpolates onto a square grid before contouring; the default
+            linear method triangulates the cell centres directly, so there is no
+            grid for this to size and passing it changes nothing (measured: 338
+            contour points at 40, 150 and 400 alike).
+        contour_method : {'linear', 'cubic'}, default 'linear'
+            How the scattered cell values become contours. ``'linear'``
+            triangulates the cell centres and contours the triangulation --
+            fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+            a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+            that -- smoother, slower, and able to overshoot between cells.
+            ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+            ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+            both; ``'nearest'`` in particular was documented here for a while and
+            has never been implemented.
+        select : sequence of int, ndarray, str, Path or geometry, optional
+            Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+            name of a registered model region (``"all_streams"``), a path to a
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
+            nothing (with a warning) when the selection is empty.
+        select_style : {'outline', 'dim', 'both'}, default 'outline'
+            How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+            of the selection and leaves every cell at full opacity. ``'dim'`` fades
+            the *unselected* cells to 20% instead, which suits a bare grid where the
+            selection is the subject, but on a field it costs a measured 6.9x of
+            readable contrast everywhere you did not select -- and one box/lasso
+            gesture in the browser overwrites it. ``'both'`` draws each.
+        select_color : str, optional
+            Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+            when the default red collides with a red-blue diverging colorscale.
+        features : path, GeoDataFrame, geometry, Feature, or list/dict of those, optional
+            Custom geometry drawn over the cells -- wells, pond footprints, a
+            boundary. A path to any vector file GeoPandas reads (name a GeoPackage
+            layer with ``Feature(path, layer=...)``), a ``GeoDataFrame`` or
+            ``GeoSeries``, a shapely geometry, or a :class:`myflopy.plot.Feature`
+            carrying its own ``color``/``width``/``size``/``fill``/``label``/
+            ``hover``. A list draws several layers; a dict names them. Points
+            become markers, lines polylines, polygons outlines (or fills). Each
+            layer gets a legend entry, a stable house color and a hover listing its
+            attribute columns. A source without a CRS is taken to be in the grid's.
+            Drawn by both backends and kept by ``mosaic`` and ``animate``.
+        hillshade_path : Path, optional
+            A hillshade GeoTIFF to draw beneath the cells for topographic context.
+        fit_bounds : bool, default True
+            Fit the initial view to the grid extent rather than using ``zoom``.
+        bounds_padding : float, default 0.05
+            Fractional padding around the fitted bounds.
+        hover : HoverSpec, optional
+            Replace the sectioned hover outright. See
+            :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            With ``backend='plotly'`` (the default), a
+            :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
+            ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
+            carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
+            animation over periods.
+
+            With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
+            use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+
+            .. end generated
+
+        See Also
+        --------
+        map : one panel of this, drawn on its own.
+        animate : the same panels in sequence rather than side by side.
+
+        Examples
+        --------
+        >>> model.packages.npf.k.mosaic()                     # one panel per layer
+        >>> model.packages.npf.k.mosaic(logscale=True, show_layer_elevs=True)
+        >>> model.hds.mosaic(by="layer", contours=True, contour_levels=8)
+        >>> model.packages.drn.results.q.mosaic(features="wells.gpkg", ncols=2)
+        >>> model.packages.npf.k.mosaic(logscale=True, backend="mpl")
         """
 
+        panel_options = _explicit_options(locals(), type(self).mosaic, PANEL_DRAWING_PARAMS)
         kind_key = str(kind).lower()
         if kind_key == "map":
             axis = (by or self._spatial_default_facet()).lower()
             fixed_per = self._single_period(per)
             panels = self._facet_panels(
-                axis, per=fixed_per, layer=layer, model=model, **kwargs
+                axis, per=fixed_per, layer=layer, model=model, **panel_options, **kwargs
             )
             heading = title or f"{self._spatial_value_label()} by {axis}"
             if self._normalize_backend(backend) == "plotly":
@@ -1512,6 +1777,7 @@ class SpatialView:
                     panels, ncols=int(ncols), title=heading, sync_views=sync_views
                 )
             return self._mpl_mosaic(panels, ncols=int(ncols), title=heading)
+        refuse_panel_drawing_options(kind_key, "mosaic", panel_options)
         if kind_key == "plot":
             return self._plot_mosaic(
                 by=by,
@@ -1769,6 +2035,7 @@ class SpatialView:
     def animate(
         self,
         *,
+        # -- what is swept, and how --------------------------------------------
         kind: str = "map",
         over: str | None = None,
         per=None,
@@ -1776,8 +2043,37 @@ class SpatialView:
         model=None,
         cells=None,
         agg: str | None = None,
-        backend: str = "plotly",
         title: str | None = None,
+        # -- colour of each panel ---------------------------------------------
+        zmin: float | None = None,
+        zmax: float | None = None,
+        colorscale: str | list | tuple | None = None,
+        logscale: bool = False,
+        # -- contours ----------------------------------------------------------
+        contours: bool | str = False,
+        contour_values=None,
+        contour_levels: int | float | list = 10,
+        contour_color: str = "black",
+        contour_width: float = 1.5,
+        contour_name: str | None = None,
+        contour_clip: bool = True,
+        contour_resolution: int = 150,
+        contour_method: str = "linear",
+        # -- highlighting -------------------------------------------------------
+        select=None,
+        select_style: str = "outline",
+        select_color: str | None = None,
+        # -- overlays and framing -----------------------------------------------
+        features=None,
+        hillshade_path=None,
+        fit_bounds: bool = True,
+        bounds_padding: float = 0.05,
+        # -- hover ---------------------------------------------------------------
+        hover=None,
+        show_layer_elevs: bool | None = None,
+        hover_surfaces: bool | None = None,
+        # -- renderer -------------------------------------------------------------
+        backend: str = "plotly",
         **kwargs,
     ):
         """Animate a panel across a dimension.
@@ -1785,21 +2081,173 @@ class SpatialView:
         ``kind`` picks the panel type: ``"map"`` (default), ``"section"`` (cross
         sections, heads leaves), or ``"plot"`` (series). ``over="period"``
         sweeps stress periods (maps and sections); ``over="model"`` sweeps the
-        group's models (any kind). ``backend="plotly"`` returns an interactive
-        house ``viz.Fig`` (pan-drag, scroll-zoom, house template) with
-        play/slider; ``backend="mpl"`` a matplotlib ``FuncAnimation``. Both are
-        objects for the caller to display or save -- nothing is written to
-        disk.
+        group's models (any kind). Both backends return an object for the caller
+        to display or save -- nothing is written to disk.
+
+        **Every drawing option of ``map`` is named here and reaches every frame**
+        (8.8, 2026-09-14), and only the ones a caller actually SET are forwarded.
+        They are refused, not ignored, on ``kind="plot"``/``"section"``.
+
+        Parameters
+        ----------
+        kind : {'map', 'plot', 'section'}, default 'map'
+            What each frame is: a choropleth, a series plot, or a cross section.
+        over : {'period', 'model'}, optional
+            The dimension swept. ``'period'`` (maps and sections) steps stress
+            periods; ``'model'`` steps a group's models. Defaults to
+            ``'period'`` for maps and sections, ``'model'`` for series.
+        per : int or sequence of int, optional
+            Periods to sweep (``over='period'``), or the one period held
+            constant otherwise. Defaults to every period.
+        layer : int, default 0
+            Layer held constant across the frames (0-based).
+        model : str or sequence of str, optional
+            The models swept (``over='model'``), or the one held constant
+            otherwise. Groups and diffs only.
+        cells : sequence of int, optional
+            Restrict series frames to these cells. ``kind='plot'`` only.
+        agg : str, optional
+            How several rows per period are reduced for a series frame.
+            ``kind='plot'`` only.
+        title : str, optional
+            Figure title. Defaults to a label naming the field and the axis.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            Which renderer draws the animation. ``'plotly'`` returns an
+            interactive house ``viz.Fig`` with play/pause and a slider;
+            ``'mpl'`` a :class:`matplotlib.animation.FuncAnimation`. Both are
+            objects to display or save -- nothing is written to disk.
+
+            .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
+        zmin, zmax : float, optional
+            Fixed color-scale limits. Set both to hold the scale steady across
+            frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
+            color. With neither, the range comes from the data.
+        colorscale : str or list of (float, str), optional
+            Any Plotly colorscale name -- ``'earth'`` (the default), ``'Viridis'``,
+            ``'Turbo'``, ``'RdBu'``, ...; append ``_r`` to reverse one -- or explicit
+            ``[[position, color], ...]`` stops. The static backend builds its
+            colormap from the same stops, so a name renders the same way on both.
+            An unknown name warns and falls back to ``'earth'``.
+        logscale : bool, default False
+            Color on a log10 scale, for a field that spans orders of magnitude
+            (hydraulic conductivity, recharge). The colorbar is labelled in real
+            units at whole decades on both backends and the hover keeps the real
+            values. ``zmin``/``zmax`` (and a ``zmid``) are then in DATA units --
+            ``zmin=1e-4, zmax=10`` -- and a non-positive limit raises. Non-positive
+            values draw as gaps.
+        contours : bool or str, default False
+            Overlay contour lines. ``True`` contours the mapped values; a string
+            names a different field to contour instead.
+        contour_values : sequence of float, optional
+            Contour a supplied array rather than the mapped one.
+        contour_levels : int or float or list of float, default 10
+            A count of levels, a fixed interval, or explicit level values.
+        contour_color : str, default 'black'
+            Line colour for the contour trace.
+        contour_width : float, default 1.5
+            Line width for the contour trace.
+        contour_name : str, optional
+            Legend name for the contour trace.
+        contour_clip : bool, default True
+            Clip contours to the active domain instead of the full grid extent.
+        contour_resolution : int, default 150
+            Grid size used to build the contours, per axis. Higher is smoother and
+            slower. **Only acts under ``contour_method="cubic"``**, which is the one
+            that interpolates onto a square grid before contouring; the default
+            linear method triangulates the cell centres directly, so there is no
+            grid for this to size and passing it changes nothing (measured: 338
+            contour points at 40, 150 and 400 alike).
+        contour_method : {'linear', 'cubic'}, default 'linear'
+            How the scattered cell values become contours. ``'linear'``
+            triangulates the cell centres and contours the triangulation --
+            fast, exact at the centres, and faceted. ``'cubic'`` interpolates onto
+            a ``contour_resolution``-square grid first (Clough-Tocher) and contours
+            that -- smoother, slower, and able to overshoot between cells.
+            ``'tri'``/``'tricontour'`` and ``'clough'``/``'clough_tocher'``/
+            ``'cloughtocher'`` are accepted as aliases. Anything else raises naming
+            both; ``'nearest'`` in particular was documented here for a while and
+            has never been implemented.
+        select : sequence of int, ndarray, str, Path or geometry, optional
+            Cells to highlight. Cell indices, a boolean mask of length ``ncpl``, the
+            name of a registered model region (``"all_streams"``), a path to a
+            vector file, or a shapely/GeoPandas geometry, by coverage. Highlights
+            nothing (with a warning) when the selection is empty.
+        select_style : {'outline', 'dim', 'both'}, default 'outline'
+            How the highlight is drawn. ``'outline'`` traces the dissolved boundary
+            of the selection and leaves every cell at full opacity. ``'dim'`` fades
+            the *unselected* cells to 20% instead, which suits a bare grid where the
+            selection is the subject, but on a field it costs a measured 6.9x of
+            readable contrast everywhere you did not select -- and one box/lasso
+            gesture in the browser overwrites it. ``'both'`` draws each.
+        select_color : str, optional
+            Highlight colour, defaulting to ``viz.PALETTE.highlight``. Worth setting
+            when the default red collides with a red-blue diverging colorscale.
+        features : path, GeoDataFrame, geometry, Feature, or list/dict of those, optional
+            Custom geometry drawn over the cells -- wells, pond footprints, a
+            boundary. A path to any vector file GeoPandas reads (name a GeoPackage
+            layer with ``Feature(path, layer=...)``), a ``GeoDataFrame`` or
+            ``GeoSeries``, a shapely geometry, or a :class:`myflopy.plot.Feature`
+            carrying its own ``color``/``width``/``size``/``fill``/``label``/
+            ``hover``. A list draws several layers; a dict names them. Points
+            become markers, lines polylines, polygons outlines (or fills). Each
+            layer gets a legend entry, a stable house color and a hover listing its
+            attribute columns. A source without a CRS is taken to be in the grid's.
+            Drawn by both backends and kept by ``mosaic`` and ``animate``.
+        hillshade_path : Path, optional
+            A hillshade GeoTIFF to draw beneath the cells for topographic context.
+        fit_bounds : bool, default True
+            Fit the initial view to the grid extent rather than using ``zoom``.
+        bounds_padding : float, default 0.05
+            Fractional padding around the fitted bounds.
+        hover : HoverSpec, optional
+            Replace the sectioned hover outright. See
+            :mod:`myflopy.modflow.utils.datatypes.hover`.
+        hover_surfaces : bool, optional
+            Add the model-top / layer-bottom table to the sectioned hover.
+        show_layer_elevs : bool, optional
+            Add model-top and per-layer-bottom rows to the hover. Defaults to
+            whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
+            because forcing it on a grid without them raises.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            With ``backend='plotly'`` (the default), a
+            :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
+            ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
+            carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
+            animation over periods.
+
+            With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
+            use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
+
+            .. end generated
+
+        See Also
+        --------
+        map : one frame of this, drawn on its own.
+        mosaic : the same panels side by side rather than in sequence.
+
+        Examples
+        --------
+        >>> model.hds.animate()                               # heads over periods
+        >>> model.hds.animate(logscale=True, features="wells.gpkg")
+        >>> model.packages.drn.results.q.animate(over="period", zmin=-50, zmax=50)
+        >>> model.hds.animate(backend="mpl")
         """
 
+        panel_options = _explicit_options(locals(), type(self).animate, PANEL_DRAWING_PARAMS)
         kind_key = str(kind).lower()
         if kind_key == "map":
             axis = str(over or "period").lower()
-            frames = self._frame_panels(axis, per=per, layer=layer, model=model, **kwargs)
+            frames = self._frame_panels(
+                axis, per=per, layer=layer, model=model, **panel_options, **kwargs
+            )
             heading = title or f"{self._spatial_value_label()} over {axis}"
             if self._normalize_backend(backend) == "plotly":
                 return self._plotly_animation(frames, title=heading)
             return self._mpl_animation(frames, title=heading)
+        refuse_panel_drawing_options(kind_key, "animate", panel_options)
         if kind_key == "plot":
             return self._plot_animation(
                 over=over,
