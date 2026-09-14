@@ -1013,14 +1013,60 @@ class StaticArrayFieldExplorer(SpatialView):
         *,
         label: str | None = None,
         colorscale: str = "Viridis",
+        siblings: Sequence[str] = (),
     ):
-        """Bind a static layer/cell array field (IC/NPF/STO) with a label and colorscale."""
+        """Bind a static layer/cell array field (IC/NPF/STO) with a label and colorscale.
+
+        ``siblings`` are the package's other DECLARED array fields (``k22``/``k33``
+        beside ``k``, ``sy`` beside ``ss``). They are read at the SAME layer and
+        listed under the mapped value in the hover -- reading a K map means asking
+        "and what is K33 here", and a hover carrying only the coloured field
+        answers half of it. The same rule the list packages already follow through
+        :func:`_sibling_input_fields`, and declared by the namespace that owns the
+        field table rather than guessed here.
+        """
 
         self.model = model
         self.package_name = str(package_name).lower()
         self.field_name = str(field_name)
         self.label = label or f"{self.package_name}.{self.field_name}"
         self.colorscale = colorscale
+        self.siblings = tuple(str(name) for name in siblings)
+
+    #: What reading a SIBLING array may raise. It is a convenience on someone
+    #: else's map, so an unreadable one is dropped rather than taking the figure
+    #: down: a missing attribute, a shape `_as_layer_cell_property` refuses, or a
+    #: package object that does not answer `.array`/`.data`.
+    _SIBLING_UNAVAILABLE = (AttributeError, IndexError, KeyError, TypeError, ValueError)
+
+    def _sibling_arrays(self, layer: int) -> dict[str, list]:
+        """``{field: per-cell values}`` for this package's other arrays at ``layer``.
+
+        Only fields with VALUES at this layer. The presence test is the finite
+        data, not the attribute: FloPy answers ``npf.k22`` with a live object on
+        every model, and its ``.array`` is ``None`` on the many that never set
+        it -- which reached the hover as a row of blanks under a real field name.
+        A row that is empty on every cell is the same defect as naming a
+        parameter that cannot act.
+        """
+
+        package = self.model.package(self.package_name)
+        ncpl = int(self.model.vor.ncpl)
+        arrays: dict[str, list] = {}
+        for name in self.siblings:
+            if getattr(package, name, None) is None:
+                continue
+            try:
+                values = type(self)(self.model, self.package_name, name)._array()
+            except self._SIBLING_UNAVAILABLE:
+                continue
+            if int(layer) >= values.shape[0]:
+                continue
+            at_layer = np.asarray(values[int(layer)], dtype=float)[:ncpl]
+            if not np.isfinite(at_layer).any():
+                continue
+            arrays[name] = at_layer.tolist()
+        return arrays
 
     def _array(self) -> np.ndarray:
         """Read this field from its package and broadcast it to a ``(nlay, ncpl)`` array."""
@@ -1347,6 +1393,9 @@ class StaticArrayFieldExplorer(SpatialView):
             layer=layer,
             agg="first",
         )
+        # The package's other arrays at this layer, listed under the mapped value.
+        cell_hover = {**cell_hover, **self._sibling_arrays(int(layer))}
+        siblings = tuple(name for name in self.siblings if name in cell_hover)
         choro = self.model.plot.map(
             per=0,
             layer=layer,
@@ -1365,7 +1414,7 @@ class StaticArrayFieldExplorer(SpatialView):
             hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(
                 self.field_name,
-                extra_fields=_sibling_input_fields(self.package_name, self.field_name),
+                extra_fields=siblings,
                 context_fields=_input_context_fields(cell_hover),
             ),
             zmin=zmin,

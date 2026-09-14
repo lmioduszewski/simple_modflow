@@ -138,6 +138,16 @@ takes, at every scope, verb and noun alike:
   same stops. An unknown name warns and draws `earth` — the deliberate inverse
   of `_field_map_policy`, which raises, because a typo in a notebook cell
   should cost a warning and not the figure.
+- **A static-array map lists the package's OTHER arrays** (ledger 259). Mapping
+  `npf.k` shows `k33` under the coloured value, plain rather than bold, and
+  `npf.k33` shows `k`; `sto.ss` shows `sy`. One rule, not a K special case: the
+  same thing the list packages do through `_sibling_input_fields`, where reading
+  a GHB map means asking "what head, against what conductance". The siblings are
+  the ones the namespace DECLARES (`StaticArrayPackageExplorer`'s field table),
+  read at the same layer, and a sibling with no finite values is dropped — FloPy
+  answers `npf.k22` with a live object on every model and its `.array` is `None`
+  on the many that never set it, which otherwise rendered a row of blanks under
+  a real field name.
 - **`show_layer_elevs=` / `hover_surfaces=`** put the grid's layer frame in the
   hover — the model top and each layer's bottom at that cell. They are **Tier 1**
   as of ledger 258: the elevations come from the GRID, not from the mapped

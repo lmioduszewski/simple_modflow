@@ -163,6 +163,11 @@ class StaticArrayPackageExplorer:
             str(field_name),
             label=metadata.get("label"),
             colorscale=metadata.get("colorscale", "Viridis"),
+            # The package's OTHER declared arrays, for the map hover: reading a
+            # K map means asking "and what is K33 here". Passed DOWN rather than
+            # looked up, because this namespace owns the declaration and a field
+            # explorer reaching back up for it would be a cycle.
+            siblings=tuple(name for name in self._fields if name != str(field_name)),
         )
 
     def __getattr__(self, field_name: str) -> StaticArrayFieldExplorer:

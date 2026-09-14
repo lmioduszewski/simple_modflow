@@ -247,3 +247,94 @@ def test_every_mosaic_panel_carries_the_elevations_and_its_own_active_layer(cano
     assert len(panels) > 1
     for trace in panels:
         assert "Top" in trace.hovertemplate, "a panel lost its layer elevations"
+
+
+# ---------------------------------------------------------------------------
+# A static array map lists the package's OTHER arrays (ledger 259).
+#
+# Asked for 2026-09-14: "when I plot k or k33, I also want to show the other in
+# the hover ... not bold like k, but still there for easy reference". The same
+# rule the list packages already follow through `_sibling_input_fields` -- a GHB
+# map answers "what head, against what conductance" -- reaching the arrays,
+# where the payload carried one field and the registry names none.
+# ---------------------------------------------------------------------------
+
+
+def _hover_labels(choro) -> list[str]:
+    """The label of each row in the rendered hover, in order."""
+
+    import re
+
+    template = choro.get_choropleth().hovertemplate
+    return re.findall(r'<span style="color:#[0-9a-f]{6}">([^<]+?)\s*</span>', template)
+
+
+def _hover_row(template: str, name: str) -> str:
+    """The rendered row whose LABEL is ``name``.
+
+    Keyed on the muted label span, not on ``>name<``: the hover's title is the
+    mapped field's own name, so the loose match returns the header instead of
+    the value row and any assertion about styling then reads the wrong line.
+    """
+
+    import re
+
+    rows = [
+        line for line in template.split("<br>")
+        if re.search(r'<span style="color:#[0-9a-f]{6}">' + re.escape(name) + r'\s*</span>', line)
+    ]
+    assert rows, f"no hover row labelled {name!r}"
+    return rows[0]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(("field", "sibling"), [("k", "k33"), ("k33", "k")])
+def test_a_conductivity_map_lists_its_counterpart(canonical_run, field, sibling):
+    """Plotting either of the pair shows the other, with the mapped one primary."""
+
+    import numpy as np
+
+    npf = canonical_run.packages.npf
+    choro = getattr(npf, field).map(layer=1)
+    labels = _hover_labels(choro)
+    assert field in labels and sibling in labels, labels
+    assert labels.index(field) < labels.index(sibling), "the mapped field comes first"
+
+    # the sibling's column carries the sibling's OWN values, at this layer
+    trace = choro.get_choropleth()
+    column = _hover_row(trace.hovertemplate, sibling)
+    index = int(column.split("customdata[")[1].split("]")[0])
+    shown = np.array([float(row[index]) for row in trace.customdata])
+    truth = getattr(npf, sibling).get(layer=1)[sibling].to_numpy(dtype=float)
+    assert np.allclose(shown, truth, rtol=1e-3)
+
+
+@pytest.mark.slow
+def test_the_mapped_field_is_the_bold_one_and_the_sibling_is_not(canonical_run):
+    """"Not bold like k, but still there for easy reference"."""
+
+    template = canonical_run.packages.npf.k.map().get_choropleth().hovertemplate
+    primary, sibling = (_hover_row(template, name) for name in ("k", "k33"))
+    assert "<b>" in primary and "font-size:15px" in primary
+    assert "<b>" not in sibling and "font-size:15px" not in sibling
+
+
+@pytest.mark.slow
+def test_a_declared_sibling_with_no_values_is_not_listed(canonical_run):
+    """FloPy answers `npf.k22` with a live object on every model and its `.array`
+    is None on the many that never set it, which reached the hover as a row of
+    blanks under a real field name."""
+
+    npf = canonical_run.packages.npf
+    assert "k22" in npf.k.siblings, "k22 is declared, so the skip is measured not vacuous"
+    assert getattr(canonical_run.package("npf"), "k22", None) is not None
+    assert canonical_run.package("npf").k22.array is None
+    assert "k22" not in _hover_labels(npf.k.map())
+
+
+@pytest.mark.slow
+def test_storage_arrays_pair_the_same_way_and_a_lone_array_is_unchanged(canonical_run):
+    """One rule, not an npf special case -- and a package with one array is untouched."""
+
+    assert "sy" in _hover_labels(canonical_run.packages.sto.ss.map())
+    assert _hover_labels(canonical_run.packages.ic.strt.map()) == ["cell", "strt", "layer"]

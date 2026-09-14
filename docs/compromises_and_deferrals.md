@@ -9401,3 +9401,41 @@ same day, which is the useful part of the result.
       static-array map, record nouns, the head map's merged table unchanged, the
       not-fetched-unless-asked guard, and every mosaic panel) and the composer
       section of `tests/test_noun_signatures.py`.
+
+259. **A conductivity map answered half the question (2026-09-14).**
+    - Asked for directly: "when I plot k or k33, I also want to show the other in the
+      hover ... not bold like k, but still there for easy reference." `npf.k.map()`
+      showed the cell, `k`, the layer and the period, and nothing else.
+    - The mechanism already existed one tier over. `cell_input_hover(extra_fields=)`
+      renders a package's OTHER record fields under the coloured one -- reading a GHB
+      map means asking "what head, against what conductance" -- and
+      `StaticArrayFieldExplorer.map` already called it. It passed
+      `_sibling_input_fields("npf", "k")`, which asks the package REGISTRY, and the
+      registry names no input fields for an array package: the call returned `()`
+      on every static-array map since the day it was written. The payload could not
+      have carried them anyway -- it is built from this field's own frame.
+    - So the field table that already declares what is drawable
+      (`StaticArrayPackageExplorer`: `ic.strt`; `npf.k`/`k22`/`k33`; `sto.ss`/`sy`) is
+      now also the declaration of what to list. The namespace passes each field its
+      `siblings=`, and `_sibling_arrays(layer)` reads them at the SAME layer into the
+      hover payload. Declared DOWNWARD rather than looked up, because the namespace
+      owns the table and a field explorer reaching back up for it is a cycle.
+    - **A sibling with no finite values is skipped, and that is measured, not
+      defensive.** FloPy answers `npf.k22` with a live object on every model, and its
+      `.array` is `None` on the many that never set it -- so the attribute test that
+      reads correctly (`getattr(package, name, None) is None`) let `k22` through and
+      the hover gained a row that was blank on all 441 cells, under a real field
+      name. A row empty on every cell is the same defect as naming a parameter that
+      cannot act. The canonical model is such a model, so the guard has a live
+      subject in the suite rather than a synthetic one.
+    - Deliberately NOT done: no k/k33 special case (`sto.ss` gets `sy` from the same
+      rule, and `ic.strt` correctly gets nothing); no ratio row (a K:K33 anisotropy
+      line is a derived quantity and a different request); the siblings are NOT
+      offered as a parameter, because the field table is the declaration and a
+      per-call override has no caller yet. `_sibling_input_fields` stays as it is --
+      it is the list-package path and remains correct there.
+    - Cost: one extra array read per sibling per map, from FloPy's in-memory package.
+      No raster sampling, unlike the layer elevations in ledger 258.
+    - Tests: `tests/test_hover_integration.py` -- the pair both ways with the
+      sibling's own values checked against the array, the bold/plain styling the
+      request named, the unset-`k22` skip, `sto`, and `ic.strt` unchanged.
