@@ -9514,3 +9514,58 @@ same day, which is the useful part of the result.
       thicknesses (so a transposed or reversed frame fails), the refusal with no
       surfaces, the Dataset return, the explicit-value precedence, the model-level
       export, and the `isel` round trip through NetCDF.
+
+262. **The xugrid export could not be profiled in QGIS at all, whatever the settings
+    (2026-09-14).**
+    - Follow-up to 261, and the reason it was only half an answer. Reported: "I
+      can't figure out what to choose [in the Elevation tab] to make the layer show
+      on the profile as an elevation. Right now it just plots a flat line at zero."
+    - **No setting could have worked, and that is measured.** A QGIS mesh layer
+      takes its elevation from the mesh VERTEX Z. The UGRID file declares
+      `node_coordinates = "mesh2d_node_x mesh2d_node_y"` -- X and Y, no Z -- so
+      every vertex sits at zero. Profiling the exported mesh through the QGIS 4.2.2
+      bindings returned 102 samples, all `0.00`: exactly the reported line. And
+      `Qgis.MeshElevationMode` offers only `FixedElevationRange`, `FromVertices`
+      (the default) and `FixedRangePerGroup` -- none of which reads a dataset
+      group, so the `top`/`botm_n` datasets 261 attaches can colour a mesh but can
+      never raise it. Ledger 261 stands for interchange; it does not deliver a
+      profile.
+    - `VoronoiGridPlus.to_gpkg(path, data=None, surfaces=False, layer="cells")` is
+      the answer: a flat `cells` layer carrying any per-cell values, plus -- with
+      `surfaces=True` -- one GeoPackage layer PER SURFACE whose geometry carries
+      that surface's elevation as **Z**. Measured on the written file: all five
+      surfaces profiled, in order (`top` 101.27-146.19 down to `botm_4`
+      1.27-46.19), with **one** setting changed, `Clamping: Absolute`. The
+      attribute-driven alternative (`Clamping` + `Binding` + a data-defined
+      `ZOffset` expression) profiles identically and needs three settings and an
+      expression per layer, so the Z is baked into the geometry instead.
+    - One layer per surface, not one layer with a surface column, because elevation
+      in QGIS is a per-LAYER property: several surfaces on one profile means
+      several map layers. The flat `cells` layer still carries every surface as a
+      COLUMN, for labelling and queries.
+    - The surfaces are resolved BEFORE the first write, so a grid without them
+      raises with nothing written rather than leaving a GeoPackage holding `cells`
+      and none of what was asked for (asserted).
+    - Deliberately NOT done, each measured or reasoned:
+      - **No raster export.** QGIS profiles an elevation raster natively and that
+        is the conventional route, but rasterising a Voronoi field is a resolution
+        choice myflopy would have to invent, and the vector route needs no
+        resampling. (`Surface.resolve_source()` already hands back the GeoTIFF for a
+        raster- or contour-backed `mf.Surface`, which covers the case where a real
+        raster exists.) Recorded as the one open alternative.
+      - **No model-level `to_gpkg`.** `data=` composes: `vor.to_gpkg(p,
+        data={"head": model.hds.array(layer=0)}, surfaces=True)`. A second entry
+        point would own the same decision twice.
+      - **No Z on the `cells` layer.** It is the flat plan-view layer; giving it Z
+        would make one layer answer two questions.
+    - Not established: whether an elevation RASTER profiles in this headless
+      harness. `QgsRasterLayer.createProfileGenerator(...).generateProfile()`
+      returned True and zero samples for a valid raster that samples correctly at a
+      point, under both elevation modes. Treated as a limitation of driving the
+      profile API without a map canvas, NOT as a claim about QGIS, and left out of
+      the docs rather than asserted either way.
+    - Tests: `tests/test_grid_gpkg_export.py` -- the plain layer, data columns and
+      their length check, the Z on every surface layer matching its attribute, the
+      declared thicknesses (so a scrambled or reversed frame fails), the surface
+      columns on `cells`, the nothing-written refusal, the layer name, and a
+      created parent directory.

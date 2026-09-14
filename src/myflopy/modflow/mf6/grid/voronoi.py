@@ -771,6 +771,102 @@ class VoronoiGridPlus(VoronoiGrid):
         """Write the Voronoi polygons to a shapefile or other GeoPandas target."""
         return self.gdf_vorPolys.to_file(filepath)
 
+    def to_gpkg(
+        self,
+        path: str | Path = "grid.gpkg",
+        *,
+        data=None,
+        surfaces: bool = False,
+        layer: str = "cells",
+    ):
+        """Write the grid's cells to a GeoPackage, ready for QGIS.
+
+        The vector counterpart to :meth:`to_xugrid`. One ``cells`` layer of flat
+        polygons carrying whatever per-cell values you pass, plus -- with
+        ``surfaces=True`` -- one layer PER LAYER SURFACE whose geometry carries
+        that surface's elevation as its **Z**.
+
+        The Z is the point. A QGIS elevation profile reads a vector layer's own
+        Z when its Elevation tab is set to ``Clamping: Absolute``, and that is
+        the only setting needed: no expression, no data-defined override. The
+        alternative, driving the elevation from an attribute, needs three
+        settings and an expression per layer. Measured against QGIS 4.2.2: both
+        produce the same profile, and a MESH layer produces a flat line at zero
+        however it is configured, because mesh elevation comes from vertex Z and
+        a UGRID file carries none (ledger 261).
+
+        One GeoPackage layer per surface, rather than one layer with a surface
+        column, because elevation in QGIS is a per-LAYER property: several
+        surfaces on one profile means several map layers.
+
+        Parameters
+        ----------
+        path
+            Destination GeoPackage. Created if absent, added to if present.
+        data
+            Optional ``{name: per-cell array}`` written as attribute columns on
+            the ``cells`` layer. Each array must have one value per cell.
+        surfaces
+            Also write ``top`` and ``botm_1`` ... ``botm_n``, one Z-valued layer
+            each, from :meth:`layer_surface_fields`. Raises if the grid carries
+            no layer surfaces.
+        layer
+            Name for the flat cell layer (default ``"cells"``).
+
+        Returns
+        -------
+        pathlib.Path
+            The GeoPackage written.
+
+        See Also
+        --------
+        to_xugrid : the same data as a UGRID mesh, for NetCDF interchange.
+        layer_surface_fields : the elevations this writes, as plain arrays.
+
+        Examples
+        --------
+        >>> vor.to_gpkg("grid.gpkg", surfaces=True)
+        >>> # then in QGIS: add the `top` / `botm_1` layers, and set
+        >>> # Properties > Elevation > Clamping: Absolute on each.
+
+        >>> vor.to_gpkg("grid.gpkg", data={"k": npf_k_layer0,
+        ...                                "head": model.hds.array(layer=0)},
+        ...             surfaces=True)
+        """
+
+        from shapely import force_3d
+
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ncpl = int(self.ncpl)
+        geometry = self.gdf_vorPolys.geometry
+        columns = {"cell": np.arange(ncpl, dtype=int)}
+        for name, values in (data or {}).items():
+            array = np.asarray(values, dtype=float).ravel()
+            if array.shape[0] != ncpl:
+                raise ValueError(
+                    f"to_gpkg(): '{name}' has {array.shape[0]} value(s), "
+                    f"expected ncpl={ncpl}."
+                )
+            columns[str(name)] = array
+
+        # Resolved BEFORE the first write, so a grid with no surfaces fails with
+        # nothing written rather than leaving a half-built GeoPackage behind.
+        elevations = self.layer_surface_fields() if surfaces else {}
+        if surfaces:
+            columns.update(elevations)
+
+        gpd.GeoDataFrame(columns, geometry=geometry.to_numpy(), crs=self.crs).to_file(
+            path, layer=str(layer), driver="GPKG"
+        )
+        for name, values in elevations.items():
+            gpd.GeoDataFrame(
+                {"cell": np.arange(ncpl, dtype=int), name: values},
+                geometry=[force_3d(geom, float(z)) for geom, z in zip(geometry, values, strict=True)],
+                crs=self.crs,
+            ).to_file(path, layer=name, driver="GPKG")
+        return path
+
     def ugrid2d(self):
         """Return this grid's topology as an :class:`xugrid.Ugrid2d` (no data).
 
