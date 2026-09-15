@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 268 entries (269 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 269 entries (270 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 269 | A layer stack could not be written down, so no layered model could be SAVED | 2026-09-15 |
 | 268 | Two coupled models on different meshes built, ran, and said nothing | 2026-09-15 |
 | 267 | Three grid-bound helpers changed mesh in silence, and two ledger entries said they did not | 2026-09-15 |
 | 266 | Two of the tests written for 265 certified the fix instead of checking it, and both byte-identical comparis... | 2026-09-14 |
@@ -10231,3 +10232,36 @@ same day, which is the useful part of the result.
       The refusal names the exchange, both models and both pins, because "something is
       wrong" is not actionable. It is raised BEFORE the exchanges are built, since the
       failure it prevents is one MF6 would accept and run.
+
+269. **A layer stack could not be written down, so no layered model could be SAVED (2026-09-15).**
+      B1 commit 3, and the one that explains why B1 is bigger than "enable a grid move".
+      Measured before it: `mf.disv(result)` holds the RESOLVED `top`/`botm`/`idomain`
+      arrays, `to_dict` refuses an ndarray (ledger 193), so `Project.validate()` reported
+      `"Simulation 's' is not serializable"`, `Project.save()` persisted **0 simulations**
+      -- naming the skip in `SaveReport.skipped`, so honest rather than silent -- and
+      `Project.load()` returned an EMPTY project. That is every layered model, which is
+      the canonical way to build one here.
+      `Surface`, `_Layer` and `LayerStack` gain tagged `to_dict`/`from_dict`, plus one arm
+      each side of the spec serializer. The payload is the DECLARATION: the top surface,
+      each unit's surface and its `min_thickness`/`pinch`/`split`/`names`, and the units.
+      NOT carried: `vor` (a grid cannot be inlined, and a stack is declarable without one)
+      and `_draft` (a cached preview grid).
+      **The token is `$layer_stack`/`$surface`, not a `kind` tag, and that is not
+      cosmetic.** `Surface` HAS a `kind` field of its own -- `"flat"`, `"raster"`,
+      `"shift"` -- and `_spec_value` dispatches source specs on `kind`. Tagging a surface
+      as `{"kind": "flat"}` makes it fall through every arm and come back a PLAIN DICT:
+      no error, just a different object. The `$`-prefixed token follows `$tuple`/`$npz`.
+      Duck-typed on a class attribute rather than imported, because `specs` is import
+      layer 1 and `layers` is layer 6; revival uses a lazy import for the same reason.
+      **`Surface.from_array` and `from_points` are REFUSED by name**, since their content
+      is per-cell data and inlining arrays is exactly what ledger 193 refused (~3.3 MB per
+      model at 9,405 cells). Refusing beats degrading: a stack that quietly dropped an
+      array surface would round-trip into a DIFFERENT model. They stay usable; they just
+      cannot be written down, which is what the run's frozen snapshot is for.
+      **A stack does NOT determine its own arrays**, so this payload is a recipe and not a
+      result: `reconcile`, `min_sep`, `trigger_sep` and `method` live on the
+      `build()`/`to_disv()` call and move the answer, and `LayerBuildResult` has no field
+      for any of them. Commit 4 forwards all eight of `to_disv`'s build kwargs through
+      `mf.disv` for exactly this reason -- the user settled it 2026-09-15.
+      NOT closed here: this commit alone does not make a layered model saveable, because
+      `mf.disv` still holds arrays. Commit 4 is what closes it.

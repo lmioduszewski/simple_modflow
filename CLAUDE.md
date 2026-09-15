@@ -286,7 +286,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3420 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3429 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m00s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -629,6 +629,16 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   primitive, `Surface.toward(target, f)` — general `Surface - Surface` stays
   refused. There is deliberately no `.split()` verb: `replace(name, split=N)`.
   Not splittable: an `Isopach` bottom (measured from above, so cuts would drift).
+  **A stack SERIALIZES as of ledger 269** — `Surface`/`LayerStack` carry tagged
+  `to_dict`/`from_dict` under `$surface`/`$layer_stack` tokens (NOT a `kind` tag:
+  `Surface` has a `kind` field of its own and the source dispatcher keys on `kind`,
+  so one tagged as the other comes back a plain dict, silently). The payload is the
+  DECLARATION — top, units, `min_thickness`/`pinch`/`split`/`names` — never `vor` and
+  never the built arrays. **`Surface.from_array`/`from_points` are REFUSED by name**:
+  their content is per-cell data, which ledger 193 refused to inline. And a stack does
+  NOT determine its own arrays — `reconcile`/`min_sep`/`trigger_sep`/`method` live on
+  the `build()`/`to_disv()` call and move the answer, so a round-tripped stack is a
+  recipe that still needs them.
   Also fixed there: `thickness=<Surface>` was silently an ELEVATION, and
   `build`/`to_disv` disagreed on a split stack's idomain.
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).

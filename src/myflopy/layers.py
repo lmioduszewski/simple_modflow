@@ -2323,6 +2323,66 @@ class LayerStack:
         self.length_units = length_units
         self.time_units = time_units
 
+    #: Token :func:`myflopy.specs._json_value` writes this object under. See
+    #: :attr:`myflopy.surfaces.Surface._SPEC_TOKEN` for why it is not a ``kind`` tag.
+    _SPEC_TOKEN = "$layer_stack"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready payload: the DECLARATION, not the built arrays.
+
+        What rides: the top surface, each unit's bottom/thickness surface and its
+        ``min_thickness``/``pinch``/``split``/``names``, and the units. What does NOT:
+        ``vor`` (a stack is declarable without one, and a grid cannot be inlined --
+        ledger 193) and ``_draft`` (a cached preview grid).
+
+        **A stack does not determine its own arrays**, which is why this is a recipe
+        and not a result: ``reconcile``, ``min_sep``, ``trigger_sep`` and ``method``
+        live on the ``build()``/``to_disv()`` call and move the answer -- same stack,
+        same grid, a different ``reconcile`` measured a different ``botm``. Whoever
+        rebuilds from this payload has to supply them again (ledger 269).
+        """
+
+        return {
+            "top": self._top.to_dict(),
+            "layers": [
+                {
+                    "name": layer.name,
+                    "surface": layer.surface.to_dict(),
+                    **{
+                        key: getattr(layer, key)
+                        for key in ("min_thickness", "pinch", "split", "names")
+                        if getattr(layer, key) is not None
+                    },
+                }
+                for layer in self._layers
+            ],
+            "length_units": self.length_units,
+            "time_units": self.time_units,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], *, vor=None) -> LayerStack:
+        """Rebuild a stack from :meth:`to_dict`'s payload, optionally bound to ``vor``."""
+
+        stack = cls(
+            vor,
+            top=Surface.from_dict(data["top"]),
+            length_units=data.get("length_units"),
+            time_units=data.get("time_units"),
+        )
+        for entry in data.get("layers", ()):
+            stack._layers.append(
+                _Layer(
+                    name=entry["name"],
+                    surface=Surface.from_dict(entry["surface"]),
+                    min_thickness=entry.get("min_thickness"),
+                    pinch=entry.get("pinch"),
+                    split=entry.get("split"),
+                    names=entry.get("names"),
+                )
+            )
+        return stack
+
     def _require_grid(self, vor, caller: str):
         """Resolve the grid for ``caller``, preferring an explicit one.
 

@@ -15,7 +15,7 @@ layer-elevation lookups, ``mf.disv``) keep working unchanged.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +119,11 @@ def _cells_in_zone(vor, zone) -> np.ndarray:
     return centroid_zones(vor.gdf_vorPolys, [geom]) >= 0
 
 
+#: Surface kinds whose content is per-cell arrays, so they cannot ride in a spec
+#: (ledger 193 refused inlining arrays; ledger 269 names them here).
+_UNSERIALIZABLE_SURFACES = frozenset({"array", "points"})
+
+
 @dataclass(frozen=True)
 class Surface:
     """One elevation surface, sampled onto a grid's cells when needed.
@@ -129,6 +134,66 @@ class Surface:
     """
 
     kind: str
+    #: Token :func:`myflopy.specs._json_value` writes this object under, and
+    #: :func:`myflopy.specs._spec_value` revives it from. A `$`-prefixed key rather
+    #: than a ``kind`` tag because ``Surface`` HAS a ``kind`` field of its own
+    #: ("flat", "raster", "shift", ...) and the source-spec dispatcher keys on
+    #: ``kind`` -- tagging one as the other makes a surface come back a plain dict.
+    _SPEC_TOKEN = "$surface"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready payload, or raise for a surface that holds arrays.
+
+        ``from_array`` and ``from_points`` are REFUSED by name. Their content is
+        per-cell data, and inlining arrays into a spec is what ledger 193 refused --
+        ~3.3 MB per model at 9,405 cells, and it floods `Project.validate`. They stay
+        usable; they just cannot be written down, which is what a run's frozen
+        snapshot is for (ledger 269).
+        """
+
+        if self.kind in _UNSERIALIZABLE_SURFACES:
+            raise ValueError(
+                f"A '{self.kind}' surface holds per-cell arrays and cannot be written "
+                "into a spec. Declare the layer from a raster, contours or a constant "
+                "so the stack can be rebuilt on another mesh, or keep the built arrays "
+                "and let the run's frozen snapshot carry them."
+            )
+        payload: dict[str, Any] = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            # `default_factory` fields have `default is MISSING`, so comparing against
+            # `item.default` alone wrote an empty `grass_kwargs: {}` into every payload.
+            default = (
+                item.default_factory()
+                if item.default is MISSING and item.default_factory is not MISSING
+                else item.default
+            )
+            if item.name != "kind" and type(value) is type(default) and value == default:
+                continue
+            if item.name == "operands":
+                payload[item.name] = [operand.to_dict() for operand in value]
+            elif isinstance(value, Path):
+                payload[item.name] = value.as_posix()
+            else:
+                payload[item.name] = value
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Surface:
+        """Rebuild a surface from :meth:`to_dict`'s payload."""
+
+        known = {item.name for item in fields(cls)}
+        unknown = set(data) - known
+        if unknown:
+            raise ValueError(f"Unknown Surface fields: {sorted(unknown)}")
+        values = dict(data)
+        for name in ("path", "contours", "region_raster", "region_vector", "out"):
+            if values.get(name) is not None:
+                values[name] = Path(values[name])
+        if "operands" in values:
+            values["operands"] = tuple(cls.from_dict(item) for item in values["operands"])
+        return cls(**values)
+
     value: float | None = None
     path: Path | None = None
     fill: str | None = None

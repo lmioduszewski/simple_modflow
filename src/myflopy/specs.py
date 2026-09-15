@@ -374,6 +374,13 @@ def _json_value(value: Any) -> Any:
     and refuses a ``numpy.float64`` that JSON takes happily.
     """
 
+    if (token := getattr(type(value), "_SPEC_TOKEN", None)) is not None:
+        # A `$`-token, not a `kind` tag: `Surface` has a `kind` field of its own and
+        # the source dispatcher keys on `kind`, so tagging one as the other made a
+        # surface come back a plain dict (ledger 269). Duck-typed on the class
+        # attribute rather than imported -- `specs` is import layer 1 and `layers`
+        # is layer 6.
+        return {token: _json_value(value.to_dict())}
     if isinstance(value, (DataSourceSpec, LiteralSource)):
         # Recursed, not handed straight back. A source's own `to_dict` writes its
         # fields raw -- `metadata`, `table`, `crs`, `band`, `value` -- so this was the
@@ -465,6 +472,17 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
 
     if isinstance(value, dict) and set(value) == {"$tuple"}:
         return tuple(_spec_value(item, int_keys=int_keys) for item in value["$tuple"])
+    if isinstance(value, dict) and len(value) == 1:
+        # Imported lazily: `myflopy.surfaces` is import layer 2 and `myflopy.layers`
+        # is layer 6, so a module-level import here would be an upward edge.
+        if "$surface" in value:
+            from myflopy.surfaces import Surface
+
+            return Surface.from_dict(value["$surface"])
+        if "$layer_stack" in value:
+            from myflopy.layers import LayerStack
+
+            return LayerStack.from_dict(value["$layer_stack"])
     if isinstance(value, dict) and "kind" in value:
         # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
         # ends in "Spec", so an ``endswith("Source")`` test handed the public
