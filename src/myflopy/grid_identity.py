@@ -173,6 +173,55 @@ def pin_metadata(context) -> dict[str, str]:
     return {GRID_PIN: pin} if pin is not None else {}
 
 
+# MF6 requires these three exchanges to join models on the SAME discretization --
+# `exg-gwfgwt.f90:224` terminates on a node-count mismatch and `:239-255` on an
+# idomain mismatch. It compares COUNTS and IDOMAIN only, never geometry, so two
+# different meshes with the same `ncpl` and the same idomain pass both of its checks
+# and it then maps node-for-node by index onto the wrong geometry.
+#
+# `gwfgwf` is deliberately absent: coupling a coarse model to a fine one is what that
+# exchange is FOR.
+SAME_MESH_EXCHANGES = frozenset(
+    {"build_gwf_gwt_exchange", "build_gwf_gwe_exchange", "build_gwf_prt_exchange"}
+)
+
+
+def coupled_mesh_complaints(exchanges, built_models) -> list[str]:
+    """Complaints for exchanges whose two models resolved to different meshes.
+
+    Measured before this existed: a GWF on a 3x2 Voronoi and a GWT on a 2x3, both
+    `ncpl=6`, joined by `mf.exchange` -- built clean, ran, zero warnings, and the
+    concentration field was wrong. Nothing compared siblings; `_discretization_complaints`
+    validates each model against its OWN context and never looks across.
+
+    DISV only. A structured pair is not compared, because the pin is a DISV
+    connectivity hash; MF6's node-count check is all that stands behind a DIS pair,
+    and it has the same blind spot.
+    """
+
+    complaints: list[str] = []
+    for exchange in exchanges:
+        if getattr(exchange.builder, "__name__", "") not in SAME_MESH_EXCHANGES:
+            continue
+        pins: dict[str, str | None] = {}
+        for name in exchange.models:
+            built = built_models.get(name)
+            model = getattr(built, "model", None)
+            disv = model.get_package("disv") if model is not None else None
+            pins[name] = disv_pin(disv) if disv is not None else None
+        known = {name: pin for name, pin in pins.items() if pin is not None}
+        if len(known) < 2 or len(set(known.values())) == 1:
+            continue
+        pairs = ", ".join(f"{name} is on mesh {pin}" for name, pin in known.items())
+        complaints.append(
+            f"exchange '{exchange.name}' joins models on different meshes: {pairs}. "
+            "MODFLOW 6 requires this exchange's models to share a discretization, and it "
+            "compares only node counts and idomain -- so a mesh of the same size passes "
+            "its check and it maps node-for-node onto the wrong geometry."
+        )
+    return complaints
+
+
 def _cellids_in(options: dict[str, Any]):
     """Every ``(layer, cell)``-shaped cellid in a package's stress-period data.
 

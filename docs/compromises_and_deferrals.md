@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 267 entries (268 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 268 entries (269 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 268 | Two coupled models on different meshes built, ran, and said nothing | 2026-09-15 |
 | 267 | Three grid-bound helpers changed mesh in silence, and two ledger entries said they did not | 2026-09-15 |
 | 266 | Two of the tests written for 265 certified the fix instead of checking it, and both byte-identical comparis... | 2026-09-14 |
 | 265 | The fixture rule from 263 named the wrong property, and six numpy defects were sitting behind it | 2026-09-14 |
@@ -10204,3 +10205,29 @@ same day, which is the useful part of the result.
       NOT done here: improving FloPy's `MFDataException` on a different-`ncpl` array
       package. It is loud rather than silent, and reordering the guard to precede package
       construction is its own change.
+
+268. **Two coupled models on different meshes built, ran, and said nothing (2026-09-15).**
+      B1 commit 2. Measured: a GWF on a 3x2 Voronoi and a GWT on a 2x3, both `ncpl=6`,
+      joined by `mf.exchange` -- built clean, zero warnings, and the concentration field
+      is wrong. The grid pins differ; nothing compared siblings.
+      `_discretization_complaints` validates each model against its OWN context and never
+      looks across an exchange, and `replace_grid("flow", ...)` leaves the GWT's grid and
+      the exchange untouched, so the ordinary way to reach this state is a half-finished
+      grid move -- which is exactly what B1 is building.
+      **MF6 agrees it is an error and cannot see it**, which is the part worth recording.
+      `exg-gwfgwt.f90:224` terminates on a node-count mismatch (`nodes`/`nodesuser`) and
+      `:239-255` on an idomain mismatch, per DIS type. It compares **counts and idomain
+      only, never geometry** -- so a mesh of the same size with the same idomain passes
+      both of its checks, and MF6 then maps node-for-node BY INDEX onto the wrong
+      geometry. myflopy's pin is connectivity, so it sees what MF6 cannot.
+      Scoped to the three exchanges MF6 requires to share a discretization: `gwfgwt`,
+      `gwfgwe`, `gwfprt`. **`gwfgwf` is deliberately excluded** -- coupling a coarse model
+      to a fine one is what that exchange is FOR, and `package_api`'s own docstring
+      example is a coarse/fine pair. A mutant that includes it is killed.
+      **DISV only.** The check is `disv_pin`, a DISV connectivity hash, so a structured
+      pair is not compared and MF6's node-count check is all that stands behind it -- with
+      the same blind spot. Not closed here: a DIS geometry hash is its own piece of work
+      and this repo's models are Voronoi.
+      The refusal names the exchange, both models and both pins, because "something is
+      wrong" is not actionable. It is raised BEFORE the exchanges are built, since the
+      failure it prevents is one MF6 would accept and run.

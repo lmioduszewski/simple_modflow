@@ -43,6 +43,7 @@ from myflopy.grid_identity import (
     _discretization_complaints,  # noqa: F401
     _mesh_residual,  # noqa: F401
     _mesh_scale,  # noqa: F401
+    coupled_mesh_complaints,
     disv_pin,  # noqa: F401
     dropped_context_fields,  # noqa: F401
     grid_pin,  # noqa: F401
@@ -3449,6 +3450,14 @@ class SimulationSpec:
             model.name: model.build(simulation, build_context=build_context)
             for model in self.models
         }
+        # Before the exchanges are built, not after: MF6 would accept this and run it.
+        if mismatched := coupled_mesh_complaints(self.exchanges, built_models):
+            raise ValueError(
+                f"Simulation {self.name!r} couples models that are not on the same mesh:\n"
+                + "\n".join(f"  - {complaint}" for complaint in mismatched)
+                + "\nRe-declare the coupled models against one grid, or move them together "
+                "with `with_grid(..., on=None)`."
+            )
         built_exchanges = {
             exchange.name: exchange.build(simulation, built_models)
             for exchange in self.exchanges

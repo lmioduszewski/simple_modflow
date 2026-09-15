@@ -286,7 +286,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3416 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3420 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m00s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -496,6 +496,14 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   in one step. **`without_packages` at the simulation tier is NEW** — there was no
   way to drop a tdis or solver short of rebuilding the tuple.
   Lineage now reads `{"operation": "with_packages", "model":, "packages": [...]}`.
+- **Coupled models must share a mesh, and that is now REFUSED at build** (ledger 268,
+  2026-09-15). MF6 requires it for `gwfgwt`/`gwfgwe`/`gwfprt` — `exg-gwfgwt.f90:224`
+  terminates on a node-count mismatch and `:239-255` on an idomain one — but it compares
+  **counts and idomain only, never geometry**, so a mesh of the SAME size passes its
+  checks and it maps node-for-node onto the wrong one. Measured: GWF on a 3x2 Voronoi,
+  GWT on a 2x3, both `ncpl=6`, built clean with zero warnings. **`gwfgwf` is excluded** —
+  a coarse/fine pair is what that exchange is for. DISV only: a structured pair is not
+  compared, and MF6's node count is all that stands behind it.
 - **Coupling models is `mf.exchange(a, b)`** (ledger 203, 2026-09-10) — it reads the
   two kinds and picks the MF6 class; `.gwfgwt/.gwfgwe/.gwfprt/.gwfgwf` are explicit
   and take plain names. The four `build_*_exchange` functions resolved on `mf` but

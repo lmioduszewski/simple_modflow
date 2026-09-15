@@ -443,3 +443,103 @@ def test_an_array_helper_is_refused_on_a_different_mesh_of_the_SAME_size(tmp_pat
 
     with pytest.raises(ValueError, match=r"was resolved against a different mesh"):
         _refuses_on(tmp_path, spec, grid_b, helper.replace(".", "_"))
+
+
+# --- two models, one mesh --------------------------------------------------- #
+#
+# `_discretization_complaints` validates each model against its OWN context and never
+# compares siblings. MF6 does compare them -- `exg-gwfgwt.f90:224` terminates on a
+# node-count mismatch and `:239-255` on an idomain mismatch -- but it compares COUNTS
+# and IDOMAIN only, never geometry, so a mesh of the same size passes both of its
+# checks and it maps node-for-node onto the wrong one (ledger 268).
+
+
+def _flow(name, grid):
+    return mf.gwf(
+        name,
+        context=ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int)),
+        packages=[
+            mf.disv(nlay=1, top=10.0, botm=[0.0], **grid.get_disv_gridprops()),
+            mf.npf(k=1.0), mf.ic(strt=5.0), mf.oc(head_filerecord=f"{name}.hds"),
+        ],
+    )
+
+
+def _transport(name, grid):
+    return mf.gwt(
+        name,
+        context=ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int)),
+        packages=[
+            mf.disv(nlay=1, top=10.0, botm=[0.0], **grid.get_disv_gridprops()),
+            mf.mst(porosity=0.3), mf.ic(strt=0.0), mf.adv(),
+            mf.oc(concentration_filerecord=f"{name}.ucn"),
+        ],
+    )
+
+
+def _coupled(flow_grid, transport_grid):
+    flow, transport = _flow("flow", flow_grid), _transport("tran", transport_grid)
+    return mf.simulation(
+        flow, transport, name="c",
+        packages=[
+            mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),
+            mf.ims(models=["flow"]), mf.ims(models=["tran"], name="ims_t"),
+        ],
+        exchanges=[mf.exchange(flow, transport)],
+    )
+
+
+def test_coupled_models_on_different_meshes_of_the_same_size_are_refused(tmp_path):
+    """The measured failure: `ncpl=6` both sides, built clean, ran, zero warnings."""
+
+    flow_grid = rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=2, nlay=1, nper=1))
+    transport_grid = rectangular_voronoi(CanonicalModelConfig(nrow=2, ncol=3, nlay=1, nper=1))
+    assert flow_grid.ncpl == transport_grid.ncpl, "the same size is the whole point"
+
+    with pytest.raises(ValueError, match=r"joins models on different meshes"):
+        _coupled(flow_grid, transport_grid).build_flopy(tmp_path / "ws")
+
+
+def test_the_refusal_names_the_exchange_and_both_meshes(tmp_path):
+    """You cannot act on "something is wrong" -- it has to say which model moved."""
+
+    flow_grid = rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=2, nlay=1, nper=1))
+    transport_grid = rectangular_voronoi(CanonicalModelConfig(nrow=2, ncol=3, nlay=1, nper=1))
+
+    with pytest.raises(ValueError) as raised:
+        _coupled(flow_grid, transport_grid).build_flopy(tmp_path / "ws")
+
+    message = str(raised.value)
+    assert "flow" in message and "tran" in message
+    assert grid_pin(flow_grid) in message and grid_pin(transport_grid) in message
+
+
+def test_coupled_models_on_one_mesh_build(tmp_path):
+    """The ordinary case, which must stay ordinary."""
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=2, nlay=1, nper=1))
+
+    assert _coupled(grid, grid).build_flopy(tmp_path / "ws") is not None
+
+
+def test_a_gwfgwf_pair_on_two_meshes_still_builds(tmp_path):
+    """Coupling a coarse model to a fine one is what that exchange is FOR.
+
+    Excluding `gwfgwf` is the point of scoping the check to the three exchanges MF6
+    itself requires to share a discretization.
+    """
+
+    coarse = rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=3, nlay=1, nper=1))
+    fine = rectangular_voronoi(CanonicalModelConfig(nrow=6, ncol=6, nlay=1, nper=1))
+    sim = mf.simulation(
+        _flow("coarse", coarse), _flow("fine", fine), name="two",
+        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims()],
+        exchanges=[
+            mf.exchange.gwfgwf(
+                "coarse", "fine", nexg=1,
+                exchangedata=[[(0, 0), (0, 0), 1, 25.0, 25.0, 50.0]],
+            )
+        ],
+    )
+
+    assert sim.build_flopy(tmp_path / "ws") is not None
