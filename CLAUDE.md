@@ -286,8 +286,8 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3410 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **5m51s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**3416 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **6m00s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -412,7 +412,18 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `package_digest`** -- the records already encode the grid, and digesting the pin would
   report every stored run as drifted on the day it landed. Stamped once in
   `GeoPackageSource._metadata`, which all seven list BCs reach. **A hand-written package
-  stays unpinned**: you cannot pin cell numbers the caller typed. sfr/lak/uzf pin in C1.
+  stays unpinned**: you cannot pin cell numbers the caller typed.
+  **Every grid-bound helper the library resolves itself now pins** (ledger 267):
+  the seven `.gpkg` forms, `rch`/`evt` in BOTH list and array shapes, `uzf`, `sfr`,
+  `lak` and `hfb`. `lak` and `hfb` are the two the range check is blind to in the
+  direction that matters -- LAK's cellids live in `connectiondata`, which `_cellids_in`
+  deliberately will not walk, and a barrier's pairs are all still in range on a LARGER
+  mesh -- and both BUILT CLEAN across 28 -> 92 before the pin. **The array form pins
+  CONDITIONALLY, on whether the resolved payload names cells**: `mf.rch.array(irch=0)`
+  means the same layer on every mesh and must stay movable, while the default
+  `irch="top_active"` resolves to an `(ncpl,)` array and must not.
+  `tests/test_grid_pin.py` BUILDS each helper and reads its metadata, in both
+  directions -- reading the source is what missed `rch.array` twice.
 - **A run keeps a FROZEN SNAPSHOT, so it rebuilds without its sources** (ledger 251,
   2026-09-13). `<run>/.myflopy/frozen.npz`, written at the end of `Run.build`: the
   resolved spec as JSON, every array beside it, plus the grid's vertices, cells, CRS

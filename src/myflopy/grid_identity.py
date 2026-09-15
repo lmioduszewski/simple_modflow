@@ -156,11 +156,17 @@ def pin_metadata(context) -> dict[str, str]:
     ``.gpkg`` forms and the advanced builders cannot drift apart about what a pin is.
     Spread ``**pin_metadata(self.context)`` into an existing ``with_metadata`` call.
 
-    Not every grid-bound package can carry one. ``mf.hfb`` is FACE-indexed -- its
-    records are cell PAIRS and it has no cellid column -- and ``mf.mvr`` carries
-    package names and indices rather than cells, and holds no context at all. Both
-    are named in the plan as needing a symbolic form instead, which is a different
-    piece of work.
+    ``mf.hfb`` DOES carry one, since ledger 267. An earlier version of this docstring
+    said it could not -- "face-indexed, no cellid column" -- which contradicted
+    :func:`_cellids_in` eight lines below, whose own docstring says it reads "two for
+    an HFB, which sits on the face between a pair". Measured: the range check finds 10
+    cellids in a 5-segment barrier. What the range check cannot do is catch a barrier
+    resolved on a SMALLER mesh, where every one of those numbers is still in range --
+    which is the pin's job, not a reason to skip it.
+
+    ``mf.mvr`` still carries none: it names packages and record indices rather than
+    cells, and holds no context at all. It needs the symbolic form the plan describes,
+    which is a different piece of work.
     """
 
     pin = grid_pin(getattr(context, "grid", None)) if context is not None else None

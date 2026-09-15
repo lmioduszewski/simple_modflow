@@ -47,6 +47,7 @@ from myflopy.builders import (
     build_oc,
 )
 from myflopy.geopackage import GeoPackageSource, RowValue
+from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
 from myflopy.modflow.mf6.lakes import (
@@ -3105,7 +3106,7 @@ class _RCHPackage:
             save_flows=save_flows,
             **options,
         )
-        return _array_bc_spec(flopy.mf6.ModflowGwfrcha, name=name, options=values)
+        return _array_bc_spec(flopy.mf6.ModflowGwfrcha, name=name, options=values, context=context)
 
     def flopy(
         self,
@@ -3445,7 +3446,7 @@ class _EVTPackage:
             save_flows=save_flows,
             **options,
         )
-        return _array_bc_spec(flopy.mf6.ModflowGwfevta, name=name, options=values)
+        return _array_bc_spec(flopy.mf6.ModflowGwfevta, name=name, options=values, context=context)
 
     def flopy(
         self,
@@ -4284,7 +4285,8 @@ class _HFBPackage:
             pairs, hydchr=hydchr, layers=layers, context=context, verb="mf.hfb"
         )
         return _hfb_spec_from_records(
-            records, name=name, first_period=first_period, print_input=print_input, **options
+            records, name=name, first_period=first_period, print_input=print_input,
+            context=context, **options
         )
 
     def line(
@@ -4573,6 +4575,7 @@ def _hfb_spec_from_records(
     name: str,
     first_period: int,
     print_input: bool,
+    context: ModelContext | None = None,
     **options: Any,
 ) -> PackageSpec:
     """Wrap resolved barrier records in a ``PackageSpec``.
@@ -4580,12 +4583,22 @@ def _hfb_spec_from_records(
     ``maxhfb`` is deliberately not exposed: FloPy computes it from the data at
     write time, and a hand-set value that disagrees is the same defect class as
     the ``maxbound`` bug the list-BC builder records.
+
+    The records are PINNED to the mesh they were resolved against when a context
+    supplies one. A barrier's records are cell PAIRS, so the range check sees
+    nothing to check, and every pair resolved on a coarse mesh is still in range
+    on a finer one -- measured, a barrier resolved on 28 cells BUILT CLEAN on 92
+    (ledger 267). ``.line``, ``.gpkg`` and ``.enclose`` all funnel through the
+    single caller above, so pinning there covers every resolved route; a
+    hand-written pair list with no context stays unpinned, like any other cellid
+    the caller typed.
     """
 
     values = {"stress_period_data": {first_period: records}, **options}
     if print_input:
         values["print_input"] = True
-    return PackageSpec(name, flopy.mf6.ModflowGwfhfb, values, requires=("disv",))
+    spec = PackageSpec(name, flopy.mf6.ModflowGwfhfb, values, requires=("disv",))
+    return spec.with_metadata(**pin_metadata(context)) if context is not None else spec
 
 
 

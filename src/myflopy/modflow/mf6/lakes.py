@@ -21,6 +21,7 @@ from rasterio.features import geometry_mask
 from shapely.geometry.base import BaseGeometry
 
 from myflopy.advanced import lak_spec
+from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import (
     cell_shares,
     domain_active,
@@ -28,9 +29,9 @@ from myflopy.modflow.mf6.grid.geometry import (
     where_they_are,
 )
 from myflopy.specs import (
-    _layer_elevations,
     ModelContext,
     PackageSpec,
+    _layer_elevations,
     mf6_length_conversion,
     mf6_time_conversion,
 )
@@ -1295,6 +1296,13 @@ class LAKBuilder:
             options={**base.options, "lake_tables": tuple(child_tables)},
             metadata={
                 **base.metadata,
+                # LAK is invisible to the range check: `_cellids_in` deliberately
+                # refuses to walk `packagedata`/`connectiondata`, because a cellid
+                # sits at a different index per package (SFR's `packagedata[1]` is a
+                # cellid, LAK's is a stage). So the pin is the ONLY thing that can
+                # catch a lake resolved on another mesh -- measured, a lake declared
+                # on 28 cells BUILT CLEAN on 92 (ledger 267).
+                **pin_metadata(self.context),
                 "builder": "LAKBuilder",
                 "lake_ids": list(self.lake_ids),
                 "connection_modes": {

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 266 entries (267 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 267 entries (268 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 267 | Three grid-bound helpers changed mesh in silence, and two ledger entries said they did not | 2026-09-15 |
 | 266 | Two of the tests written for 265 certified the fix instead of checking it, and both byte-identical comparis... | 2026-09-14 |
 | 265 | The fixture rule from 263 named the wrong property, and six numpy defects were sitting behind it | 2026-09-14 |
 | 264 | The guards told the truth only in the circumstances they were tested in | 2026-09-14 |
@@ -10159,3 +10160,47 @@ same day, which is the useful part of the result.
       by nothing outside it. That is not a defect -- it is one subject in one module --
       but a `-k` exclusion or a rename of that file silently unguards ten of eleven
       fixes, which is worth knowing before it happens.
+
+267. **Three grid-bound helpers changed mesh in silence, and two ledger entries said they did not (2026-09-15).**
+      B1 commit 1. Ledger 250 stamped the seven `.gpkg` forms and reported the gap closed
+      "for every package the library resolved itself"; ledger 264 corrected that, stamped
+      `uzf`/`sfr`/`rch`/`evt` and reported it closed again. Scoping B1 by BUILDING each
+      helper and reading its metadata -- rather than reading the source, which is how both
+      entries went wrong -- found three still unpinned:
+      - **`mf.lak` and `mf.hfb` BUILD CLEAN on the wrong mesh.** Measured: declared on a
+        28-cell grid, built on a 92-cell one, no refusal and no warning. Neither is caught
+        by the range check, for different reasons. LAK's cellids live in
+        `connectiondata`, which `_cellids_in` deliberately refuses to walk (a cellid sits
+        at a different index per package -- SFR's `packagedata[1]` is a cellid, LAK's is a
+        stage), so it finds **zero** cellids to range-check. HFB's it does find -- 10 in a
+        5-segment barrier -- but every one of them is still IN RANGE on a larger mesh,
+        which is the exact gap the pin exists for (ledger 250).
+      - **`mf.rch.array`/`mf.evt.array` reach `advanced.py::_array_bc_spec`, not the
+        `areal.py` funnel 264 named**, so the array form was never pinned. A DIFFERENT
+        `ncpl` already raised, but as FloPy's `MFDataException ... Expected data
+        dimensions`, which fires while the package is still building and so beats the
+        guard to it -- loud and unhelpful. A SAME-`ncpl` swap said nothing and applied the
+        wrong per-cell layer indices.
+      **The array pin is CONDITIONAL, and that is the design decision worth recording.**
+      It is decided on the resolved PAYLOAD -- does any option hold a per-column array --
+      not on whether a `context=` was passed. `mf.rch.array(recharge=0.001, irch=0)`
+      resolves to two scalars, means the same thing on any mesh, and must stay MOVABLE;
+      pinning on the presence of a context would refuse that correct move. The default
+      `irch="top_active"` resolves to an `(ncpl,)` array derived from the domain and is
+      pinned, as is a per-column `recharge`. A mutant that pins unconditionally is killed
+      by its own test.
+      **`pin_metadata`'s docstring contradicted `_cellids_in`'s, eight lines apart.** It
+      said HFB "is FACE-indexed -- its records are cell PAIRS and it has no cellid column"
+      and needed a symbolic form; `_cellids_in` said it reads "two for an HFB ... what lets
+      a stale barrier be caught on either side". The second is right, measured. Corrected.
+      `mf.mvr` genuinely still carries none -- it names packages and record indices rather
+      than cells, and holds no context at all.
+      **The guard against a fourth round is a both-directions coverage test**
+      (`tests/test_grid_pin.py`): it BUILDS every grid-bound helper on a real mesh and
+      compares the set that pins against the set that resolves cell numbers, so adding a
+      helper without a pin fails, and so does leaving a stale entry behind. Reading the
+      source twice produced two wrong ledger entries; building the thing found it in one
+      pass.
+      NOT done here: improving FloPy's `MFDataException` on a different-`ncpl` array
+      package. It is loud rather than silent, and reordering the guard to precede package
+      construction is its own change.

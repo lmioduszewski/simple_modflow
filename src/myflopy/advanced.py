@@ -23,11 +23,12 @@ from typing import Any
 
 import flopy
 
+from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
 )
-from myflopy.specs import PackageSpec
+from myflopy.specs import ModelContext, PackageSpec
 
 
 def _named_options(name: str, options: dict[str, Any]) -> dict[str, Any]:
@@ -55,7 +56,28 @@ def _factory(constructor):
 
 
 
-def _array_bc_spec(constructor, *, name: str, options) -> PackageSpec:
+def _names_cells(options, ncpl: int) -> bool:
+    """Whether any resolved option is a per-COLUMN array, i.e. names cells.
+
+    The array form supplies one value per column, so `irch=<ncpl array>` and
+    `recharge=<ncpl array>` are both addressed BY CELL and move meaning on another
+    mesh, while `recharge=0.001` with `irch=0` means the same thing on any grid.
+    Deciding on the resolved payload rather than on "was a `context=` passed" is
+    what keeps a genuinely grid-free package movable.
+    """
+
+    def per_cell(value) -> bool:
+        if isinstance(value, dict):
+            return any(per_cell(item) for item in value.values())
+        shape = getattr(value, "shape", None)
+        return bool(shape) and shape[-1] == ncpl
+
+    return any(per_cell(value) for value in options.values())
+
+
+def _array_bc_spec(
+    constructor, *, name: str, options, context: ModelContext | None = None
+) -> PackageSpec:
     """Build one array-form (``READASARRAYS``) boundary spec.
 
     Sibling of :func:`_list_bc_spec`, for the packages MODFLOW 6 offers in both
@@ -68,9 +90,23 @@ def _array_bc_spec(constructor, *, name: str, options) -> PackageSpec:
 
     Goes through ``_factory``/``_named_options`` like everything else here, so
     ``pname``/``filename`` templating and picklability come for free.
+
+    **The pin is CONDITIONAL**, on whether the resolved payload names cells rather
+    than on whether a ``context=`` was passed. `mf.rch.array(recharge=0.001,
+    irch=0)` resolves to two scalars and is genuinely grid-free -- pinning it would
+    refuse a correct move. `irch="top_active"`, the default, resolves to an
+    `(ncpl,)` array derived from the domain, and a same-`ncpl` mesh swap then
+    applies the wrong per-cell layer indices with nothing said (ledger 267; ledger
+    264 claimed this form was already pinned and it never was).
     """
 
-    return PackageSpec(name, _factory(constructor), _named_options(name, dict(options)))
+    values = _named_options(name, dict(options))
+    spec = PackageSpec(name, _factory(constructor), values)
+    grid = getattr(context, "grid", None) if context is not None else None
+    ncpl = getattr(grid, "ncpl", None)
+    if ncpl is not None and _names_cells(values, int(ncpl)):
+        spec = spec.with_metadata(**pin_metadata(context))
+    return spec
 
 
 def _list_bc_spec(

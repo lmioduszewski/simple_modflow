@@ -13,9 +13,9 @@ same, while a renumbering does not.
 
 from __future__ import annotations
 
+import geopandas as gpd
 import numpy as np
 import pytest
-import geopandas as gpd
 from shapely.geometry import box
 
 import myflopy as mf
@@ -291,3 +291,155 @@ def test_the_recorded_pin_is_consulted_before_the_disv_s_own(tmp_path):
     stale = ModelContext(metadata={GRID_PIN: "0000deadbeef0000"})
     complaints = _discretization_complaints(built, stale, [])
     assert any("is not the mesh this model was declared against" in c for c in complaints)
+
+
+# --- every grid-bound helper, on two REAL meshes ---------------------------- #
+#
+# Ledger 250 stamped the seven `.gpkg` forms and ledger 264 the areal LIST forms,
+# and both reported the gap closed. It was not: `lak`, `hfb` and the ARRAY forms
+# carried no pin, and the first two build clean on the wrong mesh because the range
+# check cannot see their cellids at all. The coverage test below is the part meant
+# to keep this from happening a third time -- it BUILDS each helper and reads its
+# metadata, which is how the `rch.array` gap was finally found, rather than reading
+# the source and believing it (ledger 267).
+
+
+def _two_layer_context(grid):
+    """A context with the surfaces the advanced builders need."""
+
+    stack = mf.LayerStack(grid, top=mf.Surface.flat(10.0))
+    stack.add("upper", thickness=5.0)
+    stack.add("lower", thickness=5.0)
+    result = stack.build(grid, attach=True)
+    return ModelContext(grid=grid, domain=result.idomain, surfaces=grid.gdf_topbtm)
+
+
+def _lake_source(tmp_path, grid):
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    path = tmp_path / "lake.gpkg"
+    mid_x, mid_y = (xmin + xmax) / 2, (ymin + ymax) / 2
+    span = (xmax - xmin) * 0.15
+    gpd.GeoDataFrame(
+        {"name": ["L"], "strt": [5.0]},
+        geometry=[box(mid_x - span, mid_y - span, mid_x + span, mid_y + span)],
+        crs=grid.crs,
+    ).to_file(path, layer="lake", driver="GPKG")
+    return path
+
+
+def _grid_bound_helpers(tmp_path, grid):
+    """Every helper that resolves cell numbers from a context, built on ``grid``."""
+
+    from shapely.geometry import LineString
+
+    context = _two_layer_context(grid)
+    xmin, _ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    mid = (xmin + xmax) / 2
+    return {
+        "lak": mf.lak(
+            lakes=_lake_source(tmp_path, grid), context=context,
+            starting_stage=5.0, lake_bottom=0.0, nper=1,
+        ),
+        "hfb.line": mf.hfb.line(
+            LineString([(mid, _ymin), (mid, ymax)]), hydchr=1e-5, context=context
+        ),
+        "rch.array": mf.rch.array(recharge=0.001, context=context),
+        "evt.array": mf.evt.array(
+            surface=10.0, rate=0.001, depth=2.0, context=context
+        ),
+    }
+
+
+def test_every_grid_bound_helper_pins_the_mesh_it_resolved_on(tmp_path, triangulated_grid):
+    """Both directions: a new unpinned helper fails, and so does a stale entry here.
+
+    Reading the source is what missed `rch.array` twice -- it reaches
+    `advanced.py::_array_bc_spec`, not the `areal.py` funnel the ledger named. This
+    builds each one and asks the spec.
+    """
+
+    built = _grid_bound_helpers(tmp_path, triangulated_grid)
+    pinned = {name for name, spec in built.items() if GRID_PIN in (spec.metadata or {})}
+
+    assert pinned == set(built), f"grid-bound helpers with no pin: {sorted(set(built) - pinned)}"
+    for name, spec in built.items():
+        assert spec.metadata[GRID_PIN] == grid_pin(triangulated_grid), name
+
+
+def test_a_grid_free_array_package_is_not_pinned(tmp_path, triangulated_grid):
+    """`irch=0` means the same layer on every mesh, so pinning it would refuse a move.
+
+    The pin is decided on the resolved PAYLOAD -- does it name cells -- not on
+    whether a `context=` was passed. Pinning on the latter is the easy mistake and
+    it makes a correct move impossible.
+    """
+
+    context = _two_layer_context(triangulated_grid)
+
+    grid_free = mf.rch.array(recharge=0.001, irch=0, context=context)
+    per_cell = mf.rch.array(recharge=np.full(triangulated_grid.ncpl, 0.001), irch=None,
+                            context=context)
+
+    assert GRID_PIN not in (grid_free.metadata or {})
+    assert GRID_PIN in (per_cell.metadata or {}), "a per-column array names cells"
+
+
+def _refuses_on(tmp_path, spec, grid, tag):
+    """Build ``spec`` against ``grid`` and return the refusal, if any."""
+
+    model = mf.gwf(
+        "m",
+        context=_two_layer_context(grid),
+        packages=[
+            mf.disv(nlay=2, top=10.0, botm=[5.0, 0.0], **grid.get_disv_gridprops()),
+            mf.npf(k=1.0), mf.ic(strt=5.0), spec, mf.oc(head_filerecord="m.hds"),
+        ],
+    )
+    sim = mf.simulation(
+        model, name="moved", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])]
+    )
+    sim.build_flopy(tmp_path / f"ws_{tag}")
+
+
+@pytest.mark.parametrize("helper", ["lak", "hfb.line"])
+def test_a_helper_the_range_check_cannot_see_is_refused_on_another_mesh(
+    tmp_path, triangulated_grid, triangulated_grid_finer, helper
+):
+    """These two are the ones that BUILT CLEAN, and only the pin catches them.
+
+    `_cellids_in` refuses to walk `packagedata`/`connectiondata` -- a cellid sits at a
+    different index per package, so guessing would refuse correct models -- and a
+    barrier's records are cell PAIRS with no cellid column at all. Measured before the
+    pin: both built clean across 28 -> 92, on ragged real meshes.
+    """
+
+    spec = _grid_bound_helpers(tmp_path, triangulated_grid)[helper]
+
+    with pytest.raises(ValueError, match=r"was resolved against a different mesh"):
+        _refuses_on(tmp_path, spec, triangulated_grid_finer, helper.replace(".", "_"))
+
+
+@pytest.mark.parametrize("helper", ["rch.array", "evt.array"])
+def test_an_array_helper_is_refused_on_a_different_mesh_of_the_SAME_size(tmp_path, helper):
+    """Same `ncpl`, different mesh -- the case that was silent, and the pin's whole job.
+
+    A DIFFERENT `ncpl` already raised before the pin, but as FloPy's
+    `MFDataException ... Expected data dimensions`, which fires while the package is
+    still being built and so beats the guard to it. That is loud and unhelpful rather
+    than silent, and improving it is not this commit's subject. The SAME-`ncpl` swap
+    below said nothing at all and applied the wrong per-cell layer indices.
+
+    `rectangular_voronoi` is used deliberately: these two must differ in GEOMETRY while
+    agreeing in size, which two `GridSpec.voronoi` grids cannot be made to do. The pin
+    is connectivity-only, so the vertex dtype that matters elsewhere (ledger 263) does
+    not matter here.
+    """
+
+    grid_a = rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=4, nlay=2, nper=1))
+    grid_b = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=3, nlay=2, nper=1))
+    assert grid_a.ncpl == grid_b.ncpl and grid_pin(grid_a) != grid_pin(grid_b)
+
+    spec = _grid_bound_helpers(tmp_path, grid_a)[helper]
+
+    with pytest.raises(ValueError, match=r"was resolved against a different mesh"):
+        _refuses_on(tmp_path, spec, grid_b, helper.replace(".", "_"))
