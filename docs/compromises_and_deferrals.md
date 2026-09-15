@@ -9957,7 +9957,16 @@ same day, which is the useful part of the result.
         through `RCHBuilder`, and built on a 36-cell grid put recharge on **the wrong 16
         cells with MF6 running to completion**. `pin_metadata(context)` is now the one
         place a builder stamps its mesh, spread into the existing `with_metadata` calls
-        in `uzf.py`, `sfr.py` and `areal.py` (rch/evt, list and array forms).
+        in `uzf.py`, `sfr.py` and `areal.py` (rch/evt, LIST form).
+        **AMENDED 2026-09-15: "list and array forms" was wrong, and measured wrong the
+        way the rest of this entry warns about -- read, not run.** `mf.rch.array` does
+        not go through `areal.py` at all; it reaches `advanced.py::_array_bc_spec`, which
+        stamps nothing. Measured on a 100-cell grid: `mf.rch.array(recharge=0.001,
+        context=ctx)` returns a spec whose `irch` is a per-cell `(100,)` array derived
+        from the context's DOMAIN -- genuinely grid-bound -- and whose metadata carries
+        no `GRID_PIN`. So a same-`ncpl` mesh swap still applies the wrong per-cell layer
+        indices, which is precisely the gap this bullet claims to have closed. Scoped
+        into B1.
         NOT pinned, with reasons: `mf.hfb` is FACE-indexed -- its records are cell PAIRS
         and it has no cellid column -- and `mf.mvr` carries package names and indices
         rather than cells and holds no context at all. Both need the symbolic form the
