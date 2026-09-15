@@ -10073,12 +10073,19 @@ same day, which is the useful part of the result.
         what turned a loud failure into a silent permanent one. Every digest field goes
         through `_canonical` now. `np.bool_` is what any numpy predicate returns
         (`arr.any()`, `mask[i]`, a comparison), so this needed no unusual input.
-      NOT fixed, deliberately: `_canonical` has no source-spec branch either, so a numpy
-      value inside one still drifts the digest. The blunt fix -- canonicalizing the source
-      through `to_dict()` -- was measured to move the digest of ORDINARY python-valued
-      sources too (`73373803492f3890` -> `8c7fe2ba2a5d59d7`), which would report every
-      stored source-bearing run as drifted on the day it landed. That needs its own commit
-      and its own migration note, not a quiet ride along with this one.
+      NOT fixed, and the reachability is the reason -- measured after the fact, because
+      the first version of this paragraph implied it was live. `_canonical` has no
+      source-spec branch, so a numpy value inside one drifts the digest. But **nothing in
+      the library puts a source spec in `PackageSpec.inputs`**: every GIS helper resolves
+      EAGERLY and stores records, so `mf.chd.gpkg(...)` measures `inputs == {}`, and
+      `mf.npf(k=<np.float64 from a pandas cell>)` stores the value directly and digests
+      stable across a save. The only way to reach it is to hand-build a `PackageSpec` with
+      an `inputs=` source, which no test, example or notebook does. So it is LATENT, not
+      live. It also cannot be fixed cheaply: canonicalizing the source through `to_dict()`
+      moves the digest of ORDINARY python-valued sources too (`73373803492f3890` ->
+      `8c7fe2ba2a5d59d7`), reporting every stored source-bearing run as drifted on the day
+      it landed. Worth fixing when lazy package resolution lands (Phase 2 B1) and
+      `inputs` starts carrying sources for real; not worth a migration before then.
 
       **Ledger and CLAUDE.md hygiene, in the same pass.** The ledger was 9,677 lines at
       the previous commit, 48.4% of `docs/*.md`, and its own preamble prescribed
