@@ -27,6 +27,26 @@ from typing import Any, TypeAlias, TypeVar, cast
 import flopy
 
 from myflopy._logging import get_logger
+
+# Re-exported so no caller changed when these moved out (ledger 264). Each name is
+# marked unused-import-exempt individually: ruff cannot tell a re-export from a stray
+# import, and the alternative -- a per-file ignore, as `myflopy/__init__.py` has --
+# would switch the check off for all 3,500 lines of this module rather than for these
+# twelve names. (Spelling the directive out in prose here would itself be read as one.)
+from myflopy.grid_identity import (
+    DROPPED_CONTEXT_FIELDS,  # noqa: F401
+    GRID_PIN,  # noqa: F401
+    _as_int,  # noqa: F401
+    _canonical_ring,  # noqa: F401
+    _cellids_in,  # noqa: F401
+    _context_metadata,  # noqa: F401
+    _discretization_complaints,  # noqa: F401
+    _mesh_residual,  # noqa: F401
+    _mesh_scale,  # noqa: F401
+    disv_pin,  # noqa: F401
+    dropped_context_fields,  # noqa: F401
+    grid_pin,  # noqa: F401
+)
 from myflopy.sources import (
     DataSourceSpec,
     LiteralSource,
@@ -345,11 +365,24 @@ def _json_value(value: Any) -> Any:
     """Recursively convert a spec field to a JSON-serializable value.
 
     Sources serialize via ``to_dict``, paths to POSIX strings, tuples/lists/dicts
-    element-wise; primitives pass through and anything else raises.
+    element-wise, numpy scalars to the Python type they wrap; primitives pass
+    through and anything else raises.
+
+    The output is a TRUE Python primitive, not merely something ``json.dumps``
+    accepts -- ``to_yaml`` goes through PyYAML, which dispatches on the exact type
+    and refuses a ``numpy.float64`` that JSON takes happily.
     """
 
     if isinstance(value, (DataSourceSpec, LiteralSource)):
-        return value.to_dict()
+        # Recursed, not handed straight back. A source's own `to_dict` writes its
+        # fields raw -- `metadata`, `table`, `crs`, `band`, `value` -- so this was the
+        # one branch above the normalization that could still return numpy, and
+        # `PackageSpec.inputs` is exactly where source specs live. Measured: a
+        # `np.int64` inside one made `Project.validate()` return `[]` and
+        # `Project.save()` die inside `json.dumps`, having already written the
+        # project and simulation files, so the next `Project.load` raised
+        # `FileNotFoundError` on the package it never got to (ledger 265).
+        return _json_value(value.to_dict())
     if isinstance(value, Path):
         return value.as_posix()
     if isinstance(value, tuple):
@@ -366,19 +399,29 @@ def _json_value(value: Any) -> Any:
         return [_json_value(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
+    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
+        # A numpy SCALAR, which is a number and always was. `.item()` is the scalar
+        # protocol, so this covers int64, float32 and bool_ alike, and a 0-d array
+        # with them.
+        #
+        # This must sit ABOVE the primitive check, not below it, and the first
+        # version of it did not (ledger 263, corrected in 265). `np.float64`
+        # SUBCLASSES `float`, so it satisfied `isinstance(value, float)` and was
+        # returned unconverted, while `np.int64` does not subclass `int` and fell
+        # through to the raise. Converting only the half that raised left the other
+        # half in the output: `json.dumps` accepts a `np.float64`, so `to_dict` and
+        # the frozen snapshot looked fine, but PyYAML dispatches on the EXACT type
+        # and refuses it -- so `SimulationSpec.to_yaml()` raised `RepresenterError`
+        # for every model carrying voronoi gridprops, on any grid, which is why the
+        # real-grid fixture could not have found it either.
+        unwrapped = value.item()
+        if type(unwrapped) is not type(value):
+            return _json_value(unwrapped)
+        # `np.longdouble.item()` hands back a `np.longdouble`, so recursing on it
+        # never terminates -- a `RecursionError` in place of this function's own
+        # message naming the type. Fall through to that message instead.
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
-        # A numpy SCALAR, which is a number and always was. Whether one reached here
-        # at all was an accident of numpy's type hierarchy: `np.float64` subclasses
-        # `float` and sailed through the line above, while `np.int64` does not
-        # subclass `int` and raised -- so a grid whose vertex indices happened to be
-        # int64 could not be serialized while one whose coordinates were float64
-        # could. flopy's own VoronoiGrid emits exactly that mix, so every real
-        # Voronoi model failed to serialize while the hand-built test grid, whose
-        # iverts are python ints, passed. `.item()` is the scalar protocol, so this
-        # covers int64, float32 and bool_ alike, and a 0-d array with them.
-        return _json_value(value.item())
     raise ValueError(
         f"Value of type {type(value).__module__}.{type(value).__name__} "
         "cannot be serialized in a spec."
@@ -488,9 +531,17 @@ def _canonical(value: Any) -> Any:
       every such package read as edited (ledger 222).
     """
 
-    numpy = sys.modules.get("numpy")
-    if numpy is not None and isinstance(value, numpy.generic):
-        return value.item()
+    # Normalize and then FALL THROUGH, rather than returning. Returning here meant
+    # `np.str_` -- which IS a `numpy.generic` -- took this branch and never reached
+    # the interning below, so the very fix this function documents did not apply to
+    # the strings a GeoPackage actually produces: `np.unique` on a boundname column
+    # gives `np.str_`, and a package using one reported EDITED after a plain
+    # save/load, through `project.runs.drift()`. Testing `ndim`/`item` rather than
+    # `numpy.generic` also covers a 0-d ndarray, which `_json_value` normalizes and
+    # this did not -- so the two disagreed across a save and moved the digest on
+    # their own (ledger 265).
+    if getattr(value, "ndim", None) == 0 and hasattr(value, "item"):
+        value = value.item()
     if type(value) is str:
         return sys.intern(value)
 
@@ -543,13 +594,22 @@ def package_digest(package: PackageSpec) -> str | None:
     """
 
     try:
+        # EVERY field goes through `_canonical`, including the three scalar ones.
+        # `options` and `inputs` always did; `name`, `enabled` and `requires` did not,
+        # and `to_dict`/`from_dict` normalize them (`bool(...)`, and the JSON round
+        # trip for the strings). So a `np.bool_` `enabled`, a `np.str_` `name` or a
+        # `np.str_` in `requires` digested one way live and another after a
+        # `Project.save()` + `load()`, and `runs.drift()` reported a package nobody
+        # touched as EDITED -- permanently, since the reloaded value never goes back.
+        # `np.bool_` is what any numpy predicate returns (`arr.any()`, `mask[i]`, a
+        # comparison), so this is reachable without anyone meaning to. Ledger 265.
         payload = (
-            package.name,
+            _canonical(package.name),
             _callable_ref(package.builder),
             pickle.dumps(_canonical(package.options), protocol=5),
             pickle.dumps(_canonical(package.inputs), protocol=5),
-            package.enabled,
-            tuple(sorted(package.requires)),
+            _canonical(package.enabled),
+            _canonical(tuple(sorted(package.requires))),
         )
     except (ValueError, TypeError, AttributeError, pickle.PicklingError) as error:
         # A builder that is not importable (a closure, a lambda) or an option
@@ -943,7 +1003,11 @@ class PackageSpec:
             "builder": _callable_ref(self.builder),
             "inputs": _json_value(self.inputs),
             "options": _json_value(self.options),
-            "enabled": self.enabled,
+            # Through the converter like every other field: `np.bool_` is NOT a
+            # `bool` subclass, so a hand-built spec carrying one wrote a value
+            # `json.dumps` refuses -- and numpy 2 calls its own type `bool`, so
+            # the error read "Object of type bool is not JSON serializable".
+            "enabled": _json_value(self.enabled),
             "requires": list(self.requires),
             "metadata": _json_value(self.metadata),
         }
@@ -1797,13 +1861,16 @@ class GridSpec:
         for key in ("source", "boundary", "refinement"):
             value = getattr(self, key)
             if value is not None:
-                payload[key] = value.to_dict()
+                payload[key] = _json_value(value)
         if self.breaklines:
-            payload["breaklines"] = [source.to_dict() for source in self.breaklines]
+            payload["breaklines"] = [_json_value(source) for source in self.breaklines]
         if self.points:
-            payload["points"] = [source.to_dict() for source in self.points]
+            payload["points"] = [_json_value(source) for source in self.points]
         if self.crs is not None:
-            payload["crs"] = self.crs
+            # `crs` documents itself as taking `"EPSG:2927"` OR `2927`, and pandas
+            # hands back `numpy.int64` for an integer column -- so a CRS read from a
+            # config table is the ordinary producer of the value that broke the save.
+            payload["crs"] = _json_value(self.crs)
         if self.engine is not None:
             payload["engine"] = self.engine
         if self.metadata:
@@ -2505,22 +2572,6 @@ class BuiltModel:
             return self.packages[name]
         except KeyError as error:
             raise KeyError(f"Built model has no package named '{name}'.") from error
-
-
-from myflopy.grid_identity import (  # re-exported: callers import these from specs
-    DROPPED_CONTEXT_FIELDS,
-    GRID_PIN,
-    _as_int,
-    _canonical_ring,
-    _cellids_in,
-    _context_metadata,
-    _discretization_complaints,
-    _mesh_residual,
-    _mesh_scale,
-    disv_pin,
-    dropped_context_fields,
-    grid_pin,
-)
 
 
 

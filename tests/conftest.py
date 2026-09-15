@@ -63,31 +63,60 @@ _CANONICAL_PROFILES = {
 def triangulated_grid(tmp_path_factory):
     """A grid built the way a real model builds one, via ``GridSpec.voronoi``.
 
-    Every other grid in this suite comes from ``rectangular_voronoi``, which hand-
-    builds its ``iverts`` from python ``range`` objects. A grid that flopy actually
-    triangulates does not: its ``cell2d`` vertex indices are a MIX of ``int`` and
-    ``numpy.int64``, and its cells have differing vertex counts.
+    Every other grid in this suite comes from ``rectangular_voronoi``, and the ONE
+    property it cannot exhibit is the dtype of its ``cell2d`` vertex indices: they
+    are python ``int``, every one of them, because they are assigned by ``len()``.
+    A grid flopy actually triangulates mixes ``int`` with ``numpy.int64`` -- measured,
+    114 against 36 on this fixture. Everything else is shared: ``rectangular_voronoi``
+    is a real SciPy Voronoi, so its cells are already ragged and unequal, and asserting
+    raggedness therefore distinguishes nothing (ledger 263, corrected in 265).
 
-    That difference was invisible and expensive. ``_json_value`` passed ``np.float64``
-    (which subclasses ``float``) and refused ``np.int64`` (which does not subclass
-    ``int``), so every real Voronoi model failed to serialize -- no ``spec_recipe``,
-    no frozen snapshot, and a reopened run that could not be rebuilt -- while 3,315
-    tests on the hand-built grid passed. Anything that serializes, fingerprints or
-    freezes a grid should be tested against THIS one too.
+    That one difference was invisible and expensive. ``_json_value`` passed
+    ``np.float64`` (which subclasses ``float``) and refused ``np.int64`` (which does
+    not subclass ``int``), so every real Voronoi model failed to serialize -- no
+    ``spec_recipe``, no frozen snapshot, and a reopened run that could not be rebuilt
+    -- while 3,315 tests on the hand-built grid passed.
+
+    Use this fixture for anything that serializes, fingerprints or freezes a grid. It
+    is the END-TO-END check, and it is the weaker half: the type-level guard is
+    ``tests/test_numpy_at_the_boundary.py``, most of which needs no grid at all and which
+    caught ten defects this fixture could not (ledger 265). Reach for that one first.
     """
+
+    return _triangulate(tmp_path_factory, "coarse", max_area=40_000.0)
+
+
+@pytest.fixture(scope="session")
+def triangulated_grid_finer(tmp_path_factory):
+    """A SECOND real grid, on the same boundary and strictly finer.
+
+    Two real meshes are what the refusing direction of the guards needs: a package
+    resolved on ``triangulated_grid`` has every cellid in range on this one and
+    every one of them naming a different cell, which is precisely the range check's
+    documented gap and the reason the pin exists (ledger 250).
+
+    It costs ~0.2 s: the first real grid in a process pays for importing the geo
+    stack, the second pays only for triangulating.
+    """
+
+    return _triangulate(tmp_path_factory, "fine", max_area=12_000.0)
+
+
+def _triangulate(tmp_path_factory, tag: str, *, max_area: float):
+    """Resolve a real ``GridSpec.voronoi`` grid over a 600 ft square."""
 
     import geopandas as gpd
     from shapely.geometry import box
 
     import myflopy as mf
 
-    workspace = tmp_path_factory.mktemp("triangulated")
+    workspace = tmp_path_factory.mktemp(f"triangulated_{tag}")
     boundary = workspace / "boundary.gpkg"
     gpd.GeoDataFrame(
         {"name": ["domain"]}, geometry=[box(0.0, 0.0, 600.0, 600.0)], crs=2927
     ).to_file(boundary)
     return mf.GridSpec.voronoi(
-        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=40_000.0
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=max_area
     ).resolve(workspace=workspace / "grid")
 
 

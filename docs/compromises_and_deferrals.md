@@ -9,9 +9,302 @@
 > `docs/implementation_plan_2026-07.md`; this file only tracks compromises
 > *inside delivered work*.
 >
-> Format per entry: **What** was cut/traded · **Why** · **Impact** · **Revisit
-> trigger**. Remove an entry only when the compromise is actually undone (note
+> **Form per entry (restated 2026-09-14, to the form the entries actually have):**
+> `N. **Title (date).**` and then prose that says what was cut or traded, why, what
+> it costs, and what would justify revisiting. The original preamble prescribed
+> labelled `What:`/`Why:`/`Impact:` fields; measured, **42 of entries 1-132 carry both
+> a `What:` and a `Why:` label and none of 133-264 do**. The prose form is what carries
+> the value now, so it is the rule. Remove an entry only when the compromise is actually undone (note
 > the commit), never because it got stale.
+>
+> **Keep entries about the DECISION, not the debugging.** Entry length has doubled --
+> 22.1 lines each for entries 1-132, 50.9 for 133-264 -- and the growth is bug
+> narrative, which belongs in the commit message. What belongs here is the part a
+> commit message cannot hold: what was deliberately NOT done, the measurement that
+> settled a judgment call, and the trap a later reader would otherwise re-discover.
+>
+> **Numbers are addresses.** `ledger N` is cited 689 times over tracked files -- `docs/`
+> 317, `tests/` 173, `src/` 138, CLAUDE.md 59, the notebooks none -- naming 159 distinct
+> entries, so entries are never renumbered and a number is never reused; a resolved entry
+> is restated below with its title struck through, keeping its number.
+> `tests/test_ledger_format.py` checks that every citation resolves and that every title
+> closes its bold, sweeping `git ls-files` rather than the working tree; the index below
+> is generated -- rerun `python scripts/derive_ledger_index.py` when you add an entry.
+
+<!-- generated index: python scripts/derive_ledger_index.py -->
+
+<!-- 265 entries (266 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+
+| # | Entry | Date |
+| --: | --- | --- |
+| 265 | The fixture rule from 263 named the wrong property, and six numpy defects were sitting behind it | 2026-09-14 |
+| 264 | The guards told the truth only in the circumstances they were tested in | 2026-09-14 |
+| 263 | Every test grid was the one shape that hid the bug, so three commits shipped broken | 2026-09-14 |
+| 262 | The xugrid export could not be profiled in QGIS at all, whatever the settings | 2026-09-14 |
+| 261 | The xugrid export carried no layer elevations | 2026-09-14 |
+| 260 | A surfaces-only elevation table pushed a map's own values out of sight | 2026-09-14 |
+| 259 | A conductivity map answered half the question | 2026-09-14 |
+| 258 | `show_layer_elevs` was inert on every map but heads, and the composers named no drawing options at all | 2026-09-14 |
+| 257 | A model's grid guard evaporated when the project was saved and loaded | 2026-09-14 |
+| 256 | A saved project was a set of references into whatever directory it was authored in | 2026-09-14 |
+| 255 | Review-pass findings NOT acted on | 2026-09-13 |
+| 254 | `locs=` is deprecated for `features=`, and the retired spelling is drawn through the new engine | 2026-09-13 |
+| 253 | Every Plotly colorscale name is accepted, and the static colormap is built from Plotly's own stops | 2026-09-13 |
+| 252 | `logscale=True` now reads in real units everywhere, and its limits are DATA units | 2026-09-13 |
+| 251 | A run whose packages held an array could not be rebuilt at all | 2026-09-13 |
+| 250 | A package resolved on one mesh and built on another was only caught when the numbers went out of range | 2026-09-13 |
+| 249 | A model built against a grid its packages had never seen ran anyway | 2026-09-13 |
+| 248 | A cell the raster gave no value for came back as a bare NaN, with nothing said | 2026-09-13 |
+| 247 | A GeoPackage NULL became a non-finite number in a written MF6 package, by two routes | 2026-09-13 |
+| 246 | `edges_only=` on a GeoPackage source could not see the model's own idomain | 2026-09-13 |
+| 245 | Two public grid selectors took any touch, one answered about EPSG:2927 whatever frame the grid was in, and... | 2026-09-12 |
+| 244 | A USG export chained cells that shared only a corner | 2026-09-12 |
+| 243 | A zone boundary drawn through a row of cell centroids left that row in no zone | 2026-09-12 |
+| 242 | PRT release points ignored idomain and took the lowest cell on a face | 2026-09-12 |
+| 241 | A lake kept every cell it grazed, and LAK had its own activity test | 2026-09-12 |
+| 240 | Three callers read the cell selector's answer as a flat list, and so raised on every input | 2026-09-12 |
+| 239 | `sfr_connection(at=(x, y))` answered with the nearest reach CENTROID | 2026-09-12 |
+| 238 | A DRN seepage zone claimed every cell it touched | 2026-09-12 |
+| 237 | A line overshooting a face by 1e-6 ft wrote a second full record | 2026-09-12 |
+| 236 | Grid-edge cells came from a ring, and the ring was wrong four ways | 2026-09-12 |
+| 235 | The shared cell selector took any touch | 2026-09-12 |
+| 234 | PEST read a two-screen well's simulated head from the wrong layer | 2026-09-12 |
+| 233 | A head target on a cell face became four observations | 2026-09-12 |
+| 232 | The cell-coverage rules could only be reached through a GeoPackage | 2026-09-11 |
+| 231 | A lakebed from bathymetry had no supported route | 2026-09-11 |
+| 230 | A reopened run rebuilt from the library as edited since | 2026-09-11 |
+| 229 | Two packages of one type gave an empty table, or half of one | 2026-09-11 |
+| 228 | A model's package names and types, shown both -- live and reopened alike | 2026-09-11 |
+| 227 | ModelContext units were dropped on every save | 2026-09-11 |
+| 226 | SFR runoff grew with the number of reaches | 2026-09-11 |
+| 225 | The default CRS was spelled three ways at 19 sites | 2026-09-11 |
+| 224 | A reopened run was drawn in EPSG:2927 whatever CRS it ran in | 2026-09-11 |
+| 223 | `load_mf6_run` opened the alphabetically first model, not the flow model | 2026-09-11 |
+| 222 | Every saved project with shared strings or NumPy scalars drifted as 'edited' | 2026-09-11 |
+| 221 | Reopening a run printed at verbosity 0 | 2026-09-11 |
+| 220 | A reopened run reloaded on every read, and dropped your edits | 2026-09-11 |
+| 219 | Pathlines were drawn 282 miles from an offset grid | 2026-09-11 |
+| 218 | Release points were written in the world frame on an offset grid | 2026-09-11 |
+| 217 | Particle tracking failed on every converted USG model | 2026-09-11 |
+| 216 | A fault trace resolved to the faces it crossed, and 68-100% of the flow still crossed it | 2026-09-11 |
+| 215 | A tributary was connected where it started, not where it joined | 2026-09-11 |
+| 214 | A stream centerline on a cell face was two streams' worth of reaches | 2026-09-11 |
+| 213 | `ZoneSpec.from_raster` gave zone 0 to every cell too small to hold a pixel centre | 2026-09-11 |
+| 212 | A line on a face counted twice; a point on a vertex, four times | 2026-09-11 |
+| 211 | A GeoPackage that landed nowhere built an empty package | 2026-09-11 |
+| 210 | A polygon drawn on cell faces was also written to the cells outside it | 2026-09-11 |
+| 209 | SFR and LAK read layer elevations from different places | 2026-09-10 |
+| 208 | The guarded verb was the deliberate one | 2026-09-10 |
+| 207 | `run.model().chd.` autocompleted list methods | 2026-09-10 |
+| 206 | The discretization was the one package with no `mf.` helper | 2026-09-10 |
+| 205 | Four verbs nobody typed while building a model | 2026-09-10 |
+| 204 | Four spellings for add-or-replace, two for remove | 2026-09-10 |
+| 203 | The one name a coupled model needs, offered by no IDE | 2026-09-10 |
+| 202 | `mf.simulation` grew three ways to say one thing | 2026-09-10 |
+| 201 | The project accepted specs into the wrong library, and went quiet when it lost work | 2026-09-10 |
+| 200 | A `chd` handed to a simulation was accepted, and died inside FloPy | 2026-09-10 |
+| 199 | Three lookups, one question, three answers | 2026-09-10 |
+| 198 | The coupled one-liner in `simulation()`'s own docstring could not run | 2026-09-10 |
+| 197 | The declarative spec layer was pinned by nothing | 2026-09-10 |
+| 196 | `gdf_topbtm` is read positionally, and a physics keyword moved the column | 2026-09-10 |
+| 195 | PEST calibrations are excluded from the run ledger, and reported | 2026-09-06 |
+| 194 | The documentation tail, and four code bugs hiding in it | 2026-09-06 |
+| 193 | `Project.save()` persists what it can, and the return type changed | 2026-09-04 |
+| 192 | `layer=` on the grid's feature-to-cell selectors | 2026-09-03 |
+| 191 | D5 recorded at last, and the two ways step 1 made it worse | 2026-09-06 |
+| 190 | Loose ends closed after the project-libraries work | 2026-09-06 |
+| 189 | Package digests are cached, and the fork/digest cost figures were wrong | 2026-09-06 |
+| 188 | What adversarial verification found in 186/187, and what it cost | 2026-09-05 |
+| 187 | Drift: which library packages a run used have changed since | 2026-09-05 |
+| 186 | Forking and editing packages: built, never patched | 2026-09-05 |
+| 185 | `project.runs` -- the run ledger, deferred out of step 3 and built once the outcome reader existed | 2026-09-04 |
+| 184 | `status` is myflopy's verb, `outcome` is MF6's verdict | 2026-09-04 |
+| 183 | Two library keys that name one file are refused before the write | 2026-09-04 |
+| 182 | The three project spec libraries became `dict` subclasses | 2026-09-04 |
+| 181 | The run manifest stores the rebuildable recipe, not just a readable summary | 2026-09-04 |
+| 180 | The docstring generator wrote its own output back and stopped propagating, and `--check` could not see it | 2026-09-05 |
+| 179 | Integer stress-period keys restored on read, by a canonical-round-trip test rather than a format change | 2026-09-03 |
+| 178 | Spliced docstrings written into the source, because an editor cannot run your module | 2026-09-02 |
+| 177 | `section(fill=...)`: the cross-section of the MODEL, not of a line | 2026-09-02 |
+| 176 | `backend="mpl"` reaches the verb tier, and the noun tier is finished | 2026-09-02 |
+| 175 | A NaN stack refuses to draw, instead of failing inside Matplotlib | 2026-08-31 |
+| 174 | `GridSpec.voronoi` stops swallowing unknown keywords, and names its sizing options | 2026-08-31 |
+| 173 | `GeoPackageSourceSpec` given a full docstring; two more descriptions were wrong | 2026-08-31 |
+| 172 | Grid refinement documented across three channels; `GeoPackageSourceSpec.fields` was documented backwards | 2026-08-31 |
+| 171 | `Project.grids` typed so an editor can find `resolve`; `resolve() -> Any` left alone | 2026-08-31 |
+| 170 | `GridSpec.resolve` documented rather than repaired; the CRS fallback left in place | 2026-08-31 |
+| 169 | `usg.export_gis` — the USG model as grid-independent GIS | 2026-08-30 |
+| 168 | An input map's hover shows the whole record, not just the coloured field | 2026-08-30 |
+| 167 | The rest of the `*_summary()` family, and `model.outputs` -- PART DONE, rest DEFERRED | 2026-08-30 |
+| 166 | `model.packages.summary()` / `.mosaic()`, and three bugs found by asking for them | 2026-08-30 |
+| 165 | Splitting a pinched-out unit inflates it by `(N-1) * min_sep` — fix DEFERRED | 2026-08-30 |
+| 164 | `VoronoiGridPlus.from_gsf` reads the `.gsf` itself rather than reusing flopy's... | 2026-08-28 |
+| 163 | Array-form recharge and ET: `mf.rch.array` / `mf.evt.array` | 2026-08-30 |
+| 162 | Horizontal flow barriers, resolved from geometry and validated first | 2026-08-29 |
+| 161 | Mounding reaches the hover, and says what it is measured from | 2026-08-29 |
+| 160 | A highlight is a drawing, not a dimming; and it works on every map | 2026-08-29 |
+| 159 | A MODFLOW-USG model imports, and says what it could not bring | 2026-08-28 |
+| 158 | A unit splits into model layers; geology and discretization separate | 2026-08-28 |
+| 157 | The 3-D volume carries its numbers, and comes apart by layer | 2026-08-28 |
+| 156 | A section line may be what its docstring said, and `color_by` is checked | 2026-08-28 |
+| 155 | `VtkScene.html()` rewrites PyVista's module script so the page opens from disk | 2026-08-27 |
+| 154 | A bare EPSG number is normalized to `EPSG:<n>` | 2026-08-27 |
+| 153 | `surface(backend="vtk")` renders contacts as separate sheets | 2026-08-27 |
+| 152 | Interpolated surfaces drop no-value samples | 2026-08-27 |
+| 151 | `mf.Raster(..., nodata=)` overrides the header | 2026-08-27 |
+| 150 | `clip` promoted alongside `region_vector`; it stays in the cache signature | 2026-08-27 |
+| 149 | `region_vector` promoted from `**grass_kwargs` to a real parameter | 2026-08-27 |
+| 148 | `LayerStack` accepts its grid late; `vor` stays first-positional | 2026-08-27 |
+| 147 | The classmethod-binding tripwire is arity-based, so a 2+-argument misbinding still slips through | 2026-08-26 |
+| 146 | GRASS auto-discovery reaches POSIX, and finds its own bindings | 2026-08-26 |
+| 145 | Explicit signatures on the plotting verbs; a `**kwargs` tail kept | 2026-08-24 |
+| 144 | Hover audit: every model-backed map is sectioned | 2026-08-20 |
+| 143 | Docstrings are the API surface for a `**kwargs` facade | 2026-08-20 |
+| 142 | The sectioned hover reached the grammar but not the map verb | 2026-08-20 |
+| 141 | My notebook runner is not a Jupyter kernel | 2026-08-20 |
+| 140 | `mf.LayerStack` was exported without any of its arguments | 2026-08-20 |
+| 139 | The master notebook's missing output file was a typo, not a regression | 2026-08-20 |
+| 138 | 8.7: the vocabulary pinned, and an allowlist that had gone stale in silence | 2026-08-20 |
+| 137 | 8.6b: `model.visualize` deleted -- but not for the reason the plan gave | 2026-08-20 |
+| 136 | 8.6a: `animate` becomes a combinator, and the plan's "only new code" stage turned out to be mostly promotion | 2026-08-20 |
+| 135 | The Picture idempotence contract was proven against a STUB, and four real classes had drifted off it | 2026-08-20 |
+| 134 | 8.2's `xs` -> `section` rename left a canonical notebook broken | 2026-08-20 |
+| 133 | 8.5b: the 3-D scenes get a contract, and `backend=` earns its name | 2026-08-20 |
+| 132 | 8.5a: `stack.plot`, and a Picture that is not Plotly | 2026-08-20 |
+| 131 | `plot._grid_of` read `.vor` as "this is a model" | 2026-08-20 |
+| 130 | `Choro.ani` broke the idempotence the Picture contract requires | 2026-08-20 |
+| 129 | 8.4b: the eleven grid aliases, and what only five of them were | 2026-08-18 |
+| 128 | 8.4a: `model.plot`, and the 25-site workaround it let us delete | 2026-08-18 |
+| 127 | 8.3: `myflopy.plot`, and the legacy choropleth layer removed | 2026-08-18 |
+| 126 | 8.2: `xs` became `section`; `plot` stayed, because the rename it was given rested on a false premise | 2026-08-18 |
+| 125 | 8.1: one contract for every picture, and two things the survey got wrong | 2026-08-18 |
+| 124 | Phase 8 was retracted and rewritten: the goal was a vocabulary, not a directory | 2026-08-01 |
+| 123 | 7.2 (prints → logging), 7.4 (docs debt), and the flopy deprecations — what was exempted and why | 2026-08-01 |
+| 122 | 7.3: the 60 exception swallows, what narrowing them cost, and the five defects they were hiding | 2026-07-31 |
+| 121 | The parameterize surface had no completeness test; it does now, and it caught a third stale doc while being... | 2026-07-30 |
+| 120 | Sensitivity ships ensemble-based only; the jacobian half is deferred with its cost measured | 2026-07-30 |
+| 119 | The regularization item was retired and replaced by the gap it was hiding | 2026-07-30 |
+| 118 | `style="zone"` was never a working feature, so §5.8 item 2 built the whole front door, not just its raster... | 2026-07-30 |
+| 117 | `uzf.vks` ships alone, and UZF needed a new recipe field to be placeable | 2026-07-30 |
+| 116 | A pilot-points-only calibration could not run | 2026-07-30 |
+| 115 | Pilot points scaled the K field whatever target they were pointed at | 2026-07-30 |
+| 114 | `Run.pest_runs` now scans the whole run directory | 2026-07-29 |
+| 113 | The relayering of ledger 110 broke the second build on one model, and the fix reads a private FloPy attribute | 2026-07-29 |
+| 112 | The transport demo now perturbs porosity too, and ships head targets | 2026-07-29 |
+| 111 | `layers=` was silently ignored, and is now an error | 2026-07-29 |
+| 110 | `parameterize("porosity")` re-stores the model's griddata one array per layer, mutating the FloPy model | 2026-07-29 |
+| 109 | `plot_obs_residuals` warns about mixed units rather than refusing them | 2026-07-29 |
+| 108 | Two of my own `canonical_07` test assertions fought the way notebooks are actually used | 2026-07-28 |
+| 107 | PstFrom copied the PEST template into itself; guarded, with a real capability limit | 2026-07-28 |
+| 106 | `canonical_07` is verified by hand, because nothing in this repo executes a notebook | 2026-07-28 |
+| 105 | ~~Concentration observations are not yet drawn on IES residual maps~~ | 2026-07-28 |
+| 104 | `prepare_conc_observations` keeps a DEFERRED import of `load_mf6_run`, against the ratchet's default advice | 2026-07-28 |
+| 103 | The transport calibration demo estimates FLOW parameters from concentration data | 2026-07-28 |
+| 102 | `ConcTargets` keeps `head_target`/`sim_head` as its internal column names | 2026-07-28 |
+| 101 | The canonical transport fixture: the recorded blocker was wrong, and the real obstacles were different | 2026-07-28 |
+| 100 | `GroupConc`/`GroupTemp` — the "near-mechanical clone" was refused | 2026-07-27 |
+| 99 | `xs` was broken on the transport readers from the day they shipped — FIXED 2026-07-27 |  |
+| 98 | Two pre-existing defects in the PACKAGE-level `budget.<term>` namespaces, found while scoping 97 and NOT fixed | 2026-07-27 |
+| 97 | `model.budget.<term>` — four judgment calls behind the new noun | 2026-07-27 |
+| 96 | The connection-indexed guard keys on a hardcoded record NAME, because size cannot decide it | 2026-07-27 |
+| 95 | Budget hover units fall back to dimensional placeholders, and two package-output hovers still hardcode feet | 2026-07-27 |
+| 94 | `node2` basing is left asymmetric — across packages AND across the two paths — deliberately | 2026-07-27 |
+| 93 | `zero_base_budget_nodes` is now misnamed — rename DEFERRED | 2026-07-27 |
+| 92 | A fifth off-by-one, found while fixing 91 and fixed with it: `model.bud("sfr" \|"lak"\|"uzf").df` returned no... | 2026-07-27 |
+| 91 | Transport budgets were unreadable four different ways — all FIXED, with two deliberate limits | 2026-07-27 |
+| 90 | `mf.gwt`/`mf.gwe` now default `save_flows=True` — a build-side behavior change | 2026-07-27 |
+| 89 | Reopening any multi-model run raised `RecursionError` (pre-existing, FIXED 2026-07-27) |  |
+| 88 | Non-field maps borrowed `model.hds` for their time axis, which broke every package map on transport models... |  |
+| 87 | Every grouped difference map rendered mirrored on the static backend (pre-existing, FIXED 2026-07-27) |  |
+| 86 | `mf.PestProject` is documented as the advanced path but still exported as preferred (deferred) |  |
+| 85 | `edgecolor="black"` in `plot_obs_residuals` stays a literal: PALETTE covers semantic colors, not structural... |  |
+| 84 | The phi-contribution pie charts still take the backend's default colors (deferred) |  |
+| 83 | `report()` still dies on a workspace with no phi output (deferred) |  |
+| 82 | `run.pest_runs` attaches its model lazily, and gives up silently on a multi-model run |  |
+| 81 | Unmeasured-time rows are excluded by joining to `*_target_values.csv`, and the filter silently does not app... |  |
+| 80 | `obs_residuals` uses `weight > 0` as its "is this a forecast?" proxy |  |
+| 79 | `mpl_colormap_for` was extracted from `Choro.plot_mpl` rather than duplicated |  |
+| 78 | The residual sign convention differs from PEST's own `.res` file |  |
+| 77 | `plot_obs_residuals` has no `map=` flag, unlike the plan's `map=True` |  |
+| 76 | Lake and SFR observations cannot be placed on the residual map (deferred) |  |
+| 75 | The uncertainty map became a `stat`, not the planned `field_uncertainty_map` method |  |
+| 74 | [CLOSED by entry 252 -- every log map now reads in real units on both backends.] `logscale` maps read in lo... |  |
+| 73 | `IesResults.settings` and `report()` raised on a forecast-less run — RESOLVED in 6.4C | 2026-07-26 |
+| 72 | Run context (iterations, realization count) rides the figure title, not the hover footer — the plan asked f... |  |
+| 71 | ... |  |
+| 70 | [CLOSED by entry 253 -- a named `RdBu` no longer renders mirrored.] The signed-`q` maps still render mirror... |  |
+| 69 | ... |  |
+| 68 | `zmid` is emitted but is not what centers the `change` map |  |
+| 67 | The per-stat field-map color policy is module-private to `ies.py`, not a shared helper (plan §6.4 item 1) |  |
+| 66 | PRT view tests split between one real MF6 run and hand-written track CSVs (plan §6.3C | 2026-07-25 |
+| 65 | `viz.category_colors` remembers name → color in a process-global memo, and a 7-color palette can still coll... | 2026-07-25 |
+| 64 | Canonical notebook 03 lost its stream/lake outlines when it moved onto the library figure (plan §6.3C | 2026-07-25 |
+| 63 | The pathline map caps particles at 250 rather than drawing every trace (plan §6.3C | 2026-07-25 |
+| 62 | `viz.mosaic` now copies map overlays — a pre-existing silent drop (plan §6.3C | 2026-07-25 |
+| 61 | `PRTRunResults.pathlines` became a view; the raw frame moved to `track_records` (plan §6.3C | 2026-07-25 |
+| 60 | `logscale` now applies to custom-`zs` choropleths, blanking non-positive values (plan §6.3B | 2026-07-25 |
+| 59 | PRT views replace the series verb rather than implementing it (plan §6.3B | 2026-07-25 |
+| 58 | `capture` raises on an ungrouped run instead of falling back (plan §6.3B | 2026-07-25 |
+| 57 | PRT derived maps leave unreached cells blank, not zero (plan §6.3B | 2026-07-25 |
+| 56 | GWT/GWE results tier shipped reader+maps only (plan §6.0/6.1/6.2 | 2026-07-24 |
+| 55 | List-BC builders serialize via a bespoke partial encoding (plan §5.6A | 2026-07-23 |
+| 54 | YAML serializer ships without TOML (plan §5.6 | 2026-07-23 |
+| 53 | `mf.dis`/`mf.disu` build+run but get no myflopy viz (plan §5.5 | 2026-07-23 |
+| 52 | LAK budget bar (`lak.results.q.budget.plot`) is still matplotlib (plan §4.8 | 2026-07-22 |
+| 51 | `_ArealBuilder`/`EVTBuilder` deferred scope (plan §4.7.5 | 2026-07-21 |
+| 50 | Flat-bottom `bathy` lake: WARN, not raise (judgment call) |  |
+| 49 | Two pre-existing, non-sign SFR observation/plot issues (audit tail) |  |
+| 48 | Two bugs surfaced while implementing the reference-frame rename (entry 45) |  |
+| 47 | The 2026-07-19 sign audit (64 read paths, 63 locations) — TRIAGED 2026-07-21 |  |
+| 46 | DRN's PEST series is sign-inconsistent with SFR/LAK (audit finding) |  |
+| 45 | DONE: keep MF6's raw `q` signs; name the reference frame instead |  |
+| 44 | The four namespace classes still write one property per package |  |
+| 43 | The payoff probe runs in a subprocess |  |
+| 42 | ~~Four namespace properties remain hand-written, blocked on typing~~ |  |
+| 42 | Four namespace properties remain hand-written, blocked on typing |  |
+| 41 | The payoff test asserts 9-of-16 automatic, not "every surface" |  |
+| 40 | The record-order assertion is an `assert`, not a raise |  |
+| 39 | 4.7.4 added lines rather than removing them |  |
+| 38 | The helper classes were NOT collapsed — the plan's premise was wrong |  |
+| 37 | ~~Artifact capture/restore dropped MOVER from every list BC~~ |  |
+| 36 | The review found a circular test in the commit that documented circular tests as the hazard |  |
+| 35 | `_CELL_BUDGET_PACKAGES` has no consumer in `src/` |  |
+| 34 | Scaffold retirement is a manual obligation, not an enforced one |  |
+| 33 | Iteration order of the derived lists changed |  |
+| 32 | Three derived lists are unions, not pure derivations |  |
+| 31 | `gpkg_defaults` records parameter names, not MF6 record names |  |
+| 30 | The registry still covers GWF packages only |  |
+| 29 | `evt.record_fields` records the `nseg=1` prefix, not the full record |  |
+| 28 | The `RETIRE WITH 4.7.3` tests become circular the moment they are wrong |  |
+| 27 | ~~The descriptor is written but not yet read~~ |  |
+| 26 | The observation-surface coefficients have no regeneration script |  |
+| 25 | ~~OUTSTANDING: the fast tour must show a WELL-CALIBRATED model~~ |  |
+| 24 | Only the `obs_vs_sim` path got the diagnosis |  |
+| 23 | The empty-cross-plot diagnosis warns rather than raising |  |
+| 22 | Production wells carry no measured value |  |
+| 21 | The canonical model's "measured" heads are synthetic, not data |  |
+| 20 | The user's executed `canonical_fast_tour.ipynb` outputs were discarded |  |
+| 19 | `docs/refactor_review_report.md` still lists `long_profile(...)` |  |
+| 18 | The loose field-level plot verbs — RESOLVED 2026-07-22 (plan §4.8) |  |
+| 17 | The profile view has no `.map()` |  |
+| 16 | Mutation-testing residue is a real process hazard |  |
+| 15 | RIV/EVT input maps hover one field at a time (unchanged from entry 8) |  |
+| 14 | ~~`_MOVER_PACKAGES` still lists `rch`, which has no mover support~~ |  |
+| 13 | ~~`rch_spec` keeps the fragile `maxbound` inference~~ |  |
+| 12 | ~~The review that vetted this work was only ~50% complete~~ |  |
+| 11 | `RUN_SUITE` restored to `False` in `canonical_fast_tour.ipynb` |  |
+| 10 | RIV/EVT are not PEST `parameterize` targets |  |
+| 9 | ~~RIV/EVT are not in the canonical model~~ |  |
+| 8 | RIV input hover is the generic per-field hover, not the sketched multi-field one |  |
+| 7 | EVT `.gpkg` emits only the `nseg=1` record shape |  |
+| 6 | No `EVTBuilder` (no file-less whole-domain EVT form). — RESOLVED 2026-07-21 (plan §4.7.5) |  |
+| 5 | Phase 4.5 second-tier splits deferred |  |
+| 4 | Large-multilayer render test shrunk |  |
+| 3 | Pilot-point test density sized to the small domain |  |
+| 2 | IES e2e tests trim the ensemble exploration |  |
+| 1 | Default suite runs the smallest canonical profile |  |
+
+<!-- end generated index -->
 
 ## Fast test suite (2026-07-17, merged `c78c8b9`)
 
@@ -9599,11 +9892,22 @@ same day, which is the useful part of the result.
       **Ledger 251 therefore did not do what it says on any real model**, and 249, 256
       and 257 were all validated against a grid that could not exhibit the failure.
       That entry is amended below rather than left standing.
-      **The cause was the FIXTURE, not the feature.** `rectangular_voronoi` hand-builds
-      its `iverts` from python `range` objects, so every cell is a plain `int` and every
-      cell has the same width. It is the grid behind essentially every test in the
-      suite. 3,315 tests passed while the thing they were written to prove did not work
-      outside them.
+      **The cause was the FIXTURE, not the feature.** `rectangular_voronoi` is the grid
+      behind essentially every test in the suite, and its cell2d vertex indices are all
+      python `int`, which is the one shape that cannot show this. 3,315 tests passed
+      while the thing they were written to prove did not work outside them.
+      **AMENDED 2026-09-14 (entry 265), because the mechanism above was stated without
+      being measured and is wrong.** As first written this entry said the fixture
+      "hand-builds its `iverts` from python `range` objects, so every cell is a plain
+      `int` and every cell has the same width". Measured: `rectangular_voronoi` calls
+      `irregular_voronoi_grid` (`modflow/mf6/canonical.py:327`), which runs a **real
+      `scipy.spatial.Voronoi`** clipped to a box -- no `range` anywhere in it -- and its
+      cells are **not** uniform. At 4x4 it is ncpl 16 with vertex counts `{4,5,6,7}`, 16
+      distinct areas from 5,458 to 14,055, and bbox widths from 59.0 to 157.3;
+      `canonical.py:132` raises if the cells ever ARE uniform. The **only** property that
+      separates the two grids is the vertex-index dtype: 82 python `int` against the
+      triangulated grid's 114 `numpy.int64` + 36 `int`. Raggedness was never the
+      discriminator, so any test asserting it is asserting something both grids satisfy.
       - `tests/conftest.py` gains **`triangulated_grid`**, a session-scoped grid built
         through `GridSpec.voronoi` the way a model is. `tests/test_real_grid_round_trip.py`
         runs serialization, freeze, reopen, fingerprinting and save/load against it.
@@ -9675,3 +9979,126 @@ same day, which is the useful part of the result.
       normalizers elsewhere in `src/` were already right. The failure was not sprawl but
       new code not consulting what the file already knew. Grep for an existing helper
       before writing one; test a claim before writing it down.
+
+265. **The fixture rule from 263 named the wrong property, and six numpy defects were sitting behind it (2026-09-14).**
+      Ledger 263 concluded "use a real grid fixture" and 264 acted on it. Measuring the
+      two grids before adopting the fixture across ~15 modules showed the rule's stated
+      reason was **false**: `rectangular_voronoi` is a real SciPy Voronoi with ragged,
+      unequal cells (ncpl 16, vertex counts `{4,5,6,7}`, 16 distinct widths from 59.0 to
+      157.3 ft), not a `range`-built uniform mesh. The **only** property it cannot show
+      is the vertex-index dtype. 263 is amended above; the same false mechanism was
+      corrected in CLAUDE.md, `tests/conftest.py`, `test_real_grid_round_trip.py` and the
+      session memory. A rule with a false reason is worse than no rule: it sends the next
+      reader hunting raggedness bugs that do not exist.
+      - **The wide adoption was NOT done, and the reason is measured.** Substituting a
+        real grid across the four boundary modules broke 19 tests, every one of them a
+        hardcoded cell count or a test whose subject IS two different meshes -- not a
+        library failure. Worse, in `test_context_across_a_save.py` two tests go
+        **silently vacuous** rather than failing, which is the exact failure mode this
+        exercise exists to prevent. `test_build_grid_consistency.py`'s literal counts are
+        what make its error messages readable, and they would have to go.
+        Instead: a second real fixture (`triangulated_grid_finer`, ncpl 92, ~0.2 s) and
+        four targeted tests in the module that already owns this -- the refusing
+        direction of the pin across two real meshes, a renumbering on ragged rings, and a
+        freeze/thaw that must write byte-identical MF6 input AND hand back the same
+        vertices. Both halves, because the first does not imply the second and the first
+        draft claimed it did: a DISV spec carries its own `vertices`/`cell2d` as package
+        options, so **every vertex in the snapshot's grid block can be shifted a full
+        foot and the written files are identical**. `grid_pin` cannot stand in for the
+        missing half either -- it is connectivity-only by design (ledger 250), so it is
+        blind to a vertex that moved. The mutation profile is the evidence: rounding the
+        frozen vertices to whole feet, casting them to float32 and shifting them by 1e-3
+        all survived the file comparison and all fail the added one.
+      - **`tests/test_numpy_at_the_boundary.py` is the stronger guard.** Most of it needs
+        no grid -- two of its tests take the real-grid fixture, for the freeze cases --
+        and that is exactly why it finds what a grid fixture cannot: of the ten defects
+        below, one is reachable through a mesh. Push the types through the boundary
+        directly.
+      **Six live defects, each reproduced before being fixed and each killed by mutation:**
+      - **`to_yaml` raised for every model carrying a DISV.** `_json_value` returned
+        `np.float64` and `np.str_` UNCONVERTED, because both subclass a type the
+        primitive check accepts -- so 263 fixed the half that raised and left the half
+        that did not. `json.dumps` accepts them; PyYAML dispatches on the exact type and
+        does not. `SimulationSpec.to_yaml()` is a documented API with its own example
+        directory, and `tests/test_specs_io.py` never built a DISV, so nothing looked.
+      - **A package with numpy boundnames reported EDITED after a plain save/load.**
+        `np.str_` IS a `numpy.generic`, so `_canonical` returned from its numpy branch
+        and never reached the interning ledger 222 added -- and `np.unique` on a
+        boundname column is how a GeoPackage produces one. `project.runs.drift()` reads
+        those digests. **No stored run is disturbed by the fix**: measured across npf
+        (scalar and array), chd with python boundnames, ic, oc and tdis, every digest is
+        byte-identical before and after. Only a package that actually carries a `np.str_`
+        or a 0-d array moves -- and those were already reporting drift, which is the bug.
+      - **`_canonical` and `_json_value` disagreed about a 0-d `ndarray`** (one
+        normalized it, one did not), so the value changed across a save on its own.
+      - **An object-dtype `context.domain` froze "successfully" and made the WHOLE
+        snapshot unreadable** -- every package in it -- with `frozen_summary` reporting
+        `readable: False` and no cause. `ModelContext.domain` is typed `Any` and
+        validated nowhere, so a `LayerBuildResult` passed instead of its `.idomain`
+        reaches `np.asarray`. It was the one write into the store with neither guard.
+      - **A thawed run could not resolve a surface.** `_surfaces_block` stringified the
+        elevation table's integer column labels and never restored them, so `[0, 1, 2]`
+        came back `['0', '1', '2']` and the first `CellSurfaceOffset`/SFR/LAK read died
+        -- the one failure that block exists to prevent.
+      - **Two loud-but-wrong failures:** `_json_value` recursed forever on
+        `np.longdouble` (whose `.item()` returns its own type) instead of raising its own
+        message, and `PackageSpec.to_dict` wrote `enabled` raw, so a `np.bool_` there
+        produced "Object of type bool is not JSON serializable" -- numpy 2's name for its
+        own type, which sends you looking at the wrong one.
+      **Four more, found only because the first six were reviewed -- the boundary is
+      wider than the function.** Fixing `_json_value` helps a value that REACHES it:
+      - **A source spec was handed to its own `to_dict`, unrecursed** -- the FIRST branch
+        of `_json_value`, above every normalization, and a source writes its fields raw.
+        `PackageSpec.inputs` is where source specs live. Measured: `Project.validate()`
+        returned `[]` and `Project.save()` then died inside `json.dumps` having already
+        written the project and simulation files, so the next `Project.load` raised
+        `FileNotFoundError` on a package it never reached.
+      - **`_spec_summary` wrote both metadata dicts into `run.json` raw**, by a path that
+        never calls `PackageSpec.to_dict`. `spec.with_metadata(calibrated=np.True_)` or a
+        context metadata value read from a table made `prepare_run` raise outright.
+      - **`GridSpec.to_dict` emitted `crs` raw** and called `source.to_dict()` directly.
+        `crs` documents itself as taking `2927` as well as `"EPSG:2927"`, and pandas hands
+        back `numpy.int64` for an integer column, so a CRS read from a config table is the
+        ordinary producer.
+      - **The `enabled` fix above CREATED a defect, and this is the one worth reading.**
+        `package_digest` read `name`, `enabled` and `requires` raw while `from_dict`
+        normalizes them, so a `np.bool_` `enabled` digested one way live and another after
+        a save -- a package nobody touched, reported EDITED by `runs.drift()`, forever.
+        Before that fix the package could not be SAVED at all, so the fix is precisely
+        what turned a loud failure into a silent permanent one. Every digest field goes
+        through `_canonical` now. `np.bool_` is what any numpy predicate returns
+        (`arr.any()`, `mask[i]`, a comparison), so this needed no unusual input.
+      NOT fixed, deliberately: `_canonical` has no source-spec branch either, so a numpy
+      value inside one still drifts the digest. The blunt fix -- canonicalizing the source
+      through `to_dict()` -- was measured to move the digest of ORDINARY python-valued
+      sources too (`73373803492f3890` -> `8c7fe2ba2a5d59d7`), which would report every
+      stored source-bearing run as drifted on the day it landed. That needs its own commit
+      and its own migration note, not a quiet ride along with this one.
+
+      **Ledger and CLAUDE.md hygiene, in the same pass.** The ledger was 9,677 lines at
+      the previous commit, 48.4% of `docs/*.md`, and its own preamble prescribed
+      `What:`/`Why:`/`Impact:` fields that **42 of entries 1-132 and none of 133-264**
+      carry; the preamble now states the form the entries actually have. Entries have
+      doubled in length (22.1 lines each for 1-132, 50.9 for 133-264) and the growth is
+      bug narrative, which belongs in the commit message -- so the preamble says what an
+      entry is for. NOT done: no renumbering and no retroactive trimming.
+      `scripts/derive_ledger_index.py` generates the index (265 entries over 266 rows --
+      entry 42 is listed twice, once struck, which is the resolution convention) and
+      `tests/test_ledger_format.py` checks the shape, the numbering, the index's currency,
+      that every title closes its bold, and that every citation resolves -- that last
+      check is what caught this entry missing while five files already cited it.
+      **Every figure in this paragraph is the SECOND one measured, and that is the
+      entry's own lesson landing on the entry.** The first pass wrote "1,527 citations,
+      153 distinct, across `src/`, `tests/`, the notebooks and CLAUDE.md". All of it was
+      wrong. The sweep was an `rglob` that also read the three stale repo copies under
+      `.claude/worktrees/` -- **62% of the occurrences** -- so the count was neither
+      reproducible nor about this repository; the regex missed the plural `ledgers N` and
+      every range `ledger N-M`, 25 citations including entry 264's own; and the notebooks
+      contain **no** ledger citation at all while `docs/` is the largest contributor and
+      went unnamed. Over tracked files it is **689 occurrences naming 159 entries**, all
+      resolving, and the test sweeps `git ls-files` now. Four more defects in the same
+      hygiene code, all found by review rather than by use: the index generator raised
+      `TypeError` on the documented resolution shape (sorting a `None` date against a
+      string), counted rows as entries, and cut three titles mid-code-span; and the
+      anti-vacuity guard was itself vacuous -- a sweep narrowed to `docs/` alone passed
+      it while silently no longer checking `src/`.

@@ -43,7 +43,7 @@ from typing import Any
 import numpy as np
 
 from myflopy._logging import get_logger
-from myflopy.specs import PackageSpec, SimulationSpec
+from myflopy.specs import PackageSpec, SimulationSpec, _json_value
 
 logger = get_logger(__name__)
 
@@ -228,6 +228,34 @@ def _grid_block(grid, store: dict[str, np.ndarray], tag: str) -> dict | None:
     }
 
 
+def _column_label(name: Any) -> int | str:
+    """Return ``name`` as JSON carries it, keeping an integer label an integer.
+
+    The elevation table's contract is INTEGER columns -- ``specs._elevation_table_from_layers``
+    builds ``{0: top, 1..nlay: bottoms}`` and ``GeoPackageSource.surface_value`` looks
+    them up by integer -- so ``str(name)`` thawed ``[0, 1, 2]`` back as ``['0', '1',
+    '2']`` and a reopened run died on its first elevation read, which is the one thing
+    this block exists to prevent (ledger 265). JSON has no integer KEY but it has an
+    integer list ITEM, and this is a list.
+
+    Anything that is not an int or a str after conversion falls back to ``str`` -- the
+    old behaviour, and no worse than it. A `MultiIndex` label converts to a tagged
+    tuple, which is a dict, and a dict is not hashable as a column name; and a label
+    the converter refuses outright would otherwise raise inside the caller's broad
+    ``except`` and drop the surfaces entirely. Neither is an improvement on a label
+    that is merely spelled differently.
+    """
+
+    try:
+        converted = _json_value(name)
+    except (ValueError, TypeError):
+        # `ValueError` is the converter's own refusal; `TypeError` is what a label
+        # whose `.item()` will not unwrap raises out of it. Either way the answer is
+        # the label spelled as a string, which is what this line did before.
+        return str(name)
+    return converted if isinstance(converted, (int, str)) and not isinstance(converted, bool) else str(name)
+
+
 def _surfaces_block(surfaces, store: dict[str, np.ndarray], tag: str) -> dict | None:
     """The per-cell layer elevations, as columns of numbers.
 
@@ -244,7 +272,7 @@ def _surfaces_block(surfaces, store: dict[str, np.ndarray], tag: str) -> dict | 
     try:
         numeric = surfaces.drop(columns="geometry", errors="ignore")
         values = np.asarray(numeric.to_numpy(), dtype=float)
-        columns = [str(name) for name in numeric.columns]
+        columns = [_column_label(name) for name in numeric.columns]
     except Exception:  # noqa: BLE001 - see below; the tuple cannot be closed
         # Same reasoning as the grid. `surfaces` is documented loosely ("gdf_topbtm
         # or equivalent") and may be a frame, a LayerBuildResult or a bare array, so
@@ -359,7 +387,18 @@ def freeze_simulation(
         )
         domain = getattr(context, "domain", None)
         if domain is not None:
-            store[f"domain.{model.name}"] = np.asarray(domain)
+            # `_refuse_object_array` is reached from `_lift` for every package option
+            # and `_grid_block`/`_surfaces_block` force `dtype=float`, which left this
+            # as the one write into the store with neither guard. `ModelContext.domain`
+            # is typed `Any` and validated nowhere, so anything reaches it: a
+            # `LayerBuildResult` passed instead of its `.idomain`, or a list holding a
+            # `None`, becomes an object array. Measured, that froze "successfully" --
+            # 3 arrays, 3,885 bytes -- and made the WHOLE snapshot unreadable, every
+            # package in it, with `frozen_summary` reporting `readable: False` and no
+            # cause (ledger 265).
+            values = np.asarray(domain)
+            _refuse_object_array(values, f"the model domain for {model.name!r}")
+            store[f"domain.{model.name}"] = values
             domains[model.name] = f"domain.{model.name}"
         surfaces[model.name] = _surfaces_block(
             getattr(context, "surfaces", None), store, f"surf.{model.name}"

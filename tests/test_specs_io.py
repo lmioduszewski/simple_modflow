@@ -75,6 +75,34 @@ def test_yaml_string_round_trip_covers_bcs_refs_exchanges_hooks():
     assert loaded.model("flow").package("npf").key == "npf/base"  # PackageRef
 
 
+def test_a_voronoi_disv_round_trips_through_yaml(triangulated_grid):
+    """A DISV built from a real grid, which is the shape every model actually has.
+
+    `_disv_kwargs` above is hand-written from python literals, so this module proved
+    the YAML seam against numbers no grid produces. A grid's gridprops carry numpy
+    scalars, and `to_yaml` raised `RepresenterError` on every one of them -- for ANY
+    voronoi grid, not just a triangulated one -- because `_json_value` returned
+    `np.float64` unconverted (it subclasses `float`) while `json.dumps` accepted it
+    and PyYAML, which dispatches on the exact type, did not. Ledger 265.
+    """
+
+    model = mf.gwf(
+        "m",
+        packages=[
+            mf.disv(nlay=1, top=10.0, botm=[0.0], **triangulated_grid.get_disv_gridprops()),
+            mf.npf(k=1.0),
+            mf.ic(strt=5.0),
+        ],
+    )
+    spec = mf.simulation(model, name="v", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+
+    restored = mf.SimulationSpec.from_yaml(spec.to_yaml())
+
+    assert restored.to_dict() == spec.to_dict()
+    disv = next(p for p in restored.models[0].packages if p.name == "disv")
+    assert disv.options["ncpl"] == triangulated_grid.ncpl
+
+
 def test_yaml_file_round_trip_accepts_path_and_filename(tmp_path):
     """to_yaml(path) writes it; from_yaml reads a Path or a filename string (§5.6)."""
 

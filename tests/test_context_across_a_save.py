@@ -66,18 +66,18 @@ def _saved_and_reloaded(tmp_path, simulation):
 # ---------------------------------------------------------------- the fingerprint
 
 
-def test_a_built_disv_fingerprints_as_its_own_grid():
+def test_a_built_disv_fingerprints_as_its_own_grid(tmp_path):
     """The whole idea: the package can answer for the mesh once the grid is gone."""
 
     for size in (3, 5, 8):
         grid = _grid(size)
-        built = _sim(grid, grid).build_flopy(f"/tmp/_pin_{size}").built_model("flow").model
+        built = _sim(grid, grid).build_flopy(tmp_path / f"pin_{size}").built_model("flow").model
         assert disv_pin(built.get_package("disv")) == grid_pin(grid)
 
 
-def test_two_meshes_fingerprint_differently():
+def test_two_meshes_fingerprint_differently(tmp_path):
     grid, other = _grid(4), _grid(5)
-    built = _sim(grid, grid).build_flopy("/tmp/_pin_diff").built_model("flow").model
+    built = _sim(grid, grid).build_flopy(tmp_path / "pin_diff").built_model("flow").model
     assert disv_pin(built.get_package("disv")) != grid_pin(other)
 
 

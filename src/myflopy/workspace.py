@@ -37,18 +37,19 @@ from myflopy.project.freeze import (
 )
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
-    dropped_context_fields,
     BuiltSimulation,
     GridRef,
     GridSpec,
     ModelSpec,
     PackageRef,
-    package_digest,
     PackageSpec,
     SimulationSpec,
     SpecBuildContext,
     _grid_entry,
+    _json_value,
     _package_entry_label,
+    dropped_context_fields,
+    package_digest,
 )
 
 logger = get_logger(__name__)
@@ -438,7 +439,14 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
     def package_metadata(package: PackageSpec | PackageRef) -> dict[str, Any]:
         """The provenance metadata of a concrete package (empty for a bare ref)."""
 
-        return package.metadata if isinstance(package, PackageSpec) else {}
+        # Through the converter: a run manifest is written with `json.dumps` and no
+        # `default=`, and neither metadata dict goes through `PackageSpec.to_dict`
+        # on this path. `spec.with_metadata(calibrated=np.True_)` or a context
+        # metadata value read from a table serialized fine through `to_dict` and
+        # then made `prepare_run` raise `TypeError: Object of type bool is not JSON
+        # serializable` -- numpy 2's name for its own type -- so the run could not
+        # be prepared at all (ledger 265).
+        return _json_value(package.metadata) if isinstance(package, PackageSpec) else {}
 
     return {
         "name": spec.name,
@@ -458,7 +466,7 @@ def _spec_summary(spec: SimulationSpec) -> dict[str, Any]:
                     for package in model.packages
                     if package.enabled and (metadata := package_metadata(package))
                 },
-                "context_metadata": model.context.metadata,
+                "context_metadata": _json_value(model.context.metadata),
                 "post_build_hooks": [hook.name for hook in model.hooks],
             }
             for model in spec.models
@@ -505,8 +513,23 @@ def _persist_package(
     except ValueError:
         doc = None
     if doc is not None:
-        _write_json(spec_path, doc)
-        return False
+        try:
+            _write_json(spec_path, doc)
+            return False
+        except TypeError:
+            # The fallback below exists for a package that cannot be written as
+            # JSON, and it could not be reached for the commonest way that happens:
+            # `to_dict` returns, and `json.dumps` raises `TypeError` a line later,
+            # outside the guard. So the exception escaped `Project.save()` and broke
+            # its documented "persist what it can rather than refusing the whole
+            # project" contract, leaving a half-written project directory behind
+            # (ledger 265). `_json_value` closes the numpy routes into this; the
+            # fallback is for whatever is left.
+            logger.debug(
+                "Package '%s' has a field JSON cannot write; pickling it instead",
+                package.name, exc_info=True,
+            )
+            spec_path.unlink(missing_ok=True)
     pickle_path.parent.mkdir(parents=True, exist_ok=True)
     with pickle_path.open("wb") as handle:
         pickle.dump(package, handle)

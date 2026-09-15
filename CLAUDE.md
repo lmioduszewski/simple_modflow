@@ -235,6 +235,22 @@ test-fidelity trade, judgment call, or considered-but-omitted optional inside
 delivered work. Any change that makes such a call MUST add/update its ledger
 entry **in the same pass** (it is part of the docs-always-in-sync rule).
 Entries are removed only when the compromise is actually undone.
+**An entry records the DECISION, not the debugging** -- what was deliberately not done,
+the measurement that settled a judgment call, the trap a later reader would re-discover.
+Bug narrative belongs in the commit message; entries doubled in length (22.1 lines each
+for 1-132, 50.9 for 133-264) and that growth is what they filled with. The labelled
+`What:`/`Why:` format the preamble used to prescribe is carried by 42 of entries 1-132
+and **none** of 133-264.
+**A number is an address**: `ledger N` is cited **689 times over tracked files** --
+`docs/` 317, `tests/` 173, `src/` 138, this file 59, and none at all in the notebooks --
+naming 159 distinct entries, so entries are never renumbered and a number is never reused
+(a resolved entry is restated below, struck through, keeping its number). Adding an entry
+means rerunning `python scripts/derive_ledger_index.py`;
+`tests/test_ledger_format.py` fails if the index is stale, if the numbering breaks, if a
+title never closes its bold, or if any citation names an entry that does not exist. Its
+sweep reads **git-tracked files only** -- an `rglob` walk also reads the stale repo copies
+under `.claude/worktrees/`, which were 62% of the occurrences and made the count differ
+per machine.
 
 ## Printing? Only if a human asked for it (plan 7.2, 2026-08-01)
 Library code logs; it does not print. Use `myflopy._logging.get_logger(__name__)` —
@@ -270,8 +286,8 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3372 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **5m53s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**3409 passed / 4 skipped**, 2026-09-14): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **6m05s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -284,14 +300,30 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50
   profile via `SIMPLE_MODFLOW_CANONICAL_PROFILE=validation`.
 - Tour/verify interactively: `examples/mf6/notebooks/canonical_fast_tour.ipynb`.
-- **A test grid is an ASSUMPTION, and `rectangular_voronoi` is the wrong one for
-  anything that SERIALIZES, FINGERPRINTS or FREEZES a grid** (ledger 263). It hand-builds
-  `iverts` from `range`, so every vertex index is a python `int` and every cell has the
-  same width. A real `GridSpec.voronoi` grid mixes `int` and `numpy.int64` and has ragged
-  cells -- and `_json_value` passed `np.float64` (a `float` subclass) while refusing
-  `np.int64` (not an `int` subclass), so real models could not be serialized, frozen or
-  rebuilt while 3,315 tests passed. Use the session-scoped **`triangulated_grid`** fixture
-  in `tests/conftest.py` for that class of test.
+- **A test grid is an ASSUMPTION, and the one difference that matters is the vertex
+  DTYPE** (ledger 263, corrected in 265). `rectangular_voronoi` is a real SciPy Voronoi
+  with ragged, unequal cells -- what it cannot show is `numpy.int64`: its cell2d vertex
+  indices are all python `int` (82 of 82 at 4x4), where a `GridSpec.voronoi` grid mixes
+  them (114 `int64` + 36 `int`). `_json_value` passed `np.float64` (a `float` subclass)
+  while refusing `np.int64` (not an `int` subclass), so real models could not be
+  serialized, frozen or rebuilt while 3,315 tests passed. Use the session-scoped
+  **`triangulated_grid`** fixture in `tests/conftest.py` for that class of test -- and
+  note that **raggedness is NOT the discriminator**, so asserting it proves nothing.
+  Stronger still, and fixture-independent: push the numpy scalar types through the
+  boundary directly (`tests/test_real_grid_round_trip.py::test_a_numpy_scalar_serializes`).
+- **A numpy scalar at a serialization or hashing boundary is a recurring bug class**
+  (ledger 265). `tests/test_numpy_at_the_boundary.py` is the guard; most of it needs no
+  grid, which is why it finds what a grid fixture cannot.
+  The trap is numpy's inconsistent subclassing: `np.float64` IS a `float` and `np.str_`
+  IS a `str`, so both slip through an `isinstance` passthrough unconverted, while
+  `np.int64` and `np.bool_` subclass nothing and raise. Converting only the half that
+  raises leaves the other half in the output -- `json.dumps` accepts it and **PyYAML,
+  which dispatches on the exact type, does not**, so `to_yaml` broke for every model
+  carrying a DISV. **Test with `type(x) is`, never `isinstance`**, or the check passes on
+  the unconverted value. Same class, three more: `_canonical` must NORMALIZE then fall
+  through (returning early skipped the string interning, so a `np.str_` boundname read as
+  EDITED through `runs.drift()`); it and `_json_value` must agree about a 0-d `ndarray`;
+  and `.item()` on `np.longdouble` returns its own type, so recursing never ends.
 
 ## What this project is
 A Python-first MODFLOW 6 toolkit built on top of FloPy. Key strengths:
