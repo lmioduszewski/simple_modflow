@@ -186,6 +186,68 @@ SAME_MESH_EXCHANGES = frozenset(
 )
 
 
+#: Metadata key stamped by ``with_grid`` onto a package that is grid-bound but
+#: carries no pin -- hand-written cellids, a ``.flopy`` list form, a per-cell array.
+#: It records the mesh the package was moved AWAY from. The build refuses a package
+#: carrying it, because nothing else can: its cell numbers are all still in range on
+#: the new mesh and every one of them names a different cell.
+MOVED_FROM = "myflopy_moved_from"
+
+#: Metadata key listing the packages the caller asserted are mesh-independent, so a
+#: stamp on them is cleared rather than refused.
+GRID_FREE = "myflopy_grid_free"
+
+
+def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]:
+    """Classify one package for a grid move: ``(how, why)``.
+
+    The four verdicts, and what each means for the build that follows:
+
+    ``"rebuilt"``
+        It carries a recipe rather than resolved records -- a lazy DISV today -- so it
+        resolves itself against the new mesh. Nothing to check.
+    ``"stale"``
+        It carries a PIN naming another mesh. Refused at build by the pin check
+        (ledger 250/267); re-declare it against the new grid.
+    ``"unverifiable"``
+        It names cells and carries no pin: hand-written cellids, a ``.flopy`` form.
+        **You cannot pin cell numbers the caller typed**, so nothing can tell a correct
+        one from a stale one -- every number is still in range on a larger mesh.
+        Refused unless named in ``grid_free=``.
+    ``"unchanged"``
+        It names no cells at all -- a scalar ``npf``, a ``tdis`` -- or the caller
+        asserted it is mesh-independent. It moves untouched.
+    """
+
+    name = getattr(package, "name", "?")
+    if name in grid_free:
+        return "unchanged", "asserted mesh-independent by grid_free="
+    if getattr(package, "inputs", None):
+        return "rebuilt", "carries a recipe, so it resolves against the new mesh"
+    options = getattr(package, "options", None) or {}
+    if any(key in options for key in ("cell2d", "vertices", "ncpl")):
+        # A hand-written DISV IS the old mesh -- it holds that grid's `cell2d` and
+        # `vertices` verbatim. It carries no pin and names no cellid, so both of the
+        # tests below miss it, and the first report called it "unchanged".
+        return "stale", "it describes the old mesh itself (hand-written discretization)"
+    pin = (getattr(package, "metadata", None) or {}).get(GRID_PIN)
+    if pin is not None:
+        return "stale", f"its records are pinned to mesh {pin}"
+    if any(True for _ in _cellids_in(getattr(package, "options", None) or {})):
+        return "unverifiable", "names cells the library did not resolve, so it carries no pin"
+    return "unchanged", "names no cells"
+
+
+def move_report(model, *, grid_free: tuple[str, ...] = ()) -> list[dict[str, str]]:
+    """One row per package: what a grid move does to it, before anything is built."""
+
+    return [
+        {"package": getattr(package, "name", "?"), "how": how, "why": why}
+        for package in getattr(model, "packages", ())
+        for how, why in [package_move(package, grid_free=grid_free)]
+    ]
+
+
 def coupled_mesh_complaints(exchanges, built_models) -> list[str]:
     """Complaints for exchanges whose two models resolved to different meshes.
 
@@ -218,6 +280,30 @@ def coupled_mesh_complaints(exchanges, built_models) -> list[str]:
             "MODFLOW 6 requires this exchange's models to share a discretization, and it "
             "compares only node counts and idomain -- so a mesh of the same size passes "
             "its check and it maps node-for-node onto the wrong geometry."
+        )
+    return complaints
+
+
+def moved_package_complaints(packages) -> list[str]:
+    """Complaints for packages `with_grid` stamped and nobody re-declared.
+
+    The stamp is the only thing standing behind an UNPINNED grid-bound package across
+    a move: you cannot pin cell numbers the caller typed, and on a larger mesh every
+    one of them is still in range and every one names a different cell. Measured
+    before the stamp: a hand-written `wel` cellid and a `chd.flopy` list both built
+    clean across a 28 -> 92 move (ledger 271).
+    """
+
+    complaints = []
+    for package in packages:
+        pin = (getattr(package, "metadata", None) or {}).get(MOVED_FROM)
+        if pin is None:
+            continue
+        complaints.append(
+            f"package {getattr(package, 'name', '?')!r} was moved to this grid by "
+            f"`with_grid`, and its cell numbers were typed rather than resolved, so "
+            f"they still mean mesh {pin}. Re-declare it against this grid, or name it "
+            "in `grid_free=` if it really is mesh-independent."
         )
     return complaints
 

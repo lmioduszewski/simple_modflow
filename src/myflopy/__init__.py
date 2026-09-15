@@ -618,6 +618,7 @@ __compatibility__ = (
     "myflopy.project.model_group.ModelGroup.rch",
     "myflopy.project.model_group.ModelGroup.uzf",
     "myflopy.project.model_group.ModelGroup.wel",
+    "myflopy.specs.SimulationSpec.replace_grid",
 )
 
 

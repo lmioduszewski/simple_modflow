@@ -345,6 +345,7 @@ def freeze_simulation(
     *,
     run_name: str | None = None,
     contexts: dict[str, Any] | None = None,
+    resolved: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write ``spec`` to ``<workspace>/.myflopy/frozen.npz`` and return a summary.
 
@@ -365,6 +366,19 @@ def freeze_simulation(
     staging = target.with_name(target.name + ".writing.npz")
 
     store: dict[str, np.ndarray] = {}
+    # A LAZY package is frozen as what it BUILT, not as its recipe. `resolved` maps
+    # model name -> {package name -> the eager spec the builder produced}. Freezing
+    # the declared spec instead stores, for a lazy DISV, a `LayerStack` whose top
+    # surface is still `mf.Raster("gis/ground.tif")` -- so a reopened run goes back to
+    # the very files the snapshot exists to make unnecessary, and dies if they are
+    # gone. Measured before this: a thawed lazy model's DISV held no `top`/`botm`/
+    # `idomain` at all, only the stack (ledger 270).
+    substitutions = resolved or {}
+
+    def _for(model_name: str, package: Any) -> Any:
+        by_name = substitutions.get(model_name) or {}
+        return by_name.get(getattr(package, "name", None), package)
+
     lifted = replace(
         spec,
         packages=tuple(_lift_package(p, store, spec.name) for p in spec.packages),
@@ -372,7 +386,8 @@ def freeze_simulation(
             replace(
                 model,
                 packages=tuple(
-                    _lift_package(p, store, model.name) for p in model.packages
+                    _lift_package(_for(model.name, p), store, model.name)
+                    for p in model.packages
                 ),
             )
             for model in spec.models

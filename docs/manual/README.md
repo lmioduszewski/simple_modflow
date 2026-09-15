@@ -84,7 +84,7 @@ Throughout, two example models recur so the code stays concrete:
 - 4.3 The object hierarchy: `Project → SimulationSpec → ModelSpec → ModelContext → packages`
 - 4.4 Geometry rides on the *model*, not the project (`model.myflopy_context`)
 - 4.5 Immutability and composition (frozen specs; `with_*` copy-on-write)
-- 4.6 Model variants & reusable, swappable packages — package/grid libraries, `mf.ref`/`mf.grid_ref`, `derive` + `with_packages`/`replace_grid`, lineage, and why a grid swap re-maps nothing yet
+- 4.6 Model variants & reusable, swappable packages — package/grid libraries, `mf.ref`/`mf.grid_ref`, `derive` + `with_packages`/`with_grid`, lineage, the move report, and what a grid swap does and does not re-map
 - 4.7 The build lifecycle: spec → `build(context)` → FloPy objects → write → run
 - 4.8 The `mf.*` import surface (preferred vs. compatibility exports)
 

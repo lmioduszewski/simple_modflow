@@ -247,7 +247,7 @@ that references it picks up the change at the next build.
 ### Derive a variant and swap one piece
 
 To make a scenario, **derive** a named copy of a simulation and `with_packages`
-and/or `replace_grid`. Everything you don't touch is reused, and the edit is
+and/or `with_grid`. Everything you don't touch is reused, and the edit is
 recorded in `simulation.lineage`:
 
 ```python
@@ -255,7 +255,7 @@ refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
     .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")   # swap a package by key
-    .replace_grid("flow",   mf.grid_ref("refined"))  # swap the grid
+    .with_grid(mf.grid_ref("refined"), on="flow")     # move to another grid
 )
 project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
@@ -276,26 +276,35 @@ high_k = baseline.with_model(high_k_flow)
 
 ### What re-maps on a grid swap — and what doesn't
 
-**Nothing re-maps today.** This section used to say that GIS-driven packages
-re-resolve against whatever grid the variant uses. They do not: `mf.rch.gpkg`,
-`mf.drn.gpkg`, K-from-vector and the rest resolve their cells when you **declare**
-them, and the resulting records hold that grid's cell numbers. `replace_grid`
-swaps the grid and leaves every one of them behind.
+**The DISCRETIZATION re-maps; the boundary conditions do not, yet.** As of
+2026-09-15 (ledger 270/271) `sim.with_grid(new_grid)` moves a model: a `mf.disv`
+declared from a **gridless `LayerStack`** resolves itself against the new mesh, and
+everything derived from the old one — `context.grid`, `domain`, `surfaces` — is
+dropped. GIS-driven packages still resolve their cells when you **declare** them, so
+they do not move: `mf.rch.gpkg`, `mf.drn.gpkg`, K-from-vector and the rest hold the
+old grid's cell numbers.
 
-- ❌ **Bound to the grid they were declared against.** GIS-driven packages, a `chd`
-  with explicit `(layer, cell)` records, an `npf` carrying a NumPy `k` array sized
-  to the old grid — all of it.
-- 🛑 **And a stale swap is now refused.** Since 2026-09-13 `ModelSpec.build`
-  compares the built DISV, the context domain and surfaces, and every package's
-  cellids against the grid the model is being built on, and raises naming what is
-  stale. Before that it built and ran: MF6 applied the old cell numbers to the new
-  geometry and reported Normal termination, and a lazy CHD resolved to zero cells
-  on a coarser grid.
+**So read the report before you believe the move.** `sim.move_report()` classifies
+every package before anything is built, and `run.resolution` is the record after:
 
-> **To move a model to a new grid**, re-declare its GIS packages against the new
-> grid. Lazy-at-declaration resolution — which would make the swap work as this
-> section once claimed — is planned work, and the refusal above is what keeps the
-> gap honest until it lands. See [Chapter 12, §12.5](12_projects_runs.md).
+| verdict | meaning |
+| --- | --- |
+| `rebuilt` | carries a recipe, so it resolves against the new mesh |
+| `stale` | pinned to another mesh, or a hand-written DISV that *is* the old mesh |
+| `unverifiable` | names cells with no pin — you cannot pin cell numbers you typed |
+| `unchanged` | names no cells, or you asserted `grid_free=` |
+
+- 🛑 **`stale` and `unverifiable` are REFUSED at build**, naming the package. Before
+  2026-09-13 a swap built and ran: MF6 applied the old cell numbers to the new
+  geometry and reported Normal termination, and a lazy CHD resolved to zero cells on
+  a coarser grid.
+- ⚠️ **`on=` can strand a coupled sibling.** The default moves every model that has a
+  grid, because MF6 requires `gwfgwt`/`gwfgwe`/`gwfprt` models to share a
+  discretization and cannot detect a same-size violation.
+
+> **To move a model's boundary conditions to a new grid**, re-declare them against it.
+> Lazy `.gpkg` resolution is the next piece of planned work (B2). See
+> [Chapter 12, §12.5](12_projects_runs.md).
 
 ---
 

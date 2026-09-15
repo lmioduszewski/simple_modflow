@@ -68,7 +68,7 @@ def test_project_grid_library_resolves_and_swaps(tmp_path):
 
     baseline = _sim_with_grid("baseline", mf.grid_ref("a"))
     project.add_simulation(baseline)
-    swapped = baseline.derive("swapped").replace_grid("gwf", mf.grid_ref("b"))
+    swapped = baseline.derive("swapped").with_grid(mf.grid_ref("b"), on="gwf")
     project.add_simulation(swapped)
 
     run_a = project.prepare_run("a_run", "baseline")
@@ -78,10 +78,31 @@ def test_project_grid_library_resolves_and_swaps(tmp_path):
     assert run_a.built.models["gwf"].context.grid.tag == "A"
     assert run_b.built.models["gwf"].context.grid.tag == "B"
     assert swapped.lineage[-1] == {
-        "operation": "replace_grid",
-        "model": "gwf",
+        "operation": "with_grid",
+        "models": ["gwf"],
         "grid": "b",
+        "grid_free": [],
     }
+
+
+def test_replace_grid_still_works_and_warns(tmp_path):
+    """The deprecated spelling keeps working, warns, and stays out of completion.
+
+    `pyproject.toml` turns a myflopy `DeprecationWarning` into an ERROR, so this has
+    to opt in explicitly -- which is the point: any other caller of the old name
+    fails the suite rather than quietly carrying on (ledger 271).
+    """
+
+    project = mf.Project(tmp_path / "demo", name="demo")
+    project.add_grid("a", mf.GridSpec.from_object(SimpleNamespace(tag="A")))
+    project.add_grid("b", mf.GridSpec.from_object(SimpleNamespace(tag="B")))
+    baseline = _sim_with_grid("baseline", mf.grid_ref("a"))
+
+    with pytest.warns(DeprecationWarning, match=r"replace_grid is deprecated"):
+        swapped = baseline.derive("swapped").replace_grid("gwf", mf.grid_ref("b"))
+
+    assert swapped.lineage[-1]["operation"] == "with_grid"
+    assert "replace_grid" not in dir(baseline)
 
 
 def test_project_unresolved_grid_reference_raises(tmp_path):

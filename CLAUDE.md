@@ -286,8 +286,8 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3429 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **6m00s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**3451 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+  addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -376,9 +376,21 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the project. It carries `grid`, `domain` (idomain), `surfaces`, `dates`. The built model exposes
   it as `model.myflopy_context`. The GIS-aware package helpers (`mf.uzf`, `mf.sfr`, `mf.X.gpkg`)
   take `context=` so they can map features/cells onto the grid.
-- **A grid swap re-maps NOTHING, and a stale one is now REFUSED** (ledger 249,
+- **Moving a model is `sim.with_grid(grid, on=, name=, grid_free=())`** (ledger 271,
+  2026-09-15). It drops everything derived from the old mesh and CLASSIFIES every
+  package -- `rebuilt` (carries a recipe), `stale` (pinned elsewhere, or a
+  hand-written DISV, which IS the old mesh), `unverifiable` (names cells with no pin),
+  `unchanged`. **It reports and stamps; the BUILD refuses**, so read
+  `sim.move_report()` before `prepare_run`, and `run.resolution` after. `on=None`
+  moves EVERY model with a grid, because coupled models must share a mesh (ledger
+  268); `on=` is the spelling that can strand a sibling. `grid_free=` is the caller
+  asserting mesh-independence. The stamp is the only thing behind a hand-typed cellid
+  across a move -- every number stays in range on a larger mesh. **A DEFERRED-grid
+  model has no old pin to stamp**, so its hand-written cellids move unrefused; they
+  were never verifiable anyway. `replace_grid` is a warned `__getattr__`-only alias.
+- **A grid swap re-maps NOTHING outside the discretization** (ledger 249,
   2026-09-13). Every `.gpkg` helper resolves its cells at DECLARATION, so
-  `sim.replace_grid(...)` changes the grid and leaves every package's cellids,
+  moving the grid leaves every package's cellids,
   connection data and dimension counts on the old mesh. Nothing looked, and MF6 ran the
   old cell numbers against the new geometry under **Normal termination** -- a lazy CHD
   raised `IndexError` on a finer grid and resolved to ZERO cells on a coarser one.
@@ -663,6 +675,24 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   (ledger 209): the context wins when given, and a disagreement with the grid's live
   table WARNS. SFR used to read the grid while LAK read the context -- two packages in
   one model on different elevations after a notebook cell re-run (70.0 vs 60.0).
+
+### The discretization can be LAZY (ledger 270, 2026-09-15)
+`mf.disv(stack)` on a **gridless** `LayerStack` emits a lazy spec that resolves the
+stack against whatever grid the build supplies, publishes the `idomain` and sampled
+elevations onto the model context, and records what it built in `BuiltModel.resolved`
+so the run freezes **arrays, not the recipe** (a recipe sends a reopened run back to
+`gis/ground.tif` — ledger 251's failure). One declaration builds at ncpl 28 and 92.
+**This is what makes a LAYERED MODEL SAVEABLE AT ALL**: `mf.disv(result)` holds
+resolved arrays, `to_dict` refuses an ndarray (ledger 193), so `Project.save()` used
+to persist **zero** simulations for every layered model and `load()` returned an empty
+project. `mf.disv(result)` stays EAGER on purpose (24 option-read assertions).
+**`mf.disv` forwards all eight of `to_disv`'s build kwargs** — `attach`,
+`default_min_thickness`, `default_pinch`, `reconcile`, `min_sep`, `trigger_sep`,
+`method`, `refresh` — because **a stack does not determine its own arrays**:
+`default_pinch="inactive"` takes idomain layer 0 from 28 to 0, `reconcile=False` moves
+`botm.sum` by 26.6. On an already-built `LayerBuildResult` none of them can act, so a
+non-default one **raises** rather than being ignored. A declared `domain` that
+disagrees with what the stack resolves is refused, naming both shapes.
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or

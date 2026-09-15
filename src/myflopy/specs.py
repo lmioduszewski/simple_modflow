@@ -26,6 +26,7 @@ from typing import Any, TypeAlias, TypeVar, cast
 
 import flopy
 
+from myflopy._deprecation import deprecated_instance_getattr
 from myflopy._logging import get_logger
 
 # Re-exported so no caller changed when these moved out (ledger 264). Each name is
@@ -36,6 +37,7 @@ from myflopy._logging import get_logger
 from myflopy.grid_identity import (
     DROPPED_CONTEXT_FIELDS,  # noqa: F401
     GRID_PIN,  # noqa: F401
+    MOVED_FROM,
     _as_int,  # noqa: F401
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
@@ -47,6 +49,9 @@ from myflopy.grid_identity import (
     disv_pin,  # noqa: F401
     dropped_context_fields,  # noqa: F401
     grid_pin,  # noqa: F401
+    move_report,
+    moved_package_complaints,
+    package_move,
 )
 from myflopy.sources import (
     DataSourceSpec,
@@ -2528,6 +2533,13 @@ class BuiltModel:
     context: ModelContext = field(default_factory=ModelContext)
     hook_results: dict[str, Any] = field(default_factory=dict)
     simulation: Mf6Simulation | None = None
+    #: What a LAZY package actually built, as an eager ``PackageSpec``, keyed by
+    #: package name. Populated only by builders that resolve something at build time
+    #: (today: the lazy DISV). It is what lets a run FREEZE the arrays rather than the
+    #: recipe -- freezing the declared spec would store a `LayerStack` whose rasters
+    #: the reopened run then has to go back and read, which is the very dependence the
+    #: snapshot exists to remove (ledger 251, 270).
+    resolved: dict[str, Any] = field(default_factory=dict)
 
     @property
     def sim(self) -> Mf6Simulation:
@@ -2784,10 +2796,61 @@ class ModelSpec:
 
         return replace(self, context=context)
 
-    def with_grid(self, grid: GridSpec | GridRef | Any) -> ModelSpec:
-        """Return a copy with a grid recipe, reference, or built object attached."""
+    def with_grid(
+        self,
+        grid: GridSpec | GridRef | Any,
+        *,
+        grid_free: tuple[str, ...] | list[str] = (),
+    ) -> ModelSpec:
+        """Return a copy on ``grid``, with everything derived from the old one dropped.
 
-        return replace(self, grid=grid)
+        ``context.grid``/``domain``/``surfaces`` all describe the OLD mesh, and keeping
+        them is how a grid swap used to build clean on cell numbers that meant something
+        else (ledger 249). They are dropped -- the same three
+        :data:`~myflopy.grid_identity.DROPPED_CONTEXT_FIELDS` a save cannot carry.
+
+        Packages are NOT re-resolved. Each is classified instead, and a package that
+        cannot be verified on the new mesh is STAMPED so the build refuses it:
+
+        - a lazy package (a recipe in ``inputs``) rebuilds itself -- nothing to do;
+        - a PINNED package is refused by the existing pin check, naming its old mesh;
+        - a package naming cells with NO pin -- hand-written cellids, a ``.flopy``
+          form -- can be told apart from a correct one by nothing at all, since every
+          number is still in range on a larger mesh. It is stamped and refused.
+
+        ``grid_free=`` names packages the caller asserts are mesh-independent; their
+        stamp is cleared rather than applied. Read :meth:`move_report` first.
+        """
+
+        free = tuple(grid_free)
+        stamped = tuple(
+            package.with_metadata(**{MOVED_FROM: pin})
+            # `grid_free` is honoured inside `package_move`, which answers
+            # "unchanged" for a named package -- so testing it again here was dead
+            # code that read as load-bearing. Mutation found it.
+            if (
+                isinstance(package, PackageSpec)
+                and package_move(package, grid_free=free)[0] == "unverifiable"
+                and (pin := grid_pin(getattr(self.context, "grid", None))) is not None
+            )
+            else package
+            for package in self.packages
+        )
+        return replace(
+            self,
+            grid=grid,
+            packages=stamped,
+            context=replace(self.context, grid=None, domain=None, surfaces=None),
+        )
+
+    def move_report(self, *, grid_free: tuple[str, ...] | list[str] = ()) -> list[dict[str, str]]:
+        """What a grid move would do to each package, readable BEFORE the build.
+
+        The build is what refuses, so this is how you find out what it will refuse
+        without waiting for `prepare_run` to raise.
+        """
+
+        return move_report(self, grid_free=tuple(grid_free))
 
     def build(
         self,
@@ -2821,13 +2884,21 @@ class ModelSpec:
             for package in packages
             if (built := package.build(model)) is not None
         }
+        # RE-READ the context: a lazy DISV resolves the layer stack against the grid
+        # and publishes the domain and surfaces it produced. `context` above is the
+        # DECLARED one, and passing it on from here condemns a correct lazy build --
+        # measured, the guard raised "context domain is shaped (2, 28) against
+        # ncpl=92" whether or not the DISV had just published a correct (2, 92) one
+        # (ledger 270).
+        context = getattr(model, "myflopy_context", context)
+        resolved_specs = dict(getattr(model, "_myflopy_resolved", {}) or {})
         # Before the hooks, so that a stale grid is reported by name rather than as
         # whatever a hook happens to raise first. A hook attaches FloPy objects
         # directly to the model rather than as specs, so cellids it adds are outside
         # what this can read -- the grid pin is what will cover those.
-        complaints = _discretization_complaints(
-            model, context, [p for p in packages if p.name in built_packages]
-        )
+        live = [p for p in packages if p.name in built_packages]
+        complaints = _discretization_complaints(model, context, live)
+        complaints += moved_package_complaints(live)
         if complaints:
             raise ValueError(
                 f"Model {self.name!r} does not agree with the grid it was built "
@@ -2846,6 +2917,7 @@ class ModelSpec:
             context=context,
             hook_results=hook_results,
             simulation=simulation,
+            resolved=resolved_specs,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -3362,29 +3434,108 @@ class SimulationSpec:
             ),
         )
 
-    def replace_grid(
-        self, model_name: str, grid: GridSpec | GridRef | Any
+    def with_grid(
+        self,
+        grid: GridSpec | GridRef | Any,
+        *,
+        on: str | None = None,
+        name: str | None = None,
+        grid_free: tuple[str, ...] | list[str] = (),
     ) -> SimulationSpec:
-        """Return a copy with one model's grid replaced.
+        """Return a copy moved to ``grid``, with everything derived from the old one gone.
 
         ``grid`` may be a :class:`GridSpec`, a :func:`grid_ref` reference into a
         project grid library, or an already-built grid object.
+
+        ``on`` names one model; the default moves **every model that has a grid**,
+        because coupled models must share a mesh -- MF6 requires it for
+        ``gwfgwt``/``gwfgwe``/``gwfprt`` and cannot detect a same-size violation
+        (ledger 268), so moving one and stranding its sibling is the failure that check
+        exists to catch. ``name`` derives a named variant in one step, like
+        :meth:`with_packages`.
+
+        ``grid_free`` names packages the caller asserts are mesh-independent, so they
+        are not stamped. Everything else that names cells without a pin IS stamped and
+        the build refuses it -- see :meth:`ModelSpec.with_grid`.
+
+        **This reports and stamps; the BUILD refuses.** Read :meth:`move_report` to see
+        what will happen before it does.
         """
 
-        model = self.model(model_name)
         if isinstance(grid, GridRef):
             grid_label = grid.key
         elif isinstance(grid, GridSpec):
             grid_label = grid.name
         else:
             grid_label = "object"
-        return replace(
-            self.with_model(model.with_grid(grid)),
+
+        free = tuple(grid_free)
+        if on is not None:
+            moved = self.with_model(self.model(on).with_grid(grid, grid_free=free))
+            targets = [on]
+        else:
+            targets = [
+                model.name
+                for model in self.models
+                if model.grid is not None or getattr(model.context, "grid", None) is not None
+            ]
+            moved = self
+            for model_name in targets:
+                moved = moved.with_model(
+                    moved.model(model_name).with_grid(grid, grid_free=free)
+                )
+        moved = replace(
+            moved,
             lineage=(
                 *self.lineage,
-                {"operation": "replace_grid", "model": model_name, "grid": grid_label},
+                {
+                    "operation": "with_grid",
+                    "models": targets,
+                    "grid": grid_label,
+                    "grid_free": list(free),
+                },
             ),
         )
+        return replace(moved, name=name) if name is not None else moved
+
+    def move_report(
+        self, *, on: str | None = None, grid_free: tuple[str, ...] | list[str] = ()
+    ) -> list[dict[str, str]]:
+        """One row per package per model: what a grid move does to it.
+
+        Readable on the SPEC, before anything is built, because the build is what
+        refuses and `prepare_run` is a late place to find out.
+        """
+
+        models = [self.model(on)] if on is not None else list(self.models)
+        return [
+            {"model": model.name, **row}
+            for model in models
+            for row in model.move_report(grid_free=grid_free)
+        ]
+
+    def _replace_grid_compat(
+        self, model_name: str, grid: GridSpec | GridRef | Any
+    ) -> SimulationSpec:
+        """The old `replace_grid`, reached only through the warned alias below.
+
+        It swapped the grid and re-mapped NOTHING -- every package kept cellids
+        resolved on the old mesh, and nothing looked (ledger 249). `with_grid` drops
+        the derived context and stamps what cannot be verified.
+        """
+
+        return self.with_grid(grid, on=model_name)
+
+    __getattr__ = deprecated_instance_getattr(
+        {
+            "replace_grid": (
+                "_replace_grid_compat",
+                "SimulationSpec.with_grid(grid, on=model_name)",
+                "0.1.0",
+            )
+        },
+        "myflopy.specs.SimulationSpec",
+    )
 
     def resolved_packages(
         self,

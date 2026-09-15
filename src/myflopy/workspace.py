@@ -50,6 +50,7 @@ from myflopy.specs import (
     _package_entry_label,
     dropped_context_fields,
     package_digest,
+    package_move,
 )
 
 logger = get_logger(__name__)
@@ -1286,6 +1287,12 @@ class Run:
                     name: built.context
                     for name, built in (getattr(self.built, "models", {}) or {}).items()
                 },
+                # What a lazy package actually built, so the snapshot holds arrays
+                # rather than a recipe pointing back at source files (ledger 270).
+                resolved={
+                    name: dict(getattr(built, "resolved", {}) or {})
+                    for name, built in (getattr(self.built, "models", {}) or {}).items()
+                },
             )
         except Exception as error:  # noqa: BLE001 - see below; the tuple cannot be closed
             # Deliberately broad. This walks a spec built from arbitrary user
@@ -1318,6 +1325,40 @@ class Run:
         """What this run's frozen snapshot holds, or ``None`` when it has none."""
 
         return frozen_summary(self.workspace)
+
+    @property
+    def resolution(self) -> list[dict[str, Any]]:
+        """One row per package: how it reached this run's mesh, and how big it is.
+
+        The spec-side twin is ``SimulationSpec.move_report()``, which is computable
+        BEFORE a build and is what you read to find out what the build will refuse.
+        This one is the record: it is recomputed after the build, so a ``rebuilt``
+        row can say what the package actually resolved to -- the lazy DISV's real
+        ``ncpl`` exists nowhere else (ledger 271).
+
+        `prepare_run` builds in memory, so the rows are there before `execute()`; a run
+        reopened but not yet rebuilt reports the spec-side verdicts with no
+        `resolved_ncpl`.
+        """
+
+        rows: list[dict[str, Any]] = []
+        built_models = getattr(self.built, "models", {}) or {}
+        for model in getattr(self.spec, "models", ()) or ():
+            built = built_models.get(model.name)
+            resolved = dict(getattr(built, "resolved", {}) or {})
+            for package in model.packages:
+                how, why = package_move(package)
+                row: dict[str, Any] = {
+                    "model": model.name,
+                    "package": getattr(package, "name", "?"),
+                    "how": how,
+                    "why": why,
+                }
+                concrete = resolved.get(row["package"])
+                if concrete is not None:
+                    row["resolved_ncpl"] = (concrete.options or {}).get("ncpl")
+                rows.append(row)
+        return rows
 
     def _context_for_build(self) -> SpecBuildContext | None:
         """The build context, with this run's own package copies taking precedence."""

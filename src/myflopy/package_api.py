@@ -1152,6 +1152,120 @@ def _exchange_kind(model: ModelSpec | str, verb: str) -> str:
     return str(getattr(model.model_type, "value", model.model_type))
 
 
+def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **options):
+    """Resolve a declared ``LayerStack`` against the model's grid, then build the DISV.
+
+    The whole of lazy discretization. ``ModelSpec.build`` resolves a deferred
+    ``GridSpec`` and publishes it onto ``model.myflopy_context`` BEFORE any package
+    builds, so by the time this runs the grid exists -- which is why laziness here
+    needed no new machinery, only this function in place of a raise.
+
+    It PUBLISHES what it resolved: the stack's ``idomain`` becomes the context's
+    domain and the sampled elevations become its surfaces, so the surface-aware
+    builders (``mf.sfr`` reach tops, ``mf.lak`` layering) and the build-time guard all
+    see the mesh this DISV actually describes. Published by REBINDING, because
+    ``ModelContext`` is frozen with slots and an in-place write would raise.
+
+    A DECLARED domain or surfaces that disagrees with what the stack resolved is
+    refused rather than overwritten: the caller described two different models and
+    only one of them can be built (ledger 270).
+    """
+
+    from dataclasses import replace as _replace
+
+    context = getattr(model, "myflopy_context", None)
+    grid = getattr(context, "grid", None)
+    if grid is None:
+        raise ValueError(
+            "mf.disv() was given a layer stack with no grid, so the grid has to come "
+            "from the model at build time -- but this model's context carries none. "
+            "Either declare the model with `mf.gwf(..., context=ModelContext(grid=...))`, "
+            "give it a deferred grid with `.with_grid(mf.GridSpec.voronoi(...))`, or "
+            "bind the stack itself with `stack.for_grid(vor)` before `mf.disv`."
+        )
+
+    result = layer_stack.build(grid, **build_kwargs)
+    spec = result.to_disv(grid, name=disv_name)
+    built = spec.with_options(**options).build(model) if options else spec.build(model)
+
+    declared_domain = getattr(context, "domain", None)
+    if declared_domain is not None:
+        declared = np.asarray(declared_domain)
+        resolved = np.asarray(result.idomain)
+        if declared.shape != resolved.shape or not np.array_equal(declared, resolved):
+            raise ValueError(
+                f"The domain declared on model {getattr(model, 'name', '?')!r} is not the "
+                f"one this layer stack resolves: declared {declared.shape}, the stack "
+                f"produced {resolved.shape}. A lazy DISV publishes the domain it built, "
+                "so declaring a different one describes two models. Drop the declared "
+                "`domain=` and let the stack own it, or build the stack yourself and pass "
+                "`mf.disv(result)`."
+            )
+    model.myflopy_context = _replace(
+        context, domain=result.idomain, surfaces=grid.gdf_topbtm
+    )
+    # Record what was actually built, so the run freezes ARRAYS rather than this
+    # recipe. Freezing the declared spec stores the `LayerStack`, and a reopened run
+    # then goes back to `gis/ground.tif` -- the dependence ledger 251's snapshot
+    # exists to remove. `ModelSpec.build` collects this into `BuiltModel.resolved`.
+    resolved = getattr(model, "_myflopy_resolved", None)
+    if resolved is None:
+        resolved = {}
+        model._myflopy_resolved = resolved
+    resolved[disv_name] = spec.with_options(**options) if options else spec
+    return built
+
+
+_DISV_BUILD_DEFAULTS = {
+    "attach": True,
+    "default_min_thickness": 1.0,
+    "default_pinch": "floor",
+    "reconcile": "bottom",
+    "min_sep": 0.1,
+    "trigger_sep": None,
+    "method": "area",
+    "refresh": False,
+}
+
+
+def _disv_from_layers(layers: Any, grid: Any, *, name: str, build_kwargs: dict[str, Any]):
+    """Delegate to whichever ``to_disv`` ``layers`` has, forwarding what it accepts.
+
+    Two different objects answer to ``layers``. A ``LayerStack`` has not sampled
+    anything yet, so every build kwarg acts. A ``LayerBuildResult`` already HOLDS the
+    resolved arrays -- its ``to_disv`` takes only ``name`` -- so a build kwarg there
+    cannot act, and silently accepting one is the same defect as a hidden parameter
+    (the `surface(backend=)` precedent). It raises instead, naming the ones passed and
+    saying where they belong.
+
+    `myflopy.layers` is import layer 6 and this module is layer 5, so the class is not
+    imported: the distinguishing feature is which signature the object's own
+    ``to_disv`` has.
+    """
+
+    import inspect
+
+    accepted = set(inspect.signature(layers.to_disv).parameters)
+    non_default = {
+        key: value
+        for key, value in build_kwargs.items()
+        if value != _DISV_BUILD_DEFAULTS[key]
+    }
+    if "reconcile" not in accepted:
+        if non_default:
+            raise TypeError(
+                f"mf.disv() cannot apply {', '.join(sorted(non_default))} to an "
+                "already-built layer result: its arrays were resolved when you called "
+                "`stack.build(...)`, so passing them here would describe a different "
+                "model than the one you inspected. Pass them to `stack.build(...)` or "
+                "`stack.to_disv(...)`, or hand `mf.disv` the STACK instead of its result."
+            )
+        return layers.to_disv(grid, name=name) if grid is not None else layers.to_disv(name=name)
+    if grid is not None:
+        return layers.to_disv(grid, name=name, **build_kwargs)
+    return layers.to_disv(name=name, **build_kwargs)
+
+
 def disv(
     layers: Any = None,
     *,
@@ -1165,6 +1279,14 @@ def disv(
     botm: Any = None,
     idomain: Any | None = None,
     name: str = "disv",
+    attach: bool = True,
+    default_min_thickness: float = 1.0,
+    default_pinch: str = "floor",
+    reconcile: Any = "bottom",
+    min_sep: float = 0.1,
+    trigger_sep: float | None = None,
+    method: str = "area",
+    refresh: bool = False,
     **options: Any,
 ) -> PackageSpec:
     """Vertex discretization (DISV) package: the unstructured grid + layers.
@@ -1229,7 +1351,43 @@ def disv(
                 f"also passing {', '.join(sorted(supplied))} would describe a "
                 "different mesh. Pass one or the other."
             )
-        spec = layers.to_disv(grid, name=name) if grid is not None else layers.to_disv(name=name)
+        # Every one of `to_disv`'s build kwargs is forwarded. It forwarded NONE of
+        # them, so `mf.disv(stack, default_pinch="inactive")` raised
+        # `TypeError: ModflowGwfdisv does not accept 'default_pinch'` and a stack
+        # silently used `to_disv`'s defaults. That matters because **a stack does not
+        # determine its own arrays**: same stack, same grid, a different `reconcile`
+        # measures a different `botm`, and `LayerBuildResult` records no
+        # `reconcile`/`min_sep`/`trigger_sep`/`method` at all. Once the DISV resolves
+        # lazily on another mesh, forwarding nothing would re-derive with defaults --
+        # a different idomain, no warning (ledger 270).
+        build_kwargs = {
+            "attach": attach,
+            "default_min_thickness": default_min_thickness,
+            "default_pinch": default_pinch,
+            "reconcile": reconcile,
+            "min_sep": min_sep,
+            "trigger_sep": trigger_sep,
+            "method": method,
+            "refresh": refresh,
+        }
+        reachable = grid if grid is not None else getattr(layers, "vor", None)
+        if reachable is None and hasattr(layers, "_SPEC_TOKEN"):
+            # A declared, gridless LayerStack: emit a LAZY spec instead of raising.
+            # The stack rides in `inputs`, which `PackageSpec.build` splats into the
+            # builder and which `_json_value`, `freeze._lift` and `package_digest`
+            # already handle -- so no new `recipe` field is needed (ledger 270).
+            return PackageSpec(
+                name,
+                _build_lazy_disv,
+                dict(options),
+                requires=(),
+                inputs={
+                    "layer_stack": layers,
+                    "build_kwargs": build_kwargs,
+                    "disv_name": name,
+                },
+            )
+        spec = _disv_from_layers(layers, grid, name=name, build_kwargs=build_kwargs)
         return spec.with_options(**options) if options else spec
 
     missing = [

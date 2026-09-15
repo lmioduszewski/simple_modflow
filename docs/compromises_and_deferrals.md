@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 269 entries (270 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 271 entries (272 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 271 | Move it, and read the report | 2026-09-15 |
+| 270 | The discretization is a recipe now, and that is what finally lets a layered model be SAVED | 2026-09-15 |
 | 269 | A layer stack could not be written down, so no layered model could be SAVED | 2026-09-15 |
 | 268 | Two coupled models on different meshes built, ran, and said nothing | 2026-09-15 |
 | 267 | Three grid-bound helpers changed mesh in silence, and two ledger entries said they did not | 2026-09-15 |
@@ -10265,3 +10267,90 @@ same day, which is the useful part of the result.
       `mf.disv` for exactly this reason -- the user settled it 2026-09-15.
       NOT closed here: this commit alone does not make a layered model saveable, because
       `mf.disv` still holds arrays. Commit 4 is what closes it.
+
+270. **The discretization is a recipe now, and that is what finally lets a layered model be SAVED (2026-09-15).**
+      B1 commit 4. `mf.disv(stack)` on a gridless `LayerStack` raised; it emits a LAZY
+      `PackageSpec` that resolves the stack against whatever grid the build supplies.
+      **The seam already existed** -- `mf.disv` has a `grid=` parameter and duck-types on
+      `.to_disv`, and `ModelSpec.build` resolves a deferred `GridSpec` and publishes it
+      onto `model.myflopy_context` BEFORE any package builds -- so laziness replaced one
+      raise rather than adding machinery. One declaration now builds correctly at
+      ncpl 28 and ncpl 92.
+      **The headline is the save.** Before: `validate()` reported "not serializable",
+      `save()` persisted **0 simulations**, `load()` returned an empty project, for every
+      layered model. After: clean, 1, and a rebuild at the right `ncpl`.
+      **The stack rides in `PackageSpec.inputs`, so the plan's new `recipe` field was not
+      needed.** `build` splats `inputs` into the builder, and `_json_value`,
+      `freeze._lift` and `package_digest` already handle it.
+      **Three traps, each live in the first version:**
+      - **`ModelSpec.build` passes a LOCAL `context`** to the guard and to `BuiltModel`,
+        set before the package loop. Without re-reading `model.myflopy_context` after it,
+        the guard condemns a CORRECT lazy build -- it raises "context domain is shaped
+        (2, 28) against ncpl=92" whether or not the DISV just published a correct one.
+      - **The snapshot froze the RECIPE.** Measured: a thawed lazy model's DISV held a
+        `LayerStack` and no `top`/`botm`/`idomain` at all, so a reopened run went back to
+        `gis/ground.tif` -- ledger 251's failure restored. `BuiltModel.resolved` records
+        what a lazy builder actually produced and `Run._freeze` passes it, so the run
+        stays a self-contained archive: **build from a raster top, delete `gis/` entirely,
+        thaw and rebuild -- byte-identical `botm`.** This is the user's decision of
+        2026-09-15, and taking the other option would have shipped the regression.
+      - **Publish by REBINDING.** `ModelContext` is frozen with slots.
+      **All eight of `to_disv`'s build kwargs are forwarded** (user decision, same day),
+      and they are honest in both directions. A `LayerStack` has not sampled anything, so
+      every one acts -- measured, `default_pinch="inactive"` takes idomain layer 0 from 28
+      to 0, `default_min_thickness=5.0` moves `botm.sum` 2772.0 -> 2660.0, `reconcile=False`
+      2772.0 -> 2798.6. A `LayerBuildResult` already HOLDS its arrays, so none of them can
+      act there and a non-default one is **refused by name** rather than silently ignored.
+      That third path -- a GRID-BOUND stack -- was found by mutation: removing its
+      forwarding killed no test, because every kwarg test went through the lazy branch.
+      A declared `domain` that disagrees with what the stack resolves is refused, naming
+      both shapes: a lazy DISV publishes the domain it built, so declaring a different one
+      describes two models.
+      NOT done: `mf.disv(result)` stays EAGER. Making it lazy costs 24 option-read
+      assertions across 5 test modules plus 21 `attach=True` sites; the additive form
+      costs zero, and the plan's own API sketch writes `mf.disv(stack)`.
+
+271. **Move it, and read the report (2026-09-15).**
+      B1 commit 5, the last. `SimulationSpec.with_grid(grid, *, on=, name=, grid_free=())`
+      replaces `replace_grid`, which swapped the grid and re-mapped NOTHING -- every
+      package kept cellids resolved on the old mesh and nothing looked (ledger 249).
+      **It reports and stamps; the BUILD refuses** (user decision, 2026-09-15). The guard
+      that refuses already exists and runs against what was actually built, so the refusal
+      lives in one place rather than two; `move_report()` is what lets you see the verdict
+      on the SPEC, before `prepare_run` raises.
+      **Four verdicts.** `rebuilt` -- carries a recipe, so it resolves itself (a lazy
+      DISV). `stale` -- pinned to another mesh, OR a hand-written DISV, which names no
+      cellid and carries no pin but IS the old mesh: it holds that grid's `cell2d` and
+      `vertices` verbatim. The first classifier called that one "unchanged".
+      `unverifiable` -- names cells with no pin, because **you cannot pin cell numbers the
+      caller typed**; every one is still in range on a larger mesh and every one names a
+      different cell, so nothing can tell it from a correct one. `unchanged` -- names no
+      cells, or the caller asserted mesh-independence with `grid_free=`.
+      **The stamp is what closes the unverifiable case.** `with_grid` records the pin the
+      package moved AWAY from, and the build refuses a package carrying it. Measured
+      before it: a hand-written `wel` cellid built clean across a 28 -> 92 move.
+      `on=None` moves **every model that has a grid**, because coupled models must share
+      a mesh and MF6 cannot detect a same-size violation (ledger 268) -- moving one and
+      stranding its sibling is exactly what that check exists to catch. `on=` is the
+      escape hatch and is the spelling that can strand one.
+      `replace_grid` is a `__getattr__`-only warned alias (D12: out of `dir()`, out of the
+      api_snapshot, which filters private names). `pyproject.toml` turns a myflopy
+      `DeprecationWarning` into an ERROR, so the one existing caller had to migrate and
+      the deprecation test opts in with `pytest.warns` -- which is the point: any other
+      caller fails the suite rather than carrying on quietly. The lineage string moves
+      from `replace_grid` to `with_grid` and gains `models`/`grid_free`.
+      `Run.resolution` is the same classification recomputed AFTER the build, where a
+      `rebuilt` row can carry the `ncpl` the lazy DISV actually resolved to -- which
+      exists nowhere else.
+      **NOT done, measured:** a model whose grid is DEFERRED has no resolved mesh at
+      declaration, so `with_grid` has no pin to stamp and its hand-written cellids move
+      unrefused. They were never verifiable in the first place -- CLAUDE.md already says a
+      hand-written package stays unpinned -- so this is the pre-existing gap rather than a
+      new one, but the stamp does not close it.
+      **Also NOT accepted:** `uncovered=`, `drop=`, `reducers=` from the plan's signature.
+      Nothing is transferred from old cells at B1 -- the stack re-samples its own rasters
+      -- so none of them could act, and `uncovered=`'s two candidate meanings are already
+      owned by `gaps=` (ledger 248) or are "stale", which this refuses. A parameter that
+      cannot act is the same defect as a hidden one.
+      One mutant found dead code rather than a bug: the stamping condition re-tested
+      `grid_free` after `package_move` had already honoured it.
