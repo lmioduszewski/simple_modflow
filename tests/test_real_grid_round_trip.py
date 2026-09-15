@@ -256,7 +256,7 @@ def test_a_renumbered_real_mesh_is_refused(tmp_path, triangulated_grid):
         sim.build_flopy(workspace=tmp_path / "r")
 
 
-def test_a_thawed_real_grid_writes_the_same_mf6_input(tmp_path, triangulated_grid):
+def test_a_thawed_real_grid_writes_the_same_mf6_input(tmp_path, triangulated_grid, mf6_body):
     """The written input comes from the PACKAGE options, so that is what this proves.
 
     Stated carefully because the first version of this docstring did not: a DISV spec
@@ -282,8 +282,11 @@ def test_a_thawed_real_grid_writes_the_same_mf6_input(tmp_path, triangulated_gri
     second.sim.write_simulation()
 
     for name in ("m.disv", "m.npf", "m.ic"):
-        original = (first.workspace / name).read_text().splitlines()
-        rebuilt = (tmp_path / "again" / name).read_text().splitlines()
+        # `mf6_body`, not `read_text`: FloPy stamps the wall clock into line 1 of every
+        # file, so a raw comparison fails ~1% of the time -- accusing the serialization,
+        # which is a false lead (ledger 266).
+        original = mf6_body(first.workspace / name)
+        rebuilt = mf6_body(tmp_path / "again" / name)
         assert original == rebuilt, f"{name} differs after a freeze/thaw round trip"
 
     thawed_grid = thawed.models[0].context.grid

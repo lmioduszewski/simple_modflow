@@ -107,13 +107,17 @@ def test_a_zero_dimensional_array_canonicalizes_like_its_scalar():
 def test_a_package_with_numpy_boundnames_digests_as_one_with_python_ones():
     """The end-to-end shape of the two tests above: a spurious `edited` verdict."""
 
+    # The SAME name twice, deliberately. A pickle records identity, so the defect is a
+    # missing back-reference and appears only when one object REPEATS -- with each name
+    # used once this test passed with the fix fully reverted, certifying rather than
+    # checking (ledger 266).
     names = np.unique(np.array(["north_reach", "north_reach", "south_reach"]))
     numpy_side = mf.chd(
-        stress_period_data={0: [[(0, 0), 10.0, names[0]], [(0, 1), 10.0, names[1]]]},
+        stress_period_data={0: [[(0, 0), 10.0, names[0]], [(0, 1), 10.0, names[0]]]},
         boundnames=True,
     )
     python_side = mf.chd(
-        stress_period_data={0: [[(0, 0), 10.0, "north_reach"], [(0, 1), 10.0, "south_reach"]]},
+        stress_period_data={0: [[(0, 0), 10.0, "north_reach"], [(0, 1), 10.0, "north_reach"]]},
         boundnames=True,
     )
     assert package_digest(numpy_side) == package_digest(python_side)
@@ -275,9 +279,51 @@ def test_a_project_with_a_numpy_valued_source_saves_and_reloads(tmp_path):
             inputs={"k": LiteralSource(value=[np.int64(3)])},
         ),
     )
-    project.save()
+    report = project.save()
 
+    # `pickled == 0` is the load-bearing half. Without it this passed with the fix
+    # reverted, because the `TypeError` fallback quietly pickled the package instead --
+    # a reload still returns something, so `is not None` cannot tell the two apart. It
+    # is also the only assertion anywhere that reaches that fallback (ledger 266).
+    assert report.pickled == 0, "the package fell back to a pickle instead of writing JSON"
     assert Project.load(tmp_path / "p").package("np/src") is not None
+
+
+def test_a_package_json_cannot_write_falls_back_to_a_pickle(tmp_path, monkeypatch):
+    """The fallback is reached for a `json.dumps` failure, not only a `to_dict` one.
+
+    It guarded `to_dict()` alone and caught `ValueError`, but `json.dumps` raises
+    `TypeError` on the line AFTER the guard -- so for the commonest way a package
+    cannot be written as JSON the exception escaped `Project.save()` and broke its
+    documented "persist what it can rather than refusing the whole project" contract,
+    leaving a half-written directory (ledger 265).
+
+    The failure is INJECTED because the numpy routes into it are now closed; this is a
+    safety net, and a net nothing can reach is still worth knowing works.
+    """
+
+    from myflopy import workspace
+    from myflopy.workspace import Project
+
+    real = workspace._write_json
+    calls = {"n": 0}
+
+    def refuse_once(path, doc):
+        if path.name == "npf.json" and calls["n"] == 0:
+            calls["n"] += 1
+            raise TypeError("Object of type Whatever is not JSON serializable")
+        return real(path, doc)
+
+    monkeypatch.setattr(workspace, "_write_json", refuse_once)
+    project = Project(tmp_path / "p", name="p")
+    project.add_package("npf", mf.npf(k=1.0))
+
+    report = project.save()
+
+    assert calls["n"] == 1, "the injected refusal never fired; the test proves nothing"
+    assert report.pickled == 1
+    assert not report.skipped
+    assert Project.load(tmp_path / "p").package("npf") is not None
 
 
 def test_numpy_metadata_does_not_stop_a_run_being_prepared(tmp_path):

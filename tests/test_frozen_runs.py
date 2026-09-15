@@ -128,20 +128,12 @@ def test_the_domain_survives(tmp_path):
     assert np.asarray(domain).shape == (2, 25)
 
 
-def _body(path):
-    """A written MF6 file without FloPy's header.
-
-    FloPy stamps the wall-clock time to the SECOND into the first line of every file,
-    so comparing whole files is a coin flip on whether the two writes straddle a
-    second boundary -- measured flaky at 3-5%. Everything after the header is the
-    model.
-    """
-
-    lines = path.read_text().splitlines(keepends=True)
-    return "".join(line for line in lines if "created on" not in line.lower())
+# `_body` is gone: it filtered ``"created on"``, which FloPy's header does not contain,
+# so it stripped nothing and this comparison carried a wall clock (ledger 266). The
+# `mf6_body` fixture in ``tests/conftest.py`` is the one implementation now.
 
 
-def test_a_thawed_simulation_writes_identical_input(tmp_path):
+def test_a_thawed_simulation_writes_identical_input(tmp_path, mf6_body):
     """The strongest statement available without running MF6 twice.
 
     Every written file, not just one: an array can reach MF6 through an external
@@ -151,12 +143,12 @@ def test_a_thawed_simulation_writes_identical_input(tmp_path):
     sim, _k, _strt = _array_simulation(_grid())
     first = tmp_path / "first"
     sim.build_flopy(first).simulation.write_simulation(silent=True)
-    original = {f.name: _body(f) for f in sorted(first.iterdir()) if f.is_file()}
+    original = {f.name: mf6_body(f) for f in sorted(first.iterdir()) if f.is_file()}
 
     freeze_simulation(sim, tmp_path)
     second = tmp_path / "second"
     thaw_simulation(tmp_path).build_flopy(second).simulation.write_simulation(silent=True)
-    rebuilt = {f.name: _body(f) for f in sorted(second.iterdir()) if f.is_file()}
+    rebuilt = {f.name: mf6_body(f) for f in sorted(second.iterdir()) if f.is_file()}
 
     assert set(rebuilt) == set(original)
     assert rebuilt == original
