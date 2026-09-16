@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from html import escape
 from importlib import import_module
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, TypeAlias, TypeVar, cast
 
 import flopy
@@ -531,6 +531,12 @@ def _spec_options(data: Any) -> dict[str, Any]:
     return {key: _spec_value(item, int_keys=True) for key, item in dict(data).items()}
 
 
+#: Exact leaf types that can be neither a path, a source, nor a token-bearing object.
+#: Membership is tested by EXACT type, not `isinstance`: a subclass may carry a
+#: `_SPEC_TOKEN` or be a `PurePath`, and must fall through to the branches below.
+_CANONICAL_LEAF_TYPES = frozenset((float, int, bool, type(None), bytes, complex))
+
+
 def _canonical(value: Any) -> Any:
     """Normalize a value for fingerprinting, so representation is not content.
 
@@ -543,8 +549,8 @@ def _canonical(value: Any) -> Any:
 
     Lists and tuples keep their order (it is meaningful in a record list) but
     collapse to one type, since MF6 cannot tell a list of records from a tuple of
-    them. Everything else -- arrays, scalars, sources -- passes through, except two
-    kinds of leaf the pickle would otherwise tell apart by representation:
+    them. Arrays and unknown objects pass through; four kinds of value do NOT,
+    because the pickle would otherwise tell them apart by representation alone:
 
     - a NumPy scalar becomes its Python value -- ``np.float64`` subclasses float,
       so JSON keeps it and hands back a plain ``float``, which pickles differently;
@@ -552,7 +558,22 @@ def _canonical(value: Any) -> Any:
       twice is written once and back-referenced, two equal objects are written
       twice. A boundname a GeoPackage feature shares across its records, or OC's
       two ``"ALL"``, is one object before ``Project.save`` and several after, and
-      every such package read as edited (ledger 222).
+      every such package read as edited (ledger 222);
+    - a ``PurePath`` becomes its posix string, which is what ``_json_value`` writes;
+    - a token-bearing object (``Surface``, ``LayerStack``) or a source is
+      fingerprinted by its ``to_dict()`` -- its DECLARATION.
+
+    The last two exist because the digest's job is to survive the round trip
+    ``_json_value`` defines, so the two functions have to agree about what a value
+    IS. They disagreed for anything ``_json_value`` rewrote and this passed through,
+    and ledger 222's defect recurred one level deeper inside such an object.
+
+    Fingerprinting the declaration has a consequence worth knowing: whatever
+    ``to_dict`` does not write is INVISIBLE. That cuts the right way for a cached
+    preview grid (``LayerStack._draft``, which ``.plot`` populates -- previewing a
+    stack used to mark its package edited) and the wrong way if a field ever stops
+    being written, which is why the digest tests assert discrimination on every
+    conditionally-written field, not just round-trip stability.
     """
 
     # Normalize and then FALL THROUGH, rather than returning. Returning here meant
@@ -568,6 +589,41 @@ def _canonical(value: Any) -> Any:
         value = value.item()
     if type(value) is str:
         return sys.intern(value)
+    if type(value) in _CANONICAL_LEAF_TYPES:
+        # Pure speed, no behaviour: an EXACT-type hit here can be neither a path, a
+        # source nor a token-bearing object, so it skips every branch below. Tested by
+        # exact type and not `isinstance`, because a subclass may be either. Measured
+        # digesting the user's real 12-package library: 153.9 ms with it, 221.7 ms
+        # without, against 182.9 ms before this commit -- so it more than pays for the
+        # recursion the commit adds.
+        return value
+
+    # These three mirror `_json_value`'s FIRST three branches, in its order and ABOVE
+    # the containers -- which is the whole point of the commit. The digest has to
+    # survive the round trip `_json_value` defines, so the two must agree about what a
+    # value IS. They disagreed for anything `_json_value` rewrites and `_canonical`
+    # passed through, and a `LayerStack` in `inputs` is exactly that: the SAME stack
+    # digested one way live and another after a reload, because `'constant_thickness'`
+    # is one interned string object in the live graph and several after JSON, so pickle
+    # back-references it once and writes it repeatedly (ledger 222, one level deeper --
+    # inside an object this function never entered). A ONE-LAYER stack does not show
+    # it. Order matters for a token-bearing Mapping, which the dict branch would
+    # otherwise claim first, fingerprinting a body `_json_value` throws away.
+    if (token := getattr(type(value), "_SPEC_TOKEN", None)) is not None:
+        # Duck-typed on the class attribute rather than imported: `specs` is import
+        # layer 1 and `layers` is layer 6. The tag is kept because `Surface.to_dict()`
+        # is a bare `{'kind': ..., 'value': ...}` and `LayerStack.to_dict()` carries no
+        # kind at all, so an untagged payload is indistinguishable from an ordinary
+        # dict. It does NOT make the result unforgeable -- a literal tuple of the same
+        # shape still collides, exactly as it does at `_json_value`.
+        return (sys.intern(token), _canonical(value.to_dict()))
+    if isinstance(value, (DataSourceSpec, LiteralSource)):
+        # A CONSTANT tag, not the class name: a source's own `to_dict` already carries
+        # the `kind` its reader dispatches on, so renaming the Python class must not
+        # move a digest.
+        return (sys.intern("$source"), _canonical(value.to_dict()))
+    if isinstance(value, PurePath):
+        return sys.intern(value.as_posix())
 
     if isinstance(value, dict):
         return tuple(
@@ -614,7 +670,10 @@ def package_digest(package: PackageSpec) -> str | None:
 
     What it does NOT see: the BODY of an importable builder (only its reference),
     and the CONTENTS of a file a source points at (only its path). A digest says
-    the recipe is unchanged, not that the world is.
+    the recipe is unchanged, not that the world is. For a ``Surface``, a
+    ``LayerStack`` or a source it sees the serialized DECLARATION, so an attribute
+    ``to_dict`` drops -- ``LayerStack._draft``, ``vor`` -- is invisible; two stacks
+    bound to different grids therefore digest alike.
     """
 
     try:
@@ -635,7 +694,19 @@ def package_digest(package: PackageSpec) -> str | None:
             _canonical(package.enabled),
             _canonical(tuple(sorted(package.requires))),
         )
-    except (ValueError, TypeError, AttributeError, pickle.PicklingError) as error:
+    except Exception as error:  # noqa: BLE001
+        # BROAD ON PURPOSE, and it became necessary in this commit. `_canonical` now
+        # calls `to_dict()` on any token-bearing or source object, which is arbitrary
+        # code -- so the failure set stopped being the four bounded ones below
+        # (`ValueError`, `TypeError`, `AttributeError`, `pickle.PicklingError`) and
+        # became open. Measured with a token class whose `to_dict` raises `KeyError`:
+        # `project.packages.digests()` and `project.runs.summary()` both DIED, where
+        # before they reported a digest. That breaks this function's documented
+        # contract twice over -- it "reports rather than raises", and `workspace.py`
+        # requires that a bookkeeping column never make `prepare_run` fail. Jupyter
+        # calls `RunLibrary.summary` on every bare `project.runs`, so the blast radius
+        # of a raise is the user's project browser, not a test.
+        #
         # A builder that is not importable (a closure, a lambda) or an option
         # that will not pickle (an open file handle) cannot be fingerprinted.
         # That is NOT a reason to refuse the package: it was buildable and

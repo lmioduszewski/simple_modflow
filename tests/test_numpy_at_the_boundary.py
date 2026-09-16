@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import myflopy as mf
 from myflopy.project.freeze import FrozenSnapshotError, freeze_simulation, thaw_simulation
+from myflopy.sources import DataSourceSpec, LiteralSource
 from myflopy.specs import ModelContext, _canonical, _json_value, package_digest
 
 SCALARS = [
@@ -394,3 +396,137 @@ def test_a_numpy_scalar_field_does_not_drift_across_a_save(tmp_path, field, valu
     project.save()
 
     assert package_digest(Project.load(tmp_path / "p").package("np")) == before
+
+
+def _two_layer_stack(top=None):
+    """A gridless TWO-layer declaration.
+
+    Two layers, never one, and that is not arbitrary: the defect is pickle
+    back-referencing a repeated string, so a one-layer stack round-trips
+    byte-identically and would certify a fix that does nothing. Measured on the
+    unfixed code: two layers drift, one layer does not.
+    """
+
+    stack = mf.LayerStack(top=top if top is not None else mf.Surface.flat(100.0))
+    stack.add("sand", thickness=20.0)
+    stack.add("clay", thickness=30.0)
+    return stack
+
+
+@pytest.mark.parametrize(
+    "label, value",
+    [
+        ("a bare Path", Path("x.tif")),
+        ("a Path as a dict key", {Path("x.tif"): 1}),
+        ("a source carrying np.int64", DataSourceSpec(path="x.tif", metadata={"m": np.int64(3)})),
+        ("a source carrying np.float64", DataSourceSpec(path="x.tif", metadata={"m": np.float64(1.5)})),
+        ("a source carrying np.bool_", DataSourceSpec(path="x.tif", metadata={"m": np.bool_(True)})),
+        ("a source carrying np.str_", DataSourceSpec(path="x.tif", metadata={"m": np.str_("a")})),
+        ("a source carrying a Path", DataSourceSpec(path="x.tif", metadata={"m": Path("y.tif")})),
+        ("a LiteralSource carrying numpy", LiteralSource({0: np.float64(1.5)})),
+    ],
+)
+def test_a_value_in_inputs_does_not_drift_across_a_round_trip(label, value):
+    """`_canonical` has to agree with `_json_value` about what a value IS.
+
+    The digest exists to survive the round trip `_json_value` defines, so anything
+    that function REWRITES and `_canonical` passed through digested one way live and
+    another after a reload -- `runs.drift()` then reports a package nobody edited.
+    """
+
+    spec = dataclasses.replace(mf.npf(k=1.0), inputs={"v": value})
+    reloaded = mf.PackageSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+
+    assert package_digest(spec) == package_digest(reloaded), label
+
+
+def test_a_lazy_layer_stack_does_not_drift_across_a_round_trip():
+    """The live instance, shipped by B1: a `LayerStack` riding in `inputs`.
+
+    `'constant_thickness'` is ONE interned string object in the live stack and
+    several after a JSON reload, so pickle back-references it in one graph and
+    writes it out repeatedly in the other. That is ledger 222's bug one level
+    deeper -- inside an object `_canonical` never entered.
+    """
+
+    spec = mf.disv(_two_layer_stack())
+    reloaded = mf.PackageSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+
+    assert package_digest(spec) == package_digest(reloaded)
+
+
+def test_a_lazy_layer_stack_does_not_drift_across_a_save(tmp_path):
+    """The same defect through the verb a user actually runs."""
+
+    from myflopy.workspace import Project
+
+    project = Project(tmp_path / "p", name="p")
+    project.add_package("disv/lazy", mf.disv(_two_layer_stack()))
+    before = package_digest(project.package("disv/lazy"))
+    project.save()
+
+    assert package_digest(Project.load(tmp_path / "p").package("disv/lazy")) == before
+
+
+@pytest.mark.parametrize(
+    "field, before, after",
+    [
+        ("thickness", 30.0, 31.0),
+        ("pinch", "floor", "inactive"),
+        ("split", None, 3),
+        ("min_thickness", None, 5.0),
+        ("names", None, ["a", "b", "c"]),
+    ],
+)
+def test_the_digest_still_sees_a_changed_layer_field(field, before, after):
+    """A fix bought by making the digest BLIND is not a fix.
+
+    These five are the fields `LayerStack.to_dict` writes CONDITIONALLY, and they
+    are the ones at risk: the digest of a token object is now its `to_dict` payload,
+    so a field that stops being written stops being seen. Measured against a
+    deliberately lossy `to_dict`, the round-trip tests above all stay green while
+    the digest goes blind to every one of these -- which is why they are here.
+    `names` needs a split to be legal, so it is set alongside one.
+    """
+
+    def built(value):
+        stack = _two_layer_stack()
+        if value is not None:
+            extra = {"split": len(value)} if field == "names" else {}
+            stack.replace("clay", **{field: value}, **extra)
+        return mf.disv(stack)
+
+    assert package_digest(built(before)) != package_digest(built(after))
+
+
+def test_a_stack_that_cannot_be_written_is_unfingerprinted_not_wrong():
+    """`to_dict` refuses a per-cell surface (ledger 269), so there is no declaration.
+
+    `None` is the documented answer for "cannot be fingerprinted", and it REPLACES a
+    false one: such a package is persisted by pickle, and its pre-fix digest drifted
+    across that very route.
+    """
+
+    stack = _two_layer_stack(top=mf.Surface.from_array(np.arange(28.0)))
+
+    assert package_digest(mf.disv(stack)) is None
+
+
+def test_fingerprinting_reports_rather_than_raises_whatever_to_dict_does():
+    """`_canonical` now calls `to_dict`, which is arbitrary code.
+
+    Before this the failure set was four bounded exceptions; now it is open. A raise
+    here would kill `packages.digests()` and `runs.summary()` -- which Jupyter calls
+    on every bare `project.runs` -- so the contract is that a bad `to_dict` costs a
+    fingerprint, not a session.
+    """
+
+    class _Hostile:
+        _SPEC_TOKEN = "$hostile"
+
+        def to_dict(self):
+            raise KeyError("layer")
+
+    spec = dataclasses.replace(mf.npf(k=1.0), inputs={"v": _Hostile()})
+
+    assert package_digest(spec) is None

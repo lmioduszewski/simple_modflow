@@ -35,6 +35,16 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "myflopy"
 #: `_vendor` is excluded from the scan entirely -- it is third-party code we do
 #: not edit.
 ALLOWED_BROAD = {
+    # `package_digest` fingerprints by calling `_canonical`, which since ledger 273
+    # calls `to_dict()` on any token-bearing or source object -- arbitrary code, so
+    # the failure set is open rather than the four it used to be. The handler cannot
+    # narrow without breaking the function's contract: it "reports rather than
+    # raises", and a bookkeeping column must never make `prepare_run` fail. Measured
+    # with a `to_dict` raising `KeyError`, the un-widened version killed
+    # `packages.digests()` and `runs.summary()` -- which Jupyter calls on every bare
+    # `project.runs`. It does not swallow: the package is reported unfingerprinted
+    # and the error is logged at DEBUG.
+    "specs.py:package_digest",
     # flopy's `utils/voronoi.py` contains a literal `raise Exception(...)` for a
     # degenerate triangulation, so `Exception` is the only clause that catches
     # the case these guards exist for. None of the three swallows: each records

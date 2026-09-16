@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 272 entries (273 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 273 entries (274 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 273 | The digest saw a package's representation, not its content | 2026-09-15 |
 | 272 | A lazy builder accepted any option name at all | 2026-09-15 |
 | 271 | Move it, and read the report | 2026-09-15 |
 | 270 | The discretization is a recipe now, and that is what finally lets a layered model be SAVED | 2026-09-15 |
@@ -10407,3 +10408,91 @@ same day, which is the useful part of the result.
       carries a control in the other direction -- a real FloPy option and a
       forwarded build kwarg must still pass -- because a refusal bought with a false
       positive is not a fix.
+
+273. **The digest saw a package's representation, not its content (2026-09-15).**
+      `package_digest` has to survive the round trip `_json_value` defines -- that
+      is its whole contract. `_canonical` did not: it normalized numpy scalars and
+      interned strings, then PASSED THROUGH anything else, including a `Path` and
+      any object `_json_value` rewrites. So the two disagreed, and a package
+      digested one way live and another after `Project.save()` + `load()`.
+      **LIVE since B1, not latent.** `mf.disv(<gridless LayerStack>)` puts a stack
+      in `inputs`; measured `58dd51bc12ac3736` live against `6e269fd095da3ee7`
+      reloaded, so `project.runs.drift()` reported a package nobody edited as
+      `edited`. The cause is ledger 222 one level deeper, INSIDE an object this
+      function never entered: `'constant_thickness'` is one interned string object
+      in the live stack and several after JSON, so pickle back-references it in one
+      graph and writes it repeatedly in the other. **A ONE-LAYER stack does not show
+      it** and would certify a fix that does nothing -- the tests build two.
+      It is EDITED PERMANENTLY, not once: browsing, `drift()` and `run.write()` all
+      leave a stored digest alone; only re-preparing the run rewrites it. (That
+      corrects ledger 222's "reads edited ONCE".)
+      **The fix is to make `_canonical` agree with `_json_value`** -- mirroring its
+      first three branches, in its order, ABOVE the containers: a `PurePath` becomes
+      its posix string, and a token-bearing or source object is canonicalized
+      through its own `to_dict()` under a tag. Order matters for a token-bearing
+      Mapping, which the dict branch would otherwise claim first, fingerprinting a
+      body `_json_value` throws away.
+      **It moves NO stored digest, measured, which is why it is safe without a
+      version field.** 0 of the 12 real packages in the user's Ten Trails library,
+      0 of the persisted `PackageSpec` files in `examples/`, and the repo's only
+      stored manifest digest (`npf/high_k`) recomputes `666910e1103a5ac9`
+      unchanged. Every one of the 12 has an empty `inputs` and no `Path`, source or
+      token anywhere in its digested fields -- a `.gpkg` recipe lives in `metadata`,
+      which the digest excludes. **Survey limit, stated honestly:** the repo tracks
+      ZERO digest-bearing manifests (`.gitignore`), so a user's own stored runs
+      cannot be surveyed from here. What DOES move is exactly one thing: a
+      `mf.disv(<gridless stack>)` package, and only where it is a library entry
+      referenced by `mf.ref` -- an inline one is never digested at all
+      (`_package_digests` records only ref keys). Those users see one `edited` row
+      once, against a false row that is currently permanent.
+      **Re-baseline with `run.package_digests = {...}; run.save_manifest()`, NOT
+      `prepare_run(overwrite=True)`** -- the latter also replaces the run's
+      `_library/` copy and DELETES `frozen.npz`, destroying what ledgers 230 and 251
+      exist to provide.
+      **The plan's `package_digests_version` stays unbuilt**, with the number that
+      justifies deferring it: zero stored packages move, and `Run.from_dict` reads
+      `package_digests` with `.get`, so the field is backward-readable whenever a
+      change does warrant one.
+      **Two deliberate costs.** A stack whose top is `Surface.from_array` becomes
+      UNFINGERPRINTED (`None`) rather than digested -- `to_dict` refuses a per-cell
+      surface (ledger 269) -- and that replaces a FALSE answer, not a correct one:
+      such a package is persisted by pickle and its old digest drifted across that
+      very route. And the digest now sees a token object's DECLARATION, so what
+      `to_dict` omits is invisible: `LayerStack._draft` and `vor` no longer move it,
+      which means **two stacks bound to different grids digest alike**. That cuts
+      the right way for `_draft` (previewing a stack with `.plot` used to mark its
+      package edited) and is a real blind spot for `vor`, unreachable through
+      `mf.disv` (a stack with a grid goes eager) but reachable through `inputs`,
+      which B2 populates.
+      **`package_digest`'s handler had to widen to `except Exception`.** `_canonical`
+      now calls `to_dict()`, which is arbitrary code, so the failure set stopped
+      being four bounded exceptions. Measured with a `to_dict` raising `KeyError`,
+      the un-widened version KILLED `packages.digests()` and `runs.summary()` --
+      which Jupyter calls on every bare `project.runs` -- breaking this function's
+      "reports rather than raises" contract and `workspace.py`'s rule that a
+      bookkeeping column must never make `prepare_run` fail. Registered in
+      `test_exception_narrowness.py` with that argument.
+      **NOT claimed, though an earlier draft did:** digest-ability and save-ability
+      do NOT coincide. An `ndarray`, a `CellSurfaceOffset`, a `Spread` and
+      `Surface.where(<shapely zone>)` all take none of the new branches -- they are
+      unsaveable and fully digestable, exactly as before. The runtime
+      `GeoPackageSource` likewise has no `to_dict` at all, so it still pickles its
+      live mesh; the rule that it must never enter `inputs` is unchanged and
+      unenforced.
+      **The controls are the point of the test module.** A fix bought by making the
+      digest blind is not a fix, and the round-trip tests alone cannot tell: against
+      a deliberately lossy `to_dict` that drops `pinch`/`split`/`min_thickness`/
+      `names`, every round-trip test stays green while the digest goes blind to all
+      four. The discrimination tests sweep exactly the CONDITIONALLY-written fields,
+      and fail by name when that happens.
+      Cost is NEGATIVE -- digesting the real 12-package library measures 153.9 ms
+      after against 182.9 ms before (0.84x), and 221.7 ms without the exact-type leaf
+      fast path -- so that fast path more than pays for the recursion. Two timing
+      traps caught two independent measurers before the number settled: running the
+      new code first on a cold cache flattered it by 5.5x, and leaving `import`
+      statements inside the hot recursive function read 2.19x instead of ~1.2x.
+      Alternate the variants and hoist the imports.
+      **Corrects ledger 265's deferral**, which named "Phase 2 B1" as the trigger and
+      priced the fix as moving ordinary source digests. B1 put builder kwargs in
+      `inputs`, not sources; the mechanism is real and its effect is empty, because
+      the population of stored source-bearing packages is zero.

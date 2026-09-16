@@ -1383,8 +1383,10 @@ def disv(
         if reachable is None and hasattr(layers, "_SPEC_TOKEN"):
             # A declared, gridless LayerStack: emit a LAZY spec instead of raising.
             # The stack rides in `inputs`, which `PackageSpec.build` splats into the
-            # builder and which `_json_value`, `freeze._lift` and `package_digest`
-            # already handle -- so no new `recipe` field is needed (ledger 270).
+            # builder and which `_json_value` and `freeze._lift` already handle -- so
+            # no new `recipe` field is needed (ledger 270). `package_digest` did NOT
+            # handle it: a two-layer stack digested one way live and another after a
+            # reload, so every such package read as EDITED forever. Fixed in 273.
             return PackageSpec(
                 name,
                 _build_lazy_disv,

@@ -339,9 +339,18 @@ adopt a superseded verdict.
 The fingerprint covers the option and input VALUES a spec holds, its name, its
 builder REFERENCE, `enabled` and `requires`. It does not see the body of an
 importable builder, or the contents of a file a source points at — it says the
-recipe is unchanged, not that the world is. Dict key order, `requires` order and
-list-vs-tuple are normalised away, so a `save()`/`load()` round trip does not
-read as an edit.
+recipe is unchanged, not that the world is. Dict key order, `requires` order,
+list-vs-tuple and a `Path`-vs-string spelling are normalised away, so a
+`save()`/`load()` round trip does not read as an edit.
+
+A `Surface`, a `LayerStack` or a source is fingerprinted by its **declaration** —
+what its `to_dict()` writes — because that is the only definition under which the
+live spec and the reloaded one can agree (ledger 273). Two consequences worth
+knowing: what `to_dict` omits is invisible, so previewing a stack with `.plot` no
+longer marks its package edited, and two stacks bound to different grids
+fingerprint alike; and a stack whose top is a per-cell `Surface.from_array` cannot
+be written down at all, so it reads `unfingerprinted` rather than carrying a
+digest that would drift on its own.
 
 **PEST calibrations are reported, not listed.** A calibration builds into
 `<model workspace>.pest/` — inside the project — holding the PstFrom template,
