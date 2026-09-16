@@ -315,3 +315,91 @@ def test_a_built_result_still_builds_eagerly(triangulated_grid):
 
     assert spec.options["ncpl"] == triangulated_grid.ncpl
     assert not spec.inputs, "an eager result carries no recipe"
+
+
+def test_a_typo_on_a_lazy_disv_is_refused_at_the_call(triangulated_grid):
+    """The declaration-time check every other package gets, which the lazy one lost.
+
+    `_accepted_options` inspects a FloPy class, or a wrapper that DECLARES its target
+    via `mf6_targets`. `_build_lazy_disv` is a plain function and declared none, so the
+    check abstained and `mf.disv(stack, bogus=1)` was accepted at the call -- surfacing
+    from inside FloPy at build, a whole `prepare_run` from the mistake. The eager form
+    raised the whole time, which is what made the gap invisible.
+    """
+
+    with pytest.raises(TypeError, match=r"does not accept 'bogus_option'"):
+        mf.disv(_stack(), bogus_option=1)
+
+    # The near-miss path reaches a lazy spec too.
+    with pytest.raises(TypeError, match=r"did you mean 'nlay'"):
+        mf.disv(_stack(), nlays=3)
+
+    # Controls, in both directions: a real FloPy option and a forwarded build kwarg
+    # must still pass, or the check has been bought with a false refusal.
+    assert mf.disv(_stack(), length_units="feet").options == {"length_units": "feet"}
+    assert mf.disv(_stack(), default_pinch="inactive").inputs["build_kwargs"][
+        "default_pinch"
+    ] == "inactive"
+
+
+def test_a_recipe_name_cannot_also_be_passed_as_an_option():
+    """`build` splats inputs AND options, so a name in both is always fatal.
+
+    Unchecked it read `_build_lazy_disv() got multiple values for keyword argument
+    'layer_stack'` -- the private builder's name, not the call the user wrote. It is
+    not a `_check_options` question: `layer_stack` is perfectly ACCEPTABLE to that
+    builder; the defect is that the recipe already supplied it.
+    """
+
+    with pytest.raises(TypeError, match=r"'layer_stack' is part of this package's recipe"):
+        mf.disv(_stack(), layer_stack="nonsense")
+
+    with pytest.raises(TypeError, match=r"'disv_name' is part of this package's recipe"):
+        mf.disv(_stack(), disv_name="other")
+
+
+def test_a_source_in_inputs_may_shadow_the_option_it_supplies():
+    """`inputs` carries TWO things, and only one of them can collide.
+
+    A lazy recipe's entries are builder keyword arguments; a duplicate is a mistake.
+    A `DataSourceSpec`/`LiteralSource` entry is an UNRESOLVED value for the option of
+    the same name -- `inputs["k"]` says where `options["k"]` comes from -- so the
+    names matching is the whole point, and `specs.py` says as much where `_json_value`
+    handles it ("`PackageSpec.inputs` is exactly where source specs live").
+
+    Refusing it would foreclose a design rather than catch a bug. It is not yet a
+    working shape: nothing in `src/` constructs one and nothing resolves one, so a
+    build still dies inside FloPy. That resolver is B2's, and this test is what stops
+    the collision check from being "tightened" over the top of it in the meantime.
+    """
+
+    import dataclasses
+
+    from myflopy.sources import DataSourceSpec, LiteralSource
+
+    for source in (DataSourceSpec(path="x.tif"), LiteralSource({0: 1.0})):
+        spec = dataclasses.replace(mf.npf(k=1.0), inputs={"k": source})
+        assert spec.options["k"] == 1.0, "the option it supplies is left alone"
+        assert spec.inputs["k"] is source
+
+    # ...and the exemption is by TYPE, not by living in `inputs`: a plain value under
+    # a name `options` also carries is still the collision this check exists for.
+    with pytest.raises(TypeError, match=r"'k' is part of this package's recipe"):
+        dataclasses.replace(mf.npf(k=1.0), inputs={"k": 2.0})
+
+
+def test_a_lazy_disv_is_refused_on_a_simulation():
+    """Declaring `mf6_targets` also makes the builder's SCOPE decidable.
+
+    `_package_scope` reads the same signal, so before this a lazy DISV was undecidable
+    and `mf.simulation(packages=[...])` waved it through -- to die inside FloPy as
+    `Invalid package type`. The eager DISV was refused at the call all along.
+    """
+
+    from myflopy.package_api import _build_lazy_disv
+    from myflopy.specs import _package_scope
+
+    assert _package_scope(_build_lazy_disv) == "model"
+
+    with pytest.raises(ValueError, match=r"was given model package"):
+        mf.simulation(mf.gwf("m"), packages=[mf.disv(_stack())], name="s")

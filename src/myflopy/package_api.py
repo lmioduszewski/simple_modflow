@@ -1216,6 +1216,15 @@ def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **op
     return built
 
 
+# The lazy builder targets exactly what the eager one does, and saying so is what
+# restores the DECLARATION-time checks every other package gets. Without it
+# `_accepted_options` reads a plain function, returns `None`, and abstains: a typo in
+# `mf.disv(stack, ...)` was accepted at the call and surfaced from inside FloPy at
+# build. It also makes the builder's SCOPE decidable, so a lazy DISV handed to
+# `mf.simulation(packages=[...])` is refused at the call like any other model package.
+_build_lazy_disv.mf6_targets = build_disv.mf6_targets
+
+
 _DISV_BUILD_DEFAULTS = {
     "attach": True,
     "default_min_thickness": 1.0,

@@ -978,6 +978,50 @@ def _check_options(name: str, builder, options: dict[str, Any]) -> None:
     )
 
 
+def _check_input_collisions(
+    name: str, inputs: dict[str, Any], options: dict[str, Any]
+) -> None:
+    """Raise if one keyword is set twice -- once as a recipe input, once as an option.
+
+    ``PackageSpec.build`` splats both into the builder
+    (``self.builder(target, **self.inputs, **self.options)``), so a name in both is
+    always fatal. Unchecked it surfaces at BUILD as
+    ``_build_lazy_disv() got multiple values for keyword argument 'layer_stack'`` --
+    which names the private builder rather than the call the user wrote, and arrives
+    a whole `prepare_run` away from the mistake.
+
+    It cannot be caught by :func:`_check_options`, whose question is whether a name
+    is ACCEPTABLE. ``layer_stack`` is perfectly acceptable to the lazy DISV builder;
+    the defect is that the recipe already supplied it.
+
+    **A SOURCE spec is exempt, because shadowing is its meaning.** ``inputs`` carries
+    two different things. A lazy recipe's entries are builder keyword arguments, and
+    a duplicate there is a mistake. A ``DataSourceSpec``/``LiteralSource`` entry is an
+    UNRESOLVED value for the option of the same name -- ``inputs["k"]`` says where
+    ``options["k"]`` comes from -- so the two names matching is the whole point.
+    Nothing resolves one yet (measured: the shape builds to
+    ``ModflowGwfnpf() got multiple values for keyword argument 'k'``, and nothing in
+    ``src/`` constructs it), so refusing it here would foreclose a design rather than
+    catch a bug. That resolution step is B2's to build.
+    """
+
+    collisions = sorted(
+        key
+        for key in set(inputs) & set(options)
+        if not isinstance(inputs[key], (DataSourceSpec, LiteralSource))
+    )
+    if not collisions:
+        return
+    raise TypeError(
+        f"{name}: " + ", ".join(repr(key) for key in collisions) + " "
+        + ("is" if len(collisions) == 1 else "are")
+        + " part of this package's recipe and cannot also be passed as an option -- "
+        "the recipe already supplies "
+        + ("it" if len(collisions) == 1 else "them")
+        + ". Change the declaration that built the recipe instead."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PackageSpec:
     """Reusable instructions for building one package on a model or simulation.
@@ -998,6 +1042,7 @@ class PackageSpec:
     def __post_init__(self) -> None:
         """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
         _check_options(self.name, self.builder, self.options)
+        _check_input_collisions(self.name, self.inputs, self.options)
 
         object.__setattr__(self, "requires", tuple(self.requires))
 

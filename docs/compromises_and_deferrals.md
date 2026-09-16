@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 271 entries (272 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 272 entries (273 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 272 | A lazy builder accepted any option name at all | 2026-09-15 |
 | 271 | Move it, and read the report | 2026-09-15 |
 | 270 | The discretization is a recipe now, and that is what finally lets a layered model be SAVED | 2026-09-15 |
 | 269 | A layer stack could not be written down, so no layered model could be SAVED | 2026-09-15 |
@@ -10354,3 +10355,55 @@ same day, which is the useful part of the result.
       cannot act is the same defect as a hidden one.
       One mutant found dead code rather than a bug: the stamping condition re-tested
       `grid_free` after `package_move` had already honoured it.
+
+272. **A lazy builder accepted any option name at all (2026-09-15).**
+      `_accepted_options` inspects a FloPy package class, or a wrapper that DECLARES
+      its target via `mf6_targets`. `_build_lazy_disv` is a plain function and
+      declared none, so the function returned `None` and `_check_options` ABSTAINED:
+      measured, `mf.disv(stack, bogus_option=1)` was accepted at the call and
+      surfaced from inside FloPy at build, a whole `prepare_run` from the mistake.
+      The EAGER form raised the whole time, which is what kept the gap invisible --
+      the check was not weakened, it was never reached.
+      One line fixes it (`_build_lazy_disv.mf6_targets = build_disv.mf6_targets`),
+      and it buys a second refusal for free: `_package_scope` reads the SAME signal,
+      so a lazy DISV handed to `mf.simulation(packages=[...])` was undecidable and
+      waved through, to die inside FloPy as `Invalid package type`. It is refused at
+      the call now, like the eager one always was.
+      **Declaring the target also widens the accepted set to the builder's own
+      parameters** -- `layer_stack`, `build_kwargs`, `disv_name` -- because a
+      wrapper's named parameters are normally legitimate options. On a lazy spec
+      they are not: they are the RECIPE, and `PackageSpec.build` splats
+      `**self.inputs` and `**self.options` together, so a name in both is always
+      fatal. Unchecked it read `_build_lazy_disv() got multiple values for keyword
+      argument 'layer_stack'`, naming the private builder rather than the call.
+      `_check_input_collisions` refuses it at declaration instead.
+      **It is deliberately a SEPARATE check from `_check_options`**, whose question
+      is whether a name is ACCEPTABLE. `layer_stack` is perfectly acceptable to that
+      builder; the defect is that the recipe already supplied it. Folding the two
+      would have to answer "acceptable, but not from you", which is not what that
+      function means.
+      **`inputs` carries TWO different things, and the first version of this check
+      asserted it carried one.** It broke
+      `test_source_payloads_are_rebuilt_by_registry_and_keep_int_keys` on the full
+      suite. A lazy recipe's entries are builder keyword arguments, where a duplicate
+      is a mistake; a `DataSourceSpec`/`LiteralSource` entry is an UNRESOLVED value
+      for the option of the SAME name -- `inputs["k"]` says where `options["k"]`
+      comes from -- so there the names matching is the whole point, and `_json_value`
+      already says so where it handles them ("`PackageSpec.inputs` is exactly where
+      source specs live"). The check exempts a source by TYPE.
+      **The source shadow is not a working shape, measured**: nothing in `src/`
+      constructs one, nothing resolves one, and a build dies as
+      `ModflowGwfnpf() got multiple values for keyword argument 'k'`. Refusing it
+      would have foreclosed a design rather than caught a bug -- the resolver that
+      consumes a source into its option is B2's to build, and this is the same
+      latency ledger c877911 recorded from the digest side. A test pins the exemption
+      so it is not "tightened" over the top of that work.
+      Otherwise the collision check runs on every `PackageSpec`, not only lazy ones,
+      and the full suite confirms nothing legitimate carries one.
+      Both halves were mutation-tested: dropping `mf6_targets` fails
+      `test_a_typo_on_a_lazy_disv_is_refused_at_the_call` and
+      `test_a_lazy_disv_is_refused_on_a_simulation`; dropping the collision check
+      fails `test_a_recipe_name_cannot_also_be_passed_as_an_option`. Each test
+      carries a control in the other direction -- a real FloPy option and a
+      forwarded build kwarg must still pass -- because a refusal bought with a false
+      positive is not a fix.
