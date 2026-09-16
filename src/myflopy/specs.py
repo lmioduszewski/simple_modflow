@@ -488,6 +488,14 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
             from myflopy.layers import LayerStack
 
             return LayerStack.from_dict(value["$layer_stack"])
+        if "$spread" in value:
+            from myflopy.geopackage import Spread
+
+            return Spread.from_dict(value["$spread"])
+        if "$cell_surface_offset" in value:
+            from myflopy.geopackage import CellSurfaceOffset
+
+            return CellSurfaceOffset.from_dict(value["$cell_surface_offset"])
     if isinstance(value, dict) and "kind" in value:
         # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
         # ends in "Spec", so an ``endswith("Source")`` test handed the public

@@ -8,13 +8,16 @@ for an elevation and multiplies a conductance by the cell count -- on real data,
 
 from __future__ import annotations
 
+import dataclasses
+from pathlib import Path
+
 import geopandas as gpd
 import numpy as np
 import pytest
 from shapely.geometry import LineString, Point, Polygon
 
 import myflopy as mf
-from myflopy.geopackage import Spread, _extent
+from myflopy.geopackage import CellSurfaceOffset, Spread, _extent
 
 
 @pytest.fixture
@@ -214,16 +217,46 @@ def test_every_row_value_dataclass_survives_a_run_manifest():
 
 
 def test_spread_metadata_records_its_settings():
-    """The manifest keeps enough to reproduce the split, not just the field name."""
+    """The manifest keeps enough to reproduce the split, not just the field name.
+
+    It did not, until ledger 274: `warn_below` was dropped, so whether a feature
+    losing 40% of itself warned depended on a number no persisted artifact recorded,
+    under a test whose own docstring claimed otherwise.
+    """
 
     from myflopy.geopackage import _metadata_value
 
-    assert _metadata_value(Spread("cond", mode="retained", min_share=0.05)) == {
+    assert _metadata_value(
+        Spread("cond", mode="retained", min_share=0.05, warn_below=0.5)
+    ) == {
         "type": "Spread",
         "field": "cond",
         "mode": "retained",
         "min_share": 0.05,
+        "warn_below": 0.5,
     }
+
+
+def test_the_two_converters_cover_the_same_fields():
+    """`_metadata_value` and `to_dict` are separate on purpose, and must not diverge.
+
+    They answer different questions -- provenance a human reads against a payload
+    that round-trips -- so they are deliberately not one function (ledger 274). What
+    ties them is this: neither may quietly stop recording a field. `to_dict` omits
+    DEFAULTS, so it is compared against the dataclass's own field list.
+    """
+
+    import dataclasses
+
+    from myflopy.geopackage import CellSurfaceOffset, _metadata_value
+
+    for sample in (
+        Spread("cond", mode="retained", min_share=0.05, warn_below=0.5),
+        CellSurfaceOffset("cell_bottom", offset=2.0, minimum=1.0),
+    ):
+        declared = {f.name for f in dataclasses.fields(sample)}
+        assert set(_metadata_value(sample)) - {"type"} == declared
+        assert set(sample.to_dict()) == declared, "every field is non-default here"
 
 
 def test_passthrough_cells_do_not_receive_boundaries(tmp_path):
@@ -283,3 +316,152 @@ def test_one_dimensional_domain_also_excludes_passthrough(tmp_path):
     spec = mf.drn.gpkg(path, layer="bc", context=ctx, nper=1, elevation="elevation",
                        conductance="cond", boundnames=False)
     assert sorted(r[0][1] for r in _records(spec)) == [0, 3]
+
+
+def test_a_spread_and_an_offset_round_trip_as_themselves():
+    """The failure this guards is SILENT: without a revive arm they come back dicts.
+
+    Asserts the TYPE, not that something non-None came back -- a plain dict passes
+    every other assertion you would think to write (ledger 269, 274).
+    """
+
+    import json
+
+    from myflopy.specs import _json_value, _spec_value
+
+    for sample in (
+        Spread("cond", mode="retained", min_share=0.05, warn_below=0.5),
+        CellSurfaceOffset("cell_bottom", offset=2.0, minimum="floor_col"),
+    ):
+        revived = _spec_value(json.loads(json.dumps(_json_value(sample))))
+
+        assert type(revived) is type(sample)
+        assert revived == sample
+
+
+@pytest.mark.parametrize(
+    "offset", [-2.0, -2, "depth", "2.0", "1e5", "no", "null"]
+)
+def test_the_offset_union_keeps_its_side(offset):
+    """`offset` is `float | str` -- a number, or the NAME of a GeoPackage column.
+
+    A column literally called "2.0" is the case that would cross over and silently
+    change every elevation it resolves. The YAML-hostile names ("no", "null") are
+    here because PyYAML would otherwise read them as booleans and None.
+    """
+
+    import json
+
+    import yaml
+
+    sample = CellSurfaceOffset("model_top", offset=offset)
+    for load, dump in ((json.loads, json.dumps), (yaml.safe_load, yaml.safe_dump)):
+        revived = CellSurfaceOffset.from_dict(load(dump(sample.to_dict())))
+
+        assert type(revived.offset) is type(offset)
+        assert revived.offset == offset
+
+
+def test_a_numpy_setting_does_not_look_like_an_edit():
+    """`to_dict` normalizes through `_json_value` where `Surface.to_dict` does not.
+
+    `type(np.float64(0.01)) is not float`, so an un-normalized numpy scalar fails the
+    omit-defaults test, gets written, and returns a plain float that IS omitted --
+    two payloads for one object, and a digest that moves across a save. The digest
+    reads this payload since ledger 273, so the normalization is load-bearing.
+    """
+
+    import json
+
+    from myflopy.specs import package_digest
+
+    spec = dataclasses.replace(
+        mf.npf(k=1.0), inputs={"c": Spread("cond", min_share=np.float64(0.01))}
+    )
+    reloaded = mf.PackageSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+
+    assert package_digest(spec) == package_digest(reloaded)
+    assert type(Spread("c", min_share=np.float64(0.05)).to_dict()["min_share"]) is float
+
+
+def test_a_bare_payload_is_yaml_safe():
+    """PyYAML dispatches on the EXACT type and refuses a numpy scalar json takes."""
+
+    import yaml
+
+    yaml.safe_dump(Spread("cond", min_share=np.float64(0.05)).to_dict())
+
+
+def test_a_hand_edited_payload_is_refused_where_it_can_be_fixed():
+    """Serializing these is what puts them in front of a text editor.
+
+    Revival goes through `__init__`, so `__post_init__` re-runs and a bad payload
+    raises here rather than dying inside a resolver several frames later.
+    """
+
+    with pytest.raises(ValueError, match="mode"):
+        Spread.from_dict({"field": "cond", "mode": "nonsense"})
+    with pytest.raises(ValueError, match="reference"):
+        CellSurfaceOffset.from_dict({"reference": "sea_level"})
+    with pytest.raises(ValueError, match="not usable"):
+        Spread.from_dict({})
+    with pytest.raises(ValueError, match="not usable"):
+        Spread.from_dict({"field": "cond", "bogus": 1})
+    with pytest.raises(ValueError, match="mapping"):
+        Spread.from_dict("cond")
+
+
+def test_a_package_holding_one_persists_as_json_not_a_pickle():
+    """The user-visible win: a reviewable archive instead of a version-fragile cache.
+
+    `_persist_package` falls back to pickling whatever `to_dict` refuses, and
+    CLAUDE.md's rule is that a pickled entry is a cache, not an archive.
+    """
+
+    import tempfile
+
+    from myflopy.workspace import Project
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Project(Path(tmp) / "p", name="p")
+        project.add_package(
+            "npf/spread", dataclasses.replace(mf.npf(k=1.0), inputs={"c": Spread("cond")})
+        )
+        report = project.save()
+
+        assert report.pickled == 0, "a spread no longer forces the pickle fallback"
+        written = (Path(tmp) / "p" / "specs" / "packages" / "npf" / "spread.json").read_text()
+        assert "$spread" in written
+        assert type(Project.load(Path(tmp) / "p").package("npf/spread").inputs["c"]) is Spread
+
+
+@pytest.mark.parametrize(
+    "verb, kwargs",
+    [
+        ("mf.rch.array", {"recharge": Spread("c"), "irch": 0}),
+        ("mf.evt.array", {"surface": 10.0, "rate": Spread("c"), "depth": 1.0, "ievt": 0}),
+        (
+            "mf.evt.array",
+            {"surface": CellSurfaceOffset("model_top"), "rate": 1.0, "depth": 1.0, "ievt": 0},
+        ),
+    ],
+)
+def test_an_array_form_refuses_a_per_feature_value(verb, kwargs):
+    """Neither can act without features, and a parameter that cannot act is a defect.
+
+    It is also what makes ledger 274's "no stored digest moves" structural rather
+    than merely unobserved: `prepare_run` writes the manifest BEFORE it builds
+    (and `build=False` is supported), so a run could otherwise record a digest for
+    a package holding one of these, which tokenizing would then move.
+    """
+
+    helper = mf.rch.array if verb == "mf.rch.array" else mf.evt.array
+
+    with pytest.raises(TypeError, match="per-FEATURE resolution"):
+        helper(**kwargs)
+
+
+def test_the_array_form_still_takes_an_ordinary_value():
+    """The control: the refusal must not be bought with a false positive."""
+
+    assert mf.rch.array(recharge=0.001, irch=0) is not None

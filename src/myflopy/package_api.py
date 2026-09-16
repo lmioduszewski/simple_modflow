@@ -46,7 +46,7 @@ from myflopy.builders import (
     build_ims,
     build_oc,
 )
-from myflopy.geopackage import GeoPackageSource, RowValue
+from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, RowValue, Spread
 from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
@@ -1380,8 +1380,14 @@ def disv(
             "refresh": refresh,
         }
         reachable = grid if grid is not None else getattr(layers, "vor", None)
-        if reachable is None and hasattr(layers, "_SPEC_TOKEN"):
+        if reachable is None and hasattr(layers, "to_disv"):
             # A declared, gridless LayerStack: emit a LAZY spec instead of raising.
+            # Duck-typed on `to_disv`, NOT on `_SPEC_TOKEN`: the token means "this
+            # serializes", which stopped being a synonym for "this is a layer stack"
+            # the moment ledger 274 gave one to `Spread` and `CellSurfaceOffset`.
+            # Measured then: `mf.disv(mf.Spread("x"))` turned from an immediate
+            # `AttributeError` naming the real problem into an ACCEPTED, persistable
+            # spec that died at build talking about layer stacks.
             # The stack rides in `inputs`, which `PackageSpec.build` splats into the
             # builder and which `_json_value` and `freeze._lift` already handle -- so
             # no new `recipe` field is needed (ledger 270). `package_digest` did NOT
@@ -4771,6 +4777,40 @@ def _hfb_spec_from_records(
 
 
 
+def _refuse_per_feature_values(fields: dict[str, Any], *, verb: str) -> None:
+    """Refuse a ``Spread`` or ``CellSurfaceOffset`` on an ARRAY-form BC.
+
+    Both describe how to resolve a value PER FEATURE -- ``Spread`` splits an
+    extensive field across the cells one feature covers, ``CellSurfaceOffset`` reads
+    a surface under each cell a feature lands on. The array form has no features:
+    it takes one array or scalar per period. So neither can act, and a parameter
+    that cannot act is the same defect as a hidden one.
+
+    Measured before this: all four shapes were ACCEPTED, the live object reached
+    ``options``, and the package died inside FloPy as an ``MFDataException`` naming
+    a data element rather than the argument. Worse, ``Project.prepare_run`` writes
+    the manifest (``save_manifest``) BEFORE it builds, and ``build=False`` is a
+    supported call -- so a run could record a digest for a package holding one, and
+    ledger 274's "no stored digest can move" would have had a hole in it. Refusing
+    here is what makes that structural rather than merely unobserved.
+    """
+
+    offenders = {
+        key: type(value).__name__
+        for key, value in fields.items()
+        if isinstance(value, (Spread, CellSurfaceOffset))
+    }
+    if not offenders:
+        return
+    named = ", ".join(f"{key}={kind}(...)" for key, kind in sorted(offenders.items()))
+    raise TypeError(
+        f"{verb}: {named} describes a per-FEATURE resolution, and the array form has "
+        "no features -- it takes one array or scalar per period. Use the list form "
+        f"({verb.rsplit('.', 1)[0]}.gpkg(...)) where each feature resolves its own "
+        "value, or pass a plain array here."
+    )
+
+
 def _array_bc_values(
     fields: dict[str, Any],
     *,
@@ -4792,6 +4832,8 @@ def _array_bc_values(
     without one MODFLOW 6 applies the flux to layer 1 unconditionally and drops
     every column whose layer 1 is inactive, without a word.
     """
+
+    _refuse_per_feature_values(fields, verb=verb)
 
     values: dict[str, Any] = dict(fields)
     # `readasarrays` is FloPy's default on both array classes -- the CLASS is the

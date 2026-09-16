@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 273 entries (274 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 274 entries (275 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 274 | `mf.Spread` and `mf.CellSurfaceOffset` could not be written down | 2026-09-16 |
 | 273 | The digest saw a package's representation, not its content | 2026-09-15 |
 | 272 | A lazy builder accepted any option name at all | 2026-09-15 |
 | 271 | Move it, and read the report | 2026-09-15 |
@@ -10496,3 +10497,79 @@ same day, which is the useful part of the result.
       priced the fix as moving ordinary source digests. B1 put builder kwargs in
       `inputs`, not sources; the mechanism is real and its effect is empty, because
       the population of stored source-bearing packages is zero.
+
+274. **`mf.Spread` and `mf.CellSurfaceOffset` could not be written down (2026-09-16).**
+      Both are the DOCUMENTED idioms for a `.gpkg` elevation and an extensive field
+      -- `mf.drn.gpkg(..., elevation=mf.CellSurfaceOffset("cell_bottom", offset=2.0),
+      conductance=mf.Spread("conductance"))` -- and `_json_value` refused both, so a
+      package holding one fell through `_persist_package`'s pickle fallback. A
+      pickled entry is a cache, not an archive (ledger 193), and these carried a
+      `versions.json` pinning five libraries. They are JSON now: `SaveReport.pickled`
+      goes 1 -> 0 and the saved file carries `{"$spread": {...}}`.
+      B2 needs this: a lazy `.gpkg` recipe in `PackageSpec.inputs` will carry one,
+      and until now that recipe could not be serialized at all.
+      **NO stored digest moves -- 0 of 12**, measured on the user's real Ten Trails
+      library, plus the repo's one stored manifest digest (`npf/high_k`,
+      `666910e1103a5ac9`) recomputed unchanged. That matters because ledger 273 made
+      a `_SPEC_TOKEN` object digest through its `to_dict()`, so GIVING these a token
+      changes how they fingerprint. **The reason is structural, not luck:** 3 of the
+      12 packages DO use a `CellSurfaceOffset`, but `.gpkg` resolves EAGERLY --
+      `GeoPackageSource._value` consumes the object into per-cell floats at
+      declaration, and its only trace is the flat dict `_metadata_value` writes into
+      `PackageSpec.metadata`, which the digest excludes by contract. **B2 is the
+      point at which that stops being true**, and must re-run this survey.
+      **Survey limit:** nothing under `/home/lukem/models/` was reachable.
+      **One exposure route was real and is now closed rather than documented.**
+      `mf.rch.array`/`mf.evt.array` ACCEPTED a live `Spread`/`CellSurfaceOffset` into
+      `options`, where it pickled and digested -- and `Project.prepare_run` calls
+      `save_manifest()` BEFORE `build()` (and `build=False` is supported), so a run
+      could record a digest for one and this entry's headline would have had a hole.
+      They are refused at the call now, which is right on its own terms: both
+      describe a PER-FEATURE resolution and the array form has no features, so
+      neither could ever act -- the defect CLAUDE.md names.
+      **`to_dict` is NOT `_metadata_value`, deliberately.** Two converters, two jobs:
+      one round-trips, omits defaults and revives into a live object; the other is
+      human-readable provenance that spells every field out and stays a plain dict.
+      Delegating measured wrong twice -- `PackageSpec.from_dict` runs `metadata`
+      through `_spec_value`, so a `$`-tagged metadata value would come back a LIVE
+      OBJECT and change what `metadata['fields']` means for every consumer, and
+      omitting defaults would make a manifest a human consults sparser. They are tied
+      by a field-coverage test instead of by shared code -- which immediately caught
+      that `_metadata_value` dropped `Spread.warn_below`, 3 of 4 fields, under a test
+      whose docstring claimed it "keeps enough to reproduce the split". Whether a
+      feature losing 40% of itself warns depended on a number no artifact recorded.
+      **`to_dict` normalizes through `_json_value`, where `Surface.to_dict` does
+      not.** `type(np.float64(0.01)) is not float`, so an un-normalized numpy scalar
+      fails the omit-defaults test, gets written, and comes back a plain float that
+      IS omitted -- two payloads for one object, and a digest that moves across a
+      save. It also makes a bare `to_dict()` safe for `yaml.safe_dump`, which
+      dispatches on the exact type and refuses what `json.dumps` takes (ledger 265).
+      **`tests/test_spec_token_registry.py` closes the class of bug rather than the
+      instance.** Declaring `_SPEC_TOKEN` is enough to be WRITTEN -- `_json_value`
+      duck-types on it -- while being READ is a separate hand-maintained if-chain in
+      `_spec_value`. Forget the arm and the object returns a PLAIN DICT with nothing
+      raised (ledger 269's trap, reproduced here for `Spread`). The test sweeps by
+      AST rather than importing: 0.4 s against 4.6 s for a `pkgutil` walk. Two
+      constraints follow and are asserted, not assumed: a `_SPEC_TOKEN` must be a
+      string LITERAL in a class body, and an arm must be spelled `"$token" in value`
+      -- `$tuple`'s `set(value) == {"$tuple"}` form is invisible to the sweep and is
+      exempt BY NAME rather than silently absent. A third test guards the guard: an
+      AST sweep that finds nothing would pass the other two.
+      **A duck-type elsewhere had to move.** `package_api`'s `mf.disv` used
+      `hasattr(layers, "_SPEC_TOKEN")` to mean "a declared gridless `LayerStack`",
+      which stopped being a synonym the moment two more classes carried one:
+      `mf.disv(mf.Spread("x"))` went from an immediate `AttributeError` naming the
+      real problem to an ACCEPTED, persistable spec that died at build talking about
+      layer stacks. It tests `to_disv` now. The lesson generalizes -- a token means
+      "this serializes", never "this is a particular kind of thing".
+      `myflopy.specs` gains two deferred imports (5 -> 7 on the ratchet), which
+      cannot be hoisted: `specs` is layer 1, `geopackage` is layer 3, and
+      `geopackage` imports `specs` at module scope, so a module-level import is both
+      an upward edge and a cycle -- the same reason the `$surface`/`$layer_stack`
+      arms are lazy. `package_api`'s is hoisted instead, since it already imports
+      `geopackage` at module level and layer 5 -> 3 is downward.
+      **Also fixed, unclaimed until measured:** revival goes through `__init__`, so
+      `__post_init__` re-runs and a hand-edited payload is refused where the reader
+      can act on it. `TypeError` is translated too -- a missing field otherwise read
+      `Spread.__init__() missing 1 required positional argument`, naming a
+      constructor the reader never called.

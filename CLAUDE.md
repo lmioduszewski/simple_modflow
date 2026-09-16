@@ -286,7 +286,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3472 passed / 4 skipped**, 2026-09-15): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3495 passed / 4 skipped**, 2026-09-16): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -720,7 +720,9 @@ inactive — measured 40% loss under "Normal termination". `irch` is **zero-base
 (FloPy adds one on write; passing 1-based gives `Invalid layer number`).
 `nseg > 1` and `boundnames` RAISE rather than being silently dropped — segmented ET
 has no array form, because NSEG lives in DIMENSIONS which MF6 never reads under
-READASARRAYS. Arrays are opt-in: for a sparse BC they are a pessimization.
+READASARRAYS. **`mf.Spread`/`mf.CellSurfaceOffset` raise here too** (ledger 274):
+both describe a per-FEATURE resolution and the array form has no features, so
+neither could act — they were accepted, pickled and digested before. Arrays are opt-in: for a sparse BC they are a pessimization.
 
 ## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE

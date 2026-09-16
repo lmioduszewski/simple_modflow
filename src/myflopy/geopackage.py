@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +32,7 @@ from myflopy.specs import (
     GRID_PIN,
     ModelContext,
     PackageSpec,
+    _json_value,
     _layer_elevations,
     grid_pin,
 )
@@ -38,6 +40,60 @@ from myflopy.specs import (
 logger = get_logger(__name__)
 
 SurfaceReference = str
+
+
+def _spec_payload(value: Any) -> dict[str, Any]:
+    """Return the JSON-ready declaration of a flat ``RowValue`` dataclass.
+
+    DEFAULTS ARE OMITTED, so adding a defaulted field later cannot move an existing
+    package's digest -- since ledger 273 ``_canonical`` fingerprints this payload
+    rather than the object.
+
+    Every value goes through ``_json_value`` FIRST, which is where this deviates from
+    ``Surface.to_dict``. ``type(np.float64(0.01)) is not float``, so an un-normalized
+    numpy scalar fails the default test, gets written, and comes back a plain float
+    that IS omitted -- two payloads for one object, and a digest that moves across a
+    save. Normalizing here also makes a bare ``to_dict()`` safe for
+    ``yaml.safe_dump``, which dispatches on the EXACT type and refuses a numpy scalar
+    ``json.dumps`` takes happily (ledger 265).
+    """
+
+    payload: dict[str, Any] = {}
+    for item in dataclass_fields(value):
+        resolved = _json_value(getattr(value, item.name))
+        default = (
+            item.default_factory()
+            if item.default is MISSING and item.default_factory is not MISSING
+            else item.default
+        )
+        if type(resolved) is type(default) and resolved == default:
+            continue
+        payload[item.name] = resolved
+    return payload
+
+
+def _from_spec_payload(cls, data: Any):
+    """Rebuild a flat ``RowValue`` dataclass from :func:`_spec_payload`'s output.
+
+    Goes through ``__init__``, so ``__post_init__`` re-runs: a hand-edited payload is
+    refused where the reader can act on it, rather than reviving an object that dies
+    later inside a resolver. Serializing these is precisely what puts them in front of
+    a text editor, so the validation is the feature.
+
+    ``TypeError`` is translated too -- a missing required field otherwise reads
+    ``Spread.__init__() missing 1 required positional argument: 'field'``, which names
+    a constructor the reader never called.
+    """
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"A {cls.__name__} payload must be a mapping of field names, "
+            f"not a {type(data).__name__}."
+        )
+    try:
+        return cls(**data)
+    except TypeError as error:
+        raise ValueError(f"{cls.__name__} payload is not usable: {error}") from error
 
 
 def _period_value(row, field: str | list[str] | tuple[str, ...], period: int):
@@ -108,6 +164,24 @@ class CellSurfaceOffset:
     reference: SurfaceReference
     offset: int | float | str = 0.0
     minimum: int | float | str | None = None
+
+    #: The key `myflopy.specs._json_value` writes this object under and `_spec_value`
+    #: revives it from. A `$`-prefixed token, NOT a `kind` tag: the source dispatcher
+    #: keys on `kind`, so one tagged as the other comes back a plain dict, silently
+    #: (ledger 269). `tests/test_spec_token_registry.py` reads this by AST, so it must
+    #: stay a string literal in the class body.
+    _SPEC_TOKEN = "$cell_surface_offset"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready declaration of this offset."""
+
+        return _spec_payload(self)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> CellSurfaceOffset:
+        """Rebuild an offset from :meth:`to_dict`'s payload."""
+
+        return _from_spec_payload(cls, data)
 
     def __post_init__(self) -> None:
         """Lowercase and validate ``reference`` (one of model_top/cell_top/cell_bottom)."""
@@ -282,6 +356,24 @@ class Spread:
     min_share: float = 0.01
     warn_below: float = 0.99
 
+    #: The key `myflopy.specs._json_value` writes this object under and `_spec_value`
+    #: revives it from. A `$`-prefixed token, NOT a `kind` tag: the source dispatcher
+    #: keys on `kind`, so one tagged as the other comes back a plain dict, silently
+    #: (ledger 269). `tests/test_spec_token_registry.py` reads this by AST, so it must
+    #: stay a string literal in the class body.
+    _SPEC_TOKEN = "$spread"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready declaration of this split."""
+
+        return _spec_payload(self)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Spread:
+        """Rebuild a split from :meth:`to_dict`'s payload."""
+
+        return _from_spec_payload(cls, data)
+
     def __post_init__(self) -> None:
         """Validate ``mode``."""
 
@@ -370,6 +462,16 @@ def _metadata_value(value: RowValue):
     written with :func:`json.dumps` and no ``default=``, so a spec that reaches it
     unconverted fails at ``prepare_run`` -- long after the package built cleanly.
     ``tests/test_geopackage_spread.py`` asserts the whole union round-trips.
+
+    **This is NOT ``to_dict``, deliberately** (ledger 274). Two converters, two jobs:
+    ``to_dict`` round-trips, omits defaults and is revived into a live object;
+    this one is human-readable provenance, spells every field out, and stays a plain
+    dict. Delegating here to ``to_dict`` was measured wrong twice over --
+    ``PackageSpec.from_dict`` runs ``metadata`` through ``_spec_value``, so a
+    ``$``-tagged value would come back a LIVE OBJECT and change what
+    ``metadata['fields']`` means for every consumer; and omitting defaults would make
+    a manifest a reader consults sparser. They are tied together by a field-coverage
+    test instead of by shared code.
     """
 
     if isinstance(value, CellSurfaceOffset):
@@ -385,6 +487,12 @@ def _metadata_value(value: RowValue):
             "field": value.field,
             "mode": value.mode,
             "min_share": value.min_share,
+            # `warn_below` was the one field of four this dropped, while the test
+            # pinning the shape claimed it "keeps enough to reproduce the split". It
+            # did not: whether a feature losing 40% of itself warns depended on a
+            # number no persisted artifact recorded. `metadata` is excluded from the
+            # digest, so adding it drifts nothing (ledger 274).
+            "warn_below": value.warn_below,
         }
     return value
 

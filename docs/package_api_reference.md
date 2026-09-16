@@ -553,6 +553,14 @@ stepping lets MODFLOW 6 choose its own step within a period -- and, crucially,
 (`ats_dtfailadj`, default 5.0; `0` restores the stop-on-failure behaviour). Periods
 are selected zero-based: `ats=True`, `ats=[7, 9]`, or `ats={7: {"dtmin": 1e-4}}`.
 
+**`mf.Spread` and `mf.CellSurfaceOffset` both SERIALIZE** (ledger 274) — a package
+holding one saves as reviewable JSON under a `$spread` / `$cell_surface_offset` token
+instead of falling through to the pickle fallback, and a hand-edited payload is refused
+where you can act on it. They are **refused on the ARRAY forms** (`mf.rch.array`,
+`mf.evt.array`): both describe a per-FEATURE resolution and the array form has no
+features, so neither could ever act — use the `.gpkg` list form, where each feature
+resolves its own value.
+
 **Building from a line BC? Wrap the conductance in `mf.Spread`.** A feature's value is
 otherwise written to every cell it covers, which is right for an elevation and
 multiplies a conductance by the cell count (measured: 2.02x, on an unchanged grid).
