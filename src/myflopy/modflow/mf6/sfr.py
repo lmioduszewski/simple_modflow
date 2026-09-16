@@ -930,7 +930,7 @@ class SFRBuilder:
             **dict(self.options),
         )
         return package.with_metadata(
-            **pin_metadata(self.context),
+            **pin_metadata(self.context, certifies=("packagedata",)),
             builder="SFRBuilder",
             stream_ids=list(self.stream_ids),
             connections=[

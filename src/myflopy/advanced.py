@@ -56,8 +56,8 @@ def _factory(constructor):
 
 
 
-def _names_cells(options, ncpl: int) -> bool:
-    """Whether any resolved option is a per-COLUMN array, i.e. names cells.
+def _names_cells(options, ncpl: int) -> tuple[str, ...]:
+    """WHICH resolved options are per-COLUMN arrays, i.e. name cells.
 
     The array form supplies one value per column, so `irch=<ncpl array>` and
     `recharge=<ncpl array>` are both addressed BY CELL and move meaning on another
@@ -72,7 +72,12 @@ def _names_cells(options, ncpl: int) -> bool:
         shape = getattr(value, "shape", None)
         return bool(shape) and shape[-1] == ncpl
 
-    return any(per_cell(value) for value in options.values())
+    # The NAMES, not a bool. This function already computes per-option truth to decide
+    # whether to pin at all, so the pin can declare exactly which options it speaks for
+    # at no extra cost (ledger 275) -- and that is what stops an edit to a genuinely
+    # grid-free option (`recharge=0.002` beside a resolved `irch`) from voiding a pin
+    # that is still true.
+    return tuple(key for key, value in options.items() if per_cell(value))
 
 
 def _array_bc_spec(
@@ -104,8 +109,9 @@ def _array_bc_spec(
     spec = PackageSpec(name, _factory(constructor), values)
     grid = getattr(context, "grid", None) if context is not None else None
     ncpl = getattr(grid, "ncpl", None)
-    if ncpl is not None and _names_cells(values, int(ncpl)):
-        spec = spec.with_metadata(**pin_metadata(context))
+    certifies = _names_cells(values, int(ncpl)) if ncpl is not None else ()
+    if certifies:
+        spec = spec.with_metadata(**pin_metadata(context, certifies=certifies))
     return spec
 
 

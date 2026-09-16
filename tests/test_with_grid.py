@@ -12,8 +12,9 @@ is what lets you see the verdict without waiting for `prepare_run` to raise.
 
 The four verdicts: `rebuilt` (a recipe resolves itself), `stale` (pinned to another
 mesh, or a hand-written DISV that IS the old mesh), `unverifiable` (names cells with
-no pin -- you cannot pin cell numbers the caller typed), `unchanged` (names no cells,
-or asserted mesh-independent with `grid_free=`).
+no pin -- you cannot pin cell numbers the caller typed -- OR its pin was VOIDED
+because an edit replaced the records the library resolved, ledger 275), `unchanged`
+(names no cells, or asserted mesh-independent with `grid_free=`).
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ from shapely.geometry import box
 
 import myflopy as mf
 from myflopy.grid_identity import MOVED_FROM
+from myflopy.modflow.mf6.canonical_example import (
+    CanonicalModelConfig,
+    rectangular_voronoi,
+)
 from myflopy.specs import ModelContext
 
 
@@ -226,3 +231,64 @@ def test_on_names_one_model_only(tmp_path, boundary):
     moved = _lazy_simulation(boundary).with_grid(_grid_spec(boundary, 12_000.0), on="m")
 
     assert moved.lineage[-1]["models"] == ["m"]
+
+
+def test_an_edited_package_is_refused_with_a_sentence_you_can_act_on(tmp_path):
+    """The old refusal was unanswerable, which is the point of ledger 275.
+
+    An edited package kept the library's pin, so `with_grid` said "re-declare it
+    against the new grid" -- to a user who may already have typed correct numbers FOR
+    that grid. The message named records that no longer existed, and there was no
+    route out: the edit route can never re-pin (ledger 250).
+
+    It is ONE complaint, not two. A voided package classifies `unverifiable`, so it
+    would also be stamped `MOVED_FROM` and listed a second time under a different
+    explanation.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.grid_identity import GRID_PIN, PIN_VOIDED
+    from myflopy.specs import fork_package
+
+    def _grid(n):
+        return rectangular_voronoi(CanonicalModelConfig(nrow=n, ncol=n, nlay=1, nper=1))
+
+    small, large = _grid(6), _grid(10)
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0))
+    stack.add("sand", thickness=20.0)
+    xmin, ymin, xmax, ymax = small.gdf_vorPolys.total_bounds
+    path = tmp_path / "bc.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [9.0]},
+        geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.2, ymax)],
+        crs=small.crs,
+    ).to_file(path, layer="chd", driver="GPKG")
+
+    resolved = mf.chd.gpkg(
+        path, layer="chd", nper=1, head="head",
+        context=ModelContext(grid=small, domain=np.ones((1, small.ncpl), dtype=int)),
+    )
+    edited = fork_package(resolved, stress_period_data={0: [[(0, 5), 9.0]]})
+
+    assert GRID_PIN not in edited.metadata
+    assert edited.metadata[PIN_VOIDED]["was"] == resolved.metadata[GRID_PIN]
+
+    model = mf.gwf(
+        "m",
+        context=ModelContext(grid=large, domain=np.ones((1, large.ncpl), dtype=int)),
+        packages=[mf.disv(stack), edited],
+    )
+    sim = mf.simulation(model, name="s", packages=[mf.tdis(nper=1)])
+    moved = sim.with_grid(large, name="s2")
+
+    rows = {row["package"]: row["how"] for row in moved.move_report()}
+    assert rows["chd"] == "unverifiable", rows
+
+    with pytest.raises(ValueError) as caught:
+        moved.build()
+    message = str(caught.value)
+
+    assert "EDITED after the library resolved them" in message
+    assert message.count("package 'chd'") == 1, f"one defect, one sentence:\n{message}"

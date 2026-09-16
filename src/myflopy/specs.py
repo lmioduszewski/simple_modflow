@@ -37,7 +37,9 @@ from myflopy._logging import get_logger
 from myflopy.grid_identity import (
     DROPPED_CONTEXT_FIELDS,  # noqa: F401
     GRID_PIN,  # noqa: F401
+    GRID_PIN_OPTIONS,  # noqa: F401
     MOVED_FROM,
+    PIN_VOIDED,
     _as_int,  # noqa: F401
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
@@ -52,6 +54,7 @@ from myflopy.grid_identity import (
     move_report,
     moved_package_complaints,
     package_move,
+    void_pin,
 )
 from myflopy.sources import (
     DataSourceSpec,
@@ -837,6 +840,11 @@ def fork_package(
         options = _renamed_options(options, package.name, name, overrides)
     inputs = copy.deepcopy(package.inputs) if deep else dict(package.inputs)
     metadata = copy.deepcopy(package.metadata) if deep else dict(package.metadata)
+    # An override REPLACES a resolved option wholesale (measured: 11 records -> 1), so
+    # the library's pin stops being true of what is there now. Keyed on the override
+    # NAMES, not on a diff of values -- so a `name=` rename, which rewrites
+    # `pname`/`filename` through `_renamed_options`, does not void (ledger 275).
+    metadata = void_pin(metadata, touched=set(overrides))
     provenance: dict[str, Any] = {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds")
     }
@@ -1101,6 +1109,67 @@ def _check_input_collisions(
     )
 
 
+@functools.cache
+def _required_keyword_only(builder) -> tuple[str, ...]:
+    """Keyword-only parameters of ``builder`` that have no default.
+
+    Cached because it runs on EVERY ``PackageSpec`` construction and
+    ``inspect.signature`` is not cheap -- uncached it measured `mf.npf` at 44.2 ->
+    82.5 us/call, for a check that can fire on one builder in the whole library.
+    """
+
+    try:
+        parameters = inspect.signature(builder).parameters
+    except (TypeError, ValueError):  # C-implemented or unintrospectable
+        return ()
+    return tuple(
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is parameter.KEYWORD_ONLY
+        and parameter.default is parameter.empty
+    )
+
+
+def _check_recipe_complete(name: str, builder, inputs: dict, options: dict) -> None:
+    """Raise when an edit has left a recipe that can no longer build.
+
+    Clearing ``inputs`` on a lazy package removes the very thing that resolves it.
+    Measured before this, the result was worse than an error: ``package_move`` called
+    it ``"unchanged"`` -- the verdict that means MOVES UNTOUCHED -- so a spec that
+    could not build on ANY mesh sailed through a grid move, and the failure arrived
+    later as ``_build_lazy_disv() missing 2 required keyword-only arguments``.
+
+    Refused at construction rather than given a fifth verdict, because a label cannot
+    refuse anything and the state has no legitimate producer. That follows the house
+    pattern -- ledger 208 refuses a duplicate registration outright instead of
+    reporting it.
+
+    Keyword-only is the right narrowness: a positional parameter is filled by the
+    build target or bound by a ``functools.partial``. Measured, it refuses nothing that
+    exists today -- 108 ``flopy.mf6.Modflow*`` classes have zero required keyword-only
+    parameters, and ``_build_lazy_disv`` is the only builder in the library with any.
+    """
+
+    required = _required_keyword_only(builder)
+    if not required:
+        return
+    missing = sorted(set(required) - set(inputs) - set(options))
+    if not missing:
+        return
+    # `builder.__name__`, NOT `_builder_label_for_error`: since ledger 272 the lazy
+    # builder declares `mf6_targets`, so that helper answers with the four FloPy DISV
+    # classes -- none of which requires these names. Naming the wrong thing in an
+    # error is how a reader loses an afternoon.
+    label = getattr(builder, "__name__", type(builder).__name__)
+    raise TypeError(
+        f"{name}: this package's recipe no longer supplies "
+        + ", ".join(repr(key) for key in missing)
+        + f", which {label} requires. Clearing `inputs` removes the recipe that "
+        "resolves the package, and what is left cannot build on ANY mesh. Re-declare "
+        "it rather than editing `inputs`."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PackageSpec:
     """Reusable instructions for building one package on a model or simulation.
@@ -1122,6 +1191,7 @@ class PackageSpec:
         """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
         _check_options(self.name, self.builder, self.options)
         _check_input_collisions(self.name, self.inputs, self.options)
+        _check_recipe_complete(self.name, self.builder, self.inputs, self.options)
 
         object.__setattr__(self, "requires", tuple(self.requires))
 
@@ -1133,9 +1203,19 @@ class PackageSpec:
         return self.builder(target, **self.inputs, **self.options)
 
     def with_options(self, **overrides: Any) -> PackageSpec:
-        """Return a copy with selected options added or replaced."""
+        """Return a copy with selected options added or replaced.
 
-        return replace(self, options={**self.options, **overrides})
+        Voids a grid pin the overrides speak for, like every other edit route
+        (ledger 275). Measured safe for the five internal callers: every one of them
+        operates on an unpinned spec (`metadata == {}` for `to_disv`, `mf.disv(result)`
+        and `mf.ims()`), so nothing in the library voids its own pin here.
+        """
+
+        return replace(
+            self,
+            options={**self.options, **overrides},
+            metadata=void_pin(self.metadata, touched=set(overrides)),
+        )
 
     def with_metadata(self, **updates: Any) -> PackageSpec:
         """Return a copy with selected provenance metadata added or replaced."""
@@ -2955,6 +3035,11 @@ class ModelSpec:
             if (
                 isinstance(package, PackageSpec)
                 and package_move(package, grid_free=free)[0] == "unverifiable"
+                # A VOIDED package is already refused by its own complaint, which names
+                # the mesh the edit invalidated. Stamping it too made `with_grid` list
+                # the same package twice with two different explanations -- measured on
+                # a real ncpl 36 -> 100 move. One defect, one sentence.
+                and PIN_VOIDED not in (package.metadata or {})
                 and (pin := grid_pin(getattr(self.context, "grid", None))) is not None
             )
             else package

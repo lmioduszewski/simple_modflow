@@ -37,6 +37,20 @@ logger = get_logger(__name__)
 #: would report every stored run as drifted for no change in what it builds).
 GRID_PIN = "grid_pin"
 
+#: The option names a pin SPEAKS FOR, declared by the resolver that took it. An edit
+#: that replaces one of these voids the pin; an edit that renames the file does not.
+#: Declared at the pin site rather than guessed from a global list, because the same
+#: option name is grid-bound on one package and not on another -- `packagedata` carries
+#: a cellid on `sfr`/`uzf` and none on `lak` (ledger 275).
+GRID_PIN_OPTIONS = "grid_pin_options"
+
+#: What replaced a pin when an edit voided it: ``{"was": <pin>, "options": [names]}``.
+#: The voided pin's VALUE is kept deliberately -- the build-time refusal reads it, so
+#: voiding records what the records used to certify rather than deleting the evidence.
+#: Measured: popping `GRID_PIN` instead removed the refusal outright, and a CHD pinned
+#: to one mesh then built clean on another.
+PIN_VOIDED = "grid_pin_voided"
+
 
 #: Context fields that ``ModelSpec.to_dict`` cannot carry, and that something reads.
 #: ``dates`` is deliberately absent: nothing in the library reads it, so losing it
@@ -149,8 +163,15 @@ def disv_pin(disv) -> str | None:
         return None
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
-def pin_metadata(context) -> dict[str, str]:
-    """``{GRID_PIN: ...}`` for a context that has a pinnable grid, else ``{}``.
+def pin_metadata(context, *, certifies) -> dict[str, str]:
+    """``{GRID_PIN: ..., GRID_PIN_OPTIONS: ...}`` for a pinnable grid, else ``{}``.
+
+    ``certifies`` names the options this pin speaks for, and is REQUIRED -- every pin
+    site must say what it resolved. Measured why it is not defaulted: an empty tuple
+    writes an empty list, and ``void_pin`` intersects against it, so a site that
+    forgot the keyword would be silently UN-VOIDABLE forever. An empty ``certifies``
+    therefore omits the key entirely and lands in the conservative branch (void on any
+    override), which is also what every pin serialized before ledger 275 does.
 
     The one place a builder stamps the mesh its records refer to, so the seven
     ``.gpkg`` forms and the advanced builders cannot drift apart about what a pin is.
@@ -170,7 +191,55 @@ def pin_metadata(context) -> dict[str, str]:
     """
 
     pin = grid_pin(getattr(context, "grid", None)) if context is not None else None
-    return {GRID_PIN: pin} if pin is not None else {}
+    if pin is None:
+        return {}
+    stamped: dict[str, str] = {GRID_PIN: pin}
+    if certifies:
+        stamped[GRID_PIN_OPTIONS] = sorted(certifies)
+    return stamped
+
+
+def void_pin(metadata, touched):
+    """Return ``metadata`` with the pin voided if ``touched`` names an option it certifies.
+
+    An edit that REPLACES a resolved option value makes the pin a lie: the records are
+    now the caller's, and the package still certifies that the library resolved them on
+    a named mesh. Measured before this -- an edited CHD kept pin
+    ``639cf118e33c3df2`` and reported ``stale``, so a user who typed CORRECT cell
+    numbers for the new grid was refused forever by a sentence about records that no
+    longer existed.
+
+    Keyed on the option NAME, not on a change of value: a value oracle means a deep
+    walk of every option at every check, and ``fork_package`` already measures 808 ms
+    copying a 654,480-record EVT. The cost is that re-supplying an identical dict voids
+    a pin that was still true -- a spurious ``unverifiable`` rather than a silent stale
+    pin, which is the direction that fails safe.
+
+    Returns the SAME object when nothing voids: ``with_options`` shares its metadata
+    dict with the parent, so this must never mutate in place.
+    """
+
+    pin = (metadata or {}).get(GRID_PIN)
+    if pin is None:
+        # `.get(...) is None` rather than falsy: the `.gpkg` site writes the key with a
+        # None value for a grid that cannot be pinned.
+        return metadata
+    certified = metadata.get(GRID_PIN_OPTIONS)
+    hit = (
+        sorted(touched)
+        if certified is None
+        else sorted(set(touched) & set(certified))
+    )
+    if not hit:
+        return metadata
+    voided = {
+        key: value
+        for key, value in metadata.items()
+        if key not in (GRID_PIN, GRID_PIN_OPTIONS)
+    }
+    # Plain JSON types: a run manifest is `json.dumps`'d with no `default=`.
+    voided[PIN_VOIDED] = {"was": pin, "options": hit}
+    return voided
 
 
 # MF6 requires these three exchanges to join models on the SAME discretization --
@@ -210,31 +279,56 @@ def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]
         It carries a PIN naming another mesh. Refused at build by the pin check
         (ledger 250/267); re-declare it against the new grid.
     ``"unverifiable"``
-        It names cells and carries no pin: hand-written cellids, a ``.flopy`` form.
-        **You cannot pin cell numbers the caller typed**, so nothing can tell a correct
-        one from a stale one -- every number is still in range on a larger mesh.
+        It names cells and carries no pin -- hand-written cellids, a ``.flopy`` form --
+        OR its pin was VOIDED because an edit replaced the records the library
+        resolved. **You cannot pin cell numbers the caller typed**, so nothing can tell
+        a correct one from a stale one: every number is still in range on a larger mesh.
         Refused unless named in ``grid_free=``.
     ``"unchanged"``
         It names no cells at all -- a scalar ``npf``, a ``tdis`` -- or the caller
         asserted it is mesh-independent. It moves untouched.
+
+    **The recipe test comes LAST, and that is the fix in ledger 275.** It used to come
+    first, so a truthy ``inputs`` reported "nothing to check" before the hand-written
+    DISV, the pin and the cellid test had been consulted -- measured, a pinned CHD with
+    any ``inputs`` entry at all read ``rebuilt`` while its pin sat unread. Harmless
+    while only a lazy DISV carried ``inputs``; B2 puts a source recipe in every lazy
+    ``.gpkg``, which is exactly a package that carries BOTH a recipe and grid-bound
+    content.
     """
 
     name = getattr(package, "name", "?")
     if name in grid_free:
         return "unchanged", "asserted mesh-independent by grid_free="
-    if getattr(package, "inputs", None):
-        return "rebuilt", "carries a recipe, so it resolves against the new mesh"
     options = getattr(package, "options", None) or {}
+    inputs = getattr(package, "inputs", None) or {}
+    metadata = getattr(package, "metadata", None) or {}
     if any(key in options for key in ("cell2d", "vertices", "ncpl")):
         # A hand-written DISV IS the old mesh -- it holds that grid's `cell2d` and
         # `vertices` verbatim. It carries no pin and names no cellid, so both of the
         # tests below miss it, and the first report called it "unchanged".
         return "stale", "it describes the old mesh itself (hand-written discretization)"
-    pin = (getattr(package, "metadata", None) or {}).get(GRID_PIN)
+    pin = metadata.get(GRID_PIN)
     if pin is not None:
+        certified = metadata.get(GRID_PIN_OPTIONS)
+        if certified and set(certified) <= set(inputs):
+            # Every option the pin speaks for is now supplied by the recipe, so the pin
+            # describes nothing that survives to the new mesh. This is the contract
+            # B2's lazy `.gpkg` has to meet: the source spec lands under the certified
+            # name, and the stale pin stops masking it and being masked by it.
+            return "rebuilt", "its pinned records are supplied by a recipe now"
         return "stale", f"its records are pinned to mesh {pin}"
-    if any(True for _ in _cellids_in(getattr(package, "options", None) or {})):
+    voided = metadata.get(PIN_VOIDED)
+    if voided:
+        return (
+            "unverifiable",
+            f"its records were edited after the library resolved them on mesh "
+            f"{voided.get('was')}",
+        )
+    if any(True for _ in _cellids_in(options)):
         return "unverifiable", "names cells the library did not resolve, so it carries no pin"
+    if inputs:
+        return "rebuilt", "carries a recipe, so it resolves against the new mesh"
     return "unchanged", "names no cells"
 
 
@@ -529,13 +623,33 @@ def _discretization_complaints(model, context, packages) -> list[str]:
             model_pin = built_pin
     if model_pin is not None:
         for package in packages:
-            pin = (package.metadata or {}).get(GRID_PIN)
+            metadata = package.metadata or {}
+            pin = metadata.get(GRID_PIN)
             if pin is not None and pin != model_pin:
                 complaints.append(
                     f"package {package.name!r} was resolved against a different mesh: "
                     f"its records are pinned to grid {pin}, and this model's grid is "
                     f"{model_pin}. Cell numbers do not carry between meshes, and a "
                     "number that happens to be in range is still the wrong cell"
+                )
+                continue
+            voided = metadata.get(PIN_VOIDED)
+            if voided and voided.get("was") not in (None, model_pin):
+                # The sentence that answers a refusal the old one could not. Before
+                # ledger 275 an edited package kept its pin and was told "re-declare it
+                # against the new grid" -- so a user who had ALREADY typed correct
+                # numbers for this mesh was refused forever, by a message about records
+                # that no longer existed. Naming the edit is what makes the refusal
+                # actionable, and the edit route can never re-pin (ledger 250: you
+                # cannot pin cell numbers the caller typed).
+                complaints.append(
+                    f"package {package.name!r} holds records that were EDITED after the "
+                    f"library resolved them on mesh {voided['was']}, replacing "
+                    f"{', '.join(voided['options'])} -- and this model's grid is "
+                    f"{model_pin}. Nothing verified the cell numbers that are there "
+                    "now. If you typed them for THIS grid, declare the package fresh "
+                    "rather than editing a resolved one; otherwise re-declare it "
+                    "against this grid"
                 )
 
     if ncpl is not None:

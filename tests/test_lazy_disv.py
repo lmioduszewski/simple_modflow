@@ -403,3 +403,48 @@ def test_a_lazy_disv_is_refused_on_a_simulation():
 
     with pytest.raises(ValueError, match=r"was given model package"):
         mf.simulation(mf.gwf("m"), packages=[mf.disv(_stack())], name="s")
+
+
+def test_voiding_a_recipe_is_refused_rather_than_given_a_verdict():
+    """A spec with its recipe cleared cannot build on ANY mesh, so it must not exist.
+
+    Measured before ledger 275, the failure was worse than an error: `package_move`
+    called it `"unchanged"` -- the verdict that means MOVES UNTOUCHED -- so it sailed
+    through a grid move and died later as `_build_lazy_disv() missing 2 required
+    keyword-only arguments`, naming a private builder.
+
+    Refused at construction rather than labelled, because a label cannot refuse
+    anything and the state has no legitimate producer (the house pattern: ledger 208
+    refuses a duplicate registration outright).
+    """
+
+    import dataclasses
+
+    lazy = mf.disv(_stack())
+
+    with pytest.raises(TypeError, match=r"recipe no longer supplies"):
+        dataclasses.replace(lazy, inputs={})
+
+    # A PARTIAL void is the same defect and is caught the same way.
+    with pytest.raises(TypeError, match=r"'build_kwargs'"):
+        dataclasses.replace(lazy, inputs={"layer_stack": lazy.inputs["layer_stack"]})
+
+    # The message names the builder that actually requires them. `_builder_label_for_error`
+    # answers with the four FloPy DISV classes here -- none of which requires these
+    # names -- because ledger 272 gave the lazy builder `mf6_targets`.
+    with pytest.raises(TypeError, match=r"_build_lazy_disv requires"):
+        dataclasses.replace(lazy, inputs={})
+
+
+def test_an_ordinary_package_pays_nothing_for_that_check():
+    """The control: it must refuse nothing that exists.
+
+    Measured: 108 `flopy.mf6.Modflow*` classes have zero required keyword-only
+    parameters, and `_build_lazy_disv` is the only builder in the library with any.
+    """
+
+    from myflopy.specs import _required_keyword_only
+
+    assert mf.npf(k=1.0) is not None
+    assert mf.chd(stress_period_data={0: [[(0, 0), 1.0]]}) is not None
+    assert _required_keyword_only(mf.npf(k=1.0).builder) == ()

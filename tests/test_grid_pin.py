@@ -20,7 +20,7 @@ from shapely.geometry import box
 
 import myflopy as mf
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
-from myflopy.specs import GRID_PIN, ModelContext, grid_pin
+from myflopy.specs import GRID_PIN, ModelContext, grid_pin, package_move
 
 
 def _grid(nrow: int, ncol: int):
@@ -242,12 +242,23 @@ def test_a_package_from_an_advanced_builder_is_refused_on_another_mesh(tmp_path)
 def test_pin_metadata_is_empty_without_a_pinnable_grid():
     """A builder with no context, or a context with no grid, stamps nothing."""
 
-    from myflopy.grid_identity import pin_metadata
+    from myflopy.grid_identity import GRID_PIN_OPTIONS, pin_metadata
 
-    assert pin_metadata(None) == {}
-    assert pin_metadata(ModelContext()) == {}
+    assert pin_metadata(None, certifies=("stress_period_data",)) == {}
+    assert pin_metadata(ModelContext(), certifies=("stress_period_data",)) == {}
     grid = _grid(3, 3)
-    assert pin_metadata(ModelContext(grid=grid)) == {GRID_PIN: grid_pin(grid)}
+    assert pin_metadata(ModelContext(grid=grid), certifies=("stress_period_data",)) == {
+        GRID_PIN: grid_pin(grid),
+        GRID_PIN_OPTIONS: ["stress_period_data"],
+    }
+
+    # An EMPTY `certifies` omits the key rather than writing `[]` (ledger 275). The
+    # difference is the whole safety of the scheme: an absent key means "void on any
+    # override", while an empty list means `set(touched) & set([])` -- nothing ever
+    # voids it. A site that forgot the keyword must fail closed, not open.
+    assert pin_metadata(ModelContext(grid=grid), certifies=()) == {
+        GRID_PIN: grid_pin(grid)
+    }
 
 
 def test_a_model_with_no_grid_at_all_still_compares_package_pins(tmp_path, source):
@@ -543,3 +554,140 @@ def test_a_gwfgwf_pair_on_two_meshes_still_builds(tmp_path):
     )
 
     assert sim.build_flopy(tmp_path / "ws") is not None
+
+
+def _pinned_chd(source):
+    """A real resolved `.gpkg` CHD carrying the library's pin."""
+
+    grid = _grid(6, 6)
+    return mf.chd.gpkg(
+        source, layer="chd", nper=1, head="head",
+        context=ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int)),
+    )
+
+
+def test_an_edit_voids_the_pin_it_no_longer_speaks_for(source):
+    """The pin certifies that the LIBRARY resolved these records on a named mesh.
+
+    An override replaces the option wholesale -- measured, 11 records become 1 -- so
+    after an edit the records are entirely the caller's and the certificate is a lie.
+    Before this the pin survived every route byte-identically, and the package still
+    reported `stale`: a user who typed CORRECT cell numbers for the new grid was
+    refused forever, by a sentence naming records that no longer existed.
+    """
+
+    from myflopy.grid_identity import GRID_PIN_OPTIONS, PIN_VOIDED
+    from myflopy.specs import fork_package
+
+    pinned = _pinned_chd(source)
+    assert pinned.metadata[GRID_PIN] is not None
+    assert pinned.metadata[GRID_PIN_OPTIONS] == ["stress_period_data"]
+
+    edited = fork_package(pinned, stress_period_data={0: [[(0, 0), 99.0]]})
+
+    assert GRID_PIN not in edited.metadata, "the certificate must not survive the edit"
+    assert edited.metadata[PIN_VOIDED]["was"] == pinned.metadata[GRID_PIN]
+    assert edited.metadata[PIN_VOIDED]["options"] == ["stress_period_data"]
+    assert package_move(edited)[0] == "unverifiable"
+
+
+@pytest.mark.parametrize(
+    "override", ["pname", "filename", "save_flows", "print_input", "boundnames"]
+)
+def test_a_pass_through_override_keeps_the_pin(source, override):
+    """The control: the void must not be bought with a false positive.
+
+    Renaming the file does not move a cellid. Measured across 98 (package, override)
+    pairs on the seven list BCs: 91 left the built package's cellids byte-identical,
+    and the 7 that moved them were all `stress_period_data`.
+    """
+
+    from myflopy.specs import fork_package
+
+    pinned = _pinned_chd(source)
+    forked = fork_package(pinned, **{override: "x" if "name" in override else True})
+
+    assert forked.metadata[GRID_PIN] == pinned.metadata[GRID_PIN]
+
+
+def test_stamping_a_note_is_not_an_edit(source):
+    """`with_metadata` records provenance, which is why the digest excludes metadata.
+
+    Ledger 186/250: stamping a note must never look like a change to the model.
+    """
+
+    pinned = _pinned_chd(source)
+    noted = pinned.with_metadata(note="reviewed")
+
+    assert noted.metadata[GRID_PIN] == pinned.metadata[GRID_PIN]
+    assert package_move(noted)[0] == "stale"
+
+
+def test_voiding_a_pin_does_not_move_the_digest(source):
+    """Load-bearing for this commit being safe: metadata is excluded by contract.
+
+    If it were not, every stored run would report drift the day this landed.
+    """
+
+    from myflopy.specs import fork_package, package_digest
+
+    pinned = _pinned_chd(source)
+    # Re-supplying the IDENTICAL records: the pin voids (the rule is keyed on the
+    # option name, not on a change of value) while the content is untouched.
+    voided = fork_package(pinned, stress_period_data=pinned.options["stress_period_data"])
+    changed = fork_package(pinned, stress_period_data={0: [[(0, 0), 99.0]]})
+
+    assert package_digest(voided) == package_digest(pinned), "voiding is metadata-only"
+    assert package_digest(changed) != package_digest(pinned), "the records ARE content"
+
+
+def test_a_recipe_no_longer_masks_a_pin_or_a_cellid(source):
+    """The recipe test used to come FIRST, before the pin and the cellid test.
+
+    Harmless while only a lazy DISV carried `inputs`. B2 puts a source recipe in every
+    lazy `.gpkg` -- a package carrying BOTH a recipe and grid-bound content -- and the
+    old order reported "nothing to check" for all of them.
+    """
+
+    import dataclasses
+
+    pinned = _pinned_chd(source)
+    with_recipe = dataclasses.replace(pinned, inputs={"unrelated": 1})
+
+    assert package_move(with_recipe)[0] == "stale", "the pin must still be consulted"
+
+    hand_written = mf.chd(stress_period_data={0: [[(0, 0), 9.0]]})
+    assert package_move(
+        dataclasses.replace(hand_written, inputs={"unrelated": 1})
+    )[0] == "unverifiable", "typed cellids must still be unverifiable"
+
+
+def test_a_recipe_supplying_every_certified_option_supersedes_the_pin(source):
+    """The contract B2's lazy `.gpkg` has to meet.
+
+    Once the source spec lands under the certified name, the old pin describes nothing
+    that survives to the new mesh -- so it stops masking the recipe and being masked
+    by it.
+    """
+
+    import dataclasses
+
+    from myflopy.sources import DataSourceSpec
+
+    pinned = _pinned_chd(source)
+    # A SOURCE spec, not a plain value. `inputs` carries two different things
+    # (ledger 272): builder keyword arguments, where a name also in `options` is
+    # refused outright, and an unresolved source supplying the option of the SAME
+    # name -- which is exempt from that refusal precisely because shadowing is its
+    # meaning. This is the only shape a lazy `.gpkg` can take, so it is the shape the
+    # supersede branch has to recognise.
+    lazy = dataclasses.replace(
+        pinned, inputs={"stress_period_data": DataSourceSpec(path="bc.gpkg")}
+    )
+
+    assert package_move(lazy)[0] == "rebuilt"
+
+    # And a plain value under a certified name is still refused by ledger 272's check,
+    # so the supersede branch cannot be reached by accident.
+    with pytest.raises(TypeError, match="part of this package's recipe"):
+        dataclasses.replace(pinned, inputs={"stress_period_data": "a recipe"})

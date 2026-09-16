@@ -218,5 +218,5 @@ class _ArealBuilder:
 
         self.validate()
         return self._make_spec(self.stress_period_data).with_metadata(
-            **pin_metadata(self.context), **self._build_metadata()
+            **pin_metadata(self.context, certifies=("stress_period_data",)), **self._build_metadata()
         )

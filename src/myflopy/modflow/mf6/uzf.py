@@ -336,7 +336,7 @@ class UZFBuilder:
             **dict(self.options),
         )
         return package.with_metadata(
-            **pin_metadata(self.context),
+            **pin_metadata(self.context, certifies=("packagedata",)),
             builder="UZFBuilder",
             cell_selection=self.cells if isinstance(self.cells, str) else "explicit",
             uzf_cells=list(self.uzf_cells),

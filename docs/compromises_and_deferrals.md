@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 274 entries (275 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 275 entries (276 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 275 | An edited package kept the certificate that said the library resolved it | 2026-09-16 |
 | 274 | `mf.Spread` and `mf.CellSurfaceOffset` could not be written down | 2026-09-16 |
 | 273 | The digest saw a package's representation, not its content | 2026-09-15 |
 | 272 | A lazy builder accepted any option name at all | 2026-09-15 |
@@ -10573,3 +10574,79 @@ same day, which is the useful part of the result.
       can act on it. `TypeError` is translated too -- a missing field otherwise read
       `Spread.__init__() missing 1 required positional argument`, naming a
       constructor the reader never called.
+
+275. **An edited package kept the certificate that said the library resolved it
+      (2026-09-16).**
+      A resolved `.gpkg` package carries a pin meaning *the library resolved these
+      records on this mesh*. `packages.edit`/`fork`/`with_options`/`dataclasses.replace`
+      all REPLACE the option wholesale -- measured, 11 records become 1 -- and every
+      one of them copied the pin through byte-identically. So the package went on
+      certifying a resolution that had not produced its records.
+      **The damage was not a missed refusal but an UNANSWERABLE one.** Measured across
+      a 6x6 -> 10x10 move: an edited CHD reported `stale` and the build refused with
+      *"re-declare it against the new grid"* -- to a user who had ALREADY typed correct
+      cell numbers for that grid, in a message naming records that no longer existed.
+      There was no way out: the edit route can never re-pin, because you cannot pin
+      cell numbers the caller typed (ledger 250). The only two escapes measured were
+      `with_metadata(grid_pin=None)` and `with_metadata(**{GRID_PIN: grid_pin(new)})`,
+      both undocumented and the second a way to FORGE the library's certificate.
+      **A pin now declares the options it speaks for** (`GRID_PIN_OPTIONS`, written at
+      the pin site by the resolver that took it) and an edit naming one voids it into
+      `PIN_VOIDED = {"was": <pin>, "options": [...]}`. Editing `stress_period_data`
+      voids; renaming the file or toggling `save_flows` does not -- measured across 98
+      (package, override) pairs on the seven list BCs, 91 left the built cellids
+      byte-identical and the 7 that moved them were all `stress_period_data`.
+      **Declared per site, not from one global list**, because the same name is
+      grid-bound on one package and not another: `packagedata` carries a cellid on
+      `sfr`/`uzf` and none on `lak`.
+      **Voiding KEEPS the pin's value rather than deleting the key.** Measured:
+      popping `GRID_PIN` removed the build-time refusal outright -- a CHD pinned to one
+      mesh then BUILT CLEAN on another -- and dropped `lak`/`rch.array`/`evt.array` to
+      `unchanged`, the verdict that means moves untouched. The refusal is as strong as
+      before; only the sentence changed, and it now names the edit.
+      **`certifies=` is a REQUIRED keyword and an empty one omits the key.** That is
+      the one direction a forgotten keyword must never take: an empty list makes
+      `set(touched) & set([])` empty, so nothing would EVER void it, silently. Absent
+      means "void on any override" -- which is also what every pin serialized before
+      this entry does, so there is no migration.
+      **Keyed on the option NAME, not on a change of value.** A value oracle means a
+      deep walk at every check, and `fork_package` already measures 808 ms copying a
+      654,480-record EVT. The accepted cost: re-supplying an IDENTICAL dict voids a pin
+      that was still true. A spurious `unverifiable` rather than a silent stale pin --
+      the direction that fails safe.
+      **No digest moves**: `metadata` is excluded from `package_digest` by contract
+      (ledgers 186, 250), verified here -- voiding and not voiding digest identically,
+      while a real records change still moves it.
+      **The recipe test moved to LAST in `package_move`, which is a second live bug.**
+      `if inputs: return "rebuilt"` ran BEFORE the hand-written-DISV branch, the pin and
+      the cellid test, so a pinned CHD carrying any `inputs` entry read "nothing to
+      check" while its pin sat unread. Harmless while only a lazy DISV carried
+      `inputs`; **B2 puts a source recipe in every lazy `.gpkg`**, which is precisely a
+      package with both a recipe and grid-bound content. A pin whose certified options
+      are ALL supplied by the recipe now supersedes to `rebuilt` -- the contract B2's
+      later commits must meet. Note that shape is only constructible with a SOURCE spec
+      in `inputs`: a plain value under a certified name is refused by ledger 272's
+      collision check, so the supersede branch cannot be reached by accident.
+      **A voided RECIPE is refused at construction rather than given a fifth verdict.**
+      Clearing `inputs` on a lazy package produced a spec that classified `unchanged`
+      -- moves untouched -- and could not build on any mesh, failing later as
+      `_build_lazy_disv() missing 2 required keyword-only arguments`. A label cannot
+      refuse anything and the state has no legitimate producer, so `__post_init__`
+      refuses it, following ledger 208's refuse-at-the-call pattern. Narrow to required
+      KEYWORD-ONLY parameters, which refuses nothing that exists: 108
+      `flopy.mf6.Modflow*` classes have zero, and `_build_lazy_disv` is the only
+      builder in the library with any. `inspect.signature` is cached -- uncached it
+      measured `mf.npf` at 44.2 -> 82.5 us/call for a check that can fire on one
+      builder. The message names `builder.__name__`: `_builder_label_for_error` answers
+      with the four FloPy DISV classes since ledger 272 gave the lazy builder
+      `mf6_targets`, and none of them requires those names.
+      **One defect, one sentence.** A voided package classifies `unverifiable`, so it
+      was ALSO stamped `MOVED_FROM` and listed a second time under a different
+      explanation -- measured on a real ncpl 36 -> 100 move. Voided packages are no
+      longer stamped; their own complaint already refuses them.
+      **Known and deliberate:** `sfr`/`uzf`/`lak` have no non-voiding edit route for
+      their physics, because the cell-bearing option is also the only home of roughness,
+      width, bed leakance and stage -- so `packages.edit(key, packagedata=...)` always
+      voids. Correct under the rule (the caller retyped the cellids) but a real cost.
+      **Left to B2:** a resolver that RE-pins must clear `PIN_VOIDED`, or a package
+      carries a pin and its own contradiction, and the duplicate complaint returns.

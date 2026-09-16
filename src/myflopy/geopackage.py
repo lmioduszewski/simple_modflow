@@ -30,6 +30,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import (
     GRID_PIN,
+    GRID_PIN_OPTIONS,
     ModelContext,
     PackageSpec,
     _json_value,
@@ -860,6 +861,12 @@ class GeoPackageSource:
             # The mesh these records' cell numbers refer to. Every list BC reaches
             # this one method, so pinning here pins all seven.
             GRID_PIN: grid_pin(self.grid),
+            # The option this pin speaks for: an edit replacing the records voids it,
+            # while renaming the file or toggling `save_flows` does not (ledger 275).
+            # Measured across 98 (package, override) pairs on the seven list BCs: 91
+            # left the built package's cellids byte-identical, and the 7 that moved
+            # them were all `stress_period_data`.
+            GRID_PIN_OPTIONS: ["stress_period_data"],
             "source_type": "geopackage",
             "source_path": str(self.path),
             "source_layer": self.layer,

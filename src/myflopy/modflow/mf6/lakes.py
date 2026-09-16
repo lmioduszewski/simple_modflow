@@ -1302,7 +1302,7 @@ class LAKBuilder:
                 # cellid, LAK's is a stage). So the pin is the ONLY thing that can
                 # catch a lake resolved on another mesh -- measured, a lake declared
                 # on 28 cells BUILT CLEAN on 92 (ledger 267).
-                **pin_metadata(self.context),
+                **pin_metadata(self.context, certifies=("connectiondata",)),
                 "builder": "LAKBuilder",
                 "lake_ids": list(self.lake_ids),
                 "connection_modes": {

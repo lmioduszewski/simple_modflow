@@ -4773,7 +4773,11 @@ def _hfb_spec_from_records(
     if print_input:
         values["print_input"] = True
     spec = PackageSpec(name, flopy.mf6.ModflowGwfhfb, values, requires=("disv",))
-    return spec.with_metadata(**pin_metadata(context)) if context is not None else spec
+    return (
+        spec.with_metadata(**pin_metadata(context, certifies=("stress_period_data",)))
+        if context is not None
+        else spec
+    )
 
 
 

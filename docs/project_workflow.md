@@ -214,6 +214,17 @@ project.packages.edit("npf/base", k=res.per_layer(K_revised),
                       note="post-calibration K")
 ```
 
+**An edit VOIDS the grid pin it speaks for** (ledger 275). A resolved `.gpkg`
+package carries a certificate saying the library resolved its records on a named mesh;
+an override replaces that option wholesale, so after an edit the records are yours and
+the certificate is a lie. The pin is voided and the package reads `unverifiable` rather
+than `stale` — and if you move the model, the refusal names the edit instead of telling
+you to re-declare records you just typed yourself. Only options the pin *speaks for*
+void it: editing `stress_period_data` does, renaming the file or toggling `save_flows`
+does not. There is no way back to a pin through the edit route — you cannot pin cell
+numbers the caller typed (ledger 250) — so declare the package fresh against the new
+grid when you want one.
+
 Both are **built, not patched** — the new spec goes through the same constructor
 `mf.npf(...)` does, so a typo raises here rather than at MF6 build time:
 
