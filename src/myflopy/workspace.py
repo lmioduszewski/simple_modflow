@@ -37,6 +37,7 @@ from myflopy.project.freeze import (
 )
 from myflopy.project.run_model import load_mf6_run, patch_simulation_plot
 from myflopy.specs import (
+    SOURCE_SHA,
     BuiltSimulation,
     GridRef,
     GridSpec,
@@ -51,6 +52,7 @@ from myflopy.specs import (
     dropped_context_fields,
     package_digest,
     package_move,
+    source_fingerprint,
 )
 
 logger = get_logger(__name__)
@@ -933,6 +935,7 @@ class RunLibrary(SpecLibrary["Run"]):
         # per-call and discarded, so an edit is picked up on the next call rather
         # than needing invalidation.
         now_by_key = self._library_digest_memo()
+        source_by_key = self._library_source_memo()
         rows: list[dict[str, Any]] = []
         for run_key in keys:
             recorded = self[run_key].package_digests
@@ -944,6 +947,7 @@ class RunLibrary(SpecLibrary["Run"]):
                         "ran_with": "—",
                         "library_now": "—",
                         "state": "unknown" if recorded is None else "unchanged",
+                        "source": "—",
                     }
                 )
                 continue
@@ -957,9 +961,42 @@ class RunLibrary(SpecLibrary["Run"]):
                         "ran_with": ran_with or "—",
                         "library_now": (now if now is not _MISSING_KEY else None) or "—",
                         "state": state,
+                        "source": source_by_key.get(package_key, "—"),
                     }
                 )
-        return pd.DataFrame(rows, columns=["run", "key", "ran_with", "library_now", "state"])
+        return pd.DataFrame(
+            rows, columns=["run", "key", "ran_with", "library_now", "state", "source"]
+        )
+
+    def _library_source_memo(self) -> dict[str, str]:
+        """Per package key, whether the FILE it was built from still says the same.
+
+        A separate column rather than a fifth ``state``, because it answers a different
+        question. ``state`` is about the LIBRARY -- does this key still mean what the
+        run used? ``source`` is about the world outside it -- is the file that key was
+        built from still the one it was built from? A package can be ``unchanged`` and
+        ``edited`` at once, and collapsing them would make one of the two invisible.
+
+        Four values. ``ok`` the recorded hash matches the file now; ``edited`` it
+        differs; ``missing`` the path is gone; ``unfingerprinted`` the package records a
+        source but no hash -- every package declared before ledger 276, and any whose
+        file could not be read at declaration. ``—`` means the package names no source
+        at all, which is most of them.
+        """
+
+        answers: dict[str, str] = {}
+        for key, spec in (self._packages or {}).items():
+            metadata = getattr(spec, "metadata", None) or {}
+            path = metadata.get("source_path")
+            if path is None:
+                continue
+            recorded = metadata.get(SOURCE_SHA)
+            if recorded is None:
+                answers[key] = "unfingerprinted"
+                continue
+            now = source_fingerprint(path)
+            answers[key] = "missing" if now is None else ("ok" if now == recorded else "edited")
+        return answers
 
     def _library_digest_memo(self) -> dict[str, str | None]:
         """The current library fingerprints, computed once and cached per call."""

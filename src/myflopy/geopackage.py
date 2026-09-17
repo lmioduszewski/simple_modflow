@@ -31,11 +31,13 @@ from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import (
     GRID_PIN,
     GRID_PIN_OPTIONS,
+    SOURCE_SHA,
     ModelContext,
     PackageSpec,
     _json_value,
     _layer_elevations,
     grid_pin,
+    source_fingerprint,
 )
 
 logger = get_logger(__name__)
@@ -869,6 +871,12 @@ class GeoPackageSource:
             GRID_PIN_OPTIONS: ["stress_period_data"],
             "source_type": "geopackage",
             "source_path": str(self.path),
+            # What the file CONTAINED when this package was declared. `source_path`
+            # alone cannot answer "have my inputs changed since?" -- measured, a
+            # library package built from a GeoPackage that was later edited reports
+            # `unchanged` forever, and `drift()`'s own docstring promises that means
+            # reproducible (ledger 276).
+            SOURCE_SHA: source_fingerprint(self.path),
             "source_layer": self.layer,
             "builder": method,
             "fields": {name: _metadata_value(value) for name, value in fields.items()},

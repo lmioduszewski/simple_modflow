@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 275 entries (276 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 276 entries (277 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 276 | Nothing noticed when a package's source file changed | 2026-09-17 |
 | 275 | An edited package kept the certificate that said the library resolved it | 2026-09-16 |
 | 274 | `mf.Spread` and `mf.CellSurfaceOffset` could not be written down | 2026-09-16 |
 | 273 | The digest saw a package's representation, not its content | 2026-09-15 |
@@ -10650,3 +10651,52 @@ same day, which is the useful part of the result.
       voids. Correct under the rule (the caller retyped the cellids) but a real cost.
       **Left to B2:** a resolver that RE-pins must clear `PIN_VOIDED`, or a package
       carries a pin and its own contradiction, and the duplicate complaint returns.
+
+276. **Nothing noticed when a package's source file changed (2026-09-17).**
+      A `.gpkg` package records `source_path` and nothing about what the file
+      CONTAINED. So a library package built from a GeoPackage that was later edited
+      reports `unchanged` forever -- measured: head 9.0 -> 42.0 on disk, the stored
+      spec's digest identical before and after, because the records were resolved at
+      declaration and the library never re-reads the file.
+      Today that is defensible: the library package genuinely is unchanged, and
+      `drift()` answers about the LIBRARY. **B2 makes it a lie.** A lazy `.gpkg`
+      resolves from the file at BUILD time, so a changed file means a different model
+      while the recipe -- and therefore the digest -- says nothing. The scope sweep for
+      B2 commit 5 measured the fingerprint INVERTED on both axes for a lazy package:
+      editing the content left the digest identical, while moving the same bytes to
+      another path MOVED it. Pulled forward so it is fixed before the laziness that
+      would expose it, rather than discovered after.
+      **`SOURCE_SHA` records a 16-character content hash at declaration**, in
+      `metadata`, which `package_digest` excludes -- so it moves NO stored digest, the
+      same property ledger 250 relied on when it kept the grid pin out. Verified both
+      directions.
+      **`drift()` gains a `source` COLUMN, not a fifth state.** The two answer
+      different questions: `state` is "does this key still mean what the run used?",
+      `source` is "is the file it was built from still the one it was built from?" A
+      package is routinely `unchanged` AND `edited` at once -- measured -- and
+      collapsing them would make one invisible. Values: `ok`, `edited`, `missing`,
+      `unfingerprinted` (a package that names a source but records no hash: everything
+      declared before this entry, and anything whose file could not be read), and `—`
+      for the majority that name no source.
+      **It hashes BYTES, not logical content.** Rewriting a GeoPackage without changing
+      a feature moves the hash: SQLite rewrites pages and the file carries its own
+      timestamps. Deliberate -- a false `edited` is a prompt to look, a false `ok` is
+      the lie this exists to remove. Cost is negligible: chunked, 3.2 ms for the
+      largest real Ten Trails input (2.4 MB), against a declaration that already reads
+      and spatially resolves the same file.
+      **The `SOURCE_SHA` import is HOISTED, not ratcheted.** A function-level
+      `from myflopy.specs import SOURCE_SHA` in `workspace.py` took the deferred-import
+      ratchet from 1 to 2 and failed `test_deferred_import_ratchet`. `workspace` already
+      imports from `specs` at module scope, so the import belongs there -- the same
+      correction ledger 274 made for `package_api`. Only `specs` -> `geopackage` is
+      genuinely undeferrable (an upward edge AND a cycle).
+      **An unreadable source returns `None` rather than raising.** Declaring a package
+      must never fail because a bookkeeping column could not be filled -- the rule
+      `package_digest` already follows, and `workspace.py` requires that such a column
+      never make `prepare_run` fail.
+      **Still NOT answered, and named here so it is not mistaken for solved:** a
+      package whose source moved to a new path with identical bytes. Today the recorded
+      path is absolute, so ledger 256's `bundle_sources=True` -- which repoints every
+      path into `inputs/` -- would report the whole library as source-changed. The
+      fingerprint is content-only and does not see the path at all, so it is unaffected;
+      but the BUNDLING commit must relativize the recorded path or explain the churn.

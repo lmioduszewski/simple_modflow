@@ -347,6 +347,15 @@ results behind, so without this a re-prepared, never-executed run reported the
 previous execution's `normal` and its elapsed time. `reconcile()` refuses to
 adopt a superseded verdict.
 
+**`drift()` also reports a `source` column** (ledger 276) — whether the FILE a
+package was resolved from still says what it said. The two answer different
+questions and a package is routinely both at once: `state` is *does this key still
+mean what the run used?*, `source` is *is the file it was built from still the one
+it was built from?* Values are `ok`, `edited`, `missing`, `unfingerprinted` (names a
+source but records no hash — anything declared before this landed) and `—` for the
+majority that name no file. It hashes BYTES, so rewriting a GeoPackage without
+changing a feature reads as `edited`: a prompt to look, which is the safe direction.
+
 The fingerprint covers the option and input VALUES a spec holds, its name, its
 builder REFERENCE, `enabled` and `requires`. It does not see the body of an
 importable builder, or the contents of a file a source points at — it says the

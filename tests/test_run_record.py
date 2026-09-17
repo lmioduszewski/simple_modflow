@@ -19,6 +19,8 @@ import pytest
 
 import myflopy as mf
 from myflopy.run_record import ListingOutcome, read_listing_outcome
+from myflopy.specs import ModelContext
+from myflopy.workspace import Project
 
 _NORMAL_TAIL = """\
  Run end date and time (yyyy/mm/dd hh:mm:ss): 2026/09/03 12:50:17
@@ -907,3 +909,123 @@ def test_an_edited_value_still_changes_the_digest():
     assert package_digest(mf.wel(stress_period_data={0: [[(0, 1), np.float64(-1.5)]]})) != (
         package_digest(mf.wel(stress_period_data={0: [[(0, 1), -2.5]]}))
     )
+
+
+def _gpkg_library_project(tmp_path):
+    """A project whose CHD is resolved from a GeoPackage on disk."""
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        rectangular_voronoi,
+    )
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=6, ncol=6, nlay=1, nper=1))
+    path = tmp_path / "bc.gpkg"
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+
+    def write(head):
+        gpd.GeoDataFrame(
+            {"name": ["west"], "layer": [1], "head": [head]},
+            geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.2, ymax)],
+            crs=grid.crs,
+        ).to_file(path, layer="chd", driver="GPKG")
+
+    write(9.0)
+    context = ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int))
+    project = Project(tmp_path / "proj", name="p")
+    project.add_package(
+        "chd/west", mf.chd.gpkg(path, layer="chd", nper=1, head="head", context=context)
+    )
+    project.add_package("npf/base", mf.npf(k=1.0))
+    model = mf.gwf(
+        "m", context=context, packages=[mf.ref("chd/west"), mf.ref("npf/base")]
+    )
+    project.add_simulation(mf.simulation(model, name="s", packages=[mf.tdis(nper=1)]))
+    project.prepare_run("r", "s", build=False)
+    return project, path, write
+
+
+def test_drift_sees_the_source_file_change_under_a_package(tmp_path):
+    """`state` answers about the LIBRARY; `source` answers about the world outside it.
+
+    A package resolved from a GeoPackage records `source_path` and nothing else, so
+    editing that file left every run reporting `unchanged` -- and `drift()`'s own
+    docstring promises `unchanged` means "reproducible from the library as it stands".
+    It still is, which is why this is a SECOND column rather than a fifth state: the
+    key means what it meant, and the file it was built from does not.
+    """
+
+    project, path, write = _gpkg_library_project(tmp_path)
+    before = project.runs.drift().set_index("key")
+
+    assert before.loc["chd/west", "source"] == "ok"
+    assert before.loc["npf/base", "source"] == "—", "a package with no source"
+
+    write(42.0)
+    after = project.refresh_runs().drift().set_index("key")
+
+    assert after.loc["chd/west", "source"] == "edited"
+    assert after.loc["chd/west", "state"] == "unchanged", (
+        "the LIBRARY key is genuinely unchanged -- collapsing the two would hide one"
+    )
+
+    path.unlink()
+    gone = project.refresh_runs().drift().set_index("key")
+
+    assert gone.loc["chd/west", "source"] == "missing"
+
+
+def test_a_package_declared_before_fingerprints_reports_unfingerprinted(tmp_path):
+    """A missing fingerprint is not evidence of sameness -- the module's own rule."""
+
+    import dataclasses
+
+    from myflopy.specs import SOURCE_SHA
+
+    project, _, _ = _gpkg_library_project(tmp_path)
+    old = project.package("chd/west")
+    project.add_package(
+        "chd/west",
+        dataclasses.replace(
+            old, metadata={k: v for k, v in old.metadata.items() if k != SOURCE_SHA}
+        ),
+        overwrite=True,
+    )
+
+    row = project.refresh_runs().drift().set_index("key").loc["chd/west"]
+
+    assert row["source"] == "unfingerprinted"
+
+
+def test_recording_a_source_fingerprint_moves_no_digest(tmp_path):
+    """Load-bearing: `metadata` is excluded from `package_digest` (ledgers 186, 250).
+
+    If it were not, adding this would report every stored `.gpkg` package as drifted
+    on the day it landed -- which is precisely why ledger 250 kept the grid pin out.
+    """
+
+    import dataclasses
+
+    from myflopy.specs import SOURCE_SHA, package_digest
+
+    project, _, _ = _gpkg_library_project(tmp_path)
+    spec = project.package("chd/west")
+
+    assert spec.metadata[SOURCE_SHA] is not None
+    without = dataclasses.replace(
+        spec, metadata={k: v for k, v in spec.metadata.items() if k != SOURCE_SHA}
+    )
+
+    assert package_digest(spec) == package_digest(without)
+
+
+def test_an_unreadable_source_does_not_stop_a_package_being_declared(tmp_path):
+    """A bookkeeping column must never decide whether a model can be built."""
+
+    from myflopy.specs import source_fingerprint
+
+    assert source_fingerprint(tmp_path / "nope.gpkg") is None
+    assert source_fingerprint(tmp_path) is None, "a directory is not readable as bytes"

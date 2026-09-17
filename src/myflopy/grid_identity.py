@@ -163,6 +163,41 @@ def disv_pin(disv) -> str | None:
         return None
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
+#: Metadata key recording a 16-character hash of the file a package was built FROM,
+#: taken when it was declared. Excluded from `package_digest` like the rest of
+#: `metadata`, so adding it moved no stored digest (ledger 276).
+SOURCE_SHA = "source_sha"
+
+
+def source_fingerprint(path) -> str | None:
+    """A 16-character content hash of ``path``, or ``None`` if it cannot be read.
+
+    ``None`` for a missing or unreadable file rather than raising: declaring a package
+    must not fail because a bookkeeping column could not be filled, which is the same
+    rule `package_digest` follows.
+
+    Chunked, because a source is an arbitrary file on the user's disk. Measured on the
+    real Ten Trails inputs: 3.2 ms for the largest GeoPackage (2.4 MB), against a
+    declaration that already reads and spatially resolves the same file.
+
+    **It hashes BYTES, not logical content.** Rewriting a GeoPackage without changing a
+    feature still moves the hash -- SQLite rewrites pages, and the file carries its own
+    timestamps. That is the safe direction: a false "edited" is a prompt to look, where
+    a false "unchanged" is the lie this exists to remove.
+    """
+
+    import hashlib
+
+    try:
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()[:16]
+
+
 def pin_metadata(context, *, certifies) -> dict[str, str]:
     """``{GRID_PIN: ..., GRID_PIN_OPTIONS: ...}`` for a pinnable grid, else ``{}``.
 

@@ -40,6 +40,7 @@ from myflopy.grid_identity import (
     GRID_PIN_OPTIONS,  # noqa: F401
     MOVED_FROM,
     PIN_VOIDED,
+    SOURCE_SHA,  # noqa: F401
     _as_int,  # noqa: F401
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
@@ -54,6 +55,7 @@ from myflopy.grid_identity import (
     move_report,
     moved_package_complaints,
     package_move,
+    source_fingerprint,  # noqa: F401
     void_pin,
 )
 from myflopy.sources import (
