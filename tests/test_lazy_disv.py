@@ -448,3 +448,61 @@ def test_an_ordinary_package_pays_nothing_for_that_check():
     assert mf.npf(k=1.0) is not None
     assert mf.chd(stress_period_data={0: [[(0, 0), 1.0]]}) is not None
     assert _required_keyword_only(mf.npf(k=1.0).builder) == ()
+
+
+def test_a_builder_can_ask_for_the_spec_it_came_from():
+    """A builder is called as `builder(target, **inputs, **options)` and so learns
+    nothing about its own spec -- not its name, not its metadata.
+
+    Fine for a FloPy class, which is told everything through options. Wrong for a
+    builder that RESOLVES a recipe: the package it produces has to be NAMED, and the
+    only honest source of that name is the `PackageSpec`.
+
+    Freezing the name in the recipe instead was measured worse than useless --
+    `fork_package` renames through `_renamed_options`, which rewrites `options` and
+    never touches `inputs`, so the frozen name survives a rename and two renamed forks
+    collapse into ONE MF6 package under a FloPy "Replacing existing package" warning.
+    """
+
+    from myflopy.specs import PackageSpec, _wants_spec, fork_package
+
+    def asks(target, *, _spec, **options):
+        return _spec.name
+
+    def plain(target, **options):
+        return "no identity"
+
+    assert _wants_spec(asks) and not _wants_spec(plain)
+
+    spec = PackageSpec("chd", asks, {"save_flows": True})
+    assert spec.build(None) == "chd"
+
+    # The point of taking it from the SPEC: a rename reaches the built package.
+    assert fork_package(spec, name="chd_west").build(None) == "chd_west"
+
+
+def test_a_builder_that_does_not_ask_is_called_exactly_as_before():
+    """Opt-in by signature, so nothing that exists today changes shape."""
+
+    from myflopy.specs import _wants_spec
+
+    assert not _wants_spec(mf.npf(k=1.0).builder), "a FloPy class must not be handed one"
+    assert not _wants_spec(mf.chd(stress_period_data={0: [[(0, 0), 1.0]]}).builder)
+
+
+def test_asking_for_a_spec_is_not_an_incomplete_recipe():
+    """`_spec` is filled by `build`, not by the recipe.
+
+    Without the exclusion, ledger 275's completeness check refuses a builder that asks
+    for its own identity -- one guard firing on another's mechanism.
+    """
+
+    from myflopy.specs import PackageSpec
+
+    def asks(target, *, _spec, layer_stack, **options):
+        return _spec.name
+
+    assert PackageSpec("x", asks, inputs={"layer_stack": object()}).build(None) == "x"
+
+    with pytest.raises(TypeError, match=r"no longer supplies 'layer_stack'"):
+        PackageSpec("x", asks, inputs={})

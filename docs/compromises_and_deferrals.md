@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 277 entries (278 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 278 entries (279 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 278 | A builder never learned which package it was building | 2026-09-17 |
 | 277 | The recipe a lazy `.gpkg` will carry | 2026-09-17 |
 | 276 | Nothing noticed when a package's source file changed | 2026-09-17 |
 | 275 | An edited package kept the certificate that said the library resolved it | 2026-09-16 |
@@ -10757,3 +10758,32 @@ same day, which is the useful part of the result.
       the payload so a later defaulted field cannot move an existing digest, and a
       discrimination test asserts all twelve fields still move it, because a payload
       that stops writing a field is a digest that stops seeing it.
+
+278. **A builder never learned which package it was building (2026-09-17).**
+      `PackageSpec.build` calls `self.builder(target, **inputs, **options)`, so a
+      builder receives no name, no metadata, no spec. That is right for a FloPy class,
+      which is told everything through options, and wrong for a builder that RESOLVES a
+      recipe: the package it produces has to be NAMED, and the recipe deliberately does
+      not carry one (ledger 277).
+      **Freezing the name in the recipe instead is worse than useless, measured.**
+      `fork_package` renames through `_renamed_options`, which rewrites `options` and
+      never touches `inputs` -- so a frozen name survives a rename unchanged, and TWO
+      renamed forks collapse into ONE MF6 package under a FloPy "Replacing existing
+      package" warning, with myflopy's own bookkeeping reporting two. That is the exact
+      defect `_renamed_options` already exists to prevent (its docstring records the
+      same measurement), reopened through a new door. The scope document for B2 commit 5
+      specified `package_name` in the recipe; the adversarial pass is what caught it.
+      **`build` passes `_spec=self` to a builder that declares a keyword-only `_spec`.**
+      Opt-in by SIGNATURE rather than by a flag, so every builder that does not ask is
+      called exactly as before -- verified for a FloPy class and for the `functools.
+      partial` list-BC builders. Cached, because it runs on every build.
+      **One guard fired on the other's mechanism.** `_check_recipe_complete` (ledger
+      275) reads required keyword-only parameters and refuses a spec whose recipe does
+      not supply them -- and `_spec` is supplied by `build`, not by the recipe, so a
+      builder asking for its own identity was refused at construction. `_spec` is
+      excluded by name. Worth noting as a pattern: the checks added across ledgers
+      272-277 now interact, and each new mechanism has to be run against all of them
+      rather than reasoned about.
+      **This is B2 commit 5's blocker 1, landed on its own** because the lazy `.gpkg`
+      builder cannot be written without it, and because it is general: nothing here is
+      about GeoPackages, and 5c needs the same identity for the frozen-snapshot key.

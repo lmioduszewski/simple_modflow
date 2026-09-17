@@ -1132,6 +1132,34 @@ def _required_keyword_only(builder) -> tuple[str, ...]:
     )
 
 
+@functools.cache
+def _wants_spec(builder) -> bool:
+    """Whether ``builder`` declares a keyword-only ``_spec`` parameter.
+
+    A builder is called as ``builder(target, **inputs, **options)`` and so learns
+    nothing about the spec it came from -- not its name, not its metadata. That is fine
+    for a FloPy class, which is told everything through options, and wrong for a builder
+    that RESOLVES a recipe: the package it produces has to be named, and the only honest
+    source of that name is the ``PackageSpec``.
+
+    Declaring the name in the recipe instead was measured worse than useless.
+    ``fork_package`` renames through ``_renamed_options``, which rewrites ``options`` and
+    never touches ``inputs``, so a frozen name survives a rename unchanged -- and two
+    renamed forks then collapse into ONE MF6 package under a FloPy "Replacing existing
+    package" warning, which is the defect ``_renamed_options`` exists to prevent.
+
+    Opt-in by signature rather than by a flag, so a builder that does not ask is called
+    exactly as before. Cached because it runs on every build.
+    """
+
+    try:
+        parameters = inspect.signature(builder).parameters
+    except (TypeError, ValueError):  # C-implemented or unintrospectable
+        return False
+    parameter = parameters.get("_spec")
+    return parameter is not None and parameter.kind is parameter.KEYWORD_ONLY
+
+
 def _check_recipe_complete(name: str, builder, inputs: dict, options: dict) -> None:
     """Raise when an edit has left a recipe that can no longer build.
 
@@ -1155,7 +1183,11 @@ def _check_recipe_complete(name: str, builder, inputs: dict, options: dict) -> N
     required = _required_keyword_only(builder)
     if not required:
         return
-    missing = sorted(set(required) - set(inputs) - set(options))
+    # `_spec` is filled by `build` itself, not by the recipe, so it is never missing in
+    # the sense this check means. Without the exclusion a builder that asks for its own
+    # identity is refused at construction -- ledger 275's guard firing on ledger 278's
+    # mechanism.
+    missing = sorted(set(required) - set(inputs) - set(options) - {"_spec"})
     if not missing:
         return
     # `builder.__name__`, NOT `_builder_label_for_error`: since ledger 272 the lazy
@@ -1202,6 +1234,11 @@ class PackageSpec:
 
         if not self.enabled:
             return None
+        if _wants_spec(self.builder):
+            # A recipe-resolving builder needs the identity of the spec it came from --
+            # its NAME above all, since the package it produces has to be named and the
+            # recipe deliberately does not carry one (ledger 277).
+            return self.builder(target, _spec=self, **self.inputs, **self.options)
         return self.builder(target, **self.inputs, **self.options)
 
     def with_options(self, **overrides: Any) -> PackageSpec:
