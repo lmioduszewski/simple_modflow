@@ -211,6 +211,7 @@ if TYPE_CHECKING:
         patch_simulation_plot,
     )
     from myflopy.sources import (
+        BoundarySource,
         DataSourceSpec,
         GeoPackageSourceSpec,
         LiteralSource,
@@ -297,6 +298,7 @@ _EXPORTS = {
     "grid_ref": ("myflopy.specs", "grid_ref"),
     "PostBuildHook": ("myflopy.specs", "PostBuildHook"),
     "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
+    "BoundarySource": ("myflopy.sources", "BoundarySource"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
     "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
     "LiteralSource": ("myflopy.sources", "LiteralSource"),

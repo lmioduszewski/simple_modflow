@@ -365,6 +365,146 @@ class GeoPackageSourceSpec(DataSourceSpec):
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BoundarySource(DataSourceSpec):
+    """How to resolve one list boundary condition from a GeoPackage, as plain data.
+
+    This is the RECIPE behind a lazy ``mf.<pkg>.gpkg(...)``: everything needed to
+    reproduce the records given a grid, and nothing that needs one. It rides in
+    ``PackageSpec.inputs`` under the option it supplies (``stress_period_data``), which
+    is the shape ledger 272 calls case (b) -- a source shadowing the option of the same
+    name, and the only shape ``_check_input_collisions`` permits there.
+
+    It is NOT :class:`~myflopy.geopackage.GeoPackageSource`, the runtime resolver. That
+    class holds a live :class:`~myflopy.specs.ModelContext` (hence a grid) and a cached
+    GeoDataFrame, has no ``to_dict``, and raises on a gridless context -- so it can
+    never be serialized, and its digest moves the moment anything reads its cache. This
+    carries the same fields minus the context, plus what the helper adds on top.
+
+    It is also not :class:`GeoPackageSourceSpec`, whose ``fields`` maps logical keys to
+    columns for GRID resolution. The value mapping here is ``values`` rather than
+    ``fields`` deliberately: one name meaning two things is how that class's own
+    docstring says a recipe goes silently inert.
+
+    Parameters
+    ----------
+    package : str
+        Which boundary condition -- ``"chd"``, ``"ghb"``, ``"drn"``, ``"riv"``,
+        ``"wel"``, ``"rch"``, ``"evt"``. It decides the record SCHEMA (the field names
+        and their MF6 order), which the package registry owns.
+    nper : int
+        Number of stress periods to resolve.
+    values : dict
+        Per-field value specifications, keyed by the helper's own argument names
+        (``head=``, ``conductance=``, ``elevation=``...). A value may be a column name,
+        a constant, a list of column names for per-period data, or a live
+        :class:`~myflopy.geopackage.Spread` / :class:`~myflopy.geopackage.CellSurfaceOffset`.
+    layer, name_field, layer_field, period_field, layer_base, period_base
+        As :class:`~myflopy.geopackage.GeoPackageSource` reads them.
+    edges_only : bool
+        Keep only cells on the edge of the ACTIVE domain, per layer (ledger 246).
+    boundnames : bool
+        Whether to write a boundname column.
+
+    Notes
+    -----
+    **Keyword-only, and not merely as a courtesy.** ``nper`` has no default and the
+    inherited fields do, so without ``kw_only`` the class fails to be created at all
+    ("non-default argument follows default argument"). It also closes the positional
+    trap :class:`GeoPackageSourceSpec`'s docstring warns about.
+
+    **``to_dict()`` is not pure JSON.** A live ``Spread`` in ``values`` comes back as
+    itself, because that is what ``_canonical`` must fingerprint and what
+    ``from_dict`` must rebuild. :func:`myflopy.specs._json_value` is the converter --
+    it recurses into this payload and writes the ``$spread`` / ``$cell_surface_offset``
+    tokens. ``json.dumps(source.to_dict())`` raises; that is not a defect.
+
+    **The reverse trip works only through ``options``/``inputs``.**
+    ``_spec_value(..., int_keys=True)`` is what recurses INTO a source payload and
+    revives those tokens before this class is rebuilt. A recipe reached through any
+    other field comes back with plain dicts where the objects were.
+
+    **``kind`` ends in "Source" on purpose.** ``_spec_value`` keeps an
+    ``endswith("Source")`` arm alongside the registry so an unregistered kind RAISES
+    rather than degrading to a dict -- the silent failure of ledger 269. A new source
+    class that forgets :data:`_SOURCE_TYPES` fails loudly.
+
+    **It carries no package NAME.** Identity belongs to the ``PackageSpec``, not to its
+    recipe: ``fork_package`` renames through ``_renamed_options``, which rewrites
+    ``options`` and never touches ``inputs``, so a name frozen in here would be
+    silently discarded by a rename -- and two renamed forks would collapse into one MF6
+    package under a FloPy "Replacing existing package" warning, which is the exact
+    defect ``_renamed_options`` already exists to prevent.
+    """
+
+    package: str
+    nper: int
+    values: dict[str, Any] = field(default_factory=dict)
+    layer: str | None = None
+    name_field: str | None = "name"
+    layer_field: str | None = "layer"
+    period_field: str | None = None
+    layer_base: int = 1
+    period_base: int = 0
+    edges_only: bool = False
+    boundnames: bool = True
+
+    kind: ClassVar[str] = "BoundarySource"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding every field that is not a default.
+
+        Defaults are omitted so that adding a defaulted field later cannot move an
+        existing package's digest -- ``_canonical`` fingerprints this payload rather
+        than the object (ledger 273).
+        """
+
+        payload = DataSourceSpec.to_dict(self)
+        payload["package"] = self.package
+        payload["nper"] = self.nper
+        if self.values:
+            payload["values"] = dict(self.values)
+        for name, default in (
+            ("layer", None),
+            ("name_field", "name"),
+            ("layer_field", "layer"),
+            ("period_field", None),
+            ("layer_base", 1),
+            ("period_base", 0),
+            ("edges_only", False),
+            ("boundnames", True),
+        ):
+            value = getattr(self, name)
+            if value != default or type(value) is not type(default):
+                payload[name] = value
+        return payload
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> BoundarySource:
+        """Rebuild a :class:`BoundarySource` from a payload dict.
+
+        ``values`` is taken as it arrives: by the time this runs, ``_spec_value`` has
+        already revived any ``$spread`` / ``$cell_surface_offset`` inside it.
+        """
+
+        return cls(
+            path=data["path"],
+            package=data["package"],
+            nper=data["nper"],
+            values=dict(data.get("values", {})),
+            layer=data.get("layer"),
+            name_field=data.get("name_field", "name"),
+            layer_field=data.get("layer_field", "layer"),
+            period_field=data.get("period_field"),
+            layer_base=data.get("layer_base", 1),
+            period_base=data.get("period_base", 0),
+            edges_only=bool(data.get("edges_only", False)),
+            boundnames=bool(data.get("boundnames", True)),
+            external=bool(data.get("external", False)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RasterSource(DataSourceSpec):
     """Reference to a raster (GeoTIFF/IMG) sampled onto the grid for a surface or array.
@@ -480,6 +620,7 @@ _SOURCE_TYPES: dict[str, type[Any]] = {
     TableSource.kind: TableSource,
     ShapeSource.kind: ShapeSource,
     GeoPackageSourceSpec.kind: GeoPackageSourceSpec,
+    BoundarySource.kind: BoundarySource,
     RasterSource.kind: RasterSource,
     LiteralSource.kind: LiteralSource,
 }
@@ -509,6 +650,7 @@ def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
 
 
 __all__ = [
+    "BoundarySource",
     "DataSourceSpec",
     "is_source_payload",
     "GeoPackageSourceSpec",

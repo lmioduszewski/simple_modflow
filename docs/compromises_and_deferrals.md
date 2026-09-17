@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 276 entries (277 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 277 entries (278 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 277 | The recipe a lazy `.gpkg` will carry | 2026-09-17 |
 | 276 | Nothing noticed when a package's source file changed | 2026-09-17 |
 | 275 | An edited package kept the certificate that said the library resolved it | 2026-09-16 |
 | 274 | `mf.Spread` and `mf.CellSurfaceOffset` could not be written down | 2026-09-16 |
@@ -10700,3 +10701,59 @@ same day, which is the useful part of the result.
       path into `inputs/` -- would report the whole library as source-changed. The
       fingerprint is content-only and does not see the path at all, so it is unaffected;
       but the BUNDLING commit must relativize the recorded path or explain the churn.
+
+277. **The recipe a lazy `.gpkg` will carry (2026-09-17).**
+      `BoundarySource(DataSourceSpec)` in `sources.py`: everything needed to reproduce
+      a list BC's records given a grid, and nothing that needs one. **Data only --
+      nothing emits one yet.** B2 commit 5b is the helper that does; this lands first
+      so the contract is pinned before anything depends on it, and so the commit that
+      changes behaviour changes only behaviour.
+      **It is not the runtime `GeoPackageSource`, and cannot be.** That class holds a
+      live `ModelContext` (hence a grid) and a cached GeoDataFrame, has no `to_dict`,
+      and raises on both a missing file and a gridless context in `__post_init__` --
+      measured, it cannot even be CONSTRUCTED as a recipe. Its digest also moves the
+      moment anything reads its cache.
+      **It is not `GeoPackageSourceSpec` either**, whose `fields` maps logical keys to
+      columns for GRID resolution. The value mapping here is `values`: one name meaning
+      two things is how that class's own docstring says a recipe goes silently inert.
+      Worth knowing while reading either -- the registry key `"GeoPackageSource"`
+      belongs to the SPEC class, not to the runtime class of that name. Two classes,
+      one string; `BoundarySource` reuses neither.
+      **`kind` ends in "Source" deliberately.** `_spec_value` keeps an
+      `endswith("Source")` arm beside the registry so an unregistered kind RAISES
+      instead of degrading to a plain dict -- the silent failure of ledger 269, which
+      ledger 274 had to close again for `Spread`.
+      **`kw_only=True` is structural, not stylistic.** `nper` has no default and the
+      inherited fields do, so without it the class fails to be created at all. It also
+      closes the positional trap `GeoPackageSourceSpec` documents, where
+      `GeoPackageSourceSpec("x.gpkg", "areas")` silently sets `external="areas"`.
+      **It carries NO package name**, against the scope document's design. That
+      document put `package_name` in the recipe; the adversarial pass measured the
+      consequence -- `fork_package` renames through `_renamed_options`, which rewrites
+      `options` and never touches `inputs`, so a frozen name is silently discarded by a
+      rename and **two renamed forks collapse into ONE MF6 package** under a FloPy
+      "Replacing existing package" warning. That is the exact defect `_renamed_options`
+      already exists to prevent, reopened through a new door. Identity belongs to the
+      `PackageSpec`; 5b/5c must take the name from the spec at build time. `package` is
+      kept because it names the record SCHEMA, which is type, not identity.
+      **`to_dict()` is deliberately not pure JSON.** A live `Spread` in `values` comes
+      back as itself, because that is what `_canonical` fingerprints (ledger 273) and
+      what `from_dict` rebuilds; `_json_value` is the converter and writes the
+      `$spread` / `$cell_surface_offset` tokens. `json.dumps(source.to_dict())` raises,
+      and that is not a defect.
+      **The reverse trip works ONLY through `options`/`inputs`.** `_spec_value(...,
+      int_keys=True)` is what recurses INTO a source payload and revives those tokens.
+      Measured and pinned in both directions: through `inputs` the nested objects come
+      back as `Spread`/`CellSurfaceOffset`; through any other field they come back as
+      plain DICTS, with nothing raised. 5b must put the recipe in `inputs` and nowhere
+      else.
+      **Exported as `mf.BoundarySource`** for consistency: every other source class is,
+      and the house position (stated in `DataSourceSpec`'s own docstring) is that these
+      are public but rarely hand-built -- reached for "only when authoring a serialized
+      recipe", which is exactly what someone reading `"kind": "BoundarySource"` in a
+      saved project is doing. The api_snapshot diff is one line, the new name.
+      Verified across all five routes a spec takes -- `to_dict`, JSON, YAML, the freeze
+      lift, and `package_digest` -- plus deepcopy and pickle. Defaults are omitted from
+      the payload so a later defaulted field cannot move an existing digest, and a
+      discrimination test asserts all twelve fields still move it, because a payload
+      that stops writing a field is a digest that stops seeing it.
