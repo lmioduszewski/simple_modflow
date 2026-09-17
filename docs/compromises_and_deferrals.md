@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 278 entries (279 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 279 entries (280 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 279 | A `.gpkg` boundary condition can be declared before its grid exists | 2026-09-17 |
 | 278 | A builder never learned which package it was building | 2026-09-17 |
 | 277 | The recipe a lazy `.gpkg` will carry | 2026-09-17 |
 | 276 | Nothing noticed when a package's source file changed | 2026-09-17 |
@@ -10787,3 +10788,67 @@ same day, which is the useful part of the result.
       **This is B2 commit 5's blocker 1, landed on its own** because the lazy `.gpkg`
       builder cannot be written without it, and because it is general: nothing here is
       about GeoPackages, and 5c needs the same identity for the frozen-snapshot key.
+
+279. **A `.gpkg` boundary condition can be declared before its grid exists
+      (2026-09-17).**
+      `mf.chd.gpkg(path, layer=..., nper=...)` without `context=` emits a LAZY spec that
+      resolves against whatever grid the build supplies. **One declaration builds
+      correctly on two meshes** -- measured, chd 11 records at ncpl 36 and 13 at ncpl
+      100, drn 10 and 7 carrying a `Spread` and a `CellSurfaceOffset`, each identical to
+      the eager form on that mesh. That is what turns a `move_report` row from `stale`
+      into `rebuilt`, and it is the reason Phase 2 exists (ledger 249).
+      **With `context=` nothing changes.** The eager branch is untouched; the recipe
+      branch is an early return above it. `api_snapshot` moves exactly seven rows,
+      `context` required -> optional, and nothing else.
+      **One generic builder bound per package with `functools.partial`**, not seven
+      private functions and not one with a union `mf6_targets`. Measured: the partial
+      gives `_accepted_options` the REAL package's 13 names, where a union gives 22 --
+      so `mf.chd.gpkg(..., nseg=3)` is refused by the lazy form exactly as by the eager
+      one, did-you-mean included. Memoized, because `_required_keyword_only` and
+      `_wants_spec` are cached on the builder OBJECT and a partial hashes by identity.
+      **Three preconditions, each replacing a failure that named nothing.** No grid on
+      the context -> a message naming the three ways to supply one. No discretization
+      built yet -> "the discretization has to be declared BEFORE it", replacing
+      `MFDataException ... "stress_period_data"` five frames down. A discretization
+      whose `ncpl` disagrees with the grid's -> both counts, replacing `IndexError:
+      index 56 is out of bounds`. The discretization is found by `package_type`, never
+      by name: `model.get_package("dis")` does a FloPy PREFIX match and returns a
+      `ModflowGwfdisv`, and `requires=("disv",)` names the myflopy SPEC name, so it
+      false-refuses `mf.disv(stack, name="mesh")` and a `mf.ref` whose key differs.
+      **The DOMAIN falls back to the built discretization, and that is correctness.**
+      `with_grid` DROPS `context.domain`, so a lazy package's context routinely carries
+      none. Measured with three cells of a drain line inactive in the DISV: reading the
+      built idomain gives 7 records, matching the eager form given an explicit
+      `domain=`, while a resolver reading only the context gives 10 -- three drains
+      written into cells the discretization makes inactive. MF6 then refuses the run,
+      EXCEPT under `edges_only=True` where it runs normally on the wrong boundary. Read
+      off the PACKAGE, never `model.modelgrid.idomain`: flopy SYNTHESIZES an all-ones
+      float array where the package's own field says None.
+      **SURFACES fall back to the discretization's top/botm**, which is what makes
+      `CellSurfaceOffset` -- the documented elevation idiom for drn/riv/ghb -- work
+      behind an eager or hand-written DISV, where it raises today. The order consults
+      `context.surfaces`, then `grid.gdf_topbtm`, then the built package: that is PARITY
+      with `_layer_elevations`, not preference, and lazy == eager is this commit's
+      contract. The fallback is LOCAL to this package's resolution and is deliberately
+      NOT published onto `model.myflopy_context` -- publishing would change what every
+      later package reads, including the eager ones.
+      **The declaration-time checks are repeated in `_lazy_bc_spec` on purpose.** They
+      live in `GeoPackageSource.__post_init__`, which the lazy branch never reaches, so
+      without them `mf.chd.gpkg("nope.gpkg", nper=0)` was ACCEPTED and raised at BUILD.
+      Neither check needs a grid, so neither belongs at build time.
+      **This commit broke a guard it inherited, and had to fix it.** Ledger 272's source
+      exemption let an edit to a lazy package's records through: both `with_options` and
+      `fork_package` constructed fine and died at BUILD with `functools.partial(...) got
+      multiple values for keyword argument 'stress_period_data'`, naming a partial
+      object -- the exact failure that check exists to prevent. The exemption now has a
+      limit: a source is exempt UNLESS the builder itself REQUIRES that keyword. Case
+      (b) survives for a builder that does not.
+      **`edges_only` is read from the package registry**, not a hand-kept list:
+      `wel`/`rch`/`evt` have no such parameter and `capabilities.edges_only` already
+      said so. Three generated wrappers referenced a name that did not exist there, and
+      the registry is what fixed it -- §4.7's one-descriptor rule paying off.
+      **NOT in this commit:** the resolved spec does not yet reach the frozen snapshot,
+      so a lazy package reopens from its recipe rather than its records, and `mf.ref`
+      is untested against it. Both are commit 5c. Until then a lazy `.gpkg` run is
+      rebuildable only while its GeoPackage is still there -- the dependence ledger 251
+      exists to remove.

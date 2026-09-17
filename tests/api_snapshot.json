@@ -23,7 +23,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "head:KEYWORD_ONLY='head'",
         "layer:KEYWORD_ONLY=None",
@@ -129,7 +129,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "elevation:KEYWORD_ONLY='elevation'",
         "conductance:KEYWORD_ONLY='conductance'",
@@ -221,7 +221,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "surface:KEYWORD_ONLY='surface'",
         "rate:KEYWORD_ONLY='rate'",
@@ -254,7 +254,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "head:KEYWORD_ONLY='head'",
         "conductance:KEYWORD_ONLY='conductance'",
@@ -603,7 +603,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "recharge:KEYWORD_ONLY='recharge'",
         "layer:KEYWORD_ONLY=None",
@@ -634,7 +634,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "stage:KEYWORD_ONLY='stage'",
         "conductance:KEYWORD_ONLY='conductance'",
@@ -809,7 +809,7 @@
       ],
       "gpkg": [
         "path:POSITIONAL_OR_KEYWORD=<required>",
-        "context:KEYWORD_ONLY=<required>",
+        "context:KEYWORD_ONLY=None",
         "nper:KEYWORD_ONLY=<required>",
         "rate:KEYWORD_ONLY='rate'",
         "layer:KEYWORD_ONLY=None",

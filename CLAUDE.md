@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3525 passed / 4 skipped**, 2026-09-17): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3539 passed / 4 skipped**, 2026-09-17): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -421,8 +421,24 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   foot, and float32 at State Plane. **It is a range check, not a proof**: a stale cellid
   that still falls inside a LARGER new grid passes, which the grid pin closes; advanced
   packages are not cellid-checked because the cellid's position differs per package
-  (SFR's `packagedata[1]` is a cellid, LAK's is a stage). To move a model to a new grid
-  today, re-declare its GIS packages; lazy resolution is planned work.
+  (SFR's `packagedata[1]` is a cellid, LAK's is a stage).
+- **A `.gpkg` list BC declared WITHOUT `context=` resolves at BUILD time** (ledger 279,
+  2026-09-17) -- one declaration builds correctly on two meshes (measured: chd 11
+  records at ncpl 36, 13 at ncpl 100; drn 10 and 7 carrying a `Spread` and a
+  `CellSurfaceOffset`), and `move_report` reads `rebuilt` rather than `stale`. **With
+  `context=` nothing changes** -- the eager branch is untouched and still resolves at
+  declaration, so the "re-declare its GIS packages to move a model" advice still holds
+  for anything declared eagerly. The recipe is a `BoundarySource` in
+  `PackageSpec.inputs` under `stress_period_data` (ledger 277); the builder is bound to
+  its FloPy class with `functools.partial` so the typo check stays byte-identical to the
+  eager form. **The discretization must be declared BEFORE it** (refused by name
+  otherwise, found by `package_type` -- `model.get_package("dis")` prefix-matches a
+  DISV), and the domain and layer elevations fall back to the BUILT discretization when
+  the context carries none, which is the normal case after `with_grid` since that drops
+  both. Reading the idomain off `model.modelgrid` instead is wrong: flopy synthesizes an
+  all-ones float array where the package's own field says None.
+  **NOT yet: the frozen snapshot** -- a lazy run still reopens from its recipe, so it is
+  rebuildable only while its GeoPackage is there. That is commit 5c.
   **A resolved package also carries a PIN** (ledger 250, 2026-09-13) -- `grid_pin(grid)`,
   a hash of the mesh's CONNECTIVITY (the cell count and each cell's canonical vertex
   ring; NOT the vertex count, which FloPy computes at write time) and nothing continuous. That closes the range check's gap: a

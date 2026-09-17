@@ -9,7 +9,9 @@ boundaries, and ``mf.uzf(...)`` for the higher-level UZF builder.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import replace as _replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -47,7 +49,7 @@ from myflopy.builders import (
     build_oc,
 )
 from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, RowValue, Spread
-from myflopy.grid_identity import pin_metadata
+from myflopy.grid_identity import PIN_VOIDED, pin_metadata
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
 from myflopy.modflow.mf6.lakes import (
@@ -58,9 +60,11 @@ from myflopy.modflow.mf6.lakes import (
     LakeTableBuilder,
 )
 from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
+from myflopy.sources import BoundarySource
 from myflopy.specs import (
     ExchangeSpec,
     ModelContext,
@@ -469,6 +473,210 @@ def prt(
             save_flows=save_flows,
             extra=kwargs,
         ),
+    )
+
+
+_DISCRETIZATION_TYPES = ("dis", "disv", "disu")
+
+
+def _built_discretization(model):
+    """The discretization already built on ``model``, or ``None``.
+
+    Found by ``package_type`` rather than by name. ``model.get_package("dis")`` does a
+    FloPy PREFIX match and hands back a ``ModflowGwfdisv`` -- measured -- and a name test
+    would miss `mf.disv(stack, name="mesh")` besides. `requires=("disv",)` is wrong for
+    the same reason: it names the myflopy SPEC name, so it false-refuses a renamed
+    discretization and a `mf.ref` whose key differs.
+    """
+
+    for package in getattr(model, "packagelist", None) or ():
+        if getattr(package, "package_type", None) in _DISCRETIZATION_TYPES:
+            return package
+    return None
+
+
+def _lazy_resolution_context(model, spec_name: str):
+    """The three preconditions a lazy boundary condition needs, in order.
+
+    Each replaces a failure that names nothing. Returns a ``ModelContext`` local to this
+    package's resolution -- deliberately NOT published onto ``model.myflopy_context``,
+    because publishing would change what every later package reads, including the eager
+    ones, and this commit's contract is that the eager path does not move.
+    """
+
+    context = getattr(model, "myflopy_context", None)
+    grid = getattr(context, "grid", None)
+    if grid is None:
+        raise ValueError(
+            f"Package {spec_name!r} was declared without `context=`, so its grid has to "
+            "come from the model at build time -- and this model's context carries none. "
+            "Either declare the model with `mf.gwf(..., context=ModelContext(grid=...))`, "
+            "give it a deferred grid with `.with_grid(mf.GridSpec.voronoi(...))`, or pass "
+            "`context=` to the helper to resolve it eagerly."
+        )
+
+    discretization = _built_discretization(model)
+    if discretization is None:
+        raise ValueError(
+            f"Package {spec_name!r} resolves its cells against the model's grid at BUILD "
+            "time, so the discretization has to be declared BEFORE it. Move `mf.disv(...)` "
+            "ahead of it in `packages=[...]`."
+        )
+
+    ncpl = getattr(getattr(discretization, "ncpl", None), "get_data", lambda: None)()
+    if ncpl is not None and int(ncpl) != int(grid.ncpl):
+        raise ValueError(
+            f"Package {spec_name!r} resolves against this model's grid "
+            f"({grid.ncpl} cells) at build time, but the discretization "
+            f"already built on the model describes {int(ncpl)} cells -- they are not the "
+            "same mesh. Declare the discretization from the same grid; `mf.disv(stack)` "
+            "resolves against whatever grid the build supplies."
+        )
+
+    domain = getattr(context, "domain", None)
+    if domain is None:
+        # Read the idomain off the PACKAGE, never off `model.modelgrid.idomain`: flopy
+        # SYNTHESIZES an all-ones FLOAT array when the discretization declares none,
+        # where the package's own field says None -- which is what "no idomain" means in
+        # MF6. Load-bearing, measured: a resolver reading only the context wrote
+        # boundaries into cells the discretization makes inactive (drn 5 records against
+        # a correct 4), and MF6 then refuses the run -- except under `edges_only=True`,
+        # where it runs normally on the wrong boundary.
+        idomain = getattr(discretization, "idomain", None)
+        domain = idomain.get_data() if idomain is not None else None
+
+    surfaces = getattr(context, "surfaces", None)
+    if surfaces is None and getattr(grid, "gdf_topbtm", None) is None:
+        # The order is PARITY, not preference: `_layer_elevations` consults the grid's
+        # own table before anything else for the eager form, and lazy == eager is this
+        # commit's contract. Falling back to the built discretization is what makes
+        # `CellSurfaceOffset` -- the documented elevation idiom for drn/riv/ghb -- work
+        # behind an eager or hand-written DISV, where it raises today.
+        top = getattr(discretization, "top", None)
+        botm = getattr(discretization, "botm", None)
+        if top is not None and botm is not None:
+            surfaces = {"top": top.array, "botm": botm.array}
+
+    return _replace(context, domain=domain, surfaces=surfaces)
+
+
+def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **options):
+    """Resolve a :class:`~myflopy.sources.BoundarySource` against the model's grid.
+
+    The whole of a lazy list boundary condition. It is bound to its FloPy class by
+    :func:`_lazy_factory`, so the declaration-time option check sees the real package's
+    signature rather than a union of all seven (ledger 279).
+
+    Its NAME comes from ``_spec``, never from the recipe (ledger 278): a name frozen in
+    the recipe survives a rename, and two renamed forks then collapse into one MF6
+    package.
+    """
+
+    recipe = stress_period_data
+    context = _lazy_resolution_context(model, _spec.name)
+    source = GeoPackageSource(
+        recipe.path,
+        context,
+        recipe.nper,
+        layer=recipe.layer,
+        name_field=recipe.name_field,
+        layer_field=recipe.layer_field,
+        period_field=recipe.period_field,
+        layer_base=recipe.layer_base,
+        period_base=recipe.period_base,
+    )
+    kwargs = dict(recipe.values)
+    kwargs["name"] = _spec.name
+    kwargs["boundnames"] = recipe.boundnames
+    if _PACKAGE_EXPLORER_SPECS[recipe.package].capabilities.edges_only:
+        kwargs["edges_only"] = recipe.edges_only
+    eager = getattr(source, recipe.package)(**kwargs, **options)
+    # `_bc_from_features` stamps GRID_PIN afresh but never clears a void, so a recipe
+    # forked from an edited package would carry a pin AND its own contradiction, and
+    # `with_grid` would complain about it twice (ledger 275).
+    if PIN_VOIDED in eager.metadata:
+        eager = _replace(
+            eager,
+            metadata={k: v for k, v in eager.metadata.items() if k != PIN_VOIDED},
+        )
+    return eager.build(model)
+
+
+@functools.cache
+def _lazy_factory(package: str):
+    """A per-package lazy builder, bound to its FloPy class.
+
+    Memoized because ``specs._required_keyword_only`` and ``specs._wants_spec`` are both
+    cached on the builder OBJECT and a ``functools.partial`` hashes by identity -- a
+    fresh partial per declaration would add a permanent cache entry per call.
+    """
+
+    flopy_class = getattr(flopy.mf6, _PACKAGE_EXPLORER_SPECS[package].flopy_class)
+    return functools.partial(_build_lazy_list_bc, flopy_class)
+
+
+def _lazy_bc_spec(
+    package: str,
+    path: PathLike,
+    *,
+    name: str,
+    nper: int,
+    layer: str | None,
+    name_field: str | None,
+    layer_field: str | None,
+    period_field: str | None,
+    layer_base: int,
+    period_base: int,
+    values: dict[str, Any],
+    # `wel`/`rch`/`evt` have no `edges_only` parameter at all -- the package registry
+    # says so (`capabilities.edges_only`) and their signatures agree -- so their
+    # wrappers pass nothing and the recipe records the default.
+    edges_only: bool = False,
+    boundnames: bool,
+    options: dict[str, Any],
+) -> PackageSpec:
+    """A lazy list-BC spec: the recipe in ``inputs``, resolved at build time.
+
+    One helper for all seven so the registry key and the bound FloPy class can never
+    disagree -- they are derived from the same ``package`` string.
+
+    The recipe rides under ``stress_period_data``, the option it supplies. That is
+    ledger 272's case (b) -- a source shadowing its own option -- and the only shape
+    ``_check_input_collisions`` permits there.
+
+    **The declaration-time checks are repeated here on purpose.** They live in
+    ``GeoPackageSource.__post_init__``, which the lazy branch never reaches, so without
+    them `mf.chd.gpkg("nope.gpkg", nper=0)` is ACCEPTED and raises at BUILD -- measured.
+    Neither needs a grid, so neither belongs at build time; the eager form refuses both
+    at the call and the lazy form must match it.
+    """
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"GeoPackage not found: {path}")
+    if nper < 1:
+        raise ValueError("nper must be at least 1.")
+
+    recipe = BoundarySource(
+        path=path,
+        package=package,
+        nper=nper,
+        values=dict(values),
+        layer=layer,
+        name_field=name_field,
+        layer_field=layer_field,
+        period_field=period_field,
+        layer_base=layer_base,
+        period_base=period_base,
+        edges_only=edges_only,
+        boundnames=boundnames,
+    )
+    return PackageSpec(
+        name,
+        _lazy_factory(package),
+        dict(options),
+        requires=(),
+        inputs={"stress_period_data": recipe},
     )
 
 
@@ -1170,8 +1378,6 @@ def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **op
     refused rather than overwritten: the caller described two different models and
     only one of them can be built (ledger 270).
     """
-
-    from dataclasses import replace as _replace
 
     context = getattr(model, "myflopy_context", None)
     grid = getattr(context, "grid", None)
@@ -2214,7 +2420,7 @@ class _CHDPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         head: RowValue = "head",
         layer: str | None = None,
@@ -2275,6 +2481,24 @@ class _CHDPackage:
         --------
         >>> mf.chd.gpkg("bcs.gpkg", layer="fixed_head", context=ctx, nper=1)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "chd",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"head": head},
+                edges_only=edges_only,
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -2401,7 +2625,7 @@ class _GHBPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         head: RowValue = "head",
         conductance: RowValue = "conductance",
@@ -2476,6 +2700,24 @@ class _GHBPackage:
         --------
         >>> mf.ghb.gpkg("bcs.gpkg", layer="underflow", context=ctx, nper=1)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "ghb",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"head": head, "conductance": conductance},
+                edges_only=edges_only,
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -2584,7 +2826,7 @@ class _DRNPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         elevation: RowValue = "elevation",
         conductance: RowValue = "conductance",
@@ -2660,6 +2902,24 @@ class _DRNPackage:
         --------
         >>> mf.drn.gpkg("bcs.gpkg", layer="springs", context=ctx, nper=1)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "drn",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"elevation": elevation, "conductance": conductance},
+                edges_only=edges_only,
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -2789,7 +3049,7 @@ class _RIVPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         stage: RowValue = "stage",
         conductance: RowValue = "conductance",
@@ -2868,6 +3128,24 @@ class _RIVPackage:
         --------
         >>> mf.riv.gpkg("bcs.gpkg", layer="river", context=ctx, nper=1)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "riv",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"stage": stage, "conductance": conductance, "rbot": rbot},
+                edges_only=edges_only,
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -2995,7 +3273,7 @@ class _WELPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         rate: RowValue = "rate",
         layer: str | None = None,
@@ -3064,6 +3342,23 @@ class _WELPackage:
         --------
         >>> mf.wel.gpkg("wells.gpkg", context=ctx, nper=12)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "wel",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"rate": rate},
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -3319,7 +3614,7 @@ class _RCHPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         recharge: RowValue = "recharge",
         layer: str | None = None,
@@ -3387,6 +3682,23 @@ class _RCHPackage:
         --------
         >>> mf.rch.gpkg("recharge_zones.gpkg", context=ctx, nper=12)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "rch",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"recharge": recharge},
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,
@@ -3673,7 +3985,7 @@ class _EVTPackage:
         self,
         path: PathLike,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         surface: RowValue = "surface",
         rate: RowValue = "rate",
@@ -3758,6 +4070,23 @@ class _EVTPackage:
         --------
         >>> mf.evt.gpkg("et_zones.gpkg", context=ctx, nper=12)
         """
+
+        if context is None:
+            return _lazy_bc_spec(
+                "evt",
+                path,
+                name=name,
+                nper=nper,
+                layer=layer,
+                name_field=name_field,
+                layer_field=layer_field,
+                period_field=period_field,
+                layer_base=layer_base,
+                period_base=period_base,
+                values={"surface": surface, "rate": rate, "depth": depth},
+                boundnames=boundnames,
+                options=options,
+            )
 
         return _source(
             path,

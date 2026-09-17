@@ -1068,7 +1068,7 @@ def _check_options(name: str, builder, options: dict[str, Any]) -> None:
 
 
 def _check_input_collisions(
-    name: str, inputs: dict[str, Any], options: dict[str, Any]
+    name: str, builder, inputs: dict[str, Any], options: dict[str, Any]
 ) -> None:
     """Raise if one keyword is set twice -- once as a recipe input, once as an option.
 
@@ -1083,21 +1083,30 @@ def _check_input_collisions(
     is ACCEPTABLE. ``layer_stack`` is perfectly acceptable to the lazy DISV builder;
     the defect is that the recipe already supplied it.
 
-    **A SOURCE spec is exempt, because shadowing is its meaning.** ``inputs`` carries
-    two different things. A lazy recipe's entries are builder keyword arguments, and
-    a duplicate there is a mistake. A ``DataSourceSpec``/``LiteralSource`` entry is an
-    UNRESOLVED value for the option of the same name -- ``inputs["k"]`` says where
-    ``options["k"]`` comes from -- so the two names matching is the whole point.
-    Nothing resolves one yet (measured: the shape builds to
-    ``ModflowGwfnpf() got multiple values for keyword argument 'k'``, and nothing in
-    ``src/`` constructs it), so refusing it here would foreclose a design rather than
-    catch a bug. That resolution step is B2's to build.
+    **A SOURCE spec is exempt, UNLESS the builder itself requires that keyword.**
+    ``inputs`` carries two different things. A lazy recipe's entries are builder keyword
+    arguments, and a duplicate there is a mistake. A ``DataSourceSpec``/``LiteralSource``
+    entry is an UNRESOLVED value for the option of the same name -- ``inputs["k"]`` says
+    where ``options["k"]`` comes from -- so there the two names matching is the point,
+    and a future resolver will consume one into the other.
+
+    The refinement is what keeps the exemption honest once a builder RESOLVES the
+    recipe itself. ``_build_lazy_list_bc`` takes ``stress_period_data`` as a required
+    keyword-only parameter, so both edit routes -- ``with_options`` and
+    ``fork_package``/``packages.edit`` -- constructed fine and died at BUILD with
+    ``functools.partial(...) got multiple values for keyword argument
+    'stress_period_data'``, naming a partial object. That is precisely the failure this
+    function exists to prevent, let through by the exemption it grants. A builder that
+    requires the keyword will be handed BOTH, so the collision is real however the value
+    is spelled.
     """
 
+    resolves = set(_required_keyword_only(builder))
     collisions = sorted(
         key
         for key in set(inputs) & set(options)
-        if not isinstance(inputs[key], (DataSourceSpec, LiteralSource))
+        if key in resolves
+        or not isinstance(inputs[key], (DataSourceSpec, LiteralSource))
     )
     if not collisions:
         return
@@ -1224,7 +1233,7 @@ class PackageSpec:
     def __post_init__(self) -> None:
         """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
         _check_options(self.name, self.builder, self.options)
-        _check_input_collisions(self.name, self.inputs, self.options)
+        _check_input_collisions(self.name, self.builder, self.inputs, self.options)
         _check_recipe_complete(self.name, self.builder, self.inputs, self.options)
 
         object.__setattr__(self, "requires", tuple(self.requires))
