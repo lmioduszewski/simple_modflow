@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3600 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3613 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -781,8 +781,16 @@ both describe a per-FEATURE resolution and the array form has no features, so
 neither could act — they were accepted, pickled and digested before. That refusal
 saw only the VALUE fields until ledger 283, so `irch=mf.Spread(...)` was accepted
 and digested; it reads every keyword now.
-**`mf.evt.array` with `surface` omitted resolves the MODEL TOP**, and refuses when it
-cannot (ledger 283). It used to leave the argument out entirely, so FloPy's own
+**Both array helpers go LAZY when the part that needs a grid is left to them**
+(ledger 285) — `irch`/`ievt` at `"top_active"`, or an omitted EVT `surface`, with no
+`context=`. That is what finally makes an array-form model SAVEABLE: the default
+resolves to an `(ncpl,)` array, `to_dict` refuses an ndarray, and `Project.save()`
+persisted **zero simulations** (ledger 270's defect one package over). **The trigger is
+narrower than the list form's on purpose**: `irch=0 | None | <array>` with no context is
+legal and digestible today, so keying on `context is None` would move those digests and
+make `runs.drift()` call every reloaded package edited. Measured 0 of 10 moved.
+**`mf.evt.array` with `surface` omitted resolves the MODEL TOP**, and refuses when a
+`context=` cannot answer (ledger 283). It used to leave the argument out entirely, so FloPy's own
 `surface=0.0` default wrote `CONSTANT 0.00000000` — the datum — and MF6 then draws the
 full rate everywhere, because every head is above the ET surface, making `depth=` inert:
 measured EVT total **-151.13 against a correct 0.0**, Normal termination, no warning.

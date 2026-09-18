@@ -23,6 +23,7 @@ from shapely.geometry import Point, Polygon
 from myflopy._logging import get_logger
 from myflopy.advanced import (
     _array_bc_spec,
+    _names_cells,
     chd_spec,
     drn_spec,
     evt_spec,
@@ -56,6 +57,7 @@ from myflopy.geopackage import (
     SurfaceResolver,
 )
 from myflopy.grid_identity import (
+    CELLWISE_OPTIONS,
     GRID_PIN,
     GRID_PIN_OPTIONS,
     PIN_VOIDED,
@@ -3799,12 +3801,14 @@ class _RCHPackage:
                 "mf.rch.array: MODFLOW 6 does not allow boundnames under READASARRAYS. "
                 "Use mf.rch(...) for the list form, which does."
             )
-        values = _array_bc_values(
-            {"recharge": recharge},
-            context=context,
-            index=irch,
+        return _array_bc_result(
+            flopy.mf6.ModflowGwfrcha,
+            name=name,
             index_name="irch",
             verb="mf.rch.array",
+            fields={"recharge": recharge},
+            context=context,
+            index=irch,
             fixed_cell=fixed_cell,
             auxiliary=auxiliary,
             auxmultname=auxmultname,
@@ -3813,7 +3817,6 @@ class _RCHPackage:
             save_flows=save_flows,
             **options,
         )
-        return _array_bc_spec(flopy.mf6.ModflowGwfrcha, name=name, options=values, context=context)
 
     def flopy(
         self,
@@ -4191,16 +4194,17 @@ class _EVTPackage:
                 "mf.evt.array: MODFLOW 6 does not allow boundnames under READASARRAYS. "
                 "Use mf.evt(...) for the list form, which does."
             )
-        fields: dict[str, Any] = {"rate": rate, "depth": depth}
-        fields["surface"] = (
-            _model_top_surface(context, verb="mf.evt.array") if surface is None else surface
-        )
-        values = _array_bc_values(
-            fields,
-            context=context,
-            index=ievt,
+        return _array_bc_result(
+            flopy.mf6.ModflowGwfevta,
+            name=name,
             index_name="ievt",
             verb="mf.evt.array",
+            # `_MODEL_TOP` rather than the resolved elevation: with no context there is
+            # nothing to resolve it against yet, and leaving the argument out entirely
+            # is what wrote MODFLOW's datum (ledger 283).
+            fields={"rate": rate, "depth": depth, "surface": _MODEL_TOP if surface is None else surface},
+            context=context,
+            index=ievt,
             fixed_cell=fixed_cell,
             auxiliary=auxiliary,
             auxmultname=auxmultname,
@@ -4209,7 +4213,6 @@ class _EVTPackage:
             save_flows=save_flows,
             **options,
         )
-        return _array_bc_spec(flopy.mf6.ModflowGwfevta, name=name, options=values, context=context)
 
     def flopy(
         self,
@@ -5427,6 +5430,143 @@ def _refuse_per_feature_values(values: dict[str, Any], *, verb: str) -> None:
     )
 
 
+#: What an omitted `mf.evt.array` surface is, before a grid exists to resolve it against.
+#: A string is unambiguous here: the argument otherwise holds numbers.
+_MODEL_TOP = "model_top"
+
+#: The VALUE fields of each array form, so a lazy rebuild can split them back out of the
+#: options it was handed.
+_ARRAY_FIELDS = {"irch": ("recharge",), "ievt": ("rate", "depth", "surface")}
+
+
+def _array_bc_result(
+    constructor,
+    *,
+    name: str,
+    index_name: str,
+    verb: str,
+    fields: dict[str, Any],
+    context: ModelContext | None,
+    index: Any,
+    **rest: Any,
+):
+    """One array-form spec, EAGER or LAZY -- the single tail of both `.array` helpers.
+
+    **The trigger is narrower than the list form's, and deliberately so.** A lazy `.gpkg`
+    and a lazy `mf.rch(...)` can key on `context is None` because every such declaration
+    RAISED before, so no stored run holds one. That is not true here:
+    `mf.rch.array(recharge=..., irch=0 | None | <array>)` with no context is legal,
+    working and digestible TODAY. Relocating its payload into ``inputs`` would change
+    `package_digest`, and `project.runs.drift()` would report untouched packages as
+    EDITED the first time anyone re-ran their declaring script -- the exact failure
+    ledger 250 kept the pin out of the digest to avoid. So the branch is taken only for
+    the parts that genuinely need a grid, which are exactly the parts that raised:
+    ``irch``/``ievt`` left at ``"top_active"``, and an omitted EVT ``surface``
+    (ledger 285).
+    """
+
+    deferred = {}
+    if context is None:
+        if isinstance(index, str):
+            deferred[index_name] = index
+        if isinstance(fields.get("surface"), str):
+            deferred["surface"] = fields["surface"]
+    if deferred:
+        options = {
+            key: value
+            for key, value in {**fields, **rest}.items()
+            if key not in deferred and value is not None
+        }
+        # The lazy branch returns before `_array_bc_values` runs, so the declaration-time
+        # checks that do not need a grid have to be repeated here -- the rule
+        # `_lazy_bc_spec` already follows for a missing file and `nper=0`. Without it
+        # `mf.rch.array(recharge=mf.Spread(...))` was ACCEPTED at the call and refused at
+        # BUILD, quietly undoing ledger 283 for every lazy declaration.
+        _refuse_per_feature_values({**options, **deferred}, verb=verb)
+        return PackageSpec(
+            name,
+            _lazy_array_factory(index_name),
+            options,
+            requires=(),
+            inputs=deferred,
+        )
+
+    if isinstance(fields.get("surface"), str):
+        fields = {**fields, "surface": _model_top_surface(context, verb=verb)}
+    values = _array_bc_values(
+        fields, context=context, index=index, index_name=index_name, verb=verb, **rest
+    )
+    return _array_bc_spec(constructor, name=name, options=values, context=context)
+
+
+def _build_lazy_array(constructor, index_name, model, *, _spec, **kwargs):
+    """Resolve an array-form RCH/EVT declaration against the model's grid at build time.
+
+    It re-enters ``_array_bc_values``/``_array_bc_spec`` with a resolved context, so the
+    result is the eager one by construction rather than by a second implementation that
+    has to be kept in step.
+    """
+
+    verb = f"mf.{'rch' if index_name == 'irch' else 'evt'}.array"
+    context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
+    kwargs = dict(kwargs)
+    index = kwargs.pop(index_name, None)
+    fields = {key: kwargs.pop(key) for key in _ARRAY_FIELDS[index_name] if key in kwargs}
+    if isinstance(fields.get("surface"), str):
+        fields["surface"] = _model_top_surface(context, verb=verb)
+    values = _array_bc_values(
+        fields, context=context, index=index, index_name=index_name, verb=verb, **kwargs
+    )
+    eager = _array_bc_spec(constructor, name=_spec.name, options=values, context=context)
+    if GRID_PIN not in (eager.metadata or {}):
+        # No grid on the context means `_array_bc_spec` could only stamp the weaker
+        # per-cell MARKER (ledger 282). The built DISV is the same mesh by another
+        # route, so the resolved package records WHICH mesh rather than only that it
+        # names cells; the marker is dropped because a pin supersedes it.
+        disv = _built_discretization(model)
+        pin = disv_pin(disv) if disv is not None else None
+        if pin is not None:
+            metadata = {
+                key: value
+                for key, value in (eager.metadata or {}).items()
+                if key != CELLWISE_OPTIONS
+            }
+            eager = _replace(
+                eager,
+                metadata={
+                    **metadata,
+                    GRID_PIN: pin,
+                    GRID_PIN_OPTIONS: sorted(_names_cells(values, int(_ncpl_of(disv)))),
+                },
+            )
+    resolved = getattr(model, "_myflopy_resolved", None)
+    if resolved is None:
+        resolved = {}
+        model._myflopy_resolved = resolved
+    resolved[_spec.name] = eager
+    return eager.build(model)
+
+
+def _ncpl_of(discretization) -> int:
+    """The cell count a built discretization describes."""
+
+    return int(getattr(getattr(discretization, "ncpl", None), "get_data", lambda: 0)() or 0)
+
+
+@functools.cache
+def _lazy_array_factory(index_name: str):
+    """A per-package lazy array builder, bound to its FloPy class.
+
+    Bound arg only, no keywords -- see :func:`_lazy_areal_factory` for the digest that
+    a keyword moved. Cached for the reason the other two factories are.
+    """
+
+    constructor = (
+        flopy.mf6.ModflowGwfrcha if index_name == "irch" else flopy.mf6.ModflowGwfevta
+    )
+    return functools.partial(_build_lazy_array, constructor, index_name)
+
+
 def _model_top_surface(context: ModelContext | None, *, verb: str):
     """The ET surface for an array-form EVT that did not name one: the model top.
 
@@ -5471,12 +5611,14 @@ def _array_bc_values(
     index: Any,
     index_name: str,
     verb: str,
-    fixed_cell: bool,
-    auxiliary: Any,
-    auxmultname: str | None,
-    observations: Any,
-    print_input: bool,
-    save_flows: bool,
+    # Defaulted so the LAZY rebuild can restate only what the caller actually set
+    # (ledger 285); the public helpers pass all of them explicitly, as before.
+    fixed_cell: bool = False,
+    auxiliary: Any = None,
+    auxmultname: str | None = None,
+    observations: Any = None,
+    print_input: bool = False,
+    save_flows: bool = True,
     **options: Any,
 ) -> dict[str, Any]:
     """Assemble the constructor arguments shared by the array-form BC helpers.

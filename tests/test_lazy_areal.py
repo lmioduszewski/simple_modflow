@@ -459,3 +459,132 @@ def test_an_option_the_recipe_already_supplies_collides_by_name():
 
     with pytest.raises(TypeError, match="boundnames"):
         spec.with_options(boundnames=False)
+
+
+# --- the ARRAY form (ledger 285) ----------------------------------------------
+
+
+@pytest.mark.parametrize("package", ["rch", "evt"])
+def test_the_array_form_resolves_its_layer_index_at_build_time(
+    tmp_path, triangulated_grid, triangulated_grid_finer, package
+):
+    """`irch="top_active"` is the documented default and the one that must stay one:
+    MODFLOW 6 with no IRCH applies recharge to layer 1 unconditionally and silently
+    skips any column whose layer 1 is inactive (ledger 163).
+
+    Eagerly it resolves to an `(ncpl,)` array, which is why the declaration is mesh-bound
+    -- and why `to_dict` refused it, making the whole model unsaveable. Lazily the recipe
+    holds the STRING.
+    """
+
+    index = "irch" if package == "rch" else "ievt"
+    lazy = (
+        mf.rch.array(recharge=6.0e-4)
+        if package == "rch"
+        else mf.evt.array(rate=2.0e-3, depth=2.5)
+    )
+
+    assert index in lazy.inputs
+    assert package_move(lazy)[0] == "rebuilt"
+
+    for tag, grid in (("coarse", triangulated_grid), ("fine", triangulated_grid_finer)):
+        context = _eager_context(grid)
+        eager = (
+            mf.rch.array(recharge=6.0e-4, context=context)
+            if package == "rch"
+            else mf.evt.array(rate=2.0e-3, depth=2.5, context=context)
+        )
+        built = _build(tmp_path, grid, lazy, tag=f"arr_{package}_{tag}")
+
+        resolved = getattr(built.get_package(package), index).get_data()
+        resolved = np.asarray(resolved[0] if isinstance(resolved, dict) else resolved)
+        assert resolved.size == int(grid.ncpl)
+        assert np.array_equal(resolved, np.asarray(eager.options[index]))
+
+
+def test_the_array_form_is_what_made_a_model_unsaveable(tmp_path, triangulated_grid):
+    """The payoff, stated as the defect it removes.
+
+    With a lazy `mf.disv(stack)` so the discretization is not the blocker (ledger 270),
+    the DOCUMENTED default array declaration was the next thing that made
+    `Project.save()` persist zero simulations -- `irch="top_active"` resolves to an
+    `(ncpl,)` array and `to_dict` refuses an ndarray (ledger 193). Same defect, one
+    package over.
+    """
+
+    lazy = mf.simulation(
+        _model(triangulated_grid, mf.rch.array(recharge=6.0e-4)),
+        name="sim", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    )
+    eager = mf.simulation(
+        _model(triangulated_grid, mf.rch.array(recharge=6.0e-4, context=_eager_context(triangulated_grid))),
+        name="sim", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    )
+
+    lazy_project = mf.Project(tmp_path / "lazy", name="p")
+    lazy_project.add_simulation(lazy)
+    eager_project = mf.Project(tmp_path / "eager", name="p")
+    eager_project.add_simulation(eager)
+
+    assert lazy_project.save().simulations == 1
+    assert eager_project.save().simulations == 0, "the eager array form still cannot be written down"
+
+
+def test_an_omitted_et_surface_resolves_lazily_rather_than_raising(tmp_path, triangulated_grid):
+    """Ledger 283 made an unresolvable surface RAISE rather than write the datum. With no
+    context there is now something to resolve it against later, so it defers instead --
+    and the set of declarations that raised is exactly the set that became a recipe."""
+
+    lazy = mf.evt.array(rate=1e-3, depth=2.0, ievt=None)
+    assert sorted(lazy.inputs) == ["surface"]
+
+    built = _build(tmp_path, triangulated_grid, lazy, tag="evt_surface")
+    surface = built.get_package("evt").surface.get_data()
+    surface = np.asarray(surface[0] if isinstance(surface, dict) else surface)
+
+    assert np.allclose(surface, 100.0), "the stack's model top, not MODFLOW's datum"
+
+
+@pytest.mark.parametrize(
+    "declare",
+    [
+        lambda n: mf.rch.array(recharge=6e-4, irch=0),
+        lambda n: mf.rch.array(recharge=6e-4, irch=None),
+        lambda n: mf.rch.array(recharge=6e-4, irch=np.zeros(n, dtype=int)),
+        lambda n: mf.rch.array(recharge=np.full(n, 6e-4), irch=0),
+        lambda n: mf.evt.array(rate=1e-3, depth=2.0, surface=95.0, ievt=0),
+    ],
+)
+def test_a_declaration_that_already_worked_is_left_entirely_alone(triangulated_grid, declare):
+    """**The reason the array trigger is narrower than the list form's.**
+
+    A lazy `.gpkg` and a lazy `mf.rch(...)` can key on `context is None` because every
+    such declaration RAISED before. These did not: they are legal, working and
+    digestible today. Moving their payload into `inputs` would change `package_digest`,
+    and `runs.drift()` would report untouched packages as EDITED the first time anyone
+    re-ran their declaring script -- the exact failure ledger 250 kept the pin out of the
+    digest to avoid.
+    """
+
+    spec = declare(int(triangulated_grid.ncpl))
+
+    assert spec.inputs == {}, "this declaration must not become a recipe"
+    assert package_digest(spec) is not None
+
+
+def test_a_run_reports_what_an_array_package_resolved(tmp_path, triangulated_grid):
+    """An array package has neither records nor an `ncpl`, so both existing columns said
+    nothing about it -- the shape ledger 280 fixed for the list form."""
+
+    sim = mf.simulation(
+        _model(triangulated_grid, mf.rch.array(recharge=6e-4)),
+        name="sim", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    )
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_simulation(sim)
+    run = project.prepare_run("r1", sim)
+    run.write()
+
+    row = next(r for r in run.resolution if r.get("package") == "rch")
+    assert row["how"] == "rebuilt"
+    assert row["resolved_cells"] == int(triangulated_grid.ncpl)

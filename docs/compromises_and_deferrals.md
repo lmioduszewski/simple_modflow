@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 284 entries (285 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 285 entries (286 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 285 | The array form's default could not be written down, which made the whole model unsaveable | 2026-09-18 |
 | 284 | Recharge and ET can be declared before their grid exists | 2026-09-18 |
 | 283 | The array form put the ET surface at the DATUM, and two arguments went missing on the way to the builder | 2026-09-18 |
 | 282 | An array-form boundary condition names its cells by POSITION, and nothing was reading that | 2026-09-18 |
@@ -11089,3 +11090,42 @@ same day, which is the useful part of the result.
       `docs/reproducers/digest_pickle_memo.py`.
       **Not carried:** `nper` is still the caller's, and nothing compares it to the
       simulation's `tdis` -- true of the eager form too, and a separate change.
+
+285. **The array form's default could not be written down, which made the whole model
+      unsaveable (2026-09-18).**
+      `mf.rch.array(recharge=..., context=ctx)` at its DOCUMENTED default resolves
+      `irch="top_active"` to an `(ncpl,)` layer-index array, `to_dict` refuses an ndarray
+      (ledger 193), and so `Project.save()` persisted **zero simulations** and `load()`
+      returned an empty project. **This is ledger 270's defect one package over** --
+      exactly what made `mf.disv(stack)` have to be lazy -- and it was invisible until
+      270 landed, because before that the hand-written DISV failed first. Measured with a
+      lazy `mf.disv(stack)` so the discretization is not the blocker: the array default
+      `simulations=0, skipped=1`, `irch=None` and the list form `simulations=1`.
+      Declared without `context=` the recipe now holds the STRING and the model saves.
+      One declaration produced the same `irch` array as the eager form at ncpl 28 and at
+      ncpl 92, `mf.evt.array` likewise including its resolved surface, and `with_grid`
+      reads `rebuilt`.
+      **The trigger is NARROWER than the list form's, and that is the whole design.**
+      A lazy `.gpkg` (279) and a lazy `mf.rch(...)` (284) can key on `context is None`
+      because every such declaration RAISED before, so no stored run can hold one. **That
+      is not true here**: `mf.rch.array(recharge=..., irch=0 | None | <array>)` with no
+      context is legal, working and digestible TODAY. Relocating its payload into
+      `inputs` would change `package_digest`, and `project.runs.drift()` would report
+      untouched packages as EDITED the first time anyone re-ran their declaring script --
+      the exact failure ledger 250 kept the pin out of the digest to avoid. So only the
+      parts that genuinely need a grid defer, and they are exactly the parts that raised:
+      `irch`/`ievt` left at `"top_active"`, and an omitted EVT `surface` (283). Measured:
+      0 of 10 previously-legal declarations moved a digest.
+      **Repeating the per-feature refusal in the lazy branch is load-bearing**, and was
+      missed first time round: the branch returns before `_array_bc_values`, so
+      `mf.rch.array(recharge=mf.Spread(...))` was ACCEPTED at the call and refused at
+      BUILD, quietly undoing ledger 283 for every lazy declaration. Same rule as
+      `_lazy_bc_spec`'s repeated `path.exists()`: a check that needs no grid belongs at
+      the call.
+      **`Run.resolution` gained `resolved_cells`.** An array package has neither records
+      nor an `ncpl`, so both existing columns said nothing about it -- the same shape
+      ledger 280 fixed for the list form.
+      **What is still eager-only:** a per-column payload the caller supplies inline
+      (`recharge=<ncpl array>`). Laziness cannot rescue it -- an inline array is an
+      inline array -- so it stays unsaveable for ledger 193's reason and is classified
+      `unverifiable` by ledger 282 rather than moving silently.

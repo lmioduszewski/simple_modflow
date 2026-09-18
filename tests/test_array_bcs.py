@@ -78,11 +78,20 @@ def test_irch_none_is_the_explicit_opt_out(ctx):
     assert "irch" not in mf.rch.array(recharge=1e-4, irch=None, context=ctx).options
 
 
-def test_irch_top_active_needs_a_domain():
-    """Silently defaulting to layer 1 is what this refuses to do."""
+def test_irch_top_active_needs_a_domain(canonical_run):
+    """Silently defaulting to layer 1 is what this refuses to do.
+
+    A `context=` that carries no domain still cannot resolve `top_active` and still
+    raises. With NO context the declaration is now LAZY instead (ledger 285) -- the
+    domain comes from the discretization at build time, so there is nothing to refuse.
+    """
+
+    from myflopy.specs import ModelContext
 
     with pytest.raises(ValueError, match="active-cell array"):
-        mf.rch.array(recharge=1e-4)
+        mf.rch.array(recharge=1e-4, context=ModelContext(grid=canonical_run.vor))
+
+    assert sorted(mf.rch.array(recharge=1e-4).inputs) == ["irch"]
 
 
 def test_an_unknown_irch_word_says_so(ctx):
@@ -147,12 +156,17 @@ def test_an_omitted_et_surface_is_the_model_top_not_the_datum(ctx, canonical_run
 def test_an_et_surface_that_cannot_be_resolved_is_refused(canonical_run):
     """Refusing beats substituting: writing a number the caller never gave is the defect.
 
-    `ievt='top_active'` already refuses a missing context for the same reason, so this
-    is the rule the helper already followed one argument along.
+    The refusal is for a `context=` that cannot answer -- one with no surfaces and a
+    grid with no elevation table. With NO context the declaration DEFERS instead
+    (ledger 285), and the model top comes off the built discretization.
     """
 
+    from myflopy.specs import ModelContext
+
     with pytest.raises(ValueError, match="surface"):
-        mf.evt.array(rate=1e-4, depth=5.0, ievt=None)
+        mf.evt.array(rate=1e-4, depth=5.0, ievt=0, context=ModelContext(domain=np.ones((1, 6), dtype=int)))
+
+    assert sorted(mf.evt.array(rate=1e-4, depth=5.0, ievt=None).inputs) == ["surface"]
 
 
 def test_a_flat_land_surface_resolves_to_a_scalar(ctx, canonical_run):
@@ -177,6 +191,7 @@ def test_a_flat_land_surface_resolves_to_a_scalar(ctx, canonical_run):
         assert np.asarray(spec.options["surface"]).size == int(canonical_run.vor.ncpl)
 
 
+@pytest.mark.parametrize("lazily", [False, True], ids=["eager", "lazy"])
 @pytest.mark.parametrize(
     "keyword, value",
     [
@@ -185,7 +200,7 @@ def test_a_flat_land_surface_resolves_to_a_scalar(ctx, canonical_run):
         ("observations", "offset"),
     ],
 )
-def test_a_per_feature_value_is_refused_on_every_keyword(ctx, keyword, value):
+def test_a_per_feature_value_is_refused_on_every_keyword(ctx, keyword, value, lazily):
     """The refusal saw `fields` only -- `{"recharge"}` -- so every other keyword passed.
 
     Measured: `recharge=Spread(...)` refused, `irch=Spread(...)` accepted AND digested,
@@ -194,9 +209,12 @@ def test_a_per_feature_value_is_refused_on_every_keyword(ctx, keyword, value):
     """
 
     payload = mf.Spread("x") if value == "spread" else mf.CellSurfaceOffset("model_top")
+    # The LAZY branch returns before `_array_bc_values`, so the refusal has to be
+    # repeated there or it fires at BUILD instead of at the call (ledger 285).
+    index = {} if keyword == "irch" else ({} if lazily else {"irch": 0})
 
     with pytest.raises(TypeError, match=keyword):
-        mf.rch.array(recharge=1e-4, **{keyword: payload}, **({} if keyword == "irch" else {"irch": 0}))
+        mf.rch.array(recharge=1e-4, **{keyword: payload}, **index)
 
 
 def _written_evt(tmp_path, tag, ctx, spec):

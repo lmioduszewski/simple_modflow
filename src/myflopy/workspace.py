@@ -1415,6 +1415,16 @@ class Run:
                     if isinstance(records, dict) and records:
                         first = records[min(records)]
                         row["resolved_records"] = len(first)
+                    # An ARRAY-form package has neither: it resolves to one value per
+                    # COLUMN, so the honest count is the length of the layer index it
+                    # built (ledger 285). Without this the array rows carried a verdict
+                    # and nothing else, which is the shape ledger 280 fixed for the
+                    # list form.
+                    for index_name in ("irch", "ievt"):
+                        index = options.get(index_name)
+                        size = getattr(index, "size", None)
+                        if size:
+                            row["resolved_cells"] = int(size)
                 rows.append(row)
         return rows
 
