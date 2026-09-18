@@ -599,6 +599,17 @@ def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **op
             eager,
             metadata={k: v for k, v in eager.metadata.items() if k != PIN_VOIDED},
         )
+    # Record what was actually BUILT, so the run freezes records rather than this
+    # recipe. Without it a reopened run goes back to the GeoPackage -- the dependence
+    # ledger 251's snapshot exists to remove -- and dies if the file has moved.
+    # `ModelSpec.build` collects this into `BuiltModel.resolved` and aliases the key
+    # for a `mf.ref` (ledger 280).
+    eager = _replace(eager, name=_spec.name)
+    resolved = getattr(model, "_myflopy_resolved", None)
+    if resolved is None:
+        resolved = {}
+        model._myflopy_resolved = resolved
+    resolved[_spec.name] = eager
     return eager.build(model)
 
 

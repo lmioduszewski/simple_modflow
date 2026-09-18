@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3539 passed / 4 skipped**, 2026-09-17): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3543 passed / 4 skipped**, 2026-09-17): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -437,8 +437,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the context carries none, which is the normal case after `with_grid` since that drops
   both. Reading the idomain off `model.modelgrid` instead is wrong: flopy synthesizes an
   all-ones float array where the package's own field says None.
-  **NOT yet: the frozen snapshot** -- a lazy run still reopens from its recipe, so it is
-  rebuildable only while its GeoPackage is there. That is commit 5c.
+  **The run freezes what it BUILT** (ledger 280): the snapshot holds records and the
+  new mesh's pin, so a lazy run rebuilds with its GeoPackage deleted -- inline AND
+  through `mf.ref`, which failed where inline succeeded because `freeze._for` keys on
+  the DECLARED entry's name and a `PackageRef`'s name is its library key. The declared
+  spec keeps its recipe and stays `rebuilt`; the snapshot is pinned and reads `stale`,
+  which is correct for something already resolved. `Run.resolution` reports
+  `resolved_ncpl` for a discretization and `resolved_records` for a boundary condition.
   **A resolved package also carries a PIN** (ledger 250, 2026-09-13) -- `grid_pin(grid)`,
   a hash of the mesh's CONNECTIVITY (the cell count and each cell's canonical vertex
   ring; NOT the vertex count, which FloPy computes at write time) and nothing continuous. That closes the range check's gap: a

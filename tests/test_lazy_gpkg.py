@@ -273,3 +273,115 @@ def test_a_rename_reaches_the_built_package(source, meshes, tmp_path):
     model = sim.build(tmp_path / "rename").simulation.get_model("m")
 
     assert "CHD_WEST" in model.get_package_list()
+
+
+def _project_run(tmp_path, source, grid, *, use_ref):
+    """Prepare and build a one-BC run, either inline or through `mf.ref`."""
+
+    from myflopy.workspace import Project
+
+    project = Project(tmp_path / "proj", name="p")
+    lazy = mf.chd.gpkg(source, layer="chd", nper=1, head="head")
+    if use_ref:
+        project.add_package("chd/west", lazy)
+        packages = [mf.disv(_stack()), mf.ref("chd/west")]
+    else:
+        packages = [mf.disv(_stack()), lazy]
+    project.add_simulation(
+        mf.simulation(
+            mf.gwf("m", context=ModelContext(grid=grid), packages=packages),
+            name="s", packages=[mf.tdis(nper=1)],
+        )
+    )
+    run = project.prepare_run("r", "s")
+    run.build()
+    return run
+
+
+@pytest.mark.parametrize("use_ref", [False, True], ids=["inline", "mf.ref"])
+def test_a_lazy_run_rebuilds_with_its_geopackage_deleted(
+    source, meshes, tmp_path, use_ref
+):
+    """The snapshot must hold RECORDS, not the recipe that points back at the file.
+
+    `mf.ref` is parametrized because it is the DOCUMENTED library path and it failed
+    where inline succeeded: `freeze._for` reads `name` off the DECLARED entry, and a
+    `PackageRef`'s name is its library KEY ("chd/west"), while a builder only knows the
+    resolved spec's own name ("chd"). The mismatch is completely silent -- the snapshot
+    simply keeps the recipe, and nothing says so until the file moves.
+    """
+
+    import shutil
+
+    from myflopy.project.freeze import thaw_simulation
+
+    # A PRIVATE copy: the fixture is module-scoped, and deleting it broke every test
+    # that ran after this one. A shared fixture is read-only by contract (ledger 48).
+    private = tmp_path / "gis"
+    private.mkdir()
+    shutil.copy(source, private / source.name)
+
+    small, _ = meshes
+    run = _project_run(tmp_path, private / source.name, small, use_ref=use_ref)
+    before = (
+        run.built.built_model("m").model.get_package("chd")
+        .stress_period_data.get_data(0)
+    )
+
+    shutil.rmtree(private)
+
+    thawed = thaw_simulation(run.workspace)
+    rebuilt = thawed.build_flopy(workspace=tmp_path / "again")
+    after = rebuilt.built_model("m").model.get_package("chd").stress_period_data.get_data(0)
+
+    assert len(after) == len(before) > 0
+    assert [tuple(r)[0] for r in after] == [tuple(r)[0] for r in before]
+
+
+def test_the_snapshot_holds_records_and_the_declared_spec_keeps_its_recipe(
+    source, meshes, tmp_path
+):
+    """Two different things, and each has to stay itself.
+
+    The snapshot is the resolved EAGER equivalent -- pinned, `stale`, no recipe -- so a
+    reopened run rebuilds exactly what ran. The library's spec keeps the recipe and
+    stays `rebuilt`, so it can still move to another mesh.
+    """
+
+    from myflopy.grid_identity import GRID_PIN, GRID_PIN_OPTIONS, grid_pin
+    from myflopy.project.freeze import thaw_simulation
+
+    small, _ = meshes
+    declared = mf.chd.gpkg(source, layer="chd", nper=1, head="head")
+    run = _project_run(tmp_path, source, small, use_ref=False)
+    frozen = next(
+        p for p in thaw_simulation(run.workspace).models[0].packages
+        if getattr(p, "name", None) == "chd"
+    )
+
+    assert not frozen.inputs, "the recipe must not survive into the snapshot"
+    assert len(frozen.options["stress_period_data"][0]) > 0
+    assert frozen.metadata[GRID_PIN] == grid_pin(small)
+    assert frozen.metadata[GRID_PIN_OPTIONS] == ["stress_period_data"]
+    assert package_move(frozen)[0] == "stale", "a resolved snapshot IS pinned"
+
+    assert declared.inputs, "the declared spec keeps its recipe"
+    assert package_move(declared)[0] == "rebuilt"
+
+
+def test_the_resolution_report_says_what_each_package_resolved_to(
+    source, meshes, tmp_path
+):
+    """`ncpl` is what a lazy DISV resolves to; a lazy BC resolves to RECORDS.
+
+    Reading `options["ncpl"]` off a boundary condition gave `None` -- a column that
+    said nothing for every package except the discretization.
+    """
+
+    small, _ = meshes
+    run = _project_run(tmp_path, source, small, use_ref=False)
+    rows = {row["package"]: row for row in run.resolution}
+
+    assert rows["disv"]["resolved_ncpl"] == small.ncpl
+    assert rows["chd"]["resolved_records"] > 0
+    assert "resolved_ncpl" not in rows["chd"], "a BC resolves to records, not a mesh"

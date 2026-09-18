@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 279 entries (280 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 280 entries (281 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 280 | A lazy `.gpkg` run went back to its GeoPackage on reopen | 2026-09-17 |
 | 279 | A `.gpkg` boundary condition can be declared before its grid exists | 2026-09-17 |
 | 278 | A builder never learned which package it was building | 2026-09-17 |
 | 277 | The recipe a lazy `.gpkg` will carry | 2026-09-17 |
@@ -10881,3 +10882,37 @@ same day, which is the useful part of the result.
       is untested against it. Both are commit 5c. Until then a lazy `.gpkg` run is
       rebuildable only while its GeoPackage is still there -- the dependence ledger 251
       exists to remove.
+
+280. **A lazy `.gpkg` run went back to its GeoPackage on reopen (2026-09-17).**
+      Ledger 279 made the seven list BCs resolve at build time and deliberately stopped
+      short of the snapshot. Without it a run froze the RECIPE, so reopening rebuilt
+      from the GeoPackage -- the dependence ledger 251's snapshot exists to remove.
+      Measured: delete the source and thaw, `FileNotFoundError: GeoPackage not found`.
+      The builder records what it BUILT into `model._myflopy_resolved`, which
+      `ModelSpec.build` collects into `BuiltModel.resolved` and `Run._freeze` passes as
+      `resolved=`. Measured after: both paths thaw with the file deleted, 11 records,
+      the same cells. The frozen spec carries `inputs == {}`, the records, and the new
+      mesh's pin with `GRID_PIN_OPTIONS` -- so it reads `stale`, which is CORRECT for a
+      resolved snapshot -- while the declared spec keeps its recipe and stays `rebuilt`.
+      Two different objects, each staying itself.
+      **`mf.ref` failed where inline succeeded, and it is the DOCUMENTED library path.**
+      `freeze._for` reads `name` off the DECLARED entry, and a `PackageRef`'s name is
+      its library KEY (`"chd/west"`), while a builder only ever knows the resolved
+      spec's own name (`"chd"`). The mismatch is COMPLETELY silent: no warning, a
+      readable snapshot, an identical `Run.resolution` row -- the snapshot simply keeps
+      the recipe and nothing says so until the file moves. `ModelSpec.build` now aliases
+      the resolved spec under the ref key as well, keying off `zip(self.packages,
+      packages)` where both the declared entry and its resolution are in scope. The
+      test is PARAMETRIC over inline and `mf.ref` for exactly this reason; an
+      inline-only test passes with the alias deleted.
+      **`Run.resolution` reports what each package actually resolved TO.**
+      `resolved_ncpl` was read off `options["ncpl"]`, which a boundary condition does
+      not have -- so the column said `None` for every package except the
+      discretization. A lazy DISV resolves to a mesh and reports `resolved_ncpl`; a lazy
+      BC resolves to RECORDS and reports `resolved_records`; a package that resolved
+      nothing reports neither.
+      **A test deleted a module-scoped fixture's directory** and broke every test after
+      it -- the shared-fixture hazard ledger 48 records, reproduced here by the test
+      written to prove the fix. It copies the GeoPackage into its own `tmp_path` first.
+      A shared fixture is read-only by contract, and "my test cleans up after itself" is
+      how that contract gets broken.

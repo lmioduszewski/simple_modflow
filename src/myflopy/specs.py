@@ -3149,6 +3149,17 @@ class ModelSpec:
         # (ledger 270).
         context = getattr(model, "myflopy_context", context)
         resolved_specs = dict(getattr(model, "_myflopy_resolved", {}) or {})
+        # ALSO key a resolved spec by the `mf.ref` KEY it was declared under, because
+        # that is the name the frozen snapshot will look it up by. `freeze._for` reads
+        # `getattr(package, "name")` off the DECLARED entry, and a `PackageRef`'s name
+        # is its library key ("chd/west"), while a builder only ever knows the resolved
+        # spec's own name ("chd"). The mismatch is COMPLETELY silent -- the snapshot
+        # just keeps the recipe, and the run dies on reopen looking for a file that has
+        # moved. `mf.ref` is the documented library path, so this is the common case
+        # rather than an edge (ledger 280).
+        for entry, spec in zip(self.packages, packages, strict=True):
+            if isinstance(entry, PackageRef) and spec.name in resolved_specs:
+                resolved_specs[entry.key] = resolved_specs[spec.name]
         # Before the hooks, so that a stale grid is reported by name rather than as
         # whatever a hook happens to raise first. A hook attaches FloPy objects
         # directly to the model rather than as specs, so cellids it adds are outside

@@ -1393,7 +1393,18 @@ class Run:
                 }
                 concrete = resolved.get(row["package"])
                 if concrete is not None:
-                    row["resolved_ncpl"] = (concrete.options or {}).get("ncpl")
+                    # `ncpl` is what a lazy DISV resolves TO; a lazy boundary condition
+                    # resolves to RECORDS, and reading `options["ncpl"]` off one gave
+                    # `None` -- a column that said nothing for every package except the
+                    # discretization. Report whichever the package actually produced
+                    # (ledger 280).
+                    options = concrete.options or {}
+                    if "ncpl" in options:
+                        row["resolved_ncpl"] = options["ncpl"]
+                    records = options.get("stress_period_data")
+                    if isinstance(records, dict) and records:
+                        first = records[min(records)]
+                        row["resolved_records"] = len(first)
                 rows.append(row)
         return rows
 
