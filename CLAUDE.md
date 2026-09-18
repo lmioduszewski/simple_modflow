@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3561 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3600 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -424,6 +424,23 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   that still falls inside a LARGER new grid passes, which the grid pin closes; advanced
   packages are not cellid-checked because the cellid's position differs per package
   (SFR's `packagedata[1]` is a cellid, LAK's is a stage).
+- **`mf.rch(...)` / `mf.evt(...)` declared WITHOUT `context=` resolve at BUILD time too**
+  (ledger 284, 2026-09-18) -- measured 28 records at ncpl 28 and 92 at ncpl 92,
+  byte-identical to the eager form on each. The recipe is FLAT builder kwargs in
+  `inputs`, recording only what the caller SET. **Its precondition is WIDER than the
+  `.gpkg` one**: the areal builders touch only `context.domain` and `grid.ncpl`, both of
+  which the built DISV carries, so `_lazy_resolution_context(needs_grid=False)` keeps the
+  lazy form from being NARROWER than the eager one -- it accepts a bare
+  `ModelContext(domain=...)` and a model with no context at all, and synthesizes an
+  all-active domain when the DISV declares no `idomain=`. **Caller-typed cell identity is
+  REFUSED in a lazy recipe** -- an explicit `cells=` list, `name_by_cell=`, a
+  `{cellid: value}` mapping, a per-cell sequence -- all still available with `context=`.
+  Two traps it introduced and the mutation check caught: binding the partial to
+  `RCHBuilder` narrowed the option check so the lazy branch refused `print_input` (a
+  `lazy != eager` divergence a typo test cannot see -- assert BOTH directions), and a
+  `package=` KEYWORD on the partial moved the digest, because `package_digest` pickles
+  `name` and the builder reference into one memo table and an interned string collides
+  (168 bytes vs 172; `docs/reproducers/digest_pickle_memo.py`).
 - **A `.gpkg` list BC declared WITHOUT `context=` resolves at BUILD time** (ledger 279,
   2026-09-17) -- one declaration builds correctly on two meshes (measured: chd 11
   records at ncpl 36, 13 at ncpl 100; drn 10 and 7 carrying a `Spread` and a
@@ -731,15 +748,20 @@ disagrees with what the stack resolves is refused, naming both shapes.
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
   `mf.GridSpec.voronoi(...).resolve(workspace)`), put it in `ModelContext(grid=vor, domain=idomain)`,
-  then declare packages. **Required today** for `mf.uzf/sfr/lak/.gpkg` because they resolve cells
+  then declare packages. **Required today** for `mf.uzf/sfr/lak` because they resolve cells
   eagerly at declaration (e.g. `UZFBuilder.build()` bakes resolved data into the `PackageSpec`).
+  **The seven `.gpkg` forms no longer need it** (ledger 279), and neither does
+  `mf.rch(...)`/`mf.evt(...)` (ledger 284) — omit `context=` and they resolve at BUILD
+  time against whatever grid the model supplies. Passing `context=` still resolves and
+  pins at declaration, unchanged.
 - **Deferred** (`mf.gwf().with_grid(mf.GridSpec.voronoi(boundary=<gpkg>, refinement=<gpkg>))`):
   the project builds the grid at run time into `run.workspace/_grid/<model>` and populates
   `context.grid`. In `ModelSpec.build` the grid resolves BEFORE packages build, and the model
   carries `model.myflopy_context` — so deferred GIS packages are *feasible*, just not wired: the
   helpers would need a grid-lazy mode emitting a `PackageSpec` whose `build(model)` resolves against
-  `model.myflopy_context` instead of resolving eagerly. Until then, deferred GridSpec composes only
-  with disv + simple BCs, not with `mf.uzf/sfr/lak`.
+  `model.myflopy_context` instead of resolving eagerly. **That mode now exists** for the seven
+  `.gpkg` forms and for `mf.rch`/`mf.evt` — omit `context=`. Deferred GridSpec therefore composes
+  with disv, the list BCs and areal recharge/ET; still not with `mf.uzf/sfr/lak`.
 
 Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
 

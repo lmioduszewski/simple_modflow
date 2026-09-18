@@ -127,8 +127,12 @@ def test_package_api_evt_uses_builder_by_default_and_flopy_for_direct_data():
     direct = mf.evt(stress_period_data={0: [[(0, 3), 100.0, 2.0e-3, 2.5]]})
     assert direct.metadata == {}
 
-    with pytest.raises(TypeError, match="context=, nper=, rate=, and depth="):
+    # `context=` stopped being required in ledger 284, so the message names what still
+    # is. `depth=` missing is refused with or without one.
+    with pytest.raises(TypeError, match="nper=, rate= and depth="):
         mf.evt(context=_context(), nper=1, rate=2.0e-3)  # depth missing
+    with pytest.raises(TypeError, match="nper=, rate= and depth="):
+        mf.evt(nper=1, rate=2.0e-3)  # depth missing, and no context either
 
 
 def test_evt_builder_writes_real_flopy_package(tmp_path):

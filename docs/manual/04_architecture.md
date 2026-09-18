@@ -302,8 +302,11 @@ every package before anything is built, and `run.resolution` is the record after
   grid, because MF6 requires `gwfgwt`/`gwfgwe`/`gwfprt` models to share a
   discretization and cannot detect a same-size violation.
 
-> **To move a model's boundary conditions to a new grid**, re-declare them against it.
-> Lazy `.gpkg` resolution is the next piece of planned work (B2). See
+> **To move a model's boundary conditions to a new grid**, declare them LAZILY — omit
+> `context=` and they resolve against whatever grid the build supplies. That covers the
+> seven `.gpkg` forms (ledger 279) and `mf.rch(...)` / `mf.evt(...)` (ledger 284);
+> `mf.uzf/sfr/lak` still resolve eagerly and must be re-declared. Anything given a
+> `context=` also resolves at declaration and must be re-declared. See
 > [Chapter 12, §12.5](12_projects_runs.md).
 
 ---

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 283 entries (284 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 284 entries (285 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 284 | Recharge and ET can be declared before their grid exists | 2026-09-18 |
 | 283 | The array form put the ET surface at the DATUM, and two arguments went missing on the way to the builder | 2026-09-18 |
 | 282 | An array-form boundary condition names its cells by POSITION, and nothing was reading that | 2026-09-18 |
 | 281 | Two ways a package escaped classification, both found by importing a real run | 2026-09-18 |
@@ -11029,3 +11030,62 @@ same day, which is the useful part of the result.
       direction -- what it used to build was maximum ET everywhere -- and it is also what
       makes the declaration lazy-eligible in the commit that follows: the set of
       declarations that raise is the set that becomes a recipe.
+
+284. **Recharge and ET can be declared before their grid exists (2026-09-18).**
+      `mf.rch(nper=, recharge=)` and `mf.evt(nper=, rate=, depth=)` without `context=`
+      now emit a RECIPE that resolves against whatever grid the build supplies. Measured:
+      one declaration built **28 records at ncpl 28 and 92 at ncpl 92**, byte-identical to
+      the eager form on each mesh, both packages, both periods -- and `with_grid` reports
+      it **`rebuilt`** where it read `stale` before, which is the user-visible point of B2.
+      **With `context=` nothing moved.** The eager branch still resolves at declaration
+      and still pins.
+      **The trigger is exactly the declaration that RAISED**, and that is a rule rather
+      than a coincidence: all four target forms refused before, so no stored run can hold
+      one and no digest can move. The `.gpkg` commit had the same property for free; the
+      array form does NOT, which is why its trigger is narrower still (next entry).
+      **The precondition had to be WIDER than the `.gpkg` one, not the same.** A spy grid
+      measured the areal builders touching exactly two things -- `context.domain` and
+      `grid.ncpl` -- and both are on the built discretization, so demanding a grid object
+      would make the lazy form refuse two shapes the EAGER form accepts: a bare
+      `ModelContext(domain=idomain)`, and a model declared with no context at all, which
+      this repo's own examples use. `_lazy_resolution_context` grew `needs_grid=False`
+      rather than a sibling, so the ordering and ncpl-agreement rules stay in one place.
+      It also synthesizes an ALL-ACTIVE domain when there is neither a context nor an
+      `idomain=` on the discretization -- an absent IDOMAIN means every cell active in
+      MF6, so saying so is not a guess -- because otherwise both routes to a cell count
+      are None and `_ArealBuilder` dies five frames down naming neither the package nor
+      the fix.
+      **What a recipe may NOT carry is cell identity the caller chose**: an explicit
+      `cells=` list, `name_by_cell=`, a `{cellid: value}` mapping, or a per-cell sequence.
+      All four are refused at the call, naming `context=`. The `cells=` list is the sharp
+      one -- measured before the refusal, a lazy `cells=[1, 2, 3]` built the SAME three
+      records at ncpl 28 and at ncpl 92, reported `rebuilt`, and warned about nothing.
+      `name_by_cell` does not even error on another mesh: it MISSES and falls back to a
+      generated `<name>_<layer>_<cell>`, and its tuple keys do not survive JSON either.
+      These stay available EAGERLY, so this refuses a combination, not a capability.
+      **Two defects this commit introduced and the mutation check caught**, both worth
+      recording because the obvious test passes through either:
+      **(a) binding the partial to `RCHBuilder` narrowed the option check.**
+      `_accepted_options` recurses into a partial's bound ARGS and never reads
+      `mf6_targets` off the partial itself, so setting that attribute was dead code and
+      the accepted set became `RCHBuilder`'s eight parameters -- the lazy branch REFUSED
+      `print_input`, `print_flows` and `auxiliary`, real MF6 options the eager branch
+      accepts. `lazy == eager` (ledger 279) is broken by NARROWING just as surely as by
+      widening, and a test asserting "a typo is refused" passes the whole time. The test
+      asserts both directions now, per package and per option.
+      **(b) a `package="rch"` keyword on the partial MOVED THE DIGEST.**
+      `package_digest` pickles `name` and the builder reference into ONE payload, so they
+      share a memo table: a declared spec holds the same INTERNED string in both places
+      and pickle emits a back-reference, while a spec revived from JSON holds two distinct
+      equal strings and pickle writes it out twice. **168 bytes against 172** -- equal
+      values, different digest, and `runs.drift()` would report every reloaded package as
+      EDITED permanently. Avoided by keeping `keywords` empty and keying the builder off
+      the bound FloPy class. **`package_digest` itself is NOT fixed**: pre-pickling the
+      four remaining payload elements would make it memo-independent and would move every
+      stored digest, which is a migration rather than a side effect of a feature commit.
+      The exposure is narrow -- `options` and `inputs` are already pre-pickled, so a
+      collision needs a second string equal to `name` inside the builder reference or
+      `requires`, and nothing in the library puts one there. Reproducer:
+      `docs/reproducers/digest_pickle_memo.py`.
+      **Not carried:** `nper` is still the caller's, and nothing compares it to the
+      simulation's `tdis` -- true of the eager form too, and a separate change.

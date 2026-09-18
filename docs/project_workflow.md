@@ -57,18 +57,21 @@ project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
 ```
 
-**Swapping the grid does not re-map the packages.** GIS-driven helpers
-(`mf.rch.gpkg(...)`, `mf.drn.gpkg(...)`, `K`-from-vector, …) resolve their cells when
-you **declare** them, not when the model builds, so their records carry the cell
-numbers of the grid that was on the context at declaration. `replace_grid` changes
-the grid and leaves those records alone.
+**Swapping the grid re-maps only what was declared LAZILY.** A GIS-driven helper given
+a `context=` (`mf.drn.gpkg(path, context=ctx, …)`, `mf.rch(context=ctx, …)`,
+`K`-from-vector, …) resolves its cells when you **declare** it, not when the model
+builds, so its records carry the cell numbers of the grid that was on the context at
+declaration. Omit `context=` and the same declaration becomes a RECIPE that resolves
+against whatever grid the build supplies: the seven `.gpkg` forms (ledger 279) and
+`mf.rch(...)` / `mf.evt(...)` (ledger 284). `mf.uzf/sfr/lak` are still eager-only.
 
 Since 2026-09-13 that is refused rather than run: `ModelSpec.build` compares the
 built DISV, the context domain and every package's cellids against the grid, and
 raises naming what is stale. It used to build and run — MF6 applied the old cell
-numbers to the new geometry and reported Normal termination. To move a model to a
-new grid today, re-declare its GIS packages against the new grid. Lazy resolution,
-which makes the swap work as this section once promised, is planned work.
+numbers to the new geometry and reported Normal termination. **Read
+`sim.move_report()` before `prepare_run`**: a package declared lazily reads `rebuilt`
+and moves itself, while one declared with `context=` reads `stale` and must be
+re-declared against the new grid.
 
 ## Coupled (multi-model) runs
 

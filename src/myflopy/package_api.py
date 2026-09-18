@@ -55,7 +55,13 @@ from myflopy.geopackage import (
     Spread,
     SurfaceResolver,
 )
-from myflopy.grid_identity import PIN_VOIDED, pin_metadata
+from myflopy.grid_identity import (
+    GRID_PIN,
+    GRID_PIN_OPTIONS,
+    PIN_VOIDED,
+    disv_pin,
+    pin_metadata,
+)
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
 from myflopy.modflow.mf6.lakes import (
@@ -502,18 +508,27 @@ def _built_discretization(model):
     return None
 
 
-def _lazy_resolution_context(model, spec_name: str):
+def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
     """The three preconditions a lazy boundary condition needs, in order.
 
     Each replaces a failure that names nothing. Returns a ``ModelContext`` local to this
     package's resolution -- deliberately NOT published onto ``model.myflopy_context``,
     because publishing would change what every later package reads, including the eager
     ones, and this commit's contract is that the eager path does not move.
+
+    ``needs_grid=False`` is for the AREAL builders, which read the idomain and a cell
+    count and nothing else -- measured with a spy grid: `mf.rch(context=...)` touches
+    `get_disv_gridprops` (for the pin) and `ncpl`, no geometry, no CRS, no surfaces.
+    Both are on the built discretization, so demanding a grid object would make the lazy
+    form strictly NARROWER than the eager one, which accepts a bare
+    ``ModelContext(domain=idomain)`` and a model declared with no context at all
+    (ledger 284). The ORDERING and ncpl-agreement rules stay here either way, which is
+    the reason this is a parameter rather than a second function.
     """
 
     context = getattr(model, "myflopy_context", None)
     grid = getattr(context, "grid", None)
-    if grid is None:
+    if grid is None and needs_grid:
         raise ValueError(
             f"Package {spec_name!r} was declared without `context=`, so its grid has to "
             "come from the model at build time -- and this model's context carries none. "
@@ -531,7 +546,7 @@ def _lazy_resolution_context(model, spec_name: str):
         )
 
     ncpl = getattr(getattr(discretization, "ncpl", None), "get_data", lambda: None)()
-    if ncpl is not None and int(ncpl) != int(grid.ncpl):
+    if ncpl is not None and grid is not None and int(ncpl) != int(grid.ncpl):
         raise ValueError(
             f"Package {spec_name!r} resolves against this model's grid "
             f"({grid.ncpl} cells) at build time, but the discretization "
@@ -551,6 +566,16 @@ def _lazy_resolution_context(model, spec_name: str):
         # where it runs normally on the wrong boundary.
         idomain = getattr(discretization, "idomain", None)
         domain = idomain.get_data() if idomain is not None else None
+
+    if domain is None and grid is None and ncpl is not None:
+        # Nothing left to count cells with: no context, and a discretization declared
+        # without `idomain=`. The areal builders fall back to `context.grid.ncpl` for
+        # their cell list, so both routes are None here and they die five frames down
+        # with a message naming neither the package nor the fix. An absent IDOMAIN means
+        # every cell ACTIVE in MF6, so saying that outright is not a guess -- it is the
+        # same model, written down (ledger 284).
+        nlay = getattr(getattr(discretization, "nlay", None), "get_data", lambda: None)()
+        domain = np.ones((int(nlay or 1), int(ncpl)), dtype=int)
 
     surfaces = getattr(context, "surfaces", None)
     if surfaces is None and getattr(grid, "gdf_topbtm", None) is None:
@@ -618,6 +643,187 @@ def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **op
         model._myflopy_resolved = resolved
     resolved[_spec.name] = eager
     return eager.build(model)
+
+
+#: Keyed by the FLOPY class, not by the package name. The lazy builder is bound to its
+#: FloPy class through a ``functools.partial`` so the option check sees the real
+#: package's signature, and looking the builder up from that same object is what keeps
+#: the partial's ``keywords`` EMPTY -- see :func:`_lazy_areal_factory` for why a
+#: keyword there moved the digest (ledger 284).
+_AREAL_BUILDERS = {
+    flopy.mf6.ModflowGwfrch: RCHBuilder,
+    flopy.mf6.ModflowGwfevt: EVTBuilder,
+}
+
+
+#: What each areal declaration key means when the caller said nothing. A recipe records
+#: only what DIFFERS from these -- the `_explicit_options` discipline of ledger 258 --
+#: so adding a defaulted argument later cannot move a stored digest.
+_AREAL_DEFAULTS = {
+    "cells": "top_active",
+    "layer": 0,
+    "name_by_cell": None,
+    "boundnames": False,
+}
+
+
+def _explicit_areal(**declared: Any) -> dict[str, Any]:
+    """The areal declaration, minus everything left at its default."""
+
+    return {
+        key: value
+        for key, value in declared.items()
+        if key not in _AREAL_DEFAULTS or value != _AREAL_DEFAULTS[key]
+    }
+
+
+def _refuse_caller_typed_cells(recipe: dict[str, Any], *, verb: str) -> None:
+    """Refuse the parts of an areal declaration that name cells the caller chose.
+
+    A lazy recipe is a promise that the package can be rebuilt on another mesh, and
+    four of these cannot keep it:
+
+    * an explicit ``cells=`` list -- the numbers are the caller's, and **you cannot pin
+      cell numbers the caller typed**. Measured: a lazy `cells=[1, 2, 3]` built the SAME
+      three records at ncpl 28 and at ncpl 92, with a `rebuilt` verdict and no warning.
+    * ``name_by_cell=`` -- keyed by cell id, and on another mesh it does not error, it
+      MISSES and falls back to a generated ``<name>_<layer>_<cell>``. Its tuple keys do
+      not survive a JSON round trip either: ``_json_value`` stringifies them and
+      ``_spec_value`` revives only int-like keys, so ``(0, 3)`` comes back ``'(0, 3)'``.
+    * a ``{cellid: value}`` mapping, for the same two reasons.
+    * a per-cell SEQUENCE, whose length is the selected-cell count on the mesh it was
+      written for.
+
+    All four are still available EAGERLY -- `context=` resolves them against a known
+    grid and pins the result -- so this refuses a combination, not a capability, and
+    says which one to reach for. Refusing at the call rather than at build is the rule
+    `_lazy_bc_spec` already follows for a missing file and `nper=0`: neither needs a
+    grid, so neither belongs at build time.
+    """
+
+    def caller_typed(value) -> bool:
+        if isinstance(value, Mapping):
+            return not all(isinstance(key, int) for key in value)
+        return isinstance(value, Sequence) and not isinstance(value, str)
+
+    offenders: list[str] = []
+    if not isinstance(recipe.get("cells", "top_active"), str):
+        offenders.append("cells=[...] names cells by number")
+    if recipe.get("name_by_cell") is not None:
+        offenders.append("name_by_cell= is keyed by cell id")
+    for key in ("recharge", "rate", "depth", "surface"):
+        value = recipe.get(key)
+        if value is None:
+            continue
+        if caller_typed(value):
+            offenders.append(f"{key}= is per-cell rather than a scalar or {{period: scalar}}")
+        elif isinstance(value, Mapping) and any(caller_typed(item) for item in value.values()):
+            offenders.append(f"{key}= is per-cell within a period")
+    if not offenders:
+        return
+    raise TypeError(
+        f"{verb} was declared without `context=`, so it resolves against whatever grid "
+        "the build supplies -- and " + "; ".join(offenders) + ". Nothing can carry those "
+        "to another mesh. Pass `context=` to resolve and pin them against a known grid, "
+        "or give a scalar / {period: scalar} value here."
+    )
+
+
+#: The declaration keys an areal recipe carries. Everything else a lazy areal spec is
+#: handed is a FloPy option -- the split has to be decidable, because ``PackageSpec.build``
+#: splats ``inputs`` and ``options`` into one call and the builder sees them merged.
+_AREAL_RECIPE_KEYS = frozenset(
+    {"nper", "cells", "layer", "name_by_cell", "boundnames", "recharge", "rate", "depth", "surface"}
+)
+
+
+def _build_lazy_areal(package_class, model, *, _spec, **kwargs):
+    """Resolve an areal (RCH/EVT) declaration against the model's grid at build time.
+
+    The list form's counterpart to :func:`_build_lazy_list_bc`, and the same shape: the
+    declaration rides in ``PackageSpec.inputs``, the NAME comes from ``_spec`` rather
+    than from the recipe (ledger 278), and what was actually built is recorded so the
+    run freezes RECORDS rather than this recipe (ledger 251/280).
+
+    ``needs_grid=False``: these builders read the idomain and a cell count, both of
+    which the built discretization carries.
+
+    ``package_class`` is the FLOPY class, bound by :func:`_lazy_areal_factory` exactly
+    as :func:`_build_lazy_list_bc` binds its own, and it chooses the areal builder.
+    Binding ``RCHBuilder`` instead narrowed the accepted option set to that builder's
+    eight parameters, and the lazy branch then REFUSED ``print_input``, ``print_flows``
+    and ``auxiliary`` -- real MF6 options the eager branch accepts, a ``lazy != eager``
+    divergence in the narrowing direction. ``_accepted_options`` recurses into a
+    partial's bound ARGS and never reads ``mf6_targets`` off the partial itself, so
+    setting that attribute on the partial was dead code (ledger 284).
+    """
+
+    recipe = {key: value for key, value in kwargs.items() if key in _AREAL_RECIPE_KEYS}
+    options = {key: value for key, value in kwargs.items() if key not in _AREAL_RECIPE_KEYS}
+    context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
+    eager = _AREAL_BUILDERS[package_class](
+        context=context, name=_spec.name, options=options, **recipe
+    ).build()
+    if GRID_PIN not in (eager.metadata or {}):
+        # `_ArealBuilder.build` pins through `pin_metadata`, which fingerprints
+        # `context.grid` -- and a model declared with no context has none. The built
+        # DISV is the same mesh by another route, and `disv_pin` measured EQUAL to
+        # `grid_pin` on it, so the resolved package still records which mesh its
+        # records belong to instead of silently going unpinned (ledger 282 is what
+        # unpinned costs).
+        disv = _built_discretization(model)
+        pin = disv_pin(disv) if disv is not None else None
+        if pin is not None:
+            eager = eager.with_metadata(
+                **{GRID_PIN: pin, GRID_PIN_OPTIONS: ["stress_period_data"]}
+            )
+    resolved = getattr(model, "_myflopy_resolved", None)
+    if resolved is None:
+        resolved = {}
+        model._myflopy_resolved = resolved
+    resolved[_spec.name] = eager
+    return eager.build(model)
+
+
+@functools.cache
+def _lazy_areal_factory(package: str):
+    """A per-package lazy areal builder, bound to its builder class.
+
+    Memoized for the reason :func:`_lazy_factory` is: ``_wants_spec`` and
+    ``_required_keyword_only`` cache on the builder OBJECT and a ``functools.partial``
+    hashes by identity, so a fresh one per declaration would leak a cache entry a call.
+    """
+
+    flopy_class = getattr(flopy.mf6, _PACKAGE_EXPLORER_SPECS[package].flopy_class)
+    # ONE bound arg and NO keywords. Carrying the package name as a keyword instead
+    # measured a MOVED DIGEST across `to_dict`/`from_dict`: `package_digest` pickles
+    # `name` and the builder reference into one payload, a declared spec has the same
+    # INTERNED string in both places, and pickle emits a memo back-reference for the
+    # second -- 168 bytes against 172 for the revived spec, whose two strings are
+    # distinct objects. Equal values, different bytes, and `runs.drift()` would report
+    # every reloaded package as EDITED (ledger 284).
+    return functools.partial(_build_lazy_areal, flopy_class)
+
+
+def _lazy_areal_spec(package: str, *, name: str, recipe: dict[str, Any], options: dict[str, Any]):
+    """A lazy areal spec: the declaration in ``inputs``, resolved at build time."""
+
+    verb = f"mf.{package}"
+    _refuse_caller_typed_cells(recipe, verb=verb)
+    if int(recipe["nper"]) < 1:
+        raise ValueError("nper must be at least 1.")
+    return PackageSpec(
+        name,
+        _lazy_areal_factory(package),
+        dict(options),
+        requires=(),
+        # FLAT, not nested under one key: a recipe entry that shares a name with a FloPy
+        # option -- `boundnames` is the live one for both packages -- must COLLIDE, so
+        # that `packages.edit(key, boundnames=True)` is refused by name instead of
+        # reaching the builder twice and dying inside a `functools.partial`. Nesting
+        # hides every key from `_check_input_collisions` (ledger 284).
+        inputs=dict(recipe),
+    )
 
 
 @functools.cache
@@ -3484,10 +3690,23 @@ class _RCHPackage:
             return rch_spec(
                 stress_period_data, name=name, boundnames=boundnames, **options
             )
-        if context is None or nper is None or recharge is None:
+        if nper is None or recharge is None:
             raise TypeError(
                 "mf.rch requires either stress_period_data=, or the builder "
-                "arguments context=, nper=, and recharge=."
+                "arguments nper= and recharge= (plus context= to resolve eagerly)."
+            )
+        if context is None:
+            # LAZY: the same declaration, resolved against whatever grid the build
+            # supplies. The trigger is exactly the declaration that RAISED before, which
+            # is what keeps every stored digest still (ledger 284).
+            return _lazy_areal_spec(
+                "rch",
+                name=name,
+                recipe=_explicit_areal(
+                    nper=nper, recharge=recharge, cells=cells, layer=layer,
+                    name_by_cell=name_by_cell, boundnames=boundnames,
+                ),
+                options=options,
             )
         return RCHBuilder(
             context=context,
@@ -3853,11 +4072,27 @@ class _EVTPackage:
                 boundnames=boundnames,
                 **options,
             )
-        if context is None or nper is None or rate is None or depth is None:
+        if nper is None or rate is None or depth is None:
             raise TypeError(
                 "mf.evt requires either stress_period_data=, or the builder "
-                "arguments context=, nper=, rate=, and depth=."
+                "arguments nper=, rate= and depth= (plus context= to resolve eagerly)."
             )
+        if context is None:
+            if nseg != 1:
+                raise ValueError(
+                    "mf.evt(...): the domain-aware builder writes single-segment ET "
+                    "only. Use mf.evt.flopy(stress_period_data=..., nseg=...)."
+                )
+            recipe = _explicit_areal(
+                nper=nper, rate=rate, depth=depth, cells=cells, layer=layer,
+                name_by_cell=name_by_cell, boundnames=boundnames,
+            )
+            if surface is not None:
+                recipe["surface"] = surface
+            lazy_options = dict(options)
+            if auxiliary is not None:
+                lazy_options["auxiliary"] = auxiliary
+            return _lazy_areal_spec("evt", name=name, recipe=recipe, options=lazy_options)
         if nseg != 1:
             # `nseg` and `auxiliary` are NAMED parameters, so neither ever fell into
             # `**options`, and the builder branch assembled its kwargs without them:
