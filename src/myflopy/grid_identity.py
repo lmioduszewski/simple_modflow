@@ -478,9 +478,18 @@ def _cellids_in(options: dict[str, Any]):
         return tuple(int(part) for part in value)
 
     for records in blocks:
-        if not isinstance(records, (list, tuple)):
+        # A numpy RECARRAY is neither a list nor a tuple, and it is the shape FloPy
+        # itself produces -- so a package built from `.flopy(...)`, or rebuilt from a
+        # written MF6 run, was INVISIBLE here and classified "unchanged", the verdict
+        # that means MOVES UNTOUCHED. Measured: 118 cellids found through the `.gpkg`
+        # path, 0 through the identical data as a recarray (ledger 281).
+        if isinstance(records, np.ndarray):
+            records = records.tolist()
+        elif not isinstance(records, (list, tuple)):
             continue
         for record in records:
+            if isinstance(record, np.void):
+                record = record.tolist()
             if not isinstance(record, (list, tuple)):
                 continue
             for element in record:

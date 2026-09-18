@@ -691,3 +691,32 @@ def test_a_recipe_supplying_every_certified_option_supersedes_the_pin(source):
     # so the supersede branch cannot be reached by accident.
     with pytest.raises(TypeError, match="part of this package's recipe"):
         dataclasses.replace(pinned, inputs={"stress_period_data": "a recipe"})
+
+
+def test_a_recarray_of_records_is_not_invisible():
+    """FloPy's own record shape was skipped entirely, and read as `unchanged`.
+
+    `_cellids_in` accepted a list or a tuple of records. A numpy RECARRAY is neither --
+    and it is what FloPy produces, what a `.flopy(...)` escape hatch carries, and what
+    you get rebuilding specs from a written MF6 run. Measured on real data: 118 cellids
+    found through the `.gpkg` path, 0 through the identical records as a recarray, and
+    the package classified `unchanged` -- the verdict that means MOVES UNTOUCHED.
+    """
+
+    from myflopy.grid_identity import _cellids_in
+
+    records = np.rec.fromrecords(
+        [((0, 1), 5.0), ((0, 2), 6.0)], dtype=[("cellid", "O"), ("head", "f8")]
+    )
+    spec = mf.chd(stress_period_data={0: records}, name="chd")
+
+    assert len(list(_cellids_in(spec.options))) == 2
+    assert package_move(spec)[0] == "unverifiable"
+
+    # The same records as a plain list must behave identically -- the shape is not
+    # supposed to change the verdict.
+    plain = mf.chd(stress_period_data={0: [[(0, 1), 5.0], [(0, 2), 6.0]]}, name="chd")
+    assert package_move(plain) == package_move(spec)
+
+    # Control: a package that genuinely names no cells is still `unchanged`.
+    assert package_move(mf.npf(k=1.0))[0] == "unchanged"

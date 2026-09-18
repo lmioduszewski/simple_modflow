@@ -1383,11 +1383,21 @@ class Run:
         for model in getattr(self.spec, "models", ()) or ():
             built = built_models.get(model.name)
             resolved = dict(getattr(built, "resolved", {}) or {})
-            for package in model.packages:
+            # Classify the RESOLVED package, not the `mf.ref` naming it. A `PackageRef`
+            # carries no options, inputs or metadata, so `package_move` answered
+            # "unchanged" -- moves untouched -- for every row of a ref-declared model,
+            # which is the documented library path. Same shape as ledger 280's freeze
+            # mis-key: the declared entry and the thing it resolves to are not the same
+            # object, and only one of them can be classified.
+            library = dict(getattr(self, "_snapshot_specs", {}) or {})
+            for entry in model.packages:
+                package = entry
+                if isinstance(entry, PackageRef):
+                    package = library.get(entry.key) or resolved.get(entry.key) or entry
                 how, why = package_move(package)
                 row: dict[str, Any] = {
                     "model": model.name,
-                    "package": getattr(package, "name", "?"),
+                    "package": getattr(entry, "key", getattr(package, "name", "?")),
                     "how": how,
                     "why": why,
                 }

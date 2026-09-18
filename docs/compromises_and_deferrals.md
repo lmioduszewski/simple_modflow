@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 280 entries (281 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 281 entries (282 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 281 | Two ways a package escaped classification, both found by importing a real run | 2026-09-18 |
 | 280 | A lazy `.gpkg` run went back to its GeoPackage on reopen | 2026-09-17 |
 | 279 | A `.gpkg` boundary condition can be declared before its grid exists | 2026-09-17 |
 | 278 | A builder never learned which package it was building | 2026-09-17 |
@@ -10916,3 +10917,32 @@ same day, which is the useful part of the result.
       written to prove the fix. It copies the GeoPackage into its own `tmp_path` first.
       A shared fixture is read-only by contract, and "my test cleans up after itself" is
       how that contract gets broken.
+
+281. **Two ways a package escaped classification, both found by importing a real run
+      (2026-09-18).**
+      Rebuilding specs from a finished MF6 workspace -- the user's own workflow --
+      produced a model every row of whose `Run.resolution` read `unchanged`, the verdict
+      that means MOVES UNTOUCHED. Two independent causes, the same shape as ledger 280's
+      freeze mis-key: **the declared entry and the thing it resolves to are different
+      objects, and only one of them can be classified.**
+      **(a) `Run.resolution` classified the `mf.ref`, not the package it names.** A
+      `PackageRef` carries no `options`, `inputs` or `metadata`, so `package_move`
+      answered "names no cells" for every entry of a model declared the DOCUMENTED
+      library way. It resolves the ref against the run's own package copies first now.
+      **(b) `_cellids_in` skipped a numpy RECARRAY entirely.** It accepted a list or a
+      tuple of records; a recarray is neither -- and a recarray is what FloPy itself
+      produces, what a `.flopy(...)` escape hatch carries, and what rebuilding a spec
+      from a written run gives. Measured on the real Ten Trails boundaries: **118
+      cellids through the `.gpkg` path, 0 through the identical records as a recarray**,
+      and the package classified `unchanged` rather than `unverifiable`. The hand-written
+      list shape was fine the whole time, which is why every synthetic test passed.
+      **Neither was reachable from the test suite**, because every fixture builds its
+      records through a helper that emits lists. It took importing a bare MF6 workspace
+      -- no `run.json`, no `_library`, no frozen snapshot -- to walk into them. Both
+      tests now assert the recarray and list shapes classify IDENTICALLY, which is the
+      invariant that was actually broken: the shape of the data must not change the
+      verdict.
+      **What a reader should take from this:** `unchanged` is the dangerous verdict. The
+      other three refuse or warn; only this one lets a package through silently, so a
+      gap anywhere in the classification chain fails in that direction. Ledgers 271,
+      275, 280 and this one are all the same defect found in four different places.

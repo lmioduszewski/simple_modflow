@@ -292,3 +292,36 @@ def test_an_edited_package_is_refused_with_a_sentence_you_can_act_on(tmp_path):
 
     assert "EDITED after the library resolved them" in message
     assert message.count("package 'chd'") == 1, f"one defect, one sentence:\n{message}"
+
+
+def test_a_ref_declared_model_reports_what_its_packages_actually_are(tmp_path):
+    """`Run.resolution` classified the `mf.ref`, not the package it names.
+
+    A `PackageRef` carries no options, inputs or metadata, so `package_move` answered
+    `unchanged` -- moves untouched -- for EVERY row of a model declared the documented
+    library way. Same shape as ledger 280's freeze mis-key: the declared entry and the
+    thing it resolves to are different objects, and only one of them can be classified.
+    """
+
+    from myflopy.workspace import Project
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=6, ncol=6, nlay=1, nper=1))
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0))
+    stack.add("sand", thickness=50.0)
+    result = stack.build(grid, attach=False)
+
+    project = Project(tmp_path / "p", name="p")
+    project.add_package("dis/hand", mf.disv(**result.to_disv(grid).options))
+    project.add_package("npf/base", mf.npf(k=1.0))
+    project.add_simulation(mf.simulation(
+        mf.gwf("m", context=ModelContext(grid=grid),
+               packages=[mf.ref("dis/hand"), mf.ref("npf/base")]),
+        name="s", packages=[mf.tdis(nper=1)],
+    ))
+
+    run = project.prepare_run("r", "s")
+    run.build()
+    rows = {row["package"]: row["how"] for row in run.resolution}
+
+    assert rows["dis/hand"] == "stale", "a hand-written DISV IS the old mesh"
+    assert rows["npf/base"] == "unchanged", "a scalar npf genuinely names no cells"
