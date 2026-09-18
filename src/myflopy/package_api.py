@@ -48,7 +48,13 @@ from myflopy.builders import (
     build_ims,
     build_oc,
 )
-from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, RowValue, Spread
+from myflopy.geopackage import (
+    CellSurfaceOffset,
+    GeoPackageSource,
+    RowValue,
+    Spread,
+    SurfaceResolver,
+)
 from myflopy.grid_identity import PIN_VOIDED, pin_metadata
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
@@ -73,6 +79,7 @@ from myflopy.specs import (
     PackageSpec,
     PostBuildHook,
     SimulationSpec,
+    _layer_elevations,
 )
 
 PathLike = Path | str
@@ -3810,9 +3817,11 @@ class _EVTPackage:
         nseg : int, default 1
             Direct form: number of ET segments; segmented records add
             ``pxdp``/``petm`` values (see :func:`myflopy.advanced.evt_spec`). The
-            builder form is single-segment only (``nseg=1``).
+            builder form is single-segment only and now RAISES on ``nseg > 1``
+            rather than silently building one segment (ledger 283).
         auxiliary : optional
-            Direct form: auxiliary variable name(s) forwarded to FloPy.
+            Auxiliary variable name(s) forwarded to FloPy. Reaches the builder form
+            too -- it used to be dropped there while ``mf.rch`` kept it (ledger 283).
         boundnames : bool, default False
             Enable named boundaries.
         **options
@@ -3849,6 +3858,22 @@ class _EVTPackage:
                 "mf.evt requires either stress_period_data=, or the builder "
                 "arguments context=, nper=, rate=, and depth=."
             )
+        if nseg != 1:
+            # `nseg` and `auxiliary` are NAMED parameters, so neither ever fell into
+            # `**options`, and the builder branch assembled its kwargs without them:
+            # a caller asking for segmented ET got single-segment ET and a caller
+            # asking for an auxiliary variable got none, both without a word
+            # (ledger 283). `mf.rch` keeps `auxiliary` because it has no parameter of
+            # that name -- the defect was asymmetric inside one helper pair.
+            raise ValueError(
+                "mf.evt(context=...): the domain-aware builder writes single-segment ET "
+                "only -- it has no way to place the pxdp/petm breakpoints a segmented "
+                "curve needs. Use mf.evt.flopy(stress_period_data=..., nseg=...) to "
+                "supply the segmented records yourself."
+            )
+        builder_options = dict(options)
+        if auxiliary is not None:
+            builder_options["auxiliary"] = auxiliary
         builder_kwargs: dict[str, Any] = dict(
             context=context,
             nper=nper,
@@ -3859,7 +3884,7 @@ class _EVTPackage:
             name_by_cell=name_by_cell,
             boundnames=boundnames,
             name=name,
-            options=options,
+            options=builder_options,
         )
         if surface is not None:
             builder_kwargs["surface"] = surface
@@ -3891,7 +3916,11 @@ class _EVTPackage:
         depth : scalar, array, or {period: scalar or array}
             Extinction depth below ``surface``.
         surface : scalar, array, or {period: ...}, optional
-            ET surface elevation; the model top when omitted.
+            ET surface elevation. Omitted, it is RESOLVED to the model top from
+            ``context``, which needs one carrying a grid and surfaces -- it used to
+            be left to FloPy, whose default is the datum ``0.0``, and MODFLOW 6 then
+            draws the full rate everywhere because the head is above the ET surface
+            in every cell (ledger 283).
         context, ievt, fixed_cell : optional
             As ``context``/``irch``/``fixed_cell`` on :meth:`_RCHPackage.array` --
             and the same trap: omitting IEVT applies ET to layer 1 unconditionally
@@ -3928,8 +3957,9 @@ class _EVTPackage:
                 "Use mf.evt(...) for the list form, which does."
             )
         fields: dict[str, Any] = {"rate": rate, "depth": depth}
-        if surface is not None:
-            fields["surface"] = surface
+        fields["surface"] = (
+            _model_top_surface(context, verb="mf.evt.array") if surface is None else surface
+        )
         values = _array_bc_values(
             fields,
             context=context,
@@ -5121,7 +5151,7 @@ def _hfb_spec_from_records(
 
 
 
-def _refuse_per_feature_values(fields: dict[str, Any], *, verb: str) -> None:
+def _refuse_per_feature_values(values: dict[str, Any], *, verb: str) -> None:
     """Refuse a ``Spread`` or ``CellSurfaceOffset`` on an ARRAY-form BC.
 
     Both describe how to resolve a value PER FEATURE -- ``Spread`` splits an
@@ -5137,11 +5167,18 @@ def _refuse_per_feature_values(fields: dict[str, Any], *, verb: str) -> None:
     supported call -- so a run could record a digest for a package holding one, and
     ledger 274's "no stored digest can move" would have had a hole in it. Refusing
     here is what makes that structural rather than merely unobserved.
+
+    **It is handed the MERGED values, and that is the point** (ledger 283). It used to
+    see only ``fields`` -- ``{"recharge"}`` for RCH, ``{"rate", "depth", "surface"}``
+    for EVT -- so ``irch=``, ``auxmultname=``, ``observations=`` and every other
+    keyword sailed past the check whose docstring says no digest can hold one.
+    Measured: ``recharge=Spread(...)`` refused, ``irch=Spread(...)`` accepted AND
+    digested. Called after the index is resolved so it sees that too.
     """
 
     offenders = {
         key: type(value).__name__
-        for key, value in fields.items()
+        for key, value in values.items()
         if isinstance(value, (Spread, CellSurfaceOffset))
     }
     if not offenders:
@@ -5153,6 +5190,43 @@ def _refuse_per_feature_values(fields: dict[str, Any], *, verb: str) -> None:
         f"({verb.rsplit('.', 1)[0]}.gpkg(...)) where each feature resolves its own "
         "value, or pass a plain array here."
     )
+
+
+def _model_top_surface(context: ModelContext | None, *, verb: str):
+    """The ET surface for an array-form EVT that did not name one: the model top.
+
+    **Omitting it used to write the DATUM.** ``surface`` was simply not passed, so
+    FloPy's own ``ModflowGwfevta`` default of ``0.0`` reached the file as
+    ``surface CONSTANT 0.00000000`` -- while the parameter's documentation promised
+    "the model top when omitted". MODFLOW 6 applies the full rate wherever the head is
+    at or above the surface, so an ET surface pinned at datum makes the extinction
+    depth inert and draws maximum ET everywhere, for the life of the model, under
+    Normal termination. Measured on a 4x4 two-layer model with top 100 and heads at 95:
+    an ET total of -151.13 against 0.0 for the same declaration naming the top
+    (ledger 283). It is ledger 163's ``irch`` trap in the sibling package.
+
+    Resolved through :class:`SurfaceResolver`, the same engine the list form's default
+    ``CellSurfaceOffset("model_top")`` uses, so the two shapes of one package agree
+    about what "the model top" means and the ``gdf_topbtm`` column layout is read in
+    one place (ledger 196/209).
+
+    Refusing when it cannot be resolved is deliberate: silently writing a number the
+    caller never gave is what this replaces. ``mf.evt.array`` already refuses
+    ``ievt='top_active'`` without a context for the same reason.
+    """
+
+    grid = getattr(context, "grid", None)
+    ncpl = getattr(grid, "ncpl", None)
+    surfaces = _layer_elevations(context) if context is not None else None
+    if ncpl is None or surfaces is None:
+        raise ValueError(
+            f"{verb}: surface= is the ET surface ELEVATION, and omitting it writes "
+            "MODFLOW's datum (0.0), not the land surface -- which applies the full ET "
+            "rate everywhere and makes depth= inert. Pass surface= explicitly, or pass "
+            "context=ModelContext(grid=..., surfaces=...) so the model top can be "
+            "resolved."
+        )
+    return SurfaceResolver(context).surface_column("model_top", layer=0, ncpl=int(ncpl))
 
 
 def _array_bc_values(
@@ -5177,8 +5251,6 @@ def _array_bc_values(
     every column whose layer 1 is inactive, without a word.
     """
 
-    _refuse_per_feature_values(fields, verb=verb)
-
     values: dict[str, Any] = dict(fields)
     # `readasarrays` is FloPy's default on both array classes -- the CLASS is the
     # choice, so passing it again would only be a second place to get it wrong.
@@ -5202,6 +5274,7 @@ def _array_bc_values(
             verb,
             index_name.upper(),
         )
+        _refuse_per_feature_values(values, verb=verb)
         return values
 
     if isinstance(index, str):
@@ -5232,6 +5305,7 @@ def _array_bc_values(
         index = np.where(active.any(axis=0), np.argmax(active, axis=0), 0).astype(int)
 
     values[index_name] = index
+    _refuse_per_feature_values(values, verb=verb)
     return values
 
 

@@ -110,6 +110,120 @@ def test_segmented_et_is_refused_not_silently_flattened(ctx):
         mf.evt.array(rate=1e-4, depth=5.0, nseg=2, context=ctx)
 
 
+def test_an_omitted_et_surface_is_the_model_top_not_the_datum(ctx, canonical_run, tmp_path):
+    """MODFLOW 6 draws the FULL rate wherever the head is at or above the ET surface.
+
+    `surface` was put into the FloPy call only when it was not None, so omitting it
+    handed the file `ModflowGwfevta`'s own default -- `CONSTANT 0.00000000`, the datum
+    -- while the parameter's documentation promised the model top. That makes `depth=`
+    inert and runs maximum ET everywhere under Normal termination. Measured on two real
+    MF6 runs before the fix: an EVT total of -151.13 against 0.0 for the same
+    declaration naming the top (ledger 283).
+
+    Asserted on the WRITTEN FILE, because the written file is where the two forms
+    differed and where a reader would have to look to notice.
+    """
+
+    grid = canonical_run.vor
+    ncpl, top = int(grid.ncpl), 10.0
+    # Surfaces stated on the context, so the number the test expects and the number the
+    # DISV declares are the same one rather than whatever the canonical grid's own
+    # table happens to carry.
+    flat = ModelContext(
+        grid=grid,
+        domain=np.ones((1, ncpl), dtype=int),
+        surfaces={"top": np.full(ncpl, top), "botm": np.zeros((1, ncpl))},
+    )
+
+    omitted = _written_evt(tmp_path, "omitted", flat,
+                           mf.evt.array(rate=1e-4, depth=5.0, ievt=None, context=flat))
+    named = _written_evt(tmp_path, "named", flat,
+                         mf.evt.array(rate=1e-4, depth=5.0, surface=top, ievt=None, context=flat))
+
+    assert omitted["surface"] == named["surface"]
+    assert float(omitted["surface"].split()[-1]) == pytest.approx(top)
+
+
+def test_an_et_surface_that_cannot_be_resolved_is_refused(canonical_run):
+    """Refusing beats substituting: writing a number the caller never gave is the defect.
+
+    `ievt='top_active'` already refuses a missing context for the same reason, so this
+    is the rule the helper already followed one argument along.
+    """
+
+    with pytest.raises(ValueError, match="surface"):
+        mf.evt.array(rate=1e-4, depth=5.0, ievt=None)
+
+
+def test_a_flat_land_surface_resolves_to_a_scalar(ctx, canonical_run):
+    """A constant top means the same thing on every mesh, so it must not name cells.
+
+    Resolving it per column would write an `ncpl`-long array of one repeated number,
+    which is both a larger file and -- since ledger 282 -- a package that classifies
+    `unverifiable` and is refused on a grid move it should survive.
+    """
+
+    from myflopy.grid_identity import CELLWISE_OPTIONS
+    from myflopy.specs import GRID_PIN
+
+    spec = mf.evt.array(rate=1e-4, depth=5.0, ievt=None, context=ctx)
+
+    tops = np.unique(np.asarray(canonical_run.gwf.disv.top.array))
+    if tops.size == 1:
+        assert isinstance(spec.options["surface"], float)
+        assert GRID_PIN not in (spec.metadata or {})
+        assert CELLWISE_OPTIONS not in (spec.metadata or {})
+    else:
+        assert np.asarray(spec.options["surface"]).size == int(canonical_run.vor.ncpl)
+
+
+@pytest.mark.parametrize(
+    "keyword, value",
+    [
+        ("irch", "spread"),
+        ("auxmultname", "spread"),
+        ("observations", "offset"),
+    ],
+)
+def test_a_per_feature_value_is_refused_on_every_keyword(ctx, keyword, value):
+    """The refusal saw `fields` only -- `{"recharge"}` -- so every other keyword passed.
+
+    Measured: `recharge=Spread(...)` refused, `irch=Spread(...)` accepted AND digested,
+    which is precisely the exposure the refusal's own docstring claims to close
+    structurally, and what ledger 274's "no stored digest can move" was resting on.
+    """
+
+    payload = mf.Spread("x") if value == "spread" else mf.CellSurfaceOffset("model_top")
+
+    with pytest.raises(TypeError, match=keyword):
+        mf.rch.array(recharge=1e-4, **{keyword: payload}, **({} if keyword == "irch" else {"irch": 0}))
+
+
+def _written_evt(tmp_path, tag, ctx, spec):
+    """Build a one-package model and return its EVT file's array blocks."""
+
+    model = mf.gwf(
+        "m",
+        context=ctx,
+        packages=[
+            mf.disv(nlay=1, top=10.0, botm=[0.0], idomain=ctx.domain,
+                    **ctx.grid.get_disv_gridprops()),
+            mf.npf(k=1.0), mf.ic(strt=5.0), spec, mf.oc(head_filerecord="m.hds"),
+        ],
+    )
+    sim = mf.simulation(model, name="evtw", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    workspace = tmp_path / f"ws_{tag}"
+    built = sim.build_flopy(workspace)
+    built.simulation.write_simulation(silent=True)
+    written = [p for p in workspace.rglob("*") if p.is_file() and "evt" in p.suffix.lower()]
+    lines = written[0].read_text().splitlines()
+    return {
+        line.strip().lower(): lines[i + 1].strip()
+        for i, line in enumerate(lines)
+        if line.strip().lower() in {"surface", "rate", "depth"}
+    }
+
+
 def test_boundnames_are_refused(ctx):
     with pytest.raises(ValueError, match="boundnames"):
         mf.rch.array(recharge=1e-4, boundnames=True, context=ctx)

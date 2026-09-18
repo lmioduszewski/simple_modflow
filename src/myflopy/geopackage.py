@@ -278,7 +278,32 @@ class SurfaceResolver:
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
         """Return a model/cell surface value for a mapped boundary cell."""
 
+        return self._decode(self._surfaces(), reference, layer=layer, cell=cell)
+
+    def surface_column(self, reference: SurfaceReference, *, layer: int, ncpl: int):
+        """The whole per-column surface -- the ARRAY form's counterpart to :meth:`surface_value`.
+
+        One value per column is what ``READASARRAYS`` wants, and resolving it a cell at
+        a time through :meth:`surface_value` would re-read the elevation table ncpl
+        times: ``_layer_elevations`` compares the context's table against the grid's
+        live one on every call, so that is an O(ncpl x table) walk, not a loop of
+        lookups. The table is fetched ONCE here and the same decoder runs per cell.
+
+        Returns a plain ``float`` when every column agrees, so a flat land surface still
+        writes MODFLOW's ``CONSTANT`` form -- and stays genuinely mesh-independent, which
+        is what keeps it off the per-column pin (ledger 282).
+        """
+
         surfaces = self._surfaces()
+        values = np.array(
+            [self._decode(surfaces, reference, layer=layer, cell=cell) for cell in range(int(ncpl))],
+            dtype=float,
+        )
+        return float(values[0]) if values.size and np.all(values == values[0]) else values
+
+    def _decode(self, surfaces, reference: SurfaceReference, *, layer: int, cell: int) -> float:
+        """The ONE place the elevation table's layout is read. Both verbs go through it."""
+
         if isinstance(surfaces, dict):
             if reference in {"model_top", "cell_top"} and layer == 0:
                 return self._cell_sequence(surfaces["top"], cell)

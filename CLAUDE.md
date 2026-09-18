@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3553 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3561 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -756,7 +756,17 @@ inactive — measured 40% loss under "Normal termination". `irch` is **zero-base
 has no array form, because NSEG lives in DIMENSIONS which MF6 never reads under
 READASARRAYS. **`mf.Spread`/`mf.CellSurfaceOffset` raise here too** (ledger 274):
 both describe a per-FEATURE resolution and the array form has no features, so
-neither could act — they were accepted, pickled and digested before. Arrays are opt-in: for a sparse BC they are a pessimization.
+neither could act — they were accepted, pickled and digested before. That refusal
+saw only the VALUE fields until ledger 283, so `irch=mf.Spread(...)` was accepted
+and digested; it reads every keyword now.
+**`mf.evt.array` with `surface` omitted resolves the MODEL TOP**, and refuses when it
+cannot (ledger 283). It used to leave the argument out entirely, so FloPy's own
+`surface=0.0` default wrote `CONSTANT 0.00000000` — the datum — and MF6 then draws the
+full rate everywhere, because every head is above the ET surface, making `depth=` inert:
+measured EVT total **-151.13 against a correct 0.0**, Normal termination, no warning.
+Same pass: **`mf.evt(context=...)` silently dropped `nseg` and `auxiliary`** — both are
+NAMED parameters, so neither ever reached `**options`, and `mf.rch` kept `auxiliary` only
+because it has no parameter of that name. `auxiliary` is forwarded now, `nseg > 1` raises. Arrays are opt-in: for a sparse BC they are a pessimization.
 
 ## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE

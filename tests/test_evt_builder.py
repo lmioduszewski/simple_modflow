@@ -186,3 +186,38 @@ def test_evt_builder_writes_real_flopy_package(tmp_path):
     built.simulation.write_simulation(silent=True)
 
     assert (tmp_path / "flow.evt").exists()
+
+
+def test_the_builder_forwards_auxiliary():
+    """`auxiliary` is a NAMED parameter on `mf.evt`, so it never fell into `**options`
+    and the builder branch assembled its kwargs without it -- a caller asking for an
+    auxiliary variable got none, silently.
+
+    The defect was ASYMMETRIC inside one helper pair: `mf.rch` keeps it precisely
+    because it has no parameter of that name, so the two halves of the same API
+    disagreed (ledger 283).
+    """
+
+    context = _context()
+
+    assert mf.evt(context=context, nper=1, rate=1e-3, depth=2.0,
+                  auxiliary=["conc"]).options["auxiliary"] == ["conc"]
+    assert mf.rch(context=context, nper=1, recharge=1e-4,
+                  auxiliary=["conc"]).options["auxiliary"] == ["conc"]
+
+
+def test_the_builder_refuses_segmented_et_rather_than_flattening_it():
+    """`nseg` reached the same dead end: named, never forwarded, and `_make_spec`
+    hardcodes `nseg=1`, so segmented ET became single-segment ET with no word.
+
+    `_check_options` cannot catch it -- `nseg` IS an accepted `ModflowGwfevt` option.
+    `mf.evt.array` already refused it by name; this is the sibling branch catching up.
+    """
+
+    context = _context()
+
+    with pytest.raises(ValueError, match="nseg|segment"):
+        mf.evt(context=context, nper=1, rate=1e-3, depth=2.0, nseg=3)
+
+    # The default still builds, and still writes one segment.
+    assert mf.evt(context=context, nper=1, rate=1e-3, depth=2.0, nseg=1).options["nseg"] == 1

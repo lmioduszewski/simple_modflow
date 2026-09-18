@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 282 entries (283 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 283 entries (284 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 283 | The array form put the ET surface at the DATUM, and two arguments went missing on the way to the builder | 2026-09-18 |
 | 282 | An array-form boundary condition names its cells by POSITION, and nothing was reading that | 2026-09-18 |
 | 281 | Two ways a package escaped classification, both found by importing a real run | 2026-09-18 |
 | 280 | A lazy `.gpkg` run went back to its GeoPackage on reopen | 2026-09-17 |
@@ -10985,3 +10986,46 @@ same day, which is the useful part of the result.
       **Why the suite missed it:** every array-form test passes a full `context=`, which is
       the one shape that pins. **`unchanged` is the dangerous verdict** -- ledgers 271, 275,
       280 and 281 are the same defect found in four other places, and this is the fifth.
+
+283. **The array form put the ET surface at the DATUM, and two arguments went missing on
+      the way to the builder (2026-09-18).**
+      Three defects in the two `mf.evt` branches that B2's lazy work rewrites, none of them
+      caused by it. Fixed first so three physics and API corrections are not buried inside
+      a laziness refactor.
+      **(a) `mf.evt.array` with `surface` omitted wrote MODFLOW's datum.** The parameter
+      was put into `fields` only when it was not None, so an omitted one never reached
+      FloPy and `ModflowGwfevta`'s own `surface=0.0` default landed in the period block --
+      while the docstring promised "the model top when omitted". MODFLOW 6 draws the full
+      rate wherever the head is at or above the ET surface, so a surface pinned at datum
+      makes `depth=` inert and runs maximum ET everywhere, for the life of the model, under
+      Normal termination. **Measured on two real MF6 runs**, 4x4 two-layer, top 100, heads
+      95: `surface CONSTANT 0.00000000` and an EVT total of **-151.13**, against
+      `CONSTANT 100.00000000` and **0.0** for the same declaration naming the top. It is
+      ledger 163's `irch` trap in the sibling package -- a FloPy default that is a
+      defensible number and the wrong physics. It resolves through `SurfaceResolver` now,
+      the same engine the list form's `CellSurfaceOffset("model_top")` default uses, so the
+      two shapes of one package agree what "the model top" means. **It RAISES when it
+      cannot resolve one**: writing a number the caller never gave is the thing being
+      replaced, and `ievt='top_active'` already refuses a missing context for that reason.
+      `SurfaceResolver.surface_column` returns a plain float when every column agrees, so a
+      flat land surface still writes `CONSTANT` and stays off the per-column pin.
+      **(b) `mf.evt(context=...)` dropped `nseg` and `auxiliary`.** Both are NAMED
+      parameters, so neither ever fell into `**options`, and the builder branch assembled
+      its kwargs without them: a caller asking for segmented ET got single-segment ET and a
+      caller asking for an auxiliary variable got none, in both cases silently.
+      `_check_options` cannot catch it -- `nseg` IS an accepted `ModflowGwfevt` option. The
+      defect was ASYMMETRIC inside one helper pair: `mf.rch` keeps `auxiliary` precisely
+      because it has no parameter of that name. `auxiliary` is forwarded now and `nseg > 1`
+      raises, naming `mf.evt.flopy` -- the same refusal `mf.evt.array` already carried.
+      **(c) `_refuse_per_feature_values` was handed `fields`, not the merged values.** It
+      saw `{"recharge"}` for RCH and `{"rate", "depth", "surface"}` for EVT, so `irch=`,
+      `auxmultname=`, `observations=` and every other keyword sailed past it. Measured:
+      `recharge=Spread(...)` refused, `irch=Spread(...)` **accepted and digested** -- which
+      is exactly the exposure its own docstring claims to have closed structurally, and the
+      hole ledger 274's "no stored digest can move" was resting on. It is called after the
+      index is resolved now, so it sees that too.
+      **What (a) changes for existing callers:** an `mf.evt.array` that omitted `surface`
+      and passed no usable context now raises where it used to build. That is the intended
+      direction -- what it used to build was maximum ET everywhere -- and it is also what
+      makes the declaration lazy-eligible in the commit that follows: the set of
+      declarations that raise is the set that becomes a recipe.

@@ -422,7 +422,8 @@ def test_a_grid_free_array_package_is_not_pinned(tmp_path, triangulated_grid):
                      id="explicit-irch-array-no-context"),
         pytest.param(lambda g, ctx: mf.rch.array(recharge={0: np.full(g.ncpl, 0.001)}, irch=None),
                      id="per-period-per-column-mapping"),
-        pytest.param(lambda g, ctx: mf.evt.array(rate=np.full(g.ncpl, 0.001), depth=2.0, ievt=None),
+        pytest.param(lambda g, ctx: mf.evt.array(rate=np.full(g.ncpl, 0.001), depth=2.0,
+                                                 surface=10.0, ievt=None),
                      id="evt-per-column-rate"),
     ],
 )
