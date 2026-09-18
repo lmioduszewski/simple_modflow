@@ -13,12 +13,15 @@ same, while a renumbering does not.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import geopandas as gpd
 import numpy as np
 import pytest
 from shapely.geometry import box
 
 import myflopy as mf
+from myflopy.grid_identity import CELLWISE_OPTIONS, GRID_PIN_OPTIONS
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
 from myflopy.specs import GRID_PIN, ModelContext, grid_pin, package_move
 
@@ -315,6 +318,19 @@ def test_the_recorded_pin_is_consulted_before_the_disv_s_own(tmp_path):
 # the source and believing it (ledger 267).
 
 
+def _domain_only(context):
+    """The same context with its GRID dropped -- domain but nothing to fingerprint.
+
+    A real shape, not a contrivance: `with_grid` drops `grid`, `domain` and `surfaces`
+    together (ledger 271), and a caller who builds the idomain themselves and passes
+    `ModelContext(domain=idomain)` never had one. The areal resolver reads the domain,
+    so the package resolves per-column values happily -- and `pin_metadata` has no grid
+    to pin them to.
+    """
+
+    return ModelContext(domain=context.domain, surfaces=context.surfaces)
+
+
 def _two_layer_context(grid):
     """A context with the surfaces the advanced builders need."""
 
@@ -393,6 +409,114 @@ def test_a_grid_free_array_package_is_not_pinned(tmp_path, triangulated_grid):
 
     assert GRID_PIN not in (grid_free.metadata or {})
     assert GRID_PIN in (per_cell.metadata or {}), "a per-column array names cells"
+
+
+@pytest.mark.parametrize(
+    "declare",
+    [
+        pytest.param(lambda g, ctx: mf.rch.array(recharge=0.001, context=_domain_only(ctx)),
+                     id="top_active-resolved-from-a-domain-only-context"),
+        pytest.param(lambda g, ctx: mf.rch.array(recharge=np.full(g.ncpl, 0.001), irch=None),
+                     id="per-column-recharge-no-context"),
+        pytest.param(lambda g, ctx: mf.rch.array(recharge=0.001, irch=np.zeros(g.ncpl, dtype=int)),
+                     id="explicit-irch-array-no-context"),
+        pytest.param(lambda g, ctx: mf.rch.array(recharge={0: np.full(g.ncpl, 0.001)}, irch=None),
+                     id="per-period-per-column-mapping"),
+        pytest.param(lambda g, ctx: mf.evt.array(rate=np.full(g.ncpl, 0.001), depth=2.0, ievt=None),
+                     id="evt-per-column-rate"),
+    ],
+)
+def test_an_array_package_the_library_could_not_pin_is_unverifiable(
+    triangulated_grid, declare
+):
+    """An array form names its cells by POSITION, so it reaches `package_move` with no
+    cellid to find and no pin to read, and used to fall through to `"unchanged"`.
+
+    `unchanged` is the verdict that means MOVES UNTOUCHED, and it is the one every gap
+    in the chain falls into -- ledgers 271, 275, 280 and 281 are the same defect found
+    in four other places. Measured here before the fix: one `mf.rch.array` declaration
+    wrote mesh A's recharge pattern onto a DIFFERENT mesh of the same cell count,
+    built clean, and warned about nothing (ledger 282).
+
+    The pin cannot help: `_array_bc_spec` takes `ncpl` from `context.grid`, so every
+    declaration that resolved from a domain alone -- or from no context at all -- had
+    nothing to pin against. What it can still say is that the payload addresses cells,
+    which is what makes the honest verdict `unverifiable` rather than `unchanged`.
+    """
+
+    spec = declare(triangulated_grid, _two_layer_context(triangulated_grid))
+
+    assert GRID_PIN not in (spec.metadata or {}), "nothing to pin against, by construction"
+    assert package_move(spec)[0] == "unverifiable"
+
+
+def test_a_per_column_payload_reads_the_same_as_a_list_or_an_array(triangulated_grid):
+    """The SHAPE of the data must not change the verdict -- ledger 281's invariant.
+
+    `_names_cells` measured a payload with `getattr(value, "shape", None)`, so
+    `recharge=[1e-4] * ncpl` -- an ordinary way to write one value per column, which
+    FloPy accepts -- was invisible to it while the identical numpy array was not. The
+    list went unpinned and classified `"unchanged"`; the array pinned and classified
+    `"stale"`. Same data, two verdicts.
+    """
+
+    context = _two_layer_context(triangulated_grid)
+    values = [0.001] * int(triangulated_grid.ncpl)
+
+    as_list = mf.rch.array(recharge=values, irch=None, context=context)
+    as_array = mf.rch.array(recharge=np.asarray(values), irch=None, context=context)
+
+    assert as_list.metadata[GRID_PIN] == as_array.metadata[GRID_PIN]
+    assert as_list.metadata[GRID_PIN_OPTIONS] == as_array.metadata[GRID_PIN_OPTIONS]
+    assert package_move(as_list) == package_move(as_array)
+
+
+def test_a_scalar_payload_is_still_grid_free_however_it_is_written(triangulated_grid):
+    """The refusing direction: widening what counts as per-column must not sweep in a
+    genuinely mesh-independent package, or every correct move is refused.
+
+    A time-series NAME is a string and a `auxiliary=["conc"]` list is names, not
+    values -- neither addresses a cell, and both sit beside the payloads above.
+    """
+
+    spec = mf.rch.array(recharge=0.001, irch=0, auxiliary=["conc"])
+
+    assert GRID_PIN not in (spec.metadata or {})
+    assert CELLWISE_OPTIONS not in (spec.metadata or {})
+    assert package_move(spec) == ("unchanged", "names no cells")
+
+
+def test_the_cellwise_marker_yields_to_a_recipe_exactly_as_the_pin_does(triangulated_grid):
+    """The two "this names cells" signals must answer a recipe the same way.
+
+    `package_move`'s pin branch already answers `"rebuilt"` when every option the pin
+    speaks for is supplied by `inputs` -- that is the contract the lazy `.gpkg` meets
+    (ledger 279). The marker has to mirror it, or the lazy ARRAY form, whose whole
+    point is that it resolves `irch` against the new mesh, would be refused by the
+    marker it stamped on itself.
+
+    Classified from stubs rather than from specs: a real `PackageSpec` cannot hold one
+    name in both `options` and `inputs` -- `_check_input_collisions` refuses it, which
+    is the machinery working -- so the branch is only reachable at this level. That is
+    also what makes it worth pinning: it is defensive today and load-bearing in B2's
+    array commit.
+    """
+
+    def stub(metadata, inputs):
+        return SimpleNamespace(name="rch", options={}, inputs=inputs, metadata=metadata)
+
+    pin = {GRID_PIN: "deadbeef", GRID_PIN_OPTIONS: ["irch"]}
+    marker = {CELLWISE_OPTIONS: ["irch"]}
+
+    assert package_move(stub(pin, {}))[0] == "stale"
+    assert package_move(stub(marker, {}))[0] == "unverifiable"
+
+    assert package_move(stub(pin, {"irch": "top_active"}))[0] == "rebuilt"
+    assert package_move(stub(marker, {"irch": "top_active"}))[0] == "rebuilt"
+
+    # A recipe that supplies only SOME of what the signal speaks for settles nothing.
+    both = {CELLWISE_OPTIONS: ["irch", "recharge"]}
+    assert package_move(stub(both, {"irch": "top_active"}))[0] == "unverifiable"
 
 
 def _refuses_on(tmp_path, spec, grid, tag):

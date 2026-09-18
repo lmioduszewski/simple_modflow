@@ -293,7 +293,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3545 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3553 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -386,7 +386,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
 - **Moving a model is `sim.with_grid(grid, on=, name=, grid_free=())`** (ledger 271,
   2026-09-15). It drops everything derived from the old mesh and CLASSIFIES every
   package -- `rebuilt` (carries a recipe), `stale` (pinned elsewhere, or a
-  hand-written DISV, which IS the old mesh), `unverifiable` (names cells with no pin,
+  hand-written DISV, which IS the old mesh), `unverifiable` (names cells with no pin --
+  including the ARRAY forms, which name cells by POSITION and so carry no cellid to
+  find, ledger 282 --
   or an EDIT voided the pin -- ledger 275: `packages.edit`/`fork`/`with_options`
   replacing a certified option makes the library's certificate a lie, so it is voided
   and the refusal names the edit instead of telling you to re-declare what you just

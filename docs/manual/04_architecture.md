@@ -291,7 +291,7 @@ every package before anything is built, and `run.resolution` is the record after
 | --- | --- |
 | `rebuilt` | carries a recipe, so it resolves against the new mesh |
 | `stale` | pinned to another mesh, or a hand-written DISV that *is* the old mesh |
-| `unverifiable` | names cells with no pin — you cannot pin cell numbers you typed |
+| `unverifiable` | names cells with no pin — you cannot pin cell numbers you typed, and an array form names its cells by POSITION, so it carries no cellid either (ledger 282) |
 | `unchanged` | names no cells, or you asserted `grid_free=` |
 
 - 🛑 **`stale` and `unverifiable` are REFUSED at build**, naming the package. Before

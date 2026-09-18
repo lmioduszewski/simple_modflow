@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Iterable
+from numbers import Real
 from typing import Any
 
 import flopy
 
-from myflopy.grid_identity import pin_metadata
+from myflopy.grid_identity import CELLWISE_OPTIONS, pin_metadata
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
@@ -56,6 +57,43 @@ def _factory(constructor):
 
 
 
+def _column_count(value) -> int | None:
+    """How many columns a payload supplies a value for, or ``None`` if it is not per-column.
+
+    A numpy array answers with ``shape[-1]``; a plain list or tuple of numbers answers
+    with its length. Reading ``.shape`` alone was the gap: ``recharge=[1e-4] * ncpl`` is
+    a perfectly ordinary way to write a per-column payload, FloPy accepts it, and it was
+    invisible here -- so the package went unpinned and classified ``"unchanged"``
+    (ledger 282). Strings are excluded because a time-series name is a scalar.
+    """
+
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        return int(shape[-1]) if shape else None
+    if isinstance(value, (list, tuple)) and value and not isinstance(value, str):
+        return len(value) if all(isinstance(item, Real) for item in value) else None
+    return None
+
+
+def _cellwise_options(options) -> tuple[str, ...]:
+    """WHICH options are per-column when there is no ``ncpl`` to measure them against.
+
+    :func:`_names_cells` compares a payload's length to the grid's cell count, which is
+    exact and needs a grid. A declaration with no ``context=`` has none -- and under
+    ``READASARRAYS`` "one value per column" is the format's own definition, so any
+    array-valued option is per-column by construction. That makes this the conservative
+    substitute rather than an equivalent, which is the point: it cannot know the length
+    is wrong, only that the value addresses cells at all.
+    """
+
+    def per_cell(value) -> bool:
+        if isinstance(value, dict):
+            return any(per_cell(item) for item in value.values())
+        return _column_count(value) is not None
+
+    return tuple(key for key, value in options.items() if per_cell(value))
+
+
 def _names_cells(options, ncpl: int) -> tuple[str, ...]:
     """WHICH resolved options are per-COLUMN arrays, i.e. name cells.
 
@@ -69,8 +107,7 @@ def _names_cells(options, ncpl: int) -> tuple[str, ...]:
     def per_cell(value) -> bool:
         if isinstance(value, dict):
             return any(per_cell(item) for item in value.values())
-        shape = getattr(value, "shape", None)
-        return bool(shape) and shape[-1] == ncpl
+        return _column_count(value) == ncpl
 
     # The NAMES, not a bool. This function already computes per-option truth to decide
     # whether to pin at all, so the pin can declare exactly which options it speaks for
@@ -109,10 +146,18 @@ def _array_bc_spec(
     spec = PackageSpec(name, _factory(constructor), values)
     grid = getattr(context, "grid", None) if context is not None else None
     ncpl = getattr(grid, "ncpl", None)
-    certifies = _names_cells(values, int(ncpl)) if ncpl is not None else ()
-    if certifies:
-        spec = spec.with_metadata(**pin_metadata(context, certifies=certifies))
-    return spec
+    cellwise = (
+        _names_cells(values, int(ncpl)) if ncpl is not None else _cellwise_options(values)
+    )
+    if not cellwise:
+        return spec
+    stamped = pin_metadata(context, certifies=cellwise) if ncpl is not None else {}
+    # A pin when there was a mesh to pin TO, and the weaker marker otherwise. Both say
+    # the same thing -- these options address cells -- but only the pin can say WHICH
+    # mesh, so an unpinnable one classifies `unverifiable` rather than `unchanged`
+    # (ledger 282). `pin_metadata` returns {} for a grid it cannot fingerprint, and
+    # that falls through to the marker rather than losing it.
+    return spec.with_metadata(**(stamped or {CELLWISE_OPTIONS: sorted(cellwise)}))
 
 
 def _list_bc_spec(

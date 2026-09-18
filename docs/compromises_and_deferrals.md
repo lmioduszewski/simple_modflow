@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 281 entries (282 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 282 entries (283 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 282 | An array-form boundary condition names its cells by POSITION, and nothing was reading that | 2026-09-18 |
 | 281 | Two ways a package escaped classification, both found by importing a real run | 2026-09-18 |
 | 280 | A lazy `.gpkg` run went back to its GeoPackage on reopen | 2026-09-17 |
 | 279 | A `.gpkg` boundary condition can be declared before its grid exists | 2026-09-17 |
@@ -10946,3 +10947,41 @@ same day, which is the useful part of the result.
       other three refuse or warn; only this one lets a package through silently, so a
       gap anywhere in the classification chain fails in that direction. Ledgers 271,
       275, 280 and this one are all the same defect found in four different places.
+
+282. **An array-form boundary condition names its cells by POSITION, and nothing was
+      reading that (2026-09-18).**
+      `mf.rch.array` / `mf.evt.array` supply one value per column -- no cellid anywhere --
+      so `_cellids_in` finds nothing in them and only a PIN can say which mesh they were
+      shaped for. `_array_bc_spec` took `ncpl` from `context.grid`, so **every declaration
+      that resolved from a domain alone, or from no context at all, was unpinned** and fell
+      through `package_move` to **`"unchanged"` -- the verdict that means MOVES UNTOUCHED**.
+      Six reachable shapes were in it: `irch='top_active'` against a domain-only context, a
+      per-column `recharge`/`rate` with no context, an explicit `irch` array, a
+      `{period: array}` mapping, the EVT twin of each. Measured end to end: **one
+      declaration wrote mesh A's recharge pattern onto a DIFFERENT mesh of the same cell
+      count, built clean, and warned about nothing.**
+      **The same payload written as a python list was invisible a second way.**
+      `_names_cells` measured a value with `getattr(value, "shape", None)`, so
+      `recharge=[1e-4] * ncpl` -- an ordinary spelling that FloPy accepts -- was never
+      per-column to it, while the identical numpy array was. Same data, two verdicts:
+      pinned and `stale` as an array, unpinned and `unchanged` as a list. That is ledger
+      281's invariant again -- **the shape of the data must not change the verdict** -- and
+      `_column_count` now answers for both.
+      The fix is a second, weaker signal beside the pin: `CELLWISE_OPTIONS` names the
+      options a package supplies one value per cell under, stamped when the payload
+      addresses cells and there was no mesh to fingerprint. It classifies `unverifiable`,
+      and it MIRRORS the pin -- a recipe supplying every option it speaks for answers
+      `"rebuilt"` instead, which is the contract B2's lazy array form has to meet.
+      **Where there is no `ncpl`, the test is conservative rather than exact.** With a grid,
+      `_names_cells` compares a payload's length to the cell count. Without one there is
+      nothing to compare against -- so any array-valued option counts, on the grounds that
+      under `READASARRAYS` "one value per column" is the format's own definition. It can
+      say that a value addresses cells; it cannot say the length is wrong.
+      **What this does NOT close:** the length. A wrong-length array still reaches FloPy,
+      which refuses it (`MFDataException`, "Expected data dimensions: [92]"). This is about
+      the REPORT -- `move_report()` is what you read BEFORE `prepare_run`, and it was saying
+      the package needed no attention. Moves no digest: `metadata` is excluded from
+      `package_digest` by contract, measured 0 of 10.
+      **Why the suite missed it:** every array-form test passes a full `context=`, which is
+      the one shape that pins. **`unchanged` is the dangerous verdict** -- ledgers 271, 275,
+      280 and 281 are the same defect found in four other places, and this is the fifth.

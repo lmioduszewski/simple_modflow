@@ -44,6 +44,14 @@ GRID_PIN = "grid_pin"
 #: a cellid on `sfr`/`uzf` and none on `lak` (ledger 275).
 GRID_PIN_OPTIONS = "grid_pin_options"
 
+#: The option names a package supplies ONE VALUE PER CELL under, when the library could
+#: not pin it. The array-form boundary conditions address cells POSITIONALLY -- under
+#: ``READASARRAYS`` "one value per column" is the format's own definition -- so they carry
+#: no cellid for :func:`_cellids_in` to find and no pin when no grid was resolved against.
+#: Without this marker such a package answered ``"unchanged"``, the verdict that means it
+#: moves untouched (ledger 282).
+CELLWISE_OPTIONS = "grid_cellwise_options"
+
 #: What replaced a pin when an edit voided it: ``{"was": <pin>, "options": [names]}``.
 #: The voided pin's VALUE is kept deliberately -- the build-time refusal reads it, so
 #: voiding records what the records used to certify rather than deleting the evidence.
@@ -315,10 +323,12 @@ def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]
         (ledger 250/267); re-declare it against the new grid.
     ``"unverifiable"``
         It names cells and carries no pin -- hand-written cellids, a ``.flopy`` form --
-        OR its pin was VOIDED because an edit replaced the records the library
-        resolved. **You cannot pin cell numbers the caller typed**, so nothing can tell
-        a correct one from a stale one: every number is still in range on a larger mesh.
-        Refused unless named in ``grid_free=``.
+        OR it supplies one value per cell POSITIONALLY and carries no pin (the array
+        form, ledger 282) -- OR its pin was VOIDED because an edit replaced the records
+        the library resolved. **You cannot pin cell numbers the caller typed**, so
+        nothing can tell a correct one from a stale one: every number is still in range
+        on a larger mesh, and every array is still the right length on a mesh of the
+        same size. Refused unless named in ``grid_free=``.
     ``"unchanged"``
         It names no cells at all -- a scalar ``npf``, a ``tdis`` -- or the caller
         asserted it is mesh-independent. It moves untouched.
@@ -362,6 +372,19 @@ def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]
         )
     if any(True for _ in _cellids_in(options)):
         return "unverifiable", "names cells the library did not resolve, so it carries no pin"
+    cellwise = metadata.get(CELLWISE_OPTIONS)
+    if cellwise and not set(cellwise) <= set(inputs):
+        # An ARRAY-form package names its cells by POSITION, so it reaches here with no
+        # cellid and no pin and used to fall through to "unchanged" -- measured, one
+        # `mf.rch.array` declaration wrote mesh A's recharge pattern onto a different
+        # mesh of the same size, clean and unwarned (ledger 282). The `<= inputs` test
+        # mirrors the pin branch above: once a recipe supplies these options, the array
+        # is rebuilt rather than carried.
+        return (
+            "unverifiable",
+            "supplies one value per cell and carries no pin, so nothing can tell an "
+            "array shaped for this mesh from one shaped for another",
+        )
     if inputs:
         return "rebuilt", "carries a recipe, so it resolves against the new mesh"
     return "unchanged", "names no cells"
