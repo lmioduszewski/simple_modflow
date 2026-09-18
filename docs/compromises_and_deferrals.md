@@ -10832,6 +10832,35 @@ same day, which is the useful part of the result.
       contract. The fallback is LOCAL to this package's resolution and is deliberately
       NOT published onto `model.myflopy_context` -- publishing would change what every
       later package reads, including the eager ones.
+      **DEFERRED, and narrower than an earlier draft of this entry said.** Consulting
+      `grid.gdf_topbtm` before the built discretization can give a WRONG answer, because
+      two routes sample the same rasters and only one reconciles: `grid.rasters=[...]`
+      reaches `get_raster_vals_at_centroids` -- raw per-cell sampling, no reconciliation
+      -- while `LayerStack.build()` pushes each bottom below the one above, enforces
+      `min_thickness` and applies pinch rules. Where the rasters CROSS, which real
+      interpolated surfaces do, the two disagree.
+      Measured here (reproducer: `docs/reproducers/raw_vs_reconciled_surfaces.py`), flat
+      100 ft top against a bottom ramping 60 -> 120 ft: **18 of 36 cells differ, max
+      18.94 ft**, and the raw table puts the layer bottom ABOVE the model top in 16
+      cells where the reconciled one never does. It reaches a boundary condition -- a
+      `drn.gpkg` with `CellSurfaceOffset("cell_bottom")` resolved 0.000 ft from the raw
+      table and **18.943 ft from the DISV the same script built**, placing 5 of 10 drain
+      inverts above the model top, silently.
+      **THREE conditions are all required**, which is why the default path is safe: the
+      grid must carry `rasters=`, the stack must be built with `attach=False`, and the
+      rasters must actually cross. Measured: `attach=True` -- the DEFAULT in
+      `_DISV_BUILD_DEFAULTS`, so what `mf.disv(stack)` does -- overwrites `gdf_topbtm`
+      with the reconciled table and the difference is 0.000 ft. The lazy path is safe
+      for the same reason: the DISV publishes the reconciled surfaces onto the context,
+      which this order consults FIRST.
+      Not fixed here, and deliberately not by preferring the discretization: that would
+      make lazy and eager disagree, which is this commit's contract. It is an EAGER-path
+      defect and belongs in its own commit.
+      **A number quoted without its setup is not evidence.** An earlier draft carried
+      "11.87 ft on 12 of 28 cells" from the scope sweep; no surviving script produced it,
+      and the figure is a property of whatever synthetic rasters that scout built rather
+      than of the library. The reproducer above is checked in so the next reader does not
+      have to rebuild it -- see [[a-measurement-belongs-to-what-it-measured]].
       **The declaration-time checks are repeated in `_lazy_bc_spec` on purpose.** They
       live in `GeoPackageSource.__post_init__`, which the lazy branch never reaches, so
       without them `mf.chd.gpkg("nope.gpkg", nper=0)` was ACCEPTED and raised at BUILD.
