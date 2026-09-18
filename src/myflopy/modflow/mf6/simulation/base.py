@@ -71,6 +71,23 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _model_config():
+    """:class:`~myflopy.project.model_config.ModelConfig`, imported at CALL time.
+
+    The ONE deferred import of it in this module, shared by ``config`` and
+    ``model_options``. Hoisting it to module level looks safe -- ``model_config``
+    imports nothing from myflopy but ``_logging`` -- and is not: a bare
+    ``import myflopy`` succeeds while the test suite's import order hits a circular
+    import through ``myflopy.project.__init__``. Measured, not assumed. Two call sites
+    would be two entries in the deferred-import ratchet, and a deferral that cannot be
+    hoisted is worth stating once rather than counting twice.
+    """
+
+    from myflopy.project.model_config import ModelConfig
+
+    return ModelConfig
+
+
 
 class SimulationBase:
     """The legacy stateful model object: build, run, and explore one MF6 model.
@@ -1192,15 +1209,43 @@ class SimulationBase:
         A :class:`~myflopy.project.model_config.ModelConfig` capturing the
         scalar settings that control how the run behaves -- TDIS timing
         (including per-period ``perlen``/``nstp``/``tsmult``), the IMS solver
-        block, OC save/print records, and every package's OPTIONS -- as one
-        comparable ``(section, setting, value)`` table (``config.settings()``).
-        This is what the :class:`~myflopy.project.model_diff.ModelDiff` config
-        tier diffs across models.
+        block, OC save/print records, the MODEL's own options block
+        (``config.model`` -- where ``NEWTON`` lives, ledger 286) and every package's
+        OPTIONS -- as one comparable ``(section, setting, value)`` table
+        (``config.settings()``). This is what the
+        :class:`~myflopy.project.model_diff.ModelDiff` config tier diffs across models.
         """
 
-        from myflopy.project.model_config import ModelConfig
+        return _model_config().from_model(self)
 
-        return ModelConfig.from_model(self)
+    @property
+    def model_options(self) -> dict:
+        """The MODEL-level options this model declares, as ``mf.gwf(...)`` keyword arguments.
+
+        Rebuilding specs from a finished workspace reads each PACKAGE off the loaded
+        model -- and the model's own options block belongs to none of them, so it was
+        dropped in silence. On a real 18,107-cell model that lost ``NEWTON``: every cell
+        is convertible, **90,408 cells converted to DRY** straight from the initial
+        conditions, recharge on a dry column is skipped so the period-1 rate fell from
+        2,854,736 to 1,645 ft3/d, every head-dependent boundary went to zero, and the
+        solver diverged with a 200% budget discrepancy. Restoring the one option
+        reproduced the original run's iteration trace digit for digit (ledger 286).
+
+        Spread it into the rebuild::
+
+            run = mf.load_mf6_run(workspace)
+            model = mf.gwf(name, context=ctx, packages=[...], **run.model_options)
+
+        Only options the model actually SETS are returned, so the result is also a
+        readable answer to "what is switched on here".
+
+        **Filename-valued options carry the SOURCE model's names** (``list``, the
+        ``nc_*`` file records). Rebuilding under a new model name, pass the ones you
+        want yourself -- they are returned rather than dropped, because a silent drop is
+        the defect this exists to fix.
+        """
+
+        return _model_config().model_options(getattr(self, "gwf", None))
 
     def _summary_ncpl(self) -> int | None:
         """Return the cell count shown by :meth:`summary`.

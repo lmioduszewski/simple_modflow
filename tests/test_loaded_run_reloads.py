@@ -113,3 +113,84 @@ def test_a_reopened_run_is_quiet_at_verbosity_zero(flopy_named_workspace, capsys
     capsys.readouterr()
     model.packages.chd.inputs.head.get()
     assert capsys.readouterr().out == ""
+
+
+# --- the model's own options survive a reload (ledger 286) --------------------
+
+
+@pytest.mark.parametrize(
+    "declared, expected_block",
+    [
+        ({}, []),
+        ({"newtonoptions": "NEWTON"}, ["NEWTON"]),
+        ({"newtonoptions": ["under_relaxation"]}, ["NEWTON  UNDER_RELAXATION"]),
+        ({"print_flows": True, "save_flows": True}, ["PRINT_FLOWS", "SAVE_FLOWS"]),
+    ],
+)
+def test_model_options_round_trip_through_a_reload(tmp_path, declared, expected_block):
+    """Rebuilding specs from a finished workspace reads each PACKAGE off the loaded
+    model -- and the model's own options block belongs to no package, so it was dropped
+    in silence.
+
+    Measured on a real 18,107-cell model that lost `NEWTON`: 90,408 cells converted to
+    DRY straight from the initial conditions, period-1 recharge fell from 2,854,736 to
+    1,645 ft3/d, every head-dependent boundary went to zero, and the solver diverged at
+    a 200% budget discrepancy. Restoring the one option reproduced the original run's
+    iteration trace digit for digit (ledger 286).
+
+    Both directions are asserted -- a model that declares nothing must come back
+    declaring nothing. `newtonoptions=""` and `[]` write NOTHING at all (measured on all
+    four spellings), so a reader that normalized to the empty form would drop exactly
+    the option it exists to carry, while every "did it round-trip" test still passed.
+    """
+
+    grid = _three_by_three_grid()
+    packages = [
+        mf.disv(nlay=1, top=10.0, botm=[0.0], **grid.get_disv_gridprops()),
+        mf.ic(strt=5.0), mf.npf(k=1.0), mf.oc(head_filerecord="m.hds"),
+    ]
+    context = mf.ModelContext(grid=grid, domain=np.ones((1, int(grid.ncpl)), dtype=int))
+
+    def write(workspace, **options):
+        model = mf.gwf("m", context=context, packages=packages, **options)
+        sim = mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+        sim.build_flopy(workspace).simulation.write_simulation(silent=True)
+        body = (workspace / "m.nam").read_text().split("BEGIN options")[1].split("END options")[0]
+        return [line.strip() for line in body.splitlines() if line.strip()]
+
+    assert write(tmp_path / "a", **declared) == expected_block
+
+    carried = mf.load_mf6_run(str(tmp_path / "a")).model_options
+    assert write(tmp_path / "b", **carried) == expected_block
+
+
+def test_model_options_keeps_a_filename_option_rather_than_dropping_it(tmp_path):
+    """`_options_rows` skips every `*filerecord` because an output path is noise in a
+    DIFF. It is CONTENT in a rebuild, so this reader keeps them -- dropping them here
+    would be the same silent loss in miniature, one tier down."""
+
+    grid = _three_by_three_grid()
+    context = mf.ModelContext(grid=grid, domain=np.ones((1, int(grid.ncpl)), dtype=int))
+    model = mf.gwf(
+        "m", context=context, list="custom.lst",
+        packages=[mf.disv(nlay=1, top=10.0, botm=[0.0], **grid.get_disv_gridprops()),
+                  mf.ic(strt=5.0), mf.npf(k=1.0), mf.oc()],
+    )
+    sim = mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    sim.build_flopy(tmp_path).simulation.write_simulation(silent=True)
+
+    assert mf.load_mf6_run(str(tmp_path)).model_options.get("list") == "custom.lst"
+
+
+def _three_by_three_grid():
+    """A 3x3 DISV grid, built the way this module's other fixture builds one."""
+
+    n, d = 3, 10.0
+    verts = np.array([[i * d, j * d] for j in range(n + 1) for i in range(n + 1)], dtype=float)
+    iverts = [
+        [j * (n + 1) + i, (j + 1) * (n + 1) + i, (j + 1) * (n + 1) + i + 1, j * (n + 1) + i + 1]
+        for j in range(n)
+        for i in range(n)
+    ]
+    xcyc = np.array([[(i + 0.5) * d, (j + 0.5) * d] for j in range(n) for i in range(n)])
+    return VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)

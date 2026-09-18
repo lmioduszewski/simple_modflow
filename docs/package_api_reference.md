@@ -382,7 +382,7 @@ time, and they deep-copy by default so editing a fork cannot write through into
 the original's arrays.
 
 **Runs.** `project.runs` is the ledger: one row per run under the project,
-including bare MF6 workspaces with no manifest. `run.outcome` is what **MF6**
+including bare MF6 workspaces with no manifest. `run.model_options` returns the MODEL-level options (`NEWTON`, `print_flows`, ...) as `mf.gwf(...)` keyword arguments, so rebuilding specs from a workspace does not silently drop them (ledger 286). `run.outcome` is what **MF6**
 reported in `mfsim.lst` (`normal`/`failed`/`incomplete`/`absent`/`superseded`),
 which is a different axis from `run.status`, what **myflopy** did;
 `run.reconcile()` adopts the verdict. `project.runs.drift()` reports which

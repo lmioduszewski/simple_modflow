@@ -1218,6 +1218,7 @@
       "lak",
       "lak_output",
       "master_celld",
+      "model_options",
       "modelgrid",
       "outputs",
       "package_names",

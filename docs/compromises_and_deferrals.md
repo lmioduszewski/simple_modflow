@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 285 entries (286 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 286 entries (287 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 286 | A model's own options belong to no package, so importing a run dropped them | 2026-09-18 |
 | 285 | The array form's default could not be written down, which made the whole model unsaveable | 2026-09-18 |
 | 284 | Recharge and ET can be declared before their grid exists | 2026-09-18 |
 | 283 | The array form put the ET surface at the DATUM, and two arguments went missing on the way to the builder | 2026-09-18 |
@@ -11129,3 +11130,51 @@ same day, which is the useful part of the result.
       (`recharge=<ncpl array>`). Laziness cannot rescue it -- an inline array is an
       inline array -- so it stays unsaveable for ledger 193's reason and is classified
       `unverifiable` by ledger 282 rather than moving silently.
+
+286. **A model's own options belong to no package, so importing a run dropped them
+      (2026-09-18).**
+      Rebuilding specs from a finished MF6 workspace reads each PACKAGE off the loaded
+      model. **`NEWTON` is not in a package** -- it is in the model's name-file options
+      block -- so a faithful package-by-package rebuild lost it in silence.
+      **Measured on a real 18,107-cell model.** With `NEWTON` gone and every cell
+      convertible (`icelltype=1` throughout): **90,408 cells converted to DRY straight
+      from the initial conditions** (41 conversion blocks; the source run has ZERO),
+      recharge on a dry column is skipped so the period-1 rate fell from **2,854,736 to
+      1,645 ft3/d**, every head-dependent boundary -- 976 drains, 500 rivers, 263 GHB,
+      120 CHD -- contributed **exactly zero**, the budget closed at **200% discrepancy**,
+      and the solver diverged: first head change 13,098 ft rising to 143,000 ft in a
+      model whose elevations span ~500-900 ft, residual growing monotonically, and
+      backtracking frozen. Restoring that ONE option reproduced the source run's
+      iteration trace **digit for digit** (`Model 1 79 52.962401`, `2 84 64.871056`,
+      `3 84 76.811184`, ...) and the rebuild then ran to Normal termination.
+      **The tool that should have caught it was blind in the same place.**
+      `model.config` advertises "every package's OPTIONS" and builds its table by
+      walking `gwf.packagelist` -- which the name file is not in. So `ref.diff(new)`'s
+      config tier compared two runs differing ONLY in `NEWTON` as EQUAL. The extractor
+      reads the name file now and `ModelConfig.model` joins `.tdis`/`.ims`/`.oc`.
+      **`SimulationBase.model_options`** returns what the model SETS, as `mf.gwf(...)`
+      keyword arguments, so the rebuild is `mf.gwf(name, ..., **run.model_options)`.
+      Only what is set, so it doubles as a readable answer to "what is switched on".
+      **Three traps it had to handle, each measured:**
+      (a) FloPy returns `newtonoptions` in more than one nested shape -- `[(True,)]`,
+      `[(True, 'UNDER_RELAXATION')]`, `(('NEWTON', 'UNDER_RELAXATION'),)` -- so the
+      reader flattens and drops the leading NEWTON marker.
+      (b) **`newtonoptions=""` and `[]` write NOTHING AT ALL** (measured on all four
+      spellings), so normalizing the bare case to an empty form would drop exactly the
+      option this exists to carry while every round-trip test still passed. It returns
+      the string `"NEWTON"`.
+      (c) `_options_rows` skips every `*filerecord` because an output path is noise in a
+      DIFF. It is CONTENT in a rebuild, so this reader keeps them -- the same silent loss
+      in miniature, one tier down. A filename option carries the SOURCE model's name,
+      which is documented rather than silently rewritten.
+      **The deferred import could not be hoisted**, and that is measured rather than
+      assumed: `model_config` imports nothing from myflopy but `_logging`, a bare
+      `import myflopy` with the import at module level SUCCEEDS, and the test suite's
+      import order then hits a circular import through `myflopy.project.__init__`. The
+      two call sites share one `_model_config()` accessor so the ratchet stays flat.
+      **Still not carried:** the SOLVER. `mf.ims(...)` is hand-rebuilt the same way, and
+      the same real model drifted `outer_maximum` 2000 -> 300. `config.ims` has always
+      been able to READ it (`mf.load_mf6_run(ws).config.ims["outer_maximum"]`), so unlike
+      `NEWTON` this one is visible to anyone who looks -- it wants kwargs shaping, not a
+      new reader, and `usg/convert.py:_ims_spec` argues a half-copied solver block is
+      worse than a named preset. Left for `project.import_run` (plan D2).

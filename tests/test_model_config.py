@@ -28,7 +28,7 @@ class _FlopyModelLike:
 
 
 def _tiny_config(
-    *, kappa=0.1, outer=1e-2, tsmult=1.4, nstp=5, spec_discharge=True
+    *, kappa=0.1, outer=1e-2, tsmult=1.4, nstp=5, spec_discharge=True, newtonoptions=None
 ) -> ModelConfig:
     ws = tempfile.mkdtemp()
     sim = flopy.mf6.MFSimulation(sim_name="t", sim_ws=ws)
@@ -44,7 +44,7 @@ def _tiny_config(
         under_relaxation="DBD",
         under_relaxation_kappa=kappa,
     )
-    gwf = flopy.mf6.ModflowGwf(sim, modelname="t")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="t", newtonoptions=newtonoptions)
     flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=2, ncol=2)
     flopy.mf6.ModflowGwfnpf(
         gwf, save_flows=True, save_specific_discharge=spec_discharge, icelltype=1
@@ -66,6 +66,31 @@ def test_extractor_captures_expected_sections_and_values():
     assert config.ims["under_relaxation_kappa"] == pytest.approx(0.1)
     assert config.ims["linear_acceleration"] == "bicgstab"
     assert config.ims["outer_dvclose"] == pytest.approx(1e-2)
+
+
+def test_the_config_sees_the_models_own_options_block():
+    """`NEWTON` lives in the MODEL's name file, which is not in `gwf.packagelist`.
+
+    The extractor walked that list, so the model-level options block was structurally
+    invisible and two runs differing ONLY in `NEWTON` compared EQUAL through the config
+    tier. That is the option whose absence converted 90,408 cells to DRY on a real
+    model and diverged it -- the tool that should have caught it could not see it
+    (ledger 286).
+    """
+
+    assert _tiny_config(newtonoptions="NEWTON").model
+    assert _tiny_config(newtonoptions=None).model == {}
+
+
+def test_the_config_diff_reports_a_newton_difference():
+    """The refusing direction: the blind spot is only closed if a DIFF shows it."""
+
+    with_newton = _tiny_config(newtonoptions="NEWTON").settings(section="model")
+    without = _tiny_config(newtonoptions=None).settings(section="model")
+
+    assert len(with_newton) == 1
+    assert len(without) == 0
+    assert with_newton["setting"].tolist() == ["newtonoptions"]
 
 
 def test_extractor_excludes_output_filerecords():

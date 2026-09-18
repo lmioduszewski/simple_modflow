@@ -270,6 +270,21 @@ human asking — plus `runtime.run_simulation`'s "Success is:" line.
 inspection without being listed, everything else must be in an allowlist exact in both
 directions, and `import myflopy` must be silent.
 
+**Importing a bare MF6 workspace? Carry the MODEL's own options** (2026-09-18,
+ledger 286). `mf.load_mf6_run(ws)` + a package-by-package rebuild drops them, because
+**`NEWTON` is in the model's NAME FILE, not in any package** — measured on a real
+18,107-cell model: 90,408 cells converted to DRY at ITER=0, period-1 recharge fell
+2,854,736 → 1,645 ft3/d, every head-dependent boundary went to zero, 200% budget
+discrepancy, and the solver diverged at 143,000 ft head changes. Spread
+`**run.model_options` into `mf.gwf(...)`. `model.config` was blind in the same place —
+it walked `gwf.packagelist`, so `ref.diff(new)` compared two runs differing ONLY in
+`NEWTON` as EQUAL; `config.model` is the new section. Traps: FloPy returns
+`newtonoptions` in three nested shapes, **`newtonoptions=""`/`[]` write NOTHING**
+(so normalizing the bare case to empty drops the option while every round-trip test
+passes), and the reader KEEPS `*filerecord` entries that the diff extractor skips.
+**The SOLVER is still not carried** — the same model drifted `outer_maximum` 2000 → 300;
+`config.ims` can read it today, it wants kwargs shaping (plan D2).
+
 **Also don't call flopy APIs it has deprecated.** `tests/test_no_deprecated_flopy_calls.py`
 names them (`gwf.package_names`, `gwf.package_name_dict` — use `get_package_list()`, or
 myflopy's own `model.package_names` -- the real names, one per package;
@@ -293,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3613 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3620 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.

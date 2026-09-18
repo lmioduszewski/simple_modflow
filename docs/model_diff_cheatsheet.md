@@ -32,6 +32,8 @@ diff = mf.ModelGroup(                                       # named; best for >2
 ).diff()
 ```
 
+> **The config tier now includes the MODEL's own options block** (`config.model` -- `NEWTON` lives there, ledger 286). It used to walk `gwf.packagelist` only, and the name file is not in it, so two runs differing ONLY in `NEWTON` compared EQUAL.
+
 ## 1. Headline reports
 
 ```python

@@ -122,6 +122,80 @@ def _ims_package(model):
     return getattr(sim, "ims", None)
 
 
+#: The MODEL-level option names ``mf.gwf`` accepts -- MF6's own GWF name-file options.
+#: One-to-one with ``package_api._model_options``, so a reader can carry every one of
+#: them and there is no name this can silently fail to notice.
+MODEL_OPTION_NAMES = (
+    "list",
+    "print_input",
+    "print_flows",
+    "save_flows",
+    "newtonoptions",
+    "nc_mesh2d_filerecord",
+    "nc_structured_filerecord",
+    "nc_filerecord",
+)
+
+
+def _newton_kwarg(value):
+    """FloPy's ``newtonoptions`` payload as the ``str | list[str]`` ``mf.gwf`` wants.
+
+    FloPy hands this back in more than one shape depending on how the model was
+    produced -- ``[(True,)]`` and ``[(True, 'UNDER_RELAXATION')]`` from a file reload,
+    ``(('NEWTON', 'UNDER_RELAXATION'),)`` elsewhere -- all nested one level, with the
+    leading element being the NEWTON marker itself (``True`` or the word). Flattening
+    and dropping that marker leaves the modifiers, which is what ``mf.gwf`` takes.
+
+    ``"NEWTON"`` is returned for the bare case rather than ``[]`` or ``""``: **both of
+    those write NOTHING at all** -- measured on all four spellings -- so a reader that
+    normalized to the empty form would drop the very option it exists to carry.
+    """
+
+    flat: list[str] = []
+    stack = [value]
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, (list, tuple)):
+            stack = list(item) + stack
+        elif isinstance(item, str):
+            flat.append(item)
+        elif item is not None and not isinstance(item, bool):
+            flat.append(str(item))
+    modifiers = [word.lower() for word in flat if word.upper() != "NEWTON"]
+    return modifiers or "NEWTON"
+
+
+def _model_option_kwargs(gwf) -> dict:
+    """Every model-level option ``gwf`` SETS, as ``mf.gwf`` keyword arguments.
+
+    Reads the name file's options block, which is not in ``gwf.packagelist`` and so is
+    invisible to :func:`_extract_settings`'s package loop (ledger 286). Unlike
+    :func:`_options_rows` this keeps the ``*_filerecord`` entries: they are noise for a
+    DIFF and content for a REBUILD, and dropping them here would be the same silent
+    loss in miniature.
+    """
+
+    name_file = getattr(gwf, "name_file", None)
+    if name_file is None:
+        return {}
+    options: dict = {}
+    for name in MODEL_OPTION_NAMES:
+        dataset = getattr(name_file, name, None)
+        if dataset is None:
+            continue
+        try:
+            if hasattr(dataset, "has_data") and not dataset.has_data():
+                continue
+            value = dataset.get_data() if hasattr(dataset, "get_data") else dataset
+        except (MFDataException, FlopyException):
+            logger.debug("no data for model option %s; leaving it out", name)
+            continue
+        if value is None:
+            continue
+        options[name] = _newton_kwarg(value) if name == "newtonoptions" else value
+    return options
+
+
 def _extract_settings(model) -> pd.DataFrame:
     """Build the ``(section, setting, value)`` settings table for a model."""
 
@@ -139,6 +213,16 @@ def _extract_settings(model) -> pd.DataFrame:
         rows += _options_rows("ims", ims, ["options", "nonlinear", "linear"])
 
     if gwf is not None:
+        # The MODEL's own options block -- `NEWTON` lives here, and nothing read it.
+        # `gwf.packagelist` holds the model's PACKAGES, and the name file is not one of
+        # them, so the loop below is structurally blind to it: two runs differing only
+        # in `NEWTON` compared EQUAL through `ref.diff(new)`'s config tier. That is the
+        # option whose absence dried 90,408 cells and diverged a real model, and the
+        # tool that should have caught it could not see it (ledger 286).
+        name_file = getattr(gwf, "name_file", None)
+        if name_file is not None:
+            rows += _options_rows("model", name_file, ["options"])
+
         for pkg in getattr(gwf, "packagelist", None) or []:
             ptype = str(getattr(pkg, "package_type", "")).lower()
             section = str(getattr(pkg, "package_name", ptype) or ptype).lower()
@@ -199,6 +283,30 @@ class ModelConfig:
         """The OC (output-control) settings as a ``{setting: value}`` mapping."""
 
         return self.section("oc")
+
+    @classmethod
+    def model_options(cls, gwf) -> dict:
+        """Every model-level option ``gwf`` SETS, as ``mf.gwf`` keyword arguments.
+
+        A classmethod rather than a second module-level function so
+        :class:`~myflopy.modflow.mf6.simulation.base.SimulationBase` reaches it through
+        the import it ALREADY defers. Hoisting that import to module level looks safe --
+        this module imports nothing from myflopy but ``_logging`` -- and is not: a bare
+        ``import myflopy`` succeeds while the test suite's import order hits a circular
+        import through ``myflopy.project.__init__``. Measured, not assumed.
+        """
+
+        return _model_option_kwargs(gwf)
+
+    @property
+    def model(self) -> dict:
+        """The MODEL-level settings -- the name file's own options block.
+
+        ``NEWTON`` lives here, not in any package, which is why it went unseen: the
+        extractor walked ``gwf.packagelist`` and the name file is not in it (ledger 286).
+        """
+
+        return self.section("model")
 
     def __repr__(self) -> str:
         """Show the config's sections and total setting count."""
