@@ -910,7 +910,25 @@ Module `src/myflopy/modflow/usg/`; tests `tests/test_usg_import.py` build their 
 synthetic 2-layer USG model, so CI never needs a real one.
 **Read the report, not just the spec:** `usg.report()` states every approximation and
 omission with counts, and `usg.validate()` names what MODFLOW 6 will REJECT before you
-run (USG accepts a head boundary below its cell bottom; MF6 refuses to start).
+run. **Whether it rejects splits on `icelltype`, which a converted model inherits from
+the LPF `LAYTYP`** (ledger 291): a convertible layer is refused by name, a confined one
+runs and moves more water than the boundary drawn (measured 2.0x for a drain), with
+nothing in MF6's listing file saying so -- a finding with `blocks_run` False is not a
+harmless one, and `to_mf6` warns about those at conversion time as well. MF6 stops at
+the FIRST package it objects to, which is the argument for reading the list over
+running and seeing.
+**`fix_for_mf6=True` lifts a GHB head, a DRN invert and a RIV BED back inside their
+cells.** A river moves as a PAIR -- `rbot` to the floor, and `stage` up by the SAME
+delta **only where the stage was below the bottom too**, so the declared depth
+survives while a legal water surface is left exactly where it was drawn. Lifting it
+unconditionally (ledger 290's rule, generalised from a case where both were below)
+measured a stage 3 ft above land surface and a **reversed sign**, -272.73 -> +1254.55;
+`river_pair_lift`/`bottom_clearance` in `modflow/mf6/boundary_support.py` are the one
+shared rule and `mf.riv.gpkg` was corrected with it (ledger 291). It does NOT touch a
+stage below its own bed: MF6 refuses that at any icelltype and a converter cannot know
+which number is wrong. Until 2026-09-18 the clamp lifted RIV's `stage` -- the first
+value in the record, so the one a positional read lands on -- and left `rbot`, the
+field MF6 checks, exactly where it was.
 Three traps that cost a day and will cost it again:
 - **Coordinates must be LOCAL.** MF6 builds DISV conductances from raw vertex
   coordinates; on State Plane (~1.34e6 ft) it loses the precision and returns a **NaN

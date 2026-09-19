@@ -181,7 +181,8 @@ real geometry), `cln_polygons()` (CLN features dissolved to polygons).
 Not converted: **CLN** (no MF6 counterpart -- read and reported, never written) and
 DRAWDOWN output. Approximated: CHD's within-period ramp, SMS's inner solver. Exact
 despite having no direct MF6 equivalent: ETS `NETSOP = 3` (resolved once from the
-static IBOUND). `validate()` lists what MF6 will reject before you run.
+static IBOUND). `validate()` lists what MF6 will object to before you run -- `reject` (will not start) or `allow` (starts, and the boundary behaves differently), which for a
+below-bottom elevation depends on the layer's `icelltype` (ledger 291).
 
 ## The genuinely short gap list (verify each before building)
 

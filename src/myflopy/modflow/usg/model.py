@@ -426,11 +426,24 @@ class UsgModel:
             ``None`` converts everything that mapped.
         fix_for_mf6
             Apply the smallest edits that make MODFLOW 6 accept the model --
-            today, raising a GHB/RIV head that sits below its cell bottom up to
-            that bottom. MODFLOW-USG tolerates such a boundary and MODFLOW 6
-            refuses to run at all. Off by default, because a boundary head is
-            not something to change without being told; :meth:`validate` names
-            every case first, and each edit is logged when it is made.
+            today, lifting a GHB head, a DRN invert or a RIV **bed** that sits
+            below its own cell bottom back inside the cell. A river is lifted as
+            a PAIR: ``rbot`` goes to the floor and ``stage`` rises by the same
+            delta, because MODFLOW 6 checks ``rbot`` against the cell bottom and
+            ``stage >= rbot`` separately, and clamping both collapses the
+            declared river depth to zero (ledger 291).
+
+            MODFLOW-USG tolerates such a boundary. Whether MODFLOW 6 refuses one
+            depends on the layer -- see :meth:`validate` -- but the edits are
+            applied wherever the elevation is outside its cell, not only where
+            MODFLOW 6 would object, so the option means the same thing on every
+            model. Off by default, because a boundary elevation is not something
+            to change without being told; :meth:`validate` names every case
+            first, and each edit is logged when it is made.
+
+            What it does NOT touch: a river whose stage is below its own bed.
+            MODFLOW 6 refuses that at any ``icelltype``, and which of the two
+            numbers is the wrong one is not something a converter can know.
         local_origin
             Write the mesh relative to its own lower-left corner and declare
             that corner as the DISV ``xorigin``/``yorigin``. Leave this on:
@@ -465,6 +478,15 @@ class UsgModel:
 
         Each entry says how many records are affected, why MODFLOW 6 minds, and
         the one-line fix. Entries whose ``blocks_run`` is true stop the run.
+
+        **An entry whose ``blocks_run`` is false is not a harmless one.** For a
+        boundary elevation below its own cell bottom, what MODFLOW 6 does splits
+        on ``icelltype`` -- which a converted model inherits from the LPF
+        ``LAYTYP``. A convertible layer is refused by name; a confined layer runs
+        and over-discharges against a head below the cell, saying nothing in the
+        listing file. Both are reported, with the marker saying which (ledger
+        291). MODFLOW 6 also stops at the FIRST package it objects to, which is
+        the argument for reading this list rather than running and seeing.
         """
 
         from myflopy.modflow.usg.convert import mf6_findings

@@ -187,12 +187,16 @@ def test_a_negative_clearance_is_refused(sloping):
 
 
 def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping):
-    """MF6 checks `rbot` and never names `stage`, and raising `rbot` alone trips a SECOND
-    check (`stage >= rbot`) -- so a model that ran becomes a hard failure.
+    """Where the STAGE is below the floor too, it is carried up with the bed.
 
-    Measured on one record: as declared q=-868.57; rbot alone REFUSED at both icelltypes;
-    both clamped q=-380.00 with the river depth collapsed to 0.000 from a declared 1.0;
-    pair-lifted q=-108.57. Three readings of "the same parameter", 3.5x apart in flux.
+    MF6 checks `rbot` and enforces `stage >= rbot` separately, so raising `rbot` alone
+    turns a model that ran into a hard failure, and clamping both collapses the depth.
+    Measured on one record: as declared q=-868.57; rbot alone REFUSED at both
+    icelltypes; both clamped q=-380.00 with the river depth collapsed to 0.000 from a
+    declared 1.0; pair-lifted q=-108.57.
+
+    The bottom SLOPES here, so one declaration meets the floor differently in each cell
+    -- which is what separates this from its sibling below.
     """
 
     context, _, bottoms = sloping
@@ -218,8 +222,48 @@ def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping):
     rbot = np.array([float(r[3]) for r in records])
 
     assert (rbot < bottoms[cells]).sum() == 0
-    assert np.allclose(stage - rbot, 5.0), "the declared 5 ft river depth must survive"
     assert np.all(stage >= rbot)
+    moved = stage > 40.0
+    assert moved.any(), "the fixture must contain a stage that had to move"
+    assert np.allclose((stage - rbot)[moved], 5.0), "its declared 5 ft depth must survive"
+    assert np.allclose(stage[~moved], 40.0), "and a stage that did not have to move stays"
+
+
+def test_a_river_whose_stage_is_already_inside_its_cell_keeps_it(sloping):
+    """The half ledger 290 generalised past: a bed below the cell, a legal stage.
+
+    That is what an ordinary river looks like, and the stage is the water surface it
+    imposes -- lifting it by the bed's delta moves the answer. Measured on a one-cell
+    bench (bottom 48, top 60), declared stage 55 / rbot 40: lifting the pair wrote
+    stage 63, three feet ABOVE land surface, and turned q = 0.00 into +436.37; with a
+    deeper bed (stage 50 / rbot 20) it reversed the sign, -272.73 to +1254.55. Lifting
+    the bed alone reproduced the declared answer exactly and ran at both icelltypes.
+    """
+
+    context, _, bottoms = sloping
+    import tempfile
+    from pathlib import Path
+
+    path = Path(tempfile.mkdtemp()) / "ordinary.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["riv"], "layer": [1], "stage": [75.0], "rbot": [28.0],
+         "conductance": [100.0]},
+        geometry=[LineString([(20.0, 300.0), (580.0, 300.0)])], crs=2927,
+    ).to_file(path)
+
+    with pytest.warns(UserWarning):
+        spec = mf.riv.gpkg(
+            path, context=context, nper=1, stage="stage", rbot="rbot",
+            conductance="conductance", min_above_bottom=1.0,
+        )
+
+    records = spec.options["stress_period_data"][0]
+    cells = np.array([r[0][1] for r in records])
+    stage = np.array([float(r[1]) for r in records])
+    rbot = np.array([float(r[3]) for r in records])
+
+    assert (rbot < bottoms[cells]).sum() == 0, "every bed still comes inside its cell"
+    assert np.allclose(stage, 75.0), "and not one stage moved"
 
 
 def test_a_river_stage_below_its_own_bottom_is_refused(sloping):

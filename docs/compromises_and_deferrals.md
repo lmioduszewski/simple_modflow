@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 290 entries (291 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 291 entries (292 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 291 | The importer lifted the river's water surface, not its bed | 2026-09-18 |
 | 290 | An elevation outside its own cell, and nothing said so | 2026-09-18 |
 | 289 | A floor that silently was not one, and an elevation divided by area | 2026-09-18 |
 | 288 | A feature that missed the grid was reported through a channel nobody hears | 2026-09-18 |
@@ -4118,12 +4119,16 @@ same day, which is the useful part of the result.
        9,405 of 9,405 shifted**. `to_mf6(local_origin=True)` (the default) writes
        the mesh relative to its own corner and declares that corner as
        `xorigin`/`yorigin`, so the model stays georeferenced.
-     - **`fix_for_mf6` is OFF by default.** MODFLOW-USG accepts a head boundary
-       below its cell bottom and MODFLOW 6 refuses to run. The opt-in raises GHB
-       heads to just above the bottom (a relative nudge -- exact equality still
-       trips MODFLOW 6 once the written text rounds) and omits CHD records in the
-       periods where they sit below, which is inert in USG anyway. Off by default
-       because a boundary head is not something to change unasked.
+     - **`fix_for_mf6` is OFF by default.** MODFLOW-USG accepts a boundary
+       elevation below its cell bottom. The opt-in raises GHB heads, DRN inverts
+       and RIV beds to just above the bottom (a relative nudge -- exact equality
+       still trips MODFLOW 6 once the written text rounds) and omits CHD records
+       in the periods where they sit below, which is inert in USG anyway. Off by
+       default because a boundary elevation is not something to change unasked.
+       (Amended by **ledger 291**: as written this raised RIV's *stage*, not its
+       *rbot*, and exempted DRN from the findings entirely. Whether MODFLOW 6
+       "refuses to run" also turns out to depend on `icelltype`, which this entry
+       asserted unconditionally.)
      - **No DRAWDOWN output.** The USG OC asks for it; MODFLOW 6 does not produce
        drawdown.
      - **Boundary files are truncated to `NPER`.** They routinely carry more
@@ -11422,8 +11427,11 @@ same day, which is the useful part of the result.
       discarded digits fall is a coin flip -- which is why round numbers look immune. A CHD
       set exactly at its bottom is worse: it aborts the SOLVER (`CONSTANT-HEAD CELL WENT
       DRY`) at round magnitudes too. The clearance is nudged by
-      `max(|bottom| * 1e-6, 1e-6)`, the relative form already at `usg/convert.py:363`
-      whose comment says exactly this and is now measured true rather than defensive. A
+      `max(|bottom| * 1e-6, 1e-6)`, the relative form already in the MODFLOW-USG importer
+      whose comment says exactly this and is now measured true rather than defensive
+      (both are `boundary_support.bottom_clearance` since ledger 291, which also
+      corrects the RIV pair rule below: carrying the stage up is right only where the
+      stage is itself below the floor). A
       plain absolute `1e-6` is NOT enough -- it fails at bottom 3456.789012346.
       **RIV is a PAIR, and the three readings of "the same parameter" are 3.5x apart in
       flux on ONE record.** MF6 checks `rbot` and never names `stage`; raising `rbot`
@@ -11447,3 +11455,85 @@ same day, which is the useful part of the result.
       **Not carried:** the detection needs the layer elevations, so a model that declares
       none is skipped rather than refused -- there is nothing to compare against, and a
       model without surfaces is not an error.
+
+291. **The importer lifted the river's water surface, not its bed (2026-09-18).**
+      `to_mf6(fix_for_mf6=True)` clamped RIV's **`stage`** and left **`rbot`** below the
+      cell bottom -- and `rbot` is the field MODFLOW 6 checks. `_bc_record` passes a USG
+      record's trailing values through in MF6 order (`stage, cond, rbot`), so column 0 is
+      the water surface; the clamp read column 0 and the finding read the same column.
+      Measured end to end (`docs/reproducers/riv_pair_and_icelltype.py`, cell bottom 48.0,
+      declared stage 40 / rbot 35, `icelltype = 1`): as declared REFUSED, stage lifted
+      alone **still REFUSED** naming `RIVER BOTTOM`, pair-lifted runs. At `icelltype = 0`,
+      where all three run, they read q = -818.18 / -381.82 / -109.09 -- three readings of
+      one river, **7.5x apart**. So the option's documented promise was false for RIV in
+      exactly the way that looks like it worked.
+      **The case it could not see at all is the ordinary one.** A river with its surface
+      inside the cell and its bed below it -- stage 55, rbot 40, bottom 48 -- offends on
+      nothing the old check read, and MODFLOW 6 refuses it by name. The check is on
+      `rbot` now, and on `stage` as well because MODFLOW 6 names both when both offend.
+      **RIV moves as a PAIR, but ledger 290's version of that rule was over-general and
+      is corrected here -- which changes `mf.riv.gpkg` too.** 290 measured ONE record
+      shape, stage 40 / rbot 35 with BOTH below the bottom, where carrying the stage up
+      by the bed's delta is the best of the readings (-109.09, against -381.82 for
+      clamping both and losing the declared depth), and generalised to every record. On
+      the ordinary river -- stage 55 / rbot 40, the water surface INSIDE the cell --
+      carrying it up writes a stage of 63.0 against a cell top of 60.0: **three feet
+      above land surface**, turning q = 0.00 into **+436.37**. With a deeper bed, stage
+      50 / rbot 20, the sign reverses: **-272.73 to +1254.55**. Lifting the bed alone
+      reproduces the declared answer exactly and runs at both icelltypes.
+      So the stage is carried up **only when it is itself below the floor**, which is
+      exactly when MODFLOW 6 would refuse it. `max(stage, floor)` is NOT the rule either:
+      on 290's own shape it collapses the depth to zero. `river_pair_lift` /
+      `bottom_clearance` in `modflow/mf6/boundary_support.py` (L0) are the single rule
+      now -- both layers carried their own copy and the copies had drifted -- and a test
+      asserts the two call sites resolve to the same function objects.
+      The project's own fixture was already producing the bad case unnoticed: a declared
+      stage of 7.0 over a bed at 2.0, in a cell bottomed at 5.0 with a top of 10.0, was
+      being written at 10.000005. Found by an adversarial review, not by the tests.
+      **`validate()` was silent about a model MODFLOW 6 will not start.** DRN was exempt,
+      on the comment that a drain below its cell bottom is simply inactive. Neither branch
+      supports that: at `icelltype != 0` MODFLOW 6 REFUSES it by name (NEWTON does not
+      change it) and at `icelltype = 0` it accepts it and over-discharges -- **2.00x** the
+      same drain placed inside its cell. A converted model inherits `icelltype` from the
+      LPF `LAYTYP`, so both branches are reachable from one importer. **`severity` is
+      therefore read from the model**: `reject` when any offending record sits in a
+      convertible layer, `allow` otherwise -- with `allow` reported, not dropped, because
+      the silence is what was constant. The report's `MODFLOW 6 IS STRICTER` heading
+      became `MODFLOW 6 DIFFERS`: its `allows` branch had been dead code.
+      **DRN had to join the clamp in the same pass**, or `validate()` would name a blocker
+      whose stated remedy does nothing. A stage below its own bed is REFUSED at both
+      icelltypes and is deliberately **not** repaired -- a pair lift preserves an
+      inversion rather than fixing it, and which of the two numbers is wrong is not
+      something a converter can know; it is named instead.
+      **What was deliberately NOT changed.** The corrections stay unconditional while the
+      detection became icelltype-aware, so `fix_for_mf6` means the same thing on every
+      model. Two consequences, both accepted: on a confined model it edits boundaries
+      MODFLOW 6 would have accepted, and the CHD branch still DROPS records that a
+      confined model was actively using -- measured **-1200** ft3/d on the bench, a
+      boundary DRAINING that much rather than feeding it, so "inert in USG anyway" is
+      true only of a convertible layer. Gating the corrections would have
+      changed the converted water balance for confined models, which the one real model
+      that exercises this path cannot be re-run here to check. **Open**: gate the CHD drop
+      on convertibility once a confined USG model is available to measure.
+      The finding tests `< bottom` while the clamp lifts below `bottom + clearance`, so
+      a value sitting exactly ON its bottom is corrected but not reported -- it is not
+      *below* the bottom, and MODFLOW 6's verdict on it is the coin flip ledger 290
+      measured. Asymmetric in the safe direction, unlike the defect above it.
+      **An `allow` finding is logged at conversion time, not left to `validate()`.**
+      The first draft left it to `validate()`/`report()` on the grounds that the two USG
+      notebooks carry conversion warnings in saved output that cannot be regenerated
+      without the proprietary model -- but reading that model settles it: Ten Trails is
+      `icelltype [1 1 1 1 1]`, carries no RIV and has no below-bottom DRN, so every
+      finding there is `reject` and logs exactly as before. Withholding the one warning
+      nothing else says out loud would have been ledger 288's defect ("reported through
+      a channel nobody hears") one module over. The GHB clamp message is byte-identical
+      all the same; DRN and RIV got their own, since one line cannot call a drain invert,
+      a river bed and a head the same thing, and the CHD drop message now splits on
+      convertibility rather than asserting an inertness that holds on only one side.
+      **Each number in a finding comes from ONE period** -- the one with the most
+      offenders. Taking count, depth, share and total as independent maxima over periods
+      reported a share/total pair belonging to no period at all (a constructed case
+      understated it 50x) and a count that read as a record total.
+      **Known gap, not closed here:** a non-finite elevation is neither clamped nor
+      reported (`nan < floor` is False), so it reaches MODFLOW 6 -- the USG importer has
+      no counterpart to the refusal ledgers 247/289 built for the GeoPackage sources.

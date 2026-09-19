@@ -22,6 +22,7 @@ from myflopy.advanced import (
     riv_spec,
     wel_spec,
 )
+from myflopy.modflow.mf6.boundary_support import bottom_clearance, river_pair_lift
 from myflopy.modflow.mf6.grid.geometry import (
     _extent,  # noqa: F401 -- re-exported: callers and tests import it from here
     cell_shares,
@@ -1246,7 +1247,9 @@ class GeoPackageSource:
         from [40, 600], and which way the discarded digits fall is a coin flip. A CHD set
         exactly at its bottom is worse -- it aborts the SOLVER ("CONSTANT-HEAD CELL WENT
         DRY"), at round magnitudes too. The relative nudge is the one already at
-        `usg/convert.py`, whose comment says so and is now measured true.
+        `myflopy.modflow.mf6.boundary_support.bottom_clearance`, which the MODFLOW-USG
+        importer floors by as well -- one rule, since ledger 291 found the two copies
+        had drifted apart.
         """
 
         fields = _PACKAGE_EXPLORER_SPECS[package].gpkg_defaults
@@ -1254,14 +1257,17 @@ class GeoPackageSource:
         if not positions:
             return values
         bottom = self.surface_value("cell_bottom", layer=layer, cell=cell)
-        nudge = max(abs(bottom) * 1e-6, 1e-6)
+        nudge = bottom_clearance(bottom)
 
-        # RIV is a PAIR, not two independent elevations. MF6 checks `rbot` and never names
-        # `stage`, and raising `rbot` alone trips a SECOND check (`stage >= rbot`) -- so a
-        # model that ran becomes a hard failure. Measured, one record: as declared
-        # q=-868.57; rbot alone REFUSED at both icelltypes; both clamped q=-380.00 with the
-        # river depth collapsed to 0.000 from a declared 1.0; pair-lifted q=-108.57. Three
-        # readings of "the same parameter", 3.5x apart.
+        # RIV is a PAIR, not two independent elevations. MF6 checks `rbot` against the cell
+        # bottom -- and names `stage` too when the stage is itself below it -- and enforces
+        # `stage >= rbot` separately, so raising `rbot` alone turns a model that ran into a
+        # hard failure whenever the stage was below the bottom as well. Measured, one
+        # record: as declared q=-868.57; rbot alone REFUSED at both icelltypes; both
+        # clamped q=-380.00 with the river depth collapsed to 0.000 from a declared 1.0;
+        # carrying the stage up q=-108.57. Three readings, 3.5x apart.
+        # A stage that is ALREADY inside its cell is left alone -- see `river_pair_lift`,
+        # where lifting it unconditionally measured a reversed sign (ledger 291).
         if package == "riv":
             stage_now = float(values[positions["stage"]])
             rbot_now = float(values[positions["rbot"]])
@@ -1292,12 +1298,19 @@ class GeoPackageSource:
             floor = bottom + max(float(self.min_above_bottom), nudge)
             if value >= floor:
                 continue
-            values[index] = floor
             coverage.floored.append((label, name, floor - value))
             if pair:
-                # Lift `stage` by the SAME delta, so the declared river depth survives.
+                # Carry `stage` up by the same delta when it is itself below the floor,
+                # so the declared river depth survives; leave a legal stage exactly where
+                # it was drawn. One helper, because the MODFLOW-USG importer floors RIV
+                # records by the same rule and used to carry its own copy of it -- which
+                # clamped `stage` and left `rbot` below the bottom (ledger 291).
                 stage = positions["stage"]
-                values[stage] = float(values[stage]) + (floor - value)
+                values[stage], values[index] = river_pair_lift(
+                    float(values[stage]), value, floor
+                )
+            else:
+                values[index] = floor
         return values
 
     def _account_for_missing(self, coverage, row, fields, *, package: str, covered: float) -> None:

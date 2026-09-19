@@ -60,11 +60,48 @@ def _write_gsf(path):
     path.write_text("\n".join(lines) + "\n")
 
 
-@pytest.fixture(scope="module")
-def usg_workspace(tmp_path_factory):
-    """Build a complete little MODFLOW-USG model and return its name file."""
+#: The hand-written list/array packages. These carry the reuse conventions the importer
+#: has to honour, which FloPy's writers do not expose. A variant model overrides one by
+#: name -- the below-cell-bottom tests build the same mesh with offending boundaries on
+#: it rather than a second mesh of their own.
+_DEFAULT_PACKAGES = {
+    "DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  7.5  120.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    )),
+    "CHD": (18, "tiny.chd", (
+        "# chd\n"
+        "  2\n"
+        "  2  Stress Period 1\n"
+        "  3  9.0  9.0\n"
+        "  4  9.0  8.5\n"
+        "  2  Stress Period 2\n"
+        "  3  9.0  9.0\n"
+        "  4  8.5  8.0\n"
+    )),
+    # The recharge array comes through OPEN/CLOSE with a multiplier of 2.0, which
+    # is the record shape that once silently negated an entire array.
+    "RCH": (12, "tiny.rch", (
+        "# rch\n"
+        "  1  0\n"
+        "  1\n"
+        "OPEN/CLOSE rech.dat 2.0 (FREE) -1  Stress Period 1\n"
+        " -1\n"
+    )),
+}
 
-    ws = tmp_path_factory.mktemp("usg")
+
+def _write_usg_model(ws, *, laytyp=4, packages=None):
+    """Write a complete little MODFLOW-USG model into ``ws`` and return its name file.
+
+    ``laytyp`` becomes MODFLOW 6's ``icelltype``, which is the whole severity split for
+    a boundary elevation below its cell bottom: 4 is convertible, 0 confined.
+    """
+
     iac, ja = _connectivity()
 
     model = flopy.mfusg.MfUsg(modelname="tiny", model_ws=str(ws), structured=False)
@@ -92,40 +129,17 @@ def usg_workspace(tmp_path_factory):
         steady=[False, False],
     )
     flopy.mfusg.MfUsgBas(model, ibound=1, strt=8.0, hnoflo=999.0)
-    flopy.mfusg.MfUsgLpf(model, laytyp=4, layvka=0, chani=1.0, hk=10.0, vka=1.0, ss=1e-5, sy=0.2)
+    flopy.mfusg.MfUsgLpf(
+        model, laytyp=laytyp, layvka=0, chani=1.0, hk=10.0, vka=1.0, ss=1e-5, sy=0.2
+    )
     flopy.mfusg.MfUsgSms(model, hclose=0.01, hiclose=0.001, mxiter=50, iter1=100, nonlinmeth=1)
     model.write_input()
 
-    # Hand-written list/array packages: these carry the reuse conventions the
-    # importer has to honour, which FloPy's writers do not expose.
-    (ws / "tiny.drn").write_text(
-        "# drn\n"
-        "  2  0\n"
-        "  2  0  Stress Period 1\n"
-        "  1  7.5  100.0\n"
-        "  2  7.5  120.0\n"
-        " -1  0  Stress Period 2 (reuse)\n"
-    )
-    (ws / "tiny.chd").write_text(
-        "# chd\n"
-        "  2\n"
-        "  2  Stress Period 1\n"
-        "  3  9.0  9.0\n"
-        "  4  9.0  8.5\n"
-        "  2  Stress Period 2\n"
-        "  3  9.0  9.0\n"
-        "  4  8.5  8.0\n"
-    )
-    # The recharge array comes through OPEN/CLOSE with a multiplier of 2.0, which
-    # is the record shape that once silently negated an entire array.
+    written = dict(_DEFAULT_PACKAGES)
+    written.update(packages or {})
     (ws / "rech.dat").write_text("0.001 0.002 0.003 0.004\n")
-    (ws / "tiny.rch").write_text(
-        "# rch\n"
-        "  1  0\n"
-        "  1\n"
-        "OPEN/CLOSE rech.dat 2.0 (FREE) -1  Stress Period 1\n"
-        " -1\n"
-    )
+    for _, filename, text in written.values():
+        (ws / filename).write_text(text)
     (ws / "tiny.oc").write_text("HEAD SAVE UNIT 30\nPeriod 1 Step 1\nSAVE HEAD\n")
 
     nam = ws / "tiny.nam"
@@ -136,12 +150,20 @@ def usg_workspace(tmp_path_factory):
         "LPF 11 tiny.lpf\n"
         "SMS 19 tiny.sms\n"
         "OC 22 tiny.oc\n"
-        "DRN 13 tiny.drn\n"
-        "CHD 18 tiny.chd\n"
-        "RCH 12 tiny.rch\n"
+        + "".join(
+            f"{ftype} {unit} {filename}\n"
+            for ftype, (unit, filename, _) in written.items()
+        )
     )
     _write_gsf(ws / "tiny.gsf")
     return nam
+
+
+@pytest.fixture(scope="module")
+def usg_workspace(tmp_path_factory):
+    """The baseline synthetic model: every boundary inside the cell it sits in."""
+
+    return _write_usg_model(tmp_path_factory.mktemp("usg"))
 
 
 @pytest.fixture(scope="module")
@@ -455,3 +477,391 @@ def test_the_converted_npf_saves_what_particle_tracking_reads(usg):
     npf = next(p for p in sim.models[0].packages if p.name == "npf")
     assert npf.options["save_specific_discharge"] is True
     assert npf.options["save_saturation"] is True
+
+
+# --- boundaries below the cell bottom (ledger 291) -------------------------
+
+# A USG RIV record is `node, stage, cond, rbot`. The two rows are the two branches
+# of the repair rule. Node 1 is the case a stage-only check cannot see: its BED is
+# below the layer-0 bottom of 5.0 while its water surface is comfortably above it,
+# which is what an ordinary river looks like -- and its stage must not be touched.
+# Node 2 has BOTH below the bottom, so its stage has to move, and the declared 2 ft
+# of depth has to survive the move.
+_BELOW_BOTTOM = {
+    "RIV": (14, "tiny.riv", (
+        "# riv\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.0  50.0  2.0\n"
+        "  2  3.0  60.0  1.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    )),
+    # Layer 2 is bottomed at exactly 0.0, where a relative nudge degenerates to
+    # the absolute one.
+    "GHB": (15, "tiny.ghb", (
+        "# ghb\n"
+        "  1  0\n"
+        "  1  0  Stress Period 1\n"
+        "  5  -1.0  70.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    )),
+    "DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  2.5  120.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    )),
+}
+
+#: Where the offending records sit, so a test can state the expected answer.
+LAYER0_BOTTOM, LAYER1_BOTTOM, MODEL_TOP = 5.0, 0.0, 10.0
+
+
+@pytest.fixture(scope="module")
+def below_bottom(tmp_path_factory):
+    """Factory for the same mesh with boundaries hanging below their own cells.
+
+    ``laytyp`` is the whole point: it becomes MODFLOW 6's ``icelltype``, and that is
+    what decides whether MODFLOW 6 refuses the model or runs it and quietly changes
+    what the boundary does.
+    """
+
+    cache = {}
+
+    def build(laytyp=4):
+        if laytyp not in cache:
+            ws = tmp_path_factory.mktemp(f"usg_below_{laytyp}")
+            nam = _write_usg_model(ws, laytyp=laytyp, packages=_BELOW_BOTTOM)
+            cache[laytyp] = read_usg(nam, gsf=ws / "tiny.gsf", crs="EPSG:2927")
+        return cache[laytyp]
+
+    return build
+
+
+def _records(sim, name):
+    """The MODFLOW 6 stress-period records the converted spec carries for a package."""
+
+    package = next(p for p in sim.models[0].packages if p.name == name)
+    return package.options["stress_period_data"][0]
+
+
+def _finding(model, code):
+    """One finding by code, or None."""
+
+    return next((f for f in model.validate() if f.code == code), None)
+
+
+# --- the field MODFLOW 6 actually checks -----------------------------------
+
+
+def test_a_river_bed_below_its_cell_is_seen_even_when_the_stage_is_not(below_bottom):
+    """The ordinary river: bed below the cell bottom, water surface above it.
+
+    MODFLOW 6 measures ``rbot`` against the cell bottom. Inspecting ``stage`` instead
+    -- which is the FIRST value in the record, so the one a positional read lands on
+    -- reports nothing at all for this record, and the run dies on a field validate()
+    never looked at.
+    """
+
+    model = below_bottom(laytyp=4)
+    riv = model.boundaries["RIV"].periods[0]
+    assert riv[0, 1] > LAYER0_BOTTOM > riv[0, 3], "node 1 must offend on rbot ALONE"
+
+    finding = _finding(model, "riv_rbot_below_cell_bottom")
+    assert finding is not None, "a river bed below its cell bottom must be named"
+    assert finding.blocks_run
+    assert finding.count == 2
+    assert "rbot" in finding.detail
+
+
+def test_fix_for_mf6_lifts_the_river_BED_not_its_stage(below_bottom):
+    """``rbot`` is what MODFLOW 6 compares; lifting ``stage`` leaves the run refused.
+
+    Measured on a real MODFLOW 6 run at ``icelltype = 1``, cell bottom 48.0: stage
+    lifted with rbot left at 35.0 still fails with ``RIV BOUNDARY (1) RIVER BOTTOM
+    IS LESS THAN CELL BOTTOM``.
+    """
+
+    model = below_bottom(laytyp=4)
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    stages = np.array([float(r[1]) for r in _records(sim, "riv")])
+    rbots = np.array([float(r[3]) for r in _records(sim, "riv")])
+
+    assert (rbots > LAYER0_BOTTOM).all(), "every river bed must end up inside its cell"
+    # Strictly above, never equal: FloPy writes botm fixed-point and a boundary value
+    # in E format, so exactly-equal can round BELOW in the file MODFLOW 6 reads.
+    assert (rbots - LAYER0_BOTTOM).min() > 0
+    assert (stages > rbots).all(), "MODFLOW 6 enforces stage >= rbot as well"
+
+
+def test_a_river_lifted_off_the_bottom_keeps_the_depth_it_was_drawn_with(below_bottom):
+    """Node 2, whose stage was below the bottom too, so the stage HAD to move.
+
+    Clamping both numbers to the floor collapses the declared depth to zero: measured
+    on a one-cell bench at cell bottom 48.0, both-clamped q = -381.82 with 0.000 ft of
+    depth against pair-lifted -109.09.
+    """
+
+    model = below_bottom(laytyp=4)
+    declared = model.boundaries["RIV"].periods[0]
+    both_below = next(i for i, row in enumerate(declared) if row[1] < LAYER0_BOTTOM)
+
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    record = _records(sim, "riv")[both_below]
+
+    assert float(record[3]) > float(declared[both_below, 3]), "the bed must have moved"
+    assert float(record[1]) > float(declared[both_below, 1]), "and carried its stage"
+    depth = float(record[1]) - float(record[3])
+    assert depth == pytest.approx(float(declared[both_below, 1] - declared[both_below, 3]))
+
+
+def test_a_river_whose_water_surface_is_legal_keeps_it_exactly(below_bottom):
+    """Node 1: bed below the cell bottom, water surface inside the cell.
+
+    A stage already inside its cell is the water surface the river imposes, and moving
+    it moves the answer. Lifting it by the bed's delta -- which is what ledger 290's
+    rule did, generalised from a case where the stage was ALSO below -- measured on a
+    one-cell bench (bottom 48, top 60): stage 55 / rbot 40 became stage 63, three feet
+    ABOVE land surface, and q went from 0.00 to +436.37. With a deeper bed the sign
+    reverses: -272.73 to +1254.55. Here it would put the stage above this model's own
+    top of 10.0.
+    """
+
+    model = below_bottom(laytyp=4)
+    declared = model.boundaries["RIV"].periods[0]
+    legal = next(i for i, row in enumerate(declared) if row[1] > LAYER0_BOTTOM > row[3])
+
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    record = _records(sim, "riv")[legal]
+
+    assert float(record[1]) == float(declared[legal, 1]), "a legal stage must not move"
+    assert float(record[3]) > LAYER0_BOTTOM, "while its bed still comes inside the cell"
+    assert float(record[1]) <= MODEL_TOP, "and no stage may end up above land surface"
+
+
+def test_an_inverted_river_is_named_rather_than_pair_lifted(tmp_path):
+    """A stage below its own bed is refused by MODFLOW 6 at any icelltype.
+
+    Carrying the stage up with the bed preserves the inversion rather than repairing
+    it, and which of the two numbers is wrong is not something a converter can know.
+    """
+
+    inverted = dict(_BELOW_BOTTOM)
+    inverted["RIV"] = (14, "tiny.riv", (
+        "# riv\n"
+        "  1  0\n"
+        "  1  0  Stress Period 1\n"
+        "  1  6.0  50.0  8.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    ))
+    nam = _write_usg_model(tmp_path, laytyp=4, packages=inverted)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+
+    finding = _finding(model, "riv_stage_below_river_bottom")
+    assert finding is not None and finding.blocks_run
+    assert "will not guess" in finding.fix
+
+
+def test_a_short_river_record_does_not_silently_empty_its_period(tmp_path):
+    """A malformed record must not be floored past its own end -- nor vanish.
+
+    A RIV line carrying three numbers instead of four gives a values block with no
+    `rbot` column at all. Indexing it raises; skipping the period instead deletes
+    every record in it, and in MODFLOW 6 an ABSENT period means "reuse the previous
+    one" while an EMPTY one means "delete every record" -- so a quiet skip here is a
+    boundary condition silently switched off.
+    """
+
+    short = dict(_BELOW_BOTTOM)
+    short["RIV"] = (14, "tiny.riv", (
+        "# riv\n"
+        "  1  0\n"
+        "  1  0  Stress Period 1\n"
+        "  1  7.0  50.0\n"
+        " -1  0  Stress Period 2 (reuse)\n"
+    ))
+    nam = _write_usg_model(tmp_path, laytyp=4, packages=short)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    records = _records(sim, "riv")
+    assert len(records) == 1
+    assert float(records[0][1]) == pytest.approx(7.0), "left exactly as it was read"
+    # The record is still malformed, and FloPy refuses it at build time rather than
+    # here -- with a message that names neither the RIV line nor its period. The
+    # conversion's job is only not to make it disappear first.
+
+
+# --- the DRN exemption, which was false in both directions -----------------
+
+
+def test_a_drain_below_its_cell_bottom_stops_the_run_and_validate_says_so(below_bottom):
+    """It was exempted on the premise that such a drain is simply inactive.
+
+    Measured: at ``icelltype != 0`` MODFLOW 6 refuses by name -- ``DRN BOUNDARY (1)
+    ELEVATION ( 45.000) IS LESS THAN CELL BOTTOM`` -- so validate(), whose documented
+    job is to name what MODFLOW 6 will reject, was silent about a model that cannot
+    start.
+    """
+
+    model = below_bottom(laytyp=4)
+    finding = _finding(model, "drn_elev_below_cell_bottom")
+    assert finding is not None, "a drain below its cell bottom must be named"
+    assert finding.blocks_run
+    assert finding.count == 1
+    assert any(f.blocks_run for f in model.validate())
+
+
+def test_a_confined_model_is_told_it_will_run_and_over_discharge(below_bottom):
+    """The other half of the same false premise: at ``icelltype = 0`` it is not inactive.
+
+    MODFLOW 6 accepts the record, terminates normally, and drains against a head below
+    the cell -- measured 2.0x the discharge of the same drain placed inside its cell.
+    So the finding is reported but must NOT block the run.
+    """
+
+    model = below_bottom(laytyp=0)
+    finding = _finding(model, "drn_elev_below_cell_bottom")
+    assert finding is not None
+    assert not finding.blocks_run and finding.severity == "allow"
+    assert "CONFINED" in finding.detail
+    assert not [f for f in model.validate() if f.blocks_run]
+
+
+def test_fix_for_mf6_lifts_a_drain_invert_too(below_bottom):
+    """Otherwise validate() names a blocker whose stated remedy does nothing."""
+
+    model = below_bottom(laytyp=4)
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    elevations = np.array([float(r[1]) for r in _records(sim, "drn")])
+
+    assert (elevations >= LAYER0_BOTTOM).all()
+    assert (elevations - LAYER0_BOTTOM).min() > 0
+    # The drain that was already inside its cell is left exactly where it was drawn.
+    assert elevations.max() == pytest.approx(7.5)
+
+
+def test_a_bottom_of_exactly_zero_still_lands_strictly_above_it(below_bottom):
+    """Where the relative nudge degenerates, the absolute one has to carry it."""
+
+    model = below_bottom(laytyp=4)
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True)
+    heads = np.array([float(r[1]) for r in _records(sim, "ghb")])
+    assert (heads > LAYER1_BOTTOM).all()
+
+
+# --- one rule, not two copies of it ----------------------------------------
+
+
+def test_the_importer_and_the_geopackage_sources_floor_by_the_same_rule():
+    """Both layers used to carry their own copy, and the copies disagreed.
+
+    CLAUDE.md's rule is to grep BOTH the package-first layer and the legacy engine
+    before adding a capability. The USG importer's copy clamped the wrong RIV field
+    for as long as it existed.
+    """
+
+    import myflopy.geopackage as geopackage
+    from myflopy.modflow.usg import convert
+
+    assert convert.river_pair_lift is geopackage.river_pair_lift
+    assert convert.bottom_clearance is geopackage.bottom_clearance
+
+
+# --- what MODFLOW 6 itself says --------------------------------------------
+
+
+def _verdict(model, workspace, *, include, fix_for_mf6):
+    """Run the converted model under MODFLOW 6 and return ``(success, listing text)``."""
+
+    sim = model.to_mf6(
+        "tiny", start_date_time="2020-01-01", include=include, fix_for_mf6=fix_for_mf6
+    )
+    success, report = sim.build(workspace).execute()
+    return success, "\n".join(report).upper()
+
+
+@pytest.mark.slow
+def test_mf6_refuses_the_model_until_the_river_BED_is_inside_its_cell(
+    below_bottom, tmp_path
+):
+    """The end of the argument: MODFLOW 6's own verdict on both spellings.
+
+    This is the test that fails if the clamp goes back to lifting ``stage`` -- which
+    it did, and which left ``rbot`` exactly where MODFLOW 6 was about to look.
+    """
+
+    model = below_bottom(laytyp=4)
+    include = ("chd", "riv")
+
+    success, listing = _verdict(model, tmp_path / "raw", include=include, fix_for_mf6=False)
+    assert not success
+    assert "RIVER BOTTOM" in listing and "LESS THAN CELL BOTTOM" in listing
+
+    success, listing = _verdict(model, tmp_path / "fixed", include=include, fix_for_mf6=True)
+    assert success, listing[-2000:]
+
+
+@pytest.mark.slow
+def test_mf6_refuses_the_model_until_the_drain_invert_is_inside_its_cell(
+    below_bottom, tmp_path
+):
+    """The drain validate() used to exempt, put to MODFLOW 6 itself.
+
+    Each package is read in turn and MODFLOW 6 stops at the FIRST one it objects to,
+    which is the argument for naming every case up front instead of discovering them
+    one failed run at a time.
+    """
+
+    model = below_bottom(laytyp=4)
+    include = ("chd", "drn")
+
+    success, listing = _verdict(model, tmp_path / "raw", include=include, fix_for_mf6=False)
+    assert not success
+    assert "DRN BOUNDARY" in listing and "LESS THAN CELL BOTTOM" in listing
+
+    success, listing = _verdict(model, tmp_path / "fixed", include=include, fix_for_mf6=True)
+    assert success, listing[-2000:]
+
+
+@pytest.mark.slow
+def test_a_confined_model_runs_with_the_very_same_records(below_bottom, tmp_path):
+    """The claim behind the non-blocking severity, checked rather than asserted."""
+
+    model = below_bottom(laytyp=0)
+    success, _ = _verdict(
+        model, tmp_path / "confined", include=("chd", "drn", "ghb", "riv"), fix_for_mf6=False
+    )
+    assert success, "at icelltype 0 MODFLOW 6 accepts every one of these records"
+
+
+def test_a_model_whose_boundaries_are_inside_their_cells_says_nothing(usg):
+    """The other direction: a check that fires on everything reports nothing either.
+
+    The baseline model's DRN sits at 7.5 in a cell bottomed at 5.0 and its CHD at 8.0
+    to 9.0, so every finding here would be a false one -- and a false `reject` sends a
+    modeller editing boundary elevations that were right.
+    """
+
+    assert usg.validate() == []
+    assert "MODFLOW 6 DIFFERS" not in usg.report()
+
+
+def test_a_confined_model_is_warned_about_at_conversion_time(below_bottom, caplog):
+    """The `allow` case is the one nothing else says out loud.
+
+    MODFLOW 6 runs the model and the boundary does something other than what was drawn;
+    leaving that to `validate()`/`report()`, which a caller has to think to ask for, is
+    ledger 288's defect -- a degradation reported through a channel nobody hears.
+    """
+
+    model = below_bottom(laytyp=0)
+    with caplog.at_level("WARNING", logger="myflopy.modflow.usg.convert"):
+        model.to_mf6("tiny", start_date_time="2020-01-01")
+
+    said = [r.getMessage() for r in caplog.records if "change what a boundary does" in r.getMessage()]
+    assert said, "a confined model with below-bottom boundaries must not convert in silence"
+    assert any("DRN" in message for message in said)
+    assert not [r for r in caplog.records if "will reject this model" in r.getMessage()]

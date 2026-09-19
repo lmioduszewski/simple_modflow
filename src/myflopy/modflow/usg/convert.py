@@ -15,6 +15,7 @@ import numpy as np
 
 import myflopy.package_api as api
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.boundary_support import bottom_clearance, river_pair_lift
 from myflopy.specs import ModelContext, PackageSpec, SimulationSpec
 
 if TYPE_CHECKING:
@@ -27,6 +28,55 @@ __all__ = ["Finding", "conversion_notes", "mf6_findings", "to_mf6"]
 #: USG list packages and the MODFLOW 6 factory that receives them.
 _LIST_TARGETS = {"CHD": "chd", "DRN": "drn", "GHB": "ghb", "RIV": "riv", "WEL": "wel"}
 
+#: The elevation fields MODFLOW 6 measures against the cell bottom, and the column each
+#: one occupies in a MODFLOW-USG record (column 0 is the node). A USG ``RIV`` record is
+#: ``node, stage, cond, rbot`` -- the same order MODFLOW 6 writes -- and ``rbot`` is the
+#: field MODFLOW 6 actually checks. A river whose BED is below its cell bottom while its
+#: water surface is not is the ordinary case, and a stage-only check cannot see it at
+#: all: measured, stage 55 / rbot 40 in a cell bottomed at 48 is refused by name at
+#: ``icelltype = 1`` and was reported by nothing (ledger 291).
+_BOTTOM_CHECKED: dict[str, tuple[tuple[str, int], ...]] = {
+    "DRN": (("elev", 1),),
+    "GHB": (("bhead", 1),),
+    "RIV": (("rbot", 3), ("stage", 1)),
+}
+
+#: Where each family keeps its conductance, for saying how much of the package the
+#: offending records carry.
+_CONDUCTANCE_COLUMN = {"DRN": 2, "GHB": 2, "RIV": 2}
+
+#: What each family's clamp says when it runs. The GHB wording is deliberately
+#: unchanged: it is accurate, and two notebooks carry it in their saved output.
+_CLAMP_REPORT = {
+    "GHB": "%s: raised %d boundary head(s) to their cell bottom so MODFLOW 6 accepts them "
+           "(fix_for_mf6=True)",
+    "DRN": "%s: raised %d drain elevation(s) to their cell bottom so MODFLOW 6 accepts "
+           "them (fix_for_mf6=True)",
+    "RIV": "%s: raised %d river bed(s) to their cell bottom, carrying a stage up with its "
+           "bed only where the stage was below the bottom too (fix_for_mf6=True)",
+}
+
+#: What ``fix_for_mf6=True`` does about each one, in the finding's own words.
+_BOTTOM_FIXES = {
+    ("DRN", "elev"): (
+        "to_mf6(fix_for_mf6=True) raises each elev to just above its cell bottom"
+    ),
+    ("GHB", "bhead"): (
+        "to_mf6(fix_for_mf6=True) raises each bhead to just above its cell bottom"
+    ),
+    ("RIV", "rbot"): (
+        "to_mf6(fix_for_mf6=True) raises each rbot to just above its cell bottom, and "
+        "carries the stage up by the same delta where the stage was below the bottom "
+        "too, so the declared river depth survives; a stage already inside its cell "
+        "is left where it was drawn"
+    ),
+    ("RIV", "stage"): (
+        "to_mf6(fix_for_mf6=True) carries each stage up with its own river bottom where "
+        "that bottom is lifted; where the bottom is already inside the cell, a stage "
+        "below it means the stage is under its own bed -- see riv_stage_below_river_bottom"
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Finding:
@@ -34,9 +84,14 @@ class Finding:
 
     MODFLOW-USG accepts inputs MODFLOW 6 refuses -- most often a head-type
     boundary placed below the bottom of the cell it sits in, which USG treats as
-    a strong sink and MODFLOW 6 rejects outright. Finding these before the run
-    is worth more than discovering them from a failed run, because the listing
-    file names six of them and stops.
+    a strong sink. Finding these before the run is worth more than discovering
+    them from a failed run, because the listing file names six of them and stops.
+
+    **Whether MODFLOW 6 actually refuses depends on the layer**, so ``severity``
+    is read from the model, never assumed (ledger 291). ``"reject"`` means
+    MODFLOW 6 will not start; ``"allow"`` means it starts and the converted model
+    behaves differently from the one the modeller drew -- silently, which is the
+    reason a non-blocking finding is worth reporting at all.
     """
 
     code: str
@@ -47,7 +102,11 @@ class Finding:
 
     @property
     def blocks_run(self) -> bool:
-        """True when MODFLOW 6 will refuse to run until this is resolved."""
+        """True when MODFLOW 6 will refuse to run until this is resolved.
+
+        False does NOT mean "harmless": an ``"allow"`` finding is one MODFLOW 6
+        accepts and runs, having changed what the boundary does.
+        """
 
         return self.severity == "reject"
 
@@ -55,78 +114,217 @@ class Finding:
 def mf6_findings(model: UsgModel) -> list[Finding]:
     """Return everything MODFLOW 6 will object to in this model, before running it."""
 
+    return [
+        *_below_bottom_findings(model),
+        *_river_pair_findings(model),
+        *_chd_findings(model),
+    ]
+
+
+def _convertible(model: UsgModel, layers: np.ndarray) -> bool:
+    """True when any of these layers is convertible, which is the whole severity split."""
+
+    return bool(np.asarray(model.icelltype)[layers].any())
+
+
+def _below_bottom_findings(model: UsgModel) -> list[Finding]:
+    """Findings for every elevation MODFLOW 6 measures against its own cell's bottom.
+
+    **What MODFLOW 6 does with one depends on ``icelltype``, and a converted USG model
+    lands on either side of that split** -- ``icelltype`` is the LPF ``LAYTYP``, carried
+    straight across. Where the layer is convertible MODFLOW 6 REFUSES to start and names
+    the record, and the refusal is a per-period data read, so a model whose first
+    offending period is late dies after MODFLOW 6 has solved the earlier ones. Where the
+    layer is confined MODFLOW 6 accepts the record, terminates normally, and drains
+    against a head below the cell it sits in -- measured 2.0x the discharge of the same
+    drain placed inside its cell, with nothing said in the listing file.
+
+    So the severity is read from the model rather than asserted (ledger 291). Both halves
+    used to be asserted, and asserted wrongly: RIV was inspected on ``stage`` where
+    MODFLOW 6 checks ``rbot``, and DRN was exempted outright on the premise that a drain
+    below its cell bottom is simply inactive, which neither branch supports.
+
+    The test here is ``< bottom``, while the clamp lifts anything below ``bottom +
+    clearance``. The asymmetry is deliberate and in the safe direction: a value sitting
+    exactly ON its cell bottom is not *below* it, so saying so would be false, but it
+    can still round below in the written file -- so the correction covers it while the
+    report does not claim it.
+    """
+
     findings: list[Finding] = []
-    for ftype, column, label in (("GHB", 1, "bhead"), ("RIV", 1, "stage"), ("DRN", 1, "elev")):
+    for ftype, checks in _BOTTOM_CHECKED.items():
         records = model.boundaries.get(ftype)
         if records is None:
             continue
-        offenders = 0
-        worst = 0.0
-        share = 0.0
-        total = 0.0
-        for block in records.periods.values():
-            if not len(block):
+        for label, column in checks:
+            # Every number in the sentence comes from ONE period -- the one with the most
+            # offenders. Taking each as a max over periods independently reported a
+            # share/total pair that occurred in no period at all (a constructed case
+            # understated the share 50x), and a count that read as a record total when it
+            # was a per-period maximum.
+            worst_period = None
+            convertible = False
+            conductance = _CONDUCTANCE_COLUMN[ftype]
+            for block in records.periods.values():
+                if not len(block) or block.shape[1] <= column:
+                    continue
+                cellid = model.to_cellid(block[:, 0].astype(np.int64))
+                valid = cellid[:, 0] >= 0
+                if not valid.any():
+                    continue
+                layers = cellid[valid, 0]
+                bottom = model.botm[layers, cellid[valid, 1]]
+                below = block[valid, column] < bottom
+                if not below.any():
+                    continue
+                convertible = convertible or _convertible(model, layers[below])
+                share = total = 0.0
+                if block.shape[1] > conductance:
+                    share = float(block[valid, conductance][below].sum())
+                    total = float(block[valid, conductance].sum())
+                here = (
+                    int(below.sum()),
+                    float((bottom - block[valid, column])[below].max()),
+                    share,
+                    total,
+                )
+                if worst_period is None or here[0] > worst_period[0]:
+                    worst_period = here
+            if worst_period is None:
                 continue
-            cellid = model.to_cellid(block[:, 0].astype(np.int64))
-            valid = cellid[:, 0] >= 0
-            if not valid.any():
-                continue
-            bottom = model.botm[cellid[valid, 0], cellid[valid, 1]]
-            below = block[valid, column] < bottom
-            offenders = max(offenders, int(below.sum()))
-            if below.any():
-                worst = max(worst, float((bottom - block[valid, column])[below].max()))
-                if block.shape[1] > column + 1:
-                    share = max(share, float(block[valid, column + 1][below].sum()))
-                    total = max(total, float(block[valid, column + 1].sum()))
-        if offenders and ftype != "DRN":  # a DRN below its cell bottom is simply inactive
-            portion = f", carrying {share:.3g} of {total:.3g} total conductance" if total else ""
+            offenders, worst, share, total = worst_period
+            portion = f", carrying {share:.3g} of the period's {total:.3g} conductance" if total else ""
+            verdict = (
+                "MODFLOW-USG allows this; MODFLOW 6 refuses to start and names the "
+                "record. The refusal is read per stress period, so a model whose first "
+                "offending period is late fails only after the earlier ones have solved."
+                if convertible
+                else "Every layer holding one is CONFINED (icelltype 0), where MODFLOW 6 "
+                "accepts the record and terminates normally -- but the boundary then "
+                "works against a head below its own cell and exchanges more water with "
+                "the model than the one that was drawn, with nothing said in the "
+                "listing file."
+            )
             findings.append(
                 Finding(
-                    code=f"{ftype.lower()}_below_cell_bottom",
-                    severity="reject",
+                    code=f"{ftype.lower()}_{label}_below_cell_bottom",
+                    severity="reject" if convertible else "allow",
                     count=offenders,
                     detail=(
                         f"{offenders} {ftype} record(s) have {label} below the bottom of "
-                        f"their cell (by up to {worst:.2f}){portion}. MODFLOW-USG allows "
-                        "this; MODFLOW 6 rejects it and stops."
+                        f"their cell in one stress period, the deepest by {worst:.2f}"
+                        f"{portion}. {verdict}"
                     ),
-                    fix=f"to_mf6(fix_for_mf6=True) raises each {label} to its cell bottom",
-                )
-            )
-
-    chd = model.boundaries.get("CHD")
-    if chd is not None:
-        worst_count = 0
-        for block in chd.periods.values():
-            if not len(block):
-                continue
-            cellid = model.to_cellid(block[:, 0].astype(np.int64))
-            valid = cellid[:, 0] >= 0
-            if not valid.any():
-                continue
-            bottom = model.botm[cellid[valid, 0], cellid[valid, 1]]
-            head = block[valid, 2] if block.shape[1] > 2 else block[valid, 1]
-            worst_count = max(worst_count, int((head < bottom).sum()))
-        if worst_count:
-            findings.append(
-                Finding(
-                    code="chd_below_cell_bottom",
-                    severity="reject",
-                    count=worst_count,
-                    detail=(
-                        f"up to {worst_count} CHD record(s) per period hold a head below their "
-                        "cell bottom. MODFLOW 6 rejects that outright. MODFLOW-USG accepts it, "
-                        "but the cell then has zero saturated thickness and passes no water -- "
-                        "so the boundary was already inert wherever this happens."
-                    ),
-                    fix=(
-                        "to_mf6(fix_for_mf6=True) omits each such record in the periods where "
-                        "it is below the bottom, and keeps it in the periods where it is not"
-                    ),
+                    fix=_BOTTOM_FIXES[ftype, label],
                 )
             )
     return findings
+
+
+def _river_pair_findings(model: UsgModel) -> list[Finding]:
+    """A river whose stage sits below its own bed, which MODFLOW 6 refuses either way.
+
+    Unlike everything else here this does not depend on ``icelltype``: MODFLOW 6 checks
+    ``stage >= rbot`` as a property of the record, and refuses a confined model for it
+    too. ``fix_for_mf6`` deliberately does not touch it -- which of the two numbers is
+    wrong is not something a converter can know, and a pair lift preserves the inversion
+    rather than repairing it.
+    """
+
+    records = model.boundaries.get("RIV")
+    if records is None:
+        return []
+    offenders = 0
+    worst = 0.0
+    for block in records.periods.values():
+        if not len(block) or block.shape[1] < 4:
+            continue
+        inverted = block[:, 1] < block[:, 3]
+        if not inverted.any():
+            continue
+        offenders = max(offenders, int(inverted.sum()))
+        worst = max(worst, float((block[:, 3] - block[:, 1])[inverted].max()))
+    if not offenders:
+        return []
+    return [
+        Finding(
+            code="riv_stage_below_river_bottom",
+            severity="reject",
+            count=offenders,
+            detail=(
+                f"{offenders} RIV record(s) give a stage below their own river bottom "
+                f"(by up to {worst:.2f}). MODFLOW 6 refuses to start at any icelltype: a "
+                "river's stage is its water surface and its rbot the bed beneath it."
+            ),
+            fix=(
+                "correct the source RIV records -- fix_for_mf6 will not guess which of "
+                "the two numbers is the wrong one"
+            ),
+        )
+    ]
+
+
+def _chd_findings(model: UsgModel) -> list[Finding]:
+    """Constant heads below their cell bottom, whose meaning also splits on icelltype."""
+
+    chd = model.boundaries.get("CHD")
+    if chd is None:
+        return []
+    offenders = 0
+    convertible = False
+    for block in chd.periods.values():
+        if not len(block):
+            continue
+        cellid = model.to_cellid(block[:, 0].astype(np.int64))
+        valid = cellid[:, 0] >= 0
+        if not valid.any():
+            continue
+        layers = cellid[valid, 0]
+        bottom = model.botm[layers, cellid[valid, 1]]
+        head = block[valid, 2] if block.shape[1] > 2 else block[valid, 1]
+        below = head < bottom
+        if not below.any():
+            continue
+        offenders = max(offenders, int(below.sum()))
+        convertible = convertible or _convertible(model, layers[below])
+    if not offenders:
+        return []
+    fix = (
+        "to_mf6(fix_for_mf6=True) omits each such record in the periods where it is "
+        "below the bottom, and keeps it in the periods where it is not"
+    )
+    if convertible:
+        return [
+            Finding(
+                code="chd_head_below_cell_bottom",
+                severity="reject",
+                count=offenders,
+                detail=(
+                    f"up to {offenders} CHD record(s) per period hold a head below their "
+                    "cell bottom. MODFLOW 6 refuses to start and names the record. "
+                    "MODFLOW-USG accepts it, but a convertible cell then has zero "
+                    "saturated thickness and passes no water -- so the boundary was "
+                    "already inert wherever this happens."
+                ),
+                fix=fix,
+            )
+        ]
+    return [
+        Finding(
+            code="chd_head_below_cell_bottom",
+            severity="allow",
+            count=offenders,
+            detail=(
+                f"up to {offenders} CHD record(s) per period hold a head below their cell "
+                "bottom. Every layer holding one is CONFINED (icelltype 0), where MODFLOW "
+                "6 accepts the record and runs -- and where the cell keeps its full "
+                "thickness, so the boundary is NOT inert: it pins the head below the "
+                "cell and pulls water out (measured -1200 ft3/d on a one-cell bench). "
+                "Dropping it is a real change to the water balance, not a tidy-up."
+            ),
+            fix=fix,
+        )
+    ]
 
 
 def to_mf6(
@@ -151,10 +349,22 @@ def to_mf6(
             "read_usg() must be given the model's .gsf file"
         )
 
-    blocking = [f for f in mf6_findings(model) if f.blocks_run]
-    if blocking and not fix_for_mf6:
-        for finding in blocking:
-            logger.warning("MODFLOW 6 will reject this model: %s %s", finding.detail, finding.fix)
+    if not fix_for_mf6:
+        for finding in mf6_findings(model):
+            if finding.blocks_run:
+                logger.warning(
+                    "MODFLOW 6 will reject this model: %s %s", finding.detail, finding.fix
+                )
+            else:
+                # An `allow` finding is the one nothing else says out loud: MODFLOW 6
+                # runs, and the boundary does something other than what was drawn.
+                # Leaving it to validate()/report() alone is ledger 288's defect one
+                # module over -- a degradation reported through a channel nobody hears.
+                logger.warning(
+                    "MODFLOW 6 will run this model but change what a boundary does: %s %s",
+                    finding.detail,
+                    finding.fix,
+                )
 
     wanted = {p.lower() for p in include} if include is not None else None
     keep = lambda pkg: wanted is None or pkg in wanted  # noqa: E731
@@ -325,6 +535,7 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
     data: dict[int, list[Any]] = {}
     clamped = [0]
     dropped = [0]
+    dropped_convertible = False
     for period, block in sorted(records.periods.items()):
         if len(block) == 0:
             continue
@@ -333,34 +544,69 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
         valid = cellid[:, 0] >= 0
         values_block = block[valid, 1:]
         if fix_for_mf6 and ftype == "CHD":
-            # A constant head below its cell bottom is inert in MODFLOW-USG
-            # (zero saturated thickness) and fatal in MODFLOW 6, so omitting it
-            # reproduces the USG behaviour exactly. It has to be decided PER
-            # PERIOD: these heads follow a seasonal cycle, so the same record is
-            # below the bottom in a low-stage month and above it in a high one.
+            # A constant head below its cell bottom is fatal in MODFLOW 6 where the
+            # layer is CONVERTIBLE, and there it is inert in MODFLOW-USG too (zero
+            # saturated thickness), so omitting it reproduces the USG behaviour
+            # exactly. In a CONFINED layer neither half holds: the cell keeps its full
+            # thickness, MODFLOW 6 accepts the record, and dropping it removes a
+            # boundary that was moving water (measured -1200 ft3/d on a one-cell
+            # bench). The drop is unconditional all the same -- see ledger 291, where
+            # gating it is recorded as open rather than guessed at.
+            # It has to be decided PER PERIOD: these heads follow a seasonal cycle, so
+            # the same record is below the bottom in a low-stage month and above it in
+            # a high one.
             bottom = model.botm[cellid[valid, 0], cellid[valid, 1]]
             head = values_block[:, 1] if values_block.shape[1] > 1 else values_block[:, 0]
-            guard = np.maximum(np.abs(bottom) * 1e-6, 1e-6)
-            keep_row = head > bottom + guard
+            keep_row = head > bottom + bottom_clearance(bottom)
+            dropped_convertible = dropped_convertible or (
+                not keep_row.all() and _convertible(model, cellid[valid, 0][~keep_row])
+            )
             if not keep_row.all():
                 dropped[0] += int((~keep_row).sum())
                 cellid = cellid[valid][keep_row]
                 values_block = values_block[keep_row]
                 valid = np.ones(len(cellid), dtype=bool)
 
-        if fix_for_mf6 and ftype in ("GHB", "RIV"):
+        # `values_block` drops the node, so its columns are the record's trailing
+        # values: (bhead, cond) / (elev, cond) / (stage, cond, rbot).
+        column = 2 if ftype == "RIV" else 0
+        floorable = fix_for_mf6 and ftype in ("GHB", "DRN", "RIV")
+        if floorable and values_block.shape[1] <= column:
+            # A record short of its own fields is malformed upstream. Leaving it as
+            # read keeps the failure where it belongs, rather than turning it into an
+            # IndexError inside the clamp -- or, worse, dropping the period.
+            logger.debug(
+                "%s: %d value column(s) in period %d, too few to floor %s; left as read",
+                ftype, values_block.shape[1], period, "rbot" if column else "the elevation",
+            )
+            floorable = False
+        if floorable:
             bottom = model.botm[cellid[valid, 0], cellid[valid, 1]]
-            below = values_block[:, 0] < bottom
+            # Clamp to just ABOVE the bottom, not to it. MODFLOW 6 compares the two
+            # numbers as it read them back from text, and both are written with
+            # finite precision -- so a value set exactly equal to the bottom still
+            # trips "IS LESS THAN CELL BOTTOM" once the last digit rounds the wrong
+            # way. The nudge is relative so it stays negligible at any elevation
+            # (5e-5 ft at 50 ft); `bottom_clearance` is the same rule the GeoPackage
+            # boundary sources floor by.
+            floor = bottom + bottom_clearance(bottom)
+            below = values_block[:, column] < floor
             if below.any():
                 values_block = values_block.copy()
-                # Clamp to just ABOVE the bottom, not to it. MODFLOW 6 compares
-                # the two numbers as it read them back from text, and both are
-                # written with finite precision -- so a head set exactly equal to
-                # the bottom still trips "HEAD IS LESS THAN CELL BOTTOM" once the
-                # last digit rounds the wrong way. The nudge is relative so it
-                # stays negligible at any elevation (5e-5 ft at 50 ft).
-                target = bottom[below]
-                values_block[below, 0] = target + np.maximum(np.abs(target) * 1e-6, 1e-6)
+                if ftype == "RIV":
+                    # A RIV record is a PAIR. MODFLOW 6 checks `rbot` against the cell
+                    # bottom and `stage >= rbot` separately, so lifting `rbot` alone
+                    # turns a model that ran into a hard failure WHERE THE STAGE WAS
+                    # BELOW THE BOTTOM TOO, and clamping both to the floor collapses
+                    # the declared depth to zero. A stage already inside its cell is a
+                    # legal, physical number and is left exactly where it was drawn --
+                    # raising it unconditionally put one 3 ft above land surface and
+                    # reversed the river's sign (ledger 291).
+                    values_block[below, 0], values_block[below, 2] = river_pair_lift(
+                        values_block[below, 0], values_block[below, 2], floor[below]
+                    )
+                else:
+                    values_block[below, column] = floor[below]
                 clamped[0] += int(below.sum())
         rows = []
         for (layer, cell), values in zip(cellid[valid], values_block, strict=True):
@@ -368,19 +614,26 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
         if rows:
             data[period] = rows
     if dropped[0]:
+        # The convertible wording is byte-identical to what this always said, and is
+        # true there. The confined one is new, because there the record was neither
+        # inert in MODFLOW-USG nor rejected by MODFLOW 6.
         logger.warning(
-            "%s: omitted %d record-period(s) whose head sits below the cell bottom -- inert in "
-            "MODFLOW-USG, rejected by MODFLOW 6 (fix_for_mf6=True)",
+            (
+                "%s: omitted %d record-period(s) whose head sits below the cell bottom -- "
+                "inert in MODFLOW-USG, rejected by MODFLOW 6 (fix_for_mf6=True)"
+                if dropped_convertible
+                else "%s: omitted %d record-period(s) whose head sits below the cell "
+                "bottom in a CONFINED layer, where MODFLOW 6 would have accepted them and "
+                "the cell keeps its full thickness -- this removes water the model was "
+                "moving (fix_for_mf6=True)"
+            ),
             ftype,
             dropped[0],
         )
     if clamped[0]:
-        logger.warning(
-            "%s: raised %d boundary head(s) to their cell bottom so MODFLOW 6 accepts them "
-            "(fix_for_mf6=True)",
-            ftype,
-            clamped[0],
-        )
+        # One message per family, each naming the field it actually moved. A single
+        # generic line would have to call a drain invert and a river bed a "head".
+        logger.warning(_CLAMP_REPORT[ftype], ftype, clamped[0])
     return data
 
 
@@ -627,7 +880,12 @@ def conversion_notes(model: UsgModel) -> str:
 
     findings = mf6_findings(model)
     if findings:
-        add("MODFLOW 6 IS STRICTER")
+        # Not every finding is a refusal. Whether MODFLOW 6 rejects a below-bottom
+        # elevation or accepts it and quietly changes what the boundary does depends on
+        # the layer's icelltype (ledger 291), so a single "IS STRICTER" heading would be
+        # wrong half the time; the marker on each line says which this one is.
+        add("MODFLOW 6 DIFFERS")
+        add("  REJECTS = will not start; allows = starts, and the boundary behaves differently")
         for finding in findings:
             marker = "REJECTS" if finding.blocks_run else "allows "
             add(f"  {marker}  {finding.detail}")
