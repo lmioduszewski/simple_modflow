@@ -2561,10 +2561,6 @@ class Project:
         them would archive files nothing opens.
         """
 
-        bundled: list[tuple[str, str]] = []
-        if bundle_sources:
-            bundled = self._bundle_grid_sources()
-
         dropped = self._report_dropped_contexts()
 
         issues = self.validate()
@@ -2573,6 +2569,15 @@ class Project:
                 "Project cannot be saved:\n"
                 + "\n".join(f"- {issue}" for issue in issues)
             )
+
+        # AFTER the strict refusal, never before. Bundling COPIES FILES and repoints the
+        # live registry, so running it first left a refused save with a populated
+        # `inputs/`, the in-memory recipes pointing into it, and no spec file written --
+        # a state nothing on disk records, and one a later plain `save()` would then
+        # persist without the user ever asking for an archive (ledger 292).
+        bundled: list[tuple[str, str]] = []
+        if bundle_sources:
+            bundled = self._bundle_grid_sources()
 
         # Two kinds of un-persistable simulation, handled differently on purpose.
         # An embedded array is nothing the caller can fix at save time, so it is

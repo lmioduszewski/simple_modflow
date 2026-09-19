@@ -5,7 +5,13 @@ on disk. `Project.save(bundle_sources=True)` copies those files into
 ``<root>/inputs/`` and rewrites the stored paths to point there, so the project is an
 archive rather than a set of references into whatever directory it was authored in.
 
-**Grids only, and that is a measurement rather than a scope cut.** Every `.gpkg`
+**Grids only -- for now, and no longer for the reason below.** Ledgers 279/284/285 made
+the seven `.gpkg` list BCs lazy when declared without ``context=``, so a saved package
+CAN hold a path and does read a file at build. Carrying those is its own commit; what
+follows is the measurement that was true when this module was written, kept because it
+still describes the eager form exactly.
+
+**Every `.gpkg`**
 package helper resolves EAGERLY at declaration, so a saved package holds finished
 records: an instrumented recorder saw zero file reads inside ``PackageSpec.build``
 across 306 passing tests, a project rebuilds with its GeoPackage deleted, and the
@@ -34,6 +40,44 @@ from myflopy._logging import get_logger
 from myflopy.specs import DataSourceSpec, GridSpec
 
 logger = get_logger(__name__)
+
+
+#: Extensions whose format is MULTI-FILE: the named file is unusable without its
+#: companions, which share its stem. Copying only the file the recipe names produced a
+#: project that reported `bundled` and could no longer be OPENED -- measured, a shapefile
+#: written with five sidecars (.cpg .dbf .prj .shp .shx) was bundled as the .shp alone and
+#: the grid that resolved before the save then failed `DataSourceError` on a tree where
+#: nothing had been deleted (ledger 292). A `.gdb` is a DIRECTORY and is already carried
+#: whole by `copytree`; this is the other shape of the same mistake.
+#: Raster sidecars are here because they are cheap and their absence is silent: a `.tif`
+#: opens without its `.tfw` and lands in the wrong place.
+_COMPANION_FORMATS = frozenset(
+    {".shp", ".tab", ".mif", ".tif", ".tiff", ".asc", ".img", ".bil", ".bip", ".bsq"}
+)
+
+
+def _companions(source: Path) -> list[Path]:
+    """Every sibling belonging to ``source``'s multi-file format, itself excluded.
+
+    Matched by NAME PREFIX rather than by an enumerated suffix list: a shapefile's
+    companion set is open (.shx .dbf .prj .cpg .qix .sbn .sbx .qpj ...) and a raster's
+    sidecar is often a double extension (`ground.tif.aux.xml`), whose `Path.stem` is
+    `ground.tif` rather than `ground`. A prefix match catches both without a table that
+    silently omits the one format a user has.
+    """
+
+    if source.suffix.lower() not in _COMPANION_FORMATS:
+        return []
+    try:
+        siblings = list(source.parent.iterdir())
+    except OSError:
+        return []
+    prefix = f"{source.stem}."
+    return [
+        path
+        for path in siblings
+        if path != source and path.is_file() and path.name.startswith(prefix)
+    ]
 
 
 def _paths_of(spec: GridSpec) -> list[Path]:
@@ -79,6 +123,15 @@ def grid_sources(spec: GridSpec, *, project_root: Path | str | None = None) -> l
         else:
             resolved.append(Path(project_root) / path)
     return resolved
+
+
+def _inside(source: Path, directory: Path) -> bool:
+    """Whether ``source`` already lives under ``directory``, resolving both."""
+
+    try:
+        return source.resolve().is_relative_to(directory.resolve())
+    except (OSError, ValueError):
+        return False
 
 
 def _same_file(left: Path, right: Path) -> bool:
@@ -154,10 +207,14 @@ class _Bundler:
             # would lose the rest of it.
             self.missing.append(str(source))
             return value
-        try:
-            already_inside = source.resolve().is_relative_to(self.inputs_dir.resolve())
-        except (OSError, ValueError):
-            already_inside = False
+        # Against the PROJECT ROOT, not just `inputs/`. A source the project already
+        # holds does not need copying anywhere -- and testing only `inputs/` made the
+        # bundler copy the project's OWN artifact into itself: a `method="object"` grid
+        # becomes a pickle on save, and that pickle was then duplicated into `inputs/`
+        # and the recipe repointed at the copy, orphaning the original. On a real grid
+        # the pickle is the largest thing a saved project holds (ledger 292). It is also
+        # what `usg.export_gis(dir)` encourages -- writing sources INTO the project.
+        already_inside = _inside(source, self.inputs_dir) or _inside(source, self.root)
         destination = source if already_inside else self._destination(source)
         if not already_inside:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +226,14 @@ class _Bundler:
                 shutil.copytree(source, destination)
             else:
                 shutil.copy2(source, destination)
+                for companion in _companions(source):
+                    beside = destination.parent / (
+                        destination.stem + companion.name[len(source.stem):]
+                    )
+                    shutil.copy2(companion, beside)
+                    self.copied.append(
+                        {"from": str(companion), "to": str(beside.relative_to(self.root))}
+                    )
             self.copied.append(
                 {"from": str(source), "to": str(destination.relative_to(self.root))}
             )

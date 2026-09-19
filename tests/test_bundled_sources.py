@@ -279,3 +279,112 @@ def test_a_manifest_without_a_project_root_still_opens(tmp_path):
     reopened = Run.reopen(root / "runs" / "r1")
     assert reopened.project_root is None
     reopened.build()                         # the snapshot still carries it through
+
+
+# --- three defects in the shipped bundler (ledger 292) ------------------------
+
+
+def _shapefile(path):
+    """A one-polygon SHAPEFILE, which is five files sharing a stem."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gpd.GeoDataFrame(
+        {"name": ["d"]}, geometry=[box(0, 0, 600.0, 600.0)], crs=2927
+    ).to_file(path)
+    return path
+
+
+def test_a_multi_file_source_is_bundled_WHOLE(tmp_path):
+    """Copying only the file the recipe names produced a project that reported success
+    and could no longer be OPENED.
+
+    Measured before this, on a tree where NOTHING was deleted: a shapefile written with
+    five sidecars (.cpg .dbf .prj .shp .shx) was bundled as the `.shp` alone, the grid
+    that resolved before the save then failed `DataSourceError`, and `SaveReport` said it
+    had bundled. That is strictly worse than not bundling -- it takes a project that
+    builds and makes it not build (ledger 292). A `.gdb` directory was already carried
+    whole by `copytree`; this is the other shape of the same mistake.
+    """
+
+    source = _shapefile(tmp_path / "gis" / "domain.shp")
+    written = {path.suffix for path in source.parent.iterdir()}
+    assert {".shp", ".shx", ".dbf"} <= written, "the fixture must really be multi-file"
+
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    project.add_grid("g", _grid_spec(source))
+    project.save(bundle_sources=True)
+
+    bundled = {path.suffix for path in (root / "inputs").iterdir()}
+    assert written <= bundled, f"sidecars left behind: {sorted(written - bundled)}"
+    # The real assertion: GDAL can open the copy. A .shp without its .shx cannot.
+    assert len(gpd.read_file(root / "inputs" / "domain.shp")) == 1
+
+
+def test_a_single_file_source_does_not_drag_in_its_neighbours(tmp_path):
+    """The refusing direction. A `.gpkg` is self-contained, so a same-stem neighbour is
+    somebody else's file and must stay where it is."""
+
+    source = _gpkg(tmp_path / "gis" / "domain.gpkg")
+    (source.parent / "domain.notes.txt").write_text("not mine")
+
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    project.add_grid("g", _grid_spec(source))
+    project.save(bundle_sources=True)
+
+    assert sorted(p.name for p in (root / "inputs").iterdir()) == ["domain.gpkg"]
+
+
+def test_a_source_the_project_ALREADY_holds_is_not_copied_into_itself(tmp_path):
+    """`already_inside` tested `inputs/` only, never the project root.
+
+    A `method="object"` grid becomes a pickle on save, and the bundler then copied the
+    project's own `specs/grids/g.pkl` into `inputs/` and repointed the recipe at the
+    copy, orphaning the original. On a real grid that pickle is the largest thing a
+    saved project holds, so it doubled it (ledger 292). It is also the shape
+    `usg.export_gis(dir)` encourages -- writing sources INTO the project.
+    """
+
+    from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
+
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    project.add_grid("g", rectangular_voronoi(CanonicalModelConfig(nrow=3, ncol=3, nlay=1, nper=1)))
+
+    # SAVE, LOAD, then bundle -- the live grid is still an OBJECT and names no pickle, so
+    # a single save cannot reach this. Only the RELOADED recipe carries
+    # `pickle_path="specs/grids/g.pkl"`, which is the path the bundler then copied into
+    # `inputs/`. Writing this as one save passed with the fix reverted.
+    project.save()
+    reloaded = Project.load(root)
+    assert str(reloaded.grid("g").pickle_path) == "specs/grids/g.pkl", "the premise"
+    reloaded.save(bundle_sources=True)
+
+    pickles = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.pkl"))
+    assert pickles == ["specs/grids/g.pkl"], f"duplicated: {pickles}"
+
+
+def test_a_REFUSED_save_copies_nothing_and_moves_nothing(tmp_path):
+    """Bundling was the first statement of `save`, ahead of `validate()`.
+
+    So a `strict=True` refusal left `inputs/` populated and the LIVE registry repointed
+    into it, with no spec file written -- a state nothing on disk records, and one a
+    later plain `save()` would then persist without the user ever asking for an archive.
+    """
+
+    source = _gpkg(tmp_path / "gis" / "domain.gpkg")
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    project.add_grid("g", _grid_spec(source))
+    project.add_simulation(
+        mf.simulation(
+            mf.gwf("m", packages=[mf.ref("nope")]), name="s", packages=[mf.tdis(nper=1)]
+        )
+    )
+
+    with pytest.raises(ValueError, match="cannot be saved"):
+        project.save(strict=True, bundle_sources=True)
+
+    assert not (root / "inputs").exists()
+    assert str(project.grid("g").boundary.path) == str(source)

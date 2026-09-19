@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 291 entries (292 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 292 entries (293 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 292 | The bundler half-copied a shapefile, bundled the project into itself, and ran before the save was allowed | 2026-09-18 |
 | 291 | The importer lifted the river's water surface, not its bed | 2026-09-18 |
 | 290 | An elevation outside its own cell, and nothing said so | 2026-09-18 |
 | 289 | A floor that silently was not one, and an elevation divided by area | 2026-09-18 |
@@ -9568,6 +9569,14 @@ same day, which is the useful part of the result.
       those copies, and repoints the LIVE registry too -- otherwise a later plain `save()`
       writes the original paths back and quietly un-bundles the project. `SaveReport`
       gains `bundled`, the `(from, to)` pairs.
+      **AMENDED 2026-09-18: the "grids only" premise below was true when written and is
+      now HALF false.** Ledgers 279/284/285 made the seven `.gpkg` list BCs lazy when
+      declared without `context=`, so a saved package can hold a PATH and does read a file
+      at build -- re-running this entry's own instrument on one model gives eager 0 reads,
+      lazy 3 (`gpd.read_file` on the GeoPackage, `open` for its fingerprint,
+      `rasterio.open` for a lazy DISV's surface). The eager clause still stands; it is
+      simply no longer the whole class. Carrying package sources is its own commit; ledger
+      292 fixed the bundler this one shipped, first.
       **GRIDS ONLY, and that is a measurement rather than a scope cut.** The plan's text
       for this commit was "copy every source a RECIPE names", which assumed the recipe
       field deferred from A2. A scoping workflow measured the premise instead of
@@ -11537,3 +11546,42 @@ same day, which is the useful part of the result.
       **Known gap, not closed here:** a non-finite elevation is neither clamped nor
       reported (`nan < floor` is False), so it reaches MODFLOW 6 -- the USG importer has
       no counterpart to the refusal ledgers 247/289 built for the GeoPackage sources.
+
+292. **The bundler half-copied a shapefile, bundled the project into itself, and ran
+      before the save was allowed (2026-09-18).**
+      Three defects in the SHIPPED grid bundler (ledger 256), found while scoping B2's
+      package-source work and landed first because that work multiplies every one of them.
+      **(a) A multi-file source was bundled as its named FILE alone, and the project then
+      could not be opened.** Measured end to end, on a tree where NOTHING was deleted: a
+      shapefile written with five companions (`.cpg .dbf .prj .shp .shx`) was bundled as
+      the `.shp` only; the grid that resolved at `ncpl = 28` before the save then failed
+      `DataSourceError`, and `SaveReport` reported the bundle as done. **That is strictly
+      worse than not bundling** -- it takes a project that builds and makes it not build,
+      and says it archived it. A `.gdb` is a DIRECTORY and was already carried whole by
+      `copytree`; this is the same mistake in its other shape.
+      Companions are matched by NAME PREFIX rather than an enumerated suffix table: a
+      shapefile's companion set is open-ended, and a raster sidecar is often a double
+      extension (`ground.tif.aux.xml`), whose `Path.stem` is `ground.tif` rather than
+      `ground`. The prefix catches both without a table that silently omits the one format
+      a user has. Only formats that NEED companions are swept, so a self-contained
+      `.gpkg` does not drag in a same-stem neighbour.
+      **(b) A source the project ALREADY held was copied into the project.**
+      `already_inside` tested `inputs/` and never the project root, so a `method="object"`
+      grid -- which becomes a pickle on save -- had its own `specs/grids/g.pkl` copied to
+      `inputs/g.pkl` and the recipe repointed at the copy, orphaning the original. On a
+      real grid that pickle is the largest thing a saved project holds, so it doubled it.
+      **It takes save -> load -> save to reach**: the LIVE grid is still an object and
+      names no pickle, so a single save cannot produce it, and the first version of the
+      test passed with the fix reverted for exactly that reason. The same one-line
+      condition also covers a source the user deliberately keeps inside the project, which
+      `usg.export_gis(dir)` (ledger 169) actively encourages.
+      **(c) A REFUSED save still copied files and repointed the live registry.**
+      `_bundle_grid_sources()` was the FIRST statement of `Project.save`, ahead of
+      `validate()` and the `strict=True` raise -- so a refused save left `inputs/`
+      populated and the in-memory recipes pointing into it, with no spec file written. A
+      state nothing on disk records, and one a later plain `save()` would then persist
+      without the user having asked for an archive. Bundling runs after the refusal now.
+      **Ledger 256's premise is separately stale** and is amended there rather than here:
+      "package sources resolve EAGERLY" was measured true when written and is now false
+      for a lazy `.gpkg` (ledgers 279/284/285). Carrying those is the NEXT commit; this
+      one is the bundler that will have to carry them.
