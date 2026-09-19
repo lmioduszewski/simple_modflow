@@ -308,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3646 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3655 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -656,7 +656,16 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   disjoint; all-no-data where they overlap is a blank raster, not a misplaced one.
   `vor.get_raster_vals_at_centroids` forwards `method=`/`nodata=`/`gaps=` now; it
   forwarded none of them.
-- **A `.gpkg` NULL raises too, naming the row** (ledger 247, 2026-09-13). A null
+- **A `.gpkg` NULL raises too, naming the row** (ledger 247, 2026-09-13, amended by 289).
+  **Two members of that family survived until 2026-09-18** (ledger 289): a NULL in a
+  `CellSurfaceOffset`'s `minimum` column read back as `nan`, `max(value, nan)` returns
+  `value`, and the result is FINITE -- so the guard passed and the FLOOR SILENTLY DID NOT
+  EXIST (measured: output byte-identical to no floor, 11 of 11 records below their own cell
+  bottom). And **`Spread` on an ELEVATION** was accepted and divided it by the cell's area
+  share (a declared 75.0 written as 2.06-11.87) -- ledger 274 refused that on the ARRAY
+  form and never reached the list form. `_ELEVATION_FIELDS` names the six fields, and the
+  refusal is called from BOTH the eager and the lazy path because a lazy declaration never
+  reaches `_bc_from_features`. A null
   attribute reached a written package as a NON-FINITE number by two separate
   routes: `k_array` did `float(row[value])`, which makes NaN, and a boundary record
   kept the `None`, which numpy casts to NaN when FloPy builds the recarray. MF6 then

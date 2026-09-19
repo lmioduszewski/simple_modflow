@@ -55,6 +55,7 @@ from myflopy.geopackage import (
     RowValue,
     Spread,
     SurfaceResolver,
+    refuse_spread_on_elevation,
 )
 from myflopy.grid_identity import (
     CELLWISE_OPTIONS,
@@ -892,6 +893,7 @@ def _lazy_bc_spec(
     # declaration has no mesh yet, and a number resolved now would carry the OLD grid's
     # cell width across `with_grid`, which is the stale-cellid defect in another costume
     # (ledger 288).
+    refuse_spread_on_elevation(package, values)
     check_gaps(gaps, verb=f"mf.{package}.gpkg")
     if snap_within is not None and not (float(snap_within) > 0):
         raise ValueError(

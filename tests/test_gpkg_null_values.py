@@ -124,7 +124,16 @@ def test_a_null_in_a_spread_field_names_it_as_a_spread(tmp_path, vor):
 
 
 def test_a_null_offset_on_a_surface_reference_names_the_column(tmp_path, vor):
-    """The sum goes non-finite through the OFFSET, so the error points at the column."""
+    """The OFFSET column is read through the same funnel now, so it is caught AT the read.
+
+    It used to be caught downstream, once the SUM went non-finite -- which named the
+    fields but not the feature and not which of `offset=`/`minimum=` was empty. The
+    `minimum` column had no such luck in either direction: a NULL read back as `nan`
+    SILENTLY DISABLED the floor (`max(value, nan)` returns `value`, and the result is
+    finite so this guard passed), and a TEXT NULL raised a bare `TypeError` naming
+    nothing. Both columns go through `_finite` now (ledger 289), which is what makes
+    ledger 247's own claim -- that it names the offset and minimum columns -- true.
+    """
 
     vor.gdf_topbtm = gpd.GeoDataFrame(
         {0: [10.0] * (N * N), 1: [0.0] * (N * N)},
@@ -132,10 +141,51 @@ def test_a_null_offset_on_a_surface_reference_names_the_column(tmp_path, vor):
         crs=CRS,
     )
     source = _source(tmp_path, vor, {"drop": [float("nan")], "conductance": [1.0]})
-    with pytest.raises(ValueError, match=r"surface reference \(fields 'drop'\)"):
+    with pytest.raises(ValueError, match=r"feature 'a' \(offset=\) has nan for 'drop'"):
         source.drn(
             elevation=CellSurfaceOffset("cell_top", offset="drop"), conductance="conductance"
         )
+
+
+def test_a_null_minimum_is_refused_rather_than_silently_disabling_the_floor(tmp_path, vor):
+    """`max(value, nan)` returns `value`, and the result is FINITE -- so this guard passed.
+
+    A caller who asked for a floor got none, and the written output was byte-identical to
+    declaring no floor at all: measured, 11 of 11 records below their own cell bottom
+    with zero warnings (ledger 289). That is the worst shape of a silent input defect --
+    the safeguard the user reached for is the thing that vanished.
+    """
+
+    vor.gdf_topbtm = gpd.GeoDataFrame(
+        {0: [10.0] * (N * N), 1: [0.0] * (N * N)},
+        geometry=list(vor.gdf_vorPolys.geometry),
+        crs=CRS,
+    )
+    source = _source(tmp_path, vor, {"floor": [float("nan")], "conductance": [1.0]})
+
+    with pytest.raises(ValueError, match=r"\(minimum=\) has nan for 'floor'"):
+        source.drn(
+            elevation=CellSurfaceOffset("cell_top", offset=-20.0, minimum="floor"),
+            conductance="conductance",
+        )
+
+
+def test_a_real_minimum_still_floors(tmp_path, vor):
+    """The refusing direction: the guard must not break a floor that is actually given."""
+
+    vor.gdf_topbtm = gpd.GeoDataFrame(
+        {0: [10.0] * (N * N), 1: [0.0] * (N * N)},
+        geometry=list(vor.gdf_vorPolys.geometry),
+        crs=CRS,
+    )
+    source = _source(tmp_path, vor, {"floor": [4.0], "conductance": [1.0]})
+
+    spec = source.drn(
+        elevation=CellSurfaceOffset("cell_top", offset=-20.0, minimum="floor"),
+        conductance="conductance",
+    )
+
+    assert {record[1] for record in spec.options["stress_period_data"][0]} == {4.0}
 
 
 def test_a_feature_that_lands_nowhere_reports_the_MISS_not_the_null(tmp_path, vor):

@@ -465,3 +465,58 @@ def test_the_array_form_still_takes_an_ordinary_value():
     """The control: the refusal must not be bought with a false positive."""
 
     assert mf.rch.array(recharge=0.001, irch=0) is not None
+
+
+def _one_feature_file(tmp_path):
+    """A one-row GeoPackage, so the refusal under test is reached rather than the file check."""
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    path = tmp_path / "bc.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["f"], "layer": [1], "x": [1.0]},
+        geometry=[box(0.0, 0.0, 1.0, 1.0)],
+        crs="EPSG:2927",
+    ).to_file(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "field"),
+    [("chd", "head"), ("ghb", "head"), ("drn", "elevation"),
+     ("riv", "stage"), ("riv", "rbot"), ("evt", "surface")],
+)
+def test_spread_is_refused_on_an_elevation_field(tmp_path, helper_name, field):
+    """`Spread` divides a feature's total across the cells it covers. An elevation has no
+    total to divide, so each cell would get a FRACTION of the elevation declared.
+
+    Measured before this: `elevation=mf.Spread("elev")` on a declared 75.0 wrote 2.06 to
+    11.87 -- the elevation times each cell's area share -- with all 11 records below their
+    own cell bottom, a clean build and no warning (ledger 289). Ledger 274 refused exactly
+    this on the ARRAY form and never reached the list form.
+
+    Asserted on the LAZY declaration (no `context=`), because that path never reaches
+    `_bc_from_features` -- a single check site would have covered only half the API.
+    """
+
+    import myflopy as mf
+    from myflopy.geopackage import Spread
+
+    helper = getattr(mf, helper_name)
+    with pytest.raises(TypeError, match=f"{field}=mf.Spread"):
+        helper.gpkg(_one_feature_file(tmp_path), nper=1, **{field: Spread("x")})
+
+
+def test_spread_is_still_allowed_where_there_IS_a_total_to_divide(tmp_path):
+    """The refusing direction. A conductance, and a recharge column that really holds a
+    volume, ARE spreadable -- that is what `Spread`'s own docstring teaches -- so the
+    refusal must name elevations only."""
+
+    import myflopy as mf
+    from myflopy.geopackage import Spread
+
+    path = _one_feature_file(tmp_path)
+    for helper_name, field in (("drn", "conductance"), ("rch", "recharge"), ("wel", "rate")):
+        spec = getattr(mf, helper_name).gpkg(path, nper=1, **{field: Spread("x")})
+        assert spec.inputs["stress_period_data"].values[field].field == "x"

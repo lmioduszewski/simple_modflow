@@ -199,13 +199,31 @@ class CellSurfaceOffset:
         object.__setattr__(self, "reference", reference)
 
     @staticmethod
-    def _row_or_value(row, value: int | float | str | None) -> float | None:
-        """Resolve a numeric constant or a GeoPackage field name to a float (``None`` -> ``None``)."""
+    def _row_or_value(
+        row, value: int | float | str | None, *, role: str = "offset", source: str = ""
+    ) -> float | None:
+        """A numeric constant or a GeoPackage column, as a float (``None`` -> ``None``).
+
+        **A NULL in the column is REFUSED, not passed on.** A nullable REAL column reads
+        back as ``nan``, and ``max(value, nan)`` returns ``value`` in Python -- so a NULL
+        in the ``minimum`` column SILENTLY DISABLED the floor, and the result was finite
+        so ledger 247's own check let it through. Measured: a drain declared with
+        ``minimum="floor"`` over a NULL column wrote output BYTE-IDENTICAL to no floor at
+        all, 11 of 11 records below their own cell bottom, zero warnings (ledger 289).
+        The other direction was no better -- a TEXT NULL raised a bare ``TypeError``
+        naming neither the feature nor the field, where the same NULL in a plain value
+        column gives ledger 247's full named error.
+        """
 
         if value is None:
             return None
         if isinstance(value, str):
-            return float(row[value])
+            return _finite(
+                row[value],
+                field=value,
+                label=f"{row.get('name', getattr(row, 'name', '?'))!r} ({role}=)",
+                source=source or "",
+            )
         return float(value)
 
     def required_fields(self) -> set[str]:
@@ -226,8 +244,10 @@ class CellSurfaceOffset:
         """
 
         surface = source.surface_value(self.reference, layer=layer, cell=cell)
-        value = surface + self._row_or_value(row, self.offset)
-        minimum = self._row_or_value(row, self.minimum)
+        where = getattr(source, "path", None)
+        where = f"'{where.name}'" if where is not None else ""
+        value = surface + self._row_or_value(row, self.offset, role="offset", source=where)
+        minimum = self._row_or_value(row, self.minimum, role="minimum", source=where)
         if minimum is not None:
             value = max(value, minimum)
         return float(value)
@@ -538,6 +558,44 @@ _FULLY_COVERED = 1.0 - 1e-9
 #: summing it says nothing. Everything else reports per feature, with no total, unless
 #: the caller wrapped it in ``mf.Spread``, which IS a declaration that it is extensive.
 _EXTENSIVE_FIELDS = {("wel", "rate")}
+
+#: The ``(package, record field)`` pairs that are ELEVATIONS. ``Spread`` divides a
+#: feature's total across the cells it covers, which is meaningful for a flux or a
+#: conductance and MEANINGLESS for an elevation: measured, ``elevation=mf.Spread("elev")``
+#: on a declared 75.0 wrote 2.06 to 11.87 -- the elevation multiplied by each cell's area
+#: share -- with all 11 records below their own cell bottom and no warning (ledger 289).
+#: Ledger 274 refused exactly this on the ARRAY form and never reached the list form.
+#: ``rch.recharge`` is deliberately absent: a rate column that really holds a total volume
+#: IS spreadable, which is what ``Spread``'s own docstring teaches.
+_ELEVATION_FIELDS = {
+    ("chd", "head"),
+    ("ghb", "head"),
+    ("drn", "elevation"),
+    ("riv", "stage"),
+    ("riv", "rbot"),
+    ("evt", "surface"),
+}
+
+
+def refuse_spread_on_elevation(package: str, values) -> None:
+    """Refuse ``Spread`` on a field that is an ELEVATION, at the CALL.
+
+    Needs no grid, so it belongs at declaration -- the rule `_lazy_bc_spec` already
+    follows for a missing file and ``nper >= 1``. Called from BOTH paths: the eager one
+    reaches `_bc_from_features`, and a lazy declaration never does, so a single site
+    would have covered only half the API (ledger 289).
+    """
+
+    for record_field, spec in (values or {}).items():
+        if isinstance(spec, Spread) and (package, record_field) in _ELEVATION_FIELDS:
+            raise TypeError(
+                f"mf.{package}.gpkg: {record_field}=mf.Spread(...) divides a feature's "
+                f"total across the cells it covers, and {record_field} is an ELEVATION -- "
+                "there is no total to divide, so each cell would get a FRACTION of the "
+                "elevation you declared (measured: a declared 75.0 written as 2.06 to "
+                f"11.87). Pass the column directly ({record_field}={spec.field!r}), or "
+                "mf.CellSurfaceOffset(...) to place it relative to a surface."
+            )
 
 
 def _listed(items, limit: int = 10) -> str:
@@ -1242,6 +1300,8 @@ class GeoPackageSource:
             f"{package}: fields {tuple(fields)} are not in the descriptor's "
             f"record order {expected}"
         )
+
+        refuse_spread_on_elevation(package, fields)
 
         data_options: dict[str, Any] = {"boundnames": boundnames}
         if descriptor.capabilities.edges_only:

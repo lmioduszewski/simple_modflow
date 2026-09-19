@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 288 entries (289 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 289 entries (290 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 289 | A floor that silently was not one, and an elevation divided by area | 2026-09-18 |
 | 288 | A feature that missed the grid was reported through a channel nobody hears | 2026-09-18 |
 | 287 | Every PART of a multi-part point was a whole feature | 2026-09-18 |
 | 286 | A model's own options belong to no package, so importing a run dropped them | 2026-09-18 |
@@ -9064,6 +9065,12 @@ same day, which is the useful part of the result.
       and MINIMUM columns it read rather than the surface reference -- a null offset
       is what makes that sum non-finite, and blaming `cell_bottom` would send the
       reader to the wrong place.
+      **AMENDED by ledger 289: that last claim was only half true.** A NULL reaching the
+      surface SUM through `offset` was named; the `minimum` column was never checked at
+      all, so a NULL there came back `nan`, `max(value, nan)` returned the UNFLOORED
+      value, and the result was finite -- so this guard passed and the floor silently did
+      not exist. Both columns go through `_finite` now, and the message names which of
+      `offset=`/`minimum=` was empty as well as the column.
       **Refusing rather than defaulting is a deliberate divergence from the legacy
       behaviour.** `KFromVector` substituted the layer default for a null; that is a
       guess at a number the user never supplied, and it makes a mis-typed zone
@@ -11329,3 +11336,45 @@ same day, which is the useful part of the result.
       writes the record at `(98, 111)` silently; with a domain declared the same input
       raises. The guard exists only by accident of whether a domain was passed, and
       ledger 284 made contextless declarations normal.
+
+289. **A floor that silently was not one, and an elevation divided by area (2026-09-18).**
+      Two live silent-wrong-value defects in `GeoPackageSource._value` /
+      `CellSurfaceOffset.resolve`, found while scoping the elevation floor (B2 item 8) and
+      landed first because the floor would have inherited the first one.
+      **(a) A NULL in the `minimum` column silently disabled the floor.** A nullable REAL
+      column reads back as `nan`, `max(value, nan)` returns `value` in Python, and the
+      result is FINITE -- so ledger 247's own guard let it through. Measured: a drain
+      declared `minimum="floor"` over a NULL column wrote output **byte-identical to
+      declaring no floor at all**, 11 of 11 records below their own cell bottom, zero
+      warnings. That is the worst shape an input defect takes -- **the safeguard the user
+      reached for is the thing that vanished**. The other direction was no better: a TEXT
+      NULL raised a bare `TypeError` naming neither the feature nor the field, where the
+      same NULL in a plain value column gives 247's full named error. Both the `offset`
+      and `minimum` columns go through `_finite` now, which is what makes ledger 247's own
+      claim -- that it names those columns -- true; that entry is amended.
+      The message gained the ROLE as well as the column, because knowing a value is
+      missing is no use without knowing which of `offset=`/`minimum=` it was:
+      `GeoPackage 'bc.gpkg': feature 'l' (minimum=) has nan for 'floor'.`
+      **(b) `Spread` on an ELEVATION was accepted and divided it by the cell's area
+      share.** Measured: `elevation=mf.Spread("elev")` on a declared 75.0 wrote **2.06 to
+      11.87** across 11 cells -- all of them below their own cell bottom -- with a clean
+      build and no warning. `Spread` exists to divide a feature's TOTAL across the cells
+      it covers, which is right for a flux or a conductance and meaningless for an
+      elevation: there is no total to divide. **Ledger 274 refused exactly this on the
+      ARRAY form and never reached the list form.** Refused by name now, for the six
+      elevation fields (`chd.head`, `ghb.head`, `drn.elevation`, `riv.stage`, `riv.rbot`,
+      `evt.surface`), through `_ELEVATION_FIELDS` -- the shape `_EXTENSIVE_FIELDS` set in
+      ledger 288. `rch.recharge` is deliberately absent: a rate column that really holds a
+      total volume IS spreadable, which is what `Spread`'s own docstring teaches.
+      **The refusal had to be called from BOTH paths**, and a single site would have
+      covered half the API: the eager form reaches `_bc_from_features` and a LAZY
+      declaration never does (ledger 284/285 made contextless declarations normal). It
+      needs no grid, so it belongs at the call -- the rule `_lazy_bc_spec` already follows
+      for a missing file and `nper >= 1`. Proved by mutation: removing the lazy-path call
+      fails five of the six parametrized cases.
+      **Recorded so it is not re-filed:** the LEGACY builders carry a third instance of
+      the same family -- `min_elev = min_elev if min_elev is not None else 0` at
+      `modflow/mf6/ghb.py:242` and `drn.py:200`, read with `row.get(...)`, turns an ABSENT
+      floor column into an absolute floor at DATUM ZERO. Silently correct on a model above
+      sea level and silently destructive below it. Legacy layer, and deprecating it is
+      already blocked, so it is noted rather than fixed.
