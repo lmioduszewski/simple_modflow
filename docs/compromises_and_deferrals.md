@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 286 entries (287 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 287 entries (288 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 287 | Every PART of a multi-part point was a whole feature | 2026-09-18 |
 | 286 | A model's own options belong to no package, so importing a run dropped them | 2026-09-18 |
 | 285 | The array form's default could not be written down, which made the whole model unsaveable | 2026-09-18 |
 | 284 | Recharge and ET can be declared before their grid exists | 2026-09-18 |
@@ -11178,3 +11179,39 @@ same day, which is the useful part of the result.
       `NEWTON` this one is visible to anyone who looks -- it wants kwargs shaping, not a
       new reader, and `usg/convert.py:_ims_spec` argues a half-copied solver block is
       worse than a named preset. Left for `project.import_run` (plan D2).
+
+287. **Every PART of a multi-part point was a whole feature (2026-09-18).**
+      `cell_shares` divides a feature by its own extent -- length for a line, area for a
+      polygon -- and a point has none, so the zero-extent branch handed **every part a
+      share of 1.0**. Its own docstring, three paragraphs above, says fractions are of
+      the WHOLE feature and sum to less than one where part of it lies outside; so does
+      `mf.Spread`'s ("each cell receives ``value * share``, where ``share`` is the cell's
+      fraction of the feature"). Both were false for a MultiPoint.
+      **Measured on the default path, no `Spread` needed to trigger it and `Spread` no
+      help against it:** a MultiPoint of 3 wells declared at `-1000` wrote **-3000**,
+      identically wrapped and unwrapped -- and `mf.Spread` exists precisely to conserve a
+      feature's total. Worse, a part that reached no cell simply vanished: the same file
+      wrote `-2000` with one part 50,000 ft off the grid and `-3000` with all three on
+      it, shares summing to 2.0 against 3.0 -- **indistinguishable from a complete
+      two-part feature**. It never entered `missed` either, which records only a feature
+      reaching ZERO cells, so nothing warned at any level.
+      **Only points were affected, and the contrast is what isolates it**: a
+      MultiLineString with one part off-grid already summed to 0.5000 and `Spread`
+      already wrote `-500.0`, because the extent-based branch divides by the feature's
+      own length. Lines and polygons were right the whole time.
+      Each part carries `1 / nparts` now, accumulated per cell rather than collapsed into
+      a set -- two parts landing on ONE cell owe it both their shares, and a set would
+      drop the second and make a complete feature read as truncated. A single point is
+      one part and so is unchanged.
+      **This CHANGES WRITTEN VALUES** for a multi-part point wrapped in `mf.Spread`:
+      the MultiPoint above now writes `-1000.0` where it wrote `-3000.0`, and `-666.7`
+      where a third of it is off the grid. That is the number the declaration always
+      meant, but a stored run holding such a package will report a moved digest, which is
+      correct rather than noise. An UNWRAPPED value is untouched: it is copied whole to
+      every cell a feature reaches, by the same documented rule that puts a plain
+      conductance on all twelve cells of a polygon.
+      **Why it landed before B2 item 7** (user decision, 2026-09-18): that commit's third
+      deliverable is a declared-versus-written quantity, and the identity is wrong by a
+      factor of N for every multi-part point until this is true. Fixing it inside the
+      feature commit would have buried the reproducer, which is what splitting ledger 283
+      out of 284 avoided.

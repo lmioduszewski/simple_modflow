@@ -308,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3620 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3624 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -607,6 +607,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   well as a `.gpkg` source: a line ending on a face and overshooting by 1e-6 ft -- a CRS
   round trip moves an end by 3e-7 -- wrote a full second record, where `mf.sfr` had
   dropped the reach since ledger 214.
+  **A multi-part POINT divides itself between its parts** (ledger 287): every part used
+  to get a share of 1.0, so a MultiPoint of 3 wells declared at `-1000` wrote **-3000**
+  under `mf.Spread` -- which exists to conserve a feature's total -- and a part off the
+  grid vanished into a sum indistinguishable from a complete smaller feature, never
+  entering `missed`. Lines and polygons were always right (they divide by their own
+  extent), which is what isolates it to the zero-extent branch. It CHANGES WRITTEN
+  VALUES for a multi-part point under `Spread`; an unwrapped value is untouched.
 - **Sampling a raster onto cells: `gaps=` says what a MISSING cell means** (ledger
   248, 2026-09-13). `get_raster_vals_at_centroids` handed back NaN for a cell off
   the raster's data with nothing said, and a NaN in `strt` or `gdf_topbtm` makes MF6

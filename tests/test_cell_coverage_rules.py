@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, MultiPoint, Point, box
 
 import myflopy as mf
 from myflopy import geopackage
@@ -146,6 +146,58 @@ def test_a_line_along_the_grid_edge_keeps_its_whole_length(polys):
 )
 def test_a_point_goes_whole_to_the_lowest_numbered_usable_cell(polys, point, cell):
     assert cell_shares(polys, point) == [(cell, 1.0)]
+
+
+def test_a_multi_part_point_divides_the_feature_between_its_parts(polys):
+    """A point has no extent to divide, so the FEATURE is divided instead.
+
+    Every part used to get a share of 1.0, which contradicts the rule stated three
+    paragraphs into `cell_shares`'s own docstring -- that fractions are of the WHOLE
+    feature. Measured on the default path: a MultiPoint of 3 wells declared at -1000
+    wrote **-3000** under `mf.Spread`, which exists to conserve a feature's total
+    (ledger 287). The extent-based branch was always right, which is why only points
+    were affected: a MultiLineString with one part off-grid already summed to 0.5.
+    """
+
+    three = MultiPoint([(12.5, 12.5), (37.5, 37.5), (62.5, 62.5)])
+    shares = dict(cell_shares(polys, three))
+
+    assert len(shares) == 3
+    assert sum(shares.values()) == pytest.approx(1.0)
+    assert all(share == pytest.approx(1 / 3) for share in shares.values())
+
+
+def test_a_part_that_reaches_no_cell_leaves_the_feature_short(polys):
+    """The second half of the same defect: a truncated feature has to LOOK truncated.
+
+    With every part at 1.0 a MultiPoint whose third part was 50,000 ft away summed to
+    2.0 -- indistinguishable from a complete two-part feature -- so nothing downstream
+    could tell that a third of the declared pumping had gone. It never entered `missed`
+    either, because that records a feature reaching ZERO cells.
+    """
+
+    truncated = MultiPoint([(12.5, 12.5), (37.5, 37.5), (50_000.0, 50_000.0)])
+    shares = dict(cell_shares(polys, truncated))
+
+    assert len(shares) == 2
+    assert sum(shares.values()) == pytest.approx(2 / 3)
+
+
+def test_two_parts_on_one_cell_owe_it_both_their_shares(polys):
+    """Accumulated, not a set. Collapsing them would drop the second part's share and
+    the feature would read as truncated when nothing is missing."""
+
+    both_in_cell_zero = MultiPoint([(6.0, 6.0), (18.0, 18.0)])
+    shares = dict(cell_shares(polys, both_in_cell_zero))
+
+    assert shares == pytest.approx({0: 1.0})
+
+
+def test_a_single_point_is_unchanged(polys):
+    """The refusing direction: dividing by the part count must not move the ordinary
+    case, which is one part and therefore one whole share."""
+
+    assert cell_shares(polys, Point(12.5, 12.5)) == [(0, 1.0)]
 
 
 def test_usable_chooses_which_cells_are_eligible(polys):

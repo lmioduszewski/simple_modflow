@@ -751,12 +751,27 @@ def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
         return []
     measure = _extent(geometry)
     if measure <= 0:
-        chosen = set()
-        for part in shp.get_parts(geometry):
+        # A point has no extent to divide, so the FEATURE is divided instead: each of
+        # its parts carries an equal share of it. Giving every part 1.0 -- what this did
+        # -- broke the promise three paragraphs up, that fractions are of the WHOLE
+        # feature. Measured: a MultiPoint of 3 wells declared at -1000 wrote -3000 under
+        # `mf.Spread`, which exists to conserve a feature's total, and a part 50,000 ft
+        # off the grid simply vanished: 2 cells at 1.0 each, summing to 2.0, so nothing
+        # downstream could tell a complete feature from a truncated one (ledger 287).
+        # The extent-based branch below was always right -- a MultiLineString with one
+        # part off-grid already summed to 0.5 -- which is why only points were affected.
+        parts = [part for part in shp.get_parts(geometry) if not part.is_empty]
+        if not parts:
+            return []
+        each = 1.0 / len(parts)
+        # Accumulated, not a set: two parts landing on ONE cell owe it both their
+        # shares, and collapsing them would lose the second.
+        sizes: dict[int, float] = {}
+        for part in parts:
             hits = _usable_candidates(polys, part, usable)
             if hits:
-                chosen.add(hits[0])
-        return [(cell, 1.0) for cell in sorted(chosen)]
+                sizes[hits[0]] = sizes.get(hits[0], 0.0) + each
+        return sorted(sizes.items())
 
     # A GeometryCollection is measured by its highest dimension: the lines in a
     # polygon collection add no area. In practice they are what gpd.clip and
