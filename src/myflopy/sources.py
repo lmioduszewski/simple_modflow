@@ -453,6 +453,7 @@ class BoundarySource(DataSourceSpec):
     period_base: int = 0
     gaps: str = "warn"
     snap_within: float | None = None
+    min_above_bottom: float | None = None
     edges_only: bool = False
     boundnames: bool = True
 
@@ -482,6 +483,7 @@ class BoundarySource(DataSourceSpec):
             ("period_base", 0),
             ("gaps", "warn"),
             ("snap_within", None),
+            ("min_above_bottom", None),
             ("edges_only", False),
             ("boundnames", True),
         ):
@@ -520,6 +522,7 @@ class BoundarySource(DataSourceSpec):
             period_base=data.get("period_base", 0),
             gaps=data.get("gaps", "warn"),
             snap_within=data.get("snap_within"),
+            min_above_bottom=data.get("min_above_bottom"),
             edges_only=bool(data.get("edges_only", False)),
             boundnames=bool(data.get("boundnames", True)),
             external=bool(data.get("external", False)),

@@ -620,12 +620,14 @@ class _Coverage:
     snapped: list = field(default_factory=list)      # (label, distance)
     missed: list = field(default_factory=list)       # (index, row)
     clipped: list = field(default_factory=list)      # (label, covered fraction)
+    below_bottom: list = field(default_factory=list)  # (label, record field, depth below)
+    floored: list = field(default_factory=list)       # (label, record field, lift applied)
     lost: dict = field(default_factory=dict)         # extensive field -> quantity not written
 
     def quiet(self) -> bool:
         """Whether nothing worth saying happened."""
 
-        return not (self.snapped or self.missed or self.clipped)
+        return not (self.snapped or self.missed or self.clipped or self.below_bottom or self.floored)
 
     def summary(self) -> dict:
         """The durable record: counts, and the snap distances that reveal a systematic error.
@@ -643,6 +645,12 @@ class _Coverage:
             "missed": len(self.missed),
             "clipped": len(self.clipped),
         }
+        if self.below_bottom:
+            record["below_bottom"] = len(self.below_bottom)
+            record["worst_below_bottom"] = float(min(d for _, _, d in self.below_bottom))
+        if self.floored:
+            record["floored"] = len(self.floored)
+            record["max_lift"] = float(max(lift for _, _, lift in self.floored))
         if self.snapped:
             distances = sorted(distance for _, distance in self.snapped)
             record["snap_max"] = float(distances[-1])
@@ -672,6 +680,7 @@ class GeoPackageSource:
     period_base: int = 0
     gaps: str = "warn"
     snap_within: float | None = None
+    min_above_bottom: float | None = None
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
     _edge_cells: dict[int, set[int]] = field(default_factory=dict, init=False, repr=False)
     _source_crs: Any = field(default=None, init=False, repr=False)
@@ -689,6 +698,12 @@ class GeoPackageSource:
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
         check_gaps(self.gaps, verb="A GeoPackage source")
+        if self.min_above_bottom is not None and float(self.min_above_bottom) < 0:
+            raise ValueError(
+                "min_above_bottom is a CLEARANCE above the cell bottom and cannot be "
+                f"negative, not {self.min_above_bottom!r}. 0.0 means as close to the "
+                "bottom as the written file can express."
+            )
         if self.snap_within is not None and not (float(self.snap_within) > 0):
             raise ValueError(
                 f"snap_within is a distance in the grid's own coordinate units and must "
@@ -992,6 +1007,37 @@ class GeoPackageSource:
                 f"{len(coverage.clipped)} lie only partly inside the active grid and are "
                 f"CLIPPED to the part that is: {_listed(clipped)}"
             )
+        if coverage.below_bottom:
+            worst = min(depth for _, _, depth in coverage.below_bottom)
+            # Grouped by FEATURE: one drain line crossing six offending cells is one
+            # problem the user can act on, not six identical listings.
+            grouped: dict[tuple, list] = {}
+            for label, name, depth in coverage.below_bottom:
+                grouped.setdefault((label, name), []).append(depth)
+            named = [
+                f"{label} ({name}, {len(depths)} cell{'s' if len(depths) > 1 else ''}, "
+                f"worst {min(depths):,.3g})"
+                for (label, name), depths in grouped.items()
+            ]
+            parts.append(
+                f"{len(coverage.below_bottom)} records place an ELEVATION BELOW their own "
+                f"cell bottom (worst {worst:,.3g}): {_listed(named)} -- MF6 refuses these "
+                "at icelltype != 0, and at icelltype 0 accepts them and over-drains; pass "
+                "min_above_bottom= to lift them"
+            )
+        if coverage.floored:
+            by_feature: dict[tuple, list] = {}
+            for label, name, lift in coverage.floored:
+                by_feature.setdefault((label, name), []).append(lift)
+            lifted = [
+                f"{label} ({name}, {len(lifts)} cell{'s' if len(lifts) > 1 else ''}, "
+                f"up to +{max(lifts):,.3g})"
+                for (label, name), lifts in by_feature.items()
+            ]
+            parts.append(
+                f"{len(coverage.floored)} records were LIFTED to min_above_bottom: "
+                f"{_listed(lifted)}"
+            )
         if coverage.lost:
             lost = ", ".join(f"{key} {value:,.4g}" for key, value in sorted(coverage.lost.items()))
             parts.append(f"not written: {lost}")
@@ -1090,6 +1136,10 @@ class GeoPackageSource:
         """
 
         coverage = _Coverage()
+        # Detection needs the layer elevations. Where the model carries none there is
+        # nothing to compare against, so it is skipped rather than raising -- a package
+        # whose model declares no surfaces is not an error.
+        elevations_available = bool(package) and _layer_elevations(self.context) is not None
         spreads = tuple(f for f in fields if isinstance(f, Spread))
         required = {
             field_name
@@ -1148,6 +1198,14 @@ class GeoPackageSource:
                         )
                         for field in fields
                     ]
+                    if elevations_available:
+                        # AFTER the `gaps="nearest"` snap, never before: a snapped point
+                        # lands in a DIFFERENT cell with a different bottom, so a floor
+                        # applied earlier would use the wrong one (ledger 290).
+                        values = self._floor_elevations(
+                            values, package=package, layer=layer, cell=cell,
+                            coverage=coverage, label=label,
+                        )
                     record = [(layer, cell), *values]
                     if boundnames:
                         record.append(boundname)
@@ -1163,6 +1221,84 @@ class GeoPackageSource:
         )
         self.last_coverage = coverage
         return data
+
+    def _floor_elevations(self, values, *, package, layer, cell, coverage, label):
+        """Keep an elevation inside its cell, and SAY when one is not -- per cell.
+
+        **What MF6 does with a below-bottom elevation depends on `icelltype`, and both
+        branches are live in this library** (ledger 290). At `icelltype = 0` -- which is
+        what `mf.npf(k=...)` writes, because it names no icelltype at all -- all four
+        packages ACCEPT one, terminate normally, and over-drain: measured 2.17x on a
+        3x3 bench and 1.09x on a real 64-cell DISV model. At `icelltype != 0` -- which
+        `CanonicalModelConfig` and 17 taught sites use -- MF6 REFUSES by name, NEWTON does
+        not change it, and **the refusal is a per-period data read**, so an offender in
+        period 3 dies after MF6 has already solved periods 1 and 2. On a 72-period model
+        that is a late failure.
+
+        So the DETECTION is default-on and the CORRECTION is opt-in. Nothing reported this
+        before -- no warning, no metadata key, no validator -- and the silence is the part
+        that is constant across models; the magnitude is not.
+
+        **A floor exactly AT the bottom is not safe**, which is why the clearance is
+        nudged. FloPy writes `botm` fixed-point and a list-BC value in E format, so a value
+        set exactly equal to its cell bottom can round BELOW it in the written file and
+        MF6's strict comparison trips: measured, 13 of 24 real runs FAILED at bottoms drawn
+        from [40, 600], and which way the discarded digits fall is a coin flip. A CHD set
+        exactly at its bottom is worse -- it aborts the SOLVER ("CONSTANT-HEAD CELL WENT
+        DRY"), at round magnitudes too. The relative nudge is the one already at
+        `usg/convert.py`, whose comment says so and is now measured true.
+        """
+
+        fields = _PACKAGE_EXPLORER_SPECS[package].gpkg_defaults
+        positions = {name: i for i, name in enumerate(fields) if (package, name) in _ELEVATION_FIELDS}
+        if not positions:
+            return values
+        bottom = self.surface_value("cell_bottom", layer=layer, cell=cell)
+        nudge = max(abs(bottom) * 1e-6, 1e-6)
+
+        # RIV is a PAIR, not two independent elevations. MF6 checks `rbot` and never names
+        # `stage`, and raising `rbot` alone trips a SECOND check (`stage >= rbot`) -- so a
+        # model that ran becomes a hard failure. Measured, one record: as declared
+        # q=-868.57; rbot alone REFUSED at both icelltypes; both clamped q=-380.00 with the
+        # river depth collapsed to 0.000 from a declared 1.0; pair-lifted q=-108.57. Three
+        # readings of "the same parameter", 3.5x apart.
+        if package == "riv":
+            stage_now = float(values[positions["stage"]])
+            rbot_now = float(values[positions["rbot"]])
+            if stage_now < rbot_now:
+                # MF6 refuses this at BOTH icelltypes ("RIV BOUNDARY (n) RIVER STAGE ...
+                # IS LESS THAN RIVER BOTTOM"), and `mf.riv.gpkg`'s own docstring already
+                # promises the invariant while nothing enforced it. Refused here rather
+                # than silently collapsed by the pair-lift below (ledger 290).
+                raise ValueError(
+                    f"GeoPackage '{self.path.name}': feature {label} gives cell {cell} a "
+                    f"river stage ({stage_now:,.4g}) BELOW its river bottom "
+                    f"({rbot_now:,.4g}). MF6 refuses that whatever icelltype is, and "
+                    "min_above_bottom cannot fix it -- a river's stage is its water "
+                    "surface and its rbot the bed beneath. Swap the two columns, or "
+                    "correct the attribute."
+                )
+
+        pair = ("rbot", "stage") if package == "riv" else ()
+        checked = ["rbot"] if pair else list(positions)
+
+        for name in checked:
+            index = positions[name]
+            value = float(values[index])
+            if value < bottom:
+                coverage.below_bottom.append((label, name, value - bottom))
+            if self.min_above_bottom is None:
+                continue
+            floor = bottom + max(float(self.min_above_bottom), nudge)
+            if value >= floor:
+                continue
+            values[index] = floor
+            coverage.floored.append((label, name, floor - value))
+            if pair:
+                # Lift `stage` by the SAME delta, so the declared river depth survives.
+                stage = positions["stage"]
+                values[stage] = float(values[stage]) + (floor - value)
+        return values
 
     def _account_for_missing(self, coverage, row, fields, *, package: str, covered: float) -> None:
         """Add a feature's unwritten quantity to the running total, where that MEANS something.
@@ -1262,6 +1398,7 @@ class GeoPackageSource:
             "period_base": self.period_base,
             "gaps": self.gaps,
             "snap_within": self.snap_within,
+            "min_above_bottom": self.min_above_bottom,
             # What became of the features -- counts, and the snap distances. A warning
             # is best-effort: `warnings.warn` dedupes, and a lazy declaration resolves
             # inside `prepare_run` where no stacklevel points at the caller. This

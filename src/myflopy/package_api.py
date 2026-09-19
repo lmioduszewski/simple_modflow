@@ -622,6 +622,7 @@ def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **op
         period_base=recipe.period_base,
         gaps=recipe.gaps,
         snap_within=recipe.snap_within,
+        min_above_bottom=recipe.min_above_bottom,
     )
     kwargs = dict(recipe.values)
     kwargs["name"] = _spec.name
@@ -859,6 +860,10 @@ def _lazy_bc_spec(
     period_base: int,
     gaps: str,
     snap_within: float | None,
+    # DEFAULTED, unlike `gaps`/`snap_within`: only chd/ghb/drn/riv have an elevation
+    # field, so only those four pass it. Required here it broke the other three on the
+    # lazy path outright -- `_lazy_bc_spec() missing 1 required keyword-only argument`.
+    min_above_bottom: float | None = None,
     values: dict[str, Any],
     # `wel`/`rch`/`evt` have no `edges_only` parameter at all -- the package registry
     # says so (`capabilities.edges_only`) and their signatures agree -- so their
@@ -914,6 +919,7 @@ def _lazy_bc_spec(
         period_base=period_base,
         gaps=gaps,
         snap_within=snap_within,
+        min_above_bottom=min_above_bottom,
         edges_only=edges_only,
         boundnames=boundnames,
     )
@@ -939,6 +945,7 @@ def _source(
     period_base: int = 0,
     gaps: str = "warn",
     snap_within: float | None = None,
+    min_above_bottom: float | None = None,
 ) -> GeoPackageSource:
     """Return a configured GeoPackage source for package-first helpers."""
 
@@ -954,6 +961,7 @@ def _source(
         period_base=period_base,
         gaps=gaps,
         snap_within=snap_within,
+        min_above_bottom=min_above_bottom,
     )
 
 
@@ -2681,6 +2689,7 @@ class _CHDPackage:
         period_base: int = 0,
         gaps: str = "warn",
         snap_within: float | None = None,
+        min_above_bottom: float | None = None,
         name: str = "chd",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -2714,6 +2723,16 @@ class _CHDPackage:
             Index base of ``layer_field`` values (1 = one-based GIS convention).
         period_base : int, default 0
             Index base of ``period_field`` values (0 = zero-based).
+        min_above_bottom : float, optional
+            Keep every resolved elevation at least this far above ITS OWN cell bottom,
+            per cell. ``None`` (the default) changes nothing but still REPORTS a record
+            that falls below -- see ledger 290 for why the detection is default-on and the
+            correction is not. ``0.0`` means as close to the bottom as the written file
+            can express: FloPy writes ``botm`` fixed-point and a boundary value in E
+            format, so a value set exactly equal to its cell bottom can round below it and
+            MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
+            set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
+            ``stage`` by the same delta, so the declared river depth survives.
         name : str, default "chd"
             Package name.
         edges_only : bool, default False
@@ -2748,6 +2767,7 @@ class _CHDPackage:
                 period_base=period_base,
                 gaps=gaps,
                 snap_within=snap_within,
+                min_above_bottom=min_above_bottom,
                 values={"head": head},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -2766,6 +2786,7 @@ class _CHDPackage:
             period_base=period_base,
             gaps=gaps,
             snap_within=snap_within,
+            min_above_bottom=min_above_bottom,
         ).chd(
             head=head,
             name=name,
@@ -2893,6 +2914,7 @@ class _GHBPackage:
         period_base: int = 0,
         gaps: str = "warn",
         snap_within: float | None = None,
+        min_above_bottom: float | None = None,
         name: str = "ghb",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -2940,6 +2962,16 @@ class _GHBPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        min_above_bottom : float, optional
+            Keep every resolved elevation at least this far above ITS OWN cell bottom,
+            per cell. ``None`` (the default) changes nothing but still REPORTS a record
+            that falls below -- see ledger 290 for why the detection is default-on and the
+            correction is not. ``0.0`` means as close to the bottom as the written file
+            can express: FloPy writes ``botm`` fixed-point and a boundary value in E
+            format, so a value set exactly equal to its cell bottom can round below it and
+            MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
+            set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
+            ``stage`` by the same delta, so the declared river depth survives.
         name : str, default "ghb"
             Package name.
         edges_only : bool, default False
@@ -2973,6 +3005,7 @@ class _GHBPackage:
                 period_base=period_base,
                 gaps=gaps,
                 snap_within=snap_within,
+                min_above_bottom=min_above_bottom,
                 values={"head": head, "conductance": conductance},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -2991,6 +3024,7 @@ class _GHBPackage:
             period_base=period_base,
             gaps=gaps,
             snap_within=snap_within,
+            min_above_bottom=min_above_bottom,
         ).ghb(
             head=head,
             conductance=conductance,
@@ -3100,6 +3134,7 @@ class _DRNPackage:
         period_base: int = 0,
         gaps: str = "warn",
         snap_within: float | None = None,
+        min_above_bottom: float | None = None,
         name: str = "drn",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -3121,7 +3156,11 @@ class _DRNPackage:
             :class:`~myflopy.geopackage.CellSurfaceOffset`.
             ``CellSurfaceOffset("cell_bottom", offset=2.0)`` puts it 2 ft above each
             cell's own floor; ``("model_top", offset=-2.0)`` puts it 2 ft below ground.
-            MF6 rejects an invert below its cell bottom.
+            **MF6 rejects an invert below its cell bottom only at ``icelltype != 0``**;
+            at ``icelltype = 0`` -- what ``mf.npf(k=...)`` writes, naming no icelltype at
+            all -- it ACCEPTS one and over-drains under Normal termination (measured 2.17x
+            on a bench, 1.09x on a real model). Either way one is reported now, and
+            ``min_above_bottom=`` lifts it (ledger 290).
         conductance : str, float, list of str, or Spread, default "conductance"
             Drain conductance, L^2/T. Wrap it in :class:`~myflopy.geopackage.Spread` when the
             feature spans more than one cell -- a bare column copies the SAME value into every
@@ -3149,6 +3188,16 @@ class _DRNPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        min_above_bottom : float, optional
+            Keep every resolved elevation at least this far above ITS OWN cell bottom,
+            per cell. ``None`` (the default) changes nothing but still REPORTS a record
+            that falls below -- see ledger 290 for why the detection is default-on and the
+            correction is not. ``0.0`` means as close to the bottom as the written file
+            can express: FloPy writes ``botm`` fixed-point and a boundary value in E
+            format, so a value set exactly equal to its cell bottom can round below it and
+            MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
+            set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
+            ``stage`` by the same delta, so the declared river depth survives.
         name : str, default "drn"
             Package name.
         edges_only : bool, default False
@@ -3181,6 +3230,7 @@ class _DRNPackage:
                 period_base=period_base,
                 gaps=gaps,
                 snap_within=snap_within,
+                min_above_bottom=min_above_bottom,
                 values={"elevation": elevation, "conductance": conductance},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -3199,6 +3249,7 @@ class _DRNPackage:
             period_base=period_base,
             gaps=gaps,
             snap_within=snap_within,
+            min_above_bottom=min_above_bottom,
         ).drn(
             elevation=elevation,
             conductance=conductance,
@@ -3330,6 +3381,7 @@ class _RIVPackage:
         period_base: int = 0,
         gaps: str = "warn",
         snap_within: float | None = None,
+        min_above_bottom: float | None = None,
         name: str = "riv",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -3381,6 +3433,16 @@ class _RIVPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        min_above_bottom : float, optional
+            Keep every resolved elevation at least this far above ITS OWN cell bottom,
+            per cell. ``None`` (the default) changes nothing but still REPORTS a record
+            that falls below -- see ledger 290 for why the detection is default-on and the
+            correction is not. ``0.0`` means as close to the bottom as the written file
+            can express: FloPy writes ``botm`` fixed-point and a boundary value in E
+            format, so a value set exactly equal to its cell bottom can round below it and
+            MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
+            set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
+            ``stage`` by the same delta, so the declared river depth survives.
         name : str, default "riv"
             Package name.
         edges_only : bool, default False
@@ -3413,6 +3475,7 @@ class _RIVPackage:
                 period_base=period_base,
                 gaps=gaps,
                 snap_within=snap_within,
+                min_above_bottom=min_above_bottom,
                 values={"stage": stage, "conductance": conductance, "rbot": rbot},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -3431,6 +3494,7 @@ class _RIVPackage:
             period_base=period_base,
             gaps=gaps,
             snap_within=snap_within,
+            min_above_bottom=min_above_bottom,
         ).riv(
             stage=stage,
             conductance=conductance,

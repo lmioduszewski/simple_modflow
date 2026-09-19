@@ -308,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3655 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3668 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -656,6 +656,33 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   disjoint; all-no-data where they overlap is a blank raster, not a misplaced one.
   `vor.get_raster_vals_at_centroids` forwards `method=`/`nodata=`/`gaps=` now; it
   forwarded none of them.
+- **An elevation outside its own cell: `min_above_bottom=` on chd/ghb/drn/riv** (ledger
+  290, 2026-09-18). **MF6's behaviour splits on `icelltype`, and BOTH branches are live
+  here.** At `icelltype = 0` — what `mf.npf(k=10.0)` writes, naming no icelltype at all —
+  all four ACCEPT a below-bottom value and over-drain under Normal termination (2.17x on a
+  bench, 1.09x on a real 64-cell model). At `icelltype != 0` — `CanonicalModelConfig` and
+  17 taught sites — MF6 REFUSES by name, NEWTON does not change it, and the refusal is a
+  PER-PERIOD read, so an offender in period 3 dies after periods 1-2 have solved.
+  **The DETECTION is default-on and the correction is opt-in**, because what is constant
+  across models is the silence, not the magnitude: nothing reported this before, and the
+  count/worst depth/lift now ride beside `coverage` in metadata.
+  **Half the arithmetic already shipped** and the entry says so:
+  `CellSurfaceOffset("cell_bottom", offset=F, minimum=<declared>)` IS `min_above_bottom=F`
+  for a constant or single-column elevation. What it cannot floor is a per-period list or
+  a surface-relative value (`minimum=` is per FEATURE, and `minimum=<CellSurfaceOffset>`
+  raises) — and surface-relative is the idiom the docs teach (63 `model_top` + ~50
+  `cell_top` against 5 uses of `minimum=` in the whole tree).
+  **`min_above_bottom=0.0` cannot mean "at the bottom"**: FloPy writes `botm` fixed-point
+  and a BC value in E format, so exactly-equal can round BELOW and MF6's strict compare
+  trips — 13 of 24 real runs FAILED, round numbers being the immune cases — and a CHD
+  exactly there aborts the solver. Nudged by `max(|bottom|*1e-6, 1e-6)`; a plain absolute
+  1e-6 is not enough.
+  **RIV is a PAIR**: MF6 checks `rbot` and never names `stage`, and flooring `rbot` alone
+  trips `stage >= rbot`, turning a running model into a hard failure. Floor rbot, raise
+  stage by the same delta (measured: the three readings are 3.5x apart in flux; the naive
+  ones collapse a declared 1.0 ft depth to 0.000). A declared `stage < rbot` is refused.
+  **The floor runs AFTER the `gaps="nearest"` snap** — a snapped point is in a different
+  cell with a different bottom.
 - **A `.gpkg` NULL raises too, naming the row** (ledger 247, 2026-09-13, amended by 289).
   **Two members of that family survived until 2026-09-18** (ledger 289): a NULL in a
   `CellSurfaceOffset`'s `minimum` column read back as `nan`, `max(value, nan)` returns

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 289 entries (290 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 290 entries (291 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 290 | An elevation outside its own cell, and nothing said so | 2026-09-18 |
 | 289 | A floor that silently was not one, and an elevation divided by area | 2026-09-18 |
 | 288 | A feature that missed the grid was reported through a channel nobody hears | 2026-09-18 |
 | 287 | Every PART of a multi-part point was a whole feature | 2026-09-18 |
@@ -11378,3 +11379,71 @@ same day, which is the useful part of the result.
       floor column into an absolute floor at DATUM ZERO. Silently correct on a model above
       sea level and silently destructive below it. Legacy layer, and deprecating it is
       already blocked, so it is noted rather than fixed.
+
+290. **An elevation outside its own cell, and nothing said so (2026-09-18).**
+      `min_above_bottom=` on `mf.chd/ghb/drn/riv.gpkg` lifts an elevation that resolves
+      below its cell's bottom, PER CELL -- plus a **default-on detection** that reports one
+      whether or not the floor is asked for. Not `evt` (user decision).
+      **The plan's justification was wrong and the earlier correction incomplete.** MF6's
+      behaviour splits on `icelltype`, and **both branches are live in this library**.
+      At `icelltype = 0` -- which is what `mf.npf(k=10.0)` writes, because it names no
+      icelltype at all -- all four packages ACCEPT a below-bottom value, terminate
+      normally, and over-drain: **2.17x on a 3x3 bench, 1.09x on a real 64-cell DISV
+      model**. At `icelltype != 0` -- which `CanonicalModelConfig` uses and 17 taught sites
+      pass -- MF6 **REFUSES by name**, NEWTON does not change it, and the refusal is a
+      PER-PERIOD data read, so an offender in period 3 dies after MF6 has solved periods 1
+      and 2. On a 72-period model that is a late failure. End to end on a real run: the
+      same declaration at `icelltype=1` fails with `DRN BOUNDARY (1) ELEVATION ( 45.000)
+      IS LESS THAN CELL BOTTOM` and reaches Normal termination with
+      `min_above_bottom=0.5`.
+      **What is constant across models is the SILENCE, not the magnitude**, so the
+      detection is default-on and the correction opt-in. Nothing reported a below-bottom
+      elevation before: no warning, no metadata key, no validator (`surface_water_validation`
+      covers LAK stage and SFR streambed only). The count, the worst depth and the lift
+      are stamped beside `coverage` in metadata, because on the lazy path the warning
+      fires inside `prepare_run` where no stacklevel points at the declaration.
+      **Half of the arithmetic already shipped, and the entry says so** rather than let a
+      later reader find `max(value, minimum)` and think this was redundant.
+      `CellSurfaceOffset("cell_bottom", offset=F, minimum=<declared>)` IS
+      `min_above_bottom=F` exactly, for a declared elevation that is a constant or a single
+      column -- measured, 0 of 7 mismatches. What it cannot do is floor anything else:
+      `minimum` is read once per FEATURE (a scalar and a column behave identically, both
+      leaving 3 of 7 records below their own bottoms), and `minimum=<CellSurfaceOffset>`
+      and `minimum=[...]` both raise `TypeError`. So the two shapes that could not be
+      floored are the per-period column list and a surface-relative value --
+      `CellSurfaceOffset("model_top", offset=-35.0)`, "a drain 35 ft below ground", which
+      left 5 of 7 records below their own cell bottom. **That is the idiom the docs push
+      people toward**: 63 `model_top` + ~50 `cell_top` references across the tree, against
+      `minimum=` appearing 5 times in total and never as a real declaration in `src/`.
+      **A clearance of 0.0 does NOT mean "at the bottom"**, and cannot. FloPy writes `botm`
+      fixed-point and a list-BC value in E format, so a value set exactly equal to its cell
+      bottom can round BELOW it in the written file and MF6's strict comparison trips:
+      **13 of 24 real runs FAILED** at bottoms drawn from [40, 600], and which way the
+      discarded digits fall is a coin flip -- which is why round numbers look immune. A CHD
+      set exactly at its bottom is worse: it aborts the SOLVER (`CONSTANT-HEAD CELL WENT
+      DRY`) at round magnitudes too. The clearance is nudged by
+      `max(|bottom| * 1e-6, 1e-6)`, the relative form already at `usg/convert.py:363`
+      whose comment says exactly this and is now measured true rather than defensive. A
+      plain absolute `1e-6` is NOT enough -- it fails at bottom 3456.789012346.
+      **RIV is a PAIR, and the three readings of "the same parameter" are 3.5x apart in
+      flux on ONE record.** MF6 checks `rbot` and never names `stage`; raising `rbot`
+      alone trips a SECOND check (`stage >= rbot`), so a model that RAN becomes a hard
+      failure. Measured, cell bottom 48.0, declared stage 40 / rbot 35: as declared
+      q=-868.57 (runs at icelltype 0); rbot alone REFUSED at both icelltypes; both clamped
+      q=-380.00 with the river depth collapsed to **0.000 from a declared 1.0**;
+      pair-lifted q=-108.57. So the floor lifts `rbot` and raises `stage` by the SAME
+      delta, and the declared depth survives (measured exactly 5.000 ft across every
+      cell). A declared `stage < rbot` is REFUSED by name instead -- MF6 refuses it at
+      both icelltypes and `mf.riv.gpkg`'s own docstring already promised the invariant
+      while nothing enforced it.
+      **Order matters: the floor runs AFTER the `gaps="nearest"` snap** (ledger 288). A
+      snapped point lands in a DIFFERENT cell with a different bottom, so a floor applied
+      first would use the wrong one.
+      **A regression this commit introduced and a test now guards:** making
+      `min_above_bottom` a REQUIRED keyword on the shared `_lazy_bc_spec` broke
+      `wel`/`rch`/`evt` on the lazy path outright (`missing 1 required keyword-only
+      argument`), because only four of the seven pass it. Defaulted, and the three are
+      asserted still to build.
+      **Not carried:** the detection needs the layer elevations, so a model that declares
+      none is skipped rather than refused -- there is nothing to compare against, and a
+      model without surfaces is not an error.
