@@ -13,6 +13,7 @@ so it warns -- by name.
 from __future__ import annotations
 
 import logging
+import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -126,23 +127,60 @@ def test_a_polygon_that_only_borders_the_grid_is_told_to_overlap_it(tmp_path):
 # --- some land: warned, by name --------------------------------------------- #
 
 
-def test_a_feature_that_misses_is_named_while_the_rest_resolve(tmp_path, caplog):
+def test_a_feature_that_misses_is_named_through_the_channel_a_caller_HEARS(tmp_path):
+    """`caplog` is not evidence that anyone is told.
+
+    `import myflopy` installs a `NullHandler` on the `myflopy` logger and root has
+    none, so `logging.callHandlers` counts a handler as found and never falls back to
+    `logging.lastResort` -- the partial-miss line produced **zero bytes on stderr** in a
+    bare session and in a real ipykernel. These tests passed only because pytest
+    attaches the handler the user does not have, which is the "a test can certify
+    instead of check" pattern. Asserted on `pytest.warns` now, which pytest does not
+    supply for free (ledger 288). The logger still emits, for a configured application.
+    """
+
     path = _write(tmp_path, CELL_5, FAR, names=["inside", "away"])
-    with caplog.at_level(logging.WARNING, logger="myflopy.geopackage"):
+
+    with pytest.warns(UserWarning, match="1 of 2 features") as caught:
         spec = mf.drn.gpkg(path, layer="bc", context=_context(), nper=1)
+
     assert _cells(spec) == [5]
-    assert "1 of 2 features" in caplog.text
-    assert "'away' (outside the grid)" in caplog.text
+    assert "'away' (outside the grid)" in str(caught[0].message)
 
 
-def test_a_partial_miss_under_spread_is_reported_once(tmp_path, caplog):
+def test_the_message_names_the_PACKAGE_so_four_of_them_are_four_warnings(tmp_path):
+    """`warnings.warn` dedupes on (text, category, module, lineno).
+
+    One GeoPackage driving four packages emitted four BYTE-IDENTICAL lines, so a
+    default caller saw one of four -- in exactly the shape ledger 211 names as the
+    legitimate reason to warn rather than refuse, one layer serving several packages.
+    The package name is in the message now, which makes each event distinct AND is the
+    accounting; one change buys both.
+    """
+
+    path = _write(tmp_path, CELL_5, FAR, names=["inside", "away"])
+    context = _context()
+
+    with pytest.warns(UserWarning) as caught:
+        for helper in (mf.drn, mf.ghb, mf.riv, mf.chd):
+            helper.gpkg(path, layer="bc", context=context, nper=1)
+
+    subjects = {str(record.message).split(" -> ")[1].split(":")[0] for record in caught}
+    assert subjects == {"drn", "ghb", "riv", "chd"}
+
+
+def test_a_partial_miss_under_spread_is_reported_once(tmp_path):
     """Spread used to log its own 'covers no active cell' line on top."""
 
     path = _write(tmp_path, CELL_5, FAR, names=["inside", "away"])
-    with caplog.at_level(logging.WARNING, logger="myflopy.geopackage"):
-        mf.drn.gpkg(path, layer="bc", context=_context(), nper=1, conductance=Spread("conductance"))
-    assert [record.levelname for record in caplog.records] == ["WARNING"]
-    assert "'away' (outside the grid)" in caplog.text
+
+    with pytest.warns(UserWarning) as caught:
+        mf.drn.gpkg(
+            path, layer="bc", context=_context(), nper=1, conductance=Spread("conductance")
+        )
+
+    assert len(caught) == 1
+    assert "'away' (outside the grid)" in str(caught[0].message)
 
 
 def test_k_array_names_a_zone_that_misses_and_keeps_the_rest(tmp_path, caplog):
@@ -154,6 +192,8 @@ def test_k_array_names_a_zone_that_misses_and_keeps_the_rest(tmp_path, caplog):
 
 
 def test_a_source_that_lands_entirely_says_nothing(tmp_path, caplog):
-    with caplog.at_level(logging.WARNING, logger="myflopy.geopackage"):
-        mf.drn.gpkg(_write(tmp_path, CELL_5), layer="bc", context=_context(), nper=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning at all fails this
+        with caplog.at_level(logging.WARNING, logger="myflopy.geopackage"):
+            mf.drn.gpkg(_write(tmp_path, CELL_5), layer="bc", context=_context(), nper=1)
     assert caplog.text == ""

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 287 entries (288 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 288 entries (289 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 288 | A feature that missed the grid was reported through a channel nobody hears | 2026-09-18 |
 | 287 | Every PART of a multi-part point was a whole feature | 2026-09-18 |
 | 286 | A model's own options belong to no package, so importing a run dropped them | 2026-09-18 |
 | 285 | The array form's default could not be written down, which made the whole model unsaveable | 2026-09-18 |
@@ -7054,7 +7055,12 @@ same day, which is the useful part of the result.
       - **Some missed: WARNS, by name** (the first ten, then a count). A partial
         miss can be deliberate -- one layer serving several grids -- so it is not
         refused. Decided 2026-09-11: raise on empty, warn on partial, and no
-        `on_miss=` switch.
+        `on_miss=` switch. **The switch part is SUPERSEDED by ledger 288**, which adds
+        `gaps=`; the rest of this entry stands, including raise-on-empty, which 288
+        keeps ORTHOGONAL to the mode. It fell because the channel this assumed -- a
+        `logger.warning` -- was measured to reach nobody: `import myflopy` installs a
+        `NullHandler`, so `logging.lastResort` never fires and the partial-miss line
+        produced zero bytes on stderr.
       - **An empty layer raises too**; zero features make the same empty package.
       - **CRS strictness was considered and rejected.** Location-agnostic models
         sit at the origin in EPSG:2927 on purpose, and refusing a defaulted CRS
@@ -11215,3 +11221,111 @@ same day, which is the useful part of the result.
       factor of N for every multi-part point until this is true. Fixing it inside the
       feature commit would have buried the reproducer, which is what splitting ledger 283
       out of 284 avoided.
+
+288. **A feature that missed the grid was reported through a channel nobody hears
+      (2026-09-18).**
+      `gaps=` (`"warn"` | `"nearest"` | `"raise"` | `"ignore"`) and `snap_within=` on the
+      seven `.gpkg` helpers and on `GeoPackageSource`, the miss moved to
+      `warnings.warn`, and per-feature loss accounting in the message and in
+      `PackageSpec.metadata`.
+      **The channel was the whole of the invisibility, and the mechanism is not what it
+      looks like.** `import myflopy` installs a `NullHandler` on the `myflopy` logger and
+      root has none, so `Logger.callHandlers` counts a handler as FOUND and never reaches
+      `logging.lastResort`, the stderr fallback. Measured: the partial-miss line produced
+      **zero bytes** on stderr in a bare session and in a real ipykernel, while
+      `warnings.warn` printed. The motivating case reproduced exactly -- 2 wells, one off
+      the grid, **90% of the declared pumping gone, zero python warnings**. Both channels
+      emit now; `logger.warning` is still right for a configured application.
+      **The message had to become DISTINCT or the fix would not have worked.**
+      `warnings.warn` dedupes on (text, category, module, lineno), and one GeoPackage
+      driving four packages emitted four BYTE-IDENTICAL lines -- so a default caller
+      would have seen one of four, in exactly the shape ledger 211 names as the
+      legitimate reason to warn rather than refuse. The package name and the lost
+      quantity are in the message; that makes each event distinct AND is the accounting.
+      One change, both problems.
+      **`gaps="nearest"` moves POINTS, and that is measured, not conservative.**
+      Translating a feature by the minimal vector onto the grid recovers a point exactly
+      (share 1.0000 at 3 ft off and at 30 ft off). It recovers a LINE only when the line
+      happens to lie PARALLEL to the boundary it missed: the same line POINTING at the
+      grid lands with its tip touching and resolves to **zero cells**. A polygon
+      translated by exactly its gap only touches; with 0.01 ft of overshoot it finds the
+      right cells but their shares sum to **0.0001**, so a `Spread` conductance would
+      write 0.01% of what was declared, and the overshoot is a tuning knob with no
+      defensible default. Orientation luck is not a rule. A point has no extent, which is
+      the one case where "the same feature, slightly over" is well defined.
+      **An areal feature is CLIPPED, never snapped** (user decision, 2026-09-18) -- and
+      `cell_shares` already did that exactly: `sum(share)` equals the true in-grid
+      fraction to four decimals (1.0000 / 0.5000 / 0.0909 / 0.0000). What was missing is
+      that the loss was silent: a half-off polygon under `Spread(mode="clip")` wrote
+      **497.1 of a declared 1000.0** with no warning at any level. The clipped fraction
+      is reported per feature now, with the quantity where one means something.
+      **A total is reported only where the library KNOWS the field is extensive** -- a
+      well's rate, or any field the caller wrapped in `Spread(mode="clip")`, which IS a
+      declaration that it is extensive. A declared-minus-written identity over every
+      field is nonsense: an unwrapped conductance is copied WHOLE to each of the twelve
+      cells a polygon covers, so a clean build would report -300% "loss". Ledger 169
+      measured `corr(cond, cell area) ~ 0` over 205 real DRN records -- a conductance is
+      not a leakance and summing it says nothing. Everything else lists per feature with
+      no total.
+      **`snap_within=None` in the signature AND in the recipe**, resolved at build
+      against the `sqrt(area)` of the cell the feature would snap TO. A number resolved
+      at declaration would carry the OLD mesh's cell width across `with_grid` -- the
+      stale-cellid defect in another costume -- and a lazy declaration has no mesh to
+      compute one from. LOCAL rather than grid-wide because cell areas span **3.9x** on a
+      plain Voronoi mesh and 18.5x on a refined one, so one number is ~2x too generous
+      beside the smallest cells and ~0.3x too tight beside the largest, in one model.
+      Compared against the distance to the cell POLYGON, not its centroid: the two differ
+      by **3.07x** on one real miss (3.00 ft against 9.21 ft). The raster sibling uses
+      centroid distance; the divergence is deliberate.
+      **The tolerance is the only discriminator that works, and no cleverer one does.**
+      Snap-vector BEARING COHERENCE cannot gate it: legitimate one-sided digitizing slop
+      measures R = 1.000, identical to a uniform 700 ft datum shift. Magnitude separates
+      them -- a one-cell tolerance accepts **12 of 12** legitimate slop (median 0.12
+      cells) and refuses **77 of 78** systematic misses (medians 11.8 and 25.5 cells). So
+      R is worth reporting and worthless as a gate; the recorded `snap_max` is what makes
+      a systematic error visible even when the tolerance refused it.
+      **The all-missed refusal is ORTHOGONAL to the mode**, `"ignore"` included. Ledger
+      211 decided raise-on-empty and this does not reopen it in one word. The raster
+      sibling's `"ignore"` DOES return before its all-missing raise
+      (`grid/surfaces.py:201` precedes `:203`) because `Surface.sample` has a documented
+      next stage that fills the gaps; a boundary package has no such caller, and an empty
+      one is rejected by MF6 naming the file or runs without the boundary under
+      `maxbound=`. The vocabulary is shared through one `check_gaps`, so the four words
+      cannot drift into two dialects; the one divergence is stated in both places.
+      **Only "no `on_miss=` switch" falls out of ledger 211**, and it falls because the
+      channel it assumed was never heard. Raise-on-empty, deliberate-partial-miss and
+      guard-on-the-RESULT-not-the-CRS all survive intact.
+      **The blind spot `gaps=` can never close, stated because it will otherwise be
+      trusted there:** a unit/scale CRS error. Displacement is proportional to distance
+      from the projection origin, so near features stay ON the grid in the WRONG cells,
+      mid features land just outside and snap, and far ones are refused. Measured with
+      EPSG:32149 against a 600 ft model at the origin -- the documented
+      location-agnostic workflow -- **2 of 5 wells landed, 161 ft and 484 ft from where
+      they were drawn**, 3 missed, 60% of the pumping gone. The tolerance does the right
+      thing with the misses and nothing can touch the survivors.
+      **Two defects fixed in passing because this commit makes them live:**
+      `BoundarySource.to_dict` compared each field against its default without
+      normalizing, so a numpy-typed value was written into the payload and it then failed
+      BOTH `json.dumps` and `yaml.safe_dump` --
+      `snap_within=np.sqrt(vor.gdf_vorPolys.area.median())` is the obvious spelling. It
+      runs `_json_value` above the comparison now, which also means a `np.float64` equal
+      to its default is correctly OMITTED, so no stored digest moves. And the loop-local
+      boundname shadowed the package name being passed to the reporter, so the first
+      version of the message named a FEATURE where it meant the package.
+      **The deferred-import ratchet goes 77 -> 78, and could not be hoisted**: `specs.py`
+      imports from `sources.py` at module level, so `sources.py` cannot import `specs` at
+      module level. `_stacklevel_outside_package` moved out of
+      `modflow/utils/datatypes/choros.py` into `myflopy/_warnings.py` rather than being
+      copied -- a second copy is what the shared-rules consolidation of ledgers 210-212
+      exists to prevent.
+      **Confirmed adjacent and deliberately NOT fixed here**, each measured:
+      (a) `mf.hfb.gpkg` with every trace 50,000 ft off the grid BUILDS an empty package
+      with zero warnings -- ledger 211's exact failure in the one package 211 never
+      reached, because HFB is face-indexed and outside `package_registry` -- and a NULL
+      `hydchr` raises a bare `TypeError: float() argument ...` naming neither file nor
+      feature (ledger 247's `_finite` guard never applied there). It needs a miss
+      vocabulary of its own.
+      (b) `layer_field` naming layer 99 on a 1-layer model with NO `ModelContext.domain`
+      writes the record at `(98, 111)` silently; with a domain declared the same input
+      raises. The guard exists only by accident of whether a domain was passed, and
+      ledger 284 made contextless declarations normal.

@@ -24,6 +24,7 @@ from rasterio.warp import transform_bounds
 
 from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
+from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.features import (
@@ -135,29 +136,6 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 # mask MODFLOW's 1e30 sentinel, and label the layer-hover table by value name.
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
-
-
-def _stacklevel_outside_package() -> int:
-    """The ``stacklevel`` that pins a warning on the first frame outside ``myflopy``.
-
-    Counted from the CALLER of this helper. A deprecation reaches ``Choro``
-    through a different number of frames from every scope (free verb, bound
-    verb, noun), so no constant is right; and a warning attributed to library
-    code is one Python's stock filters suppress in a notebook or script, which
-    makes it a deprecation nobody hears.
-    """
-
-    import sys
-
-    level = 1
-    frame = sys._getframe(1)
-    while frame is not None:
-        module = frame.f_globals.get("__name__", "")
-        if not (module == "myflopy" or module.startswith("myflopy.")):
-            return level
-        frame = frame.f_back
-        level += 1
-    return level
 
 
 def _resolve_cells(select, *, vor, model=None):
@@ -406,7 +384,7 @@ class Choro(Picture):
             # reads still offers it.
             warn_deprecated(
                 "myflopy.plot.map(locs=)", "features=", since="0.2.0",
-                stacklevel=_stacklevel_outside_package() + 1,
+                stacklevel=stacklevel_outside_package() + 1,
             )
             features = combine_features(features, Feature(legacy_locations, name="locations"))
         self.kwargs = kwargs

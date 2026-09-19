@@ -401,6 +401,11 @@ class BoundarySource(DataSourceSpec):
         :class:`~myflopy.geopackage.Spread` / :class:`~myflopy.geopackage.CellSurfaceOffset`.
     layer, name_field, layer_field, period_field, layer_base, period_base
         As :class:`~myflopy.geopackage.GeoPackageSource` reads them.
+    gaps, snap_within
+        What a feature that reaches no cell means, and how far a POINT may be moved to
+        reach one (ledger 288). ``snap_within`` stays ``None`` in the recipe when the
+        caller gave no number: a lazy declaration has no mesh, and a distance resolved
+        at declaration would carry the OLD grid's cell width across ``with_grid``.
     edges_only : bool
         Keep only cells on the edge of the ACTIVE domain, per layer (ledger 246).
     boundnames : bool
@@ -446,6 +451,8 @@ class BoundarySource(DataSourceSpec):
     period_field: str | None = None
     layer_base: int = 1
     period_base: int = 0
+    gaps: str = "warn"
+    snap_within: float | None = None
     edges_only: bool = False
     boundnames: bool = True
 
@@ -464,6 +471,8 @@ class BoundarySource(DataSourceSpec):
         payload["nper"] = self.nper
         if self.values:
             payload["values"] = dict(self.values)
+        from myflopy.specs import _json_value
+
         for name, default in (
             ("layer", None),
             ("name_field", "name"),
@@ -471,10 +480,21 @@ class BoundarySource(DataSourceSpec):
             ("period_field", None),
             ("layer_base", 1),
             ("period_base", 0),
+            ("gaps", "warn"),
+            ("snap_within", None),
             ("edges_only", False),
             ("boundnames", True),
         ):
-            value = getattr(self, name)
+            # NORMALIZED first, then compared. The `type(...) is not type(...)` clause
+            # is what keeps a numpy-typed value from being mistaken for its plain
+            # default -- and it also wrote that numpy value straight into the payload,
+            # which then failed BOTH `json.dumps` and `yaml.safe_dump`. `snap_within`
+            # makes that live: `snap_within=np.sqrt(vor.gdf_vorPolys.area.median())` is
+            # the obvious spelling, and it produced a recipe that could not be saved,
+            # frozen or round-tripped (ledger 288). Normalizing above the comparison
+            # also means a `np.float64` equal to its default is correctly OMITTED, so
+            # no stored digest moves.
+            value = _json_value(getattr(self, name))
             if value != default or type(value) is not type(default):
                 payload[name] = value
         return payload
@@ -498,6 +518,8 @@ class BoundarySource(DataSourceSpec):
             period_field=data.get("period_field"),
             layer_base=data.get("layer_base", 1),
             period_base=data.get("period_base", 0),
+            gaps=data.get("gaps", "warn"),
+            snap_within=data.get("snap_within"),
             edges_only=bool(data.get("edges_only", False)),
             boundnames=bool(data.get("boundnames", True)),
             external=bool(data.get("external", False)),

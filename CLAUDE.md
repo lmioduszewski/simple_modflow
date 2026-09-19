@@ -308,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3624 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
+- Full suite (**3646 passed / 4 skipped**, 2026-09-18): `pytest -n 10` ≈ **85 s** (worksteal dist is in
   addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
@@ -600,7 +600,31 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   feature off the grid, on inactive cells, or only bordering cells used to build an
   EMPTY package -- MF6 rejects it naming the file, or under `maxbound=` runs without
   it. The error prints both extents and both CRSs, because a location mismatch is two
-  boxes; a partial miss WARNS by name. A polygon covers a cell by AREA (ledger 210):
+  boxes; a partial miss WARNS by name -- through **`warnings.warn` as well as the
+  logger** since ledger 288, because `import myflopy` installs a `NullHandler` and root
+  has none, so `logging.lastResort` never fires and the log line reached NOBODY (zero
+  bytes on stderr, measured in a bare session and in a real ipykernel). **`gaps=` says
+  what a miss means** -- `"warn"` (default) / `"nearest"` / `"raise"` / `"ignore"`, the
+  same four words as the raster sampler, validated through one `check_gaps`. The
+  all-missed refusal is ORTHOGONAL to the mode, `"ignore"` included: the raster side
+  lets `"ignore"` through because `Surface.sample` has a next stage, and a boundary
+  package has none. **`gaps="nearest"` moves POINTS only** -- translation recovers a
+  point exactly, recovers a LINE only when it happens to lie parallel to the boundary it
+  missed, and leaves a polygon touching at 0.0001 of itself; orientation luck is not a
+  rule. An areal feature is CLIPPED to the part inside the grid (which `cell_shares`
+  already did exactly) and the clipped-away fraction is now REPORTED.
+  **`snap_within=` is `None` in the recipe and resolved at BUILD** against the candidate
+  cell's own `sqrt(area)` -- a number resolved at declaration carries the old mesh's cell
+  width across `with_grid`, and cell areas span 3.9-18.5x within one mesh. Compared
+  against POLYGON distance, not centroid (3.07x apart on one real miss; the raster
+  sibling uses centroid). A total of what was NOT written is reported only where the
+  library knows the field is extensive -- a well's rate, or a `Spread(mode="clip")` field
+  -- because an unwrapped conductance is copied whole to every covered cell and
+  declared-minus-written would call a clean build a -300% loss.
+  **The blind spot to state out loud:** a unit/scale CRS error leaves near features ON
+  the grid in the WRONG cells. Measured, EPSG:32149 against a 600 ft model at the origin:
+  2 of 5 wells landed 161 ft and 484 ft from where they were drawn, 60% of the pumping
+  gone. No tolerance can see that. A polygon covers a cell by AREA (ledger 210):
   drawn along faces it reaches only the cells inside it, never its neighbours. A LINE
   piece under the same 0.01 tolerance is noise too (ledger 237) -- and this is the
   SHARED rule, so it moves `map(select=<line>)`, a region and a line head target as

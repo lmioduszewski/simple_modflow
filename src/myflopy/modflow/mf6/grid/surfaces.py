@@ -133,6 +133,24 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
 GAP_MODES = ("warn", "ignore", "nearest", "raise")
 
 
+def check_gaps(gaps: str, *, verb: str) -> str:
+    """Validate a ``gaps=`` mode against the ONE vocabulary, and return it.
+
+    Shared with the ``.gpkg`` boundary sources (ledger 288) so the four words cannot
+    drift into two dialects. What each word MEANS differs by subject -- a raster gap is
+    a cell with no value, a feature gap is a feature that reached no cell -- and one
+    divergence is deliberate and documented there: on this side ``"ignore"`` returns
+    before the all-missing refusal, and on the feature side the refusal is orthogonal to
+    the mode, because an empty boundary package is not a state MF6 can use.
+    """
+
+    if gaps not in GAP_MODES:
+        raise ValueError(
+            f"{verb}: unknown gaps mode {gaps!r}; expected one of {GAP_MODES}."
+        )
+    return gaps
+
+
 def _fill_nearest(values: np.ndarray, xs, ys, missing: np.ndarray) -> np.ndarray:
     """Copy each gap's value from the nearest cell that HAS one, by centroid distance."""
 

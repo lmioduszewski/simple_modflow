@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import MISSING, dataclass, field
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
@@ -11,6 +12,7 @@ import geopandas as gpd
 import numpy as np
 
 from myflopy._logging import get_logger
+from myflopy._warnings import stacklevel_outside_package
 from myflopy.advanced import (
     chd_spec,
     drn_spec,
@@ -27,6 +29,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     miss_reason,
     where_they_are,
 )
+from myflopy.modflow.mf6.grid.surfaces import check_gaps
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.specs import (
     GRID_PIN,
@@ -525,6 +528,72 @@ def _metadata_value(value: RowValue):
     return value
 
 
+#: Coverage at or above this counts as whole -- a feature is not "clipped" by float noise.
+_FULLY_COVERED = 1.0 - 1e-9
+
+#: The ``(package, record field)`` pairs the library knows are EXTENSIVE, so a total of
+#: what was NOT written means something. Deliberately one entry: a well's rate is
+#: unambiguously a flux. A conductance is not -- ledger 169 measured
+#: ``corr(cond, cell area) ~ 0`` over 205 real DRN records, so it is not a leakance and
+#: summing it says nothing. Everything else reports per feature, with no total, unless
+#: the caller wrapped it in ``mf.Spread``, which IS a declaration that it is extensive.
+_EXTENSIVE_FIELDS = {("wel", "rate")}
+
+
+def _listed(items, limit: int = 10) -> str:
+    """The first ``limit`` entries, then a count -- one wording for every listing here."""
+
+    listing = ", ".join(items[:limit])
+    return listing + (f", and {len(items) - limit} more" if len(items) > limit else "")
+
+
+@dataclass
+class _Coverage:
+    """What became of every feature of one source: the message AND the record.
+
+    A warning is best-effort -- `warnings.warn` dedupes, and on the lazy path it fires
+    deep inside `prepare_run` where no stacklevel points at the declaration -- so the
+    same numbers are stamped into `PackageSpec.metadata`, which is excluded from
+    `package_digest` and therefore cannot report a stored run as drifted (ledger 288).
+    """
+
+    features: int = 0
+    landed: int = 0
+    snapped: list = field(default_factory=list)      # (label, distance)
+    missed: list = field(default_factory=list)       # (index, row)
+    clipped: list = field(default_factory=list)      # (label, covered fraction)
+    lost: dict = field(default_factory=dict)         # extensive field -> quantity not written
+
+    def quiet(self) -> bool:
+        """Whether nothing worth saying happened."""
+
+        return not (self.snapped or self.missed or self.clipped)
+
+    def summary(self) -> dict:
+        """The durable record: counts, and the snap distances that reveal a systematic error.
+
+        The MAX snap distance is the one that matters -- a uniform datum shift and
+        ordinary digitizing slop are indistinguishable by the DIRECTION of their snap
+        vectors (measured: both concentrate at R = 1.000), and separable only by
+        magnitude.
+        """
+
+        record = {
+            "features": self.features,
+            "landed": self.landed,
+            "snapped": len(self.snapped),
+            "missed": len(self.missed),
+            "clipped": len(self.clipped),
+        }
+        if self.snapped:
+            distances = sorted(distance for _, distance in self.snapped)
+            record["snap_max"] = float(distances[-1])
+            record["snap_median"] = float(distances[len(distances) // 2])
+        if self.lost:
+            record["lost"] = {key: float(value) for key, value in self.lost.items()}
+        return record
+
+
 @dataclass(slots=True)
 class GeoPackageSource:
     """Map one GeoPackage layer onto a model grid and build reusable inputs.
@@ -543,9 +612,13 @@ class GeoPackageSource:
     period_field: str | None = None
     layer_base: int = 1
     period_base: int = 0
+    gaps: str = "warn"
+    snap_within: float | None = None
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
     _edge_cells: dict[int, set[int]] = field(default_factory=dict, init=False, repr=False)
     _source_crs: Any = field(default=None, init=False, repr=False)
+    #: What became of the features on the last build, for the metadata stamp.
+    last_coverage: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Coerce ``path`` and validate the file exists, a grid is present, and ``nper >= 1``."""
@@ -557,6 +630,13 @@ class GeoPackageSource:
             raise ValueError("ModelContext.grid is required for GeoPackage mapping.")
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
+        check_gaps(self.gaps, verb="A GeoPackage source")
+        if self.snap_within is not None and not (float(self.snap_within) > 0):
+            raise ValueError(
+                f"snap_within is a distance in the grid's own coordinate units and must "
+                f"be positive, not {self.snap_within!r}. Leave it None for one cell "
+                "width, measured on the cell a feature would snap to."
+            )
 
     @property
     def grid(self):
@@ -636,6 +716,61 @@ class GeoPackageSource:
             usable=lambda cells: self._usable_cells(cells, layer=layer, edge_cells=edge_cells),
         )
 
+    def _snapped_shares(self, geometry, *, layer: int, edges_only: bool):
+        """A zero-cell POINT moved onto its nearest usable cell: ``(shares, distance)``.
+
+        ``(None, distance)`` when it cannot be moved -- too far, or not a point.
+
+        **Points only, and that is measured rather than conservative.** Translating a
+        feature by the minimal vector onto the grid recovers a POINT exactly (share
+        1.0000 at 3 ft off and at 30 ft off), and recovers a LINE only when the line
+        happens to lie PARALLEL to the boundary it missed: a line of the same length
+        POINTING at the grid lands with its tip touching and resolves to **zero cells**,
+        and a polygon translated by exactly its gap only touches too (ledger 288). That
+        is orientation luck, not a rule. A point has no extent, so moving it is the one
+        case where "the same feature, slightly over" is well defined; anything with a
+        footprint would have that footprint changed or destroyed by the move.
+
+        The tolerance is compared against the distance to the cell POLYGON, not its
+        centroid -- "just off the edge" is the natural reading, and on one real miss the
+        two differ by 3.07x (3.00 ft to the polygon, 9.21 ft to the centroid). The
+        raster sibling uses centroid distance; the divergence is deliberate.
+        """
+
+        from shapely.affinity import translate
+        from shapely.ops import nearest_points
+
+        if geometry is None or geometry.is_empty or _extent(geometry) > 0:
+            return None, None
+
+        polys = self.grid.gdf_vorPolys
+        edge_cells = self._edge_set(layer) if edges_only else None
+        usable = self._usable_cells(list(polys.index), layer=layer, edge_cells=edge_cells)
+        if not usable:
+            return None, None
+        candidates = polys.geometry.loc[usable]
+        distances = candidates.distance(geometry)
+        cell = distances.idxmin()
+        distance = float(distances.loc[cell])
+
+        # `None` means one cell width, measured on the cell it would snap TO. A grid-wide
+        # statistic is the wrong instrument on a ragged mesh: cell areas span 3.9x on a
+        # plain Voronoi grid and 18.5x on a refined one, so one number is ~2x too
+        # generous beside the smallest cells and ~0.3x too tight beside the largest, in
+        # the same model.
+        tolerance = (
+            float(self.snap_within)
+            if self.snap_within is not None
+            else float(np.sqrt(candidates.loc[cell].area))
+        )
+        if distance > tolerance:
+            return None, distance
+
+        start, end = nearest_points(geometry, candidates.loc[cell])
+        moved = translate(geometry, end.x - start.x, end.y - start.y)
+        shares = self._cell_shares(moved, layer=layer, edges_only=edges_only)
+        return (shares or None), distance
+
     def _edge_set(self, layer: int) -> set[int]:
         """One layer's ACTIVE-domain edge cells, found once per layer.
 
@@ -706,6 +841,103 @@ class GeoPackageSource:
             grid_crs=getattr(self.grid, "crs", None),
             no_crs_subject="the file has NO CRS, so its coordinates",
         )
+
+    def _report(self, coverage, *, package: str, name: str, edges_only: bool, empty: str) -> None:
+        """Say what happened to every feature -- refuse, warn, or stay quiet, per ``gaps``.
+
+        **The all-missed refusal is ORTHOGONAL to the mode**, ``"ignore"`` included. The
+        raster sibling returns early on ``"ignore"`` and so lets a wholly-missing input
+        through, because ``Surface.sample`` has a documented next stage that fills it.
+        A boundary package has no such caller: an empty one is rejected by MF6 naming
+        the file, or runs without the boundary under ``maxbound=``. Ledger 211 decided
+        that and this does not reopen it in one word (ledger 288).
+
+        **Both channels, deliberately.** ``logger.warning`` stays for a configured
+        application, and ``warnings.warn`` is added because it is the only one a default
+        caller hears: ``import myflopy`` installs a ``NullHandler`` on the ``myflopy``
+        logger, root has none, and ``logging.callHandlers`` therefore counts a handler
+        as found and never reaches ``logging.lastResort`` -- measured, the partial-miss
+        line produced zero bytes on stderr in a bare session and in a real ipykernel.
+
+        The message carries the PACKAGE NAME and the quantity lost. That is the
+        accounting, and it is also what stops `warnings.warn`'s per-(text, category,
+        module, lineno) dedup collapsing one source driving four packages from four
+        warnings to one -- the four lines used to be byte-identical.
+        """
+
+        source = f"'{self.path.name}'" + (f" (layer {self.layer!r})" if self.layer else "")
+        target = "active grid-edge cell" if edges_only else "active cell"
+        subject = package if name in ("", package) else f"{package} {name!r}"
+        if coverage.features == 0:
+            raise ValueError(f"GeoPackage {source} has no features; {empty}.")
+
+        if coverage.missed and len(coverage.missed) == coverage.features:
+            polys = self.grid.gdf_vorPolys
+            reasons = [
+                f"{self._feature_label(index, row)} "
+                f"({miss_reason(polys, row.geometry, target=target)})"
+                for index, row in coverage.missed
+            ]
+            raise ValueError(
+                f"No feature in GeoPackage {source} lands on an {target}; {empty}. "
+                f"{_listed(reasons)}. {self._where()}"
+                + ("" if self.gaps != "ignore" else
+                   " gaps='ignore' does not reach this: a boundary package with no "
+                   "records is not a state MF6 can use.")
+            )
+
+        if self.gaps == "ignore" or coverage.quiet():
+            return
+
+        sentence = self._sentence(coverage, target=target)
+        if self.gaps == "raise":
+            raise ValueError(
+                f"GeoPackage {source} -> {subject}: {sentence} {self._where()} "
+                "Pass gaps='warn' to be told instead, or gaps='nearest' to move a POINT "
+                "that only just missed."
+            )
+        message = f"GeoPackage {source} -> {subject}: {sentence}"
+        logger.warning("%s", message)
+        warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
+
+    def _sentence(self, coverage, *, target: str) -> str:
+        """What happened, in one line that is DISTINCT per package.
+
+        The package name and the lost quantity are in the message on purpose. Four
+        packages driven from one GeoPackage used to emit four byte-identical lines, and
+        `warnings.warn` dedupes on (text, category, module, lineno) -- so a default
+        caller saw one of four. Making each line say what it is about fixes the dedup
+        and IS the accounting, in one change.
+        """
+
+        polys = self.grid.gdf_vorPolys
+        parts: list[str] = []
+        if coverage.missed:
+            reasons = [
+                f"{self._feature_label(index, row)} "
+                f"({miss_reason(polys, row.geometry, target=target)})"
+                for index, row in coverage.missed
+            ]
+            parts.append(
+                f"{len(coverage.missed)} of {coverage.features} features land on no "
+                f"{target} and are left out: {_listed(reasons)}"
+            )
+        if coverage.snapped:
+            moved = [f"{label} ({distance:,.3g})" for label, distance in coverage.snapped]
+            parts.append(
+                f"{len(coverage.snapped)} were MOVED onto the grid by gaps='nearest' "
+                f"(distance in grid units): {_listed(moved)}"
+            )
+        if coverage.clipped:
+            clipped = [f"{label} ({covered:.1%} inside)" for label, covered in coverage.clipped]
+            parts.append(
+                f"{len(coverage.clipped)} lie only partly inside the active grid and are "
+                f"CLIPPED to the part that is: {_listed(clipped)}"
+            )
+        if coverage.lost:
+            lost = ", ".join(f"{key} {value:,.4g}" for key, value in sorted(coverage.lost.items()))
+            parts.append(f"not written: {lost}")
+        return "; ".join(parts) + "."
 
     def _refuse_or_report_misses(
         self, missed: list[tuple[Any, Any]], *, empty: str, edges_only: bool = False
@@ -789,6 +1021,8 @@ class GeoPackageSource:
         *fields: RowValue,
         edges_only: bool = False,
         boundnames: bool = False,
+        package: str = "",
+        name: str = "",
     ) -> dict[int, list[list[Any]]]:
         """Build MF6 stress-period data by mapping every feature to its cells and value fields.
 
@@ -797,6 +1031,7 @@ class GeoPackageSource:
         covered cell, keyed by stress period.
         """
 
+        coverage = _Coverage()
         spreads = tuple(f for f in fields if isinstance(f, Spread))
         required = {
             field_name
@@ -819,13 +1054,29 @@ class GeoPackageSource:
         missed: list[tuple[Any, Any]] = []
         for index, row in self.gdf.iterrows():
             layer = self._layer(row)
+            label = self._feature_label(index, row)
+            coverage.features += 1
             shares = self._cell_shares(row.geometry, layer=layer, edges_only=edges_only)
+            if not shares and self.gaps == "nearest":
+                shares, distance = self._snapped_shares(
+                    row.geometry, layer=layer, edges_only=edges_only
+                )
+                if shares:
+                    coverage.snapped.append((label, distance))
             if not shares:
                 missed.append((index, row))
+                self._account_for_missing(coverage, row, fields, package=package, covered=0.0)
                 continue
+            coverage.landed += 1
+            covered = sum(share for _, share in shares)
+            if covered < _FULLY_COVERED:
+                coverage.clipped.append((label, covered))
+                self._account_for_missing(
+                    coverage, row, fields, package=package, covered=covered
+                )
             if spreads:
                 shares = self._resolved_shares(shares, spreads, index)
-            name = (
+            boundname = (
                 str(row[self.name_field])
                 if boundnames and self.name_field is not None
                 else str(index)
@@ -841,15 +1092,56 @@ class GeoPackageSource:
                     ]
                     record = [(layer, cell), *values]
                     if boundnames:
-                        record.append(name)
+                        record.append(boundname)
                     data[period].append(record)
-        self._refuse_or_report_misses(
-            missed,
+        coverage.missed = missed
+        self._report(
+            coverage,
+            package=package,
+            name=name,
             edges_only=edges_only,
             empty="the package would have no records -- MF6 rejects it, or runs "
             "without it under maxbound=",
         )
+        self.last_coverage = coverage
         return data
+
+    def _account_for_missing(self, coverage, row, fields, *, package: str, covered: float) -> None:
+        """Add a feature's unwritten quantity to the running total, where that MEANS something.
+
+        **Only where the library knows the field is extensive**, which is two cases: a
+        field wrapped in :class:`Spread` -- the caller said so, and ``mode="clip"`` is
+        the mode that actually discards the outside part -- and a well's rate, which is
+        unambiguously a flux. Everything else is left to the per-feature listing with no
+        total.
+
+        A declared-minus-written identity over every field is measurably nonsense: an
+        unwrapped conductance is copied WHOLE to each of the twelve cells a polygon
+        covers, so a clean build reports -300% "loss" (ledger 169 measured
+        ``corr(cond, cell area) ~ 0`` over 205 real records -- a conductance is not a
+        leakance and does not divide by area).
+        """
+
+        record_fields = tuple(_PACKAGE_EXPLORER_SPECS[package].gpkg_defaults) if package else ()
+        for position, spec in enumerate(fields):
+            record_field = record_fields[position] if position < len(record_fields) else None
+            if isinstance(spec, Spread):
+                column = spec.field if spec.mode == "clip" else None
+            elif (package, record_field) in _EXTENSIVE_FIELDS and isinstance(spec, str):
+                column = spec
+            else:
+                column = None
+            if column is None or column not in row:
+                continue
+            value = row[column]
+            try:
+                quantity = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(quantity):
+                continue
+            key = f"{record_field}={column}" if record_field else column
+            coverage.lost[key] = coverage.lost.get(key, 0.0) + quantity * (1.0 - covered)
 
     def _resolved_shares(self, shares, spreads: tuple[Spread, ...], index: Any):
         """Apply the :class:`Spread` mode to one feature's cell shares, and say what was lost."""
@@ -910,6 +1202,14 @@ class GeoPackageSource:
             "period_field": self.period_field,
             "layer_base": self.layer_base,
             "period_base": self.period_base,
+            "gaps": self.gaps,
+            "snap_within": self.snap_within,
+            # What became of the features -- counts, and the snap distances. A warning
+            # is best-effort: `warnings.warn` dedupes, and a lazy declaration resolves
+            # inside `prepare_run` where no stacklevel points at the caller. This
+            # survives. `metadata` is excluded from `package_digest`, so recording it
+            # cannot report a stored run as drifted (ledger 288).
+            "coverage": dict(self.last_coverage.summary()) if self.last_coverage else None,
         }
 
     def _bc_from_features(
@@ -950,7 +1250,7 @@ class GeoPackageSource:
             raise ValueError(f"{package} features cannot be restricted to grid edges.")
 
         return _SPEC_FACTORIES[package](
-            self._boundary_data(*fields.values(), **data_options),
+            self._boundary_data(*fields.values(), package=package, name=name, **data_options),
             name=name,
             boundnames=boundnames,
             **(options or {}),

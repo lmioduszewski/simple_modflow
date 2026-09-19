@@ -66,6 +66,7 @@ from myflopy.grid_identity import (
 )
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
+from myflopy.modflow.mf6.grid.surfaces import check_gaps
 from myflopy.modflow.mf6.lakes import (
     LAKBuilder,
     LakeConnection,
@@ -618,6 +619,8 @@ def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **op
         period_field=recipe.period_field,
         layer_base=recipe.layer_base,
         period_base=recipe.period_base,
+        gaps=recipe.gaps,
+        snap_within=recipe.snap_within,
     )
     kwargs = dict(recipe.values)
     kwargs["name"] = _spec.name
@@ -853,6 +856,8 @@ def _lazy_bc_spec(
     period_field: str | None,
     layer_base: int,
     period_base: int,
+    gaps: str,
+    snap_within: float | None,
     values: dict[str, Any],
     # `wel`/`rch`/`evt` have no `edges_only` parameter at all -- the package registry
     # says so (`capabilities.edges_only`) and their signatures agree -- so their
@@ -882,6 +887,17 @@ def _lazy_bc_spec(
         raise FileNotFoundError(f"GeoPackage not found: {path}")
     if nper < 1:
         raise ValueError("nper must be at least 1.")
+    # Neither needs a grid, so neither belongs at build time -- the same rule the two
+    # checks above already follow. `snap_within` is NOT resolved here: a lazy
+    # declaration has no mesh yet, and a number resolved now would carry the OLD grid's
+    # cell width across `with_grid`, which is the stale-cellid defect in another costume
+    # (ledger 288).
+    check_gaps(gaps, verb=f"mf.{package}.gpkg")
+    if snap_within is not None and not (float(snap_within) > 0):
+        raise ValueError(
+            f"mf.{package}.gpkg: snap_within is a distance in the grid's own coordinate "
+            f"units and must be positive, not {snap_within!r}."
+        )
 
     recipe = BoundarySource(
         path=path,
@@ -894,6 +910,8 @@ def _lazy_bc_spec(
         period_field=period_field,
         layer_base=layer_base,
         period_base=period_base,
+        gaps=gaps,
+        snap_within=snap_within,
         edges_only=edges_only,
         boundnames=boundnames,
     )
@@ -917,6 +935,8 @@ def _source(
     period_field: str | None = None,
     layer_base: int = 1,
     period_base: int = 0,
+    gaps: str = "warn",
+    snap_within: float | None = None,
 ) -> GeoPackageSource:
     """Return a configured GeoPackage source for package-first helpers."""
 
@@ -930,6 +950,8 @@ def _source(
         period_field=period_field,
         layer_base=layer_base,
         period_base=period_base,
+        gaps=gaps,
+        snap_within=snap_within,
     )
 
 
@@ -2655,6 +2677,8 @@ class _CHDPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "chd",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -2720,6 +2744,8 @@ class _CHDPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"head": head},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -2736,6 +2762,8 @@ class _CHDPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).chd(
             head=head,
             name=name,
@@ -2861,6 +2889,8 @@ class _GHBPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "ghb",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -2939,6 +2969,8 @@ class _GHBPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"head": head, "conductance": conductance},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -2955,6 +2987,8 @@ class _GHBPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).ghb(
             head=head,
             conductance=conductance,
@@ -3062,6 +3096,8 @@ class _DRNPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "drn",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -3141,6 +3177,8 @@ class _DRNPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"elevation": elevation, "conductance": conductance},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -3157,6 +3195,8 @@ class _DRNPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).drn(
             elevation=elevation,
             conductance=conductance,
@@ -3286,6 +3326,8 @@ class _RIVPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "riv",
         edges_only: bool = False,
         boundnames: bool = True,
@@ -3367,6 +3409,8 @@ class _RIVPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"stage": stage, "conductance": conductance, "rbot": rbot},
                 edges_only=edges_only,
                 boundnames=boundnames,
@@ -3383,6 +3427,8 @@ class _RIVPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).riv(
             stage=stage,
             conductance=conductance,
@@ -3508,6 +3554,8 @@ class _WELPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "wel",
         boundnames: bool = True,
         **options: Any,
@@ -3581,6 +3629,8 @@ class _WELPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"rate": rate},
                 boundnames=boundnames,
                 options=options,
@@ -3596,6 +3646,8 @@ class _WELPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).wel(
             rate=rate,
             name=name,
@@ -3863,6 +3915,8 @@ class _RCHPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "rch",
         boundnames: bool = True,
         **options: Any,
@@ -3935,6 +3989,8 @@ class _RCHPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"recharge": recharge},
                 boundnames=boundnames,
                 options=options,
@@ -3950,6 +4006,8 @@ class _RCHPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).rch(
             recharge=recharge,
             name=name,
@@ -4275,6 +4333,8 @@ class _EVTPackage:
         period_field: str | None = None,
         layer_base: int = 1,
         period_base: int = 0,
+        gaps: str = "warn",
+        snap_within: float | None = None,
         name: str = "evt",
         boundnames: bool = True,
         **options: Any,
@@ -4362,6 +4422,8 @@ class _EVTPackage:
                 period_field=period_field,
                 layer_base=layer_base,
                 period_base=period_base,
+                gaps=gaps,
+                snap_within=snap_within,
                 values={"surface": surface, "rate": rate, "depth": depth},
                 boundnames=boundnames,
                 options=options,
@@ -4377,6 +4439,8 @@ class _EVTPackage:
             period_field=period_field,
             layer_base=layer_base,
             period_base=period_base,
+            gaps=gaps,
+            snap_within=snap_within,
         ).evt(
             surface=surface,
             rate=rate,

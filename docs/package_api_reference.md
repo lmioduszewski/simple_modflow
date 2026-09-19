@@ -106,6 +106,9 @@ Each list BC offers up to three forms; the record fields are its input nouns:
 | `mf.rch` | `recharge` | ✓ | ✓ | ✓ |
 | `mf.evt` | `surface`, `rate`, `depth` | ✓ | ✓ | ✓ |
 
+> **`gaps=` and `snap_within=` on every `.gpkg` helper** (ledger 288). `gaps="warn"` (default) names a feature that reached no cell and says what was not written; `"nearest"` moves a POINT that only just missed, within `snap_within` (default: one cell width, measured on the cell it would snap to); `"raise"` refuses; `"ignore"` is silent. A source that lands NOWHERE is refused in every mode. An areal feature is clipped to the part inside the grid, never moved, and the clipped-away fraction is reported.
+
+
 - `()` — direct records: `mf.riv(stress_period_data={0: [[(0, 3), 100.0, 5.0, 98.0]]})`.
 - `.gpkg` — map GeoPackage features onto cells; field args accept a column name or a
   `CellSurfaceOffset` (surface-relative), e.g. `mf.drn.gpkg("seeps.gpkg", context=ctx,
