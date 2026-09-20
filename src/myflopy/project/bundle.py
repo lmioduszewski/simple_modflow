@@ -5,21 +5,24 @@ on disk. `Project.save(bundle_sources=True)` copies those files into
 ``<root>/inputs/`` and rewrites the stored paths to point there, so the project is an
 archive rather than a set of references into whatever directory it was authored in.
 
-**Grids only -- for now, and no longer for the reason below.** Ledgers 279/284/285 made
-the seven `.gpkg` list BCs lazy when declared without ``context=``, so a saved package
-CAN hold a path and does read a file at build. Carrying those is its own commit; what
-follows is the measurement that was true when this module was written, kept because it
-still describes the eager form exactly.
+**Grids AND lazy packages** (ledger 293). A ``GridSpec`` was always a live source --
+``ModelSpec.build`` re-resolves it on every build -- and since ledgers 270/279/284/285
+so is any package declared without a ``context=``: it holds a recipe rather than
+records, and reads its file at build time.
 
-**Every `.gpkg`**
-package helper resolves EAGERLY at declaration, so a saved package holds finished
-records: an instrumented recorder saw zero file reads inside ``PackageSpec.build``
-across 306 passing tests, a project rebuilds with its GeoPackage deleted, and the
-``source_path`` a package records is read by nothing. Bundling those today would copy
-files nothing opens. A ``GridSpec`` is the opposite -- ``ModelSpec.build`` re-resolves
-it on EVERY build -- so its sources are the live ones. The package half belongs with
-the commit that makes package resolution lazy, when a recipe is what resolution
-consults.
+An EAGER package still names nothing this copies, and the measurement behind that is
+worth keeping: every `.gpkg` helper given a ``context=`` resolves at declaration, an
+instrumented recorder saw zero file reads inside ``PackageSpec.build`` across 306
+passing tests, and a project rebuilds with its GeoPackage deleted. So the package walk
+finds nothing on an eager spec and returns it unchanged, rather than needing to ask
+whether a package is lazy before looking.
+
+**A lazy model has TWO carriers, and the easily-overlooked one fails FIRST.** The
+boundary recipes are :class:`~myflopy.sources.DataSourceSpec` objects; the layer stack
+behind ``mf.disv(<gridless LayerStack>)`` is not a dataclass, names no source spec, and
+per ledger 270 is the ONLY shape a layered model saves in. Its raster is opened inside
+the discretization, before any boundary condition is built, so bundling the recipes
+alone produces an archive that reports success and cannot open.
 
 Two of the grid's own paths are read LATER rather than at build: ``rasters`` (on the
 first ``gdf_topbtm``) and ``idomain_path`` (on the first edge query). They are bundled
@@ -37,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from myflopy._logging import get_logger
-from myflopy.specs import DataSourceSpec, GridSpec
+from myflopy.specs import DataSourceSpec, GridSpec, PackageSpec, repoint_source_paths
 
 logger = get_logger(__name__)
 
@@ -195,8 +198,15 @@ class _Bundler:
         self.taken.setdefault(name, source)
         return self.inputs_dir / name
 
-    def take(self, value: Any) -> Any:
-        """Copy one source in and return the path to store, or the original."""
+    def take(self, value: Any, *, write_target: bool = False) -> Any:
+        """Copy one source in and return the path to store, or the original.
+
+        ``write_target=True`` marks a path the project WRITES rather than reads -- the
+        GRASS interpolation cache behind a contour surface. An absent one is copied
+        over in silence instead of being reported missing: it has simply not been
+        produced yet, and listing it would put a fault in the report for a project in
+        a perfectly ordinary state.
+        """
 
         if value is None:
             return value
@@ -205,7 +215,8 @@ class _Bundler:
             # Not this verb's complaint to make: the resolver already names a
             # missing source, and refusing to save a project because one file moved
             # would lose the rest of it.
-            self.missing.append(str(source))
+            if not write_target:
+                self.missing.append(str(source))
             return value
         # Against the PROJECT ROOT, not just `inputs/`. A source the project already
         # holds does not need copying anywhere -- and testing only `inputs/` made the
@@ -314,4 +325,51 @@ def bundle_grid_sources(
     return bundled, report
 
 
-__all__ = ["bundle_grid_sources", "grid_sources"]
+def bundle_package_sources(
+    spec: PackageSpec,
+    *,
+    root: Path | str,
+    inputs_dir: Path | str,
+    project_root: Path | str | None = None,
+) -> tuple[PackageSpec, dict[str, Any]]:
+    """Return ``spec`` with the files its RECIPE reads copied in and repointed.
+
+    A package only has such files when it was declared LAZILY -- ``mf.chd.gpkg(...)``
+    without a ``context=``, or ``mf.disv(<gridless LayerStack>)``. An eager package
+    resolved at declaration and holds finished records, so it names no file at build
+    time and nothing here finds one; that is the measurement this module's own header
+    was written around, and it is still true of the eager form.
+
+    **Both carriers, because the one that is easy to overlook fails first.** A model
+    whose layer stack reads ``gis/ground.tif`` dies ``RasterioIOError`` inside the
+    discretization, before any boundary condition is built -- so a bundler that carried
+    only the ``.gpkg`` recipes would report a complete archive and produce one that
+    cannot open. :func:`myflopy.specs.repoint_source_paths` walks both.
+
+    ``report["notes"]`` names what was NOT carried, which is the half a report is
+    usually missing: a stack holding per-cell arrays cannot be serialized (ledger 193)
+    and is left exactly as it was.
+    """
+
+    root, inputs_dir = Path(root), Path(inputs_dir)
+    bundler = _Bundler(inputs_dir, root, Path(project_root) if project_root else None)
+    notes: list[tuple[str, str]] = []
+
+    def _take(path, *, role, notes):
+        """Copy one path in, whatever kind of thing named it."""
+
+        return bundler.take(path, write_target=role == "write_target")
+
+    inputs = repoint_source_paths(spec.inputs, _take, notes=notes) if spec.inputs else spec.inputs
+    bundled = spec if inputs == spec.inputs else replace(spec, inputs=inputs)
+    report = {"copied": bundler.copied, "missing": bundler.missing, "notes": notes}
+    if bundler.missing:
+        logger.warning(
+            "bundling package %r: %d source(s) could not be found and were left "
+            "pointing where they were: %s",
+            spec.name, len(bundler.missing), ", ".join(bundler.missing[:5]),
+        )
+    return bundled, report
+
+
+__all__ = ["bundle_grid_sources", "bundle_package_sources", "grid_sources"]

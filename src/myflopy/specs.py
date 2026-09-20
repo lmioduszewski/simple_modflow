@@ -634,7 +634,14 @@ def _canonical(value: Any) -> Any:
         # A CONSTANT tag, not the class name: a source's own `to_dict` already carries
         # the `kind` its reader dispatches on, so renaming the Python class must not
         # move a digest.
-        return (sys.intern("$source"), _canonical(value.to_dict()))
+        #
+        # `digest_payload()`, NOT `to_dict()`. They differ for exactly one source --
+        # a `BoundarySource`, which substitutes its file's content hash for its path,
+        # so that bundling a project into an archive does not report every lazy
+        # package as edited and an edited GeoPackage is not reported as unchanged
+        # (ledger 293). Every other source returns `to_dict()` unchanged, so no
+        # existing digest moves; `tests/test_boundary_source.py` pins both halves.
+        return (sys.intern("$source"), _canonical(value.digest_payload()))
     if isinstance(value, PurePath):
         return sys.intern(value.as_posix())
 
@@ -650,6 +657,165 @@ def _canonical(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return tuple(_canonical(item) for item in value)
     return value
+
+
+#: Every ``Surface`` field naming a file the stack READS. Matched by KEY inside a
+#: serialized payload rather than by attribute, because ``specs`` is import layer 1 and
+#: ``surfaces``/``layers`` are 2 and 6 -- the same reason ``_canonical`` duck-types on
+#: ``_SPEC_TOKEN`` instead of importing the classes. ``Spread`` and ``CellSurfaceOffset``,
+#: the other two token-bearing payloads that reach ``inputs``, declare no field of any of
+#: these names, so the key match cannot claim one of theirs.
+SURFACE_INPUT_KEYS = frozenset({"path", "contours", "region_raster", "region_vector"})
+
+#: ``Surface.out`` -- the GRASS interpolation CACHE, which the stack WRITES rather than
+#: reads. Separate because the two want opposite treatment when a file is absent: a
+#: missing input is a fault to report, a missing cache is just one that has not been
+#: produced yet.
+SURFACE_WRITE_KEYS = frozenset({"out"})
+
+
+def _repoint_payload(payload: Any, transform, notes: list[tuple[str, str]]) -> Any:
+    """Recurse through a serialized token payload, transforming the paths it names."""
+
+    if isinstance(payload, dict):
+        rebuilt = {}
+        for key, item in payload.items():
+            if isinstance(item, str) and key in SURFACE_INPUT_KEYS:
+                rebuilt[key] = transform(PurePath(item), role="surface", notes=notes) or item
+            elif isinstance(item, str) and key in SURFACE_WRITE_KEYS:
+                rebuilt[key] = (
+                    transform(PurePath(item), role="write_target", notes=notes) or item
+                )
+            else:
+                rebuilt[key] = _repoint_payload(item, transform, notes)
+        return rebuilt
+    if isinstance(payload, list):
+        return [_repoint_payload(item, transform, notes) for item in payload]
+    return payload
+
+
+def repoint_source_paths(
+    value: Any,
+    transform,
+    *,
+    honor_external: bool = False,
+    notes: list[tuple[str, str]] | None = None,
+) -> Any:
+    """Return ``value`` with every file path it names passed through ``transform``.
+
+    ONE walker for the two callers that must agree about what a path IS -- the
+    archive bundler (``project.save(bundle_sources=True)``) and the build-time anchor
+    in :meth:`ModelSpec.build`. They were written apart in the first draft and
+    disagreed immediately: bundling rewrote a layer stack's raster to a
+    project-relative path that the anchor, which only knew about ``DataSourceSpec``,
+    then left for ``rasterio`` to resolve against the current working directory. Half
+    a feature is worse than neither, because the save reports success.
+
+    **Two carriers, and the one that is easy to forget fails FIRST** (ledger 293). A
+    lazy ``.gpkg`` recipe is a :class:`~myflopy.sources.DataSourceSpec` in ``inputs``;
+    a lazy ``mf.disv`` holds a gridless ``LayerStack``, which is not a dataclass, names
+    no source spec, and per ledger 270 is the ONLY shape a layered model saves in. A
+    model carrying both dies on the raster before the boundary condition is reached,
+    so bundling only the recipe ships an archive whose headline is false.
+
+    ``transform(path, *, role, notes)`` returns the value to store, or ``None`` to
+    leave the path alone. ``role`` is ``"source"``, ``"surface"`` or
+    ``"write_target"``; see :data:`SURFACE_WRITE_KEYS` for why the last is apart.
+
+    ``honor_external=True`` leaves a source flagged ``external`` untouched -- that flag
+    means "never anchor me to the project root", which is exactly the anchor's job and
+    exactly what bundling makes false, so the two callers pass opposite values.
+
+    A ``Surface`` holding per-cell arrays cannot be serialized at all (ledger 193), so
+    a stack containing one is returned UNCHANGED with a note rather than raised over:
+    such a model is skipped by the save anyway, and a bundler that raised would cost
+    the caller every other simulation in the project.
+    """
+
+    notes = [] if notes is None else notes
+    if isinstance(value, DataSourceSpec):
+        if honor_external and value.external:
+            return value
+        stored = transform(value.path, role="source", notes=notes)
+        if stored is None or str(stored) == str(value.path):
+            return value
+        # `external` means "never anchor to the project root". Only the bundler gets
+        # here with it set, and only by copying the file inside -- which is what makes
+        # the flag false. The anchor returned above without touching it.
+        return replace(value, path=stored, external=False)
+    if getattr(type(value), "_SPEC_TOKEN", None) is not None:
+        try:
+            payload = value.to_dict()
+        except (ValueError, TypeError) as error:
+            notes.append((type(value).__name__, str(error)))
+            return value
+        repointed = _repoint_payload(payload, transform, notes)
+        if repointed == payload:
+            return value
+        try:
+            return type(value).from_dict(repointed)
+        except (ValueError, TypeError, KeyError) as error:
+            notes.append((type(value).__name__, f"could not be rebuilt: {error}"))
+            return value
+    if isinstance(value, dict):
+        return {
+            key: repoint_source_paths(
+                item, transform, honor_external=honor_external, notes=notes
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        rebuilt = [
+            repoint_source_paths(
+                item, transform, honor_external=honor_external, notes=notes
+            )
+            for item in value
+        ]
+        return type(value)(rebuilt) if isinstance(value, list) else tuple(rebuilt)
+    return value
+
+
+def _anchored_packages(
+    packages: tuple[PackageSpec, ...],
+    build_context: SpecBuildContext | None,
+) -> tuple[PackageSpec, ...]:
+    """Resolve every relative source path in ``packages`` against the project root.
+
+    ``project.save(bundle_sources=True)`` stores paths RELATIVE to the project root --
+    that is what makes a bundled project portable. Nothing resolved them on the package
+    side, so a bundled project rebuilt from any directory but its own root opened
+    ``inputs/boundaries.gpkg`` against the current working directory and died. Grids
+    never had the bug: ``grid_spec_resolver._source_path`` has anchored them all along,
+    and this is the same rule one tier over.
+
+    **After ``resolved_packages``, never before.** A ``PackageRef`` is not a
+    ``PackageSpec`` and carries no ``inputs``, so anchoring the DECLARED list silently
+    skips every package reached through ``mf.ref`` -- the documented library route, and
+    ledger 280's exact miss in a different function.
+
+    Anchoring here rather than at load time is deliberate and measured: rewriting the
+    stored spec to an absolute path MOVED the package digest, and the next plain
+    ``save()`` then wrote that absolute path back, quietly un-bundling the archive. The
+    library keeps the relative path; only this build's copy is absolute.
+    """
+
+    root = getattr(build_context, "project_root", None) if build_context else None
+    if root is None:
+        return packages
+
+    def _anchor(path, *, role, notes):
+        """Absolutize one relative path; leave an absolute one alone."""
+
+        return None if PurePath(path).is_absolute() else Path(root) / path
+
+    anchored = []
+    for package in packages:
+        if not package.inputs:
+            anchored.append(package)
+            continue
+        inputs = repoint_source_paths(package.inputs, _anchor, honor_external=True)
+        anchored.append(package if inputs == package.inputs else replace(package, inputs=inputs))
+    return tuple(anchored)
 
 
 def package_digest(package: PackageSpec) -> str | None:
@@ -3135,7 +3301,7 @@ class ModelSpec:
         builder = self.builder or _DEFAULT_MODEL_BUILDERS[self.type_enum]
         model = builder(simulation, modelname=self.name, **self.options)
         model.myflopy_context = context
-        packages = self.resolved_packages(build_context)
+        packages = _anchored_packages(self.resolved_packages(build_context), build_context)
         built_packages = {
             package.name: built
             for package in packages

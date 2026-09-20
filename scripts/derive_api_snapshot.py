@@ -233,6 +233,11 @@ def collect_surfaces() -> dict[str, list[str]]:
         "Project.members": members(Project),
         "Run.members": members(Run),
         "SaveReport.members": members(SaveReport),
+        # FIELDS as well as members: `SaveReport` is all data and no verbs, so
+        # `members()` -- callables and properties only -- captured `__fspath__` and
+        # nothing else. Its entire reporting surface could gain or lose a column
+        # without moving a single snapshot row (ledger 293).
+        "SaveReport.fields": spec_fields(SaveReport),
         "SpecLibrary.members": members(SpecLibrary),
         "PackageLibrary.members": members(PackageLibrary),
         "GridLibrary.members": members(GridLibrary),

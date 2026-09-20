@@ -230,3 +230,105 @@ def test_it_is_not_the_runtime_resolver():
     # type rather than reusing the resolver.
     with pytest.raises(FileNotFoundError):
         GeoPackageSource(path="x.gpkg", context=mf.ModelContext(), nper=1)
+
+
+# ------------------------------------------------------- the digest sees CONTENT
+
+
+def _written(path, head=10.0):
+    """A one-feature GeoPackage, written so its bytes are a function of `head`."""
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    gpd.GeoDataFrame(
+        {"name": ["w"], "head": [head], "cond": [1.0], "layer": [1]},
+        geometry=[Point(5.0, 5.0)], crs=2927,
+    ).to_file(path, driver="GPKG")
+    return path
+
+
+def test_the_digest_follows_the_file_CONTENT_not_its_location(tmp_path):
+    """Both directions, because path-keying was wrong in both (ledger 293).
+
+    It CHURNED -- `save(bundle_sources=True)` copies the GeoPackage into `inputs/`
+    and repoints the recipe, so a byte-identical archive moved every lazy package's
+    digest and `runs.drift()` called every stored run edited on the day it was
+    archived. And it was BLIND -- a different file at the same path digested the
+    same. Asserting only the first would pass on a digest that ignores the source
+    entirely, which is why the second assertion is here.
+    """
+
+    import shutil
+
+    original = _written(tmp_path / "bc.gpkg")
+    moved = tmp_path / "sub"
+    moved.mkdir()
+    shutil.copy2(original, moved / "renamed.gpkg")     # same bytes, new dir AND name
+    edited = _written(tmp_path / "edited.gpkg", head=42.0)
+
+    def digest(path):
+        return package_digest(
+            mf.ghb.gpkg(path, nper=1, head="head", conductance="cond")
+        )
+
+    assert digest(original) == digest(moved / "renamed.gpkg"), (
+        "moving a file must not look like editing it"
+    )
+    assert digest(original) != digest(edited), (
+        "editing a file must not look like leaving it alone"
+    )
+
+
+def test_a_source_that_cannot_be_read_still_digests_by_PATH(tmp_path):
+    """The fallback, and it has to be there.
+
+    `source_sha` is `None` for a file that could not be read at declaration. Dropping
+    the path as well would make two unreadable sources digest ALIKE -- the same
+    blindness the content hash exists to remove, with nothing standing in for it.
+    """
+
+    unreadable = dataclasses.replace(_recipe(), source_sha=None, path="gis/a.gpkg")
+    other = dataclasses.replace(_recipe(), source_sha=None, path="gis/b.gpkg")
+
+    assert "path" in unreadable.digest_payload()
+    assert unreadable.digest_payload() != other.digest_payload()
+
+
+def test_the_content_hash_REPLACES_the_path_rather_than_joining_it():
+    """Keeping both would reintroduce the churn half while looking fixed."""
+
+    recipe = dataclasses.replace(_recipe(), source_sha="abc123abc123abc1")
+    payload = recipe.digest_payload()
+
+    assert payload["source_sha"] == "abc123abc123abc1"
+    assert "path" not in payload
+    assert "path" in recipe.to_dict(), (
+        "to_dict still has to name a file a reader can OPEN -- only the digest drops it"
+    )
+
+
+def test_no_OTHER_source_kind_changes_what_it_digests(tmp_path):
+    """The migration guarantee: only `BoundarySource` moves.
+
+    Grid sources share `DataSourceSpec`, and moving their digests would report every
+    stored grid as drifted. `digest_payload` defaults to `to_dict`, so this is a
+    statement about the default holding.
+    """
+
+    from myflopy.sources import (
+        GeoPackageSourceSpec,
+        LiteralSource,
+        RasterSource,
+        ShapeSource,
+        TableSource,
+    )
+
+    for spec in (
+        TableSource(path="a/b.csv"),
+        ShapeSource(path="a/b.shp"),
+        GeoPackageSourceSpec(path="a/b.gpkg"),
+        RasterSource(path="a/b.tif"),
+        LiteralSource(value=1.0),
+    ):
+        assert spec.digest_payload() == spec.to_dict(), type(spec).__name__

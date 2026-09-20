@@ -28,7 +28,7 @@ from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outc
 if TYPE_CHECKING:
     import pandas as pd
 from myflopy.modflow.mf6.simulation.base import SimulationBase
-from myflopy.project.bundle import bundle_grid_sources
+from myflopy.project.bundle import bundle_grid_sources, bundle_package_sources
 from myflopy.project.freeze import (
     discard_snapshot,
     freeze_simulation,
@@ -771,6 +771,11 @@ class RunLibrary(SpecLibrary["Run"]):
     _packages: PackageLibrary | None = None
     _digest_memo: dict[str, str | None] | None = None
     _calibrations: dict[str, int] | None = None
+    # The root a BUNDLED package's relative `source_path` resolves against. Without it
+    # `_library_source_memo` hashed `inputs/boundaries.gpkg` against the current working
+    # directory, so every bundled package read `missing` from anywhere but the project
+    # root -- the same anchoring gap `ModelSpec.build` closes for the build itself.
+    _project_root: Path | None = None
 
     @classmethod
     def discover(
@@ -781,6 +786,7 @@ class RunLibrary(SpecLibrary["Run"]):
         library = cls()
         library._project_name = project.name
         library._packages = project.packages
+        library._project_root = project.root
         root = project.root
         seen: set[Path] = set()
 
@@ -994,9 +1000,23 @@ class RunLibrary(SpecLibrary["Run"]):
             if recorded is None:
                 answers[key] = "unfingerprinted"
                 continue
-            now = source_fingerprint(path)
+            now = source_fingerprint(self._anchored(path))
             answers[key] = "missing" if now is None else ("ok" if now == recorded else "edited")
         return answers
+
+    def _anchored(self, path: str) -> Path:
+        """A stored source path resolved the way the build resolves it.
+
+        Bundling stores paths RELATIVE to the project root, so a bare
+        ``source_fingerprint(path)`` asked the current working directory and answered
+        ``missing`` for a file that is present -- and ``missing`` is a claim about the
+        world, not about where the reader happened to be standing.
+        """
+
+        resolved = Path(path)
+        if not resolved.is_absolute() and self._project_root is not None:
+            return Path(self._project_root) / resolved
+        return resolved
 
     def _library_digest_memo(self) -> dict[str, str | None]:
         """The current library fingerprints, computed once and cached per call."""
@@ -1113,6 +1133,14 @@ class SaveReport:
     #: Files copied into ``inputs/`` by ``save(bundle_sources=True)``, as
     #: ``(from, to)`` pairs. Empty unless bundling was asked for.
     bundled: tuple[tuple[str, str], ...] = ()
+    #: What bundling deliberately did NOT carry, as ``(what, why)`` pairs -- a layer
+    #: stack holding per-cell arrays, which cannot be serialized at all (ledger 193).
+    #: Reported rather than raised: such a model is skipped by the save anyway, and a
+    #: bundler that raised would cost the caller every other simulation in the project.
+    #: The point of the field is that ``bundled`` alone reads as a complete archive,
+    #: and an archive that is complete except for the one file the build opens first
+    #: is the failure this whole commit exists to prevent (ledger 293).
+    not_bundled: tuple[tuple[str, str], ...] = ()
     #: Context fields that could not be written, as ``(model, field)`` pairs. A grid,
     #: a domain and a surfaces table are not serializable (ledger 193), and were
     #: dropped in silence until ledger 257 -- so ``skipped=0`` read as "nothing was
@@ -2551,14 +2579,17 @@ class Project:
         already pickles a package whose ``to_dict`` raises, so an array-bearing
         package persists either way.
 
-        ``bundle_sources=True`` copies every file the project's GRIDS are built from
-        into ``inputs/`` and repoints the saved recipes at those copies, so the
-        project is an archive rather than a set of references into the directory it
-        was authored in. It repoints the LIVE registry too: otherwise a later plain
-        ``save()`` would write the original paths back and quietly un-bundle the
-        project. Package sources are deliberately not bundled -- they are resolved
-        eagerly, so a saved package holds records rather than a path, and copying
-        them would archive files nothing opens.
+        ``bundle_sources=True`` copies every file the project is built from into
+        ``inputs/`` and repoints the saved recipes at those copies, so the project is
+        an archive rather than a set of references into the directory it was authored
+        in. It repoints the LIVE registry too: otherwise a later plain ``save()``
+        would write the original paths back and quietly un-bundle the project.
+
+        That covers the GRIDS and every LAZY package -- a ``.gpkg`` boundary condition
+        declared without a ``context=``, and the layer stack behind a lazy ``mf.disv``
+        (ledger 293). An EAGER package resolved at declaration and holds records
+        rather than a path, so it names no file to copy. ``SaveReport.bundled`` lists
+        what was carried and ``SaveReport.not_bundled`` what was not.
         """
 
         dropped = self._report_dropped_contexts()
@@ -2576,8 +2607,11 @@ class Project:
         # a state nothing on disk records, and one a later plain `save()` would then
         # persist without the user ever asking for an archive (ledger 292).
         bundled: list[tuple[str, str]] = []
+        not_bundled: list[tuple[str, str]] = []
         if bundle_sources:
             bundled = self._bundle_grid_sources()
+            package_copies, not_bundled = self._bundle_package_sources()
+            bundled += package_copies
 
         # Two kinds of un-persistable simulation, handled differently on purpose.
         # An embedded array is nothing the caller can fix at save time, so it is
@@ -2673,6 +2707,7 @@ class Project:
             pickled=pickled,
             skipped=tuple(skipped),
             bundled=tuple(bundled),
+            not_bundled=tuple(not_bundled),
             context_dropped=tuple(dropped),
         )
 
@@ -2746,6 +2781,58 @@ class Project:
         if copied:
             logger.info("bundled %d grid source file(s) into %s", len(copied), inputs)
         return copied
+
+    def _bundle_package_sources(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Copy every LAZY package's sources into ``inputs/`` and repoint the project.
+
+        Both tiers, like the grid pass: the package library, and a ``PackageSpec``
+        written inline on a model. A ``PackageRef`` is followed to its library entry
+        rather than copied twice.
+
+        Only a lazy package names a file at all. An eager ``.gpkg`` resolved at
+        declaration and holds records, so the walk finds nothing on it and it is
+        returned unchanged -- which is why this can run over every package
+        unconditionally rather than testing for laziness first.
+
+        Returns the copies made and the things deliberately NOT carried.
+        """
+
+        inputs = self.layout.inputs_dir
+        inputs.mkdir(parents=True, exist_ok=True)
+        copied: list[tuple[str, str]] = []
+        notes: list[tuple[str, str]] = []
+
+        def _bundle(spec: PackageSpec) -> PackageSpec:
+            if not spec.inputs:
+                return spec
+            result, report = bundle_package_sources(
+                spec, root=self.root, inputs_dir=inputs, project_root=self.root
+            )
+            copied.extend((item["from"], item["to"]) for item in report["copied"])
+            notes.extend((f"{spec.name}: {what}", why) for what, why in report["notes"])
+            return result
+
+        for key, package in list(self.packages.items()):
+            if isinstance(package, PackageSpec):
+                self.packages[key] = _bundle(package)
+
+        for name, simulation in list(self.simulations.items()):
+            models = tuple(
+                replace(
+                    model,
+                    packages=tuple(
+                        _bundle(entry) if isinstance(entry, PackageSpec) else entry
+                        for entry in model.packages
+                    ),
+                )
+                for model in simulation.models
+            )
+            if models != simulation.models:
+                self.simulations[name] = replace(simulation, models=models)
+
+        if copied:
+            logger.info("bundled %d package source file(s) into %s", len(copied), inputs)
+        return copied, notes
 
     @staticmethod
     def _restore_layout(root: Path) -> ProjectLayout | None:

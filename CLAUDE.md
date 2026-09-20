@@ -308,13 +308,17 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3689 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **85 s** (worksteal dist is in
-  addopts); serial (`-n0`) ≈ **6m28s**; inner loop `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**3701 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+  (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
+  `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
-  Serial is ~3.7x the parallel run — that gap is the price of the `-n0`
-  pre-commit check below, not a regression.
+  **Read the two numbers as a RATIO, not a clock.** Both grew ~1.5x between
+  2026-09-14 and 2026-09-19 on the same tree under load, while serial stayed
+  ~3.7x the parallel run — so a wall time well off these is machine contention,
+  and it is the ratio moving that would mean something. That 3.7x gap is the
+  price of the `-n0` pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
 - Tests share ONE session-scoped canonical model on
@@ -526,17 +530,42 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   2026-09-14) -- it copies every file the project's GRIDS are built from into
   `inputs/`, repoints the saved recipes AND the live registry (a later plain `save()`
   would otherwise write the original paths back), and reports the pairs in
-  `SaveReport.bundled`. **Grids only, measured not assumed**: package sources resolve
-  EAGERLY, so a saved package holds records rather than a path -- zero file reads
-  inside `PackageSpec.build` across 306 tests, a project rebuilds with its GeoPackage
-  deleted, and `metadata['source_path']` is read by nothing. A `GridSpec` is the
+  `SaveReport.bundled`. **Grids AND lazy packages** (ledger 293, 2026-09-19): a
+  package declared without `context=` holds a RECIPE, and a lazy model has **TWO
+  carriers, of which the easily-forgotten one fails FIRST** -- the `.gpkg` recipes are
+  `DataSourceSpec`s an existing walk would find, while the gridless `LayerStack`
+  behind `mf.disv` is not a dataclass and names no source spec, and its raster is
+  opened inside the DISCRETIZATION, before any BC is built. So a BC-only bundler
+  reports a complete archive and ships one that cannot open. An EAGER package still
+  carries nothing, and that is measured, not assumed: it resolves at declaration and
+  holds records -- zero file reads inside `PackageSpec.build` across 306 tests, and a
+  project rebuilds with its GeoPackage deleted. A `GridSpec` is the
   opposite: `ModelSpec.build` re-resolves it on EVERY build. `rasters=` and
   `idomain_path=` are bundled too even though they are read later still (the first
   `gdf_topbtm`, the first edge query). An `external=True` source IS bundled and the
   flag cleared -- it meant "never anchor", which stops being true once a copy is
   inside. **A run now records its project root**, because bundling stores RELATIVE
   paths and `Run.reopen`/`load_run` had no `project_root`, so a relative source
-  resolved against the current working directory.
+  resolved against the current working directory. The PACKAGE tier needed the same
+  anchor, in `ModelSpec.build` and **after `resolved_packages`** -- before it, a
+  `PackageRef` carries no `inputs` and every `mf.ref` package is silently skipped
+  (ledger 280's miss, one function over). `Surface.out` IS carried: it is the GRASS
+  cache, so an archive without it needs GRASS to rebuild, and with it the cache reads
+  `stale` and is reused rather than regenerated. `SaveReport.not_bundled` names what
+  was left behind (a stack holding per-cell arrays cannot be serialized at all).
+- **A lazy package's digest reads its file's CONTENT, not its path** (ledger 293).
+  Path-keying was wrong in BOTH directions at once: bundling moved every lazy digest
+  on a byte-identical archive, so `runs.drift()` called every stored run edited the
+  day it was archived; and a DIFFERENT file at the same path digested IDENTICALLY.
+  `BoundarySource.source_sha` rides in `inputs`, so it is digest-VISIBLE, and it
+  REPLACES the path rather than joining it -- keeping both reintroduces the churn
+  while looking fixed. It falls back to the path when the file could not be read.
+  Only `BoundarySource` moved: `digest_payload()` defaults to `to_dict()`, so no grid
+  source's digest changed. This also makes lazy AGREE with eager, which stores records
+  and is therefore location-blind and content-sensitive already -- the two had been
+  drifting in OPPOSITE directions from the same declaration. `drift()`'s `source`
+  column was inverted for the same reason (only the eager form stamped
+  `source_path`), so the package that cannot build without its file read `—`.
 - **A saved project keeps a 16-character GRID FINGERPRINT, because it cannot keep the
   grid** (ledger 257, 2026-09-14). `ModelSpec.to_dict` cannot carry `context.grid`,
   `domain` or `surfaces` -- inlining them was refused in ledger 193 (floods

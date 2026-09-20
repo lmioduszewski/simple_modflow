@@ -6,16 +6,18 @@ raw `pyogrio.errors.DataSourceError` with no myflopy frame in it.
 `save(bundle_sources=True)` copies those files into `inputs/` and repoints the
 recipes, which also makes relative paths the normal case: hence the anchoring half.
 
-Package sources are deliberately NOT bundled. They resolve eagerly, so a saved
-package holds finished records rather than a path -- measured: zero file reads inside
-`PackageSpec.build` across the suite, and a project rebuilds with its GeoPackage
-deleted. Copying them would archive files nothing opens.
+LAZY package sources are bundled too (ledger 293) -- a `.gpkg` declared without a
+`context=`, and the layer stack behind a lazy `mf.disv`. An EAGER package still names
+nothing: it resolves at declaration and holds finished records, measured as zero file
+reads inside `PackageSpec.build` across the suite, so copying its file would archive
+something nothing opens.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -388,3 +390,246 @@ def test_a_REFUSED_save_copies_nothing_and_moves_nothing(tmp_path):
 
     assert not (root / "inputs").exists()
     assert str(project.grid("g").boundary.path) == str(source)
+
+
+# ----------------------------------------------- lazy packages: the second carrier
+
+
+def _bc_gpkg(path, head=9.0):
+    """A one-point GeoPackage usable as a boundary condition source."""
+
+    from shapely.geometry import Point
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gpd.GeoDataFrame(
+        {"name": ["w"], "head": [head], "cond": [1.0], "layer": [1]},
+        geometry=[Point(300.0, 300.0)], crs=2927,
+    ).to_file(path, driver="GPKG")
+    return path
+
+
+def _raster(path, value=100.0):
+    """A small GeoTIFF covering the `_gpkg` boundary, usable as a stack top."""
+
+    import rasterio
+    from rasterio.transform import from_origin
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=20, width=20, count=1,
+        dtype="float32", crs="EPSG:2927", transform=from_origin(0, 600, 30, 30),
+    ) as handle:
+        handle.write(np.full((20, 20), value, dtype="float32"), 1)
+    return path
+
+
+def _lazy_project(tmp_path):
+    """A project carrying BOTH lazy carriers: a stack raster and a `.gpkg` recipe."""
+
+    gis = tmp_path / "gis"
+    boundary, bcs, top = _gpkg(gis / "b.gpkg"), _bc_gpkg(gis / "bc.gpkg"), _raster(gis / "top.tif")
+
+    project = Project(tmp_path / "proj", name="p")
+    project.add_grid("g", _grid_spec(boundary))
+    stack = mf.LayerStack(top=mf.Surface.raster(top)).add("sand", thickness=50)
+    model = mf.gwf(
+        "m",
+        grid=mf.grid_ref("g"),
+        packages=[
+            mf.disv(stack),
+            mf.npf(k=1.0),
+            mf.ic(strt=95.0),
+            mf.oc(head_filerecord="m.hds"),
+            mf.ghb.gpkg(bcs, nper=1, head="head", conductance="cond"),
+        ],
+    )
+    project.add_simulation(
+        mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    )
+    return project, gis
+
+
+def test_a_lazy_model_rebuilds_after_EVERY_source_it_reads_is_deleted(tmp_path):
+    """The headline, and it needs both carriers to be true.
+
+    A lazy `mf.disv` holds a gridless `LayerStack`, which per ledger 270 is the only
+    shape a layered model saves in -- and its raster is opened inside the
+    discretization, BEFORE any boundary condition is built. So this same assertion
+    passes vacuously on a bundler that carries only the `.gpkg` recipes, right up
+    until a model has a layer stack.
+    """
+
+    project, gis = _lazy_project(tmp_path)
+    report = project.save(bundle_sources=True)
+    carried = {os.path.basename(source) for source, _ in report.bundled}
+
+    assert {"top.tif", "bc.gpkg"} <= carried, f"a carrier was missed: {sorted(carried)}"
+
+    shutil.rmtree(gis)
+    reopened = Project.load(tmp_path / "proj")
+    gwf = reopened.prepare_run("r", reopened.simulations["s"]).model("m").gwf
+
+    assert float(np.mean(gwf.get_package("disv").top.array)) == pytest.approx(100.0)
+    assert len(gwf.get_package("ghb").stress_period_data.get_data(0)) == 1
+
+
+def test_the_RASTER_is_what_fails_first_when_a_carrier_is_missed(tmp_path):
+    """Pins the ORDER, which is the whole argument for doing both at once.
+
+    Measured by deleting only the stack's raster and leaving the GeoPackage: the
+    failure is `RasterioIOError` from inside the discretization, never a GeoPackage
+    error -- so a bundler that carried only the boundary recipes would report a
+    complete archive and produce one that cannot open.
+    """
+
+    project, gis = _lazy_project(tmp_path)
+    project.save(bundle_sources=True)
+
+    # Un-bundle the raster only: put the recipe back on a file that will not be there.
+    (tmp_path / "proj" / "inputs" / "top.tif").unlink()
+    shutil.rmtree(gis)
+    reopened = Project.load(tmp_path / "proj")
+
+    with pytest.raises(Exception) as caught:
+        reopened.prepare_run("r", reopened.simulations["s"])
+
+    assert "top.tif" in str(caught.value), (
+        f"the raster must be what names itself first, got {caught.value!r}"
+    )
+
+
+def test_a_bundled_package_source_is_read_from_the_project_not_the_cwd(tmp_path, monkeypatch):
+    """The anchoring half, on the PACKAGE tier.
+
+    Bundling stores project-relative paths; nothing resolved them for a package, so a
+    bundled project rebuilt from any directory but its own root opened
+    `inputs/bc.gpkg` against `os.getcwd()`. Grids never had the bug --
+    `grid_spec_resolver._source_path` has anchored them all along -- which is exactly
+    why the package tier went unnoticed.
+    """
+
+    project, gis = _lazy_project(tmp_path)
+    project.save(bundle_sources=True)
+    shutil.rmtree(gis)
+
+    monkeypatch.chdir(tmp_path.parent)
+
+    reopened = Project.load(tmp_path / "proj")
+    gwf = reopened.prepare_run("r", reopened.simulations["s"]).model("m").gwf
+
+    assert len(gwf.get_package("ghb").stress_period_data.get_data(0)) == 1
+
+
+def test_an_EAGER_package_names_no_file_to_bundle(tmp_path):
+    """The negative, and it is what keeps the walk cheap and safe to run on everything.
+
+    An eager `.gpkg` resolved at declaration and holds records, so there is nothing to
+    copy and nothing to repoint. If this ever fails, the bundler has started archiving
+    files nothing opens -- and repointing a spec whose path is now only provenance.
+    """
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        rectangular_voronoi,
+    )
+    from myflopy.project.bundle import bundle_package_sources
+    from myflopy.specs import ModelContext
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=6, ncol=6, nlay=1, nper=1))
+    context = ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int))
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    path = tmp_path / "gis" / "eager.gpkg"
+    path.parent.mkdir(parents=True)
+    gpd.GeoDataFrame(
+        {"name": ["w"], "layer": [1], "head": [9.0], "cond": [1.0]},
+        geometry=[box(xmin, ymin, xmax, ymax)], crs=grid.crs,
+    ).to_file(path, driver="GPKG")
+
+    eager = mf.ghb.gpkg(path, nper=1, head="head", conductance="cond", context=context)
+
+    assert eager.inputs == {}, "an eager package holds records, not a recipe"
+
+    # The project root is a SIBLING of `gis/`, not its parent. With the source inside
+    # the root, `already_inside` (ledger 292) declines to copy it and this test would
+    # pass on a bundler that walks eager packages happily -- certifying rather than
+    # checking.
+    root = tmp_path / "proj"
+    inputs = root / "inputs"
+    inputs.mkdir(parents=True)
+    bundled, report = bundle_package_sources(
+        eager, root=root, inputs_dir=inputs, project_root=root
+    )
+
+    assert report["copied"] == []
+    assert bundled is eager
+    assert list(inputs.iterdir()) == []
+
+
+def test_a_stack_holding_ARRAYS_is_reported_rather_than_raised_over(tmp_path):
+    """A bundler that raised would cost the caller every other simulation.
+
+    `Surface.from_array` holds per-cell data, which ledger 193 refused to inline, so
+    its stack cannot be serialized at all. Such a model is skipped by the save anyway
+    -- the honest answer is a line in `not_bundled`, not an exception that takes the
+    whole project down with it.
+    """
+
+    from myflopy.project.bundle import bundle_package_sources
+    from myflopy.specs import PackageSpec
+
+    stack = mf.LayerStack(top=mf.Surface.from_array(np.full(9, 100.0))).add(
+        "sand", thickness=50
+    )
+    spec = PackageSpec("disv", lambda model, **kw: None, inputs={"layer_stack": stack})
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+
+    bundled, report = bundle_package_sources(
+        spec, root=tmp_path, inputs_dir=inputs, project_root=tmp_path
+    )
+
+    assert bundled is spec, "nothing was repointed"
+    assert report["notes"], "and the caller is TOLD, rather than reading an empty list"
+    assert "LayerStack" in report["notes"][0][0]
+
+
+def test_the_GRASS_cache_is_carried_when_it_exists_and_is_silent_when_it_does_not(tmp_path):
+    """`Surface.out` is a WRITE target, so it takes the opposite rule to an input.
+
+    Carried when present: the cache IS the interpolated raster, and an archive without
+    it needs GRASS installed to rebuild. Not reported when absent: it has simply not
+    been produced yet, and listing it would put a fault in the report for a project in
+    a perfectly ordinary state.
+    """
+
+    from myflopy.project.bundle import bundle_package_sources
+    from myflopy.specs import PackageSpec
+
+    gis = tmp_path / "gis"
+    contours = _gpkg(gis / "contours.gpkg")
+    cache = _raster(gis / "interp.tif")
+    root = tmp_path / "proj"          # a SIBLING of gis/, so a copy really has to happen
+    inputs = root / "inputs"
+    inputs.mkdir(parents=True)
+
+    def bundle(out):
+        surface = mf.Surface(kind="contours", contours=contours, out=out)
+        spec = PackageSpec("disv", lambda model, **kw: None, inputs={"s": surface})
+        return bundle_package_sources(
+            spec, root=root, inputs_dir=inputs, project_root=root
+        )
+
+    bundled, report = bundle(cache)
+    carried = {os.path.basename(item["from"]) for item in report["copied"]}
+
+    assert carried == {"contours.gpkg", "interp.tif"}
+    assert bundled.inputs["s"].out == Path("inputs/interp.tif"), "the recipe now names it"
+
+    _bundled, report = bundle(gis / "never_made.tif")
+
+    assert report["missing"] == [], (
+        "a cache that was never produced is not a missing input"
+    )
+    assert {os.path.basename(item["from"]) for item in report["copied"]} == {
+        "contours.gpkg"
+    }, "the INPUT is still carried when the cache beside it is absent"

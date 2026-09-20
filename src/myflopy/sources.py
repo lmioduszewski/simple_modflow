@@ -70,6 +70,18 @@ class DataSourceSpec:
             payload["metadata"] = self.metadata
         return payload
 
+    def digest_payload(self) -> dict[str, Any]:
+        """What :func:`myflopy.specs.package_digest` fingerprints instead of the object.
+
+        The serialized declaration, which for every source but one IS ``to_dict()``.
+        The hook exists so a source that knows its own file's CONTENT can be
+        fingerprinted by that rather than by where the file sits -- see
+        :meth:`BoundarySource.digest_payload`. Separate from ``to_dict`` on purpose:
+        ``to_dict`` is what gets WRITTEN and must still name a path a reader can open.
+        """
+
+        return self.to_dict()
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataSourceSpec:
         """Rebuild a source spec, dispatching on its ``kind`` tag to the right subclass."""
@@ -456,6 +468,11 @@ class BoundarySource(DataSourceSpec):
     min_above_bottom: float | None = None
     edges_only: bool = False
     boundnames: bool = True
+    #: 16-character content hash of ``path`` when the recipe was declared, or ``None``
+    #: if the file could not be read. It is what the DIGEST sees in place of the path
+    #: (:meth:`digest_payload`), which is why it lives here and not in ``metadata``:
+    #: ``package_digest`` excludes metadata by contract.
+    source_sha: str | None = None
 
     kind: ClassVar[str] = "BoundarySource"
 
@@ -486,6 +503,7 @@ class BoundarySource(DataSourceSpec):
             ("min_above_bottom", None),
             ("edges_only", False),
             ("boundnames", True),
+            ("source_sha", None),
         ):
             # NORMALIZED first, then compared. The `type(...) is not type(...)` clause
             # is what keeps a numpy-typed value from being mistaken for its plain
@@ -499,6 +517,38 @@ class BoundarySource(DataSourceSpec):
             value = _json_value(getattr(self, name))
             if value != default or type(value) is not type(default):
                 payload[name] = value
+        return payload
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The declaration with the file's CONTENT standing in for its LOCATION.
+
+        A lazy recipe is the only source a package's digest reads that is also the
+        thing the package is BUILT FROM, and fingerprinting it by path was wrong in
+        both directions at once (ledger 293):
+
+        * **it churned.** ``project.save(bundle_sources=True)`` copies the GeoPackage
+          into ``inputs/`` and repoints the recipe, so a byte-identical archive moved
+          every lazy package's digest and ``runs.drift()`` reported every stored run as
+          edited on the day it was archived -- measured 4c3988e4 -> 113e32d2 for a file
+          that had not changed;
+        * **and it was blind.** A DIFFERENT file at the same path digested IDENTICALLY,
+          which is the ``unchanged``-is-the-dangerous-verdict failure: the recipe says
+          "read this file", and nothing about the digest noticed when the file stopped
+          saying what it said.
+
+        The content hash fixes both, and it is also what makes the lazy form agree with
+        the EAGER one. An eager ``.gpkg`` resolves at declaration and stores RECORDS, so
+        its digest is location-blind and content-sensitive by construction. Before this
+        the two drifted in OPPOSITE directions from the same declaration.
+
+        Falls back to the path when ``source_sha`` is ``None`` -- a file that could not
+        be read at declaration. Dropping the path as well would make two unreadable
+        sources digest alike, which is the blindness above with no hash to replace it.
+        """
+
+        payload = BoundarySource.to_dict(self)
+        if payload.get("source_sha") is not None:
+            payload.pop("path", None)
         return payload
 
     @classmethod
@@ -525,6 +575,7 @@ class BoundarySource(DataSourceSpec):
             min_above_bottom=data.get("min_above_bottom"),
             edges_only=bool(data.get("edges_only", False)),
             boundnames=bool(data.get("boundnames", True)),
+            source_sha=data.get("source_sha"),
             external=bool(data.get("external", False)),
             metadata=dict(data.get("metadata", {})),
         )
@@ -629,6 +680,11 @@ class LiteralSource:
         if self.metadata:
             payload["metadata"] = self.metadata
         return payload
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The serialized declaration -- a literal has no file, so this IS ``to_dict``."""
+
+        return self.to_dict()
 
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> LiteralSource:

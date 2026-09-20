@@ -1210,6 +1210,17 @@
       "drift",
       "summary"
     ],
+    "SaveReport.fields": [
+      "bundled",
+      "context_dropped",
+      "grids",
+      "not_bundled",
+      "packages",
+      "pickled",
+      "project_spec",
+      "simulations",
+      "skipped"
+    ],
     "SaveReport.members": [],
     "SimulationBase.package_properties": [
       "all_conc",

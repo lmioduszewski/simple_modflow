@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 292 entries (293 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 293 entries (294 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 293 | A saved project now carries what a LAZY package reads, and the digest reads the file rather than its address | 2026-09-19 |
 | 292 | The bundler half-copied a shapefile, bundled the project into itself, and ran before the save was allowed | 2026-09-18 |
 | 291 | The importer lifted the river's water surface, not its bed | 2026-09-18 |
 | 290 | An elevation outside its own cell, and nothing said so | 2026-09-18 |
@@ -11585,3 +11586,77 @@ same day, which is the useful part of the result.
       "package sources resolve EAGERLY" was measured true when written and is now false
       for a lazy `.gpkg` (ledgers 279/284/285). Carrying those is the NEXT commit; this
       one is the bundler that will have to carry them.
+
+293. **A saved project now carries what a LAZY package reads, and the digest reads the
+      file rather than its address (2026-09-19).** Ledger 292 fixed the grid bundler; this carries the
+      other tier. A package declared without a `context=` holds a RECIPE, so
+      `bundle_sources=True` had to grow a package pass -- and the interesting part is
+      that **there are TWO carriers, and the one that is easy to overlook fails FIRST**.
+      The boundary recipes are `DataSourceSpec` objects in `inputs`, which
+      `bundle._paths_of`'s walk would have found. The layer stack behind
+      `mf.disv(<gridless LayerStack>)` is not a dataclass, names no source spec, and per
+      ledger 270 is the ONLY shape a layered model saves in. Measured by deleting the
+      sources and rebuilding: the failure is `RasterioIOError` on the stack's raster,
+      raised inside the discretization before any boundary condition is built. So a
+      bundler carrying only the `.gpkg` recipes reports a complete archive and produces
+      one that cannot open -- strictly worse than not bundling, the same shape as 292(a).
+      One walker (`specs.repoint_source_paths`) serves both, duck-typed on `_SPEC_TOKEN`
+      because `specs` is import layer 1 and `layers` is 6.
+      **THE DIGEST WAS WRONG IN BOTH DIRECTIONS AT ONCE.** `package_digest` fingerprinted
+      a source by its PATH. So bundling -- which copies the file into `inputs/` and
+      repoints the recipe -- moved every lazy package's digest on a byte-identical
+      archive (`4c3988e4` -> `113e32d2`), and `runs.drift()` called every stored run
+      edited on the day it was archived. And a DIFFERENT file at the same path digested
+      IDENTICALLY, which is the `unchanged`-is-the-dangerous-verdict failure: the recipe
+      says "read this file", and nothing noticed when the file stopped saying what it
+      said. A content hash on the recipe (`BoundarySource.source_sha`, inside `inputs` so
+      it is digest-VISIBLE) fixes both, and it is also what makes the lazy form AGREE
+      with the eager one -- an eager `.gpkg` stores records, so its digest is
+      location-blind and content-sensitive by construction, and the two were drifting in
+      OPPOSITE directions from the same declaration. Only `BoundarySource` moves:
+      `digest_payload()` defaults to `to_dict()`, so no grid source's digest changes.
+      **The path is REPLACED, not joined** -- keeping both reintroduces the churn half
+      while looking fixed -- except when the file could not be read at declaration, where
+      `source_sha` is `None` and the path stands in, because two unreadable sources
+      digesting alike is the blindness again with nothing to replace it. The migration
+      was free: 0 tracked files held a lazy recipe, re-checked at the start of the commit.
+      `to_dict` still writes the path; only the digest drops it.
+      **The anchor belongs AFTER `resolved_packages`**, which is ledger 280's exact miss
+      in a different function: a `PackageRef` carries no `inputs`, so anchoring the
+      DECLARED list silently skips every package reached through `mf.ref` -- the
+      documented library route. Anchoring at LOAD time instead was measured worse twice
+      over: it moved the digest, and the next plain `save()` wrote the absolute path
+      back, quietly un-bundling the archive. Grids never had this bug --
+      `grid_spec_resolver._source_path` has anchored them all along -- which is exactly
+      why the package tier went unnoticed. `RunLibrary._library_source_memo` needed the
+      same anchor: it hashed `inputs/bc.gpkg` against the current working directory and
+      answered `missing` for a file sitting right there.
+      **`drift()`'s `source` column was INVERTED, and blind on the wrong half.** The memo
+      keys off `metadata['source_path']`, which only the EAGER declaration stamped -- so
+      the package whose records are frozen and whose file is never reopened reported
+      `missing` when that file moved, while the LAZY one, which cannot build without it,
+      reported `—`: "names no source". The lazy spec stamps `source_path` + `source_sha`
+      now; both are in `metadata`, which `package_digest` excludes, so the stamp moves
+      nothing.
+      **`Surface.out` is carried, and it is the one path here that is a WRITE target.**
+      It is the GRASS interpolation cache, so an archive without it needs GRASS installed
+      to rebuild; with it, `DerivedRaster.status()` reads `stale` -- its provenance key
+      records each source by PATH STRING, which bundling changes -- and a stale cache is
+      REUSED with a warning rather than regenerated, so the archive still produces the
+      same raster. Its `.provenance.json` rides along for free: `.tif` is in
+      `_COMPANION_FORMATS` and the prefix match catches the double extension (292). An
+      ABSENT cache is not reported missing -- it has simply not been produced yet, and
+      listing it would put a fault in the report for a project in an ordinary state.
+      **Not carried, and now SAID so:** a `LayerStack` holding a `from_array` surface
+      cannot be serialized at all (ledger 193), so it is left exactly as it was and named
+      in the new `SaveReport.not_bundled`. Reported rather than raised because such a
+      model is skipped by the save anyway, and a bundler that raised would cost the
+      caller every other simulation in the project -- the rule `SaveReport` was created
+      for. `SaveReport`'s whole reporting surface was invisible to CI until this commit:
+      `members()` captures callables and properties only, and this class is all data, so
+      `SaveReport.members` is the empty list and every column could have appeared or
+      vanished without moving a snapshot row. `SaveReport.fields` is pinned now.
+      **Still open, deliberately.** `BoundarySource` has no `*.fields` snapshot row, so
+      `source_sha` is pinned only by `test_boundary_source.py`'s own field sweep; the
+      eager `.gpkg` path still stamps its metadata in `GeoPackageSource._metadata` while
+      the lazy one stamps in `_lazy_bc_spec`, two sites that must agree by hand.

@@ -62,8 +62,10 @@ from myflopy.grid_identity import (
     GRID_PIN,
     GRID_PIN_OPTIONS,
     PIN_VOIDED,
+    SOURCE_SHA,
     disv_pin,
     pin_metadata,
+    source_fingerprint,
 )
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares
@@ -906,10 +908,18 @@ def _lazy_bc_spec(
             f"units and must be positive, not {snap_within!r}."
         )
 
+    # ONE read, used twice on purpose. It is the DIGEST's stand-in for the path
+    # (`BoundarySource.digest_payload`) and the metadata `runs.drift()`'s source column
+    # compares against -- and those are different questions: the recipe's copy says what
+    # the file said when this recipe was written, while the column asks what it says
+    # now. `None` for an unreadable file, exactly as the eager stamp does; neither is a
+    # reason to refuse the declaration.
+    sha = source_fingerprint(path)
     recipe = BoundarySource(
         path=path,
         package=package,
         nper=nper,
+        source_sha=sha,
         values=dict(values),
         layer=layer,
         name_field=name_field,
@@ -929,6 +939,15 @@ def _lazy_bc_spec(
         dict(options),
         requires=(),
         inputs={"stress_period_data": recipe},
+        # The same two keys the EAGER form stamps in `GeoPackageSource._metadata`, and
+        # they are what `RunLibrary._library_source_memo` keys off. Without them
+        # `runs.drift()`'s source column was INVERTED (ledger 293): the eager package,
+        # whose records are frozen and whose file is never reopened, reported
+        # `source=missing` when its GeoPackage moved, while the lazy one -- which
+        # CANNOT BUILD without that file -- reported `—`, meaning "names no source".
+        # Excluded from `package_digest` like the rest of `metadata`, so stamping them
+        # moves nothing; the recipe's own `source_sha` is what the digest reads.
+        metadata={"source_type": "geopackage", "source_path": str(path), SOURCE_SHA: sha},
     )
 
 

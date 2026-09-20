@@ -9,6 +9,7 @@ project: four runs, all reading ``written``/``None``, three of which had reached
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -976,6 +977,90 @@ def test_drift_sees_the_source_file_change_under_a_package(tmp_path):
     gone = project.refresh_runs().drift().set_index("key")
 
     assert gone.loc["chd/west", "source"] == "missing"
+
+
+def test_a_LAZY_package_reports_its_source_state_too(tmp_path):
+    """The column was INVERTED, and the wrong half of the pair was blind (ledger 293).
+
+    `_library_source_memo` keys off `metadata['source_path']`, which only the EAGER
+    declaration stamped. So the package whose records are already frozen -- the one
+    that rebuilds fine with its GeoPackage deleted -- reported `missing` when the file
+    moved, while the LAZY one, which cannot build at all without that file, reported
+    `—`: "names no source". Exactly backwards, and backwards in the direction that
+    stays quiet.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        rectangular_voronoi,
+    )
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=6, ncol=6, nlay=1, nper=1))
+    path = tmp_path / "bc.gpkg"
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+
+    def write(head):
+        gpd.GeoDataFrame(
+            {"name": ["west"], "layer": [1], "head": [head]},
+            geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.2, ymax)],
+            crs=grid.crs,
+        ).to_file(path, layer="chd", driver="GPKG")
+
+    write(9.0)
+    project = Project(tmp_path / "proj", name="p")
+    # NO `context=` -- this is the lazy form, and the recipe it holds IS the path.
+    project.add_package(
+        "chd/west", mf.chd.gpkg(path, layer="chd", nper=1, head="head")
+    )
+
+    assert project.runs._library_source_memo()["chd/west"] == "ok"
+
+    write(42.0)
+    assert project.runs._library_source_memo()["chd/west"] == "edited"
+
+    path.unlink()
+    assert project.runs._library_source_memo()["chd/west"] == "missing"
+
+
+def test_a_bundled_relative_source_is_read_from_the_project_not_the_cwd(tmp_path, monkeypatch):
+    """`missing` must be a claim about the world, not about where the reader stands.
+
+    Bundling stores paths RELATIVE to the project root, so hashing one against the
+    current working directory answers `missing` for a file that is sitting right
+    there -- and `missing` is the loudest thing this column says.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.specs import SOURCE_SHA
+
+    root = tmp_path / "proj"
+    (root / "inputs").mkdir(parents=True)
+    gpd.GeoDataFrame(
+        {"name": ["w"], "layer": [1], "head": [9.0]},
+        geometry=[box(0, 0, 10, 10)], crs=2927,
+    ).to_file(root / "inputs" / "bc.gpkg", layer="chd", driver="GPKG")
+
+    project = Project(root, name="p")
+    spec = mf.chd.gpkg(root / "inputs" / "bc.gpkg", layer="chd", nper=1, head="head")
+    project.add_package(
+        "chd/west",
+        dataclasses.replace(
+            spec,
+            metadata={**spec.metadata, "source_path": "inputs/bc.gpkg"},
+        ),
+    )
+
+    monkeypatch.chdir(tmp_path)  # anywhere but the project root
+
+    assert project.runs._library_source_memo()["chd/west"] == "ok", (
+        "the relative path must anchor to the project, not to os.getcwd()"
+    )
+    assert project.package("chd/west").metadata[SOURCE_SHA] is not None
 
 
 def test_a_package_declared_before_fingerprints_reports_unfingerprinted(tmp_path):

@@ -17,6 +17,7 @@ import pytest
 from shapely.geometry import LineString, box
 
 import myflopy as mf
+from myflopy.grid_identity import GRID_PIN, SOURCE_SHA, source_fingerprint
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
 from myflopy.specs import ModelContext, package_move
 
@@ -77,7 +78,14 @@ def test_a_lazy_gpkg_declares_a_recipe_and_reads_as_rebuilt(source):
 
     assert type(spec.inputs["stress_period_data"]) is BoundarySource
     assert "stress_period_data" not in spec.options
-    assert not spec.metadata, "nothing is resolved yet, so nothing is pinned"
+    # NO PIN, which is what "nothing is resolved yet" actually means. This used to
+    # assert the metadata was EMPTY, which is a wider claim than its own reason: the
+    # spec carries provenance from ledger 293 -- where the file is and what it said --
+    # and provenance is not a resolution. `metadata` is excluded from `package_digest`,
+    # so neither kind of stamp moves anything.
+    assert GRID_PIN not in spec.metadata, "nothing is resolved yet, so nothing is pinned"
+    assert spec.metadata["source_path"] == str(source)
+    assert spec.metadata[SOURCE_SHA] == source_fingerprint(source)
     assert package_move(spec)[0] == "rebuilt"
 
 
