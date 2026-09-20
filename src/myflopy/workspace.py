@@ -2609,9 +2609,10 @@ class Project:
         bundled: list[tuple[str, str]] = []
         not_bundled: list[tuple[str, str]] = []
         if bundle_sources:
-            bundled = self._bundle_grid_sources()
-            package_copies, not_bundled = self._bundle_package_sources()
+            bundled, not_bundled = self._bundle_grid_sources()
+            package_copies, package_notes = self._bundle_package_sources()
             bundled += package_copies
+            not_bundled += package_notes
 
         # Two kinds of un-persistable simulation, handled differently on purpose.
         # An embedded array is nothing the caller can fix at save time, so it is
@@ -2743,7 +2744,7 @@ class Project:
             )
         return dropped
 
-    def _bundle_grid_sources(self) -> list[tuple[str, str]]:
+    def _bundle_grid_sources(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """Copy every grid source into ``inputs/`` and repoint the project at it.
 
         Both tiers: the grid library, and a ``GridSpec`` written inline on a model.
@@ -2754,6 +2755,7 @@ class Project:
         inputs = self.layout.inputs_dir
         inputs.mkdir(parents=True, exist_ok=True)
         copied: list[tuple[str, str]] = []
+        missing: list[tuple[str, str]] = []
 
         def _bundle(spec: GridSpec) -> GridSpec:
             if spec.method == "object":
@@ -2762,6 +2764,10 @@ class Project:
                 spec, root=self.root, inputs_dir=inputs, project_root=self.root
             )
             copied.extend((item["from"], item["to"]) for item in report["copied"])
+            missing.extend(
+                (f"{spec.name}: {item}", "source not found; left pointing where it was")
+                for item in report["missing"]
+            )
             return result
 
         for key, grid in list(self.grids.items()):
@@ -2780,7 +2786,7 @@ class Project:
 
         if copied:
             logger.info("bundled %d grid source file(s) into %s", len(copied), inputs)
-        return copied
+        return copied, missing
 
     def _bundle_package_sources(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """Copy every LAZY package's sources into ``inputs/`` and repoint the project.
@@ -2810,6 +2816,15 @@ class Project:
             )
             copied.extend((item["from"], item["to"]) for item in report["copied"])
             notes.extend((f"{spec.name}: {what}", why) for what, why in report["notes"])
+            # A source that could not be FOUND is the most consequential thing a bundle
+            # leaves behind, and it was computed and thrown away -- the only signal was
+            # a `logger.warning`, which per ledger 288 reaches nobody by default. So a
+            # project whose GeoPackage had moved produced an archive that reported
+            # success, carried nothing, and raised no python warning (found in review).
+            notes.extend(
+                (f"{spec.name}: {missing}", "source not found; left pointing where it was")
+                for missing in report["missing"]
+            )
             return result
 
         for key, package in list(self.packages.items()):

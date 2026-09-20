@@ -178,6 +178,33 @@ class Surface:
                 payload[item.name] = value
         return payload
 
+    def digest_payload(self) -> dict[str, Any]:
+        """The declaration with file CONTENT standing in for file LOCATION.
+
+        Same rule as :meth:`myflopy.sources.BoundarySource.digest_payload`, and it
+        exists for the same measured reason one carrier over (ledger 293). A surface
+        reaches ``PackageSpec.inputs`` through a lazy ``mf.disv`` or ``mf.evt``, where
+        the file it names is read at BUILD time -- so digesting the path meant
+        ``save(bundle_sources=True)`` moved the package's digest on a byte-identical
+        archive, and a different raster at the same path digested identically.
+
+        A path is replaced only where :attr:`source_shas` has a hash for it, so a
+        surface whose file could not be read still digests by path rather than
+        colliding with every other unreadable one.
+
+        ``out`` is dropped outright rather than hashed. It is the GRASS interpolation
+        CACHE -- a file this surface WRITES -- and its content is fully determined by
+        ``contours`` plus the build parameters, both of which are digested here. So it
+        carries nothing the digest needs, while bundling repoints it like any other
+        path and would move the digest for a file nobody edited.
+        """
+
+        payload = self.to_dict()
+        payload.pop("out", None)
+        for name in self.source_shas:
+            payload.pop(name, None)
+        return payload
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Surface:
         """Rebuild a surface from :meth:`to_dict`'s payload."""
@@ -223,6 +250,14 @@ class Surface:
     # surface-algebra / isopach parameters
     operands: tuple = ()
     zone: Any = None
+    #: ``{field name: 16-char content hash}`` for the files this surface reads, filled
+    #: in when the surface becomes part of a LAZY package (``mf.disv`` on a gridless
+    #: stack, ``mf.evt(surface=...)``). Empty everywhere else: a bare
+    #: ``Surface.raster(path)`` deliberately opens nothing, and hashing a multi-hundred-
+    #: megabyte DEM at construction would make the cheapest call in the layer API the
+    #: most expensive. It is the DIGEST's stand-in for the path (:meth:`digest_payload`)
+    #: -- see ledger 293's second pass.
+    source_shas: dict = field(default_factory=dict)
 
     @classmethod
     def raster(

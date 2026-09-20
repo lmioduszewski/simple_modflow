@@ -92,6 +92,7 @@ from myflopy.specs import (
     PostBuildHook,
     SimulationSpec,
     _layer_elevations,
+    stamp_source_hashes,
 )
 
 PathLike = Path | str
@@ -831,7 +832,10 @@ def _lazy_areal_spec(package: str, *, name: str, recipe: dict[str, Any], options
         # that `packages.edit(key, boundnames=True)` is refused by name instead of
         # reaching the builder twice and dying inside a `functools.partial`. Nesting
         # hides every key from `_check_input_collisions` (ledger 284).
-        inputs=dict(recipe),
+        # Hashed on the way in, for the same reason `_lazy_bc_spec` hashes its
+        # GeoPackage: an `mf.evt(surface=<Surface>)` recipe reads that file at BUILD
+        # time, so digesting its PATH churned on a bundle and was blind to an edit.
+        inputs=stamp_source_hashes(dict(recipe)),
     )
 
 
@@ -893,6 +897,16 @@ def _lazy_bc_spec(
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"GeoPackage not found: {path}")
+    # RESOLVED, so the recipe names the file this call just validated. A relative path
+    # was stored as typed and checked against the CURRENT WORKING DIRECTORY here, while
+    # `_anchored_packages` re-based it against the PROJECT ROOT at build -- two bases
+    # for one string. Measured: a declaration that passed then failed at build, and
+    # where a same-named file happened to sit under the project root, the model BUILT
+    # CLEAN from the wrong one (heads 999.0 against the declared 9.0, no warning).
+    # Resolving here leaves the anchor only the paths the BUNDLER wrote, which are
+    # project-relative by construction. Free of digest consequences because the content
+    # hash below is what the digest reads.
+    path = path.resolve()
     if nper < 1:
         raise ValueError("nper must be at least 1.")
     # Neither needs a grid, so neither belongs at build time -- the same rule the two
@@ -1882,7 +1896,7 @@ def disv(
                 dict(options),
                 requires=(),
                 inputs={
-                    "layer_stack": layers,
+                    "layer_stack": stamp_source_hashes(layers),
                     "build_kwargs": build_kwargs,
                     "disv_name": name,
                 },

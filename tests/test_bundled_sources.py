@@ -633,3 +633,121 @@ def test_the_GRASS_cache_is_carried_when_it_exists_and_is_silent_when_it_does_no
     assert {os.path.basename(item["from"]) for item in report["copied"]} == {
         "contours.gpkg"
     }, "the INPUT is still carried when the cache beside it is absent"
+
+
+# ------------------------------------------- what the first pass missed (ledger 293)
+
+
+def test_a_zone_VECTOR_is_bundled_like_any_other_surface_input(tmp_path):
+    """`Surface.zone` names a file, and the first pass's key set did not include it.
+
+    `zone` is typed `Any` and takes EITHER a shapely geometry or a path to a vector
+    file -- `mf.Surface.where(zone, inside, outside)`, which the cheatsheet teaches --
+    so it read as "not a path field" and was skipped. The archive then reported
+    success and died `DataSourceError` on a file nobody carried: the 292(a) shape the
+    whole feature exists to prevent.
+    """
+
+    gis = tmp_path / "gis"
+    boundary, zone, top = _gpkg(gis / "b.gpkg"), _gpkg(gis / "zone.gpkg", 200.0), _raster(gis / "top.tif")
+
+    project = Project(tmp_path / "proj", name="p")
+    project.add_grid("g", _grid_spec(boundary))
+    stack = mf.LayerStack(top=mf.Surface.raster(top)).add(
+        "sand", bottom=mf.Surface.where(zone, mf.Surface.flat(50), mf.Surface.flat(20))
+    )
+    model = mf.gwf(
+        "m", grid=mf.grid_ref("g"),
+        packages=[mf.disv(stack), mf.npf(k=1.0), mf.ic(strt=95.0), mf.oc(head_filerecord="m.hds")],
+    )
+    project.add_simulation(
+        mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    )
+    report = project.save(bundle_sources=True)
+    carried = {os.path.basename(source) for source, _ in report.bundled}
+
+    assert "zone.gpkg" in carried, f"the zone vector was not carried: {sorted(carried)}"
+
+    shutil.rmtree(gis)
+    reopened = Project.load(tmp_path / "proj")
+    gwf = reopened.prepare_run("r", reopened.simulations["s"]).model("m").gwf
+
+    assert gwf.get_package("disv").top.array is not None
+
+
+def test_a_geometry_zone_is_left_alone(tmp_path):
+    """The other half of `zone`: a shapely geometry is not a path and must not move.
+
+    This is what makes including `zone` in a KEY-name match safe -- the walker tests
+    the VALUE's type, so only a string is treated as a file.
+    """
+
+    from shapely.geometry import box
+
+    from myflopy.project.bundle import bundle_package_sources
+    from myflopy.specs import PackageSpec
+
+    surface = mf.Surface.where(box(0, 0, 10, 10), mf.Surface.flat(5), mf.Surface.flat(1))
+    spec = PackageSpec("disv", lambda model, **kw: None, inputs={"s": surface})
+    inputs = tmp_path / "proj" / "inputs"
+    inputs.mkdir(parents=True)
+
+    bundled, report = bundle_package_sources(
+        spec, root=tmp_path / "proj", inputs_dir=inputs, project_root=tmp_path / "proj"
+    )
+
+    assert report["copied"] == []
+    assert report["missing"] == [], "a geometry must not be reported as a missing file"
+    assert bundled is spec
+
+
+def test_a_source_that_MOVED_is_named_in_the_report(tmp_path):
+    """It was computed and discarded, so the only signal was an invisible log line.
+
+    `import myflopy` installs a NullHandler and root has none, so `logging.lastResort`
+    never fires (ledger 288) -- a bundle that carried nothing raised no python warning
+    and reported success.
+    """
+
+    gis = tmp_path / "gis"
+    bcs = _bc_gpkg(gis / "bc.gpkg")
+    project = Project(tmp_path / "proj", name="p")
+    project.add_package("ghb", mf.ghb.gpkg(bcs, nper=1, head="head", conductance="cond"))
+    shutil.rmtree(gis)                      # the source moves AFTER declaration
+
+    report = project.save(bundle_sources=True)
+
+    assert report.bundled == ()
+    assert any("bc.gpkg" in what for what, _why in report.not_bundled), (
+        f"a source that could not be found must be named: {report.not_bundled}"
+    )
+
+
+def test_a_bound_layer_stack_keeps_its_grid_through_the_walk(tmp_path):
+    """The walker rebuilds from a DECLARATION, and a bound grid is not part of one.
+
+    Not reachable through a lazy `mf.disv` (which requires a gridless stack), but both
+    callers share this walker, and the failure it produced was
+    `LayerStack.build() needs a grid. This stack was declared without one` -- about a
+    stack that was declared with one.
+    """
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        rectangular_voronoi,
+    )
+    from myflopy.project.bundle import bundle_package_sources
+    from myflopy.specs import PackageSpec
+
+    grid = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=4, nlay=1, nper=1))
+    top = _raster(tmp_path / "gis" / "top.tif")
+    stack = mf.LayerStack(grid, top=mf.Surface.raster(top)).add("sand", thickness=50)
+    spec = PackageSpec("disv", lambda model, **kw: None, inputs={"layer_stack": stack})
+    inputs = tmp_path / "proj" / "inputs"
+    inputs.mkdir(parents=True)
+
+    bundled, _report = bundle_package_sources(
+        spec, root=tmp_path / "proj", inputs_dir=inputs, project_root=tmp_path / "proj"
+    )
+
+    assert bundled.inputs["layer_stack"].vor is grid

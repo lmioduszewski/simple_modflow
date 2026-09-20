@@ -1020,6 +1020,26 @@
     }
   },
   "surfaces": {
+    "BoundarySource.fields": [
+      "boundnames",
+      "edges_only",
+      "external",
+      "gaps",
+      "layer",
+      "layer_base",
+      "layer_field",
+      "metadata",
+      "min_above_bottom",
+      "name_field",
+      "nper",
+      "package",
+      "path",
+      "period_base",
+      "period_field",
+      "snap_within",
+      "source_sha",
+      "values"
+    ],
     "GridLibrary.members": [],
     "GridSpec.fields": [
       "boundary",
@@ -1311,6 +1331,30 @@
       "copy",
       "names",
       "summary"
+    ],
+    "Surface.fields": [
+      "array",
+      "clip",
+      "contours",
+      "epsg",
+      "fill",
+      "grass_kwargs",
+      "kind",
+      "method",
+      "nodata",
+      "operands",
+      "out",
+      "path",
+      "points",
+      "progress",
+      "region_raster",
+      "region_vector",
+      "resolution",
+      "source_shas",
+      "units",
+      "value",
+      "z",
+      "zone"
     ],
     "advanced.__all__": [
       "chd_spec",

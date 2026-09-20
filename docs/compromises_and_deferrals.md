@@ -11660,3 +11660,76 @@ same day, which is the useful part of the result.
       `source_sha` is pinned only by `test_boundary_source.py`'s own field sweep; the
       eager `.gpkg` path still stamps its metadata in `GeoPackageSource._metadata` while
       the lazy one stamps in `_lazy_bc_spec`, two sites that must agree by hand.
+      **AMENDED 2026-09-19 after two independent adversarial reviews, which found six
+      defects and two overstated claims in the paragraphs above.** Corrections first,
+      because both are claims this entry made about its own evidence:
+      * *"it churned ... measured 4c3988e4 -> 113e32d2"* **described a state that never
+        shipped.** Before this commit `save(bundle_sources=True)` did not touch package
+        recipes at all, so bundling could not move a package digest; the number came
+        from a scoping exercise that simulated the bundling this commit then added.
+        Latent-within-the-commit, not live before it -- the same correction c877911 made,
+        and the same rule as [[a-measurement-belongs-to-what-it-measured]]. What WAS
+        live is the weaker form: a user who moved their own GeoPackage moved its digest.
+      * *"the migration was free"* is true of STORED payloads only -- a recipe loaded
+        from a pre-commit project digests identically, because `source_sha` is absent and
+        the path falls back. A LIVE re-declaration moves, so a stored run reads
+        `state=edited` the first time its declaring script is re-run. Exposure is small
+        (the lazy `.gpkg` landed 2026-09-17) but "0 tracked files held a lazy recipe"
+        measures the REPO, not a user's saved project.
+      **THE DIGEST FIX COVERED ONE CARRIER OF THE TWO -- a regression this commit
+      introduced.** `_canonical`'s `_SPEC_TOKEN` branch still read `to_dict()`, so the
+      LAYER STACK -- the carrier this entry's own headline is about -- kept a path-keyed
+      digest. Because the commit made bundling reach package inputs for the first time,
+      that turned the churn LIVE exactly where it had just been removed: a byte-identical
+      archive moved the lazy disv's digest (`c69eb0ad` -> `660c6be0`) while the `.gpkg`
+      beside it held still. Blind in the other direction too (a different raster at the
+      same path digested identically), and the same for a lazy `mf.evt(surface=...)`.
+      Fixed with the same rule: `Surface.source_shas` + `Surface.digest_payload` +
+      `LayerStack.digest_payload`, stamped by `stamp_source_hashes` **at LAZY-PACKAGE
+      declaration, not in `Surface`** (user decision) -- a bare `Surface.raster(path)`
+      opens nothing, and hashing there would put a full read of a multi-hundred-megabyte
+      DEM behind the cheapest call in the layer API. `out` is dropped from the digest
+      rather than hashed: it is a WRITE target whose content is fully determined by
+      `contours` plus the build parameters, which ARE digested.
+      **`Surface.zone` NAMES A FILE and the key set missed it.** It is typed `Any` and
+      takes either a shapely geometry or a path to a vector file (`Surface.where`, which
+      the cheatsheet teaches), so it read as "not a path field" -- and a stack using one
+      bundled with `not_bundled` empty and then died `DataSourceError`, the 292(a) shape
+      again. Including it is safe because the walk tests the VALUE's type: a geometry is
+      not a `str`. Same pass: the new `source_shas` dict is keyed by FIELD NAME, so a
+      naive walk read its content hashes AS paths (the bundler reported
+      `proj/06464ba5355f3e8e` missing); `SHA_KEY` is skipped by both walkers.
+      **THE ANCHOR SILENTLY CHANGED WHICH FILE A RELATIVE DECLARATION NAMED.**
+      `_lazy_bc_spec` validated the path against the CWD; `_anchored_packages` re-based
+      it against the project root. Two bases for one string: a declaration that passed
+      then failed at build, and where a same-named file happened to sit under the project
+      root **the model BUILT CLEAN from the wrong one** -- heads 999.0 against a declared
+      9.0, normal termination, no warning. Both reviews found it independently. The
+      recipe RESOLVES at declaration now (and so does a surface path the stamp could
+      read), so the only relative paths reaching the anchor are the ones the bundler
+      wrote, which are project-relative by construction. Free of digest consequences
+      because the content hash is what the digest reads.
+      **`drift()`'s source column answered about the wrong file, in both directions.**
+      Bundling repointed the RECIPE and left `metadata['source_path']` -- which the memo
+      keys off -- naming the original. A shipped archive read `missing`; and editing the
+      bundled copy, the only file the build opens, read **`ok`**. A false clean bill
+      produced by the column added to remove exactly that. Bundling repoints the metadata
+      and re-hashes now.
+      **Two more, smaller:** `bundle_package_sources`' `missing` list was computed and
+      discarded (the sole signal was a `logger.warning`, invisible per ledger 288), so a
+      project whose source had moved archived nothing, said nothing, and reported
+      success -- it goes in `not_bundled`, and the GRID pass's identical discard is fixed
+      with it. And the walker rebuilds a token object from its DECLARATION, which drops a
+      `LayerStack`'s bound `vor`, producing "needs a grid ... declared without one" about
+      a stack declared with one.
+      **One of this entry's own guards was CERTIFYING**: the `_anchored` test built its
+      state with `dataclasses.replace(spec, metadata=...)`, and the library could not
+      produce that state, because bundling left the metadata behind. It passed while what
+      it guarded was unreachable. It goes through `save(bundle_sources=True)` now.
+      **Still open after the second pass:** a lazy `mf.disv` stamps NO `source_path`, so
+      its `source` column reads `—`. That column is single-source by construction and a
+      stack names many files; giving it a multi-source answer belongs with B2 item 10
+      (source-edited drift state), not here. The `*.fields` snapshot gap was closed in
+      the same pass instead of being deferred: `BoundarySource.fields` and
+      `Surface.fields` are pinned now, because a field vanishing from either silently
+      changes what `package_digest` fingerprints.

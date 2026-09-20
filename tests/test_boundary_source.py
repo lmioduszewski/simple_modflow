@@ -332,3 +332,82 @@ def test_no_OTHER_source_kind_changes_what_it_digests(tmp_path):
         LiteralSource(value=1.0),
     ):
         assert spec.digest_payload() == spec.to_dict(), type(spec).__name__
+
+
+# ------------------------------ the SECOND carrier: a layer stack's surfaces (293.2)
+
+
+def _tif(path, value):
+    """A tiny GeoTIFF whose bytes are a function of `value`."""
+
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=4, width=4, count=1, dtype="float32",
+        crs="EPSG:2927", transform=from_origin(0, 120, 30, 30),
+    ) as handle:
+        handle.write(np.full((4, 4), value, dtype="float32"), 1)
+    return path
+
+
+def _stack_digest(path):
+    return package_digest(
+        mf.disv(mf.LayerStack(top=mf.Surface.raster(path)).add("sand", thickness=50))
+    )
+
+
+def test_a_LAYER_STACK_digest_follows_content_too(tmp_path):
+    """The first pass fixed one carrier and left the other keyed on the path.
+
+    Found by adversarial review, and it was a REGRESSION rather than an oversight:
+    bundling never touched a package's inputs before, so repointing a stack's raster
+    -- which this feature introduced -- moved the disv digest on a byte-identical
+    archive. Exactly the churn the `.gpkg` half had just been fixed for.
+    """
+
+    import shutil
+
+    original = _tif(tmp_path / "a" / "top.tif", 100.0)
+    moved = tmp_path / "b" / "top.tif"
+    moved.parent.mkdir()
+    shutil.copy2(original, moved)
+
+    assert _stack_digest(original) == _stack_digest(moved), "moving is not editing"
+
+    before = _stack_digest(original)
+    _tif(original, 250.0)                       # SAME path, different content
+
+    assert _stack_digest(original) != before, "editing is not leaving alone"
+
+
+def test_a_bare_Surface_reads_NO_file(tmp_path):
+    """Why the hash is stamped at PACKAGE declaration and not in `Surface`.
+
+    `Surface.raster(path)` is the cheapest call in the layer API and deliberately
+    opens nothing -- hashing there would put a full read of a multi-hundred-megabyte
+    DEM behind it. This pins the placement, which is the whole design argument.
+    """
+
+    surface = mf.Surface.raster(tmp_path / "does_not_exist.tif")
+
+    assert surface.source_shas == {}
+    assert "path" in surface.digest_payload(), "with no hash it still digests by path"
+
+
+def test_the_GRASS_cache_is_not_in_the_digest_at_all(tmp_path):
+    """`out` is a WRITE target whose content is determined by what IS digested.
+
+    Bundling repoints it like any other path, so digesting it would move a package's
+    digest for a file nobody edited -- and it carries nothing, since `contours` and
+    the build parameters decide it.
+    """
+
+    a = mf.Surface(kind="contours", contours="gis/c.gpkg", out="cache/a.tif")
+    b = mf.Surface(kind="contours", contours="gis/c.gpkg", out="elsewhere/b.tif")
+
+    assert a.digest_payload() == b.digest_payload()
+    assert "out" not in a.digest_payload()
+    assert a.to_dict() != b.to_dict(), "to_dict still records where the cache goes"

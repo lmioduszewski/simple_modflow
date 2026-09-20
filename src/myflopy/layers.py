@@ -2360,6 +2360,20 @@ class LayerStack:
             "time_units": self.time_units,
         }
 
+    def digest_payload(self) -> dict[str, Any]:
+        """:meth:`to_dict`, with each surface fingerprinted by CONTENT where it can be.
+
+        ``to_dict`` nests each surface as a plain dict, so ``specs._canonical`` never
+        meets the ``Surface`` objects themselves and their own ``digest_payload`` would
+        never be consulted. This is what reaches them (ledger 293's second pass).
+        """
+
+        payload = self.to_dict()
+        payload["top"] = self._top.digest_payload()
+        for entry, layer in zip(payload["layers"], self._layers, strict=True):
+            entry["surface"] = layer.surface.digest_payload()
+        return payload
+
     @classmethod
     def from_dict(cls, data: dict[str, Any], *, vor=None) -> LayerStack:
         """Rebuild a stack from :meth:`to_dict`'s payload, optionally bound to ``vor``."""

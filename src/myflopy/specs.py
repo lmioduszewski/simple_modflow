@@ -629,7 +629,15 @@ def _canonical(value: Any) -> Any:
         # kind at all, so an untagged payload is indistinguishable from an ordinary
         # dict. It does NOT make the result unforgeable -- a literal tuple of the same
         # shape still collides, exactly as it does at `_json_value`.
-        return (sys.intern(token), _canonical(value.to_dict()))
+        # `digest_payload()` where the class defines one, exactly as the source branch
+        # below does. A `Surface` substitutes its file's content hash for the path and
+        # drops the GRASS cache; a `LayerStack` reaches its surfaces' payloads, which
+        # `to_dict` has already flattened into plain dicts. Without this the LAYER STACK
+        # carrier kept a path-keyed digest while the `.gpkg` carrier beside it did not
+        # -- so bundling a layered model moved its disv digest on a byte-identical
+        # archive, which is the churn ledger 293 exists to remove (found in review).
+        payload = getattr(value, "digest_payload", value.to_dict)()
+        return (sys.intern(token), _canonical(payload))
     if isinstance(value, (DataSourceSpec, LiteralSource)):
         # A CONSTANT tag, not the class name: a source's own `to_dict` already carries
         # the `kind` its reader dispatches on, so renaming the Python class must not
@@ -659,13 +667,21 @@ def _canonical(value: Any) -> Any:
     return value
 
 
-#: Every ``Surface`` field naming a file the stack READS. Matched by KEY inside a
+#: Every ``Surface`` field that can name a file the stack READS. ``zone`` is typed
+#: ``Any`` and takes EITHER a shapely geometry or a path to a vector file
+#: (``Surface.where``/``within``, taught in the cheatsheet), which is why it was missed
+#: on the first pass -- and missing it shipped an archive that reported success and
+#: died `DataSourceError` on a file nobody had carried. The value-type test below is
+#: what makes including it safe: a geometry is not a ``str``, so it is left alone.
+#: Matched by KEY inside a
 #: serialized payload rather than by attribute, because ``specs`` is import layer 1 and
 #: ``surfaces``/``layers`` are 2 and 6 -- the same reason ``_canonical`` duck-types on
 #: ``_SPEC_TOKEN`` instead of importing the classes. ``Spread`` and ``CellSurfaceOffset``,
 #: the other two token-bearing payloads that reach ``inputs``, declare no field of any of
 #: these names, so the key match cannot claim one of theirs.
-SURFACE_INPUT_KEYS = frozenset({"path", "contours", "region_raster", "region_vector"})
+SURFACE_INPUT_KEYS = frozenset(
+    {"path", "contours", "region_raster", "region_vector", "zone"}
+)
 
 #: ``Surface.out`` -- the GRASS interpolation CACHE, which the stack WRITES rather than
 #: reads. Separate because the two want opposite treatment when a file is absent: a
@@ -674,18 +690,32 @@ SURFACE_INPUT_KEYS = frozenset({"path", "contours", "region_raster", "region_vec
 SURFACE_WRITE_KEYS = frozenset({"out"})
 
 
+#: The one payload key whose own KEYS are field names, so a naive walk reads its
+#: VALUES -- content hashes -- as if they were the paths they stand in for. Found by
+#: test: the bundler reported `proj/06464ba5355f3e8e` as a missing source.
+SHA_KEY = "source_shas"
+
+
+def _path_text(value: Any) -> str:
+    """A path as it is WRITTEN in a payload: posix text, never a `Path` object."""
+
+    return value.as_posix() if isinstance(value, PurePath) else str(value)
+
+
 def _repoint_payload(payload: Any, transform, notes: list[tuple[str, str]]) -> Any:
     """Recurse through a serialized token payload, transforming the paths it names."""
 
     if isinstance(payload, dict):
         rebuilt = {}
         for key, item in payload.items():
-            if isinstance(item, str) and key in SURFACE_INPUT_KEYS:
-                rebuilt[key] = transform(PurePath(item), role="surface", notes=notes) or item
+            if key == SHA_KEY:
+                rebuilt[key] = item
+            elif isinstance(item, str) and key in SURFACE_INPUT_KEYS:
+                stored = transform(PurePath(item), role="surface", notes=notes)
+                rebuilt[key] = item if stored is None else _path_text(stored)
             elif isinstance(item, str) and key in SURFACE_WRITE_KEYS:
-                rebuilt[key] = (
-                    transform(PurePath(item), role="write_target", notes=notes) or item
-                )
+                stored = transform(PurePath(item), role="write_target", notes=notes)
+                rebuilt[key] = item if stored is None else _path_text(stored)
             else:
                 rebuilt[key] = _repoint_payload(item, transform, notes)
         return rebuilt
@@ -753,10 +783,11 @@ def repoint_source_paths(
         if repointed == payload:
             return value
         try:
-            return type(value).from_dict(repointed)
+            rebuilt = type(value).from_dict(repointed)
         except (ValueError, TypeError, KeyError) as error:
             notes.append((type(value).__name__, f"could not be rebuilt: {error}"))
             return value
+        return _carry_grid(value, rebuilt)
     if isinstance(value, dict):
         return {
             key: repoint_source_paths(
@@ -773,6 +804,93 @@ def repoint_source_paths(
         ]
         return type(value)(rebuilt) if isinstance(value, list) else tuple(rebuilt)
     return value
+
+
+def stamp_source_hashes(value: Any) -> Any:
+    """Return ``value`` with each readable file path it names carrying a content hash.
+
+    Called where a surface becomes part of a LAZY package -- ``mf.disv`` on a gridless
+    stack, a lazy areal ``mf.evt``. That placement is the whole point: it mirrors
+    ``_lazy_bc_spec``, which hashes its GeoPackage at declaration, while leaving a bare
+    ``Surface.raster(path)`` doing no I/O at all. Hashing in ``Surface`` itself would
+    put a full read of a multi-hundred-megabyte DEM behind the cheapest call in the
+    layer API, for a fingerprint most surfaces never need.
+
+    A path that cannot be read is left unhashed and keeps digesting by path -- the same
+    fallback :meth:`~myflopy.sources.BoundarySource.digest_payload` makes, for the same
+    reason: two unreadable sources must not digest alike.
+    """
+
+    return _walk_surfaces(value)
+
+
+def _stamp_payload(payload: Any) -> Any:
+    """Add ``source_shas`` to every Surface payload inside ``payload``."""
+
+    if isinstance(payload, dict):
+        rebuilt = {
+            key: item if key == SHA_KEY else _stamp_payload(item)
+            for key, item in payload.items()
+        }
+        shas = {}
+        for key, item in payload.items():
+            if isinstance(item, str) and key in SURFACE_INPUT_KEYS:
+                sha = source_fingerprint(item)
+                if sha is not None:
+                    shas[key] = sha
+                    # RESOLVED at the same moment, and for the same reason
+                    # `_lazy_bc_spec` resolves its GeoPackage: a relative path here
+                    # means one thing to the declaration (the cwd) and another to
+                    # `_anchored_packages` (the project root), and the build silently
+                    # takes the second. Only a path we just READ is rewritten, so a
+                    # surface pointing at a file that does not exist yet is untouched.
+                    rebuilt[key] = PurePath(item).as_posix() if PurePath(item).is_absolute() \
+                        else Path(item).resolve().as_posix()
+        if shas:
+            rebuilt["source_shas"] = {**payload.get("source_shas", {}), **shas}
+        return rebuilt
+    if isinstance(payload, list):
+        return [_stamp_payload(item) for item in payload]
+    return payload
+
+
+def _walk_surfaces(value: Any) -> Any:
+    """Rebuild every token-bearing object in ``value`` with its file hashes stamped."""
+
+    if getattr(type(value), "_SPEC_TOKEN", None) is not None:
+        try:
+            payload = value.to_dict()
+        except (ValueError, TypeError):
+            return value
+        stamped = _stamp_payload(payload)
+        if stamped == payload:
+            return value
+        try:
+            rebuilt = type(value).from_dict(stamped)
+        except (ValueError, TypeError, KeyError):
+            return value
+        return _carry_grid(value, rebuilt)
+    if isinstance(value, dict):
+        return {key: _walk_surfaces(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        rebuilt = [_walk_surfaces(item) for item in value]
+        return type(value)(rebuilt) if isinstance(value, list) else tuple(rebuilt)
+    return value
+
+
+def _carry_grid(original: Any, rebuilt: Any) -> Any:
+    """Re-attach a bound grid the ``to_dict``/``from_dict`` round trip dropped.
+
+    A ``LayerStack``'s payload is its DECLARATION and deliberately excludes ``vor``
+    (ledger 269), so rebuilding one hands back a GRIDLESS stack -- and the failure is
+    `LayerStack.build() needs a grid. This stack was declared without one`, about a
+    stack that was declared with one. Not reachable through a lazy ``mf.disv``, which
+    requires a gridless stack to begin with, but these walkers are generic and shared.
+    """
+
+    if getattr(original, "vor", None) is not None and getattr(rebuilt, "vor", None) is None:
+        rebuilt.vor = original.vor
+    return rebuilt
 
 
 def _anchored_packages(

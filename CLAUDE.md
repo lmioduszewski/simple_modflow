@@ -308,7 +308,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3701 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3710 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
@@ -560,8 +560,16 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `BoundarySource.source_sha` rides in `inputs`, so it is digest-VISIBLE, and it
   REPLACES the path rather than joining it -- keeping both reintroduces the churn
   while looking fixed. It falls back to the path when the file could not be read.
-  Only `BoundarySource` moved: `digest_payload()` defaults to `to_dict()`, so no grid
-  source's digest changed. This also makes lazy AGREE with eager, which stores records
+  **Both carriers do this** -- `BoundarySource.source_sha` and `Surface.source_shas`,
+  the latter stamped at LAZY-PACKAGE declaration (`mf.disv`/`mf.evt`) so a bare
+  `Surface.raster(p)` still opens nothing. `Surface.out` is dropped from the digest
+  entirely: a WRITE target whose content is decided by what IS digested. No grid
+  source moved -- `digest_payload()` defaults to `to_dict()`.
+  **A lazy `.gpkg` RESOLVES its path at declaration**, because the declaration checked
+  it against the cwd while the build anchored it to the project root -- two bases for
+  one string, and with a same-named file under the root the model BUILT CLEAN from the
+  wrong one (999.0 against a declared 9.0, no warning). The anchor now only ever sees
+  bundler-written project-relative paths. This also makes lazy AGREE with eager, which stores records
   and is therefore location-blind and content-sensitive already -- the two had been
   drifting in OPPOSITE directions from the same declaration. `drift()`'s `source`
   column was inverted for the same reason (only the eager form stamped

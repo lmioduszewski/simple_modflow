@@ -199,6 +199,7 @@ def collect_surfaces() -> dict[str, list[str]]:
         SimulationLibrary,
         SpecLibrary,
     )
+    from myflopy.sources import BoundarySource
     from myflopy.specs import (
         GridSpec,
         ModelContext,
@@ -206,6 +207,7 @@ def collect_surfaces() -> dict[str, list[str]]:
         PackageSpec,
         SimulationSpec,
     )
+    from myflopy.surfaces import Surface
     from myflopy.workspace import Project, Run, RunLibrary, SaveReport
 
     return {
@@ -258,6 +260,13 @@ def collect_surfaces() -> dict[str, list[str]]:
         "ModelContext.fields": spec_fields(ModelContext),
         "GridSpec.members": members(GridSpec),
         "GridSpec.fields": spec_fields(GridSpec),
+        # The two recipe carriers a LAZY package holds. Both gained a digest-visible
+        # field in ledger 293 (`BoundarySource.source_sha`, `Surface.source_shas`), and
+        # both were invisible here -- a field vanishing from either silently changes
+        # what `package_digest` fingerprints, which is the exact hazard `spec_fields`
+        # was added for.
+        "BoundarySource.fields": spec_fields(BoundarySource),
+        "Surface.fields": spec_fields(Surface),
     }
 
 

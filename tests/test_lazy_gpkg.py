@@ -393,3 +393,52 @@ def test_the_resolution_report_says_what_each_package_resolved_to(
     assert rows["disv"]["resolved_ncpl"] == small.ncpl
     assert rows["chd"]["resolved_records"] > 0
     assert "resolved_ncpl" not in rows["chd"], "a BC resolves to records, not a mesh"
+
+
+def test_a_RELATIVE_declaration_names_the_file_the_caller_meant(tmp_path, monkeypatch):
+    """Two bases for one string, and the build silently took the other one.
+
+    `_lazy_bc_spec` validated the path against the CURRENT WORKING DIRECTORY while
+    `_anchored_packages` re-based it against the PROJECT ROOT -- so a declaration that
+    passed could fail at build, and where a same-named file happened to sit under the
+    project root, the model BUILT CLEAN from the wrong one. Measured before the fix:
+    heads of 999.0 against the declared 9.0, normal termination, no warning. Found by
+    two independent adversarial reviews.
+
+    The recipe resolves at declaration now, so the only relative paths reaching the
+    anchor are the ones the bundler wrote, which are project-relative by construction.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.specs import SpecBuildContext, _anchored_packages
+
+    here, root = tmp_path / "here", tmp_path / "proj"
+    (here / "gis").mkdir(parents=True)
+    (root / "gis").mkdir(parents=True)
+
+    def write(path, head):
+        gpd.GeoDataFrame(
+            {"name": ["w"], "layer": [1], "head": [head]},
+            geometry=[box(0, 0, 10, 10)], crs=2927,
+        ).to_file(path, layer="chd", driver="GPKG")
+
+    write(here / "gis" / "bc.gpkg", 9.0)        # what the caller is looking at
+    write(root / "gis" / "bc.gpkg", 999.0)      # the decoy the anchor used to pick
+
+    monkeypatch.chdir(here)
+    spec = mf.chd.gpkg("gis/bc.gpkg", layer="chd", nper=1, head="head")
+
+    assert spec.inputs["stress_period_data"].path == (here / "gis" / "bc.gpkg").resolve()
+
+    anchored = _anchored_packages((spec,), SpecBuildContext(project_root=root))
+
+    assert anchored[0].inputs["stress_period_data"].path == (
+        here / "gis" / "bc.gpkg"
+    ).resolve(), "the anchor must not repoint a path the declaration already resolved"
+
+    # And the hash describes the file the build will actually open.
+    assert spec.inputs["stress_period_data"].source_sha == source_fingerprint(
+        here / "gis" / "bc.gpkg"
+    )

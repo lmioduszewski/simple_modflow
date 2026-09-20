@@ -9,7 +9,6 @@ project: four runs, all reading ``written``/``None``, three of which had reached
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import time
@@ -1025,42 +1024,81 @@ def test_a_LAZY_package_reports_its_source_state_too(tmp_path):
     assert project.runs._library_source_memo()["chd/west"] == "missing"
 
 
-def test_a_bundled_relative_source_is_read_from_the_project_not_the_cwd(tmp_path, monkeypatch):
-    """`missing` must be a claim about the world, not about where the reader stands.
+def _bundled_project(tmp_path, head=9.0):
+    """A project ARCHIVED through the public verb, with its author's tree deleted.
 
-    Bundling stores paths RELATIVE to the project root, so hashing one against the
-    current working directory answers `missing` for a file that is sitting right
-    there -- and `missing` is the loudest thing this column says.
+    Built by `save(bundle_sources=True)` rather than by hand. The first version of
+    this fixture fabricated the state with `dataclasses.replace(spec, metadata=...)`
+    -- and an adversarial review measured that the library could not actually PRODUCE
+    that state, because bundling repointed the recipe and left the metadata behind.
+    So the guard passed while the thing it guarded was unreachable: it certified.
     """
+
+    import shutil
 
     import geopandas as gpd
     from shapely.geometry import box
 
+    gis = tmp_path / "gis"
+    gis.mkdir()
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [head]},
+        geometry=[box(0, 0, 10, 10)], crs=2927,
+    ).to_file(gis / "bc.gpkg", layer="chd", driver="GPKG")
+
+    project = Project(tmp_path / "proj", name="p")
+    project.add_package(
+        "chd/west", mf.chd.gpkg(gis / "bc.gpkg", layer="chd", nper=1, head="head")
+    )
+    project.save(bundle_sources=True)
+    shutil.rmtree(gis)                      # the archive is shipped; the author's tree is gone
+    return project
+
+
+def test_a_bundled_relative_source_is_read_from_the_project_not_the_cwd(tmp_path, monkeypatch):
+    """`missing` must be a claim about the world, not about where the reader stands."""
+
     from myflopy.specs import SOURCE_SHA
 
-    root = tmp_path / "proj"
-    (root / "inputs").mkdir(parents=True)
-    gpd.GeoDataFrame(
-        {"name": ["w"], "layer": [1], "head": [9.0]},
-        geometry=[box(0, 0, 10, 10)], crs=2927,
-    ).to_file(root / "inputs" / "bc.gpkg", layer="chd", driver="GPKG")
+    project = _bundled_project(tmp_path)
 
-    project = Project(root, name="p")
-    spec = mf.chd.gpkg(root / "inputs" / "bc.gpkg", layer="chd", nper=1, head="head")
-    project.add_package(
-        "chd/west",
-        dataclasses.replace(
-            spec,
-            metadata={**spec.metadata, "source_path": "inputs/bc.gpkg"},
-        ),
+    assert project.package("chd/west").metadata["source_path"] == "inputs/bc.gpkg", (
+        "bundling must repoint the metadata, or this test has nothing to anchor"
     )
+    assert project.package("chd/west").metadata[SOURCE_SHA] is not None
 
     monkeypatch.chdir(tmp_path)  # anywhere but the project root
 
     assert project.runs._library_source_memo()["chd/west"] == "ok", (
         "the relative path must anchor to the project, not to os.getcwd()"
     )
-    assert project.package("chd/west").metadata[SOURCE_SHA] is not None
+
+
+def test_bundling_repoints_the_metadata_so_drift_watches_the_file_the_BUILD_reads(tmp_path):
+    """The false clean bill, which is the worse half (found in review).
+
+    Bundling moved the RECIPE into `inputs/` and left `metadata['source_path']` naming
+    the original. `_library_source_memo` keys off the metadata -- so editing the
+    bundled copy, the only file the build ever opens, read `source=ok`. That is the
+    `unchanged`-is-the-dangerous-verdict failure occurring inside the column that was
+    added to remove it.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    project = _bundled_project(tmp_path)
+
+    assert project.runs._library_source_memo()["chd/west"] == "ok"
+
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [42.0]},
+        geometry=[box(0, 0, 10, 10)], crs=2927,
+    ).to_file(tmp_path / "proj" / "inputs" / "bc.gpkg", layer="chd", driver="GPKG")
+
+    assert project.runs._library_source_memo()["chd/west"] == "edited", (
+        "the column must watch the bundled copy, which is what the build opens"
+    )
 
 
 def test_a_package_declared_before_fingerprints_reports_unfingerprinted(tmp_path):

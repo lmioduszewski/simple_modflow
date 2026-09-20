@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from myflopy._logging import get_logger
+from myflopy.grid_identity import SOURCE_SHA, source_fingerprint
 from myflopy.specs import DataSourceSpec, GridSpec, PackageSpec, repoint_source_paths
 
 logger = get_logger(__name__)
@@ -250,6 +251,25 @@ class _Bundler:
             )
         return destination.relative_to(self.root).as_posix()
 
+    def taken_destination(self, value: Any) -> str | None:
+        """Where ``value`` was stored by this bundler, or ``None`` if it was untouched.
+
+        Read back rather than recomputed: `_destination` disambiguates a colliding
+        basename with a digest of the source's parent, so asking twice is not the same
+        as remembering once.
+        """
+
+        source = self._resolve(value)
+        for item in self.copied:
+            if Path(item["from"]) == source:
+                return item["to"]
+        if _inside(source, self.inputs_dir) or _inside(source, self.root):
+            try:
+                return source.resolve().relative_to(self.root.resolve()).as_posix()
+            except (OSError, ValueError):
+                return None
+        return None
+
     def source(self, spec: DataSourceSpec | None) -> DataSourceSpec | None:
         """Copy a source spec's file in and repoint it, project-relative."""
 
@@ -325,6 +345,34 @@ def bundle_grid_sources(
     return bundled, report
 
 
+def _repointed_metadata(spec: PackageSpec, bundler: _Bundler) -> dict[str, Any]:
+    """``spec.metadata`` with ``source_path`` following the file into ``inputs/``.
+
+    `runs.drift()`'s ``source`` column keys off ``metadata['source_path']``, and
+    bundling used to move only the RECIPE. That left the two naming different files,
+    and the column then answered about the wrong one -- in both directions (found in
+    review, ledger 293's second pass):
+
+    * a shipped archive read ``source=missing``, because the metadata still named the
+      author's own tree, which is exactly the "a claim about the world, not about where
+      the reader is standing" failure the anchor was added to fix;
+    * and worse, editing the bundled copy -- the only file the build opens -- read
+      ``source=ok``, because the metadata pointed at the untouched original. A FALSE
+      CLEAN BILL on the one file that decides what the package builds, produced by the
+      column that exists to remove exactly that.
+    """
+
+    path = (spec.metadata or {}).get("source_path")
+    if path is None:
+        return dict(spec.metadata or {})
+    stored = bundler.taken_destination(path)
+    if stored is None:
+        return dict(spec.metadata or {})
+    return {**spec.metadata, "source_path": stored, SOURCE_SHA: source_fingerprint(
+        bundler.root / stored
+    )}
+
+
 def bundle_package_sources(
     spec: PackageSpec,
     *,
@@ -362,6 +410,8 @@ def bundle_package_sources(
 
     inputs = repoint_source_paths(spec.inputs, _take, notes=notes) if spec.inputs else spec.inputs
     bundled = spec if inputs == spec.inputs else replace(spec, inputs=inputs)
+    if bundled is not spec:
+        bundled = replace(bundled, metadata=_repointed_metadata(spec, bundler))
     report = {"copied": bundler.copied, "missing": bundler.missing, "notes": notes}
     if bundler.missing:
         logger.warning(
