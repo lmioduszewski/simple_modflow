@@ -20,7 +20,7 @@ import pytest
 import myflopy as mf
 from myflopy.run_record import ListingOutcome, read_listing_outcome
 from myflopy.specs import ModelContext
-from myflopy.workspace import Project
+from myflopy.workspace import Project, Run
 
 _NORMAL_TAIL = """\
  Run end date and time (yyyy/mm/dd hh:mm:ss): 2026/09/03 12:50:17
@@ -846,8 +846,8 @@ def test_the_pest_markers_match_the_pest_module():
     """They are DUPLICATED rather than imported -- see the note in run_record --
     so this is what keeps them honest."""
 
-    from myflopy.modflow.mf6.pest import runs as pest_runs
     from myflopy import run_record
+    from myflopy.modflow.mf6.pest import runs as pest_runs
 
     assert run_record.PEST_ROOT_SUFFIX == pest_runs.PEST_ROOT_SUFFIX
     assert run_record.LEGACY_PEST_DIRNAME == pest_runs.LEGACY_PEST_DIRNAME
@@ -1152,3 +1152,239 @@ def test_an_unreadable_source_does_not_stop_a_package_being_declared(tmp_path):
 
     assert source_fingerprint(tmp_path / "nope.gpkg") is None
     assert source_fingerprint(tmp_path) is None, "a directory is not readable as bytes"
+
+
+# ------------------------------------ what the RUN read, not what the library says
+
+
+def _sourced_project(tmp_path, head=9.0, *, inline=False):
+    """A project whose CHD resolves LAZILY from a GeoPackage, by ref or inline."""
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    gis = tmp_path / "gis"
+    gis.mkdir(exist_ok=True)
+
+    def write(value):
+        gpd.GeoDataFrame(
+            {"name": ["west"], "layer": [1], "head": [value]},
+            geometry=[box(0, 0, 600, 600)], crs=2927,
+        ).to_file(gis / "bc.gpkg", layer="chd", driver="GPKG")
+
+    write(head)
+    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927).to_file(
+        gis / "b.gpkg"
+    )
+
+    project = Project(tmp_path / "proj", name="p")
+    project.add_grid(
+        "g",
+        mf.GridSpec.voronoi(
+            boundary=mf.GeoPackageSourceSpec(path=gis / "b.gpkg"), max_area=40000.0
+        ),
+    )
+    chd = mf.chd.gpkg(gis / "bc.gpkg", layer="chd", nper=1, head="head")
+    if not inline:
+        project.add_package("chd/west", chd)
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0)).add("sand", thickness=50)
+    model = mf.gwf(
+        "m",
+        grid=mf.grid_ref("g"),
+        packages=[
+            mf.disv(stack), mf.npf(k=1.0), mf.ic(strt=95.0),
+            mf.oc(head_filerecord="m.hds"),
+            chd if inline else mf.ref("chd/west"),
+        ],
+    )
+    project.add_simulation(
+        mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    )
+    return project, write
+
+
+def _head_of(run):
+    """The one distinct head the CHD wrote (the polygon covers every cell)."""
+
+    heads = run.model("m").gwf.get_package("chd").stress_period_data.get_data(0)["head"]
+    return sorted(set(heads.tolist()))
+
+
+def test_two_runs_either_side_of_an_edit_are_DISTINGUISHABLE(tmp_path):
+    """The correctness bug (ledger 294): the library's digest is the same for both.
+
+    `package_digests` records what the LIBRARY declared, and both runs reference one
+    declaration -- so two runs that built materially different models recorded the
+    identical fingerprint and `drift()` gave them the same verdict, INCLUDING the run
+    that agrees with the file. `built_from` records what each run actually READ.
+    """
+
+    project, write = _sourced_project(tmp_path)
+
+    before = project.prepare_run("before", "s")
+    assert _head_of(before) == pytest.approx([9.0])
+
+    write(42.0)
+    after = project.prepare_run("after", "s")
+    assert _head_of(after) == pytest.approx([42.0])
+
+    assert before.package_digests == after.package_digests, (
+        "the premise: one library declaration, so the digests CANNOT differ"
+    )
+    assert before.built_from != after.built_from
+
+    drift = project.refresh_runs().drift().set_index("run")
+
+    assert drift.loc["after", "source"] == "ok", "this run agrees with the file"
+    assert drift.loc["before", "source"] == "edited", "and this one does not"
+
+
+def test_an_INLINE_lazy_package_gets_a_row_and_a_verdict(tmp_path):
+    """`_package_digests` records only `mf.ref` entries, so inline had NO row.
+
+    Its docstring's premise -- "a package written inline is baked into the run's own
+    recipe and cannot drift" -- was true until lazy packages, which hold a PATH and
+    open it at build. Measured before the fix: edit the file and drift reported
+    `unchanged` with source `—` ("names no source") while the rebuild gave 42.0.
+    """
+
+    project, write = _sourced_project(tmp_path, inline=True)
+    run = project.prepare_run("r", "s")
+
+    assert run.package_digests == {}, "the premise: nothing is recorded for inline"
+    assert "chd" in run.built_from
+
+    clean = project.refresh_runs().drift().set_index("key")
+    assert clean.loc["chd", "source"] == "ok"
+    assert clean.loc["chd", "state"] == "—", (
+        "there is no library key, so `state` has nothing to answer about"
+    )
+
+    write(42.0)
+    moved = project.refresh_runs().drift().set_index("key")
+
+    assert moved.loc["chd", "source"] == "edited"
+
+
+def test_an_EAGER_package_is_not_re_hashed_at_build(tmp_path):
+    """Only a lazy package reads a file at build, so only a lazy one is re-hashed.
+
+    Re-reading an eager package's GeoPackage would describe a read that never
+    happened -- and it is what keeps the cost honest: hashing is 0.15% of the work it
+    describes for an ordinary GeoPackage, but a full read of a multi-gigabyte DEM is
+    ~1.9 s, and the build only samples such a raster.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from myflopy.specs import SOURCE_SHA, ModelContext
+
+    project, _write = _sourced_project(tmp_path)
+    grid = project.grid("g").resolve(workspace=tmp_path / "gridws")
+    context = ModelContext(grid=grid, domain=np.ones((1, grid.ncpl), dtype=int))
+    eager = mf.chd.gpkg(
+        tmp_path / "gis" / "bc.gpkg", layer="chd", nper=1, head="head", context=context
+    )
+    project.add_package("chd/west", eager, overwrite=True)
+
+    run = project.prepare_run("r", "s")
+    recorded = run.built_from["chd/west"]
+
+    assert list(recorded.values()) == [eager.metadata[SOURCE_SHA]], (
+        "an eager package carries its DECLARATION hash -- it read nothing at build"
+    )
+
+    # And it still answers, because that hash is what this run was built from.
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [42.0]},
+        geometry=[box(0, 0, 600, 600)], crs=2927,
+    ).to_file(tmp_path / "gis" / "bc.gpkg", layer="chd", driver="GPKG")
+
+    assert project.refresh_runs().drift().set_index("key").loc["chd/west", "source"] == (
+        "edited"
+    )
+
+
+def test_a_package_naming_SEVERAL_files_reports_the_worst_with_a_count(tmp_path):
+    """A lazy discretization names one file per surface plus the top.
+
+    One cell per package, so it must not read clean because two of three files held
+    still. Worst-first, because `missing` outranks `edited`.
+    """
+
+    import geopandas as gpd
+    import rasterio
+    from rasterio.transform import from_origin
+    from shapely.geometry import box
+
+    gis = tmp_path / "gis"
+    gis.mkdir()
+
+    def raster(name, value):
+        path = gis / name
+        with rasterio.open(
+            path, "w", driver="GTiff", height=20, width=20, count=1, dtype="float32",
+            crs="EPSG:2927", transform=from_origin(0, 600, 30, 30),
+        ) as handle:
+            handle.write(np.full((20, 20), value, dtype="float32"), 1)
+        return path
+
+    top, mid = raster("top.tif", 100.0), raster("mid.tif", 60.0)
+    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927).to_file(
+        gis / "b.gpkg"
+    )
+
+    project = Project(tmp_path / "proj", name="p")
+    project.add_grid(
+        "g",
+        mf.GridSpec.voronoi(
+            boundary=mf.GeoPackageSourceSpec(path=gis / "b.gpkg"), max_area=40000.0
+        ),
+    )
+    stack = mf.LayerStack(top=mf.Surface.raster(top)).add(
+        "sand", bottom=mf.Surface.raster(mid)
+    )
+    model = mf.gwf(
+        "m", grid=mf.grid_ref("g"),
+        packages=[mf.disv(stack), mf.npf(k=1.0), mf.ic(strt=95.0),
+                  mf.oc(head_filerecord="m.hds")],
+    )
+    project.add_simulation(
+        mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    )
+    run = project.prepare_run("r", "s")
+
+    assert len(run.built_from["disv"]) == 2, "two rasters, one cell"
+    assert project.refresh_runs().drift().set_index("key").loc["disv", "source"] == "ok"
+
+    raster("mid.tif", 55.0)
+    assert project.refresh_runs().drift().set_index("key").loc["disv", "source"] == (
+        "edited (1 of 2)"
+    )
+
+    top.unlink()
+    assert project.refresh_runs().drift().set_index("key").loc["disv", "source"] == (
+        "missing (1 of 2)"
+    ), "worst-first: `missing` outranks `edited`"
+
+
+def test_built_from_survives_the_manifest_round_trip(tmp_path):
+    """It rides in `metadata`, which round-trips wholesale.
+
+    A top-level manifest key would be dropped by any rewrite from code that does not
+    know it -- and `_record_status` rewrites on every status change, so the record
+    would vanish the first time a run was written or executed.
+    """
+
+    project, _write = _sourced_project(tmp_path)
+    run = project.prepare_run("r", "s")
+    recorded = run.built_from
+
+    assert recorded
+    run._record_status("written")          # the rewrite that drops a top-level key
+
+    written = json.loads((run.workspace / "run.json").read_text())
+
+    assert written["metadata"][Run.BUILT_FROM] == recorded
+    assert Run.BUILT_FROM not in written, "it must NOT also sit at the top level"

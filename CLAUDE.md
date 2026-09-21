@@ -228,7 +228,28 @@ it said** (ledger 276) — `ok`/`edited`/`missing`/`unfingerprinted`/`—`. Sepa
 `edited` (its GeoPackage moved on), and one column would hide one of them. Nothing
 recorded a source's CONTENT before — only its path — so an edited input read
 `unchanged` forever. It hashes bytes, so a rewritten `.gpkg` reads `edited` even with
-no feature changed: the safe direction. `project.save()` returns a **`SaveReport`**,
+no feature changed: the safe direction.
+**It answers about what the RUN READ, not about the library's current declaration**
+(ledger 294, 2026-09-21). A run records `metadata['built_from']` — the content hash of
+every source it actually OPENED — and `source` compares against that. Without it two
+runs prepared either side of an edit were INDISTINGUISHABLE: they share one library
+declaration, so they recorded the identical digest while building CHD heads of 9.0 and
+42.0, and `drift()` gave both the same verdict — including the run that AGREES with the
+file. It also covers packages declared **INLINE**, which had no row at all:
+`_package_digests` records only `mf.ref` entries, on the premise that an inline package
+"cannot drift" — which lazy packages falsified, since one holds a PATH and opens it at
+build. Such a row reads `state` `—`: there is no key, so that question has nothing to
+answer about. **Only a LAZY package is re-hashed at build** (only it reads a file
+there); an eager one carries its declaration hash, so `source` for an eager package is
+PROVENANCE, not buildability. That split is also what keeps the cost honest — hashing is
+**0.15%** of the work it describes for an ordinary GeoPackage, but a full read of a
+3.7 GB DEM is **~1.9 s**, and the build only samples such a raster. A package naming
+several files reports the WORST with a count (`edited (1 of 3)`).
+**NOT built, and why** (same ledger): `grid-changed` and `unfrozen` are per-RUN facts
+and `drift()` is per (run, package key), so either would fan one fact across every row —
+they belong in `runs.summary()`. `legacy-digest` has no era marker to read, and 0 of 84
+real stored digests move under HEAD.
+`project.save()` returns a **`SaveReport`**,
 not a path, and persists what it can rather than refusing the whole project.
 Runnable tour: `examples/mf6/notebooks/project_libraries_tour.ipynb` (executed by
 `tests/test_project_libraries_tour.py`, not merely source-checked).
@@ -308,7 +329,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3710 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3715 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —

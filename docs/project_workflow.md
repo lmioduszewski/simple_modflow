@@ -309,11 +309,16 @@ records a fingerprint of what those keys meant at the time:
 
 ```python
 project.runs.drift()
-#  run       key         ran_with          library_now       state
-#  baseline  npf/base    8b6bcfeb950cb270  0e83cf9f816b6102  edited
-#  baseline  rch/series  333df8c89afe0a37  333df8c89afe0a37  unchanged
-#  mounding  rch_pond    8a2aacef0f6bca5d  —                 removed
+#  run       key         ran_with          library_now       state      source
+#  baseline  npf/base    8b6bcfeb950cb270  0e83cf9f816b6102  edited     —
+#  baseline  rch/series  333df8c89afe0a37  333df8c89afe0a37  unchanged  ok
+#  baseline  chd         —                 —                 —          edited
+#  mounding  rch_pond    8a2aacef0f6bca5d  —                 removed    —
 ```
+
+The third row is a package declared **inline** rather than through `mf.ref`. It has
+no library key, so `state` — *does this key still mean what the run used?* — has
+nothing to answer about and says so; `source` is the column that answers for it.
 
 `summary()` carries the one-cell version as a `drift` column naming the moved
 keys. A run reading `unchanged` throughout is reproducible from the library as it
@@ -358,6 +363,22 @@ it was built from?* Values are `ok`, `edited`, `missing`, `unfingerprinted` (nam
 source but records no hash — anything declared before this landed) and `—` for the
 majority that name no file. It hashes BYTES, so rewriting a GeoPackage without
 changing a feature reads as `edited`: a prompt to look, which is the safe direction.
+
+**It answers about what the RUN read, not about the library's current declaration**
+(ledger 294). Each run records `metadata['built_from']` — the content hash of every
+source it actually opened — and `source` compares against that. Without it, two runs
+of one simulation prepared either side of an edit were indistinguishable: they share
+one library declaration, so they recorded the identical fingerprint while building
+different models, and both got the same verdict, including the run that AGREES with
+the file. It also covers packages declared **inline**, which had no row at all,
+because `package_digests` records only `mf.ref` entries.
+
+For an **eager** package `source` is PROVENANCE, not buildability: it resolved at
+declaration and holds records, so it builds fine with its GeoPackage deleted —
+`missing` there means the file you built from has moved, not that anything is
+broken. Only a lazy package is re-hashed at build, because only a lazy package reads
+a file there. A package naming several files (a layer stack names one per surface
+plus the top) gets one cell, reporting the WORST with a count: `edited (1 of 3)`.
 
 The fingerprint covers the option and input VALUES a spec holds, its name, its
 builder REFERENCE, `enabled` and `requires`. It does not see the body of an

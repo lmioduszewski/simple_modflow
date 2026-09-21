@@ -1205,6 +1205,7 @@
     ],
     "Run.members": [
       "build",
+      "built_from",
       "execute",
       "flopy_model",
       "frozen",

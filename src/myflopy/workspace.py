@@ -53,6 +53,7 @@ from myflopy.specs import (
     package_digest,
     package_move,
     source_fingerprint,
+    source_paths,
 )
 
 logger = get_logger(__name__)
@@ -719,6 +720,31 @@ _MISSING_KEY = object()
 """Distinguishes "the library has no such key" from "the key digests to None"."""
 
 
+#: Worst-first, because a package naming several files gets ONE cell and the cell must
+#: not be reassuring about the worst of them. A LayerStack names one file per surface
+#: plus the stack's top, so "several" is the normal case for a lazy discretization.
+_SOURCE_SEVERITY = ("missing", "edited", "ok")
+
+
+def _source_verdict(files: dict[str, str], run: Run) -> str:
+    """One word for what a package's sources say NOW against what the run read.
+
+    Reports the WORST of them, with a count when they disagree (``edited (1 of 3)``),
+    so a stack whose one raster moved cannot read clean because its other two did not.
+    """
+
+    verdicts = []
+    for path, recorded in files.items():
+        now = source_fingerprint(run._anchor_source(path))
+        verdicts.append("missing" if now is None else ("ok" if now == recorded else "edited"))
+    if not verdicts:
+        return "—"
+    worst = min(verdicts, key=_SOURCE_SEVERITY.index)
+    if worst == "ok" or len(verdicts) == 1:
+        return worst
+    return f"{worst} ({verdicts.count(worst)} of {len(verdicts)})"
+
+
 def _drift_state(ran_with: str | None, now: Any) -> str:
     """Classify one recorded package against what its key holds now.
 
@@ -944,20 +970,18 @@ class RunLibrary(SpecLibrary["Run"]):
         source_by_key = self._library_source_memo()
         rows: list[dict[str, Any]] = []
         for run_key in keys:
-            recorded = self[run_key].package_digests
-            if not recorded:
-                rows.append(
-                    {
-                        "run": run_key,
-                        "key": "—",
-                        "ran_with": "—",
-                        "library_now": "—",
-                        "state": "unknown" if recorded is None else "unchanged",
-                        "source": "—",
-                    }
-                )
-                continue
-            for package_key, ran_with in sorted(recorded.items()):
+            entry = self[run_key]
+            recorded = entry.package_digests
+            # What THIS RUN's sources said when it was built, which is a different
+            # question from what the library's current declaration says -- and the only
+            # one that can tell two runs either side of an edit apart (ledger 294).
+            built = {
+                key: _source_verdict(files, entry)
+                for key, files in entry.built_from.items()
+            }
+            seen: set[str] = set()
+            for package_key, ran_with in sorted((recorded or {}).items()):
+                seen.add(package_key)
                 now = now_by_key.get(package_key, _MISSING_KEY)
                 state = _drift_state(ran_with, now)
                 rows.append(
@@ -967,7 +991,38 @@ class RunLibrary(SpecLibrary["Run"]):
                         "ran_with": ran_with or "—",
                         "library_now": (now if now is not _MISSING_KEY else None) or "—",
                         "state": state,
-                        "source": source_by_key.get(package_key, "—"),
+                        # The run's own record WINS over the library memo: the memo
+                        # answers about the library's CURRENT declaration, so it gave
+                        # both of two runs the same word.
+                        "source": built.get(package_key)
+                        or source_by_key.get(package_key, "—"),
+                    }
+                )
+            # Packages declared INLINE. They have no library key, so `state` -- "does
+            # this key still mean what the run used?" -- has nothing to answer about,
+            # and says so. They had no row at all before: `_package_digests` records
+            # only `mf.ref` entries, so an inline lazy `.gpkg` whose file was rewritten
+            # under it reported `unchanged` with no source, while the rebuild changed.
+            for package_key in sorted(set(built) - seen):
+                rows.append(
+                    {
+                        "run": run_key,
+                        "key": package_key,
+                        "ran_with": "—",
+                        "library_now": "—",
+                        "state": "—",
+                        "source": built[package_key],
+                    }
+                )
+            if not recorded and not built:
+                rows.append(
+                    {
+                        "run": run_key,
+                        "key": "—",
+                        "ran_with": "—",
+                        "library_now": "—",
+                        "state": "unknown" if recorded is None else "unchanged",
+                        "source": "—",
                     }
                 )
         return pd.DataFrame(
@@ -1326,9 +1381,100 @@ class Run:
         self.simulation.exe_name = self.executable
         self._model_views.clear()
         self._from_library = self._check_library_fallback(build_context)
+        self._record_built_from(build_context)
         self._freeze()
         self._record_status("built")
         return self
+
+    #: Key under which a run records what its sources SAID when it was built. Inside
+    #: ``metadata`` rather than at the top level of the manifest: ``save_manifest``
+    #: writes an explicit key list and ``from_dict`` reads one, so a top-level key is
+    #: dropped by any rewrite from code that does not know it -- and ``_record_status``
+    #: rewrites the manifest on every status change. ``metadata`` round-trips wholesale.
+    BUILT_FROM = "built_from"
+
+    def _record_built_from(self, build_context: SpecBuildContext | None) -> None:
+        """Record the content hash of every source this build actually READ.
+
+        Without it two runs of one simulation prepared either side of an edit are
+        INDISTINGUISHABLE: measured, they built CHD heads of 9.0 and 42.0, recorded the
+        identical package digest, and ``drift()`` gave both the same verdict --
+        including the run that AGREES with the file (ledger 294).
+
+        Recorded per DECLARED ENTRY, keyed the way the run addresses it: a
+        ``PackageRef`` by its library key, an inline ``PackageSpec`` by its own name.
+        The inline half is the other reason this exists -- ``_package_digests`` records
+        only ``mf.ref`` entries, on the premise that an inline package "is baked into
+        the run's own recipe and cannot drift". Lazy packages falsified that premise
+        (ledgers 279/284/293): an inline lazy ``.gpkg`` holds a PATH and opens it at
+        build, so editing that file changed what the run built while ``drift()``
+        reported ``unchanged``.
+
+        **Only a LAZY package is re-hashed here**, because only a lazy package reads a
+        file at build. An eager one resolved at declaration and carries its records, so
+        its declaration hash IS what this run was built from, and copying it costs no
+        I/O -- which matters: hashing is 0.15% of the work it describes for an ordinary
+        GeoPackage, but a full read of a multi-gigabyte DEM is ~1.9 s, and re-hashing a
+        file the build never opened would be paying that for nothing.
+        """
+
+        built_from: dict[str, dict[str, str]] = {}
+        for key, spec in self._declared_entries(build_context):
+            hashes = {
+                path: sha
+                for path in source_paths(spec.inputs)
+                if (sha := source_fingerprint(self._anchor_source(path))) is not None
+            }
+            recorded = (spec.metadata or {}).get(SOURCE_SHA)
+            if not hashes and recorded is not None:
+                # EAGER: it read nothing at build, so its declaration hash is the
+                # honest answer, and re-reading the file would describe a read that
+                # did not happen. `source` for an eager package is PROVENANCE.
+                hashes = {str((spec.metadata or {}).get("source_path")): recorded}
+            if hashes:
+                built_from[key] = hashes
+        self.metadata = {**(self.metadata or {}), self.BUILT_FROM: built_from}
+
+    def _anchor_source(self, path: str) -> Path:
+        """A stored source path resolved the way the BUILD resolves it."""
+
+        resolved = Path(path)
+        if not resolved.is_absolute() and self.project_root is not None:
+            return Path(self.project_root) / resolved
+        return resolved
+
+    def _declared_entries(self, build_context: SpecBuildContext | None):
+        """Yield ``(key, PackageSpec)`` for every package this run declares.
+
+        The key is what the RUN addresses the package by, which is the same rule
+        ``ModelSpec.build`` uses to alias a resolved spec (ledger 280): a
+        ``PackageRef``'s key, an inline spec's own name.
+        """
+
+        if self.spec is None:
+            return
+        for model in getattr(self.spec, "models", ()) or ():
+            for entry in getattr(model, "packages", ()) or ():
+                if isinstance(entry, PackageSpec):
+                    yield entry.name, entry
+                    continue
+                key = getattr(entry, "key", None)
+                if key is None:
+                    continue
+                spec = (self._snapshot_specs or {}).get(key)
+                if spec is None and build_context is not None:
+                    try:
+                        spec = build_context.package_spec(key)
+                    except (KeyError, ValueError):
+                        spec = None
+                if spec is not None:
+                    yield key, spec
+
+    @property
+    def built_from(self) -> dict[str, dict[str, str]]:
+        """What each package's sources SAID when this run was built."""
+
+        return dict((self.metadata or {}).get(self.BUILT_FROM) or {})
 
     def _freeze(self) -> None:
         """Snapshot the resolved simulation beside the run, best effort.

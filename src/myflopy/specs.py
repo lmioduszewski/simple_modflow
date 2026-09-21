@@ -806,6 +806,31 @@ def repoint_source_paths(
     return value
 
 
+def source_paths(value: Any) -> list[str]:
+    """Every file path ``value`` names, in declaration order, without changing it.
+
+    Reuses :func:`repoint_source_paths` with a transform that RECORDS and returns
+    ``None`` -- "leave this path alone" -- so the walk is the same one the bundler and
+    the build-time anchor take. One walker means these three can never disagree about
+    what counts as a source, which they did within a day of being written apart.
+
+    ``write_target`` paths are excluded: a GRASS cache is a file this package WRITES,
+    and what it contains is decided by the inputs, which are listed.
+    """
+
+    found: list[str] = []
+
+    def _collect(path, *, role, notes):
+        """Record the path; never change it."""
+
+        if role != "write_target":
+            found.append(str(path))
+        return None
+
+    repoint_source_paths(value, _collect, notes=[])
+    return list(dict.fromkeys(found))
+
+
 def stamp_source_hashes(value: Any) -> Any:
     """Return ``value`` with each readable file path it names carrying a content hash.
 

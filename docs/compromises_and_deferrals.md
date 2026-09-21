@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 293 entries (294 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 294 entries (295 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 294 | Two runs either side of an edit were indistinguishable, and an INLINE package was invisible | 2026-09-21 |
 | 293 | A saved project now carries what a LAZY package reads, and the digest reads the file rather than its address | 2026-09-19 |
 | 292 | The bundler half-copied a shapefile, bundled the project into itself, and ran before the save was allowed | 2026-09-18 |
 | 291 | The importer lifted the river's water surface, not its bed | 2026-09-18 |
@@ -11733,3 +11734,73 @@ same day, which is the useful part of the result.
       the same pass instead of being deferred: `BoundarySource.fields` and
       `Surface.fields` are pinned now, because a field vanishing from either silently
       changes what `package_digest` fingerprints.
+
+294. **Two runs either side of an edit were indistinguishable, and an INLINE package was
+      invisible (2026-09-21).**
+      B2 item 10. The plan asks for five new drift states; measuring first changed what
+      got built, and the ledger records the re-scope rather than the plan text.
+      **What was already right, measured before touching anything:** on the taught path
+      -- `add_package` -> `mf.ref` -> `save()` -> a fresh `Project.load()` -- `drift()`
+      answers correctly: `unchanged|ok` untouched, `unchanged|ok` across save/load, and
+      `unchanged|edited` once the GeoPackage moves on, with a rebuild confirming the new
+      value. The two-column split of ledger 276 does its job. So `source-edited` and
+      `source-missing` are NOT built as `state` values: they exist as the `source`
+      column, and promoting them re-hides one of the two questions 276 separated.
+      **THE CORRECTNESS BUG.** `package_digests` records the LIBRARY's declaration, so
+      two runs of one simulation prepared either side of an edit recorded the IDENTICAL
+      digest while building CHD heads of 9.0 and 42.0 -- and `drift()` gave both the same
+      verdict, including the run that AGREES with the file. A run now records
+      `metadata['built_from']`: the content hash of every source it actually READ, and
+      the `source` column prefers it over the library memo. The two runs read `edited`
+      and `ok` respectively now.
+      **AND AN INLINE PACKAGE HAD NO ROW AT ALL.** `_package_digests` records only
+      `mf.ref` entries, on the premise stated in its own docstring that an inline package
+      "is baked into the run's own recipe and cannot drift". Ledgers 279/284/293
+      falsified that premise: an inline lazy `.gpkg` holds a PATH and opens it at build.
+      Measured -- edit the file and `drift()` reported `unchanged` with `source` `—`
+      ("names no source") while the rebuild produced 42.0 instead of 9.0. Since
+      `built_from` is keyed by the DECLARED entry -- a `PackageRef`'s library key, an
+      inline spec's own name (ledger 280's rule) -- the inline half comes free. Such a
+      row reads `state` `—`: there is no key, so the question "does this key still mean
+      what the run used" has nothing to answer about, and it says so rather than
+      answering `unchanged`.
+      **ONLY A LAZY PACKAGE IS RE-HASHED AT BUILD**, because only a lazy package reads a
+      file there. An eager one resolved at declaration and carries records, so its
+      declaration hash IS what the run was built from, and re-reading would describe a
+      read that never happened -- `source` for an eager package is PROVENANCE, not
+      buildability, and the docs now say so (user decision). That distinction is also
+      what keeps the cost honest: hashing is **0.15%** of the work it describes for an
+      ordinary GeoPackage (0.07 ms against a 46.4 ms resolve; 1.4-2.4 ms on the real Ten
+      Trails files), but a full read of the 3.7 GB LIDAR DEM is **~1.9 s at 2 GB/s**,
+      and the build only SAMPLES that raster -- so hashing a file the build never opened
+      would be the dominant cost of describing it.
+      **Cost this entry also states because the previous one did not measure it:**
+      ledger 293's `stamp_source_hashes` put a full read behind `mf.disv(stack)` --
+      **2.09 s** on that same 3.7 GB DEM. `Surface.raster(path)` itself is untouched at
+      **2.4 us**, identical for a nonexistent path, so the placement argument holds; the
+      declaration of the PACKAGE is where the cost landed.
+      **A package naming several files gets ONE cell**, so it reports the WORST with a
+      count -- `edited (1 of 2)`, `missing (1 of 2)` -- because a lazy discretization
+      names one file per surface plus the top, and a stack whose single raster moved must
+      not read clean because its others did not.
+      **`built_from` lives in `metadata`, not at the top level of the manifest**:
+      `save_manifest` writes an explicit key list and `from_dict` reads one, so a
+      top-level key is dropped by any rewrite from code that does not know it -- and
+      `_record_status` rewrites on every status change. `metadata` round-trips wholesale.
+      **NOT BUILT, and why.** `grid-changed` and `unfrozen` are per-RUN and per-MODEL
+      facts; `drift()` is per (run, package key) and has no `model` column, so either
+      would fan one fact across every row -- they belong in `runs.summary()`, which has
+      one row per run. `legacy-digest` has no era marker to read (no version field exists
+      anywhere in `src/`, and `myflopy.__version__` is a frozen "0.1.0"), so every
+      existing record would have to be ASSUMED into an era; measured, 0 of 84 real stored
+      digests move under HEAD, so it would be insurance about the NEXT break rather than
+      a fix for this one.
+      **A scoping error worth recording, since it nearly set the scope.** The first pass
+      leaned on the user's Ten Trails project, where `drift()` emits 88 rows of which 84
+      read `removed` and 0 could ever read `unchanged` -- because `specs/packages` and
+      `specs/simulations` are EMPTY, the project having been script-built and never
+      saved. The user's correction: those runs predate this system and are not the
+      standard. The numbers are real and the inference was not: a legacy artifact was
+      being allowed to define normal, which is [[a-measurement-belongs-to-what-it-measured]]
+      one level up. Re-measuring on the taught path is what showed the verb already works
+      there, and narrowed this commit to the two defects that survive it.
