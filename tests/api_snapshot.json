@@ -1127,6 +1127,7 @@
     ],
     "ModelSpec.members": [
       "build",
+      "coverage_on",
       "from_dict",
       "move_report",
       "package",
@@ -1310,6 +1311,7 @@
     "SimulationSpec.members": [
       "build",
       "build_flopy",
+      "coverage_on",
       "derive",
       "from_dict",
       "from_yaml",

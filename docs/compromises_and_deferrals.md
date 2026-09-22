@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 297 entries (298 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 298 entries (299 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 298 | What a move would have no data for, in ft2 rather than as a coverage fraction | 2026-09-22 |
 | 297 | Every input field summed, including the water levels | 2026-09-22 |
 | 296 | An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine | 2026-09-22 |
 | 295 | A per-cell array moved to another mesh and the report called it `unchanged` | 2026-09-22 |
@@ -11950,3 +11951,43 @@ same day, which is the useful part of the result.
       **Not done:** a mean HIDES that a cell held several records, where the old sum at
       least produced a number a reader might question. Reporting multiplicity beside the
       value is a view-layer change of its own and is not attempted here.
+
+298. **What a move would have no data for, in ft2 rather than as a coverage fraction
+      (2026-09-22).**
+      B3's C4: the measurement to read BEFORE ``with_grid``. ``move_report`` says what
+      happens to each PACKAGE; this says what the new mesh would have nothing for at all.
+      Pure geometry, so it is the same number whatever is being moved:
+      ``model.coverage_on(grid)`` and ``sim.coverage_on(grid, on=)``.
+      **AREA IN MODEL UNITS, and that was the user's call** -- it dissolves a tolerance
+      question rather than answering it. Polygon intersection is exact to ~1e-15
+      relative, so on a mesh refined over the SAME footprint, where nothing is missing,
+      comparing ``coverage < 1`` flags **765 of 2,352 cells (32.5%)** as short by 4e-15
+      of themselves; at 1e-12 it flags zero. Any `uncovered=` default built on that
+      fraction would have been meaningless without a tolerance nobody had specified. The
+      same residual in area is ~1e-11 ft2 and reads as the nothing it is, and a threshold
+      a modeller might actually want ("more than 50 ft2 of this cell has no data") is
+      then expressible in units they can judge. Measured against a hand-checkable case:
+      a footprint grown 1,200 ft eastward reports 3,600,000 ft2 uncovered, which is
+      exactly 1,200 x 3,000.
+      **A DISJOINT PAIR IS A DIFFERENT FACT FROM A GAP**, and nothing else can tell them
+      apart. ``grid_pin`` hashes CONNECTIVITY only, so the same mesh shifted to a local
+      origin -- what a USG conversion produces by design (ledger 159), and B3's headline
+      customer -- pins IDENTICALLY while overlapping nothing. Reporting that as "100%
+      uncovered" is what would invite C6's ``nearest`` to fill every cell from a source
+      1.5 million feet away. ``CoverageReport.disjoint`` says so instead, and the two
+      boxes and both CRSs are worded by ``where_they_are``, the helper ledger 211
+      already uses for every other miss in this library.
+      **The noise floor is RELATIVE** (1e-9 of a cell's own area), so it means the same
+      on a 4 ft2 cell and a 40,000 ft2 one, and it sits five orders of magnitude above
+      the measured residual -- it can only ever hide something already invisible.
+      **A refusal rather than a guess** for a model carrying no grid: a deferred-grid
+      model has nothing to overlay, and "nothing is covered" would be indistinguishable
+      from a real total miss.
+      **One line was removed because a mutation could not kill it.** The first draft
+      clipped the per-cell shortfall at zero before thresholding it. Removing the clip
+      changed no test -- and could not, because the threshold excludes a negative
+      residual for the same reason it excludes a tiny positive one. It read as careful
+      and was unfalsifiable, which is the same defect as an assertion that certifies.
+      **Not built here:** nothing CONSUMES this yet. It reports; C6's engine is what will
+      act on it, with ``uncovered="nearest"`` as the default the user chose and the frame
+      guard above as what keeps that safe.

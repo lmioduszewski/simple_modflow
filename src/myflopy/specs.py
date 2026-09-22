@@ -926,6 +926,25 @@ def _carry_grid(original: Any, rebuilt: Any) -> Any:
 _RECIPE_OWNED_OPTIONS = frozenset({"stress_period_data", "boundnames"})
 
 
+def _polygons_of(grid: Any) -> Any:
+    """The cell polygons of whatever a caller passed as a grid.
+
+    A built grid, a `GridSpec` (resolved), or a `GridRef` are all things a caller
+    reasonably has in hand at a move; only the first carries polygons already.
+    """
+
+    polys = getattr(grid, "gdf_vorPolys", None)
+    if polys is not None:
+        return polys
+    if isinstance(grid, GridSpec):
+        return grid.resolve().gdf_vorPolys
+    raise TypeError(
+        f"coverage needs a built grid or a GridSpec, not {type(grid).__name__}. A "
+        "`mf.grid_ref(key)` names a library entry and is resolved at build, so pass "
+        "`project.grid(key)` instead."
+    )
+
+
 def _relazified(package: Any) -> Any:
     """An eagerly declared `.gpkg` package, rebuilt as its lazy self.
 
@@ -3476,6 +3495,39 @@ class ModelSpec:
             context=replace(self.context, grid=None, domain=None, surfaces=None),
         )
 
+    def coverage_on(self, grid: Any) -> Any:
+        """How much of ``grid`` this model's mesh has NO data under, in model units.
+
+        Read it BEFORE `with_grid`, because this is the question `move_report` cannot
+        answer: that one says what happens to each PACKAGE, and this says what the new
+        mesh would have no data for at all. It is pure geometry and knows nothing about
+        packages, so it is the same number whatever is being moved.
+
+        Reported as AREA in the model's own units rather than as a coverage fraction
+        (user decision, ledger 298): a fraction needs a tolerance before it means
+        anything, and on a perfectly nesting refinement `coverage < 1` flags a third of
+        the cells as short by 4e-15 of themselves.
+
+        Raises rather than guessing when this model carries no grid to compare against:
+        a DEFERRED-grid model has nothing to overlay, and answering "nothing is covered"
+        would be indistinguishable from a real total miss.
+        """
+
+        # DEFERRED, and measured worth it: hoisting this works, but it pushes `specs`
+        # from import layer 1 to 2 and 54 modules with it -- and it would make a bare
+        # `import myflopy.specs` pull geopandas, which almost everything imports and
+        # almost nothing needs geometry from.
+        from myflopy.modflow.mf6.grid.geometry import cell_coverage
+
+        old = getattr(self.context, "grid", None)
+        if old is None:
+            raise ValueError(
+                f"Model {self.name!r} carries no grid, so there is nothing to measure "
+                "coverage against. Declare it with `context=ModelContext(grid=...)`, or "
+                "resolve its GridSpec first -- a deferred grid has no mesh until build."
+            )
+        return cell_coverage(old.gdf_vorPolys, _polygons_of(grid))
+
     def move_report(self, *, grid_free: tuple[str, ...] | list[str] = ()) -> list[dict[str, str]]:
         """What a grid move would do to each package, readable BEFORE the build.
 
@@ -4161,6 +4213,22 @@ class SimulationSpec:
             for model in models
             for row in model.move_report(grid_free=grid_free)
         ]
+
+    def coverage_on(self, grid: Any, *, on: str | None = None) -> dict[str, Any]:
+        """Per model, how much of ``grid`` has no data under it -- in model units.
+
+        One entry per model, because a coupled simulation's models share a mesh
+        (ledger 268) but a simulation can hold models that do not. Read it before
+        `with_grid`; `move_report` says what happens to each PACKAGE, this says what
+        the new mesh would have nothing for.
+        """
+
+        models = [self.model(on)] if on is not None else list(self.models)
+        return {
+            model.name: model.coverage_on(grid)
+            for model in models
+            if getattr(model.context, "grid", None) is not None
+        }
 
     def _replace_grid_compat(
         self, model_name: str, grid: GridSpec | GridRef | Any

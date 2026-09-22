@@ -340,7 +340,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3733 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3737 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
@@ -454,7 +454,18 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   and the refusal names the edit instead of telling you to re-declare what you just
   typed),
   `unchanged`. **It reports and stamps; the BUILD refuses**, so read
-  `sim.move_report()` before `prepare_run`, and `run.resolution` after. `on=None`
+  `sim.move_report()` before `prepare_run`, and `run.resolution` after.
+  **What the new mesh would have NO DATA for is `model.coverage_on(grid)` /
+  `sim.coverage_on(grid, on=)`** (ledger 298) -- pure geometry, so the same number
+  whatever moves. Reported as **AREA IN MODEL UNITS**, not a coverage fraction: polygon
+  intersection is exact to ~1e-15, so on a mesh refined over the SAME footprint
+  `coverage < 1` flags 765 of 2,352 cells (32.5%) short by 4e-15 of themselves, where
+  the same residual in area is ~1e-11 ft2 and reads as zero. A footprint grown 1,200 ft
+  east reports 3,600,000 ft2, which is checkable by hand. **A DISJOINT pair is a
+  separate verdict, not "100% uncovered"** -- `grid_pin` is connectivity-only, so the
+  same mesh in another frame (what a USG local origin produces) pins IDENTICALLY while
+  overlapping nothing, and calling that a gap is what would invite filling every cell
+  from a source 1.5e6 ft away. A model with no grid REFUSES rather than answering. `on=None`
   moves EVERY model with a grid, because coupled models must share a mesh (ledger
   268); `on=` is the spelling that can strand a sibling. `grid_free=` is the caller
   asserting mesh-independence. The stamp is the only thing behind a hand-typed cellid

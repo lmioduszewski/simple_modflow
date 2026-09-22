@@ -611,3 +611,96 @@ def test_the_OLD_pin_does_not_survive_the_relazify(tmp_path):
     assert GRID_PIN not in moved.metadata
     assert "coverage" not in moved.metadata
     assert MOVE_RECIPE in moved.metadata, "the recipe itself stays, for the next move"
+
+
+# --- what the new mesh would have nothing for (ledger 298) ------------------- #
+
+
+def _square_grid(path, size, max_area, workspace):
+    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, *size)], crs=2927).to_file(path)
+    return mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=str(path)), max_area=max_area
+    ).resolve(workspace=str(workspace))
+
+
+def test_a_clean_refinement_reports_NO_uncovered_area(tmp_path):
+    """The case that decided the unit: area, not a coverage fraction.
+
+    On a mesh refined over the SAME footprint nothing is missing, but polygon
+    intersection is exact only to ~1e-15 relative -- so comparing `coverage < 1` flags
+    a THIRD of the cells as short by 4e-15 of themselves. In area that residual is
+    ~1e-11 ft2 and reads as the nothing it is.
+    """
+
+    from myflopy.modflow.mf6.grid.geometry import cell_coverage
+
+    coarse = _square_grid(tmp_path / "b.gpkg", (3000, 3000), 120_000.0, tmp_path / "c")
+    fine = mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=str(tmp_path / "b.gpkg")), max_area=4_000.0
+    ).resolve(workspace=str(tmp_path / "f"))
+
+    assert fine.ncpl > 5 * coarse.ncpl, "the guard: this must really be a refinement"
+
+    report = cell_coverage(coarse.gdf_vorPolys, fine.gdf_vorPolys)
+
+    assert report.uncovered == {}
+    assert report.uncovered_area == 0.0
+    assert not report.disjoint
+    assert report.total_area == pytest.approx(9_000_000.0, rel=1e-9)
+
+
+def test_a_GROWN_footprint_reports_the_area_it_grew_by(tmp_path):
+    """And the number is checkable by hand, which is the point of model units."""
+
+    from myflopy.modflow.mf6.grid.geometry import cell_coverage
+
+    old = _square_grid(tmp_path / "a.gpkg", (3000, 3000), 120_000.0, tmp_path / "a")
+    new = _square_grid(tmp_path / "b.gpkg", (4200, 3000), 120_000.0, tmp_path / "b")
+
+    report = cell_coverage(old.gdf_vorPolys, new.gdf_vorPolys)
+
+    # The strip the footprint grew by: 1,200 ft east x 3,000 ft north.
+    assert report.uncovered_area == pytest.approx(1200 * 3000, rel=1e-6)
+    assert report.total_area == pytest.approx(4200 * 3000, rel=1e-9)
+    assert report.uncovered, "and it names WHICH cells, not just a total"
+    assert "no old cell under it" in report.summary()
+
+
+def test_a_DIFFERENT_FRAME_is_disjoint_rather_than_100_percent_uncovered(tmp_path):
+    """Two different facts, and `grid_pin` cannot tell them apart.
+
+    It hashes CONNECTIVITY only, so the same mesh shifted to a local origin -- which is
+    what a USG conversion produces by design -- pins IDENTICALLY while overlapping
+    nothing. Reporting that as "100% uncovered" would invite filling every cell from
+    the nearest old one, 1.5 million feet away.
+    """
+
+    from shapely import affinity
+
+    from myflopy.grid_identity import grid_pin
+    from myflopy.modflow.mf6.grid.geometry import cell_coverage
+
+    grid = _square_grid(tmp_path / "a.gpkg", (3000, 3000), 120_000.0, tmp_path / "a")
+    shifted = grid.gdf_vorPolys.copy()
+    shifted["geometry"] = grid.gdf_vorPolys.geometry.apply(
+        lambda g: affinity.translate(g, 1_340_000.0, 714_000.0)
+    )
+
+    report = cell_coverage(grid.gdf_vorPolys, shifted)
+
+    assert report.disjoint
+    assert "share NO area" in report.summary()
+    assert "1,340,000.0" in report.where, "both boxes, so the frame shift is visible"
+    assert grid_pin(grid) is not None, (
+        "and the pin cannot see it: connectivity-only is translation-invariant"
+    )
+
+
+def test_coverage_REFUSES_a_model_with_no_grid(tmp_path):
+    """Answering "nothing is covered" would be indistinguishable from a real miss."""
+
+    grid = _square_grid(tmp_path / "a.gpkg", (3000, 3000), 120_000.0, tmp_path / "a")
+    deferred = mf.gwf("d", packages=[mf.npf(k=1.0)])
+
+    with pytest.raises(ValueError, match="no grid"):
+        deferred.coverage_on(grid)

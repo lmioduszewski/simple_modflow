@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1051,3 +1052,123 @@ def adjust_top_btm_overlaps(
     column.update(new_bottoms)
     elev_df[layer_bottom_name] = column
     return vor.reconcile_surfaces(df=elev_df)
+
+
+#: Below this FRACTION of a cell's own area, an uncovered sliver is arithmetic noise
+#: rather than a gap. Polygon intersection is exact to ~1e-15 relative, so on a mesh
+#: that nests perfectly the residual measured 4e-15 of a cell -- about 1e-11 ft2 on a
+#: 3,800 ft2 cell. Relative rather than absolute so it means the same on a 4 ft2 cell
+#: and a 40,000 ft2 one, and five orders of magnitude above the noise so it can only
+#: ever hide something already invisible (ledger 298).
+_COVERAGE_NOISE = 1e-9
+
+
+@dataclass(frozen=True)
+class CoverageReport:
+    """How much of a NEW mesh has no data under it on an OLD one.
+
+    Reported as AREA IN THE MODEL'S OWN UNITS (user decision, 2026-09-22), not as a
+    coverage fraction. A fraction needs a tolerance before it means anything -- on a
+    perfectly nesting 237 -> 2,352 refinement, comparing ``coverage < 1`` flags 765
+    cells (32.5%) that are short by 4e-15 of themselves, and zero at 1e-12. Area
+    dissolves that: the same residual is ~1e-11 ft2, which reads as the nothing it is,
+    and a threshold a modeller might actually want is then expressible in ft2 rather
+    than as an epsilon.
+    """
+
+    #: Total area of the new mesh, in the model's units squared.
+    total_area: float
+    #: Area of the new mesh with no old cell beneath it.
+    uncovered_area: float
+    #: Per new cell, the area not covered -- only cells above the noise floor.
+    uncovered: dict[int, float]
+    #: True when the two meshes share no area at all, which is a FRAME mismatch
+    #: rather than a coverage gap: `grid_pin` is connectivity-only, so the same mesh
+    #: in another frame pins IDENTICALLY while overlapping nothing.
+    disjoint: bool
+    #: Both bounding boxes and both CRSs, worded once by `where_they_are`.
+    where: str
+
+    @property
+    def fraction_uncovered(self) -> float:
+        """Uncovered area as a fraction of the new mesh, for a one-number summary."""
+
+        return self.uncovered_area / self.total_area if self.total_area else 0.0
+
+    def summary(self) -> str:
+        """One sentence naming the area, the cells, and the worst of them."""
+
+        if self.disjoint:
+            return f"the two meshes share NO area -- {self.where}"
+        if not self.uncovered:
+            return f"every cell of the new mesh has data under it ({self.total_area:,.0f} covered)"
+        worst = max(self.uncovered, key=self.uncovered.get)
+        return (
+            f"{self.uncovered_area:,.1f} of {self.total_area:,.1f} "
+            f"({100 * self.fraction_uncovered:.2f}%) of the new mesh has no old cell "
+            f"under it, across {len(self.uncovered)} cells; the worst is cell {worst} "
+            f"at {self.uncovered[worst]:,.1f}"
+        )
+
+
+def cell_coverage(old_polys, new_polys) -> CoverageReport:
+    """How much of ``new_polys`` has no ``old_polys`` beneath it.
+
+    The measurement a grid move should be read BEFORE it happens: what a remap would
+    have no data for. It answers about GEOMETRY only and knows nothing about packages,
+    so it is the same number whatever is being moved.
+
+    ``gpd.overlay(..., how="intersection")`` rather than :func:`cell_shares`: measured
+    on a 237 -> 2,352 refinement the overlay conserves to 5.6e-16 while `cell_shares`,
+    which exists to divide ONE feature among cells and applies a sliver rule doing it,
+    loses pieces at scale. Both are right for their own job.
+
+    **A disjoint pair is reported, not returned as "100% uncovered".** Two meshes in
+    different frames overlap in nothing, and that is a different fact from a mesh grown
+    past its data -- `grid_pin` cannot tell them apart because it hashes connectivity
+    only, so the same mesh shifted to a local origin pins IDENTICALLY (ledger 298).
+    """
+
+    import geopandas as gpd
+
+    new_area = new_polys.geometry.area.to_numpy()
+    total = float(new_area.sum())
+    # `where_they_are` supplies "The {noun} span ..." itself, so the noun carries no
+    # article -- and it words the two boxes and the two CRSs the same way every other
+    # miss in this library does (ledger 211), which is the point of borrowing it.
+    where = where_they_are(
+        old_polys, new_polys, noun="old mesh cells",
+        source_crs=getattr(old_polys, "crs", None), grid_crs=getattr(new_polys, "crs", None),
+    )
+    pieces = gpd.overlay(
+        old_polys.reset_index(names="_old")[["_old", "geometry"]],
+        new_polys.reset_index(names="_new")[["_new", "geometry"]],
+        how="intersection",
+        keep_geom_type=True,
+    )
+    if pieces.empty:
+        return CoverageReport(total, total, {}, disjoint=True, where=where)
+
+    covered = np.bincount(
+        pieces["_new"].to_numpy(),
+        weights=pieces.geometry.area.to_numpy(),
+        minlength=len(new_polys),
+    )
+    # NOT clipped at zero. An intersection can overshoot its own cell by ~1e-15 of it,
+    # so `short` can be negative -- and the threshold below excludes a negative for the
+    # same reason it excludes a tiny positive. A `np.maximum(..., 0.0)` here read as
+    # careful and was unfalsifiable: a mutation removing it changed no test, because it
+    # could not change an outcome (ledger 298).
+    short = new_area - covered
+    uncovered = {
+        int(cell): float(short[position])
+        for position, cell in enumerate(new_polys.index)
+        if short[position] > _COVERAGE_NOISE * new_area[position]
+    }
+    return CoverageReport(
+        total_area=total,
+        uncovered_area=float(sum(uncovered.values())),
+        uncovered=uncovered,
+        disjoint=False,
+        where=where,
+    )
