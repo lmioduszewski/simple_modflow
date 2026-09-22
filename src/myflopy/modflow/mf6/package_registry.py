@@ -50,6 +50,12 @@ def advanced_output_filerecords(
     return {key: f"{model_name}_{name}_{suffix}" for key, suffix in suffixes.items()}
 
 
+#: The kinds a :class:`FieldSpec` may declare. A closed set, checked at construction,
+#: because a typo in a kind would silently fall through to the intensive default and
+#: quietly change how a field aggregates.
+_FIELD_KINDS = frozenset({"extensive", "elevation", "intensive"})
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """Registry metadata for one package input field."""
@@ -58,7 +64,39 @@ class FieldSpec:
     label: str | None = None
     colorscale: str | None = None
     fill_value: float = 0.0
-    agg: str = "sum"
+    #: What the number IS, which decides how several records on one cell combine and
+    #: how the field would survive a regrid. ONE declaration, three consumers: `agg`
+    #: below, and `geopackage`'s elevation and extensive sets (ledger 297).
+    #:
+    #: ``"extensive"``  a flux or a conductance -- MF6 superposes them, so they ADD;
+    #: ``"elevation"``  a water level or an invert, which `mf.Spread` is refused on;
+    #: ``"intensive"``  a length, a fraction or a coefficient -- a level, not an amount.
+    kind: str = "intensive"
+
+    def __post_init__(self) -> None:
+        """Refuse a kind nothing downstream knows how to treat."""
+
+        if self.kind not in _FIELD_KINDS:
+            raise ValueError(
+                f"FieldSpec {self.name!r}: kind {self.kind!r} is not one of "
+                f"{sorted(_FIELD_KINDS)}."
+            )
+
+    @property
+    def agg(self) -> str:
+        """How several records on ONE cell combine for a map or table.
+
+        DERIVED from :attr:`kind` rather than declared beside it, because two fields
+        that must agree are two fields that drift. Every entry read ``"sum"`` before,
+        elevations included -- so a cell holding two CHD records of 100.0 and 102.0
+        rendered **202.0** on `packages.chd.inputs.head.map()` (ledger 297). Summing a
+        flux is right; summing a water level is not.
+
+        A caller who wants something else passes ``agg=`` at the call, which every map
+        and table already accepts -- this is the DEFAULT, not a restriction.
+        """
+
+        return "sum" if self.kind == "extensive" else "mean"
 
 
 @dataclass(frozen=True)
@@ -230,7 +268,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="recharge",
         colorscale="earth",
         inputs={
-            "recharge": FieldSpec("recharge", label="Recharge", colorscale="earth"),
+            "recharge": FieldSpec("recharge", label="Recharge", colorscale="earth", kind="extensive"),
         },
         results={
             "q": ResultSpec("q", budget_text="RCH", value_name="q_gwf", colorscale="RdBu"),
@@ -257,7 +295,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="head",
         colorscale="earth",
         inputs={
-            "head": FieldSpec("head", label="Constant head", colorscale="earth"),
+            "head": FieldSpec("head", label="Constant head", colorscale="earth", kind="elevation"),
         },
         results={
             "q": ResultSpec("q", budget_text="CHD", value_name="q_gwf", colorscale="RdBu"),
@@ -284,8 +322,8 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="elev",
         colorscale="earth",
         inputs={
-            "elev": FieldSpec("elev", label="Drain elevation", colorscale="earth"),
-            "cond": FieldSpec("cond", label="Drain conductance", colorscale="earth"),
+            "elev": FieldSpec("elev", label="Drain elevation", colorscale="earth", kind="elevation"),
+            "cond": FieldSpec("cond", label="Drain conductance", colorscale="earth", kind="extensive"),
         },
         results={
             "q": ResultSpec("q", budget_text="DRN", value_name="q_gwf", colorscale="RdBu"),
@@ -312,8 +350,8 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="bhead",
         colorscale="earth",
         inputs={
-            "bhead": FieldSpec("bhead", label="Boundary head", colorscale="earth"),
-            "cond": FieldSpec("cond", label="Boundary conductance", colorscale="earth"),
+            "bhead": FieldSpec("bhead", label="Boundary head", colorscale="earth", kind="elevation"),
+            "cond": FieldSpec("cond", label="Boundary conductance", colorscale="earth", kind="extensive"),
         },
         results={
             "q": ResultSpec("q", budget_text="GHB", value_name="q_gwf", colorscale="RdBu"),
@@ -340,9 +378,9 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="stage",
         colorscale="earth",
         inputs={
-            "stage": FieldSpec("stage", label="River stage", colorscale="earth"),
-            "cond": FieldSpec("cond", label="Riverbed conductance", colorscale="earth"),
-            "rbot": FieldSpec("rbot", label="River bottom", colorscale="earth"),
+            "stage": FieldSpec("stage", label="River stage", colorscale="earth", kind="elevation"),
+            "cond": FieldSpec("cond", label="Riverbed conductance", colorscale="earth", kind="extensive"),
+            "rbot": FieldSpec("rbot", label="River bottom", colorscale="earth", kind="elevation"),
         },
         results={
             "q": ResultSpec("q", budget_text="RIV", value_name="q_gwf", colorscale="RdBu"),
@@ -367,7 +405,7 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="q",
         colorscale="RdBu",
         inputs={
-            "q": FieldSpec("q", label="Well flow", colorscale="RdBu"),
+            "q": FieldSpec("q", label="Well flow", colorscale="RdBu", kind="extensive"),
         },
         results={
             "q": ResultSpec("q", budget_text="WEL", value_name="q_gwf", colorscale="RdBu"),
@@ -394,8 +432,8 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         default_input="rate",
         colorscale="earth",
         inputs={
-            "surface": FieldSpec("surface", label="ET surface", colorscale="earth"),
-            "rate": FieldSpec("rate", label="Maximum ET rate", colorscale="earth"),
+            "surface": FieldSpec("surface", label="ET surface", colorscale="earth", kind="elevation"),
+            "rate": FieldSpec("rate", label="Maximum ET rate", colorscale="earth", kind="extensive"),
             "depth": FieldSpec("depth", label="Extinction depth", colorscale="earth"),
         },
         results={
@@ -422,8 +460,8 @@ _PACKAGE_EXPLORER_SPECS: dict[str, PackageExplorerSpec] = {
         ),
         kind="uzf",
         inputs={
-            "finf": FieldSpec("finf", label="UZF infiltration", colorscale="earth"),
-            "pet": FieldSpec("pet", label="Potential evapotranspiration", colorscale="earth"),
+            "finf": FieldSpec("finf", label="UZF infiltration", colorscale="earth", kind="extensive"),
+            "pet": FieldSpec("pet", label="Potential evapotranspiration", colorscale="earth", kind="extensive"),
             "extdp": FieldSpec("extdp", label="ET extinction depth", colorscale="earth"),
             "extwc": FieldSpec("extwc", label="ET extinction water content", colorscale="earth"),
             "ha": FieldSpec("ha", label="Surface depression storage depth", colorscale="earth"),

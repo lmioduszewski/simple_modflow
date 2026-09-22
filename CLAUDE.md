@@ -49,6 +49,17 @@ The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every 
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
 `map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
 method pair; add a view class exposed as a noun property.
+**Several records on ONE cell combine by what the number IS** (ledger 297,
+2026-09-22): `FieldSpec.kind` -- `extensive` (a flux or conductance; MF6 superposes
+them, so they ADD), `elevation`, `intensive` -- and `agg` is DERIVED from it, never
+declared beside it. Every entry read `"sum"` before, elevations included, so two CHD
+records of 100.0 and 102.0 rendered **202.0**. Two namespaces exist and three of seven
+packages differ between them: `_ELEVATION_FIELDS`/`_EXTENSIVE_FIELDS` are keyed by the
+HELPER's argument names (`drn.elevation`, `ghb.head`, `wel.rate`), NOT the record names
+(`drn.elev`, `ghb.bhead`, `wel.q`) -- a set rebuilt against `FieldSpec` names matches
+NOTHING for those three and raises nothing. `_EXTENSIVE_FIELDS` is deliberately a
+STRICT SUBSET of `kind == "extensive"`: it asks whether the declared column holds a
+TOTAL, which an unwrapped conductance does not.
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
@@ -329,7 +340,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3727 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3733 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —

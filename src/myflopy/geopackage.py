@@ -560,9 +560,22 @@ _FULLY_COVERED = 1.0 - 1e-9
 #: ``corr(cond, cell area) ~ 0`` over 205 real DRN records, so it is not a leakance and
 #: summing it says nothing. Everything else reports per feature, with no total, unless
 #: the caller wrapped it in ``mf.Spread``, which IS a declaration that it is extensive.
+#: Deliberately NOT ``_fields_of_kind("extensive")``, which is EIGHT fields. Two
+#: different questions share the word: the registry's ``kind`` asks "do several records
+#: on one cell ADD?" (a conductance does), while this asks "does the DECLARED column
+#: hold a total we can report a shortfall against?" -- and an unwrapped conductance does
+#: not, because it is copied WHOLE to every covered cell, so declared-minus-written
+#: calls a clean build a -300% loss (ledger 169/288). Collapsing them would put a false
+#: loss figure on every drn/ghb/riv warning (ledger 297).
 _EXTENSIVE_FIELDS = {("wel", "rate")}
 
-#: The ``(package, record field)`` pairs that are ELEVATIONS. ``Spread`` divides a
+#: The ``(package, GPKG-ARGUMENT field)`` pairs that are ELEVATIONS -- ``drn.elevation``
+#: and ``ghb.head``, which are the names the HELPERS take, NOT the record names
+#: ``drn.elev`` and ``ghb.bhead``. Both sets here and both their call sites use the
+#: helper namespace; three of the seven packages differ between the two, so a rewrite
+#: keyed on ``FieldSpec`` names would silently match NOTHING for those three rather
+#: than failing (ledger 297). Derived from the registry below so the list cannot drift
+#: from the descriptor that declares each field's kind. ``Spread`` divides a
 #: feature's total across the cells it covers, which is meaningful for a flux or a
 #: conductance and MEANINGLESS for an elevation: measured, ``elevation=mf.Spread("elev")``
 #: on a declared 75.0 wrote 2.06 to 11.87 -- the elevation multiplied by each cell's area
@@ -570,14 +583,25 @@ _EXTENSIVE_FIELDS = {("wel", "rate")}
 #: Ledger 274 refused exactly this on the ARRAY form and never reached the list form.
 #: ``rch.recharge`` is deliberately absent: a rate column that really holds a total volume
 #: IS spreadable, which is what ``Spread``'s own docstring teaches.
-_ELEVATION_FIELDS = {
-    ("chd", "head"),
-    ("ghb", "head"),
-    ("drn", "elevation"),
-    ("riv", "stage"),
-    ("riv", "rbot"),
-    ("evt", "surface"),
-}
+def _fields_of_kind(kind: str) -> frozenset[tuple[str, str]]:
+    """``(package, gpkg-argument field)`` for every field the registry calls ``kind``.
+
+    The registry declares kinds against RECORD names; these sets are keyed by the
+    helper's argument names. The two are positionally aligned -- ``_bc_from_features``
+    asserts exactly that before building a record -- so the translation is a zip, and
+    doing it here once is what keeps the namespaces from being confused by hand.
+    """
+
+    found = set()
+    for package, descriptor in _PACKAGE_EXPLORER_SPECS.items():
+        gpkg_names = tuple(descriptor.gpkg_defaults or ())
+        for position, spec in enumerate((descriptor.inputs or {}).values()):
+            if spec.kind == kind and position < len(gpkg_names):
+                found.add((package, gpkg_names[position]))
+    return frozenset(found)
+
+
+_ELEVATION_FIELDS = _fields_of_kind("elevation")
 
 
 def refuse_spread_on_elevation(package: str, values) -> None:
@@ -589,14 +613,17 @@ def refuse_spread_on_elevation(package: str, values) -> None:
     would have covered only half the API (ledger 289).
     """
 
-    for record_field, spec in (values or {}).items():
-        if isinstance(spec, Spread) and (package, record_field) in _ELEVATION_FIELDS:
+    # `values` is keyed by the HELPER's argument names, which is the namespace
+    # `_ELEVATION_FIELDS` uses. Named for it, because calling it `record_field` is what
+    # made the other namespace look authoritative here (ledger 297).
+    for gpkg_field, spec in (values or {}).items():
+        if isinstance(spec, Spread) and (package, gpkg_field) in _ELEVATION_FIELDS:
             raise TypeError(
-                f"mf.{package}.gpkg: {record_field}=mf.Spread(...) divides a feature's "
-                f"total across the cells it covers, and {record_field} is an ELEVATION -- "
+                f"mf.{package}.gpkg: {gpkg_field}=mf.Spread(...) divides a feature's "
+                f"total across the cells it covers, and {gpkg_field} is an ELEVATION -- "
                 "there is no total to divide, so each cell would get a FRACTION of the "
                 "elevation you declared (measured: a declared 75.0 written as 2.06 to "
-                f"11.87). Pass the column directly ({record_field}={spec.field!r}), or "
+                f"11.87). Pass the column directly ({gpkg_field}={spec.field!r}), or "
                 "mf.CellSurfaceOffset(...) to place it relative to a surface."
             )
 
@@ -1331,12 +1358,17 @@ class GeoPackageSource:
         leakance and does not divide by area).
         """
 
-        record_fields = tuple(_PACKAGE_EXPLORER_SPECS[package].gpkg_defaults) if package else ()
+        # The HELPER's argument names (`drn.elevation`), not the record names
+        # (`drn.elev`). This local was called `record_fields`, which is the other
+        # namespace and reads as authoritative -- it is what sent a reader to conclude
+        # the branch below was dead code, since `wel`'s record field is `q` and the set
+        # says `rate` (ledger 297). Both are the helper namespace and they match.
+        gpkg_fields = tuple(_PACKAGE_EXPLORER_SPECS[package].gpkg_defaults) if package else ()
         for position, spec in enumerate(fields):
-            record_field = record_fields[position] if position < len(record_fields) else None
+            gpkg_field = gpkg_fields[position] if position < len(gpkg_fields) else None
             if isinstance(spec, Spread):
                 column = spec.field if spec.mode == "clip" else None
-            elif (package, record_field) in _EXTENSIVE_FIELDS and isinstance(spec, str):
+            elif (package, gpkg_field) in _EXTENSIVE_FIELDS and isinstance(spec, str):
                 column = spec
             else:
                 column = None
@@ -1349,7 +1381,7 @@ class GeoPackageSource:
                 continue
             if not np.isfinite(quantity):
                 continue
-            key = f"{record_field}={column}" if record_field else column
+            key = f"{gpkg_field}={column}" if gpkg_field else column
             coverage.lost[key] = coverage.lost.get(key, 0.0) + quantity * (1.0 - covered)
 
     def _resolved_shares(self, shares, spreads: tuple[Spread, ...], index: Any):

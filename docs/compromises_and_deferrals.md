@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 296 entries (297 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 297 entries (298 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 297 | Every input field summed, including the water levels | 2026-09-22 |
 | 296 | An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine | 2026-09-22 |
 | 295 | A per-cell array moved to another mesh and the report called it `unchanged` | 2026-09-22 |
 | 294 | Two runs either side of an edit were indistinguishable, and an INLINE package was invisible | 2026-09-21 |
@@ -11906,3 +11907,46 @@ same day, which is the useful part of the result.
       this. And re-lazifying is exact only because the SOURCE is re-read: a package
       whose GeoPackage has moved or been edited resolves to what the file says NOW, which
       `runs.drift()`'s `source` column is what reports (ledger 294).
+
+297. **Every input field summed, including the water levels (2026-09-22).**
+      All twenty ``FieldSpec`` entries read ``agg="sum"``, elevations among them -- so a
+      cell holding two CHD records of 100.0 and 102.0 rendered **202.0** on
+      ``packages.chd.inputs.head.map()``. Summing a flux is right and summing a level is
+      not, and nothing distinguished them. It reaches the INPUTS VIEW
+      (``package_inputs.py``), so it mis-draws a map and a table; it does not change what
+      MF6 runs.
+      **Fixed by declaring what the number IS, once.** ``FieldSpec.kind`` --
+      ``extensive`` (a flux or a conductance: MF6 superposes them, so they ADD),
+      ``elevation`` (a water level or an invert), ``intensive`` (a length, a fraction, a
+      coefficient) -- and ``agg`` became a PROPERTY of it rather than a second field
+      beside it, because two fields that must agree are two fields that drift. The
+      closed kind set is checked at construction: a typo would otherwise fall through to
+      the intensive default and quietly change how a field aggregates. Twenty fields:
+      8 extensive, 6 elevation, 6 intensive. A caller who wants something else still
+      passes ``agg=`` at the call; this is the DEFAULT, not a restriction.
+      **TWO NAMESPACES, and three of seven packages differ between them.**
+      ``_ELEVATION_FIELDS`` and ``_EXTENSIVE_FIELDS`` are keyed by the HELPER's argument
+      names (``drn.elevation``, ``ghb.head``, ``wel.rate``); the record names are
+      ``drn.elev``, ``ghb.bhead``, ``wel.q``. Both sets match their call sites and the
+      code was correct -- but the local holding those names was called ``record_fields``
+      and the comment above the set called them "record field" pairs, which is the other
+      namespace and reads as authoritative. **That cost a wrong diagnosis during this
+      commit**: comparing ``("wel", "q")`` against a set holding ``("wel", "rate")`` says
+      the branch is dead, and running it shows the loss total is reported correctly. The
+      locals are ``gpkg_field`` now and the comments name the namespace. The hazard the
+      names created is real for anything rebuilt against ``FieldSpec``: such a set would
+      match NOTHING for those three and raise nothing -- ``refuse_spread_on_elevation``
+      would simply stop refusing -- so a test pins that the two namespaces differ.
+      ``_ELEVATION_FIELDS`` is DERIVED from ``kind == "elevation"`` now (measured
+      identical to the literal it replaces), so one hand-kept list is gone.
+      **``_EXTENSIVE_FIELDS`` is deliberately NOT ``kind == "extensive"``**, which is
+      eight fields against its one. Two different questions share the word: ``kind`` asks
+      "do several records on one cell ADD?", which a conductance does; that set asks
+      "does the DECLARED column hold a total we can report a shortfall against?", which
+      an unwrapped conductance does not -- it is copied WHOLE to every covered cell, so
+      declared-minus-written calls a clean build a -300% loss (ledgers 169, 288).
+      Collapsing them would put a false loss figure on every drn/ghb/riv warning. Pinned
+      as a strict subset, so the relationship is asserted rather than remembered.
+      **Not done:** a mean HIDES that a cell held several records, where the old sum at
+      least produced a number a reader might question. Reporting multiplicity beside the
+      value is a view-layer change of its own and is not attempted here.

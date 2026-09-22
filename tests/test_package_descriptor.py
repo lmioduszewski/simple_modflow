@@ -461,3 +461,126 @@ def test_blurbs_are_distinct():
 
     blurbs = [spec(name).blurb for name in ALL_PACKAGES]
     assert len(set(blurbs)) == len(blurbs)
+
+
+# --- what a number IS decides how records on one cell combine (ledger 297) --- #
+
+
+def test_every_field_declares_a_KIND_and_a_bad_one_raises():
+    """A typo in a kind would fall through to the intensive default, silently."""
+
+    import pytest
+
+    from myflopy.modflow.mf6.package_registry import FieldSpec
+
+    kinds = {
+        (package, name): spec.kind
+        for package, descriptor in _PACKAGE_EXPLORER_SPECS.items()
+        for name, spec in (descriptor.inputs or {}).items()
+    }
+
+    assert kinds, "the registry declares input fields"
+    assert set(kinds.values()) <= {"extensive", "elevation", "intensive"}
+
+    with pytest.raises(ValueError, match="kind"):
+        FieldSpec("k", kind="exstensive")
+
+
+def test_agg_is_DERIVED_from_kind_and_not_declared_beside_it():
+    """Two fields that must agree are two fields that drift.
+
+    Every entry read `agg="sum"` before, elevations included -- so a cell holding two
+    CHD records of 100.0 and 102.0 rendered 202.0 on the inputs map. `agg` is a
+    property of `kind` now, so there is one declaration per field.
+    """
+
+    import dataclasses
+
+    from myflopy.modflow.mf6.package_registry import FieldSpec
+
+    assert "agg" not in {f.name for f in dataclasses.fields(FieldSpec)}, (
+        "agg must not be settable independently of kind"
+    )
+    assert FieldSpec("x", kind="extensive").agg == "sum"
+    assert FieldSpec("x", kind="elevation").agg == "mean"
+    assert FieldSpec("x", kind="intensive").agg == "mean"
+
+
+def test_a_LEVEL_does_not_sum_and_a_FLUX_still_does():
+    """Both directions, on the payload the map actually renders.
+
+    Summing a flux is right -- two wells in one cell pump their total. Summing a water
+    level is not, and asserting only the first half would pass on a change that made
+    everything a mean.
+    """
+
+    import pandas as pd
+
+    from myflopy.modflow.mf6.package_plotting import build_cell_input_map_payload
+
+    def rendered(column, agg):
+        frame = pd.DataFrame(
+            {"cell": [7, 7], column: [100.0, 102.0], "per": [0, 0], "layer": [0, 0]}
+        )
+        values, _hover = build_cell_input_map_payload(
+            frame, ncpl=20, value_column=column, per=0, layer=0,
+            multiplier=1.0, fill_value=0.0, agg=agg,
+        )
+        return values[7]
+
+    head = _PACKAGE_EXPLORER_SPECS["chd"].inputs["head"]
+    rate = _PACKAGE_EXPLORER_SPECS["wel"].inputs["q"]
+
+    assert rendered("head", head.agg) == 101.0, "a water level is a level, not an amount"
+    assert rendered("q", rate.agg) == 202.0, "two wells in a cell pump their total"
+
+
+def test_the_gpkg_and_RECORD_namespaces_are_not_the_same_names():
+    """Three of seven differ, which is why a rewrite keyed on the wrong one is silent.
+
+    `_ELEVATION_FIELDS` and `_EXTENSIVE_FIELDS` are keyed by the HELPER's argument
+    names (`drn.elevation`, `ghb.head`, `wel.rate`), matching their call sites. The
+    record names are `drn.elev`, `ghb.bhead`, `wel.q`. A set rebuilt against
+    `FieldSpec` names would match NOTHING for those three and raise nothing --
+    `refuse_spread_on_elevation` would simply stop refusing (ledger 297).
+    """
+
+    differ = {
+        package: (gpkg, record)
+        for package, descriptor in _PACKAGE_EXPLORER_SPECS.items()
+        for gpkg, record in zip(
+            tuple(descriptor.gpkg_defaults or ()), tuple(descriptor.inputs or ()), strict=False
+        )
+        if gpkg != record
+    }
+
+    assert differ, "if these ever coincide, this hazard is gone and so is this test"
+    assert {"drn", "ghb", "wel"} <= set(differ)
+
+
+def test_the_elevation_set_is_DERIVED_and_still_equals_what_it_replaced():
+    """Deriving it removes a hand-kept list; this pins that it changed nothing."""
+
+    from myflopy.geopackage import _ELEVATION_FIELDS
+
+    assert set(_ELEVATION_FIELDS) == {
+        ("chd", "head"), ("ghb", "head"), ("drn", "elevation"),
+        ("riv", "stage"), ("riv", "rbot"), ("evt", "surface"),
+    }
+
+
+def test_the_EXTENSIVE_set_is_deliberately_narrower_than_kind_extensive():
+    """Two different questions share the word, and collapsing them costs accuracy.
+
+    `kind="extensive"` asks "do several records on one cell ADD?" -- a conductance
+    does. `_EXTENSIVE_FIELDS` asks "does the DECLARED column hold a total we can
+    report a shortfall against?" -- an unwrapped conductance does not, because it is
+    copied WHOLE to every covered cell, so declared-minus-written calls a clean build
+    a -300% loss (ledger 169/288).
+    """
+
+    from myflopy.geopackage import _EXTENSIVE_FIELDS, _fields_of_kind
+
+    assert _EXTENSIVE_FIELDS == {("wel", "rate")}
+    assert len(_fields_of_kind("extensive")) > len(_EXTENSIVE_FIELDS)
+    assert _EXTENSIVE_FIELDS < _fields_of_kind("extensive"), "narrower, not different"
