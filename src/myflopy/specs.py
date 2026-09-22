@@ -38,6 +38,7 @@ from myflopy.grid_identity import (
     DROPPED_CONTEXT_FIELDS,  # noqa: F401
     GRID_PIN,  # noqa: F401
     GRID_PIN_OPTIONS,  # noqa: F401
+    MOVE_RECIPE,  # noqa: F401
     MOVED_FROM,
     PIN_VOIDED,
     SOURCE_SHA,  # noqa: F401
@@ -916,6 +917,62 @@ def _carry_grid(original: Any, rebuilt: Any) -> Any:
     if getattr(original, "vor", None) is not None and getattr(rebuilt, "vor", None) is None:
         rebuilt.vor = original.vor
     return rebuilt
+
+
+#: Options the RECIPE supplies, so an eager spec's copies must be dropped when it is
+#: re-lazified or the lazy builder is handed each of them twice --
+#: `GeoPackageSource.ghb() got multiple values for keyword argument 'boundnames'`.
+#: Everything else in `options` is a real MF6 option the caller set and is carried over.
+_RECIPE_OWNED_OPTIONS = frozenset({"stress_period_data", "boundnames"})
+
+
+def _relazified(package: Any) -> Any:
+    """An eagerly declared `.gpkg` package, rebuilt as its lazy self.
+
+    An eager `.gpkg` resolves at declaration and holds finished records, so a grid move
+    classifies it ``stale`` -- and that is the LARGEST stale class, because declaring
+    with a ``context=`` is what every pre-B2 document teaches. It needs no overlay to
+    move: it recorded the recipe it was built from (``metadata['move_recipe']``), so it
+    is re-declared against the new mesh EXACTLY, which is what an overlay could only
+    approximate (ledger 296).
+
+    Returns the package unchanged when there is no recipe, when the builder cannot be
+    resolved, or when the package already carries one in ``inputs`` -- a lazily
+    declared package rebuilds itself and must not be rebuilt twice.
+    """
+
+    metadata = getattr(package, "metadata", None) or {}
+    recipe = metadata.get(MOVE_RECIPE)
+    if recipe is None or getattr(package, "inputs", None):
+        return package
+    try:
+        # Deferred because `package_api` is import layer 5 and this is layer 1. The
+        # lazy BUILDER is the one thing that cannot be derived from data alone: the
+        # recipe names its package, but binding the FloPy class is what keeps the
+        # declaration-time option check byte-identical to the eager form (ledger 279).
+        from myflopy.package_api import _lazy_factory
+
+        builder = _lazy_factory(recipe.package)
+    except (ImportError, KeyError, AttributeError) as error:
+        logger.debug(
+            "package %r records a move recipe but its lazy builder could not be "
+            "resolved (%s); leaving it to be classified as it stands",
+            getattr(package, "name", "?"), error,
+        )
+        return package
+    return replace(
+        package,
+        builder=builder,
+        options={k: v for k, v in (package.options or {}).items()
+                 if k not in _RECIPE_OWNED_OPTIONS},
+        inputs={"stress_period_data": recipe},
+        # The pin and the coverage counts describe the OLD resolution. Keeping them
+        # would leave a package claiming records it no longer holds -- and the pin
+        # branch of `package_move` reads `GRID_PIN_OPTIONS <= inputs`, so a stale pin
+        # beside a fresh recipe is exactly the collision ledger 275 voided.
+        metadata={k: v for k, v in metadata.items()
+                  if k not in (GRID_PIN, GRID_PIN_OPTIONS, "coverage")},
+    )
 
 
 def _anchored_packages(
@@ -3388,6 +3445,11 @@ class ModelSpec:
         # so `self.context.grid` is the grid these packages were declared on. It is what
         # lets `package_move` see a per-cell array that nothing stamped (ledger 295).
         declared_on = getattr(getattr(self.context, "grid", None), "ncpl", None)
+        # An EAGERLY declared `.gpkg` is re-lazified from the recipe it recorded, so it
+        # moves EXACTLY rather than being refused (ledger 296). Done first, because it
+        # turns a `stale` package into a `rebuilt` one and the stamping below must see
+        # the result, not the original.
+        relazified = tuple(_relazified(package) for package in self.packages)
         stamped = tuple(
             package.with_metadata(**{MOVED_FROM: pin})
             # `grid_free` is honoured inside `package_move`, which answers
@@ -3405,7 +3467,7 @@ class ModelSpec:
                 and (pin := grid_pin(getattr(self.context, "grid", None))) is not None
             )
             else package
-            for package in self.packages
+            for package in relazified
         )
         return replace(
             self,

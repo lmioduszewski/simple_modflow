@@ -436,10 +436,14 @@ class BoundarySource(DataSourceSpec):
     it recurses into this payload and writes the ``$spread`` / ``$cell_surface_offset``
     tokens. ``json.dumps(source.to_dict())`` raises; that is not a defect.
 
-    **The reverse trip works only through ``options``/``inputs``.**
-    ``_spec_value(..., int_keys=True)`` is what recurses INTO a source payload and
-    revives those tokens before this class is rebuilt. A recipe reached through any
-    other field comes back with plain dicts where the objects were.
+    **It revives its own ``values``, so the trip back works from ANYWHERE.**
+    ``_spec_value(..., int_keys=True)`` recurses into a source payload on the way to
+    ``options``/``inputs``, and for a long time that was the only path that rebuilt the
+    nested objects -- a recipe reached through any other field came back with plain
+    dicts where the ``Spread`` was, silently. That stopped being theoretical when an
+    EAGER declaration began recording its recipe in ``metadata`` (ledger 296), which is
+    a different path; ``_from_dict`` now revives ``values`` itself and is idempotent, so
+    arriving pre-revived through ``inputs`` costs nothing.
 
     **``kind`` ends in "Source" on purpose.** ``_spec_value`` keeps an
     ``endswith("Source")`` arm alongside the registry so an unregistered kind RAISES
@@ -555,15 +559,24 @@ class BoundarySource(DataSourceSpec):
     def _from_dict(cls, data: dict[str, Any]) -> BoundarySource:
         """Rebuild a :class:`BoundarySource` from a payload dict.
 
-        ``values`` is taken as it arrives: by the time this runs, ``_spec_value`` has
-        already revived any ``$spread`` / ``$cell_surface_offset`` inside it.
+        ``values`` is revived HERE rather than relied on having been revived on the way
+        in. Through ``inputs`` it already has been and this is a no-op; through any
+        other field -- ``metadata``, where an eager declaration records its recipe --
+        nothing had recursed into it, and a ``Spread`` came back a plain dict with
+        nothing raised (ledger 296). A source that can only be rebuilt correctly via one
+        of its callers is a trap, and this class's own docstring had recorded it as one.
         """
 
+        from myflopy.specs import _spec_options
+
+        values = data.get("values", {})
+        if values:
+            values = _spec_options(dict(values))
         return cls(
             path=data["path"],
             package=data["package"],
             nper=data["nper"],
-            values=dict(data.get("values", {})),
+            values=dict(values),
             layer=data.get("layer"),
             name_field=data.get("name_field", "name"),
             layer_field=data.get("layer_field", "layer"),

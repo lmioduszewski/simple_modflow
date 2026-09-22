@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 295 entries (296 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 296 entries (297 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 296 | An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine | 2026-09-22 |
 | 295 | A per-cell array moved to another mesh and the report called it `unchanged` | 2026-09-22 |
 | 294 | Two runs either side of an edit were indistinguishable, and an INLINE package was invisible | 2026-09-21 |
 | 293 | A saved project now carries what a LAZY package reads, and the digest reads the file rather than its address | 2026-09-19 |
@@ -11854,3 +11855,54 @@ same day, which is the useful part of the result.
       whether or not the engine is ever built. It also cannot fire for a model whose
       context carries no grid (a deferred-grid model), which is the same limit ledger 271
       already records for hand-written cellids: there is no old mesh to measure against.
+
+296. **An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine
+      (2026-09-22).**
+      B3's second commit, and the one that shrinks what the engine has to cover before
+      the engine is designed. An eager `.gpkg` resolves at DECLARATION and holds finished
+      records, so `with_grid` classified it `stale` and the build refused it -- and that
+      is the LARGEST stale class there is, because declaring with a ``context=`` is what
+      every pre-B2 document teaches. It never needed an overlay: everything required to
+      resolve it again is present at the call, so it is written down and the move
+      re-declares it. Measured: 8 records on ncpl 28 becoming 10 on ncpl 81, verdict
+      `rebuilt`, and `mf.Spread(mode="retained")` conserving the feature total exactly.
+      **RECORDED, NOT RE-DERIVED, and the difference is not cosmetic.**
+      `metadata['fields']` looks like it already holds the recipe, and reconstructing
+      from it was the obvious plan. Two measurements refused it. `_metadata_value` is
+      deliberately NOT a round-trip format -- ledger 274 recorded two reasons to keep it
+      apart from `to_dict`, one of which is that reviving it would change what
+      `metadata['fields']` means for every consumer. And it is **three fields short**:
+      `nper`, `edges_only` and `boundnames` appear nowhere in metadata. `edges_only` is
+      the one that matters, because it decides WHICH CELLS are kept (ledger 246), so a
+      reconstruction that guessed it would write a different package in silence. The
+      recipe is built from the call arguments instead, where all three are in scope.
+      **It rides in `metadata`**, which `package_digest` excludes by contract, so
+      recording it moves no stored digest -- verified with and without, live and revived.
+      It cannot ride in `inputs`: `PackageSpec.build` splats `inputs` into the builder,
+      and an eager package's builder would be handed a `BoundarySource` where FloPy
+      wants records.
+      **A SOURCE THAT ONLY REBUILDS VIA ONE CALLER IS A TRAP, and this made it live.**
+      `BoundarySource`'s own docstring recorded that its nested `Spread` /
+      `CellSurfaceOffset` survive ONLY through `options`/`inputs`, because
+      `_spec_value(..., int_keys=True)` is what recurses into a source payload; by any
+      other route they came back plain dicts with nothing raised. `metadata` IS another
+      route, so the documented trap became reachable. `_from_dict` revives its own
+      `values` now and is idempotent when they arrive pre-revived. The test that had
+      PINNED the trap as behaviour is inverted, deliberately.
+      **What the move drops.** The re-lazified spec keeps the caller's real MF6 options
+      and drops the two the recipe owns (`stress_period_data`, `boundnames`) -- passing
+      either twice is `got multiple values for keyword argument`. It also drops
+      `grid_pin`/`grid_pin_options` and `coverage`: a pin describes the resolution just
+      replaced, `package_move` reads `GRID_PIN_OPTIONS <= inputs` before anything else,
+      and a stale pin beside a fresh recipe is the exact collision ledger 275 voided.
+      **The builder is the one thing data cannot carry.** A recipe names its package;
+      binding the FloPy class is what keeps the declaration-time option check
+      byte-identical to the eager form (ledger 279), so `_relazified` resolves
+      `package_api._lazy_factory` through a DEFERRED import -- `specs` is import layer 1
+      and `package_api` is 5. A package whose builder cannot be resolved is returned
+      unchanged and classified as it stands, rather than half-converted.
+      **Scope, stated:** this covers the seven list `.gpkg` forms. `mf.uzf`/`sfr`/`lak`
+      still resolve eagerly with no recipe and remain `stale` -- that is tranche C1, not
+      this. And re-lazifying is exact only because the SOURCE is re-read: a package
+      whose GeoPackage has moved or been edited resolves to what the file says NOW, which
+      `runs.drift()`'s `source` column is what reports (ledger 294).

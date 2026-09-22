@@ -329,7 +329,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3722 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3727 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
@@ -426,7 +426,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
 - **Moving a model is `sim.with_grid(grid, on=, name=, grid_free=())`** (ledger 271,
   2026-09-15). It drops everything derived from the old mesh and CLASSIFIES every
   package -- `rebuilt` (carries a recipe), `stale` (pinned elsewhere, or a
-  hand-written DISV, which IS the old mesh), `unverifiable` (names cells with no pin --
+  hand-written DISV, which IS the old mesh -- but **an eagerly declared `.gpkg` is
+  now `rebuilt`, not `stale`**: it records the recipe it was built from, so the move
+  RE-DECLARES it against the new mesh exactly, no overlay involved. Recorded rather
+  than re-derived because `metadata['fields']` is three fields short -- `nper`,
+  `edges_only`, `boundnames` -- and `edges_only` decides WHICH CELLS are kept, so a
+  guess writes a different package in silence. `mf.uzf`/`sfr`/`lak` still have no
+  recipe and stay `stale`, ledger 296), `unverifiable` (names cells with no pin --
   including the ARRAY forms, which name cells by POSITION and so carry no cellid to
   find, ledger 282; **and any package holding a per-cell ARRAY** -- `npf`/`ic`/`sto`
   take no `context=`, so nothing stamped them and they read `unchanged` while a lazy

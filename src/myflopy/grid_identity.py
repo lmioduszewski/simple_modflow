@@ -177,6 +177,12 @@ def disv_pin(disv) -> str | None:
 #: `metadata`, so adding it moved no stored digest (ledger 276).
 SOURCE_SHA = "source_sha"
 
+#: Metadata key holding the lazy recipe an EAGER `.gpkg` declaration could be rebuilt
+#: from. It is what lets `with_grid` re-lazify the largest `stale` class EXACTLY rather
+#: than approximating it through an overlay (ledger 296). Excluded from
+#: `package_digest` like the rest of `metadata`, so recording it moves no stored digest.
+MOVE_RECIPE = "move_recipe"
+
 
 def source_fingerprint(path) -> str | None:
     """A 16-character content hash of ``path``, or ``None`` if it cannot be read.

@@ -32,9 +32,11 @@ from myflopy.modflow.mf6.grid.geometry import (
 )
 from myflopy.modflow.mf6.grid.surfaces import check_gaps
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.sources import BoundarySource
 from myflopy.specs import (
     GRID_PIN,
     GRID_PIN_OPTIONS,
+    MOVE_RECIPE,
     SOURCE_SHA,
     ModelContext,
     PackageSpec,
@@ -1420,6 +1422,50 @@ class GeoPackageSource:
             "coverage": dict(self.last_coverage.summary()) if self.last_coverage else None,
         }
 
+    def _recipe(
+        self, package: str, *, boundnames: bool, edges_only: bool, **fields: RowValue
+    ) -> BoundarySource:
+        """The lazy recipe for this EAGER declaration, recorded beside its records.
+
+        An eager `.gpkg` resolves at declaration and holds finished records, so a grid
+        move classifies it ``stale`` -- and that is the LARGEST stale class there is,
+        because declaring with a ``context=`` is what every pre-B2 doc teaches. It does
+        not need an overlay engine to move: everything needed to resolve it again is
+        right here at the call, so it is written down and ``with_grid`` re-lazifies from
+        it, EXACTLY, where an overlay would only approximate (ledger 296).
+
+        **Recorded, not re-derived.** ``metadata['fields']`` looks like it already holds
+        this, and reconstructing from it was the obvious plan -- but ``_metadata_value``
+        is deliberately NOT a round-trip format (ledger 274, which measured two reasons
+        to keep it apart from ``to_dict``), and it omits ``nper``, ``edges_only`` and
+        ``boundnames`` entirely. ``edges_only`` is the one that matters: it decides
+        WHICH CELLS are kept (ledger 246), so guessing it wrong writes a different
+        package in silence.
+
+        It rides in ``metadata``, which ``package_digest`` excludes, so recording it
+        moves no stored digest -- and metadata is run through ``_spec_value`` on the way
+        back, so the source revives as a live object rather than a plain dict.
+        """
+
+        return BoundarySource(
+            path=self.path,
+            package=package,
+            nper=self.nper,
+            values=dict(fields),
+            layer=self.layer,
+            name_field=self.name_field,
+            layer_field=self.layer_field,
+            period_field=self.period_field,
+            layer_base=self.layer_base,
+            period_base=self.period_base,
+            gaps=self.gaps,
+            snap_within=self.snap_within,
+            min_above_bottom=self.min_above_bottom,
+            edges_only=edges_only,
+            boundnames=boundnames,
+            source_sha=source_fingerprint(self.path),
+        )
+
     def _bc_from_features(
         self,
         package: str,
@@ -1464,7 +1510,11 @@ class GeoPackageSource:
             name=name,
             boundnames=boundnames,
             **(options or {}),
-        ).with_metadata(**self._metadata(package, **fields))
+        ).with_metadata(
+            **self._metadata(package, **fields),
+            **{MOVE_RECIPE: self._recipe(package, boundnames=boundnames,
+                                         edges_only=edges_only, **fields)},
+        )
 
     def chd(
         self,

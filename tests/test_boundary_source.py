@@ -87,10 +87,17 @@ def test_it_round_trips_through_inputs_as_itself():
 def test_the_live_value_objects_survive_the_round_trip():
     """`Spread` and `CellSurfaceOffset` come back as THEMSELVES, not as dicts.
 
-    They survive only because `inputs` goes through `_spec_value(..., int_keys=True)`,
-    which is what recurses INTO a source payload. A recipe reached through any other
-    field comes back with plain dicts where the objects were -- which is why 5b must
-    put this in `inputs` and nowhere else.
+    They used to survive ONLY through `inputs`, which goes through
+    `_spec_value(..., int_keys=True)` -- the recursion that reaches inside a source
+    payload. A recipe arriving by any other route came back with plain dicts where the
+    objects were, silently, and this test pinned that trap as behaviour.
+
+    Ledger 296 made it real rather than theoretical: an eager declaration records its
+    recipe in `metadata`, which is a different route. `BoundarySource._from_dict`
+    revives its own `values` now, so the class rebuilds correctly from anywhere and is
+    idempotent when it arrives pre-revived. The assertion below is inverted from what
+    it was, deliberately -- a source that can only be rebuilt via one of its callers
+    was the defect, not the contract.
     """
 
     source = _recipe()
@@ -103,10 +110,12 @@ def test_the_live_value_objects_survive_the_round_trip():
     assert revived.values["conductance"].mode == "retained"
     assert revived.values["elevation"].offset == 2.0
 
-    # The trap, pinned: WITHOUT the inputs path the nested objects do not revive.
+    # And by ANY other route -- this is the assertion that used to expect a dict.
     naive = _spec_value(json.loads(json.dumps(_json_value(source))))
 
-    assert type(naive.values["conductance"]) is dict
+    assert type(naive.values["conductance"]) is mf.Spread
+    assert naive.values["conductance"].mode == "retained"
+    assert naive == source, "the whole recipe, not just the one field"
 
 
 def test_its_digest_is_stable_across_a_save():

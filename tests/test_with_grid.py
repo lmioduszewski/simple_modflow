@@ -460,3 +460,154 @@ def test_the_report_read_AFTER_a_move_agrees_with_the_build(tmp_path):
         assert package in str(caught.value), (
             f"{package} reads {verdicts[package]!r} but the build does not name it"
         )
+
+
+# --- an EAGER .gpkg moves exactly, from its own recipe (ledger 296) ---------- #
+
+
+def _eager_gpkg_simulation(tmp_path, grid, **overrides):
+    """A model whose GHB was declared EAGERLY -- with a `context=`, as the docs teach."""
+
+    from myflopy.specs import ModelContext
+
+    context = ModelContext(grid=grid, domain=np.ones((2, grid.ncpl), dtype=int))
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+    path = tmp_path / "bc.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [95.0], "cond": [2.0]},
+        geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.3, ymax)], crs=grid.crs,
+    ).to_file(path, layer="ghb", driver="GPKG")
+
+    ghb = mf.ghb.gpkg(
+        path, layer="ghb", nper=1, head="head",
+        conductance=mf.Spread("cond", mode="retained"), context=context, **overrides
+    )
+    model = mf.gwf(
+        "m", context=context,
+        packages=[mf.disv(_stack()), mf.npf(k=1.0), mf.ic(strt=95.0),
+                  mf.oc(head_filerecord="m.hds"), ghb],
+    )
+    sim = mf.simulation(
+        model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])]
+    )
+    return sim, ghb
+
+
+def _ghb_records(built):
+    return built.simulation.get_model("m").get_package("ghb").stress_period_data.get_data(0)
+
+
+def test_an_EAGERLY_declared_gpkg_moves_EXACTLY(tmp_path):
+    """The largest `stale` class there is, and it needs no overlay engine.
+
+    Declaring with a `context=` is what every pre-B2 document teaches, and it resolves
+    at declaration and holds finished records -- so a grid move used to classify it
+    `stale` and the build refused it. Everything needed to resolve it AGAIN was present
+    at the call, so it is recorded; the move re-declares it against the new mesh, which
+    is EXACT where an overlay would only approximate.
+    """
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    b = rectangular_voronoi(CanonicalModelConfig(nrow=9, ncol=9, nlay=2, nper=1))
+    assert a.ncpl != b.ncpl
+
+    sim, _ghb = _eager_gpkg_simulation(tmp_path, a)
+    on_a = _ghb_records(sim.build_flopy(tmp_path / "a"))
+
+    moved = sim.with_grid(mf.GridSpec.from_object(b))
+    verdicts = {row["package"]: row["how"] for row in moved.move_report()}
+    assert verdicts["ghb"] == "rebuilt", verdicts
+
+    on_b = _ghb_records(moved.build_flopy(tmp_path / "b"))
+
+    assert len(on_b) != len(on_a), "a different mesh resolves a different cell set"
+    assert float(sum(r["cond"] for r in on_b)) == pytest.approx(
+        float(sum(r["cond"] for r in on_a))
+    ), "mf.Spread(mode='retained') conserves the feature total across meshes"
+
+
+def test_the_recipe_records_what_METADATA_CANNOT(tmp_path):
+    """`metadata['fields']` looks like a recipe and is three fields short.
+
+    `nper`, `edges_only` and `boundnames` are absent from it, and `_metadata_value` is
+    deliberately not a round-trip format (ledger 274). `edges_only` is the one that
+    matters: it decides WHICH CELLS are kept (ledger 246), so reconstructing a recipe
+    from metadata and guessing it would write a different package in silence.
+    """
+
+    from myflopy.grid_identity import MOVE_RECIPE
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    _sim, ghb = _eager_gpkg_simulation(tmp_path, a, edges_only=True, boundnames=False)
+    recipe = ghb.metadata[MOVE_RECIPE]
+
+    assert (recipe.nper, recipe.edges_only, recipe.boundnames) == (1, True, False)
+    assert set(ghb.metadata).isdisjoint({"nper", "edges_only", "boundnames"}), (
+        "none of the three is in metadata -- which is why the recipe is recorded, "
+        "not re-derived"
+    )
+    assert type(recipe.values["conductance"]) is mf.Spread, "a LIVE object, not a dict"
+
+
+def test_recording_the_recipe_moves_NO_digest(tmp_path):
+    """It rides in `metadata`, which `package_digest` excludes by contract.
+
+    If it did not, adding this would report every stored `.gpkg` package as drifted on
+    the day it landed -- the reason ledger 250 kept the grid pin out of the digest too.
+    """
+
+    import dataclasses
+
+    from myflopy.grid_identity import MOVE_RECIPE
+    from myflopy.specs import package_digest
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    _sim, ghb = _eager_gpkg_simulation(tmp_path, a)
+    without = dataclasses.replace(
+        ghb, metadata={k: v for k, v in ghb.metadata.items() if k != MOVE_RECIPE}
+    )
+
+    assert package_digest(ghb) == package_digest(without)
+
+
+def test_a_LAZY_package_is_not_relazified_twice(tmp_path):
+    """A lazy declaration already rebuilds itself; re-deriving it would be a second
+    source of truth for the same package."""
+
+    from myflopy.grid_identity import MOVE_RECIPE
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    xmin, ymin, xmax, ymax = a.gdf_vorPolys.total_bounds
+    path = tmp_path / "lazy.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["west"], "layer": [1], "head": [95.0]},
+        geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.3, ymax)], crs=a.crs,
+    ).to_file(path, layer="ghb", driver="GPKG")
+
+    lazy = mf.ghb.gpkg(path, layer="ghb", nper=1, head="head")   # NO context=
+
+    assert MOVE_RECIPE not in (lazy.metadata or {}), "the lazy form records no second copy"
+    assert lazy.inputs, "it carries its recipe in `inputs`, where the builder reads it"
+
+
+def test_the_OLD_pin_does_not_survive_the_relazify(tmp_path):
+    """A pin describes the resolution that was just replaced.
+
+    `package_move` reads `GRID_PIN_OPTIONS <= inputs` before anything else, so a stale
+    pin sitting beside a fresh recipe is the exact collision ledger 275 voided -- and
+    the coverage counts describe records the package no longer holds.
+    """
+
+    from myflopy.grid_identity import GRID_PIN, MOVE_RECIPE
+    from myflopy.specs import _relazified
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    _sim, ghb = _eager_gpkg_simulation(tmp_path, a)
+
+    assert GRID_PIN in ghb.metadata and "coverage" in ghb.metadata
+
+    moved = _relazified(ghb)
+
+    assert GRID_PIN not in moved.metadata
+    assert "coverage" not in moved.metadata
+    assert MOVE_RECIPE in moved.metadata, "the recipe itself stays, for the next move"
