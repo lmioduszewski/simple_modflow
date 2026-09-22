@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 294 entries (295 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 295 entries (296 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 295 | A per-cell array moved to another mesh and the report called it `unchanged` | 2026-09-22 |
 | 294 | Two runs either side of an edit were indistinguishable, and an INLINE package was invisible | 2026-09-21 |
 | 293 | A saved project now carries what a LAZY package reads, and the digest reads the file rather than its address | 2026-09-19 |
 | 292 | The bundler half-copied a shapefile, bundled the project into itself, and ran before the save was allowed | 2026-09-18 |
@@ -11804,3 +11805,52 @@ same day, which is the useful part of the result.
       being allowed to define normal, which is [[a-measurement-belongs-to-what-it-measured]]
       one level up. Re-measuring on the taught path is what showed the verb already works
       there, and narrowed this commit to the two defects that survive it.
+
+295. **A per-cell array moved to another mesh and the report called it `unchanged`
+      (2026-09-22).**
+      Found while scoping B3. `npf`, `ic` and `sto` take no ``context=``, so nothing
+      ever stamped them -- ``CELLWISE_OPTIONS`` is written in ONE place
+      (``advanced._array_bc_spec``), which only ``mf.rch.array`` and ``mf.evt.array``
+      reach. Everything else carrying per-cell values fell through to
+      ``"unchanged", "names no cells"``, which is false: an array names every cell, by
+      POSITION.
+      **Measured on the form the docs now teach.** A model with a LAZY ``mf.disv(stack)``
+      moved between two meshes of the SAME cell count: the discretization reported
+      ``rebuilt`` and resolved itself correctly, ``npf`` reported ``unchanged``, the
+      build COMPLETED, and the K array was byte-identical to the one written for the old
+      mesh. This is ledger 249's defect in the one place 249's own guard cannot see it --
+      a range check passes because every index is in range on both meshes -- and B1/B2
+      made it MORE reachable, not less: a hand-written DISV was ``stale`` and refused the
+      build, while a lazy one rebuilds cleanly and leaves nothing to object to. Sixth
+      instance of the pattern in [['unchanged' is the dangerous verdict]]; and the same
+      one-carrier-of-two asymmetry as ledger 282 itself, which closed this for the array
+      BCs and left the array-valued PACKAGES open.
+      **THE DETECTION MUST BE ncpl-EXACT, and that decides where it lives.**
+      ``npf(k=[10.0, 1.0])`` is a per-LAYER list and means the same on any mesh, so
+      deciding from "is this a sequence?" would refuse a correct move. The exact test
+      needs a cell count, and these helpers have no ``context=`` to supply one -- so the
+      detection cannot happen at declaration at all. It happens in ``package_move``,
+      which ``with_grid`` calls **while it still holds the old grid**: ``with_grid`` does
+      not mutate, so ``self.context.grid`` is the mesh the packages were declared on.
+      Every scout in the scoping workflow reported "the old geometry is gone" by
+      inspecting the RESULT of the move; it is gone from the result and present at the
+      call site, and ``ModelSpec.with_grid`` already read it to compute the stamp.
+      **The rule moved to import layer 0** (``grid_identity.column_count`` /
+      ``cellwise_options``) because three callers in layers 0, 2 and 5 need the SAME one;
+      ``advanced`` now delegates rather than holding a second copy.
+      ``column_count`` also learned to see a NESTED sequence -- ``k=[[...ncpl...],
+      [...ncpl...]]`` is what a per-cell K on a multi-layer model looks like written by
+      hand, and reading ``.shape`` alone missed it, which is ledger 282's own gap one
+      nesting level down. All four spellings are pinned by a parametrized test.
+      **A stamped package now reports its own verdict.** ``package_move`` reads
+      ``MOVED_FROM`` before anything else, because the moved spec no longer carries the
+      old mesh: without it a report read AFTER the move said ``unchanged`` about the very
+      package the build then refused, and ``move_report`` exists precisely to be read
+      before ``prepare_run``.
+      **What this does NOT do.** It gives the arrays a VERDICT, not a route: a refused
+      package must still be re-declared by hand. Routing it is the overlay engine, which
+      is deliberately the LAST piece of B3 -- this commit is what gives that engine a
+      trigger, and it is worth having on its own because the silence is a live defect
+      whether or not the engine is ever built. It also cannot fire for a model whose
+      context carries no grid (a deferred-grid model), which is the same limit ledger 271
+      already records for hand-written cellids: there is no old mesh to measure against.

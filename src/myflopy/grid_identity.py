@@ -23,6 +23,7 @@ import it there.
 from __future__ import annotations
 
 import hashlib
+from numbers import Real
 from typing import Any
 
 from myflopy._logging import get_logger
@@ -310,7 +311,65 @@ MOVED_FROM = "myflopy_moved_from"
 GRID_FREE = "myflopy_grid_free"
 
 
-def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]:
+def column_count(value) -> int | None:
+    """How many columns a payload supplies a value for, or ``None`` if it is not per-column.
+
+    A numpy array answers with ``shape[-1]``; a flat list or tuple of numbers answers
+    with its length; a NESTED sequence (a per-layer list of per-cell lists, which FloPy
+    accepts for ``npf(k=...)``) answers with its inner length when the rows agree.
+
+    Reading ``.shape`` alone was the first gap: ``recharge=[1e-4] * ncpl`` is an
+    ordinary way to write a per-column payload and was invisible here (ledger 282).
+    Missing the nested case is the second, and it is what a per-cell ``k`` on a
+    multi-layer model looks like written by hand. Strings are excluded because a
+    time-series name is a scalar.
+
+    Lives here, in import layer 0, because three callers need the SAME rule and they sit
+    in layers 0, 2 and 5: ``package_move`` below, ``advanced._array_bc_spec``, and
+    ``package_api``'s lazy areal pin.
+    """
+
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        return int(shape[-1]) if shape else None
+    if not isinstance(value, (list, tuple)) or not value or isinstance(value, str):
+        return None
+    if all(isinstance(item, Real) for item in value):
+        return len(value)
+    inner = {column_count(item) for item in value}
+    # One answer, and a real one: rows of different widths are not a per-cell payload,
+    # and neither is a list holding a mix of arrays and scalars.
+    return inner.pop() if len(inner) == 1 and None not in inner else None
+
+
+def cellwise_options(options, ncpl: int | None = None) -> tuple[str, ...]:
+    """WHICH options address cells: their NAMES, never a bool.
+
+    With ``ncpl`` the test is EXACT -- a payload supplying one value per cell of that
+    mesh. Without it, the test is "is this per-column at all", which is the
+    conservative substitute used where the format itself defines a payload as
+    per-column (``READASARRAYS``). The two are not equivalent and the caller must know
+    which it is asking for: ``npf(k=[10.0, 1.0])`` is a per-LAYER list and would be a
+    false positive under the ncpl-free form, which is why ``package_move`` only ever
+    uses the exact one.
+
+    The names rather than a bool because a pin declares exactly which options it speaks
+    for, so an edit to a genuinely grid-free option beside a resolved one does not void
+    it (ledger 275).
+    """
+
+    def per_cell(value) -> bool:
+        if isinstance(value, dict):
+            return any(per_cell(item) for item in value.values())
+        count = column_count(value)
+        return count is not None if ncpl is None else count == ncpl
+
+    return tuple(key for key, value in options.items() if per_cell(value))
+
+
+def package_move(
+    package, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
+) -> tuple[str, str]:
     """Classify one package for a grid move: ``(how, why)``.
 
     The four verdicts, and what each means for the build that follows:
@@ -363,6 +422,18 @@ def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]
             # name, and the stale pin stops masking it and being masked by it.
             return "rebuilt", "its pinned records are supplied by a recipe now"
         return "stale", f"its records are pinned to mesh {pin}"
+    moved = metadata.get(MOVED_FROM)
+    if moved is not None:
+        # ALREADY DECIDED, by the `with_grid` that stamped it. Reporting it afresh would
+        # need the OLD mesh, which the moved spec no longer carries -- so without this
+        # the report read AFTER a move disagreed with the build that follows, saying
+        # `unchanged` about the very package `moved_package_complaints` refuses. The
+        # report exists to be read before `prepare_run`; it has to say the same thing.
+        return (
+            "unverifiable",
+            f"`with_grid` could not verify it on this mesh; its values still mean "
+            f"mesh {moved}",
+        )
     voided = metadata.get(PIN_VOIDED)
     if voided:
         return (
@@ -385,18 +456,43 @@ def package_move(package, *, grid_free: tuple[str, ...] = ()) -> tuple[str, str]
             "supplies one value per cell and carries no pin, so nothing can tell an "
             "array shaped for this mesh from one shaped for another",
         )
+    # NOTHING STAMPS npf/ic/sto, because they take no `context=` and so have no mesh
+    # to measure a payload against at declaration. `ncpl` is the caller's -- `with_grid`
+    # still holds the OLD grid when it classifies, since it does not mutate. Without it
+    # this cannot fire, which is the honest limit: a model whose context carries no grid
+    # has nothing to compare a length to.
+    #
+    # EXACT, never the conservative form: `npf(k=[10.0, 1.0])` is a per-LAYER list and
+    # guessing from "it is a sequence" would refuse a correct move (ledger 295).
+    if ncpl is not None:
+        named = cellwise_options(options, ncpl)
+        if named and not set(named) <= set(inputs):
+            return (
+                "unverifiable",
+                f"supplies one value per cell ({', '.join(sorted(named))}) and carries "
+                "no pin, so nothing can tell an array shaped for this mesh from one "
+                "shaped for another",
+            )
     if inputs:
         return "rebuilt", "carries a recipe, so it resolves against the new mesh"
     return "unchanged", "names no cells"
 
 
-def move_report(model, *, grid_free: tuple[str, ...] = ()) -> list[dict[str, str]]:
-    """One row per package: what a grid move does to it, before anything is built."""
+def move_report(
+    model, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
+) -> list[dict[str, str]]:
+    """One row per package: what a grid move does to it, before anything is built.
+
+    ``ncpl`` is the mesh the packages were DECLARED on, so the report can see a
+    per-cell array. The report and the stamp must be handed the same one or they
+    disagree about the same package -- which is the whole point of reading the report
+    before ``prepare_run``.
+    """
 
     return [
         {"package": getattr(package, "name", "?"), "how": how, "why": why}
         for package in getattr(model, "packages", ())
-        for how, why in [package_move(package, grid_free=grid_free)]
+        for how, why in [package_move(package, grid_free=grid_free, ncpl=ncpl)]
     ]
 
 

@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Iterable
-from numbers import Real
 from typing import Any
 
 import flopy
 
-from myflopy.grid_identity import CELLWISE_OPTIONS, pin_metadata
+from myflopy.grid_identity import CELLWISE_OPTIONS, cellwise_options, pin_metadata
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
@@ -57,64 +56,28 @@ def _factory(constructor):
 
 
 
-def _column_count(value) -> int | None:
-    """How many columns a payload supplies a value for, or ``None`` if it is not per-column.
+def _names_cells(options, ncpl: int) -> tuple[str, ...]:
+    """WHICH resolved options are per-COLUMN arrays, i.e. name cells.
 
-    A numpy array answers with ``shape[-1]``; a plain list or tuple of numbers answers
-    with its length. Reading ``.shape`` alone was the gap: ``recharge=[1e-4] * ncpl`` is
-    a perfectly ordinary way to write a per-column payload, FloPy accepts it, and it was
-    invisible here -- so the package went unpinned and classified ``"unchanged"``
-    (ledger 282). Strings are excluded because a time-series name is a scalar.
+    The ncpl-EXACT spelling of :func:`~myflopy.grid_identity.cellwise_options`, kept as
+    a name because `package_api`'s lazy areal pin imports it. The rule itself moved to
+    `grid_identity` (import layer 0) when `package_move` needed the same one: npf/ic/sto
+    carry per-cell arrays too and nothing was measuring them (ledger 295).
     """
 
-    shape = getattr(value, "shape", None)
-    if shape is not None:
-        return int(shape[-1]) if shape else None
-    if isinstance(value, (list, tuple)) and value and not isinstance(value, str):
-        return len(value) if all(isinstance(item, Real) for item in value) else None
-    return None
+    return cellwise_options(options, ncpl)
 
 
 def _cellwise_options(options) -> tuple[str, ...]:
     """WHICH options are per-column when there is no ``ncpl`` to measure them against.
 
-    :func:`_names_cells` compares a payload's length to the grid's cell count, which is
-    exact and needs a grid. A declaration with no ``context=`` has none -- and under
-    ``READASARRAYS`` "one value per column" is the format's own definition, so any
-    array-valued option is per-column by construction. That makes this the conservative
-    substitute rather than an equivalent, which is the point: it cannot know the length
-    is wrong, only that the value addresses cells at all.
+    The conservative substitute, valid HERE and not in general: under ``READASARRAYS``
+    "one value per column" is the format's own definition, so any array-valued option is
+    per-column by construction. It cannot know the length is wrong, only that the value
+    addresses cells at all -- which is why `package_move` uses the exact form instead.
     """
 
-    def per_cell(value) -> bool:
-        if isinstance(value, dict):
-            return any(per_cell(item) for item in value.values())
-        return _column_count(value) is not None
-
-    return tuple(key for key, value in options.items() if per_cell(value))
-
-
-def _names_cells(options, ncpl: int) -> tuple[str, ...]:
-    """WHICH resolved options are per-COLUMN arrays, i.e. name cells.
-
-    The array form supplies one value per column, so `irch=<ncpl array>` and
-    `recharge=<ncpl array>` are both addressed BY CELL and move meaning on another
-    mesh, while `recharge=0.001` with `irch=0` means the same thing on any grid.
-    Deciding on the resolved payload rather than on "was a `context=` passed" is
-    what keeps a genuinely grid-free package movable.
-    """
-
-    def per_cell(value) -> bool:
-        if isinstance(value, dict):
-            return any(per_cell(item) for item in value.values())
-        return _column_count(value) == ncpl
-
-    # The NAMES, not a bool. This function already computes per-option truth to decide
-    # whether to pin at all, so the pin can declare exactly which options it speaks for
-    # at no extra cost (ledger 275) -- and that is what stops an edit to a genuinely
-    # grid-free option (`recharge=0.002` beside a resolved `irch`) from voiding a pin
-    # that is still true.
-    return tuple(key for key, value in options.items() if per_cell(value))
+    return cellwise_options(options)
 
 
 def _array_bc_spec(

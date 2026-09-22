@@ -325,3 +325,138 @@ def test_a_ref_declared_model_reports_what_its_packages_actually_are(tmp_path):
 
     assert rows["dis/hand"] == "stale", "a hand-written DISV IS the old mesh"
     assert rows["npf/base"] == "unchanged", "a scalar npf genuinely names no cells"
+
+
+# --- per-cell arrays, which nothing stamped (ledger 295) --------------------- #
+
+
+def _array_simulation(grid, *, k):
+    """A model carrying `k` on `grid`, declared the modern way (a LAZY disv)."""
+
+    from myflopy.specs import ModelContext
+
+    context = ModelContext(grid=grid, domain=np.ones((2, grid.ncpl), dtype=int))
+    model = mf.gwf(
+        "m",
+        context=context,
+        packages=[mf.disv(_stack()), mf.npf(k=k), mf.ic(strt=90.0),
+                  mf.oc(head_filerecord="m.hds")],
+    )
+    return mf.simulation(
+        model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])]
+    )
+
+
+def _two_meshes():
+    """Two DIFFERENT meshes with the SAME cell count -- the dangerous shape.
+
+    A range check cannot see this: every index is in range on both. It is the case
+    ledger 249 was written about and the one a same-ncpl swap produces.
+    """
+
+    a = rectangular_voronoi(CanonicalModelConfig(nrow=4, ncol=7, nlay=2, nper=1))
+    b = rectangular_voronoi(CanonicalModelConfig(nrow=7, ncol=4, nlay=2, nper=1))
+    assert a.ncpl == b.ncpl
+    return a, b
+
+
+def test_a_per_cell_array_does_not_move_silently(tmp_path):
+    """The headline. `npf`/`ic`/`sto` take no `context=`, so NOTHING stamped them.
+
+    Measured before the fix: the lazy disv rebuilt correctly on the new mesh, the
+    report said `npf: unchanged -- names no cells`, the build COMPLETED, and the K
+    array was byte-identical to the one written for the old mesh. Ledger 282 closed
+    this for `mf.rch.array`/`mf.evt.array` only -- `CELLWISE_OPTIONS` is stamped in one
+    place those two reach. B1/B2 made it MORE reachable, not less: the discretization
+    used to be `stale` and refuse the build, and now it rebuilds and leaves nothing to
+    object to.
+    """
+
+    a, b = _two_meshes()
+    k = np.linspace(1.0, 100.0, a.ncpl * 2).reshape(2, a.ncpl)
+    moved = _array_simulation(a, k=k).with_grid(mf.GridSpec.from_object(b))
+
+    verdicts = {row["package"]: row["how"] for row in moved.move_report()}
+    assert verdicts["npf"] == "unverifiable", verdicts
+    assert verdicts["disv"] == "rebuilt", "the discretization still moves itself"
+
+    with pytest.raises(ValueError) as caught:
+        moved.build_flopy(tmp_path / "ws")
+
+    assert "npf" in str(caught.value)
+
+
+def test_a_grid_free_declaration_still_MOVES(tmp_path, boundary):
+    """The other direction, and it is the one a careless fix breaks.
+
+    `npf(k=[10.0, 1.0])` is a per-LAYER list and means the same on any mesh. Deciding
+    from "is this a sequence?" would refuse a correct move, which is why the test is
+    ncpl-EXACT and why this assertion exists beside the one above (ledger 284's
+    lesson: assert BOTH directions).
+    """
+
+    a, b = _two_meshes()
+    moved = _array_simulation(a, k=[10.0, 1.0]).with_grid(mf.GridSpec.from_object(b))
+
+    verdicts = {row["package"]: row["how"] for row in moved.move_report()}
+    assert verdicts["npf"] == "unchanged", verdicts
+
+    built = moved.build_flopy(tmp_path / "ws")
+    assert built.simulation.get_model("m").get_package("npf").k.array is not None
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["ndarray_2d", "flat_list", "nested_list", "ndarray_1d"],
+    ids=["(nlay,ncpl) array", "flat ncpl list", "nested per-layer lists", "1-D ncpl array"],
+)
+def test_every_per_cell_SPELLING_is_seen(spelling):
+    """FloPy accepts all four, so seeing only one is the same defect in miniature.
+
+    The nested case is what a per-cell `k` on a multi-layer model looks like written
+    by hand, and reading `.shape` alone missed it -- the same gap ledger 282 fixed for
+    a flat list, one nesting level down.
+    """
+
+    from myflopy.specs import package_move
+
+    a, _b = _two_meshes()
+    n = a.ncpl
+    payload = {
+        "ndarray_2d": np.ones((2, n)),
+        "flat_list": [1.0] * n,
+        "nested_list": [[1.0] * n, [2.0] * n],
+        "ndarray_1d": np.ones(n),
+    }[spelling]
+
+    assert package_move(mf.npf(k=payload), ncpl=n)[0] == "unverifiable"
+
+
+def test_the_report_read_AFTER_a_move_agrees_with_the_build(tmp_path):
+    """`with_grid` does not mutate, so it still holds the OLD mesh when it classifies.
+
+    The spec it RETURNS does not -- its context grid is dropped. So a report read off
+    the moved spec had no mesh to measure a payload against and said `unchanged` about
+    the very package the build then refused. The stamp itself is the answer: once
+    `with_grid` has decided, `package_move` reads its verdict rather than recomputing
+    one it no longer has the inputs for.
+    """
+
+    a, b = _two_meshes()
+    k = np.ones((2, a.ncpl))
+    moved = _array_simulation(a, k=k).with_grid(mf.GridSpec.from_object(b))
+
+    assert MOVED_FROM in (moved.models[0].packages[1].metadata or {})
+
+    verdicts = {row["package"]: row["how"] for row in moved.move_report()}
+    refused = [
+        row["package"] for row in moved.move_report() if row["how"] == "unverifiable"
+    ]
+
+    with pytest.raises(ValueError) as caught:
+        moved.build_flopy(tmp_path / "ws")
+
+    for package in refused:
+        assert package in str(caught.value), (
+            f"{package} reads {verdicts[package]!r} but the build does not name it"
+        )

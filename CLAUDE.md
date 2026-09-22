@@ -329,7 +329,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3715 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
+- Full suite (**3722 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
   (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
   `pytest -m "not slow"` ≈ 32 s.
   **A parallel run competing with another MF6 workload fails intermittently** —
@@ -428,7 +428,10 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   package -- `rebuilt` (carries a recipe), `stale` (pinned elsewhere, or a
   hand-written DISV, which IS the old mesh), `unverifiable` (names cells with no pin --
   including the ARRAY forms, which name cells by POSITION and so carry no cellid to
-  find, ledger 282 --
+  find, ledger 282; **and any package holding a per-cell ARRAY** -- `npf`/`ic`/`sto`
+  take no `context=`, so nothing stamped them and they read `unchanged` while a lazy
+  disv rebuilt correctly around them and the build carried K onto the WRONG MESH,
+  ledger 295 --
   or an EDIT voided the pin -- ledger 275: `packages.edit`/`fork`/`with_options`
   replacing a certified option makes the library's certificate a lie, so it is voided
   and the refusal names the edit instead of telling you to re-declare what you just
@@ -440,7 +443,16 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   asserting mesh-independence. The stamp is the only thing behind a hand-typed cellid
   across a move -- every number stays in range on a larger mesh. **A DEFERRED-grid
   model has no old pin to stamp**, so its hand-written cellids move unrefused; they
-  were never verifiable anyway. `replace_grid` is a warned `__getattr__`-only alias.
+  were never verifiable anyway -- and a per-cell array cannot be measured there
+  either. The array detection is ncpl-EXACT (a per-LAYER list `k=[10.0, 1.0]` means the
+  same on any mesh, so guessing from "is it a sequence" would refuse a correct move),
+  and `with_grid` supplies the count from the OLD grid it STILL HOLDS at the call site
+  -- it does not mutate, so the mesh is gone from the RESULT and present at the CALL.
+  The shared rule is `grid_identity.column_count` / `cellwise_options`, in import layer
+  0 because three callers need it; it tells a scalar and a per-layer list from a flat
+  `ncpl` list, an `(nlay, ncpl)` array and a NESTED per-layer list of per-cell lists.
+  It gives the arrays a VERDICT, not a route: a refused package is re-declared by hand
+  until the overlay engine lands. `replace_grid` is a warned `__getattr__`-only alias.
 - **A grid swap re-maps NOTHING outside the discretization** (ledger 249,
   2026-09-13). Every `.gpkg` helper resolves its cells at DECLARATION, so
   moving the grid leaves every package's cellids,

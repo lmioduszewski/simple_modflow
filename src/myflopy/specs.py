@@ -3384,6 +3384,10 @@ class ModelSpec:
         """
 
         free = tuple(grid_free)
+        # The OLD mesh, still in hand: `with_grid` returns a copy and does not mutate,
+        # so `self.context.grid` is the grid these packages were declared on. It is what
+        # lets `package_move` see a per-cell array that nothing stamped (ledger 295).
+        declared_on = getattr(getattr(self.context, "grid", None), "ncpl", None)
         stamped = tuple(
             package.with_metadata(**{MOVED_FROM: pin})
             # `grid_free` is honoured inside `package_move`, which answers
@@ -3391,7 +3395,8 @@ class ModelSpec:
             # code that read as load-bearing. Mutation found it.
             if (
                 isinstance(package, PackageSpec)
-                and package_move(package, grid_free=free)[0] == "unverifiable"
+                and package_move(package, grid_free=free, ncpl=declared_on)[0]
+                == "unverifiable"
                 # A VOIDED package is already refused by its own complaint, which names
                 # the mesh the edit invalidated. Stamping it too made `with_grid` list
                 # the same package twice with two different explanations -- measured on
@@ -3416,7 +3421,11 @@ class ModelSpec:
         without waiting for `prepare_run` to raise.
         """
 
-        return move_report(self, grid_free=tuple(grid_free))
+        return move_report(
+            self,
+            grid_free=tuple(grid_free),
+            ncpl=getattr(getattr(self.context, "grid", None), "ncpl", None),
+        )
 
     def build(
         self,
