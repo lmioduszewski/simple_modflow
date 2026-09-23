@@ -365,7 +365,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3816 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
+- Full suite (**3823 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
   measured on an otherwise idle machine (3808/6m31s earlier the same day; the 8 new
   tests are `test_budget_clocks.py`, 1.1 s, ledger 301). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,

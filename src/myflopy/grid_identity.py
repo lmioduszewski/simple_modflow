@@ -489,8 +489,8 @@ def package_move(
         # is rebuilt rather than carried.
         return (
             "unverifiable",
-            "supplies one value per cell and carries no pin, so nothing can tell an "
-            "array shaped for this mesh from one shaped for another",
+            "supplies one value per cell and carries no pin, so nothing can tell a "
+            "payload shaped for this mesh from one shaped for another",
         )
     # NOTHING STAMPS npf/ic/sto, because they take no `context=` and so have no mesh
     # to measure a payload against at declaration. `ncpl` is the caller's -- `with_grid`
@@ -506,7 +506,7 @@ def package_move(
             return (
                 "unverifiable",
                 f"supplies one value per cell ({', '.join(sorted(named))}) and carries "
-                "no pin, so nothing can tell an array shaped for this mesh from one "
+                "no pin, so nothing can tell a payload shaped for this mesh from one "
                 "shaped for another",
             )
     if inputs:

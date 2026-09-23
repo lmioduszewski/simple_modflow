@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from myflopy.advanced import uzf_spec
-from myflopy.grid_identity import pin_metadata
+from myflopy.grid_identity import CELLWISE_OPTIONS, pin_metadata
 from myflopy.specs import ModelContext, PackageSpec
 
 CellId = tuple[int, int]
@@ -335,8 +335,26 @@ class UZFBuilder:
             nwavesets=self.nwavesets,
             **dict(self.options),
         )
+        # A PIN when there was a mesh to pin to, and the weaker cell-addressing MARKER
+        # otherwise -- the two-branch shape `_array_bc_spec` already uses (ledger 282).
+        #
+        # `pin_metadata` returns {} for a context carrying no grid, and every UZF record
+        # holds a cellid at index 1 by construction, so without the fallback a GRIDLESS
+        # declaration reached `package_move` with nothing at all to classify on and
+        # answered "unchanged -- names no cells". Measured: a 25 -> 81 cell `with_grid`
+        # then BUILT CLEAN with 75 UZF objects sitting on columns 0..24 of 81, no
+        # warning -- UZF over 31% of the domain. Three separate misses had to line up for
+        # that: no pin, `_cellids_in` deliberately walks only `stress_period_data`, and
+        # the ncpl-exact fallback reads `None` from a record list whose second element is
+        # a cellid tuple. Ledger 295's defect, one package over (ledger 302).
+        #
+        # UNCONDITIONAL, unlike `_array_bc_spec`'s `if not cellwise: return spec` -- that
+        # one has a genuinely grid-free payload to protect (`mf.rch.array(irch=0)` means
+        # the same layer on every mesh). A UZF package with no cell-addressing records
+        # does not exist.
+        stamped = pin_metadata(self.context, certifies=("packagedata",))
         return package.with_metadata(
-            **pin_metadata(self.context, certifies=("packagedata",)),
+            **(stamped or {CELLWISE_OPTIONS: ["packagedata"]}),
             builder="UZFBuilder",
             cell_selection=self.cells if isinstance(self.cells, str) else "explicit",
             uzf_cells=list(self.uzf_cells),

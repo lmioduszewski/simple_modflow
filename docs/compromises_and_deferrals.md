@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 301 entries (302 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 302 entries (303 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 302 | A UZF package declared without a grid moved to another mesh in silence | 2026-09-23 |
 | 301 | A LAK budget could not be read at all on an ordinary output-control setting | 2026-09-23 |
 | 300 | A calibrated array could not follow its model to another mesh | 2026-09-23 |
 | 299 | A polygon map could fill an array, but the model could not then be saved or moved | 2026-09-23 |
@@ -12289,6 +12290,10 @@ same day, which is the useful part of the result.
         digest and the metadata stamp does not, so every run prepared before the move reads
         ``edited`` with ``source`` reading ``—``. Saying so is better than a stamp-reading
         special case nothing else needs yet.
+      * **AMENDED 2026-09-23 (ledger 302):** the line above saying ``uzf``/``sfr``/``lak``/
+        ``hfb.line`` are "measured ``stale``, not ``unverifiable`` -- they carry a
+        ``grid_pin``" is true only for a declaration carrying a GRID. A GRIDLESS
+        ``mf.uzf`` carried no pin at all and read ``unchanged``; ledger 302 closes that.
       * **A coupled pair under ``on=``.** Measured: ``on=`` strands the sibling on the old
         grid, and ledger 268's guard compares node counts and idomain only, so a same-ncpl
         sibling passes it. That is ledger 268's gap rather than this engine's, and
@@ -12296,6 +12301,59 @@ same day, which is the useful part of the result.
       * **A per-grid-pair weight CACHE**, a byte-identical A->B->A acceptance test, HFB
         through cell polygons, and a reducer for the discretization arrays: each measured
         and rejected during B3's scoping, and each still rejected.
+
+302. **A UZF package declared without a grid moved to another mesh in silence
+      (2026-09-23).**
+      ``mf.uzf`` resolves its cells from the IDOMAIN and needs no grid -- measured, it
+      touches exactly one grid attribute (``get_disv_gridprops``) and only from inside
+      ``pin_metadata``, and it builds byte-identical ``packagedata`` against a bare
+      ``ModelContext(domain=...)``. That gridless form is legitimate and two tests in
+      ``test_uzf_builder.py`` declare it. It was also unclassifiable: no grid meant no
+      pin, so ``package_move`` answered **``unchanged`` -- "names no cells"**, and a
+      ``with_grid`` from 25 to 81 cells **BUILT CLEAN with 75 UZF objects sitting on
+      columns 0..24 of 81** -- UZF over 31% of the domain, zero warnings. The same
+      declaration WITH a grid pins and reads ``stale``, and the build refuses it. The
+      documented path failed safe and the other one did not.
+      **Three independent misses had to line up**, which is why it survived: (a)
+      ``pin_metadata`` returns ``{}`` for a context with no grid; (b) ``_cellids_in``
+      deliberately walks only ``stress_period_data``, and UZF has none; (c) the
+      ncpl-exact fallback reads ``None`` from a UZF record list, because each record's
+      second element is a cellid TUPLE and ``column_count``'s nested branch collapses.
+      Any one of them holding would have caught it.
+      **The fix is the two-branch shape ``_array_bc_spec`` already ships** (ledger 282):
+      a PIN when there was a mesh to pin to, the weaker ``CELLWISE_OPTIONS`` marker
+      otherwise. Both say "these options address cells"; only the pin can say WHICH mesh,
+      so an unpinnable one classifies ``unverifiable`` rather than ``unchanged``.
+      **UNCONDITIONAL here, unlike ``_array_bc_spec``'s ``if not cellwise: return spec``.**
+      That early exit exists to protect a genuinely grid-free payload --
+      ``mf.rch.array(irch=0)`` means the same layer on every mesh. A UZF package with no
+      cell-addressing records does not exist: every row carries a cellid at index 1 by
+      construction. So nothing legitimate is reclassified.
+      **Costs a non-moving model nothing, and that is asserted rather than assumed.**
+      ``package_digest`` excludes ``metadata`` by contract, so the stamp moves no digest
+      and ``runs.drift()`` reports nothing -- without which closing the hole would have
+      reported every stored run as edited on the day it landed (ledger 293's churn).
+      **The limit, stated so the commit does not overclaim:** the marker is read by
+      ``package_move``, which only ``with_grid`` and ``move_report`` consult. A model
+      ASSEMBLED BY HAND against a different grid goes through neither and still builds --
+      measured, and pinned by a test. That is the build-time consistency guard's job
+      (ledger 249), and it is a range check rather than a proof.
+      **Two rejected fixes, each with the reason:**
+      * **Refusing a gridless declaration outright.** It would make the eager form
+        narrower than the lazy one, which ``_lazy_resolution_context``'s own docstring
+        records as the thing not to do (ledger 284) -- a bare ``ModelContext(domain=...)``
+        is a supported shape and is correct for any model that never moves.
+      * **Pinning from the DOMAIN's SHAPE.** A false pin. A domain shape is
+        ``(nlay, ncpl)``, and two genuinely different meshes of the same ncpl fingerprint
+        apart under ``grid_pin`` and identically under any shape test -- measured, a 2x8
+        and an 8x2 irregular Voronoi both give ``ncpl=16`` with different pins. It would
+        claim ``stale``/``rebuilt`` with confidence about a mesh it cannot tell apart,
+        which is worse than a marker that only claims "this addresses cells".
+      **One wording fix rides along.** The ``unverifiable`` sentence read "nothing can
+      tell an ARRAY shaped for this mesh from one shaped for another", which was written
+      for ``mf.rch.array`` and is wrong for UZF -- it supplies a RECORD per cell, and it
+      is the record's cellid that goes stale, not an array's position. "Payload" covers
+      both.
 
 301. **A LAK budget could not be read at all on an ordinary output-control setting
       (2026-09-23).**
