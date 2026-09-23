@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 300 entries (301 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 301 entries (302 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 301 | A LAK budget could not be read at all on an ordinary output-control setting | 2026-09-23 |
 | 300 | A calibrated array could not follow its model to another mesh | 2026-09-23 |
 | 299 | A polygon map could fill an array, but the model could not then be saved or moved | 2026-09-23 |
 | 298 | What a move would have no data for, in ft2 rather than as a coverage fraction | 2026-09-22 |
@@ -2087,6 +2088,16 @@ same day, which is the useful part of the result.
       missing verb. Also relevant: **no test anywhere covers `<pkg>.budget.<term>`** — its
       only consumer is `canonical.py:255` — so that tier would need test coverage built
       before it is safe to change.
+    - **AMENDED 2026-09-23 (ledger 301).** "Neither is a wrong-data bug" was right about
+      the two causes surveyed here and wrong about this namespace. A THIRD cause, in the
+      same `budget.<term>` path and missed by this survey, made it return a *silently
+      empty* table for a reason nothing normalizes away: the records were labelled from
+      the HEAD file's save clock, so an ordinary asymmetric `OC` made `lak.budget.get()`
+      raise `AttributeError` and every sibling term come back with **0 rows where the file
+      holds 38**. Fixed in 301, which is also where this tier finally got its tests. The
+      two defects recorded above are still open and still deferred on their own merits;
+      the `_normalize_term_filter` one is narrower than it reads here, because the empty
+      frame it produces is now the only way to get one.
 
 99. **`xs` was broken on the transport readers from the day they shipped — FIXED
     2026-07-27.**
@@ -12285,3 +12296,104 @@ same day, which is the useful part of the result.
       * **A per-grid-pair weight CACHE**, a byte-identical A->B->A acceptance test, HFB
         through cell polygons, and a reducer for the discretization arrays: each measured
         and rejected during B3's scoping, and each still rejected.
+
+301. **A LAK budget could not be read at all on an ordinary output-control setting
+      (2026-09-23).**
+      Reported as `AttributeError: 'list' object has no attribute 'empty'` from
+      `msw.packages.lak.budget.get()`. Four defects, one of them on the reporting user's
+      own model and unrelated to the crash.
+      **THE HEAD FILE'S CLOCK AND A BUDGET FILE'S CLOCK ARE TWO DIFFERENT CLOCKS.** One
+      MF6 `OC` `saverecord` sets two INDEPENDENT flags -- `idvsave` from `SAVE HEAD`,
+      `icbcfl` from `SAVE BUDGET` (`gwf.f90`) -- and LAK/SFR gate their STAGE file on the
+      first while gating their BUDGET file on the second. So within ONE package the two
+      outputs follow different schedules, which is almost certainly how
+      `budget_tables.package_output_df` came to label package-budget records by zipping
+      them positionally against `model.kstpkper`: that IS the right clock for stage, and
+      has never been the right one for budget. Measured on a real MF6 run: `SAVE HEAD
+      LAST` + `SAVE BUDGET ALL` at `nstp=5` writes **2 head records against 10 LAK budget
+      records**. Records are now labelled from the budget file's own `recordarray` under
+      FloPy's own `get_indices` mask -- the same selection, in the same file order, that
+      `get_data(text=...)` returns, so the two zip exactly.
+      **THE SILENT HALF IS WORSE THAN THE CRASH, and no length check could ever see it.**
+      `SAVE HEAD STEPS 1` + `SAVE BUDGET STEPS 3` writes **two records each, naming
+      different time steps**: head `[(0,0),(0,1)]` against a true LAK clock of
+      `[(2,0),(2,1)]`. The lengths agree, so nothing raised and nothing warned, and every
+      flow MF6 wrote at step 3 was stamped step 1.
+      **A GUARD THAT `continue`s IS NOT A FIX.** The crash reached only LAK's `GWF` term;
+      its eight siblings and the whole of SFR were on
+      `if not isinstance(raw, pd.DataFrame): continue`, which DROPPED the term. Measured
+      on the reporting user's model: `lak.budget.get(term="STORAGE")` returned **0 rows
+      where a healthy read gives 38** (q sum -4232.68), and `packages.sfr.budget.get()`
+      returned a well-formed, correctly-columned, completely EMPTY frame against a budget
+      file holding 8 terms. A plot of that reads as "no flow". Those guards are deleted:
+      `bud.get` returns a DataFrame or raises.
+      **THE RAW-LIST FALLBACK IS GONE.** `LakBudget.get`/`SFRBudget.get` caught the
+      length-check `ValueError`, warned, and returned the raw record list from a method
+      documenting a dataframe -- a silent return-type change no caller can guard against.
+      `return_df=False` already asks for the list and had zero callers; the fallback had
+      zero legitimate users. The warning was effectively invisible: Python's default
+      filter is once per `(message, category, module, lineno)` and IPython does not reset
+      `__warningregistry__`, so a kernel that hit it once earlier (via a plot) shows only
+      a bare `AttributeError` afterwards -- which is what the reporting user saw.
+      **A BUDGET FILE IS NOT ALWAYS `<name>.cbc`.** `LoadedMf6Run._get_budget_reader`
+      hardcoded the extension. On a real 38-period model whose `OC` says `BUDGET FILEOUT
+      tentrails.cbb`, **every** cell-budget surface raised `FileNotFoundError` for a file
+      MF6 never wrote -- `model.bud(pkg)`, `model.budget.<term>`,
+      `packages.<pkg>.results.q` for all five list BCs, HFB flow. Now read from the OC
+      record. Parsed from the `.nam`/`.oc` TEXT rather than from the loaded package,
+      because `_ensure_packages_loaded` triggers a FULL FloPy load -- which is the cost
+      this accessor exists to avoid. `prt.py`'s `_output_filename` had the rule already.
+      **A MODEL WITH TWO PACKAGES OF ONE TYPE OVERRAN THE MODEL-BUDGET CLOCK.** Found by
+      sweeping the same shape one tier up rather than by report. `budget_df` zipped a
+      package's records against the budget file's UNIQUE save times, which is one per
+      record only when the model has ONE package of that type. The reporting user's model
+      declares two `RIV6` entries -- a main stem and a named tributary -- so the file holds
+      **76 RIV records against 38 save times** and `model.bud("riv").df` raised
+      `IndexError` on record 38. Labelled from the same per-text selection that produced
+      the records now; the two packages' cells merge into one `riv` table, which is what
+      `packages.riv.results.q` already did.
+      **TWO CLOCKS SHARED ONE CACHE SLOT.** `LoadedMf6Run._get_budget_kstpkper` cached the
+      model-budget clock into `_kstpkper`, the attribute `accessors.get_kstpkper` caches
+      the HEAD clock into, so whichever was touched first answered for both for the life
+      of the object -- both directions measured wrong on a 6-head/2-budget model. Split
+      into `_budget_kstpkper`. `SimulationBase._get_budget_kstpkper` does not cache and
+      was never affected; that asymmetry is what hid it.
+      **WHY THE SUITE NEVER SAW ANY OF THIS: every `saverecord` in `tests/` is
+      symmetric** -- both `ALL` or both `LAST` -- so the two clocks were equal in every
+      fixture and the mismatch branch had never executed under test. Not one test drove
+      `packages.lak.budget.get()` at all. `tests/test_budget_clocks.py` is deliberately
+      asymmetric, and each test asserts the mismatch ACTUALLY HOLDS before asserting the
+      behaviour (ledger 96's lesson); all five fixes are certified by reverting each one
+      and watching a NAMED test fail. It costs 1.1 s. Nothing in the suite had two
+      packages of one type in a budget-reading test either.
+      **NOT FIXED, and recorded rather than quietly left:**
+      * **The STAGE-clock family, ~12 sites, same root shape.**
+        `LakStageOutput.get` reshapes with no clock at all and
+        `build_lak_stage_result_table` labels `per` by SAVED-RECORD INDEX (measured
+        `per = 0..5` on a 2-period model); `group/lak.py` pairs stage records with
+        `model.kstpkper` and truncates; `group/sfr.py` decodes `SFRStageOutput`'s
+        reach-indexed frame as if it were LAK's time-indexed array, so `per=` and `reach=`
+        both select the wrong thing; `_coerce_kstpkper` and `XSection.__init__` index the
+        head-clock LIST by a stress-period number, which is only correct at one save per
+        period; `budget_tables.sfr_stage_df` reshapes by `model.nper` and raises;
+        `budget_obs_df` swallows the mismatch with `except KeyError: continue`.
+        Scoped OUT by the user to keep this pass to the reported defect. They are a
+        genuinely larger surface -- the group tier and the PEST observation path -- and
+        each needs its own measured fixture. `SFRStageOutput.get`
+        (`modflow/utils/outputs.py`) is the reference pattern to converge them on: it
+        already labels from its own reader's `get_kstpkper()`.
+      * **`budget_tables.lake_stage_array` is a dead duplicate** of
+        `LakStageOutput.get`, carrying the same false "(nper, nlakes)" docstring, with no
+        caller anywhere. Left alone rather than deleted in a bug-fix pass.
+      * **`locs.filter_cells_by_pkg` reads the head clock to index a budget-indexed
+        frame, AND falls off the end returning `None` unconditionally.** No callers
+        anywhere, so nothing is broken today; it is deleted-or-fixed work, not this.
+      * **`_kstpkper` is still never invalidated.** Nothing resets it -- not
+        `run_simulation`, not `Run.execute` (`Run.open` clears `_model_views`, `execute`
+        does not) -- while `get_hds` rebuilds its reader on EVERY access, so the heads
+        refresh and their clock does not. That is how the reporting user's object got a
+        short clock in the first place: a read taken while MF6 was still writing, 23
+        minutes before the run finished. Left because invalidation needs a decision about
+        where a run's "outputs changed" signal lives, which is bigger than this fix, and
+        because with the clock corrected a stale `_kstpkper` no longer reaches any budget
+        table. `model._kstpkper = None` still clears it; so does reloading the run.

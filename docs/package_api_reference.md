@@ -797,6 +797,17 @@ The column is MF6's raw `q`, unlike `model.packages.<pkg>.results.q`, which rena
 `q_gwf`/`q_lake` to carry the reference frame. The values are identical; only the name
 differs (ledger 97).
 
+**Each of those files also has its own SAVE CLOCK, and `model.kstpkper` is the head
+file's** (ledger 301). One MF6 `OC` `saverecord` sets two independent flags — `SAVE HEAD`
+drives `idvsave`, `SAVE BUDGET` drives `icbcfl` — and LAK/SFR gate their *stage* output on
+the first while gating their *budget* output on the second. So `SAVE HEAD LAST` +
+`SAVE BUDGET ALL` at `nstp=5` writes 2 head records against 10 LAK budget records, and
+`STEPS 1` vs `STEPS 3` writes two of each naming different time steps. Every table built
+here labels its rows from the file it actually read; **never pair records from one file
+with `model.kstpkper`**. `modflow/utils/outputs.py`'s `SFRStageOutput.get` is the pattern
+to copy. The budget filename comes from the OC record too — it is not always
+`<name>.cbc`.
+
 **Grouped reads:** `group.hds` / `group.conc` / `group.temp` are the multi-model twins
 of the model-level readers, with the same verbs plus `compare()`:
 

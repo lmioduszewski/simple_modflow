@@ -45,6 +45,31 @@ become circular and stop testing anything.
 change log. An un-regenerated snapshot fails CI.
 
 ## Adding a table, plot, or map to a package? Read `docs/view_layer_conventions.md`
+**A binary output file's rows are labelled from ITS OWN clock** (ledger 301,
+2026-09-23) -- never from `model.kstpkper`, which is the HEAD file's. One MF6
+`OC` `saverecord` sets two INDEPENDENT flags, `idvsave` from `SAVE HEAD` and
+`icbcfl` from `SAVE BUDGET`, and LAK/SFR gate their STAGE file on the first
+while gating their BUDGET file on the second -- so within one package the two
+outputs follow different schedules. `SAVE HEAD LAST` + `SAVE BUDGET ALL` at
+`nstp=5` writes **2 head records against 10 LAK budget records**;
+`STEPS 1` vs `STEPS 3` writes **two of each naming different time steps**, which
+no length check can see. Both were live: the first crashed
+`packages.lak.budget.get()` and the second stamped every flow with the wrong
+step, silently. `SFRStageOutput.get` is the reference pattern. **The budget
+FILENAME comes from the OC record too** -- `<name>.cbc` is a default, not a
+rule, and assuming it left every cell-budget surface raising `FileNotFoundError`
+on a real model whose OC said `BUDGET FILEOUT tentrails.cbb`. **A reader whose
+records do not line up must RAISE** -- the removed fallback warned once (Python
+dedupes by line, and IPython never resets `__warningregistry__`) and returned a
+raw list from a method documenting a DataFrame, and the `isinstance` guard that
+caught it downstream `continue`d, returning **0 rows against a file holding 38**.
+**A model with TWO packages of one type** (two `RIV6` entries, a main stem plus
+a named tributary) writes two budget records per saved time, which overran the
+model-budget clock the same way -- `model.bud("riv").df` raised `IndexError`.
+STILL OPEN there: the ~12-site STAGE-clock family (`LakStageOutput`,
+`build_lak_stage_result_table`'s `per`-as-record-index, `group/sfr.py`'s
+transposed decode, `_coerce_kstpkper`, `XSection`), and `_kstpkper` is still
+never invalidated.
 The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every noun
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
 `map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
@@ -340,8 +365,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3808 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m31s**,
-  measured this pass on an otherwise idle machine. `pytest -n 10` ≈ **2m08s** and the
+- Full suite (**3816 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
+  measured on an otherwise idle machine (3808/6m31s earlier the same day; the 8 new
+  tests are `test_budget_clocks.py`, 1.1 s, ledger 301). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
   so do not read the serial/parallel ratio across those two dates.
   **A parallel run competing with another MF6 workload fails intermittently** —

@@ -340,12 +340,18 @@ class SfrFlowTargets:
 
         flow = model.outputs.sfr.bud.get("FLOW-JA-FACE")
         if not isinstance(flow, pd.DataFrame) or flow.empty:
-            # In-channel routing flow is unavailable — e.g. the SFR budget was saved
-            # on a different cadence than heads, so ``SFRBudget.get`` swallowed the
-            # length-mismatch ``ValueError`` and returned the raw record list (a
-            # non-DataFrame). Do NOT substitute ``sfr.results.q`` here: that is the
-            # stream-aquifer exchange, and feeding it to PEST as ``sim_flow`` would be
-            # a silent wrong-quantity calibration. Surface the gap instead.
+            # In-channel routing flow is unavailable -- the SFR budget file holds
+            # no FLOW-JA-FACE rows. Do NOT substitute ``sfr.results.q`` here: that
+            # is the stream-aquifer exchange, and feeding it to PEST as
+            # ``sim_flow`` would be a silent wrong-quantity calibration. Surface
+            # the gap instead.
+            #
+            # The ``isinstance`` half is now unreachable and kept only as a belt:
+            # until ledger 301 ``SFRBudget.get`` warned and handed back a raw
+            # record list whenever the SFR budget was saved on a different cadence
+            # than heads, which is the case this guard was written for. That
+            # comparison is gone -- the records are labelled from the SFR budget
+            # file's own clock -- so an empty frame is the only route left.
             warnings.warn(
                 "SFR in-channel routing flow (FLOW-JA-FACE) is unavailable, so no "
                 "simulated SFR flow can be produced. Returning no simulated values "

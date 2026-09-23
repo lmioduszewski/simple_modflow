@@ -510,6 +510,15 @@ Namespace-level nouns merge fields; field-level nouns cover a single field.
 Treating these two files as interchangeable is what produced the node off-by-one in
 ledger 92. When adding anything here, name which file you are reading.
 
+**And label its rows from that same file's own clock.** The two files are written on two
+independent MF6 `OC` flags (`SAVE HEAD` → `idvsave`, `SAVE BUDGET` → `icbcfl`), so they
+hold different numbers of records — and sometimes the same number at different time
+steps. `model.kstpkper` is the *head* file's clock; pairing it positionally with
+package-budget records crashed `lak.budget.get()` on one ordinary output-control setting
+and silently mislabelled on another (ledger 301). A reader whose record count disagrees
+must raise, never quietly return a different type or `continue` past the term: the guard
+that did the latter returned 0 rows against a file holding 38.
+
 The loose field-level spellings `q.plot_profile` / `stage.plot_profile` /
 `q.plot_budget` / `q.budget_summary` were retired onto these nouns in plan §4.8
 (D12 warned aliases preserve their old returns exactly). One deliberate

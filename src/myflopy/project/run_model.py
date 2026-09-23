@@ -283,6 +283,63 @@ def _grid_package_path(workspace: Path, model_name: str, grid_type: str) -> Path
     return path if path.exists() else None
 
 
+_OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds"}
+
+
+def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
+    """The ``BUDGET``/``HEAD`` output path the model's OC file actually declares.
+
+    Falls back to ``<model_name>.cbc`` / ``.hds`` when the OC file cannot be read
+    or names no such record.
+
+    A caller that ASSUMES the fallback is wrong whenever the modeller named the
+    file themselves: an OC saying ``BUDGET FILEOUT tentrails.cbb`` left every
+    cell-budget surface -- ``model.bud(pkg)``, ``model.budget.<term>``,
+    ``packages.<pkg>.results.q``, HFB flow -- raising ``FileNotFoundError`` for a
+    ``.cbc`` that MF6 never wrote (ledger 301). Parsed from the files rather than
+    from the loaded OC package because ``_ensure_packages_loaded`` triggers a
+    FULL FloPy load, which is the cost this accessor exists to avoid.
+    """
+
+    suffix = _OC_FILEOUT_SUFFIXES[kind]
+    model_dir = _model_dir(workspace, model_name)
+    fallback = workspace / f"{model_name}.{suffix}"
+
+    name_file = model_dir / f"{model_name}.nam"
+    oc_file = None
+    if name_file.is_file():
+        for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            fields = line.split("#", 1)[0].split()
+            if len(fields) >= 2 and fields[0].upper().startswith("OC"):
+                oc_file = model_dir / fields[1]
+                break
+    if oc_file is None or not oc_file.is_file():
+        return fallback
+
+    declared = None
+    for line in oc_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        fields = line.split("#", 1)[0].split()
+        if (
+            len(fields) >= 3
+            and fields[0].upper() == kind.upper()
+            and fields[1].upper() == "FILEOUT"
+        ):
+            declared = fields[2].strip("'\"")
+            break
+    if declared is None:
+        return fallback
+
+    # MF6 resolves a package's FILEOUT relative to the simulation directory, but
+    # a multi-model run keeps each model's files in its own subdirectory. Take
+    # whichever of the two actually exists, and the model dir when neither does
+    # (so the error names where the run would have written it).
+    candidates = [model_dir / declared, workspace / declared]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
 def _file_sha256(path: Path) -> str:
     """Return a normalized SHA-256 hash of one text MF6 package file.
 
@@ -540,6 +597,7 @@ class LoadedMf6Run(SimulationBase):
         self._node_to_lni = None
         self._lni_to_node = None
         self._kstpkper = None
+        self._budget_kstpkper = None
         self._idomain = None
         self._grid_type_override = grid_type if grid_type != "unknown" else None
         self._targets = None
@@ -793,19 +851,29 @@ class LoadedMf6Run(SimulationBase):
             # OSError (Errno 22) -- which escapes FloPy's BudgetIndexError/EOFError
             # guard, so the double-precision fallback never runs. Read as double.
             self._bud = flopy.utils.CellBudgetFile(
-                self.workspace / f"{self.name}.cbc", precision="double"
+                _declared_output_path(self.workspace, self.name, "budget"),
+                precision="double",
             )
         return self._bud
 
     def _get_budget_kstpkper(self) -> list[tuple[int, int]]:
-        """Return budget ``(kstp, kper)`` pairs directly from the ``.cbc`` file."""
+        """Return budget ``(kstp, kper)`` pairs directly from the model budget file.
 
-        if self._kstpkper is None:
-            self._kstpkper = [
+        Cached in its OWN slot. It used to share ``_kstpkper`` with
+        :func:`~myflopy.modflow.mf6.simulation.accessors.get_kstpkper`, which
+        caches the HEAD file's clock -- two different clocks, one slot, so
+        whichever accessor was touched first answered for both for the life of
+        the object. Measured on a model with 6 head records and 2 budget records:
+        head-first made this return the 6 head pairs, budget-first made
+        ``model.kstpkper`` return only the 2 budget times (ledger 301).
+        """
+
+        if self._budget_kstpkper is None:
+            self._budget_kstpkper = [
                 tuple(int(value) for value in pair)
                 for pair in self._get_budget_reader().get_kstpkper()
             ]
-        return self._kstpkper
+        return self._budget_kstpkper
 
     def load_all(self):
         """Fully load the MF6 simulation and all discovered packages."""

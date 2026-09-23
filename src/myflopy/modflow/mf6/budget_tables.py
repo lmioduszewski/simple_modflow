@@ -124,7 +124,14 @@ def budget_df(model: SimulationBase, gwf_package: str) -> pd.DataFrame:
         raise ValueError("gwf_package is required to build a budget dataframe.")
 
     records = raw_budget(model, gwf_package)
-    kstpkper_all = model._get_budget_kstpkper()
+    # Label each record from the SAME selection that produced it, not from the
+    # file's unique save times. A model with TWO packages of one type -- two RIV6
+    # entries in the name file, say -- writes TWO records per saved time, so a
+    # 38-period model held 76 RIV records against 38 unique times and this raised
+    # IndexError on record 38. Ledger 301, same shape as package_output_df's.
+    kstpkper_all = package_output_kstpkper(
+        model._get_budget_reader(), bud_type=gwf_package
+    )
     frames = []
     for per, record in enumerate(records):
         # Shared with the modern explorer path so the two cannot disagree about
@@ -228,6 +235,24 @@ def package_output_budget(package):
     return package.output.budget()
 
 
+def package_output_kstpkper(reader, *, bud_type: str) -> list[tuple[int, int]]:
+    """Return the zero-based ``(kstp, kper)`` of every ``bud_type`` record in ``reader``.
+
+    Taken from the budget file's own ``recordarray`` (1-based on disk) under
+    FloPy's own ``get_indices`` mask -- the same selection, in the same file
+    order, that ``get_data(text=bud_type)`` returns. So the two zip exactly.
+    """
+
+    indices = reader.get_indices(text=bud_type)
+    if indices is None:
+        return []
+    recordarray = reader.recordarray
+    return [
+        (int(recordarray["kstp"][idx]) - 1, int(recordarray["kper"][idx]) - 1)
+        for idx in indices
+    ]
+
+
 def package_output_df(
     model: SimulationBase,
     package,
@@ -236,25 +261,53 @@ def package_output_df(
 ):
     """Return one concatenated dataframe for a package-output budget type.
 
+    Each record is labelled with the ``(kstp, kper)`` the package-output budget
+    file recorded for it -- never with ``model.kstpkper``, which is the HEAD
+    file's clock.
+
+    Notes
+    -----
+    An advanced package's budget file and the model's dependent-variable file
+    are written on two INDEPENDENT MF6 clocks. One OC ``saverecord`` sets
+    ``icbcfl`` from ``SAVE BUDGET`` and ``idvsave`` from ``SAVE HEAD``
+    (``gwf.f90``), and LAK/SFR gate their BUDGET output on the first while
+    gating their STAGE output on the second. Measured: ``SAVE HEAD LAST`` +
+    ``SAVE BUDGET ALL`` at ``nstp=5`` writes 2 head records against 10 LAK
+    budget records, and ``SAVE HEAD STEPS 1`` + ``SAVE BUDGET STEPS 3`` writes
+    two of each naming DIFFERENT time steps. Pairing the two positionally --
+    which this function did until ledger 301 -- crashed on the first and
+    silently mislabelled on the second.
+
     Parameters
     ----------
     model
-        Parent model supplying stress-period metadata.
+        Parent model. Not consulted for labelling; see the note above.
     package
         FloPy package object exposing ``output.budget()``.
     bud_type
-        Output record type to concatenate across periods.
+        Output record type to concatenate across saved times.
     """
 
-    records = package.output.budget().get_data(text=bud_type)
-    if len(records) != len(model.kstpkper):
-        raise ValueError("length of periods and budget array list do not match")
+    del model  # the package budget file carries its own clock; see Notes
+    reader = package.output.budget()
+    records = reader.get_data(text=bud_type)
+    labels = package_output_kstpkper(reader, bud_type=bud_type)
+    if len(records) != len(labels):
+        # Unreachable through FloPy's own mask (get_data and get_indices select
+        # from one recordarray); a guard against a reader whose record order
+        # stops tracking its index.
+        raise ValueError(
+            f"{bud_type!r}: the package budget file yielded {len(records)} "
+            f"records but {len(labels)} (kstp, kper) labels"
+        )
 
     frames = []
-    for idx, per in enumerate(model.kstpkper):
-        frame = pd.DataFrame(records[idx])
-        frame["kstpkper"] = [per for _ in range(len(frame))]
+    for record, label in zip(records, labels):
+        frame = pd.DataFrame(record)
+        frame["kstpkper"] = [label for _ in range(len(frame))]
         frames.append(frame)
+    if not frames:
+        return pd.DataFrame()
     return pd.concat(frames)
 
 

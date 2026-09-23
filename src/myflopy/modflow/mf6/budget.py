@@ -13,7 +13,6 @@ logic with the newer lazy-loading and grouped-model layers.
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -284,27 +283,28 @@ class LakBudget:
         bud_type
             Output record type to retrieve.
         return_df
-            If ``True``, return one concatenated dataframe across all periods.
+            If ``True`` (the default), return one concatenated dataframe --
+            always a dataframe, one row per record, each labelled with the
+            ``(kstp, kper)`` the LAK budget file itself recorded.
             If ``False``, return the raw list of record arrays.
+
+        Notes
+        -----
+        Until ledger 301 this warned and returned the RAW LIST when the record
+        count disagreed with ``model.kstpkper``, silently breaking the dataframe
+        contract above; the comparison was against the HEAD file's save clock,
+        which an advanced package's budget file has never been written on. The
+        clock is now read from that file, so there is nothing left to disagree.
+        Ask for the raw list with ``return_df=False``.
         """
         if bud_type is None:
             raise ValueError(
                 "bud_type is required when requesting LAK budget data. "
                 f"Available types: {self.types}"
             )
-        bud = self.budget.get_data(text=bud_type)
         if return_df is False:
-            return bud
-        elif return_df is True:
-            try:
-                return _package_output_df(self.model, self.model.lak, bud_type=bud_type)
-            except ValueError:
-                warnings.warn(
-                    "Length of LAK budget periods and record arrays do not match; "
-                    "returning the raw record list instead of a concatenated dataframe.",
-                    stacklevel=2,
-                )
-                return bud
+            return self.budget.get_data(text=bud_type)
+        return _package_output_df(self.model, self.model.lak, bud_type=bud_type)
 
 
 class LakStage:
@@ -350,27 +350,28 @@ class SFRBudget:
         bud_type
             Output record type to retrieve.
         return_df
-            If ``True``, return one concatenated dataframe across all periods.
+            If ``True`` (the default), return one concatenated dataframe --
+            always a dataframe, one row per record, each labelled with the
+            ``(kstp, kper)`` the SFR budget file itself recorded.
             If ``False``, return the raw list of record arrays.
+
+        Notes
+        -----
+        Until ledger 301 this warned and returned the RAW LIST when the record
+        count disagreed with ``model.kstpkper``, silently breaking the dataframe
+        contract above; the comparison was against the HEAD file's save clock,
+        which an advanced package's budget file has never been written on. The
+        clock is now read from that file, so there is nothing left to disagree.
+        Ask for the raw list with ``return_df=False``.
         """
         if bud_type is None:
             raise ValueError(
                 "bud_type is required when requesting SFR budget data. "
                 f"Available types: {self.types}"
             )
-        bud = self.budget.get_data(text=bud_type)
         if return_df is False:
-            return bud
-        elif return_df is True:
-            try:
-                return _package_output_df(self.model, self.model.sfr, bud_type=bud_type)
-            except ValueError:
-                warnings.warn(
-                    "Length of SFR budget periods and record arrays do not match; "
-                    "returning the raw record list instead of a concatenated dataframe.",
-                    stacklevel=2,
-                )
-                return bud
+            return self.budget.get_data(text=bud_type)
+        return _package_output_df(self.model, self.model.sfr, bud_type=bud_type)
 
     def plot_flows(
             self,

@@ -754,10 +754,11 @@ def build_lak_budget_term_table(
             frames.append(frame)
             continue
 
-        raw = model.outputs.lak.bud.get(current_term)
-        if not isinstance(raw, pd.DataFrame):
-            continue
-        frame = raw.copy()
+        # No isinstance guard: ``bud.get`` returns a DataFrame or raises. It
+        # used to warn and hand back a raw record list when the clocks
+        # disagreed, and the guard that caught that here CONTINUED -- dropping
+        # the term with no signal (measured: STORAGE 38 rows -> 0). Ledger 301.
+        frame = model.outputs.lak.bud.get(current_term).copy()
         if frame.empty:
             continue
         frame = _normalize_budget_nodes(frame)
@@ -842,10 +843,11 @@ def build_sfr_budget_term_table(
 
     frames: list[pd.DataFrame] = []
     for current_term in selected_terms:
-        raw = model.outputs.sfr.bud.get(current_term)
-        if not isinstance(raw, pd.DataFrame):
-            continue
-        frame = raw.copy()
+        # No isinstance guard: ``bud.get`` returns a DataFrame or raises. It
+        # used to warn and hand back a raw record list when the clocks
+        # disagreed, and the guard that caught that here CONTINUED -- dropping
+        # the term with no signal (measured: STORAGE 38 rows -> 0). Ledger 301.
+        frame = model.outputs.sfr.bud.get(current_term).copy()
         if frame.empty:
             continue
         frame = _normalize_budget_nodes(frame)
