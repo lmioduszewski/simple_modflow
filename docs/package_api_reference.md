@@ -477,6 +477,37 @@ and the `<pkg>_spec` factories (`chd_spec`, `rch_spec`, `evt_spec`, …). E.g.
 
 ---
 
+### Moving a calibrated array to a new mesh — `with_grid(remap=True)`
+
+```python
+moved = sim.with_grid(finer_grid, remap=True)          # rule="geometric", uncovered="nearest"
+moved = sim.with_grid(finer_grid, remap=True, rule="harmonic", uncovered="raise")
+```
+
+Carries per-cell arrays across by area overlay, so `move_report()` reads **`remapped`**
+instead of `unverifiable` and the build accepts them. Serves `npf` `k`/`k22`/`k33` and
+`ic.strt`/`sto.ss`/`sto.sy` (ledger 300).
+
+| argument | meaning |
+| --- | --- |
+| `remap` | opt-in. The default does not move — a remap is the inferior route wherever a source exists |
+| `rule` | the CONDUCTIVITY rule: `"geometric"` (default), `"mean"`, `"harmonic"`, `"majority"` |
+| `uncovered` | `"nearest"` (default, fills and warns in detail) or `"raise"` |
+
+**Use it for an array with no recipe** — a PEST-calibrated K field, an array read out of an
+imported model. Where the package has a source, re-declare it instead: that measured 7.1%
+worst-case boundary-flux error against this engine's 12.5% at best.
+
+**`rule=` exists because K has no safe default.** The correct average depends on which way
+the water flows, which the K field does not know: measured in MF6, the arithmetic mean gave
+264× the right flux with the contrast across the flow and was exact with it along.
+`geometric` is never best and never catastrophic, and the engine warns naming the cells
+where arithmetic and harmonic diverge by more than 2×.
+
+Integer flags (`icelltype`, `iconvert`, `irch`, `ievt`) and everything extensive are
+refused by name. Two meshes in different coordinate systems are refused before anything is
+carried; a unit rescale under the same declared CRS is the known blind spot.
+
 ### A per-cell array from a polygon map — `mf.Polygons`
 
 | call | fills |

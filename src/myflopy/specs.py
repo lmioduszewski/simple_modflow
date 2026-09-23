@@ -35,12 +35,14 @@ from myflopy._logging import get_logger
 # would switch the check off for all 3,500 lines of this module rather than for these
 # twelve names. (Spelling the directive out in prose here would itself be read as one.)
 from myflopy.grid_identity import (
+    CELLWISE_OPTIONS,
     DROPPED_CONTEXT_FIELDS,  # noqa: F401
     GRID_PIN,  # noqa: F401
     GRID_PIN_OPTIONS,  # noqa: F401
     MOVE_RECIPE,  # noqa: F401
     MOVED_FROM,
     PIN_VOIDED,
+    REMAPPED_FROM,
     SOURCE_SHA,  # noqa: F401
     _as_int,  # noqa: F401
     _canonical_ring,  # noqa: F401
@@ -49,6 +51,7 @@ from myflopy.grid_identity import (
     _discretization_complaints,  # noqa: F401
     _mesh_residual,  # noqa: F401
     _mesh_scale,  # noqa: F401
+    cellwise_options,
     coupled_mesh_complaints,
     disv_pin,  # noqa: F401
     dropped_context_fields,  # noqa: F401
@@ -992,6 +995,83 @@ def _relazified(package: Any) -> Any:
         metadata={k: v for k, v in metadata.items()
                   if k not in (GRID_PIN, GRID_PIN_OPTIONS, "coverage")},
     )
+
+
+def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, uncovered):
+    """Carry one package's per-cell arrays onto the new mesh, or leave it alone.
+
+    Returns ``(package, remapped)``. A package is a candidate only when
+    :func:`~myflopy.grid_identity.package_move` would call it ``unverifiable`` FOR THE
+    ARRAY REASON -- it carries ``CELLWISE_OPTIONS`` that no recipe supplies. Everything
+    else is left exactly as it was: a pinned package is ``stale`` and re-declared, a
+    hand-typed cellid list cannot be remapped at all (there are no per-cell source values
+    to weight), and a lazy one rebuilds itself and is more faithful than any overlay.
+
+    A refusal from the engine is allowed to propagate. The alternative -- catching it and
+    leaving the package stamped ``unverifiable`` -- would make ``remap=True`` silently do
+    nothing for an integer flag or a recharge array, which is ledger 295's failure over
+    again: the caller asked for a remap and would be told the move was fine.
+    """
+
+    from myflopy.modflow.mf6.grid.remap import remap_arrays
+
+    metadata = getattr(package, "metadata", None) or {}
+    # Two routes, because only SOME packages are stamped. `mf.rch.array` records
+    # `CELLWISE_OPTIONS` at declaration; `npf`/`ic`/`sto` take no `context=` and so have
+    # nothing to measure against then -- `package_move` derives them from the OLD grid's
+    # ncpl instead (ledger 295), and so must this. Reading only the stamp made
+    # `remap=True` silently do NOTHING for the very packages the engine exists for:
+    # measured, `npf` and `ic` still read `unverifiable` and not one warning fired.
+    stamped = tuple(metadata.get(CELLWISE_OPTIONS) or ())
+    derived = cellwise_options(package.options, ncpl) if ncpl else ()
+    supplied = set(package.inputs or {})
+    cellwise = tuple(
+        name for name in dict.fromkeys(stamped + derived) if name not in supplied
+    )
+    if not cellwise:
+        return package, False
+    if PIN_VOIDED in metadata or metadata.get(GRID_PIN) is not None:
+        # A voided package's values were never verified on the OLD mesh either, so an
+        # overlay would carry an unverified guess forward and stamp it certified; a
+        # pinned one is `stale` and has a better route (re-declaration). Ledger 275.
+        return package, False
+    moved_options, report = remap_arrays(
+        dict(package.options),
+        old_polys=old_polys,
+        new_polys=new_polys,
+        cellwise=cellwise,
+        package=package.name,
+        rule=rule,
+        uncovered=uncovered,
+        domain=domain,
+    )
+    stamp = {
+        "was": grid_pin_of_polygons(old_polys, ncpl),
+        "filled": report["filled"],
+        "filled_area": report["filled_area"],
+        "rule": rule,
+    }
+    # `replace`, not `with_options`: that verb VOIDS the pin of a certified package and
+    # `package_move` then reports "its records were edited after the library resolved
+    # them", which is a lie about a correct remap (measured). Nothing was edited.
+    remapped = replace(package, options=moved_options)
+    return remapped.with_metadata(**{REMAPPED_FROM: stamp}), True
+
+
+def grid_pin_of_polygons(polys, ncpl) -> str:
+    """A short label for the mesh a remap took its values FROM.
+
+    Not `grid_pin`: that needs the grid OBJECT's connectivity and a remap is handed cell
+    polygons. The label only has to identify the source mesh in a report, so it is the
+    cell count and a hash of the bounding box -- enough to tell two meshes apart in a
+    sentence, and explicitly not a certificate.
+    """
+
+    import hashlib
+
+    bounds = tuple(round(float(one), 6) for one in polys.total_bounds)
+    digest = hashlib.sha256(repr((int(ncpl or len(polys)), bounds)).encode()).hexdigest()
+    return digest[:16]
 
 
 def _anchored_packages(
@@ -3456,6 +3536,9 @@ class ModelSpec:
         grid: GridSpec | GridRef | Any,
         *,
         grid_free: tuple[str, ...] | list[str] = (),
+        remap: bool = False,
+        rule: str = "geometric",
+        uncovered: str = "nearest",
     ) -> ModelSpec:
         """Return a copy on ``grid``, with everything derived from the old one dropped.
 
@@ -3475,6 +3558,29 @@ class ModelSpec:
 
         ``grid_free=`` names packages the caller asserts are mesh-independent; their
         stamp is cleared rather than applied. Read :meth:`move_report` first.
+
+        ``remap=True`` CARRIES a package's per-cell arrays onto the new mesh by area
+        overlay instead of stamping them (ledger 300), turning ``unverifiable`` into
+        ``remapped``. Opt-in, not the default, for a measured reason: where a package has
+        a SOURCE, re-declaring it on the new mesh is more faithful than interpolating it
+        -- 7.1% worst-case boundary-flux error against this engine's 12.5% at best -- so
+        the remap is for an array with no recipe, such as a calibrated K field. It serves
+        ``npf`` ``k``/``k22``/``k33`` and the intensive arrays ``ic.strt``/``sto.ss``/
+        ``sto.sy``; an integer flag and anything extensive are refused by name.
+
+        ``rule=`` is the conductivity rule and exists because the right average for K
+        depends on the FLOW DIRECTION -- a property of the solution, not of the field --
+        so nothing declared per-field can be right everywhere. Measured in MF6 on one 2:1
+        coarsening: with the contrast ACROSS the flow the arithmetic mean gave 264x the
+        fine-mesh boundary flux; rotated 90 degrees it was exact and the harmonic mean was
+        wrong by about 250x. ``"geometric"`` is the default because it is never best and
+        never catastrophic, and the remap WARNS naming the cells where the arithmetic and
+        harmonic means diverge -- so the choice is surfaced where it matters rather than
+        needing to be known in advance.
+
+        ``uncovered=`` says what a new cell with no old cell under it means:
+        ``"nearest"`` fills it from the nearest old cell and says so in detail,
+        ``"raise"`` refuses.
         """
 
         free = tuple(grid_free)
@@ -3487,6 +3593,10 @@ class ModelSpec:
         # turns a `stale` package into a `rebuilt` one and the stamping below must see
         # the result, not the original.
         relazified = tuple(_relazified(package) for package in self.packages)
+        if remap:
+            relazified = self._remap_onto(
+                relazified, grid, rule=rule, uncovered=uncovered
+            )
         stamped = tuple(
             package.with_metadata(**{MOVED_FROM: pin})
             # `grid_free` is honoured inside `package_move`, which answers
@@ -3512,6 +3622,41 @@ class ModelSpec:
             packages=stamped,
             context=replace(self.context, grid=None, domain=None, surfaces=None),
         )
+
+    def _remap_onto(self, packages, grid, *, rule: str, uncovered: str):
+        """Carry every remappable package's arrays onto ``grid``; see ``with_grid``.
+
+        The OLD mesh is read from ``self.context`` HERE and not later, because
+        ``with_grid`` does not mutate: the grid these arrays were declared on is present
+        at this call and absent from the result. That is the whole reason the remap is
+        eager rather than a recipe resolved at build.
+        """
+
+        old_grid = getattr(self.context, "grid", None)
+        if old_grid is None:
+            raise ValueError(
+                f"{self.name}: remap=True carries this model's per-cell arrays from its "
+                "CURRENT mesh onto the new one, and this model's context has no grid to "
+                "carry them from -- a deferred-grid model has never been resolved, so "
+                "there are no values on a mesh yet. Move it without `remap=`, or build "
+                "it once first."
+            )
+        old_polys = _polygons_of(old_grid)
+        new_polys = _polygons_of(grid)
+        carried = []
+        for package in packages:
+            if isinstance(package, PackageSpec):
+                package, _ = _remapped_package(
+                    package,
+                    old_polys=old_polys,
+                    new_polys=new_polys,
+                    ncpl=getattr(old_grid, "ncpl", None),
+                    domain=getattr(self.context, "domain", None),
+                    rule=rule,
+                    uncovered=uncovered,
+                )
+            carried.append(package)
+        return tuple(carried)
 
     def coverage_on(self, grid: Any) -> Any:
         """How much of ``grid`` this model's mesh has NO data under, in model units.
@@ -4159,6 +4304,9 @@ class SimulationSpec:
         on: str | None = None,
         name: str | None = None,
         grid_free: tuple[str, ...] | list[str] = (),
+        remap: bool = False,
+        rule: str = "geometric",
+        uncovered: str = "nearest",
     ) -> SimulationSpec:
         """Return a copy moved to ``grid``, with everything derived from the old one gone.
 
@@ -4189,7 +4337,11 @@ class SimulationSpec:
 
         free = tuple(grid_free)
         if on is not None:
-            moved = self.with_model(self.model(on).with_grid(grid, grid_free=free))
+            moved = self.with_model(
+                self.model(on).with_grid(
+                    grid, grid_free=free, remap=remap, rule=rule, uncovered=uncovered
+                )
+            )
             targets = [on]
         else:
             targets = [
@@ -4200,7 +4352,10 @@ class SimulationSpec:
             moved = self
             for model_name in targets:
                 moved = moved.with_model(
-                    moved.model(model_name).with_grid(grid, grid_free=free)
+                    moved.model(model_name).with_grid(
+                        grid, grid_free=free, remap=remap, rule=rule,
+                        uncovered=uncovered,
+                    )
                 )
         moved = replace(
             moved,

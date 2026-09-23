@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 299 entries (300 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 300 entries (301 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 300 | A calibrated array could not follow its model to another mesh | 2026-09-23 |
 | 299 | A polygon map could fill an array, but the model could not then be saved or moved | 2026-09-23 |
 | 298 | What a move would have no data for, in ft2 rather than as a coverage fraction | 2026-09-22 |
 | 297 | Every input field summed, including the water levels | 2026-09-22 |
@@ -4641,9 +4642,18 @@ same day, which is the useful part of the result.
        parameter names and stops. An earlier scope (a `CellOverlay` primitive plus
        per-field reducers, ~7 days) was designed and then dropped in favour of this
        on the user's direction, and the direction was right: a transfer has to be
-       re-run and re-argued on every re-grid, an extract does not. The overlay work
+       re-run and re-argued on every re-grid, an extract does not. ~~The overlay work
        is NOT deferred-with-intent — it is unnecessary unless someone wants an
-       automatic grid-to-grid path later.
+       automatic grid-to-grid path later.~~ **AMENDED 2026-09-23: the overlay was
+       built, as ledger 300, and the sentence above was right about the PRIORITY and
+       wrong about the value.** Someone did want the grid-to-grid path -- for an array
+       with no source, which an extract cannot serve. And the preference recorded here
+       is now measured rather than reasoned: re-declaring a source on the new mesh held
+       to 7.1% worst-case boundary-flux error where the overlay's best reducer managed
+       12.5% and its worst four orders of magnitude, so an extract really is the better
+       route wherever one exists. Amended in place rather than restated under a new
+       number because nothing cites this bullet and the rest of 169's measurements are
+       untouched; ledgers 231 and 244 amended it in place before.
      - **Conductance conserves the feature total, not a leakance.** Measured over
        205 DRN records `corr(cond, cell area) ~ 0`, and GHB is a single constant per
        family (172,357.9 in layer 3, 0.15 in layer 5) across cells spanning 2.8 to
@@ -12126,3 +12136,139 @@ same day, which is the useful part of the result.
         checks, so a new source class could ship registered nowhere and be found by the
         first user who saved a project containing one. Added here because this commit is
         what made the registry grow.
+
+300. **A calibrated array could not follow its model to another mesh (2026-09-23).**
+      B3's C6 and its last commit: the overlay remap engine.
+      ``sim.with_grid(grid, remap=True, rule=, uncovered=)`` intersects the OLD grid's own
+      cell polygons with the new grid's and carries per-cell arrays across on the
+      resulting areas. ``npf`` ``k``/``k22``/``k33`` and ``ic.strt``/``sto.ss``/``sto.sy``;
+      ``unverifiable`` becomes a fifth verdict, ``remapped``.
+      **It exists for an array with NO recipe** -- a PEST-calibrated K field, an array read
+      out of an imported model. **And it is the WORSE route wherever a source exists,
+      measured**: re-declaring a polygon map on the new mesh (ledger 299) held to a
+      maximum 7.1% and a median 2.1% boundary-flux error against the fine mesh, where the
+      best reducer's own worst case was 12.5% and the worst four orders of magnitude. So
+      ``remap=`` is OPT-IN, the default behaviour does not move, and the warning names
+      re-declaration as the better route. That also amends ledger 169's bullet, in place.
+      **K HAS NO SAFE DEFAULT, AND THAT IS THE HEADLINE.** The correct average for a
+      conductivity depends on the FLOW DIRECTION, which is a property of the SOLUTION and
+      not of the field -- so no per-field declaration can ever carry it, and
+      ``FieldSpec.remap`` (reserved in ledger 299) would have been the wrong shape.
+      Measured in MF6 on one 2:1 coarsening: with the contrast ACROSS the flow the
+      arithmetic mean gave **264x** the fine-mesh boundary flux and the harmonic mean was
+      nearly exact; with the SAME contrast rotated 90 degrees the arithmetic mean was
+      EXACT and the harmonic wrong by about 250x. **The ordering reverses.** ``geometric``
+      is the default on the user's call -- never best, never catastrophic (median 7.2%,
+      worst 81.7%, and the classical answer for a heterogeneous 2-D field) -- and the
+      engine computes the arithmetic and harmonic means ALONGSIDE it and WARNS naming the
+      cells where they diverge by more than 2x. The choice is surfaced where it matters
+      instead of having to be known in advance.
+      **TWO DENOMINATORS, and only one of them is here.** An INTENSIVE quantity divides by
+      the new cell's COVERED area; an EXTENSIVE one divides by the OLD cell's area. They
+      are not scalings of one another. The covered-area denominator is what makes a
+      partially covered cell right rather than diluted -- measured on a constant 7.0 field
+      over a grown footprint, it returns 7.000000 where the new cell's own area returns
+      0.0066 to 6.9878.
+      **EXTENSIVE IS DEFERRED, and ``kind`` is why it cannot simply be added.**
+      ``kind == "extensive"`` holds a RATE *and* a TOTAL, and they need opposite
+      treatment: measured in MF6 on a 2:1 refinement, "split and renormalize" gives 45.0
+      where the area-mean gives 90.0 for RCH -- half the water -- and the area-mean
+      DOUBLES a WEL total (-50 to -100). A reducer keyed on ``kind`` picks the wrong one
+      for four of the eight extensive fields. **And ``npf``/``ic``/``sto`` are not in
+      ``_PACKAGE_EXPLORER_SPECS`` at all**, so no ``FieldSpec`` exists for ``k`` or
+      ``strt``; what enumerates them is ``grid_identity.cellwise_options``, which is what
+      this uses.
+      **INTEGER FLAGS are refused by name** -- ``icelltype``, ``iconvert``, ``irch``,
+      ``ievt``. Measured on an 8x8 -> 5x5 coarsening of an ``icelltype`` contact: the mean
+      gave 5 of 25 cells values like 0.3851, and even ``majority``, which invents nothing,
+      moved the convertible AREA fraction from 0.4949 to 0.4569. ``irch``/``ievt`` are
+      zero-based LAYER INDICES, so averaging them is meaningless in a way nothing
+      downstream catches.
+      **THE FRAME GUARD NEEDED BUILDING; ``CoverageReport.disjoint`` IS NOT IT.** The B3
+      scope note recorded "the frame guard IS ``CoverageReport.disjoint`` -- already there,
+      already tested", and that is measured false: two identical footprints declared
+      EPSG:2927 and EPSG:2926 come back ``disjoint=False, uncovered_area=0.0`` with
+      ``summary()`` saying "every cell of the new mesh has data under it", while
+      ``gpd.overlay`` warns and proceeds. ``disjoint`` catches only the zero-pieces
+      (translated) case. So ``refuse_a_different_frame`` compares CRS FIRST and then
+      ``disjoint``; neither is sufficient alone. A grid is REFUSED rather than reprojected,
+      unlike a ``.gpkg`` source, because two model meshes are both the modeller's own and
+      one in another frame is far more likely an error than an intention.
+      **The blind spot, stated out loud:** a mesh rescaled into other UNITS while keeping
+      the same declared CRS passes both tests -- it sits inside the old footprint, every
+      cell is covered, and the remap is self-consistent; it simply describes a tenth of
+      the domain. Nothing geometric distinguishes that from a legitimate SUBDOMAIN
+      refinement, which is supported work, so a test that fired on it would fire on
+      correct work. Ledger 211 records the same blind spot for a source. A test PINS the
+      limit so it is a decision rather than a surprise.
+      **``CoverageReport.uncovered`` IS NOT THE FILL LIST**, and reading it as one destroys
+      good data. It names cells that are SHORT -- one measured at 98.9% covered -- so
+      nearest-filling from it threw away 15 correct area-weighted values out of 51 named.
+      The fill predicate is ``~reached``: this new cell got NO pieces at all.
+      **MASK THE WEIGHTS, NEVER THE VALUES.** Handing an idomain-inactive old cell through
+      as a ``NaN`` poisons the new cells above it and ``reached`` does not say so --
+      measured on a pinching wedge, ten reached new cells came back ``NaN``, THREE of them
+      ACTIVE on the new mesh. The active set genuinely differs between meshes, so the mask
+      is per-LAYER.
+      **``replace``, not ``with_options``.** That verb VOIDS the pin of a certified package
+      and ``package_move`` then reports "its records were edited after the library resolved
+      them on mesh X" -- a lie about a correct remap. Measured on ``mf.rch.array``.
+      **``REMAPPED_FROM`` is stamped INSTEAD of ``MOVED_FROM``, not beside it**:
+      ``moved_package_complaints`` fires on that stamp's presence alone, so leaving it
+      would refuse the very package the remap just fixed. ``PIN_VOIDED`` is deliberately
+      NOT cleared and a voided package is not remapped -- its values were never verified on
+      the OLD mesh either, so an overlay would carry an unverified guess forward while
+      stamping it certified (ledger 275).
+      **A fifth verdict rather than reusing ``unchanged``**, because a reader deciding
+      whether to trust a run needs to know the values were INTERPOLATED and how many cells
+      were filled from a neighbour. ``rebuilt`` would also have been a lie: that means
+      re-derived from a recipe and exact.
+      **A latent bug fixed in passing.** ``cell_coverage`` bincounted by index LABEL and
+      read the result by POSITION -- correct only for a ``RangeIndex``. A row-permuted new
+      frame reported 63 uncovered cells where the truth is 0, and a sliced one raised a
+      broadcast error. Unreachable because ``gdf_vorPolys`` is always a ``RangeIndex``, and
+      sharing the overlay is what would have made it reachable; ``cell_overlay`` assigns
+      positions with ``np.arange``.
+      **A refusal is not swallowed into a silent no-op.** ``remap=True`` on a package the
+      engine cannot serve RAISES. Catching it and leaving the package stamped
+      ``unverifiable`` would tell the caller the move was fine, which is ledger 295's
+      failure one verb over. The first version of the candidate test read only the
+      ``CELLWISE_OPTIONS`` stamp, and ``npf``/``ic`` carry none -- so ``remap=True``
+      silently did NOTHING for exactly the packages the engine exists for, measured as two
+      ``unverifiable`` verdicts and zero warnings.
+      **A test that could not tell two rules apart.** ``harmonic <= geometric <= mean`` is
+      satisfied by EQUALITY, so a mutation making the harmonic branch return the geometric
+      mean passed all 32 tests. The test now also asserts STRICT inequality on the cells
+      that actually hold both materials -- selected by a relative threshold, because on a
+      uniform cell the three agree only to float noise (the harmonic mean of identical
+      10.0s came back 9.999999999999998) and an exact-difference test failed on correct
+      code.
+      **The deferred-import ratchet goes 82 -> 83, and here it is FORCED rather than
+      preferred.** ``grid/remap.py`` imports ``grid/geometry.py`` (import layer 1) and so
+      sits at layer **2**, while ``specs.py`` is at layer **1** -- a module-level
+      ``specs -> remap`` edge would point UPWARD, which the ratchet refuses outright.
+      CLAUDE.md's rule for a rising count is "hoist it instead"; that is not available, and
+      the same is true of ledger 298's reason for keeping ``cell_coverage`` deferred
+      (hoisting makes a bare ``import myflopy.specs`` pull geopandas).
+      **Deliberately NOT here:**
+      * **Hand-typed list-BC records.** ``unverifiable`` too, but there are no per-cell
+        source VALUES to weight -- an overlay has nothing to average.
+      * **``mf.uzf``/``sfr``/``lak``/``hfb.line`` and the eager array-form ``rch``/``evt``.**
+        Measured ``stale``, not ``unverifiable``: they carry a ``grid_pin``, so the overlay
+        does not reach them and re-declaration is their route.
+      * **A saveable remapped model.** A remapped array is an ndarray, which ``to_dict``
+        refuses, so the moved model builds and runs but ``Project.save()`` persists zero
+        simulations -- the state ledgers 270, 285 and 299 each closed for a different
+        package. Named here rather than discovered later; it needs a serializable carrier
+        for the OLD mesh AND its values, which ledger 193 refuses inline.
+      * **``runs.drift()`` telling a remap from an edit.** The remapped values move the
+        digest and the metadata stamp does not, so every run prepared before the move reads
+        ``edited`` with ``source`` reading ``—``. Saying so is better than a stamp-reading
+        special case nothing else needs yet.
+      * **A coupled pair under ``on=``.** Measured: ``on=`` strands the sibling on the old
+        grid, and ledger 268's guard compares node counts and idomain only, so a same-ncpl
+        sibling passes it. That is ledger 268's gap rather than this engine's, and
+        ``on=None`` -- the default -- moves every model with a grid.
+      * **A per-grid-pair weight CACHE**, a byte-identical A->B->A acceptance test, HFB
+        through cell polygons, and a reducer for the discretization arrays: each measured
+        and rejected during B3's scoping, and each still rejected.

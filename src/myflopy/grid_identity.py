@@ -312,6 +312,15 @@ SAME_MESH_EXCHANGES = frozenset(
 #: the new mesh and every one of them names a different cell.
 MOVED_FROM = "myflopy_moved_from"
 
+#: Stamped on a package whose per-cell arrays were CARRIED onto the new mesh by the
+#: overlay engine (ledger 300). It records the old mesh's pin and what the remap had to
+#: guess, and it is what makes the fifth verdict answerable after the fact -- the moved
+#: spec no longer holds the old grid, so nothing else could say it.
+#: It is stamped INSTEAD of :data:`MOVED_FROM`, never beside it: that one is what
+#: ``moved_package_complaints`` refuses the build on, so leaving it would refuse the very
+#: package the remap just fixed.
+REMAPPED_FROM = "myflopy_remapped_from"
+
 #: Metadata key listing the packages the caller asserted are mesh-independent, so a
 #: stamp on them is cleared rather than refused.
 GRID_FREE = "myflopy_grid_free"
@@ -378,8 +387,15 @@ def package_move(
 ) -> tuple[str, str]:
     """Classify one package for a grid move: ``(how, why)``.
 
-    The four verdicts, and what each means for the build that follows:
+    The five verdicts, and what each means for the build that follows:
 
+    ``"remapped"``
+        Its per-cell arrays were CARRIED onto the new mesh by the overlay engine
+        (ledger 300), so they describe this mesh and the build accepts them. Distinct
+        from ``"rebuilt"`` on purpose: a rebuilt package re-derives itself from a recipe
+        and is exact, where this one was INTERPOLATED and may have had cells filled from
+        a neighbour. Where a package has a source, re-declaring it is measurably more
+        faithful than remapping it.
     ``"rebuilt"``
         It carries a recipe rather than resolved records -- a lazy DISV today -- so it
         resolves itself against the new mesh. Nothing to check.
@@ -418,6 +434,20 @@ def package_move(
         # `vertices` verbatim. It carries no pin and names no cellid, so both of the
         # tests below miss it, and the first report called it "unchanged".
         return "stale", "it describes the old mesh itself (hand-written discretization)"
+    remapped = metadata.get(REMAPPED_FROM)
+    if remapped is not None:
+        # Before the pin and the cellwise branches, because a remapped package's values
+        # ARE on this mesh -- it is the one case where a per-cell array can be trusted.
+        # Reported rather than silently `unchanged`: the values were INTERPOLATED, and a
+        # reader deciding whether to trust a run needs to know that and how much of it
+        # was filled from a neighbour rather than derived.
+        filled = int(remapped.get("filled") or 0)
+        detail = f", {filled} cells filled from the nearest old cell" if filled else ""
+        return (
+            "remapped",
+            f"its per-cell arrays were carried from mesh {remapped.get('was')} by area "
+            f"overlay{detail}",
+        )
     pin = metadata.get(GRID_PIN)
     if pin is not None:
         certified = metadata.get(GRID_PIN_OPTIONS)

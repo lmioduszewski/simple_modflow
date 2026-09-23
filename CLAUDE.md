@@ -340,7 +340,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3772 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m00s**,
+- Full suite (**3806 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m31s**,
   measured this pass on an otherwise idle machine. `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
   so do not read the serial/parallel ratio across those two dates.
@@ -480,8 +480,8 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   The shared rule is `grid_identity.column_count` / `cellwise_options`, in import layer
   0 because three callers need it; it tells a scalar and a per-layer list from a flat
   `ncpl` list, an `(nlay, ncpl)` array and a NESTED per-layer list of per-cell lists.
-  It gives the arrays a VERDICT, not a route: a refused package is re-declared by hand
-  until the overlay engine lands. `replace_grid` is a warned `__getattr__`-only alias.
+  It gave the arrays a VERDICT and not a route; **`remap=True` is now the route**
+  (ledger 300, below). `replace_grid` is a warned `__getattr__`-only alias.
 - **A grid swap re-maps NOTHING outside the discretization** (ledger 249,
   2026-09-13). Every `.gpkg` helper resolves its cells at DECLARATION, so
   moving the grid leaves every package's cellids,
@@ -979,6 +979,58 @@ Same pass: **`mf.evt(context=...)` silently dropped `nseg` and `auxiliary`** —
 NAMED parameters, so neither ever reached `**options`, and `mf.rch` kept `auxiliary` only
 because it has no parameter of that name. `auxiliary` is forwarded now, `nseg > 1` raises. Arrays are opt-in: for a sparse BC they are a pessimization.
 
+## Moving a CALIBRATED array to a new mesh? `with_grid(remap=True)` (ledger 300)
+The overlay remap engine, B3's last commit. It intersects the OLD grid's own cell polygons
+with the new grid's and carries per-cell arrays across on the resulting areas, so
+`unverifiable` becomes a fifth verdict, **`remapped`**. Serves `npf` `k`/`k22`/`k33` and
+`ic.strt`/`sto.ss`/`sto.sy`.
+**OPT-IN, and the default does not move, for a measured reason: a remap is the WORSE route
+wherever a source exists.** Re-declaring a polygon map on the new mesh (ledger 299) held to
+7.1% worst-case boundary-flux error where the best reducer managed 12.5% and the worst four
+orders of magnitude. This is for an array with NO recipe -- a PEST-calibrated K field, an
+array read out of an imported model -- and the warning says so.
+**K HAS NO SAFE DEFAULT, and no per-field declaration could ever give it one** (so
+`FieldSpec.remap`, reserved in ledger 299, is the wrong shape). The right average depends
+on FLOW DIRECTION, a property of the SOLUTION: measured in MF6 on one 2:1 coarsening, with
+the contrast ACROSS the flow the arithmetic mean gave **264x** the fine-mesh flux and the
+harmonic was nearly exact; rotated 90 degrees the arithmetic was EXACT and the harmonic
+wrong ~250x. **The ordering reverses.** `rule="geometric"` is the default (never best,
+never catastrophic; the classical answer for a heterogeneous 2-D field) and the engine
+computes arithmetic and harmonic ALONGSIDE it, WARNING which cells diverge by more than 2x.
+**TWO DENOMINATORS; only the intensive one is built.** Intensive divides by the new cell's
+COVERED area -- which is what makes a partly covered cell right rather than diluted
+(constant 7.0 field: 7.000000 against 0.0066-6.9878 for the cell's own area). Extensive
+divides by the OLD cell's area and is DEFERRED, because `kind == "extensive"` holds a RATE
+*and* a TOTAL needing opposite treatment (measured: "split and renormalize" halves RCH on a
+2:1 refinement; the area-mean DOUBLES a WEL total). **`npf`/`ic`/`sto` are not in
+`_PACKAGE_EXPLORER_SPECS` at all**, so no `FieldSpec` exists for `k` or `strt`;
+`grid_identity.cellwise_options` is what enumerates them.
+**Integer flags are refused by name** (`icelltype`, `iconvert`, `irch`, `ievt`): the mean
+gave 5 of 25 cells values like 0.3851, and `irch`/`ievt` are zero-based LAYER INDICES.
+**THE FRAME GUARD HAD TO BE BUILT -- `CoverageReport.disjoint` IS NOT IT.** Measured: two
+identical footprints declared EPSG:2927 and EPSG:2926 give `disjoint=False,
+uncovered_area=0.0` and `summary()` says "every cell of the new mesh has data under it".
+`disjoint` catches only the zero-pieces (translated) case, so
+`refuse_a_different_frame` compares CRS FIRST, then `disjoint`. A grid is REFUSED, never
+reprojected -- unlike a `.gpkg` source -- because both meshes are the modeller's own.
+**Blind spot, stated out loud:** a unit rescale keeping the same declared CRS passes both
+tests and is indistinguishable from a legitimate SUBDOMAIN refinement. A test pins the
+limit. Same class as ledger 211's.
+**`CoverageReport.uncovered` IS NOT THE FILL LIST** -- it names cells that are SHORT, one
+measured at 98.9% covered, so filling from it threw away 15 correct values of 51 named. The
+predicate is `~reached`. And **mask the WEIGHTS per LAYER, never pass a NaN value through**:
+ten reached cells came back NaN, three ACTIVE on the new mesh.
+**Write the arrays with `replace`, NOT `with_options`** -- that voids the pin and
+`package_move` then says "its records were edited", a lie about a correct remap. Stamp
+`REMAPPED_FROM` INSTEAD of `MOVED_FROM` (`moved_package_complaints` fires on that alone, so
+leaving it refuses the fix) and do NOT clear `PIN_VOIDED`; a voided package is not remapped
+at all.
+**NOT built:** a saveable remapped model (an ndarray, so `save()` persists zero simulations
+-- named, not discovered), `runs.drift()` telling a remap from an edit (the values move the
+digest, the stamp does not), hand-typed list BCs (no per-cell values to weight), and
+`uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt` (measured `stale`, not
+`unverifiable` -- they carry a pin, so re-declaration is their route).
+
 ## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
 `mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the
 same in `k22`/`k33`, `mf.ic(strt=)`, `mf.sto(ss=, sy=)`. A serializable RECIPE resolved
@@ -1001,11 +1053,18 @@ the map holds 2, and its area-integral ran 0.0%-60.5% from majority's across 19 
 positions -- the arithmetic-vs-harmonic problem in miniature, which is why the default is
 the rule that invents nothing. `majority` and `centroid` differ on **at most ONE cell of
 64** over that sweep, so a single fixture distinguishes nothing and the test sweeps all
-19. Ledger 169's "8 of 64 (12.5%)" is centroid vs the area-weighted MEAN -- not vs
-majority; that mis-mapping reached two docstrings before being caught.
+19. An earlier "8 of 64 (12.5%)" figure was centroid vs the area-weighted MEAN, not vs
+majority -- that mis-mapping reached two docstrings before being caught. **It is NOT in
+ledger 169, and this file claimed it was**: entry 169 contains no such number and the
+only occurrence in the tree was that claim. Ledger 299's own sweep is the citable
+measurement; a number with no ledger behind it is not an address.
 **`cell_shares` is the WRONG helper here.** It normalizes by the whole FEATURE (what
 `mf.Spread` needs to divide a total) and drops slivers; filling an array needs share of
 the CELL and must keep them. Use `gpd.overlay`, as `cell_coverage` does (ledger 298).
+**That reason is right for a polygon map and only HALF right for a grid-to-grid remap**:
+when the "feature" IS an old cell polygon, `cell_shares`' per-feature denominator is
+exactly the EXTENSIVE remap weight (share of the OLD cell). The reasons to avoid it there
+are the sliver rule and a measured 2x cost, not the denominator.
 **Refusals are the feature.** A NULL names the feature (ledger 247); a cell no polygon
 reaches is REFUSED unless `default=` is given (an unfilled cell is a NaN and MF6 answers
 a NaN budget under normal termination); a map landing nowhere prints both extents and

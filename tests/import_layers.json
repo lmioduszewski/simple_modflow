@@ -44,6 +44,7 @@
  "myflopy.modflow.mf6.grid.interpolated_surface": 3,
  "myflopy.modflow.mf6.grid.mesh_quality": 0,
  "myflopy.modflow.mf6.grid.plotting": 3,
+ "myflopy.modflow.mf6.grid.remap": 2,
  "myflopy.modflow.mf6.grid.seed_optimization": 0,
  "myflopy.modflow.mf6.grid.selection": 2,
  "myflopy.modflow.mf6.grid.surfaces": 0,

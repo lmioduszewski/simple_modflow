@@ -1217,6 +1217,263 @@ class CoverageReport:
         )
 
 
+#: How several OLD cells combine into one NEW cell. See :meth:`CellOverlay.reduce`.
+REMAP_RULES: tuple[str, ...] = ("mean", "geometric", "harmonic", "majority")
+
+
+@dataclass(frozen=True)
+class CellOverlay:
+    """The ``(old cell, new cell, intersection area)`` triples between two meshes.
+
+    Computed ONCE and reused. Both :func:`cell_coverage` and every remapped array of
+    every layer ride on one of these: the geometry does not change between layers or
+    between parameters, and re-overlaying per call measured a **24x** tax (0.661 s for
+    six array parameters across four layers, against 0.027 s for one shared overlay).
+
+    Positions, not index labels. ``old_index`` and ``new_index`` are positional over the
+    two frames' ROWS. ``cell_coverage`` used to bincount by index LABEL and read the
+    result by POSITION, which is correct only for a ``RangeIndex``; a row-permuted new
+    frame reported 63 uncovered cells where the truth was 0, and a sliced one raised a
+    broadcast error. Unreachable in practice because ``gdf_vorPolys`` is always a
+    ``RangeIndex`` -- so it was a latent bug, and sharing this makes it reachable.
+    """
+
+    old_index: np.ndarray
+    new_index: np.ndarray
+    area: np.ndarray
+    n_old: int
+    n_new: int
+
+    @property
+    def disjoint(self) -> bool:
+        """Whether the two meshes intersect in nothing at all."""
+
+        return self.area.size == 0
+
+    def reduce(self, values, *, rule: str = "mean", active=None):
+        """Carry ``values`` from the old mesh onto the new one; ``(values, reached)``.
+
+        INTENSIVE only -- a conductivity, a head, a storage coefficient: a quantity that
+        does not scale with the size of the cell holding it. **The denominator is the
+        new cell's COVERED area, not its own area**, which is what makes a partially
+        covered cell come back with the value of what IS under it rather than that value
+        diluted toward zero. Measured on a constant 7.0 field over a mesh grown past its
+        source: the covered-area denominator returns 7.000000 for every partially
+        covered cell, and the cell's own area returns 0.0066 to 6.9878.
+
+        ``active`` is a boolean mask over the OLD cells, and it masks the WEIGHTS rather
+        than the values. Passing an inactive old cell's value through as ``NaN`` poisons
+        the new cells above it and ``reached`` does not say so -- measured on a pinching
+        wedge, ``rule="mean"`` left ten reached new cells ``NaN``, THREE of them active
+        on the new mesh. The active set genuinely differs between meshes, so this is a
+        per-LAYER call, not a one-off.
+
+        ``reached`` is ``False`` for a new cell with NO piece under it, and that is the
+        FILL predicate. It is a different set from ``CoverageReport.uncovered``, which
+        names cells that are merely SHORT -- one measured at 98.9% covered. Filling from
+        that set threw away 15 correct area-weighted values out of 51 named.
+
+        **An EXTENSIVE quantity is not this function.** A rate or a total needs the OLD
+        cell's area as the denominator (the share of each old cell going out, rather than
+        the share of each new cell coming in), and the two are not scalings of one
+        another. C6 deliberately does not serve them -- see ledger 300.
+        """
+
+        if rule not in REMAP_RULES:
+            raise ValueError(
+                f"CellOverlay.reduce(rule={rule!r}) is not a rule. Use one of "
+                + ", ".join(repr(name) for name in REMAP_RULES)
+                + "."
+            )
+        source = np.asarray(values, dtype=float)
+        if source.shape != (self.n_old,):
+            raise ValueError(
+                f"reduce() takes one value per OLD cell -- {self.n_old} of them -- and "
+                f"was given an array of shape {source.shape}. Reduce one layer at a "
+                "time; an (nlay, ncpl) array has to be split by the caller, which is "
+                "also where the per-layer active mask belongs."
+            )
+
+        keep = np.ones(self.area.size, dtype=bool)
+        if active is not None:
+            mask = np.asarray(active, dtype=bool)
+            if mask.shape != (self.n_old,):
+                raise ValueError(
+                    f"active is a mask over the {self.n_old} OLD cells, not "
+                    f"{mask.shape}."
+                )
+            keep = mask[self.old_index]
+        old_at = self.old_index[keep]
+        new_at = self.new_index[keep]
+        weight = self.area[keep]
+
+        painted = np.full(self.n_new, np.nan, dtype=float)
+        reached = np.zeros(self.n_new, dtype=bool)
+        if weight.size == 0:
+            return painted, reached
+        total = np.bincount(new_at, weights=weight, minlength=self.n_new)
+        reached = total > 0
+
+        if rule == "majority":
+            # Largest contributing area wins, ties to the lowest OLD cell -- the same
+            # tie rule `polygon_cell_values` and `centroid_zones` use, so the three
+            # agree about a shared edge.
+            order = np.lexsort((old_at, -weight, new_at))
+            leading = np.empty(order.size, dtype=bool)
+            leading[0] = True
+            leading[1:] = new_at[order][1:] != new_at[order][:-1]
+            winners = order[leading]
+            painted[new_at[winners]] = source[old_at[winners]]
+            return painted, reached
+
+        taken = source[old_at]
+        if rule == "mean":
+            weighted = np.bincount(new_at, weights=weight * taken, minlength=self.n_new)
+            painted[reached] = weighted[reached] / total[reached]
+            return painted, reached
+
+        # Geometric and harmonic are undefined at or below zero -- a log and a
+        # reciprocal. Refused by name rather than returning a NaN or an inf that MF6
+        # would accept and report success on (ledger 247's failure mode). A HEAD can
+        # legitimately be negative, which is why these two are offered for conductivity
+        # and the elevation-like arrays use the mean.
+        if not np.all(taken > 0.0):
+            bad = int(np.count_nonzero(~(taken > 0.0)))
+            raise ValueError(
+                f"rule={rule!r} needs every contributing value to be positive -- it "
+                f"takes a {'logarithm' if rule == 'geometric' else 'reciprocal'} of "
+                f"each -- and {bad} of {taken.size} contributions are zero or negative "
+                f"(smallest {float(taken.min()):g}). Use rule='mean' for a quantity "
+                "that can be zero or negative, such as a head or an elevation."
+            )
+        if rule == "geometric":
+            logs = np.bincount(new_at, weights=weight * np.log(taken), minlength=self.n_new)
+            painted[reached] = np.exp(logs[reached] / total[reached])
+            return painted, reached
+        inverses = np.bincount(new_at, weights=weight / taken, minlength=self.n_new)
+        painted[reached] = total[reached] / inverses[reached]
+        return painted, reached
+
+    def rule_spread(self, values, *, active=None):
+        """How far apart the candidate rules are, per new cell: ``(ratio, worst_cell)``.
+
+        The number that makes a conductivity default honest. For K the CORRECT average
+        depends on the FLOW DIRECTION -- a property of the solution, not of the field --
+        so no default and no per-field declaration can be right everywhere. Measured in
+        MF6 on one 2:1 coarsening: with the contrast ACROSS the flow the arithmetic mean
+        gave 264x the fine-mesh boundary flux and the harmonic mean was nearly exact;
+        with the SAME contrast rotated 90 degrees the arithmetic mean was exact and the
+        harmonic wrong by about 250x. The ORDERING REVERSES.
+
+        So instead of choosing, this reports arithmetic/harmonic per cell, and the
+        caller warns where they diverge. Where the ratio is ~1 no choice matters; where
+        it is large the reader is told which cells to look at.
+        """
+
+        high, _ = self.reduce(values, rule="mean", active=active)
+        low, _ = self.reduce(values, rule="harmonic", active=active)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(low > 0, high / low, np.nan)
+        if not np.any(np.isfinite(ratio)):
+            return np.array([]), None
+        worst = int(np.nanargmax(ratio))
+        return ratio, worst
+
+
+def cell_overlay(old_polys, new_polys) -> CellOverlay:
+    """Intersect two cell frames and return the pieces as positional triples.
+
+    One ``gpd.overlay(how="intersection", keep_geom_type=True)``, which is what
+    :func:`cell_coverage` already used and what a remap needs -- the same call, with the
+    OLD cell kept rather than discarded. ``cell_coverage`` selected ``_old`` into the
+    overlay and then never read it, so these triples existed for one statement and were
+    thrown away with the local.
+
+    NOT :func:`cell_shares`. That normalizes by the whole FEATURE, applies a sliver rule
+    and loops in Python: used as a remap it measured 22 of 2,500 old cells losing more
+    than 1e-9 of themselves and cost 2x. Note the denominator objection is only half the
+    reason -- when the "feature" IS an old cell polygon, its per-feature share is
+    exactly the EXTENSIVE weight; the sliver rule and the cost are the rest.
+    """
+
+    old_frame = old_polys[["geometry"]].copy()
+    old_frame["_old"] = np.arange(len(old_frame))
+    new_frame = new_polys[["geometry"]].copy()
+    new_frame["_new"] = np.arange(len(new_frame))
+    pieces = gpd.overlay(old_frame, new_frame, how="intersection", keep_geom_type=True)
+    if pieces.empty:
+        empty = np.array([], dtype=int)
+        return CellOverlay(empty, empty, np.array([], dtype=float), len(old_frame), len(new_frame))
+    return CellOverlay(
+        old_index=pieces["_old"].to_numpy(),
+        new_index=pieces["_new"].to_numpy(),
+        area=pieces.geometry.area.to_numpy(),
+        n_old=len(old_frame),
+        n_new=len(new_frame),
+    )
+
+
+def refuse_a_different_frame(old_polys, new_polys, *, verb: str) -> None:
+    """Refuse two meshes that are not in the same frame, BEFORE anything is carried.
+
+    **The CRS test comes first and it is not optional.** ``CoverageReport.disjoint``
+    catches only the zero-pieces case -- two meshes that overlap in nothing, which is
+    what a translation produces. It does NOT catch a mesh in the wrong frame that still
+    overlaps: measured, the same 1,200 ft footprint relabelled EPSG:2927 -> EPSG:2926
+    comes back ``disjoint=False, uncovered_area=0.0`` and ``summary()`` says "every cell
+    of the new mesh has data under it". ``gpd.overlay`` warns and proceeds. So neither
+    test is sufficient alone and both are here.
+
+    That matters most under a nearest-neighbour fill, where the mirror image of the same
+    error fills most of the new mesh from one edge of the old one.
+
+    **THE BLIND SPOT, stated out loud because no tolerance can see it.** A mesh rescaled
+    into other UNITS while keeping the same declared CRS passes both tests: measured, the
+    same mesh with its coordinates divided by 3.28084 and still labelled EPSG:2927 sits
+    entirely inside the old footprint, every new cell is covered, and the remap is
+    geometrically self-consistent -- it simply describes a tenth of the domain the
+    modeller meant. Nothing geometric distinguishes that from a legitimate SUBDOMAIN
+    refinement, which is a real and supported thing to do, so a test that fired on it
+    would fire on correct work. This is the same blind spot ledger 211 records for a
+    ``.gpkg`` source ("a unit/scale CRS error leaves near features ON the grid in the
+    WRONG cells... no tolerance can see that"); the coverage report's own numbers are
+    what a reader has to check.
+
+    A grid is refused rather than reprojected, unlike every ``.gpkg`` SOURCE (which does
+    ``to_crs`` silently). A source file legitimately arrives in its own frame; two model
+    meshes are both the modeller's own, and one of them being in another frame is far
+    more likely a declaration error than an intention. Ledger 298 took the same
+    direction for a model with no grid: refuse rather than answer a question that cannot
+    be asked.
+    """
+
+    old_crs = getattr(old_polys, "crs", None)
+    new_crs = getattr(new_polys, "crs", None)
+    if old_crs is not None and new_crs is not None and old_crs != new_crs:
+        raise ValueError(
+            f"{verb}: the two meshes are in different coordinate systems -- the old one "
+            f"in {old_crs.to_string() if hasattr(old_crs, 'to_string') else old_crs} and "
+            f"the new one in "
+            f"{new_crs.to_string() if hasattr(new_crs, 'to_string') else new_crs}. "
+            "Nothing can be carried between them until they agree: an overlay across two "
+            "frames still finds pieces, so this would report full coverage while every "
+            "value landed in the wrong cell. Reproject the new grid before moving to it."
+        )
+    overlay = cell_overlay(old_polys, new_polys)
+    if overlay.disjoint:
+        raise ValueError(
+            f"{verb}: the two meshes share NO area, so there is nothing to carry. "
+            + where_they_are(
+                old_polys, new_polys, noun="old mesh cells",
+                source_crs=old_crs, grid_crs=new_crs,
+            )
+            + " A mesh in the same frame but another PLACE pins identically under "
+            "`grid_pin`, which hashes connectivity only -- so this is exactly the case a "
+            "nearest-cell fill would paper over, filling every cell from a source a long "
+            "way away."
+        )
+
+
 def cell_coverage(old_polys, new_polys) -> CoverageReport:
     """How much of ``new_polys`` has no ``old_polys`` beneath it.
 
@@ -1235,7 +1492,6 @@ def cell_coverage(old_polys, new_polys) -> CoverageReport:
     only, so the same mesh shifted to a local origin pins IDENTICALLY (ledger 298).
     """
 
-    import geopandas as gpd
 
     new_area = new_polys.geometry.area.to_numpy()
     total = float(new_area.sum())
@@ -1246,19 +1502,12 @@ def cell_coverage(old_polys, new_polys) -> CoverageReport:
         old_polys, new_polys, noun="old mesh cells",
         source_crs=getattr(old_polys, "crs", None), grid_crs=getattr(new_polys, "crs", None),
     )
-    pieces = gpd.overlay(
-        old_polys.reset_index(names="_old")[["_old", "geometry"]],
-        new_polys.reset_index(names="_new")[["_new", "geometry"]],
-        how="intersection",
-        keep_geom_type=True,
-    )
-    if pieces.empty:
+    overlay = cell_overlay(old_polys, new_polys)
+    if overlay.disjoint:
         return CoverageReport(total, total, {}, disjoint=True, where=where)
 
     covered = np.bincount(
-        pieces["_new"].to_numpy(),
-        weights=pieces.geometry.area.to_numpy(),
-        minlength=len(new_polys),
+        overlay.new_index, weights=overlay.area, minlength=len(new_polys)
     )
     # NOT clipped at zero. An intersection can overshoot its own cell by ~1e-15 of it,
     # so `short` can be negative -- and the threshold below excludes a negative for the
