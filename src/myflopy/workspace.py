@@ -51,7 +51,7 @@ from myflopy.specs import (
     _package_entry_label,
     dropped_context_fields,
     package_digest,
-    package_move,
+    package_moves,
     source_fingerprint,
     source_paths,
 )
@@ -1564,11 +1564,20 @@ class Run:
             # mis-key: the declared entry and the thing it resolves to are not the same
             # object, and only one of them can be classified.
             library = dict(getattr(self, "_snapshot_specs", {}) or {})
+            pairs = []
             for entry in model.packages:
                 package = entry
                 if isinstance(entry, PackageRef):
                     package = library.get(entry.key) or resolved.get(entry.key) or entry
-                how, why = package_move(package)
+                pairs.append((entry, package))
+            # Classified as a SET, not one at a time: a mover's verdict depends on its
+            # siblings' (ledger 303), and this table must agree with the pre-build
+            # `move_report` about the same mover.
+            verdicts = package_moves([package for _entry, package in pairs])
+            for entry, package in pairs:
+                how, why = verdicts.get(
+                    getattr(package, "name", None), ("unchanged", "names no cells")
+                )
                 row: dict[str, Any] = {
                     "model": model.name,
                     "package": getattr(entry, "key", getattr(package, "name", "?")),

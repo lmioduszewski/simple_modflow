@@ -365,7 +365,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3823 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
+- Full suite (**3832 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
   measured on an otherwise idle machine (3808/6m31s earlier the same day; the 8 new
   tests are `test_budget_clocks.py`, 1.1 s, ledger 301). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
@@ -508,6 +508,28 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `ncpl` list, an `(nlay, ncpl)` array and a NESTED per-layer list of per-cell lists.
   It gave the arrays a VERDICT and not a route; **`remap=True` is now the route**
   (ledger 300, below). `replace_grid` is a warned `__getattr__`-only alias.
+  **A MOVER is classified from its SIBLINGS, not from itself** (ledger 303): `mf.mvr`'s
+  records name a provider by package name plus an INTEGER -- a reach or lake number -- and
+  none of the mover's own options change with the mesh, so it read `unchanged` beside a
+  `stale` SFR while holding an index into the old reach network (measured: outlet at reach
+  9 of 10 on one mesh, 20 of 21 on another). `package_moves(packages, ...)` is the
+  two-pass classifier and **all three** callers use it -- `move_report`, `with_grid`'s
+  stamping loop and `Run.resolution` -- because updating two leaves the run table and the
+  pre-build report contradicting each other. A provider that is anything but `unchanged`
+  invalidates the index, **`rebuilt` included**: a rebuilt SFR renumbers every reach, so a
+  CORRECT move of the provider is what makes a typed index wrong. The marker is
+  `INDEXED_PACKAGES`, stamped in `mvr_spec` (the funnel both entry points reach), and
+  deliberately NOT `requires=` -- that means "build this first" and `mf.hfb` carries it as
+  `("disv",)`, so reading it as an index reference would refuse every barrier whenever the
+  disv rebuilt. It is conservative about WHICH provider counts (a lake number is
+  feature-derived and usually survives) because a false refusal costs a re-declaration
+  where a false pass routes water to the wrong reach.
+  **A gridless `mf.uzf` is marked, not pinned** (ledger 302): it resolves from the IDOMAIN
+  and needs no grid, so there was nothing to pin and it read `unchanged` -- a 25 -> 81 move
+  BUILT CLEAN with 75 UZF objects on columns 0..24 of 81. It carries `CELLWISE_OPTIONS`
+  now, the same two-branch shape `_array_bc_spec` uses. The marker is read by
+  `package_move`, so it closes the `with_grid` path and NOT a hand-assembled model on the
+  wrong grid -- pinned by a test so the claim stays honest.
 - **A grid swap re-maps NOTHING outside the discretization** (ledger 249,
   2026-09-13). Every `.gpkg` helper resolves its cells at DECLARATION, so
   moving the grid leaves every package's cellids,

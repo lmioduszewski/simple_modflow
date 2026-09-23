@@ -23,7 +23,7 @@ from typing import Any
 
 import flopy
 
-from myflopy.grid_identity import CELLWISE_OPTIONS, cellwise_options, pin_metadata
+from myflopy.grid_identity import CELLWISE_OPTIONS, INDEXED_PACKAGES, cellwise_options, pin_metadata
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
@@ -688,6 +688,13 @@ def mvr_spec(
         _factory(flopy.mf6.ModflowGwfmvr),
         values,
         requires=required,
+        # Which siblings this package addresses by INDEX. Stamped HERE rather than in
+        # `MVRBuilder.build` because `mf.mvr.flopy(...)` reaches this function directly
+        # and would otherwise carry no marker at all. Not `requires=`, which already
+        # means "build this first" and is carried by `mf.hfb` as ("disv",) -- reading
+        # that as an index reference would refuse every barrier whenever the
+        # discretization rebuilt (ledger 303).
+        metadata={INDEXED_PACKAGES: sorted({str(record[0]) for record in packages})},
     )
 
 

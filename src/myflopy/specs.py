@@ -58,7 +58,8 @@ from myflopy.grid_identity import (
     grid_pin,  # noqa: F401
     move_report,
     moved_package_complaints,
-    package_move,
+    package_move,  # noqa: F401 -- re-exported: the public spelling is myflopy.specs
+    package_moves,
     source_fingerprint,  # noqa: F401
     void_pin,
 )
@@ -3597,6 +3598,11 @@ class ModelSpec:
             relazified = self._remap_onto(
                 relazified, grid, rule=rule, uncovered=uncovered
             )
+        # `package_moves`, not `package_move`: a MOVER's staleness lives in its siblings,
+        # and one package is not enough to see it (ledger 303). All three callers share
+        # this function so the pre-build report, the stamp and `Run.resolution` cannot
+        # disagree about the same mover.
+        verdicts = package_moves(relazified, grid_free=free, ncpl=declared_on)
         stamped = tuple(
             package.with_metadata(**{MOVED_FROM: pin})
             # `grid_free` is honoured inside `package_move`, which answers
@@ -3604,7 +3610,7 @@ class ModelSpec:
             # code that read as load-bearing. Mutation found it.
             if (
                 isinstance(package, PackageSpec)
-                and package_move(package, grid_free=free, ncpl=declared_on)[0]
+                and verdicts.get(getattr(package, "name", None), ("", ""))[0]
                 == "unverifiable"
                 # A VOIDED package is already refused by its own complaint, which names
                 # the mesh the edit invalidated. Stamping it too made `with_grid` list

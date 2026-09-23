@@ -321,6 +321,18 @@ MOVED_FROM = "myflopy_moved_from"
 #: package the remap just fixed.
 REMAPPED_FROM = "myflopy_remapped_from"
 
+#: Names the SIBLING packages whose features this one addresses by INDEX rather than by
+#: cellid -- an MVR's providers and receivers. Stamped by ``mvr_spec``, so both
+#: ``mf.mvr(moves=...)`` and ``mf.mvr.flopy(...)`` carry it.
+#:
+#: It exists because ``package_move`` sees ONE package and a mover's staleness lives
+#: entirely in its siblings: nothing about the mover's own options changes when the mesh
+#: does, so it answered "unchanged -- names no cells" beside a stale SFR (ledger 303).
+#: Deliberately NOT ``requires=``, which already means "build this first" and is carried by
+#: ``mf.hfb`` as ``("disv",)`` -- reading that as an index reference would refuse every
+#: barrier whenever the discretization rebuilt, which is a different and correct thing.
+INDEXED_PACKAGES = "grid_indexed_packages"
+
 #: Metadata key listing the packages the caller asserted are mesh-independent, so a
 #: stamp on them is cleared rather than refused.
 GRID_FREE = "myflopy_grid_free"
@@ -514,6 +526,77 @@ def package_move(
     return "unchanged", "names no cells"
 
 
+def package_moves(
+    packages, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
+) -> dict[str, tuple[str, str]]:
+    """Every package's verdict, with a sibling-INDEXING package corrected downward.
+
+    Two passes, because :func:`package_move` is handed ONE package and one package is not
+    enough to classify a MOVER. An MVR's records name a provider and a receiver by
+    PACKAGE NAME plus an INTEGER -- a reach number, a lake number, a UZF object number --
+    and none of its own options change when the mesh does. So it answered ``unchanged``,
+    "names no cells", beside a stale SFR, while holding an index into the old reach
+    network: measured, a mover pointing at reach 9 of 10 on one mesh, where the same
+    declaration on a finer mesh resolves reach 20 of 21 (ledger 303).
+
+    **A provider that is anything but ``unchanged`` invalidates the index, ``rebuilt``
+    included** -- that is the whole point. A rebuilt SFR re-intersects its centreline and
+    renumbers every reach, so a correct move of the provider is exactly what makes a
+    hand-typed index wrong. Today the provider's own pin refuses the build first, which
+    is what has been hiding this; the moment a provider becomes movable the mover is the
+    only thing standing between a re-grid and water routed to the wrong reach.
+
+    All three callers of :func:`package_move` go through this -- :func:`move_report`,
+    ``ModelSpec.with_grid``'s stamping loop, and ``Run.resolution``. Updating two of the
+    three would leave the run table and the pre-build report saying different things
+    about the same mover, which is the disagreement ``move_report``'s own docstring
+    exists to prevent.
+
+    **DELIBERATELY CONSERVATIVE about WHICH provider invalidates the index.** A reach
+    number is mesh-derived and a LAKE number is feature-derived, so a mover into a lake
+    would usually survive a move that a mover into a stream would not -- and this names
+    both. Two reasons. A lake number is only usually stable: a lake that lands on no
+    active cell of the new mesh (ledger 211) is dropped and renumbers the rest. And the
+    two errors are not symmetric -- a false refusal costs a re-declaration, where a false
+    pass routes water to the wrong reach under Normal termination.
+
+    The message is the SPECIFIC one only on the PRE-move report, which is the one the
+    docs tell you to read. After ``with_grid`` the mover carries ``MOVED_FROM`` and
+    reports through that branch instead, exactly as every other refused package does --
+    the verdict was "ALREADY DECIDED, by the ``with_grid`` that stamped it" (ledger 271).
+    """
+
+    verdicts = {
+        name: package_move(package, grid_free=grid_free, ncpl=ncpl)
+        for package in packages
+        if (name := getattr(package, "name", None)) is not None
+    }
+    for package in packages:
+        name = getattr(package, "name", None)
+        if name is None or name in grid_free:
+            continue
+        indexed = (getattr(package, "metadata", None) or {}).get(INDEXED_PACKAGES)
+        if not indexed:
+            continue
+        moved = [
+            other
+            for other in indexed
+            if verdicts.get(other, ("unchanged", ""))[0] != "unchanged"
+        ]
+        if not moved or verdicts.get(name, ("", ""))[0] != "unchanged":
+            continue
+        verdicts[name] = (
+            "unverifiable",
+            "it names features of "
+            + ", ".join(sorted(moved))
+            + " by INDEX, and "
+            + ("that package" if len(moved) == 1 else "those packages")
+            + " did not survive this move unchanged -- a reach or lake number means "
+            "something else on the new mesh",
+        )
+    return verdicts
+
+
 def move_report(
     model, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
 ) -> list[dict[str, str]]:
@@ -525,10 +608,12 @@ def move_report(
     before ``prepare_run``.
     """
 
+    packages = tuple(getattr(model, "packages", ()))
+    verdicts = package_moves(packages, grid_free=grid_free, ncpl=ncpl)
     return [
-        {"package": getattr(package, "name", "?"), "how": how, "why": why}
-        for package in getattr(model, "packages", ())
-        for how, why in [package_move(package, grid_free=grid_free, ncpl=ncpl)]
+        {"package": name, "how": verdicts[name][0], "why": verdicts[name][1]}
+        for package in packages
+        if (name := getattr(package, "name", None)) is not None
     ]
 
 

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 302 entries (303 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 303 entries (304 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 303 | A water mover kept pointing at a reach that no longer existed | 2026-09-23 |
 | 302 | A UZF package declared without a grid moved to another mesh in silence | 2026-09-23 |
 | 301 | A LAK budget could not be read at all on an ordinary output-control setting | 2026-09-23 |
 | 300 | A calibrated array could not follow its model to another mesh | 2026-09-23 |
@@ -12354,6 +12355,60 @@ same day, which is the useful part of the result.
       for ``mf.rch.array`` and is wrong for UZF -- it supplies a RECORD per cell, and it
       is the record's cellid that goes stale, not an array's position. "Payload" covers
       both.
+
+303. **A water mover kept pointing at a reach that no longer existed (2026-09-23).**
+      ``mf.mvr``'s records name a provider and a receiver by PACKAGE NAME plus an
+      INTEGER -- a reach number, a lake number, a UZF object number. None of the mover's
+      OWN options change when the mesh does, so ``package_move`` answered **``unchanged``
+      -- "names no cells"** beside a ``stale`` SFR while holding an index into the old
+      reach network. Measured: one declaration puts the outlet at reach **9 of 10** on a
+      36-cell mesh and **20 of 21** on a 144-cell mesh over the same footprint; after a
+      move the mover still said 9, and the report called it a clean move.
+      **A provider that is anything but ``unchanged`` invalidates the index, ``rebuilt``
+      INCLUDED**, and that is the point rather than an oversight: a rebuilt SFR
+      re-intersects its centreline and renumbers every reach, so a CORRECT move of the
+      provider is exactly what makes a hand-typed index wrong. Today the provider's own
+      pin refuses the build first, which is what has been hiding this -- which also means
+      **any commit that makes SFR movable without this one is a net regression**, and
+      that is the reason this landed first.
+      **``package_move`` cannot see it, by construction**: it is handed ONE package and a
+      mover's staleness lives entirely in its siblings. So the second pass is a new
+      ``package_moves(packages, ...)``, and **all three** callers go through it --
+      ``move_report``, ``ModelSpec.with_grid``'s stamping loop and ``Run.resolution``.
+      Updating two of the three would leave the run table and the pre-build report saying
+      different things about the same mover, which is the disagreement ``move_report``'s
+      own docstring exists to prevent. A mutation reverting just ``with_grid`` fails two
+      tests by name.
+      **A new metadata key, NOT ``requires=``.** That tuple already means "build this
+      first" and ``mf.hfb`` carries it as ``("disv",)``; reading it as an index reference
+      would refuse every barrier whenever the discretization rebuilt, which is both wrong
+      and constant -- a lazy DISV is always ``rebuilt``. ``INDEXED_PACKAGES`` is stamped
+      in ``mvr_spec``, which is the funnel BOTH entry points reach, so
+      ``mf.mvr.flopy(...)`` carries it too. **A mutation reading ``requires=`` instead
+      passed all sixteen tests** on the first attempt, because a real ``mf.hfb`` is
+      PINNED and so reads ``stale``, which the second pass skips -- the distinction only
+      shows on a package that reads ``unchanged`` AND carries ``requires``, and the test
+      now constructs exactly that and says why it is synthetic.
+      **Deliberately conservative about WHICH provider counts.** A reach number is
+      mesh-derived and a LAKE number is feature-derived, so a mover into a lake would
+      usually survive a move that a mover into a stream would not -- and this names both.
+      Two reasons: a lake number is only USUALLY stable, since a lake landing on no active
+      cell of the new mesh (ledger 211) is dropped and renumbers the rest; and the errors
+      are not symmetric -- a false refusal costs a re-declaration, a false pass routes
+      water to the wrong reach under Normal termination.
+      **The specific message appears on the PRE-move report only.** After ``with_grid``
+      the mover carries ``MOVED_FROM`` and reports through that branch, exactly as every
+      other refused package does -- "ALREADY DECIDED, by the ``with_grid`` that stamped
+      it" (ledger 271). The pre-build report is the one the docs tell you to read, and it
+      is where the sentence naming the providers lands.
+      **Costs a non-moving model nothing**, asserted rather than assumed: the stamp is
+      metadata, which ``package_digest`` excludes, so no stored digest moves.
+      **Not built here:** a ``uzf_connection``. There is none anywhere in the tree and no
+      ``MoverConnection("uzf", ...)`` is constructed, so UZF cannot currently be a mover
+      endpoint at all -- the key would carry it if one ever appears. And nothing makes
+      ``mf.sfr_connection`` SYMBOLIC: it still resolves to an ``int`` at declaration, so
+      the mover is refused rather than re-resolved. That is Path A's job, and this entry
+      is what makes it safe to do.
 
 301. **A LAK budget could not be read at all on an ordinary output-control setting
       (2026-09-23).**
