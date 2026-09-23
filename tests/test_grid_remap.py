@@ -499,3 +499,65 @@ def test_package_move_reports_remapped_before_the_cellwise_branch(meshes, lens):
     how, why = package_move(stamped, ncpl=fine.ncpl)
     assert how == "remapped"
     assert "3 cells filled" in why
+
+
+def test_a_remapped_model_CAN_be_saved_by_the_documented_route(meshes, lens, tmp_path):
+    """Two reasons it cannot be saved in one step, and the route that gets there anyway.
+
+    Ledger 300 first recorded this as a flat "cannot be saved", which overstated it. The
+    two obstacles are real and both predate C6:
+
+    * the remapped values are an ``ndarray``, which ``to_dict`` refuses (ledger 193) --
+      and the model was ALREADY unsaveable before the move, which is precisely why it
+      needed remapping rather than re-declaring: a package WITH a source reads ``rebuilt``
+      and never reaches the engine;
+    * the remap needs real cell polygons so it refuses a ``mf.grid_ref`` target, leaving
+      a built grid object in ``grid=`` -- itself unsaveable (ledger 257).
+
+    Both have documented answers. This pins the combination, because nothing else here
+    would fail if the second ``with_grid`` stopped preserving the remap -- which it does
+    only because ``REMAPPED_FROM`` is tested BEFORE the cellwise branch in
+    ``package_move``.
+    """
+
+    fine, coarse = meshes
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        moved = _sim(fine, k=lens).with_grid(coarse, remap=True)
+        # Re-point at the library entry. The verdict and the values both have to survive.
+        repointed = moved.with_grid(mf.grid_ref("mesh"))
+
+    assert _verdict(repointed, "npf") == "remapped"
+    npf = next(p for p in repointed.model("m").packages if p.name == "npf")
+    assert isinstance(npf.options["k"], np.ndarray)
+
+    project = mf.Project(tmp_path / "saved", name="p")
+    project.add_grid("mesh", coarse)
+    project.add_package("npf/remapped", npf)
+    project.add_simulation(
+        repointed.with_model(
+            repointed.model("m").with_packages(mf.ref("npf/remapped"), slot="npf")
+        )
+    )
+    report = project.save()
+    assert report.simulations == 1, report
+    assert report.skipped == ()
+
+    reloaded = mf.Project.load(tmp_path / "saved")
+    run = reloaded.prepare_run("r", reloaded.simulation("s"))
+    run.build()
+    written = run.built.simulation.get_model("m").get_package("npf").k.get_data()
+    assert np.all(np.isfinite(written))
+    assert written.shape == (1, coarse.ncpl)
+
+
+def test_the_remap_refuses_a_grid_ref_target_by_name(meshes, lens):
+    """It needs polygons, and a GridRef is resolved at build. Refusing beats skipping.
+
+    Silently skipping would leave the package stamped `unverifiable` while the caller had
+    asked for a remap -- ledger 295's failure again.
+    """
+
+    fine, _ = meshes
+    with pytest.raises(TypeError, match="not GridRef"):
+        _sim(fine, k=lens).with_grid(mf.grid_ref("mesh"), remap=True)

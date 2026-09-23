@@ -340,7 +340,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3806 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m31s**,
+- Full suite (**3808 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m31s**,
   measured this pass on an otherwise idle machine. `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
   so do not read the serial/parallel ratio across those two dates.
@@ -1025,11 +1025,18 @@ ten reached cells came back NaN, three ACTIVE on the new mesh.
 `REMAPPED_FROM` INSTEAD of `MOVED_FROM` (`moved_package_complaints` fires on that alone, so
 leaving it refuses the fix) and do NOT clear `PIN_VOIDED`; a voided package is not remapped
 at all.
-**NOT built:** a saveable remapped model (an ndarray, so `save()` persists zero simulations
--- named, not discovered), `runs.drift()` telling a remap from an edit (the values move the
-digest, the stamp does not), hand-typed list BCs (no per-cell values to weight), and
-`uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt` (measured `stale`, not
-`unverifiable` -- they carry a pin, so re-declaration is their route).
+**Saving a remapped model takes three steps, and that is the whole cost** -- an earlier
+draft of ledger 300 said it could not be saved at all, which was wrong. The arrays are
+ndarrays (`to_dict` refuses them, ledger 193) and **the model was already unsaveable before
+the move** -- which is why it needed remapping rather than re-declaring. The route, pinned
+by a test: `with_grid(<built grid>, remap=True)`, then `with_grid(mf.grid_ref(key))` to
+re-point (the `remapped` verdict and the arrays survive, because `REMAPPED_FROM` is tested
+before the cellwise branch), then `add_package` the array and `mf.ref` it. A `grid_ref`
+target is refused for the remap itself: it needs real polygons.
+**NOT built:** collapsing that into one call, `runs.drift()` telling a remap from an edit
+(the values move the digest, the stamp does not), hand-typed list BCs (no per-cell values
+to weight), and `uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt`
+(measured `stale`, not `unverifiable` -- they carry a pin, so re-declaration is their route).
 
 ## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
 `mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the

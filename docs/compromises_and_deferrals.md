@@ -12256,11 +12256,24 @@ same day, which is the useful part of the result.
       * **``mf.uzf``/``sfr``/``lak``/``hfb.line`` and the eager array-form ``rch``/``evt``.**
         Measured ``stale``, not ``unverifiable``: they carry a ``grid_pin``, so the overlay
         does not reach them and re-declaration is their route.
-      * **A saveable remapped model.** A remapped array is an ndarray, which ``to_dict``
-        refuses, so the moved model builds and runs but ``Project.save()`` persists zero
-        simulations -- the state ledgers 270, 285 and 299 each closed for a different
-        package. Named here rather than discovered later; it needs a serializable carrier
-        for the OLD mesh AND its values, which ledger 193 refuses inline.
+      * **A ONE-STEP saveable remapped model.** Two obstacles, and this entry first
+        recorded them as a flat "cannot be saved", which overstated it -- corrected the
+        same day. (a) The remapped values are an ``ndarray``, which ``to_dict`` refuses
+        (ledger 193). **But the model was ALREADY unsaveable before the move**, measured:
+        ``mf.npf(k=<ndarray>)`` gives ``simulations=0, skipped=1`` either side of it. That
+        is not incidental -- it is why such a model needs remapping at all, since a
+        package WITH a source reads ``rebuilt`` and never reaches this engine. So the
+        remap INHERITS the limitation rather than causing it. (b) The remap needs real
+        cell polygons, so it refuses a ``mf.grid_ref`` target by name, leaving a built
+        grid object in ``grid=`` -- itself unsaveable (ledger 257).
+        **A fully PUBLIC route exists and is now pinned by a test**: remap against the
+        built grid, then ``with_grid(mf.grid_ref(key))`` to re-point -- the ``remapped``
+        verdict and the arrays both survive, which they do only because ``REMAPPED_FROM``
+        is tested BEFORE the cellwise branch -- then ``add_package`` the array and
+        ``mf.ref`` it, which is ledger 193's own documented escape hatch. Measured:
+        ``simulations=1``, reloads, and a fresh ``prepare_run`` rebuilds the right values.
+        What is deferred is collapsing that into one call, which would need a
+        serializable carrier for the OLD mesh AND its values.
       * **``runs.drift()`` telling a remap from an edit.** The remapped values move the
         digest and the metadata stamp does not, so every run prepared before the move reads
         ``edited`` with ``source`` reading ``—``. Saying so is better than a stamp-reading
