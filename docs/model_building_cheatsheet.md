@@ -1269,6 +1269,37 @@ So an array-laden package written **inline** in the model — `mf.disv(top=layer
    Also verified, but you must remember it at every call site.
 3. **Don't save.** Runs, scenarios, discovery and reopening never needed it.
 
+**And for an array that comes from a POLYGON MAP, there is a fourth way that keeps
+the recipe instead: `mf.Polygons`** (ledger 299).
+
+```python
+mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))
+```
+
+It records WHERE the values come from rather than what they resolved to, so the
+declaration is JSON-clean, survives `save()`/`load()`, and resolves against whatever
+grid the build supplies — one declaration builds at ncpl 36 and ncpl 100. `move_report`
+reads it `rebuilt` where a plain array reads `unverifiable`, because an array names its
+cells by POSITION and carries nothing to check against a new mesh.
+
+Available on `mf.npf(k=, k22=, k33=)`, `mf.ic(strt=)` and `mf.sto(ss=, sy=)`.
+`icelltype` / `iconvert` are REFUSED: they are integer flags, and every polygon rule
+returns a float — there is no cell type 0.4.
+
+**Name the rule if the default is not what you mean.** `rule="majority"` (default)
+gives a cell the value of whichever polygon covers most of it and so invents nothing;
+`rule="mean"` is the area-weighted mean, right for a continuous field and wrong for a
+geology map — measured on a 64-cell grid with one contact it wrote 12 distinct
+conductivities where the map holds 2. `rule="centroid"` matches `ZoneSpec.from_polygons`.
+
+**A cell no polygon reaches is REFUSED unless you pass `default=`.** An unfilled cell
+is a NaN, and MF6 answers a NaN budget while reporting normal termination.
+
+For a BOUNDARY condition — a conductance, a stage, an invert — this is the wrong tool:
+`mf.drn.gpkg(...)` and its six siblings already read a polygon's attribute columns and
+have been lazy since ledger 279. `GeoPackageSource.k_array` still works and is not
+deprecated; it is the EAGER form, and it is what cannot be saved.
+
 Call **`project.validate()`** to see which case you are in; it lists the offending
 simulations without touching disk. Since 2026-09-04 `save()` no longer raises on
 them — it writes the project document, every package and every grid, SKIPS the

@@ -62,6 +62,12 @@ if TYPE_CHECKING:
         Where,
         modflow_surfaces,
     )
+    from myflopy.library import (
+        GridLibrary,
+        PackageLibrary,
+        SimulationLibrary,
+        SpecLibrary,
+    )
     from myflopy.modflow.mf6.canonical import (
         CANONICAL_MODEL_CONTRACT,
         CanonicalModelContract,
@@ -210,11 +216,13 @@ if TYPE_CHECKING:
         load_mf6_run,
         patch_simulation_plot,
     )
+    from myflopy.run_record import ListingOutcome, read_listing_outcome
     from myflopy.sources import (
         BoundarySource,
         DataSourceSpec,
         GeoPackageSourceSpec,
         LiteralSource,
+        Polygons,
         RasterSource,
         ShapeSource,
         TableSource,
@@ -243,13 +251,6 @@ if TYPE_CHECKING:
         ref,
     )
     from myflopy.surfaces import LayerSurfaces, Surface
-    from myflopy.library import (
-        GridLibrary,
-        PackageLibrary,
-        SimulationLibrary,
-        SpecLibrary,
-    )
-    from myflopy.run_record import ListingOutcome, read_listing_outcome
     from myflopy.workspace import (
         ModelView,
         Project,
@@ -299,6 +300,7 @@ _EXPORTS = {
     "PostBuildHook": ("myflopy.specs", "PostBuildHook"),
     "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
     "BoundarySource": ("myflopy.sources", "BoundarySource"),
+    "Polygons": ("myflopy.sources", "Polygons"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
     "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
     "LiteralSource": ("myflopy.sources", "LiteralSource"),

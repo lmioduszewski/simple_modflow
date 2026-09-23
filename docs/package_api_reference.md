@@ -477,6 +477,49 @@ and the `<pkg>_spec` factories (`chd_spec`, `rch_spec`, `evt_spec`, …). E.g.
 
 ---
 
+### A per-cell array from a polygon map — `mf.Polygons`
+
+| call | fills |
+| --- | --- |
+| `mf.npf(k=mf.Polygons(p, column="k"))` | horizontal K, one value per mapped unit |
+| `mf.npf(k22=…, k33=…)` | the other two conductivities |
+| `mf.ic(strt=mf.Polygons(p, column="head"))` | starting heads |
+| `mf.sto(ss=…, sy=…)` | storage |
+
+```python
+mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))
+```
+
+A serializable RECIPE, resolved at BUILD against whatever grid the model supplies —
+so one declaration builds on two meshes, `move_report` reads it `rebuilt`, and
+`Project.save()` keeps it. An `ndarray` in the same slot can do none of those
+(ledger 299).
+
+| argument | meaning |
+| --- | --- |
+| `column` | attribute holding the value. A NULL is REFUSED naming the feature |
+| `rule` | `"majority"` (default), `"mean"`, `"centroid"` — see below |
+| `default` | value for a cell no polygon reaches. Without it, REFUSED |
+| `layer` | layer/table name inside a multi-layer file |
+| `layer_field` | column naming the model layer. Omitted, the map is areal and applies to every layer |
+
+**The rule is named, not inherited, because the three disagree.** `majority` gives a
+cell whichever polygon covers most of it and so writes only values the map contains;
+`mean` is the area-weighted mean and blends across a contact — on a 64-cell grid with
+one contact it wrote 12 distinct conductivities where the map holds 2, and its
+area-integral ran 0–60% from `majority`'s across 19 contact positions. `centroid`
+matches `ZoneSpec.from_polygons`; it differs from `majority` on at most one cell in 64.
+
+`icelltype` and `iconvert` are **refused** — integer flags, and every rule returns a
+float. So is a `Surface` or `LayerStack` in any array slot: those describe an elevation
+field and used to be accepted, then die inside FloPy naming neither.
+
+For a boundary condition's conductance or elevation this is the wrong tool — the seven
+`mf.<pkg>.gpkg` forms already do it. `GeoPackageSource.k_array` is the EAGER sibling:
+still supported, but it needs the grid at declaration and its result cannot be saved.
+
+---
+
 ### Recharge and ET, array form — `mf.rch.array` / `mf.evt.array`
 
 | call | writes |

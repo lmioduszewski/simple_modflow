@@ -709,12 +709,204 @@ class LiteralSource:
         )
 
 
+#: The polygon-to-cell rules :class:`Polygons` accepts, in the order they are taught.
+#: Declared HERE, the lowest layer that needs them, so a declaration can be refused at
+#: the call rather than five frames into a build. The resolver in
+#: ``modflow/mf6/grid/geometry.py`` re-states the three names in its own dispatch rather
+#: than importing this -- that module sits a layer ABOVE this one, so the import would
+#: have to run the other way, and grid geometry has no business knowing about source
+#: specs. ``tests/test_polygon_arrays.py`` asserts the two agree, which is what keeps
+#: the restatement from drifting.
+POLYGON_RULES: tuple[str, ...] = ("majority", "mean", "centroid")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Polygons(DataSourceSpec):
+    """A polygon map that fills a per-cell ARRAY parameter, as plain data.
+
+    The recipe behind ``mf.npf(k=mf.Polygons("geology.gpkg", column="k"))``: a vector
+    file whose features carry the value in an attribute column, resolved against
+    whatever grid the build supplies. It rides in ``PackageSpec.inputs`` under the
+    parameter it fills, which is the shape ``_check_input_collisions`` permits there.
+
+    **What this adds that the library did not already have.**
+    :meth:`myflopy.geopackage.GeoPackageSource.k_array` has painted K from polygons for
+    a long time, and it still does; it is not deprecated by this. What it cannot be is
+    LAZY or SAVED. It needs the grid at DECLARATION, so a model built with it cannot be
+    moved to another mesh -- the whole point of Phase 2 -- and it hands back an
+    ``ndarray``, which ``to_dict`` refuses (ledger 193), so ``Project.save()`` persisted
+    **zero simulations** for such a model and ``load()`` returned an empty project.
+    Measured, both: see ledger 299. This carries the RECIPE instead, so the declaration
+    survives a save and resolves against the grid it is built on.
+
+    For a BOUNDARY CONDITION -- a conductance, a stage, an invert -- this is the wrong
+    tool and is not needed: the seven ``mf.<pkg>.gpkg(...)`` forms already read a
+    polygon's attribute columns, and have been lazy since ledger 279.
+
+    Parameters
+    ----------
+    path
+        Vector file holding the polygons (GeoPackage, shapefile, GeoJSON...).
+    column : str
+        Attribute column holding the value to paint. A NULL in it is REFUSED naming
+        the feature, never filled with a default -- substituting a number the user did
+        not give is its own silent guess (ledger 247).
+    layer : str, optional
+        Layer/table name inside a multi-layer file. Omit for a single-layer one.
+    rule : {"majority", "mean", "centroid"}, default "majority"
+        How a cell overlapping several polygons picks its value.
+
+        ``majority`` gives the cell the value of whichever polygon covers most of it.
+        It is the default because it INVENTS NOTHING: on a geology map an
+        area-weighted mean across a contact writes a conductivity that no mapped unit
+        has, which is the arithmetic-versus-harmonic problem in miniature.
+        ``mean`` is the area-weighted mean, right for a genuinely continuous field.
+        ``centroid`` matches :func:`~myflopy.modflow.mf6.grid.geometry.centroid_zones`
+        and :meth:`myflopy.pest.ZoneSpec.from_polygons`.
+
+        The fork is ``mean`` against the other two, and it is not subtle. On a 64-cell
+        grid with ONE contact, ``mean`` wrote 12 distinct conductivities where the map
+        holds 2 -- ten values no mapped unit has -- and across 19 contact positions its
+        area-integral ran between 0.0% and 60.5% away from ``majority``'s.
+        ``majority`` and ``centroid`` are close but not the same rule: over those same
+        19 positions they differed on at most ONE cell of 64, the cell whose centre and
+        whose bulk fall on opposite sides of the contact. Which is why this is NAMED
+        rather than inherited.
+    default : float, optional
+        Value for a cell no polygon reaches. Without it, an unreached cell is REFUSED
+        naming the count: an unfilled cell is a NaN, and MF6 answers a NaN budget while
+        reporting normal termination (ledger 247).
+    layer_field : str, optional
+        Column naming the MODEL layer a feature paints, ``layer_base``-based. Omitted,
+        the map is areal and is broadcast to EVERY layer -- which is what a geology map
+        digitized in plan view means.
+    layer_base : int, default 1
+        What the first model layer is called in ``layer_field``.
+    source_sha : str, optional
+        16-character content hash of ``path`` when the recipe was declared. It is what
+        the DIGEST sees in place of the path (:meth:`digest_payload`), which is why it
+        lives here and not in ``metadata``: ``package_digest`` excludes metadata by
+        contract (ledger 293).
+
+    Notes
+    -----
+    **``kind`` is ``"PolygonsSource"`` while the class is ``Polygons``.** The class name
+    is the one taught -- ``mf.Polygons`` -- and the kind must end in ``"Source"``
+    because ``_spec_value`` keeps an ``endswith("Source")`` arm beside the registry so
+    an UNREGISTERED kind raises rather than degrading to a plain dict (the silent
+    failure of ledger 269). The registry maps the tag to the class; nothing requires
+    them to be spelled alike, and :class:`DataSourceSpec`'s own ``"DataSourceSpec"``
+    already is not.
+
+    **It carries no package name**, for the reason :class:`BoundarySource` records: a
+    name frozen in a recipe survives ``fork_package``'s rename and two renamed forks
+    then collapse into one MF6 package.
+
+    Examples
+    --------
+    >>> mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))
+    >>> mf.ic(strt=mf.Polygons("zones.shp", column="head", rule="mean", default=9.0))
+    """
+
+    column: str
+    layer: str | None = None
+    rule: str = "majority"
+    default: float | None = None
+    layer_field: str | None = None
+    layer_base: int = 1
+    source_sha: str | None = None
+
+    kind: ClassVar[str] = "PolygonsSource"
+
+    def __post_init__(self) -> None:
+        """Coerce ``path`` and refuse an unknown ``rule`` at the DECLARATION."""
+
+        DataSourceSpec.__post_init__(self)
+        if self.rule not in POLYGON_RULES:
+            raise ValueError(
+                f"Polygons(rule={self.rule!r}) is not a rule. Use one of "
+                + ", ".join(repr(name) for name in POLYGON_RULES)
+                + ". 'majority' gives a cell the value of whichever polygon covers most "
+                "of it, 'mean' the area-weighted mean of them, 'centroid' the one "
+                "holding the cell's centre."
+            )
+        if not self.column:
+            raise ValueError(
+                "Polygons(column=...) names the attribute column holding the value to "
+                "paint, and cannot be empty."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding every field that is not a default.
+
+        Defaults are omitted so that adding a defaulted field later cannot move an
+        existing package's digest -- ``_canonical`` fingerprints this payload rather
+        than the object (ledger 273).
+        """
+
+        payload = DataSourceSpec.to_dict(self)
+        payload["column"] = self.column
+        from myflopy.specs import _json_value
+
+        for name, default in (
+            ("layer", None),
+            ("rule", "majority"),
+            ("default", None),
+            ("layer_field", None),
+            ("layer_base", 1),
+            ("source_sha", None),
+        ):
+            # NORMALIZED first, then compared -- the `type(...) is not type(...)` clause
+            # is what keeps a numpy-typed value from being mistaken for its plain
+            # default and written into a payload that then fails both `json.dumps` and
+            # `yaml.safe_dump`. `default=np.float64(...)` is an obvious spelling here,
+            # exactly as `snap_within=` was for `BoundarySource` (ledger 288).
+            value = _json_value(getattr(self, name))
+            if value != default or type(value) is not type(default):
+                payload[name] = value
+        return payload
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The declaration with the file's CONTENT standing in for its LOCATION.
+
+        Ledger 293's rule, for the same two reasons in the same two directions: keying
+        on the path CHURNS (``project.save(bundle_sources=True)`` repoints the recipe,
+        so a byte-identical archive moves the digest and ``runs.drift()`` calls every
+        stored run edited) and it is BLIND (a different file at the same path digests
+        identically). Falls back to the path when the file could not be read -- dropping
+        it as well would make two unreadable sources digest alike.
+        """
+
+        payload = Polygons.to_dict(self)
+        if payload.get("source_sha") is not None:
+            payload.pop("path", None)
+        return payload
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> Polygons:
+        """Rebuild a :class:`Polygons` from a payload dict."""
+
+        return cls(
+            path=data["path"],
+            column=data["column"],
+            layer=data.get("layer"),
+            rule=data.get("rule", "majority"),
+            default=data.get("default"),
+            layer_field=data.get("layer_field"),
+            layer_base=data.get("layer_base", 1),
+            source_sha=data.get("source_sha"),
+            external=bool(data.get("external", False)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
 _SOURCE_TYPES: dict[str, type[Any]] = {
     DataSourceSpec.kind: DataSourceSpec,
     TableSource.kind: TableSource,
     ShapeSource.kind: ShapeSource,
     GeoPackageSourceSpec.kind: GeoPackageSourceSpec,
     BoundarySource.kind: BoundarySource,
+    Polygons.kind: Polygons,
     RasterSource.kind: RasterSource,
     LiteralSource.kind: LiteralSource,
 }
@@ -745,6 +937,8 @@ def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
 
 __all__ = [
     "BoundarySource",
+    "POLYGON_RULES",
+    "Polygons",
     "DataSourceSpec",
     "is_source_payload",
     "GeoPackageSourceSpec",

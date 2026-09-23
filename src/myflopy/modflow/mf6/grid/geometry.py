@@ -709,6 +709,112 @@ def centroid_zones(polys, zones) -> np.ndarray:
     return rows
 
 
+def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
+    """Per-cell values painted from a polygon map; ``(values, reached)``.
+
+    The three polygon-to-cell rules in one place, because they DISAGREE and the
+    disagreement is visible in what MF6 is written. The split is ``mean`` against the
+    other two: on a 64-cell grid with one geology contact it wrote 12 distinct values
+    where the map holds 2, and over 19 contact positions its area-integral ran 0.0% to
+    60.5% from ``majority``'s. ``majority`` and ``centroid`` differed on at most ONE
+    cell of 64 over the same sweep -- close, but not one rule wearing two names. A
+    caller that inherits a rule instead of naming one is choosing by accident
+    (ledger 299).
+
+    ``majority`` gives a cell whichever polygon covers most of it. It is the default
+    for :class:`~myflopy.sources.Polygons` because it invents nothing: an area-weighted
+    ``mean`` across a contact writes a value no mapped unit has. ``mean`` is that
+    area-weighted mean, right for a continuous field. ``centroid`` defers to
+    :func:`centroid_zones` -- the same rule, not a second implementation of it.
+
+    **The overlay, not** :func:`cell_shares`. That function normalizes by the whole
+    FEATURE (share of the polygon falling in each cell, which is what ``mf.Spread``
+    needs to divide a total) and applies a sliver rule doing it. Filling an array needs
+    share of the CELL -- the same intersection, a different denominator -- and must
+    keep the slivers, since a sliver is still the only thing covering its own sliver of
+    cell. ``gpd.overlay`` conserves to 5.6e-16 where ``cell_shares`` loses pieces at
+    scale (ledger 298).
+
+    Ties go to the LOWEST row of ``zones``, matching :func:`centroid_zones`, so two
+    polygons sharing an edge resolve the same way under every rule. Returns ``NaN`` and
+    ``False`` for a cell no polygon reaches: what an unreached cell MEANS is the
+    caller's, and filling it here would hide it.
+
+    ``cell_polys`` is the grid's cell frame (``vor.gdf_vorPolys``); the answer is
+    positional over its rows. ``zones`` is a GeoDataFrame, GeoSeries or sequence of
+    geometries in the grid's CRS, and ``values`` the number each carries, positionally.
+    """
+
+    import geopandas as gpd
+
+    numbers = np.asarray(values, dtype=float)
+    painted = np.full(len(cell_polys), np.nan, dtype=float)
+    reached = np.zeros(len(cell_polys), dtype=bool)
+    if numbers.size == 0 or len(cell_polys) == 0:
+        return painted, reached
+
+    if rule == "centroid":
+        rows = centroid_zones(cell_polys, zones)
+        found = rows >= 0
+        painted[found] = numbers[rows[found]]
+        return painted, found
+
+    if rule not in ("majority", "mean"):
+        raise ValueError(
+            f"polygon_cell_values(rule={rule!r}) is not a rule. Use 'majority', "
+            "'mean' or 'centroid'."
+        )
+
+    geometries = list(zones.geometry if hasattr(zones, "geometry") else zones)
+    # Positions assigned explicitly rather than taken from `reset_index`: the answer is
+    # positional over BOTH frames, and a cell frame that has been filtered or reindexed
+    # carries an index that is no longer 0..n-1.
+    cells = cell_polys[["geometry"]].copy()
+    cells["_cell"] = np.arange(len(cells))
+    zone_frame = gpd.GeoDataFrame(
+        {"_zone": np.arange(len(geometries))},
+        geometry=geometries,
+        crs=getattr(cell_polys, "crs", None),
+    )
+    pieces = gpd.overlay(cells, zone_frame, how="intersection", keep_geom_type=True)
+    if pieces.empty:
+        return painted, reached
+
+    cell_index = pieces["_cell"].to_numpy()
+    zone_index = pieces["_zone"].to_numpy()
+    area = pieces.geometry.area.to_numpy()
+
+    if rule == "mean":
+        weight = np.bincount(cell_index, weights=area, minlength=len(cells))
+        total = np.bincount(
+            cell_index, weights=area * numbers[zone_index], minlength=len(cells)
+        )
+        reached = weight > 0
+        painted[reached] = total[reached] / weight[reached]
+        return painted, reached
+
+    # Majority: per cell, the largest intersection, ties to the lowest zone row.
+    #
+    # No aggregation step, deliberately. `gpd.overlay` returns ONE row per (cell, zone)
+    # and keeps a multi-part intersection WHOLE -- measured: a two-lobe unit covering
+    # 60% of a cell comes back as a single MultiPolygon of area 60, not two pieces of
+    # 30. So the rows ARE the per-unit totals, and a groupby-sum over them could not
+    # change an outcome; a mutation swapping it for `max` passed every test. Ledger
+    # 298's rule -- unfalsifiable code is the same defect as a certifying assertion.
+    # What holds the behaviour is
+    # `test_a_multi_part_polygon_is_judged_by_its_TOTAL_area_in_a_cell`, which fails
+    # loudly if that ever stops being true.
+    order = np.lexsort((zone_index, -area, cell_index))
+    ordered = cell_index[order]
+    leading = np.empty(len(order), dtype=bool)
+    leading[0] = True
+    leading[1:] = ordered[1:] != ordered[:-1]
+    winners = order[leading]
+    painted[cell_index[winners]] = numbers[zone_index[winners]]
+    reached[cell_index[winners]] = True
+    return painted, reached
+
+
 def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:
     """The cells a geometry reaches, each with its fraction of the whole feature.
 

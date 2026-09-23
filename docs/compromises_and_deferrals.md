@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 298 entries (299 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 299 entries (300 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 299 | A polygon map could fill an array, but the model could not then be saved or moved | 2026-09-23 |
 | 298 | What a move would have no data for, in ft2 rather than as a coverage fraction | 2026-09-22 |
 | 297 | Every input field summed, including the water levels | 2026-09-22 |
 | 296 | An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine | 2026-09-22 |
@@ -11991,3 +11992,137 @@ same day, which is the useful part of the result.
       **Not built here:** nothing CONSUMES this yet. It reports; C6's engine is what will
       act on it, with ``uncovered="nearest"`` as the default the user chose and the frame
       guard above as what keeps that safe.
+
+299. **A polygon map could fill an array, but the model could not then be saved or moved
+      (2026-09-23).**
+      B3's C5: ``mf.Polygons(path, column=...)`` in ``mf.npf(k=)`` / ``k22`` / ``k33``,
+      ``mf.ic(strt=)``, ``mf.sto(ss=, sy=)``. A serializable RECIPE resolved at BUILD
+      against whatever grid the model supplies, in ``PackageSpec.inputs``, carrying
+      ``path`` + ``source_sha`` and digested by CONTENT (ledger 293's rule, both
+      directions).
+      **The justification is NOT "nothing else can do this"** --
+      ``GeoPackageSource.k_array`` has painted K from polygons for a long time, still
+      does, and is not deprecated by this. What it cannot be is LAZY or SAVED, and both
+      halves are measured, not argued: it takes a live ``ModelContext`` so it resolves at
+      DECLARATION, and it returns an ``ndarray``, which ``to_dict`` refuses (ledger 193)
+      -- so ``Project.save()`` reported ``simulations=0, skipped=1`` for a model painted
+      that way and ``load()`` returned an empty project, silently, because ``save()``
+      reports rather than raises. The recipe form reports ``simulations=1, skipped=0``
+      and rebuilds to the same two values. This is ledger 270's defect two packages over.
+      **It converts the array class from ``unverifiable`` to ``rebuilt``.** A per-cell
+      array names cells by POSITION and carries no cellid to check, so ledger 295 could
+      only give it a verdict, not a route: ``npf`` holding a plain array reads
+      ``unverifiable`` ("its values still mean mesh 639cf118"). Holding a ``Polygons`` it
+      reads ``rebuilt`` and builds correctly at ncpl 36 and ncpl 100 from ONE
+      declaration.
+      **The rule is NAMED, because there are three and they disagree.** ``majority``
+      (default), ``mean``, ``centroid``. The fork is ``mean`` against the other two: on a
+      64-cell grid with one geology contact it wrote **12 distinct conductivities where
+      the map holds 2** -- ten values no mapped unit has -- and across 19 contact
+      positions its area-integral ran between 0.0% and 60.5% from ``majority``'s. That is
+      the arithmetic-versus-harmonic problem in miniature, which is why the default is
+      the rule that INVENTS NOTHING. ``majority`` and ``centroid`` are close but not one
+      rule: over those same 19 positions they differed on **at most ONE cell of 64**, the
+      cell whose centre and whose bulk fall on opposite sides. A single fixture therefore
+      proves nothing about them, and the test sweeps the 19 rather than asserting on one.
+      **The DENOMINATOR is the trap.** ``cell_shares`` normalizes by the whole FEATURE
+      (share of the polygon falling in each cell, what ``mf.Spread`` needs to divide a
+      total) and drops slivers doing it. Filling an array needs share of the CELL -- the
+      same intersection, a different denominator -- and must KEEP the slivers, since a
+      sliver is still the only thing covering its own sliver of cell. So this uses
+      ``gpd.overlay`` like ``cell_coverage`` (ledger 298), not ``cell_shares``.
+      **An uncovered cell is REFUSED without ``default=``.** ``k_array`` cannot make that
+      mistake because its ``defaults`` is required; here it is optional, and an unfilled
+      cell is a NaN that MF6 answers with a NaN budget under normal termination -- ledger
+      247's failure exactly.
+      **Two things the slot accepted and could not use are now refused at the
+      DECLARATION**, which the user asked for as part of this: ``mf.npf(k=<Surface>)``
+      was accepted and died at BUILD inside FloPy with an ``MFDataException`` naming
+      neither the slot nor the type (measured; same for a ``LayerStack``); and a recipe
+      sitting beside an option of the same name reached FloPy as ``got multiple values
+      for keyword argument 'k'``. The second is the older defect and it was INVERTED:
+      ``_check_input_collisions`` deliberately EXEMPTS a source shadowing its own option,
+      on the recorded premise that "a future resolver will consume one into the other",
+      while refusing a non-source collision with a good message -- so the shape the
+      comment called supported got the worse error. The resolver has arrived and it
+      REPLACES the option rather than merging with it, so the state is unbuildable and
+      ``PackageSpec.build`` now says so, for every package rather than just these.
+      **The refusal is narrow on purpose**: it names the two types measured to fail
+      rather than allowing a list, because the array slots genuinely accept a scalar, a
+      sequence, an ndarray, an ``OPEN/CLOSE`` path string (measured: it builds, reads
+      back, and writes ``OPEN/CLOSE ... FACTOR 1.0``) and FloPy's own layered dicts. A
+      rule written the other way round would refuse something that works today.
+      **Integer FLAGS are refused rather than half-supported.** ``icelltype`` and
+      ``iconvert`` are not measured values and every rule here returns a float -- there
+      is no cell type 0.4. ``majority`` and ``centroid`` would in fact be meaningful on
+      them, but supporting that means shipping a cast this commit did not measure, so
+      they are named and refused instead.
+      **An allowlist, not "anything that is a ``Polygons``"**: a helper's ``**options``
+      tail also carries ``steady_state``, ``transient`` and filerecords, and silently
+      painting one of those produces an array where MF6 expects a period dict.
+      **The deferred-import ratchet goes 81 -> 82, and it cannot be hoisted.**
+      CLAUDE.md's rule for a rising count is "hoist the import to module level instead",
+      and here that is impossible rather than merely inconvenient: ``to_dict`` needs
+      ``specs._json_value`` to normalize a numpy-typed field before comparing it against
+      its default (``default=np.float64(...)`` is an obvious spelling, and the
+      unnormalized value fails both ``json.dumps`` and ``yaml.safe_dump`` -- ledger 288's
+      trap on ``snap_within``), while ``specs.py`` imports ``sources`` at module level.
+      Hoisting would be a cycle. It is the third of exactly this import in the file;
+      ``BoundarySource.to_dict`` makes the other two for the same reason.
+      **The rule names are stated TWICE and a test holds them together.**
+      ``POLYGON_RULES`` is in ``sources.py`` (import layer 0) so a declaration is refused
+      at the call; the resolver is in ``grid/geometry.py`` (layer 1) and cannot import it
+      without the edge running upward. Placing the class in ``sources.py`` is also what
+      keeps the import ratchet completely still: ``specs.py`` already imports that module
+      at module level, so there is no new edge and no new deferred import.
+      **One line was deleted because a mutation could not kill it**, ledger 298's rule
+      again. The majority branch first summed areas per (cell, zone) before picking the
+      winner, justified by "a multi-part polygon reaches one cell as several pieces".
+      Measured: it does not -- ``gpd.overlay`` returns ONE row per (cell, zone) and keeps
+      a multi-part intersection WHOLE (a two-lobe unit covering 60% of a cell comes back
+      as a single MultiPolygon of area 60, not two pieces of 30). Swapping the ``sum``
+      for a ``max`` passed every test. The groupby went, and the behaviour it claimed to
+      protect is held by a test that fails loudly if ``overlay`` ever changes.
+      **The adversarial pass found a defect of its own, and it is the interesting one.**
+      The builder first recorded its resolved arrays on a private attribute of its own
+      (``_myflopy_resolved_arrays``) that read as the obvious sibling of
+      ``_myflopy_resolved`` and was DEAD: nothing anywhere reads it. ``ModelSpec.build``
+      harvests exactly ``_myflopy_resolved`` into ``BuiltModel.resolved``, and
+      ``Run._freeze`` hands that to ``freeze_simulation(resolved=)`` -- so the snapshot
+      held the RECIPE, and a reopened run went back to the polygon file and died once it
+      was gone. **That is ledger 270's defect, one package over**, reintroduced by a
+      plausible name. It now records an eager ``PackageSpec`` carrying the arrays, and a
+      thaw with the source file DELETED comes back with the right values. A mutation
+      restoring the private attribute fails both new tests by name.
+      **Three subsystems needed no per-type wiring, which is the payoff of the shape:**
+      ``project.save(bundle_sources=True)`` archives the polygon file and reports
+      ``not_bundled=()``; ``runs.drift()`` reads ``source`` ``ok`` and then ``edited``
+      after the file changes; and ``move_report`` classifies it. All three work because
+      the recipe rides in ``inputs`` as a ``DataSourceSpec`` with a ``source_sha``, which
+      the ledger 293/294 walks already find. Pinned by tests anyway -- nothing else here
+      would fail if a refactor stopped it being found.
+      **A shadowed name that reached a running build.** ``package_api.py`` already had
+      ``_lazy_array_factory`` / ``_build_lazy_array`` for ``mf.rch.array`` (ledger 285) at
+      ~line 5890; a second definition of the same name at ~line 1000 was silently
+      overridden by it, so the new calls dispatched into the recharge builder and died on
+      ``_ARRAY_FIELDS[<flopy class>]``. Renamed to ``_polygon_array_factory`` /
+      ``_build_polygon_arrays``. The file is 5,900 lines; grep before adding a private
+      helper to it.
+      **Deliberately NOT here, and each for a reason:**
+      * **Layer ELEVATIONS from a polygon map.** The user scoped it out for a follow-up.
+        Nothing does it today -- ``Surface.where(zone, inside, outside)`` is a two-way
+        inside/outside choice on centroids, not a value looked up per unit -- but it is a
+        DIFFERENT route (through ``Surface``/``LayerStack``), not another keyword.
+      * **Boundary-condition conductances and elevations.** Already covered, and covered
+        better: the seven ``mf.<pkg>.gpkg`` forms read a polygon's attribute columns and
+        have been lazy since ledger 279. A second way to do it would be the duplication
+        the plan exists to avoid.
+      * **A ``remap`` slot on ``FieldSpec``.** ``kind`` (ledger 297) is the natural place
+        for a per-field default rule, but nothing needs one yet: C5's rule is per
+        DECLARATION. Keep it separate from ``agg`` when it lands -- ``agg`` combines
+        records already sharing a cell (no weights), ``remap`` combines old cells into a
+        new one (area weights).
+      * **A generic ``_SOURCE_TYPES`` completeness sweep existed nowhere**, only two spot
+        checks, so a new source class could ship registered nowhere and be found by the
+        first user who saved a project containing one. Added here because this commit is
+        what made the registry grow.

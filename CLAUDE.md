@@ -340,9 +340,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3737 passed / 4 skipped**, 2026-09-19): `pytest -n 10` ≈ **2m08s**
-  (worksteal dist is in addopts); serial (`-n0`) ≈ **7m51s**; inner loop
-  `pytest -m "not slow"` ≈ 32 s.
+- Full suite (**3772 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m00s**,
+  measured this pass on an otherwise idle machine. `pytest -n 10` ≈ **2m08s** and the
+  inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
+  so do not read the serial/parallel ratio across those two dates.
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -977,6 +978,65 @@ measured EVT total **-151.13 against a correct 0.0**, Normal termination, no war
 Same pass: **`mf.evt(context=...)` silently dropped `nseg` and `auxiliary`** — both are
 NAMED parameters, so neither ever reached `**options`, and `mf.rch` kept `auxiliary` only
 because it has no parameter of that name. `auxiliary` is forwarded now, `nseg > 1` raises. Arrays are opt-in: for a sparse BC they are a pessimization.
+
+## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
+`mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the
+same in `k22`/`k33`, `mf.ic(strt=)`, `mf.sto(ss=, sy=)`. A serializable RECIPE resolved
+at BUILD against whatever grid the model supplies -- one declaration builds at ncpl 36
+and ncpl 100, and `move_report` reads it **`rebuilt`** where a plain ndarray reads
+`unverifiable` (ledger 295: an array names cells by POSITION, so there is nothing to
+check).
+**`GeoPackageSource.k_array` already painted K from polygons and is NOT deprecated** --
+do not "fix" it, and do not cite novelty as the reason this exists. What it cannot be is
+LAZY or SAVED, and both are measured: it takes a live `ModelContext` so it resolves at
+DECLARATION, and it returns an ndarray, which `to_dict` refuses (ledger 193) -- so
+`Project.save()` reported **`simulations=0, skipped=1`** and `load()` returned an empty
+project, silently, because `save()` reports rather than raises. The recipe form reports
+`simulations=1`. For a BC's conductance or elevation this is the wrong tool: the seven
+`mf.<pkg>.gpkg` forms already read attribute columns and are lazy since ledger 279.
+**THE RULE IS NAMED, NOT INHERITED, AND THE PAIRING IS EASY TO GET WRONG.**
+`rule="majority"` (default) / `"mean"` / `"centroid"`. The fork is **`mean` against the
+other two**: on a 64-cell grid with one contact it wrote 12 distinct conductivities where
+the map holds 2, and its area-integral ran 0.0%-60.5% from majority's across 19 contact
+positions -- the arithmetic-vs-harmonic problem in miniature, which is why the default is
+the rule that invents nothing. `majority` and `centroid` differ on **at most ONE cell of
+64** over that sweep, so a single fixture distinguishes nothing and the test sweeps all
+19. Ledger 169's "8 of 64 (12.5%)" is centroid vs the area-weighted MEAN -- not vs
+majority; that mis-mapping reached two docstrings before being caught.
+**`cell_shares` is the WRONG helper here.** It normalizes by the whole FEATURE (what
+`mf.Spread` needs to divide a total) and drops slivers; filling an array needs share of
+the CELL and must keep them. Use `gpd.overlay`, as `cell_coverage` does (ledger 298).
+**Refusals are the feature.** A NULL names the feature (ledger 247); a cell no polygon
+reaches is REFUSED unless `default=` is given (an unfilled cell is a NaN and MF6 answers
+a NaN budget under normal termination); a map landing nowhere prints both extents and
+both CRSs (ledger 211). `icelltype`/`iconvert` are refused -- integer flags, and every
+rule returns a float, so there is no cell type 0.4; `majority` would be meaningful but
+that needs a cast this commit did not measure. The parameter list is an ALLOWLIST, not
+"anything that is a `Polygons`", because a helper's `**options` tail also carries
+`steady_state`/`transient`/filerecords.
+**Two things the array slots accepted and could not use now refuse at DECLARATION**: a
+`Surface` or `LayerStack` (accepted, then died inside FloPy with an `MFDataException`
+naming neither), and a recipe sitting beside an option of the same name (reached FloPy as
+`got multiple values for keyword argument 'k'`). The second was INVERTED:
+`_check_input_collisions` EXEMPTS the source shape on the recorded premise that "a future
+resolver will consume one into the other", so the shape it called supported got the worse
+error. The resolver REPLACES rather than merges, so `PackageSpec.build` refuses it now,
+for every package. The `Surface` refusal is deliberately NARROW -- it names the two types
+measured to fail rather than allowlisting valid ones, because these slots really do take
+a scalar, a sequence, an ndarray, an `OPEN/CLOSE` path string (measured: it builds and
+writes `OPEN/CLOSE ... FACTOR 1.0`, at an ABSOLUTE path) and FloPy's own layered dicts.
+**NOT built, deliberately: layer ELEVATIONS from a polygon map.** Scoped out by the user
+to a follow-up. Nothing does it today -- `Surface.where(zone, inside, outside)` is a
+two-way inside/outside choice on centroids, not a per-unit lookup -- but it is a
+DIFFERENT route (through `Surface`/`LayerStack`), not another keyword.
+**Placement is load-bearing:** the class is in `sources.py` (import layer 0), so the
+import ratchet does not move -- `specs.py` already imports that module. The resolver is
+`geopackage.array_from_polygons` (layer 3), the rule is
+`grid/geometry.polygon_cell_values` (layer 1), and `POLYGON_RULES` is stated in layer 0
+with the resolver re-stating the three names (it cannot import upward); a test holds the
+two together. **`package_api.py` already had `_lazy_array_factory`** for `mf.rch.array`
+at ~line 5890 -- a second definition at line 1000 was silently shadowed by it. Grep
+before adding a private helper to that file.
 
 ## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE

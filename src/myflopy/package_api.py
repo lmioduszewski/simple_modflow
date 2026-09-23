@@ -55,6 +55,7 @@ from myflopy.geopackage import (
     RowValue,
     Spread,
     SurfaceResolver,
+    array_from_polygons,
     refuse_spread_on_elevation,
 )
 from myflopy.grid_identity import (
@@ -82,7 +83,7 @@ from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
-from myflopy.sources import BoundarySource
+from myflopy.sources import BoundarySource, Polygons
 from myflopy.specs import (
     ExchangeSpec,
     ModelContext,
@@ -837,6 +838,180 @@ def _lazy_areal_spec(package: str, *, name: str, recipe: dict[str, Any], options
         # time, so digesting its PATH churned on a bundle and was blind to an edit.
         inputs=stamp_source_hashes(dict(recipe)),
     )
+
+
+#: Per-cell VALUE arrays a :class:`~myflopy.sources.Polygons` map may fill, per helper.
+#: An allowlist rather than "anything that is a Polygons", because a helper's ``**options``
+#: tail also carries things that are not per-cell arrays at all -- ``steady_state``,
+#: ``transient``, filerecords -- and silently painting one of those would produce an
+#: array where MF6 expects a period dict.
+_POLYGON_ARRAYS: dict[str, frozenset[str]] = {
+    "npf": frozenset({"k", "k22", "k33"}),
+    "ic": frozenset({"strt"}),
+    "sto": frozenset({"ss", "sy"}),
+}
+
+#: Array parameters that are integer FLAGS, and why a polygon map is refused on them.
+#: Every rule in :func:`~myflopy.modflow.mf6.grid.geometry.polygon_cell_values` returns a
+#: FLOAT, and two of the three can return one that is in no polygon -- there is no cell
+#: type 0.4. ``majority`` and ``centroid`` would in fact be meaningful here, but shipping
+#: that means shipping a cast this commit has not measured, so it is refused by name
+#: instead of half-supported (ledger 299).
+_POLYGON_FLAGS: dict[str, frozenset[str]] = {
+    "npf": frozenset({"icelltype"}),
+    "sto": frozenset({"iconvert"}),
+}
+
+
+def _split_polygon_recipes(helper: str, values: dict) -> tuple[dict, dict]:
+    """Split ``values`` into plain options and :class:`Polygons` recipes.
+
+    A recipe is MOVED out of ``options`` into ``inputs`` rather than copied: the two are
+    splatted into one builder call, so a key in both is a ``TypeError`` five frames down
+    naming FloPy rather than the declaration.
+    """
+
+    fillable = _POLYGON_ARRAYS.get(helper, frozenset())
+    flags = _POLYGON_FLAGS.get(helper, frozenset())
+    options: dict = {}
+    recipes: dict = {}
+    for key, value in values.items():
+        if not isinstance(value, Polygons):
+            options[key] = value
+            continue
+        if key in flags:
+            raise TypeError(
+                f"mf.{helper}({key}=mf.Polygons(...)) is refused: {key!r} is an integer "
+                "flag, not a measured value, and every polygon rule returns a float -- "
+                "there is no cell type 0.4. Paint the flag with a plain array or a "
+                "scalar; a polygon map is for a value that varies by mapped unit."
+            )
+        if key not in fillable:
+            raise TypeError(
+                f"mf.{helper}({key}=mf.Polygons(...)) is refused: {key!r} is not a "
+                "per-cell array this helper fills from a polygon map. It fills "
+                + ", ".join(sorted(fillable))
+                + "."
+            )
+        recipes[key] = value
+    return options, recipes
+
+
+def _refuse_unpaintable_array(helper: str, parameter: str, value) -> None:
+    """Refuse, at the DECLARATION, a value an array parameter accepts but cannot use.
+
+    ``mf.npf(k=<Surface>)`` was accepted here and died at BUILD inside FloPy with an
+    ``MFDataException`` that names neither ``Surface`` nor what to do -- measured, and
+    the same for a ``LayerStack``. A slot that says yes to something it cannot use is
+    the defect, not the message; this closes the yes.
+
+    Deliberately NARROW. It names the two types measured to fail rather than allowing a
+    list of accepted ones, because the array slots genuinely take a scalar, a sequence,
+    an ndarray, an ``OPEN/CLOSE`` path string and FloPy's own layered dicts, and a rule
+    written the other way round would refuse something that works today.
+    """
+
+    token = getattr(type(value), "_SPEC_TOKEN", None)
+    if token not in ("$surface", "$layer_stack"):
+        return
+    noun = "Surface" if token == "$surface" else "LayerStack"
+    raise TypeError(
+        f"mf.{helper}({parameter}=<{noun}>) is not supported: a {noun} describes an "
+        "ELEVATION field and MF6 is handed it unresolved, which fails inside FloPy with "
+        "an error naming neither. Pass a scalar, a per-cell array, or "
+        f"`mf.Polygons(path, column=...)` to paint {parameter} from a polygon map."
+    )
+
+
+def _array_package_spec(helper: str, name: str, builder, values: dict) -> PackageSpec:
+    """A :class:`PackageSpec` for an array package, lazy only if a recipe is present.
+
+    The eager path is byte-identical to what it was -- same builder object, same
+    ``options``, no ``inputs`` -- so declaring ``mf.npf(k=10.0)`` cannot move a stored
+    digest. Only a declaration that actually carries a ``Polygons`` becomes lazy.
+    """
+
+    for parameter, value in values.items():
+        _refuse_unpaintable_array(helper, parameter, value)
+    options, recipes = _split_polygon_recipes(helper, values)
+    if not recipes:
+        return PackageSpec(name, builder, options)
+    return PackageSpec(
+        name,
+        _polygon_array_factory(builder),
+        options,
+        requires=(),
+        inputs={key: _stamped_polygons(recipe) for key, recipe in recipes.items()},
+    )
+
+
+def _stamped_polygons(recipe: Polygons) -> Polygons:
+    """Resolve the recipe's path and stamp its content hash, both at DECLARATION.
+
+    Resolved HERE because the declaration would otherwise check the path against the
+    cwd while the build anchors it to the project root -- two bases for one string, and
+    with a same-named file under the root a model BUILDS CLEAN from the wrong one
+    (ledger 293). Hashed here for the same reason ``BoundarySource`` is: the digest must
+    read the file's CONTENT, not its address.
+    """
+
+    path = Path(recipe.path)
+    if not path.exists():
+        raise FileNotFoundError(f"Polygon source not found: {path}")
+    path = path.resolve()
+    return _replace(recipe, path=path, source_sha=source_fingerprint(path))
+
+
+def _build_polygon_arrays(builder, model, *, _spec, **values):
+    """Resolve every :class:`Polygons` in ``values`` against the model's grid, then build.
+
+    Bound to its real builder by :func:`_polygon_array_factory` so the declaration-time
+    option check still sees that package's own signature -- ``_accepted_options``
+    unwraps a ``functools.partial`` and inspects what is inside it, so binding a
+    generic wrapper WITHOUT the target would silently turn the typo check off
+    (ledger 284's trap, one helper over).
+    """
+
+    context = _lazy_resolution_context(model, _spec.name)
+    discretization = _built_discretization(model)
+    nlay = getattr(getattr(discretization, "nlay", None), "get_data", lambda: None)()
+    resolved = {
+        key: (
+            array_from_polygons(
+                value, context.grid, nlay=int(nlay or 1), parameter=f"{_spec.name}.{key}"
+            )
+            if isinstance(value, Polygons)
+            else value
+        )
+        for key, value in values.items()
+    }
+    package = builder(model, **resolved)
+    # Record an EAGER spec holding the resolved arrays, so the run freezes numbers
+    # rather than this recipe. It must go in `_myflopy_resolved` -- the attribute
+    # `ModelSpec.build` harvests into `BuiltModel.resolved` and `Run._freeze` passes to
+    # `freeze_simulation(resolved=)`. A separate attribute of its own looked equivalent
+    # and was dead: the snapshot then held the RECIPE, so a reopened run went back to
+    # the polygon file and died once it was gone -- ledger 270's defect exactly, one
+    # package over, which is how it was found here.
+    store = getattr(model, "_myflopy_resolved", None)
+    if store is None:
+        store = {}
+        model._myflopy_resolved = store
+    store[_spec.name] = _replace(_spec, builder=builder, options=dict(resolved), inputs={})
+    return package
+
+
+@functools.cache
+def _polygon_array_factory(builder):
+    """The array-resolving builder, bound to the real one.
+
+    Memoized for the reason :func:`_lazy_factory` is: ``specs._required_keyword_only``
+    and ``specs._wants_spec`` cache on the builder OBJECT, and a ``functools.partial``
+    hashes by identity, so a fresh partial per declaration would leak a cache entry per
+    call.
+    """
+
+    return functools.partial(_build_polygon_arrays, builder)
 
 
 @functools.cache
@@ -2078,7 +2253,7 @@ def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
     >>> mf.ic(strt=starting_heads)      # per-cell / per-layer array
     """
 
-    return PackageSpec(name, build_ic, {"strt": strt, **options})
+    return _array_package_spec("ic", name, build_ic, {"strt": strt, **options})
 
 
 def npf(
@@ -2132,7 +2307,7 @@ def npf(
         values["k33"] = k33
     if icelltype is not None:
         values["icelltype"] = icelltype
-    return PackageSpec(name, flopy.mf6.ModflowGwfnpf, values)
+    return _array_package_spec("npf", name, flopy.mf6.ModflowGwfnpf, values)
 
 
 def sto(
@@ -2189,7 +2364,7 @@ def sto(
     }.items():
         if value is not None:
             values[key] = value
-    return PackageSpec(name, flopy.mf6.ModflowGwfsto, values)
+    return _array_package_spec("sto", name, flopy.mf6.ModflowGwfsto, values)
 
 
 def oc(

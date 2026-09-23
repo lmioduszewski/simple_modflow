@@ -1523,6 +1523,7 @@
       "PestProject",
       "PestRunHandle",
       "Points",
+      "Polygons",
       "PostBuildHook",
       "Project",
       "ProjectLayout",

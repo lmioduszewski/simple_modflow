@@ -28,11 +28,12 @@ from myflopy.modflow.mf6.grid.geometry import (
     cell_shares,
     domain_active,
     miss_reason,
+    polygon_cell_values,
     where_they_are,
 )
 from myflopy.modflow.mf6.grid.surfaces import check_gaps
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
-from myflopy.sources import BoundarySource
+from myflopy.sources import BoundarySource, Polygons
 from myflopy.specs import (
     GRID_PIN,
     GRID_PIN_OPTIONS,
@@ -489,6 +490,146 @@ def _finite(value, *, field: RowValue, label: str, source: str):
             "report success. Fix the attribute, or drop the feature from the layer."
         )
     return value
+
+
+def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) -> np.ndarray:
+    """Resolve a :class:`~myflopy.sources.Polygons` recipe to an ``(nlay, ncpl)`` array.
+
+    The build-time half of ``mf.npf(k=mf.Polygons(...))``. It reads the file, refuses a
+    NULL naming the feature, paints each cell by the recipe's own ``rule``, and fills
+    what no polygon reached with ``default`` -- or refuses when there is none.
+
+    **Refusing an unfilled cell is the point, not a convenience.** The array goes
+    straight into MF6, where a NaN is answered with a NaN budget under "Normal
+    termination" -- the failure ledger 247 exists to close. ``k_array`` cannot make
+    that mistake because its ``defaults`` argument is required; here ``default=`` is
+    optional, so the absence has to be caught.
+
+    Layer handling mirrors ``k_array``'s except in the default: with no
+    ``layer_field`` the map is AREAL and is broadcast to every layer, which is what a
+    geology map digitized in plan view means. ``k_array`` requires the column.
+
+    A feature that lands on no cell follows ledger 211 -- all of them missing raises
+    with both extents and both CRSs, some of them warns by name -- through the same
+    :func:`~myflopy.modflow.mf6.grid.geometry.miss_reason` and
+    :func:`~myflopy.modflow.mf6.grid.geometry.where_they_are` every other miss in this
+    library is worded by.
+    """
+
+    path = Path(recipe.path)
+    read_kwargs = {} if recipe.layer is None else {"layer": recipe.layer}
+    gdf = gpd.read_file(path, **read_kwargs)
+    source_crs = gdf.crs
+    grid_crs = getattr(grid, "crs", None)
+    if grid_crs is not None and gdf.crs is not None and gdf.crs != grid_crs:
+        gdf = gdf.to_crs(grid_crs)
+
+    source = f"'{path.name}'" + (f" (layer {recipe.layer!r})" if recipe.layer else "")
+    if recipe.column not in gdf.columns:
+        import difflib
+
+        close = difflib.get_close_matches(recipe.column, list(gdf.columns), n=1, cutoff=0.6)
+        raise ValueError(
+            f"{source} has no column {recipe.column!r} to read {parameter} from"
+            + (f" (did you mean {close[0]!r}?)" if close else "")
+            + f". Its columns are: {', '.join(map(str, gdf.columns))}."
+        )
+    if len(gdf) == 0:
+        raise ValueError(
+            f"{source} has no features, so {parameter} would be its default everywhere."
+        )
+
+    cells = grid.gdf_vorPolys
+    labels = [
+        repr(str(row["name"])) if "name" in gdf.columns else f"#{index}"
+        for index, row in gdf.iterrows()
+    ]
+    numbers = np.array(
+        [
+            float(_finite(value, field=recipe.column, label=label, source=source))
+            for value, label in zip(gdf[recipe.column], labels, strict=True)
+        ],
+        dtype=float,
+    )
+
+    painted = np.full((int(nlay), len(cells)), np.nan, dtype=float)
+    if recipe.layer_field is None:
+        values, _ = polygon_cell_values(cells, gdf, numbers, rule=recipe.rule)
+        painted[:] = values
+    else:
+        if recipe.layer_field not in gdf.columns:
+            raise ValueError(
+                f"{source} has no column {recipe.layer_field!r} to read the model "
+                f"layer from. Its columns are: {', '.join(map(str, gdf.columns))}."
+            )
+        assigned = gdf[recipe.layer_field].to_numpy() - recipe.layer_base
+        beyond = sorted({int(one) for one in assigned if int(one) >= int(nlay)})
+        if beyond:
+            raise ValueError(
+                f"{source} assigns features to model layer(s) "
+                + ", ".join(str(one + recipe.layer_base) for one in beyond)
+                + f", which this model does not have (nlay={int(nlay)}, so "
+                f"{recipe.layer_field!r} runs {recipe.layer_base} to "
+                f"{int(nlay) + recipe.layer_base - 1})."
+            )
+        for index in range(int(nlay)):
+            chosen = assigned == index
+            if not chosen.any():
+                continue
+            values, reached = polygon_cell_values(
+                cells, gdf[chosen], numbers[chosen], rule=recipe.rule
+            )
+            painted[index][reached] = values[reached]
+
+    # Per-FEATURE reach, which the per-CELL answer above cannot report: a feature can
+    # lose every cell it touches to a larger neighbour under `majority` and still be on
+    # the grid, which is not a miss. Intersection is the honest test of "reaches the
+    # grid at all" (ledger 211).
+    hit, _ = cells.sindex.query(gdf.geometry, predicate="intersects")
+    landed = np.zeros(len(gdf), dtype=bool)
+    landed[np.unique(hit)] = True
+    where = where_they_are(
+        gdf, cells, source_crs=source_crs, grid_crs=grid_crs,
+        no_crs_subject="the file has NO CRS, so its coordinates",
+    )
+    if not landed.any():
+        raise ValueError(
+            f"No feature in {source} lands on the grid, so {parameter} would be its "
+            f"default everywhere. {where}"
+        )
+    if not landed.all():
+        missed = [
+            f"{labels[position]} ({miss_reason(cells, gdf.geometry.iloc[position], target='cell')})"
+            for position in np.flatnonzero(~landed)
+        ]
+        listing = ", ".join(missed[:10])
+        if len(missed) > 10:
+            listing += f", and {len(missed) - 10} more"
+        logger.warning(
+            "%d of %d features in %s land on no cell and paint nothing into %s: %s",
+            len(missed), len(gdf), source, parameter, listing,
+        )
+        warnings.warn(
+            f"{len(missed)} of {len(gdf)} features in {source} land on no cell and "
+            f"paint nothing into {parameter}: {listing}.",
+            UserWarning,
+            stacklevel=stacklevel_outside_package(),
+        )
+
+    unfilled = ~np.isfinite(painted)
+    if unfilled.any():
+        if recipe.default is None:
+            layers_short = sorted({int(one) for one in np.flatnonzero(unfilled.any(axis=1))})
+            raise ValueError(
+                f"{int(unfilled.sum())} of {painted.size} cells are reached by no "
+                f"polygon in {source}, so {parameter} has no value for them "
+                f"(layer(s) {', '.join(map(str, layers_short))}). MF6 would be written "
+                "a non-finite value and report success. Pass `default=` to say what an "
+                "uncovered cell means, or extend the polygons to cover the grid. "
+                f"{where}"
+            )
+        painted[unfilled] = float(recipe.default)
+    return painted
 
 
 def _field_name(field: RowValue) -> str:

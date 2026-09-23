@@ -1628,6 +1628,24 @@ class PackageSpec:
 
         if not self.enabled:
             return None
+        doubled = sorted(set(self.inputs) & set(self.options))
+        if doubled:
+            # `_check_input_collisions` lets a SOURCE in `inputs` shadow the option of
+            # the same name through, on the premise that a resolver would consume one
+            # into the other. The resolver arrived (ledger 299) and it REPLACES the
+            # option rather than merging with it, so this state is unbuildable -- and
+            # what it produced was FloPy's own `got multiple values for keyword
+            # argument`, naming neither the package nor the recipe. Measured: the
+            # SUPPORTED shape got the worse error and the unsupported one got the good
+            # message, which is the guard exactly inverted.
+            raise TypeError(
+                f"{self.name}: "
+                + ", ".join(repr(key) for key in doubled)
+                + (" is" if len(doubled) == 1 else " are")
+                + " supplied twice -- once by this package's recipe and once as an "
+                "option. A recipe REPLACES the option it fills; it cannot sit beside "
+                "it. Drop the option, or drop the recipe."
+            )
         if _wants_spec(self.builder):
             # A recipe-resolving builder needs the identity of the spec it came from --
             # its NAME above all, since the package it produces has to be named and the
