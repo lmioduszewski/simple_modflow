@@ -892,6 +892,22 @@ vor.plot.map(values, select=cells, select_style="dim")   # fade the rest instead
 vor.plot.map(select=cells, select_color="#0072B2")       # avoid a red colorscale
 ```
 
+**The window a map opens on** — `extent=` is an option on `map` at every scope and on
+both backends (ledger 309), and the one way to frame a static map, which cannot be
+zoomed. It sets the VIEW only: no cell is cropped and the colour scale still spans
+the whole field (pass `zmin`/`zmax` for a close-up). Four numbers are
+`(xmin, ymin, xmax, ymax)` in the grid's CRS -- shapely's order, not FloPy's -- and a
+box off the grid raises printing both boxes and both CRSs. In a mosaic, one extent
+frames every panel and a list frames each on its own (a list is never synced).
+
+```python
+model.plot.map(layer=0, extent=(500, 600, 1000, 1100), backend="mpl")   # a static close-up
+model.plot.map(layer=0, extent=[(500, 600), (1000, 1100)])              # points -> their box
+model.plot.map(layer=0, extent=transect_line)                           # any geometry's bounds
+model.packages.npf.transmissivity.mosaic(per=3, extent=site_gdf)        # every panel
+model.hds.mosaic(by="layer", extent=[site, None, north, None])          # one per panel
+```
+
 **Custom geometry over a map** — `features=` is an option on `map` at the same
 scopes (ledger 254): a vector file path, a `GeoDataFrame`, a shapely geometry,
 a `mf.plot.Feature(...)` carrying its styling, or a list/dict of those. One

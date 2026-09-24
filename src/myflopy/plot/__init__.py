@@ -262,6 +262,7 @@ def map(      # noqa: A001 - the verb IS `map`
     zoom: int = 13,
     fit_bounds: bool = True,
     bounds_padding: float = 0.05,
+    extent=None,
     # -- hover ---------------------------------------------------------------
     hover=None,
     hover_layers: str | None = None,
@@ -416,6 +417,19 @@ def map(      # noqa: A001 - the verb IS `map`
         ``.save()`` to an image refits for the export's size.
     bounds_padding : float, default 0.05
         Fractional padding around the fitted bounds.
+    extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+        The window the map OPENS on, on both backends -- the one way to frame a
+        static (matplotlib) map, which cannot be zoomed. Four numbers
+        ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+        FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+        bounding box); any shapely geometry -- a polygon, a transect line -- by its
+        bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+        area of interest (``model.aoi``). It sets the VIEW only: no cell is
+        cropped and the colour scale still spans the whole field, so pass
+        ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+        as it pads the grid. A box off the grid raises, printing both boxes and
+        both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+        them frames each panel on its own.
     hover : HoverSpec, optional
         Replace the sectioned hover outright. See
         :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -550,6 +564,7 @@ def map(      # noqa: A001 - the verb IS `map`
         bgs=bgs,
         fit_bounds=fit_bounds,
         bounds_padding=bounds_padding,
+        extent=extent,
         hover=hover,
         hover_layers=hover_layers,
         hover_surfaces=hover_surfaces,
@@ -1485,6 +1500,7 @@ class ModelPlots:
         zoom: int = 13,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         hover=None,
         hover_layers: str | None = None,
         hover_surfaces: bool | None = None,
@@ -1635,6 +1651,19 @@ class ModelPlots:
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -2228,8 +2257,9 @@ class ModelPlots:
         ncols: int = 3,
         title: str | None = None,
         diff: bool = False,
-        sync_views: bool = True,
+        sync_views: bool | None = None,
         colorbar=None,
+        extent=None,
     ):
         """Compose any pictures into one figure. See :func:`myflopy.viz.mosaic`.
 
@@ -2264,15 +2294,16 @@ class ModelPlots:
             When ``True``, the shared map color scale is centered at zero
             (diverging), as used by the diff surfaces.
         sync_views
-            Every map panel always *starts* framed to the same shared extent (the
-            union of the panels' grid bounds) so the small multiples line up at the
-            site. When ``sync_views`` is ``True`` (default), the panels are also
-            wired to pan and zoom **together** live -- dragging or zooming one map
-            moves the others (via a ``plotly_relayout`` handler injected at
-            ``show()`` / ``write_html()`` time; inline notebook display shows the
-            shared start view but not the live linking). Set ``False`` to let each
-            map pan/zoom independently after the shared start. Panels without
-            geometry (raw Plotly figures) are unaffected.
+            Map panels framed to ONE window (the union of their grids, or one shared
+            ``extent``) start there together and, by default (``None``), are wired to
+            pan and zoom **together** live -- dragging or zooming one map moves the
+            others (via a ``plotly_relayout`` handler injected at ``show()`` /
+            ``write_html()`` time; inline notebook display shows the shared start view
+            but not the live linking). Panels framed to DIFFERENT windows -- a list of
+            extents -- are not synced by default, since the first pan would snap every
+            panel to one window; ``True`` then raises rather than doing that. Set
+            ``False`` to let each map pan/zoom independently. Panels without geometry
+            (raw Plotly figures) are unaffected.
         colorbar
             Colorbar settings for the shared map color axis -- a dict of Plotly
             ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
@@ -2287,6 +2318,11 @@ class ModelPlots:
             on the pooled limits, and those are only known here -- e.g.
             ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
             Ignored when no panel is a map.
+        extent
+            The window every map panel opens on (see :func:`myflopy.plot.map`), or a
+            LIST of them, one per panel in order -- ``None`` in the list for "this
+            panel's own". A panel built with its own ``map(extent=...)`` keeps it
+            when this is ``None``. Sets the VIEW only.
 
         Returns
         -------
@@ -2314,6 +2350,7 @@ class ModelPlots:
             diff=diff,
             sync_views=sync_views,
             colorbar=colorbar,
+            extent=extent,
         )
 
 

@@ -222,6 +222,7 @@ class CellBudgetResultsExplorer(SpatialView):
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         # -- hover -----------------------------------------------------------
         hover=None,
         show_layer_elevs: bool | None = None,
@@ -375,6 +376,19 @@ class CellBudgetResultsExplorer(SpatialView):
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -511,6 +525,7 @@ class CellBudgetResultsExplorer(SpatialView):
             hillshade_path=hillshade_path,
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
+            extent=extent,
             **trace_kwargs,
         )
         return _apply_backend(choro, backend)
@@ -590,6 +605,7 @@ class StageResultsExplorer(SpatialView):
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         # -- hover -----------------------------------------------------------
         hover=None,
         show_layer_elevs: bool | None = None,
@@ -732,6 +748,19 @@ class StageResultsExplorer(SpatialView):
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -845,6 +874,7 @@ class StageResultsExplorer(SpatialView):
             hillshade_path=hillshade_path,
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
+            extent=extent,
             **trace_kwargs,
         )
         return _apply_backend(choro, backend)

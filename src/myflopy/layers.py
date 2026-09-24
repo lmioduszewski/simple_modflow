@@ -36,6 +36,7 @@ from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.utils.datatypes.extent import resolve_extent
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.package_api import disv as disv_spec
 from myflopy.surfaces import (
@@ -1400,17 +1401,33 @@ class LayerThicknessMap(MplPicture):
     grid really is where it says it is.
     """
 
-    def __init__(self, result, layer=None):
-        """Bind a thickness map of ``result`` (total, or one named layer)."""
+    def __init__(self, result, layer=None, *, extent=None, padding: float = 0.05):
+        """Bind a thickness map of ``result`` (total, or one named layer).
+
+        ``extent`` is the window it opens on (see :func:`myflopy.plot.map`),
+        resolved here so a box off the grid raises at the call.
+        """
 
         self._result = result
         self._layer = layer
         _, self.title = result._thickness_values(layer)
+        vor = result.vor
+        self._extent = resolve_extent(
+            extent,
+            crs=getattr(vor, "crs", None),
+            bounds=vor.gdf_vorPolys.total_bounds,
+        )
+        self._padding = float(padding)
 
     def draw(self, ax=None, **kwargs):
         """Render the thickness map into ``ax`` (or a new one)."""
 
-        return self._result._draw_thickness_map(layer=self._layer, ax=ax, **kwargs)
+        ax = self._result._draw_thickness_map(layer=self._layer, ax=ax, **kwargs)
+        if self._extent is not None:
+            xmin, ymin, xmax, ymax = self._extent.padded(self._padding)
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
+        return ax
 
 
 class LayerSurface(Picture):
@@ -1618,6 +1635,19 @@ class StackPlots:
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -1723,13 +1753,17 @@ class StackPlots:
             # import and the exact-match ratchet only moves down. Same function
             # either way -- `vor.plot.map` is what the front door calls too.
             return GridPlots(self.result.vor).map(values=list(values), **kwargs)
+        # The one option the static thickness map honours -- framing, which a
+        # Matplotlib picture cannot do by zooming (ledger 309).
+        extent = kwargs.pop("extent", None)
+        padding = kwargs.pop("bounds_padding", 0.05) if extent is not None else 0.05
         if kwargs:
             raise TypeError(
                 f"{', '.join(sorted(kwargs))} style the choropleth, which is "
                 f"only drawn with basemap=True; the default thickness map is "
-                f"Matplotlib and ignores them."
+                f"Matplotlib and honours only extent=/bounds_padding=."
             )
-        return LayerThicknessMap(self.result, layer=layer)
+        return LayerThicknessMap(self.result, layer=layer, extent=extent, padding=padding)
 
     def section(
         self,

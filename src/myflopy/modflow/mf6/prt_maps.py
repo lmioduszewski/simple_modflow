@@ -44,6 +44,7 @@ from myflopy.modflow.mf6.package_plotting import (
     resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_tables import summarize_input_table
+from myflopy.modflow.utils.datatypes.extent import resolve_extent
 from myflopy.modflow.utils.datatypes.hover import (
     HoverContext,
     pathline_hover,
@@ -723,6 +724,7 @@ class PRTPathlineView(_PRTDerivedView):
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         # -- hover -----------------------------------------------------------
         hover=None,
         show_layer_elevs: bool | None = None,
@@ -865,6 +867,19 @@ class PRTPathlineView(_PRTDerivedView):
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -952,17 +967,33 @@ class PRTPathlineView(_PRTDerivedView):
         if self._normalize_backend(backend) == "mpl":
             from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
 
+            # The one framing option a static plan view CAN honour -- and the one
+            # it needs most, having no zoom (ledger 309). Padded as a map pads.
+            window = base_options.pop("extent", None)
+            padding = base_options.pop("bounds_padding", 0.05) if window is not None else 0.05
             if base_options:
                 raise TypeError(
                     f"backend='mpl' draws FloPy's plan view, which takes no base-map "
-                    f"options: {sorted(base_options)}. Drop them, or use the default "
-                    "plotly backend."
+                    f"options but extent=: {sorted(base_options)}. Drop them, or use "
+                    "the default plotly backend."
                 )
-            return as_mpl_figure(plot_particle_pathlines(
+            figure = as_mpl_figure(plot_particle_pathlines(
                 self.model,
                 frame,
                 title=title or "Particle pathlines",
             ))
+            if window is not None:
+                vor = self.model.vor
+                resolved = resolve_extent(
+                    window,
+                    crs=getattr(vor, "crs", None),
+                    bounds=vor.gdf_vorPolys.total_bounds,
+                    names=getattr(self.model, "aoi", None),
+                )
+                xmin, ymin, xmax, ymax = resolved.padded(padding)
+                figure.axes[0].set_xlim(xmin, xmax)
+                figure.axes[0].set_ylim(ymin, ymax)
+            return figure
 
         kept, dropped = self._selected_particles(frame, max_particles)
         if dropped:

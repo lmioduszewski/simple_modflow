@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 308 entries (309 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 309 entries (310 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 309 | `extent=` -- the window a map opens on, at every scope and backend | 2026-09-24 |
 | 308 | Transmissivity maps and nouns: saturated by default, and the choices behind it | 2026-09-23 |
 | 307 | A plotly map was fitted for a canvas nothing draws | 2026-09-23 |
 | 306 | The composers named `zmin`/`zmax` and pooled over them; the static ones dropped every overlay | 2026-09-23 |
@@ -12711,3 +12712,50 @@ same day, which is the useful part of the result.
       **DEFERRED:** total transmissivity over layers (``layer="total"`` would widen
       ``layer`` at every scope, where it is pinned an int); groups and diffs have no
       ``npf`` noun at all, so comparing T across scenarios is not reachable.
+
+309. **`extent=` -- the window a map opens on, at every scope and backend (2026-09-24).**
+      Asked for by the user because a Matplotlib map cannot be zoomed. **Three rules are
+      the user's:** an extent sets the VIEW only -- no cell is cropped and the colour scale
+      still spans the whole field, although a 1/16-area window measured using a median 25%
+      of the ramp (a quarter window ~60%); ``zmin``/``zmax`` is the lever for a close-up,
+      which is why ledger 306 made the composers honour them first. One extent frames
+      every panel of a mosaic; a LIST frames each panel on its own. And it is a box,
+      points, a geometry's bounds, or a NAME (the name lookup lands with the area
+      registry; the resolver already takes a ``names`` mapping).
+      **One resolver, run at the call** (``utils/datatypes/extent.resolve_extent``, import
+      layer 1), so a bad box raises where it was typed, like ``select=``. Numbers and bare
+      geometries are in the GRID's CRS, the ``features=`` rule; a ``GeoDataFrame`` is
+      reprojected from its own. The box is densified before it goes to WGS84, since its
+      edges are not straight there.
+      **Shapely order, and the trap it cannot close:** ``(xmin, ymin, xmax, ymax)``, as
+      ``LayerStack.draft_grid(extent=)`` already had it. FloPy's and matplotlib's
+      ``(xmin, xmax, ymin, ymax)`` is REFUSED only when it produces an inverted box; when
+      it happens to be a valid box inside the grid -- ``(500, 1000, 600, 1100)`` on the
+      canonical model -- it frames the wrong window in silence. No check can tell.
+      **What refuses by name:** an inverted box, a box off the grid (both boxes and both
+      CRSs printed -- a lon/lat box given to a feet model lands here), a geometry with no
+      area (a point frames nothing), a list given to a single map or to ``animate`` (one
+      view), ``fit_bounds=False`` beside an extent (it IS a fit), and a list of the wrong
+      length (naming the panels).
+      **A list is told from one extent by its ITEMS, never its length** -- four numbers
+      are one box, four ``(x, y)`` pairs one set of points, four boxes or four names one
+      per panel. The rule lives in ``viz.is_extent_list`` because the free ``mosaic`` is
+      ``viz.mosaic`` and ``viz`` imports nothing from myflopy.
+      **Panels on different windows are not synced.** The sync script copies ABSOLUTE
+      centre and zoom, so the first pan would snap every panel to one window;
+      ``sync_views`` now defaults to ``None`` (sync exactly when the panels share a
+      window) on ``viz.mosaic``, ``ModelPlots.mosaic`` and ``SpatialView.mosaic``, and an
+      explicit ``True`` with different windows raises.
+      **Renderers:** plotly reads ``Choro.latlon_bounds``/``map_view`` (so the standalone
+      map, mosaic subplots, animation frames and ledger 307's PNG refit all follow);
+      ``Choro.plot_mpl`` sets the padded limits LAST, and only when an extent was given --
+      a default static map still autoscales, including out to a feature off the grid.
+      The static mosaic and animation draw through ``plot_mpl`` (ledger 306) and the PNG
+      animation renders each frame through it, so they needed nothing further. The PRT
+      plan view (FloPy's ``PlotMapView``) and the stack thickness map each set the same
+      padded box; both still refuse every OTHER base-map option.
+      **NOT on the ``grid`` verb** (the bare 2-D mesh / 3-D volume): it is not a map of
+      values, and giving it ``extent=`` changes its signature at four scopes and its chain
+      of mirrored defaults. Nor on ``section``/``surface``, which are not plan views.
+      **Not built:** the JavaScript ``fitBounds`` (ledger 307's reason), so an inline
+      notebook figure still frames by the default-canvas estimate.

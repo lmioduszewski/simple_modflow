@@ -28,6 +28,7 @@ from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity
 from myflopy.modflow.utils.animations import Animation
+from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
 from myflopy.modflow.utils.datatypes.features import (
     Feature,
     combine_features,
@@ -316,6 +317,7 @@ class Choro(Picture):
             select_style: str = "outline",
             select_color: str = None,
             input_model=None,
+            extent=None,
             **kwargs
 
     ):
@@ -357,6 +359,8 @@ class Choro(Picture):
         :param input_model: the model to read INPUTS and names from (K, idomain,
         region names) when ``model`` is None because it has no results yet.
         ``model`` wins when both are given.
+        :param extent: the window the map opens on -- a box, points, a geometry, a
+        GeoDataFrame, an area or its name (:mod:`.extent`). Sets the VIEW only.
         """
 
         self._vor = None
@@ -490,6 +494,14 @@ class Choro(Picture):
         self._select_cells, self._select_label = _resolve_cells(
             select, vor=self.vor, model=self._inputs
         )
+
+        # Resolved HERE, like `select=`, so a bad box raises at the call.
+        self._extent = self.resolve_extent(extent)
+        if self._extent is not None and not self.fit_bounds:
+            raise ValueError(
+                "extent= is a window to FIT the view to, and fit_bounds=False asks for "
+                "no fit; drop one of them (zoom= only acts without extent=)."
+            )
 
         self._fig = Fig()
         self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
@@ -1149,14 +1161,42 @@ class Choro(Picture):
         view = self.map_view(size=map_canvas(self._fig.layout, size=size))
         return {key: view[key] for key in ("center", "zoom") if key in view}
 
+    #: The resolved ``extent=`` (a class default for `object.__new__` doubles).
+    _extent = None
+
+    @property
+    def extent(self) -> Extent | None:
+        """The window this map opens on (``extent=``), or None for the whole grid."""
+
+        return self._extent
+
+    def resolve_extent(self, value) -> Extent | None:
+        """``value`` resolved against THIS map's grid and names, without applying it.
+
+        What a composer calls to frame a panel it did not build; the map's own
+        ``extent=`` goes through the same call.
+        """
+
+        vor = self.vor
+        names = getattr(self._inputs, "aoi", None) if self._inputs is not None else None
+        return resolve_extent(
+            value,
+            crs=getattr(vor, "crs", None),
+            bounds=None if vor is None else vor.gdf_vorPolys.total_bounds,
+            names=names,
+        )
+
     @property
     def latlon_bounds(self):
-        """``(west, south, east, north)`` WGS84 grid bounds, or ``None``.
+        """``(west, south, east, north)`` WGS84 bounds to frame: the ``extent`` when
+        one was given, else the grid's; ``None`` without a grid.
 
         Consumed by :func:`myflopy.viz.mosaic` to fit -- and optionally to
         synchronize -- the view of each map subplot to the model data.
         """
 
+        if self._extent is not None:
+            return self._extent.wgs84
         if self.vor is None:
             return None
         west, south, east, north = self.vor.gdf_latlon.total_bounds
@@ -1788,6 +1828,13 @@ class Choro(Picture):
 
         ax.set_aspect("equal")
         ax.set_axis_off()
+        if self._extent is not None:
+            # LAST, so anything drawn after the cells -- features far off the grid,
+            # a caller's own overlay -- cannot autoscale it away. Only with an
+            # extent: a default static map keeps autoscaling to what it draws.
+            xmin, ymin, xmax, ymax = self._extent.padded(self.bounds_padding)
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
         if title:
             ax.set_title(title)
         return fig

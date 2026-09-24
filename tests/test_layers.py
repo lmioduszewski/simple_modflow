@@ -1890,3 +1890,15 @@ def test_build_result_to_disv_needs_a_grid(real_vor):
     res.vor = None
     with pytest.raises(ValueError, match="No grid"):
         res.to_disv()
+
+
+def test_a_static_thickness_map_honours_extent_and_nothing_else():
+    """The default stack map is Matplotlib, so framing is the one option it can
+    honour (ledger 309); choropleth styling still needs basemap=True."""
+
+    vor = _poly_vor([box(0, 0, 1, 1), box(1, 0, 2, 1)])
+    result = LayerStack(vor, top=Flat(100)).add("a", thickness=10).build(reconcile=False)
+    axis = result.plot.map(extent=(0.0, 0.0, 1.0, 1.0)).axes
+    assert (*axis.get_xlim(), *axis.get_ylim()) == pytest.approx((-0.05, 1.05, -0.05, 1.05))
+    with pytest.raises(TypeError, match="honours only extent"):
+        result.plot.map(zmin=1.0)

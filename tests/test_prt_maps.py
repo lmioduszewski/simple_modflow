@@ -1039,3 +1039,16 @@ def test_naming_the_base_map_options_did_not_empty_the_checks_that_read_them(prt
 
     # and the plain Matplotlib branch still returns ONE bare figure
     assert isinstance(view.map(backend="mpl"), Figure)
+
+
+def test_a_static_pathline_map_honours_extent(prt_run):
+    """FloPy's plan view takes no base-map option -- except the one it needs most,
+    having no zoom (ledger 309). Padded as every map pads; others still refused."""
+
+    xmin, ymin, xmax, ymax = (float(v) for v in prt_run.flow_model.vor.gdf_vorPolys.total_bounds)
+    box = (xmin, ymin, (xmin + xmax) / 2, (ymin + ymax) / 2)
+    figure = prt_run.pathlines.map(backend="mpl", extent=box, bounds_padding=0.0)
+    axis = figure.axes[0]
+    assert (*axis.get_xlim(), *axis.get_ylim()) == pytest.approx((box[0], box[2], box[1], box[3]))
+    with pytest.raises(TypeError, match="but extent="):
+        prt_run.pathlines.map(backend="mpl", zmin=1.0)

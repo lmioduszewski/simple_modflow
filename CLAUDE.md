@@ -149,6 +149,15 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**`extent=` is the window a map opens on, at EVERY scope and backend** (ledger 309):
+VIEW ONLY (the user's rule -- no crop, no colour re-range; `zmin`/`zmax` tighten a
+close-up). One resolver, `utils/datatypes/extent.resolve_extent`, run at the call;
+plotly frames it through `latlon_bounds`/`map_view`, Matplotlib sets padded limits
+LAST in `plot_mpl` and only when given. Four numbers are SHAPELY order
+`(xmin, ymin, xmax, ymax)` -- FloPy's `(xmin, xmax, ymin, ymax)` is undetectable when
+it happens to be a valid box. A mosaic takes one extent for every panel or a LIST,
+one per panel, told apart by the ITEMS (`viz.is_extent_list`); different windows are
+never synced (`sync_views=None`; `True` raises). NOT on `grid`/`section`/`surface`.
 **Transmissivity: `map(type="trans")` is SATURATED, `"trans_max"` is K x full
 thickness** (ledger 308, the user's call), and `packages.npf.transmissivity`/`_max` are
 the nouns -- they draw THROUGH the free map (`StaticArrayFieldExplorer._map_type`), so
@@ -187,7 +196,7 @@ path raises at the call. Engine: `utils/datatypes/features.py`. **`locs=` is
 DEPRECATED** (warns, drawn as a layer named "locations") and is named on no
 signature — do not reintroduce it.
 **The COMPOSERS name the map options too** (ledger 258, 2026-09-14).
-`mosaic`/`animate` are defined ONCE on `SpatialView`, and they now name all 23
+`mosaic`/`animate` are defined ONCE on `SpatialView`, and they now name all 24
 per-panel drawing options plus `backend`, with descriptions spliced from
 `plot.map` — so `packages.npf.k.mosaic(logscale=True, features=..., show_layer_elevs=True)`
 completes in an editor. Only options the caller actually SET are forwarded
@@ -221,7 +230,7 @@ signatures — it stays `*args, **kwargs` and points at the leaf.
 **This reaches the NOUN tier too, and as of 2026-09-02 all 15 are converted**
 (`tests/test_noun_signatures.py`, which DISCOVERS its subjects by AST sweep
 rather than listing them; its `UNCONVERTED` set is now empty and asserted empty).
-A noun names Tier 1 (`NOUN_MAP_PARAMS`, 22 including `backend`) plus its own
+A noun names Tier 1 (`NOUN_MAP_PARAMS`, 25 including `backend`) plus its own
 selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
 per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178/180, 2026-09-05): the free
 verb is the single author, and `scripts/derive_docstrings.py` writes the spliced

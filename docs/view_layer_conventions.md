@@ -119,6 +119,21 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### `extent=` is a window, resolved once, honoured by every renderer
+
+Ledger 309. `utils/datatypes/extent.resolve_extent` turns every accepted spelling
+into one `Extent` -- the box in the grid's CRS and in WGS84 -- at the CALL, like
+`select=`. A picture that frames a map reads that ONE object: plotly through
+`Choro.latlon_bounds` -> `map_view`, Matplotlib by setting the axis limits LAST in
+`Choro.plot_mpl` (only when an extent is given, so a default picture still
+autoscales), the PRT plan view and the stack thickness map by the same padded box.
+It is a Tier 1 noun option (`NOUN_MAP_PARAMS`), so every noun and composer names
+it. A LIST is one per panel -- told apart by its ITEMS, never its length
+(`viz.is_extent_list`, in `viz` because `mosaic` needs it and `viz` imports nothing
+from myflopy) -- and panels on different windows are never synced
+(`sync_views=None` decides; `True` then raises). Not on `section`/`surface` (not
+plan views) nor on `grid` (the bare mesh; deferred in the ledger).
+
 ### A plotly map is fitted for the canvas plotly will draw
 
 Ledger 307. `viz.map_canvas(layout, subplot)` is the one rule: the figure's own

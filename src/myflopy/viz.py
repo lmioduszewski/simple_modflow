@@ -827,6 +827,47 @@ class VtkScene(Picture):
         return {"text/html": self._make_file_url_safe(self._export_html(None).getvalue())}
 
 
+def _is_one_extent(value) -> bool:
+    """Whether ``value`` is ONE ``extent=`` by its own shape (duck-typed; see below)."""
+
+    import numbers
+
+    import numpy as np
+
+    if value is None or isinstance(value, (str, bytes)):
+        return True
+    # A geometry, a GeoSeries/GeoDataFrame, or an area object.
+    if any(hasattr(value, name) for name in ("geom_type", "total_bounds", "to_geoseries")):
+        return True
+    try:
+        flat = np.asarray(value, dtype=object).reshape(-1).tolist()
+    except (TypeError, ValueError):
+        return False
+    if not flat or not all(
+        isinstance(item, numbers.Real) and not isinstance(item, bool) for item in flat
+    ):
+        return False
+    shape = np.asarray(value, dtype=float).shape
+    # Four numbers, or a run of (x, y) points -- NOT a run of 4-number boxes.
+    return (len(shape) == 1 and shape[0] == 4) or (len(shape) == 2 and shape[1] == 2)
+
+
+def is_extent_list(value) -> bool:
+    """Whether ``value`` is a LIST of ``extent=`` values -- one per panel -- rather than one.
+
+    Told apart by what the ITEMS are, never by length alone: a flat run of four
+    numbers is always one box, and a run of ``(x, y)`` pairs is one set of
+    points. A list whose items are each a box, a geometry, an area or a name is
+    one per panel, so a 4-panel mosaic given four names frames each on its own.
+    Lives here, duck-typed, because :func:`mosaic` needs it and this module
+    imports nothing from myflopy (ledger 309).
+    """
+
+    if _is_one_extent(value) or not isinstance(value, (list, tuple)) or not value:
+        return False
+    return all(_is_one_extent(item) for item in value)
+
+
 def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:
     """Return a Plotly subplot grid on the shared :class:`figs.Fig` backend.
 
@@ -923,25 +964,45 @@ def shared_map_view(panels, *, bounds=None, size=None):
     return view or None
 
 
-def _fit_map_views(fig, map_cells) -> list[str]:
-    """Frame every map subplot to one shared extent; return the framed ids.
+def _fit_map_views(fig, map_cells, boxes=None) -> tuple[list[str], bool]:
+    """Frame every map subplot; return ``(framed ids, whether they DIFFER)``.
 
     Plotly subplots default every map cell to the world view; a composed map
     only knows where to zoom once we set its ``map``/``map2``/... subplot
-    layout. All map panels are framed to the same (unioned) extent so the small
-    multiples line up "at the site". ``map_cells`` is ``[(subplot_id, panel),
-    ...]``; the returned subplot ids drive optional live view-syncing.
+    layout. ``map_cells`` is ``[(subplot_id, panel), ...]``; ``boxes`` one WGS84
+    window per cell, ``None`` for "the panel's own" (its ``extent``, else its
+    grid). Panels that all share one window -- the usual case, including no
+    extent at all -- are framed to the UNION, so the small multiples line up "at
+    the site"; panels framed to different windows (a list of extents, ledger
+    309) each get their own view, and cannot be synced.
     """
 
     # Every map cell of one grid has the same domain size, so the first one's
     # canvas is every one's. The map_view used to be fitted for a 1000x700
     # single map, which showed ~10% of the grid in each panel (ledger 307).
     size = map_canvas(fig.layout, map_cells[0][0])
-    view = shared_map_view([panel for _, panel in map_cells], size=size)
-    if not view:
-        return []
-    fig.update_layout(**{sid: view for sid, _ in map_cells})
-    return [sid for sid, _ in map_cells]
+    panels = [panel for _, panel in map_cells]
+    boxes = list(boxes) if boxes is not None else [None] * len(panels)
+    windows = [
+        box if box is not None else getattr(panel, "latlon_bounds", None)
+        for box, panel in zip(boxes, panels, strict=True)
+    ]
+    own = [
+        box is not None or getattr(panel, "extent", None) is not None
+        for box, panel in zip(boxes, panels, strict=True)
+    ]
+    distinct = any(own) and len({tuple(w) for w in windows if w is not None}) > 1
+    if not distinct:
+        shared = next((w for w, o in zip(windows, own, strict=True) if o), None)
+        view = shared_map_view(panels, bounds=shared, size=size)
+        if not view:
+            return [], False
+        fig.update_layout(**{sid: view for sid, _ in map_cells})
+        return [sid for sid, _ in map_cells], False
+    for (sid, panel), window in zip(map_cells, windows, strict=True):
+        if hasattr(panel, "map_view") and window is not None:
+            fig.update_layout(**{sid: panel.map_view(bounds=window, size=size)})
+    return [sid for sid, _ in map_cells], True
 
 
 def _map_sync_post_script(subplot_ids) -> str:
@@ -1134,8 +1195,9 @@ def mosaic(
     ncols: int = 3,
     title: str | None = None,
     diff: bool = False,
-    sync_views: bool = True,
+    sync_views: bool | None = None,
     colorbar=None,
+    extent=None,
 ):
     """Compose arbitrary panel objects into one Plotly grid.
 
@@ -1163,15 +1225,16 @@ def mosaic(
         When ``True``, the shared map color scale is centered at zero
         (diverging), as used by the diff surfaces.
     sync_views
-        Every map panel always *starts* framed to the same shared extent (the
-        union of the panels' grid bounds) so the small multiples line up at the
-        site. When ``sync_views`` is ``True`` (default), the panels are also
-        wired to pan and zoom **together** live -- dragging or zooming one map
-        moves the others (via a ``plotly_relayout`` handler injected at
-        ``show()`` / ``write_html()`` time; inline notebook display shows the
-        shared start view but not the live linking). Set ``False`` to let each
-        map pan/zoom independently after the shared start. Panels without
-        geometry (raw Plotly figures) are unaffected.
+        Map panels framed to ONE window (the union of their grids, or one shared
+        ``extent``) start there together and, by default (``None``), are wired to
+        pan and zoom **together** live -- dragging or zooming one map moves the
+        others (via a ``plotly_relayout`` handler injected at ``show()`` /
+        ``write_html()`` time; inline notebook display shows the shared start view
+        but not the live linking). Panels framed to DIFFERENT windows -- a list of
+        extents -- are not synced by default, since the first pan would snap every
+        panel to one window; ``True`` then raises rather than doing that. Set
+        ``False`` to let each map pan/zoom independently. Panels without geometry
+        (raw Plotly figures) are unaffected.
     colorbar
         Colorbar settings for the shared map color axis -- a dict of Plotly
         ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
@@ -1186,6 +1249,11 @@ def mosaic(
         on the pooled limits, and those are only known here -- e.g.
         ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
         Ignored when no panel is a map.
+    extent
+        The window every map panel opens on (see :func:`myflopy.plot.map`), or a
+        LIST of them, one per panel in order -- ``None`` in the list for "this
+        panel's own". A panel built with its own ``map(extent=...)`` keeps it
+        when this is ``None``. Sets the VIEW only.
 
     Examples
     --------
@@ -1305,8 +1373,40 @@ def mosaic(
             map_cells.append((subplot_id, normalized[index][1]))
 
     if map_cells:
-        synced_ids = _fit_map_views(fig, map_cells)
-        if sync_views and len(synced_ids) >= 2 and hasattr(fig, "add_post_script"):
+        # One window per MAP cell, from the composer's extent= (a list is one per
+        # PANEL, map or not); None means "the panel's own".
+        if extent is None:
+            per_panel = [None] * len(normalized)
+        elif is_extent_list(extent):
+            per_panel = list(extent)
+            if len(per_panel) != len(normalized):
+                raise ValueError(
+                    f"extent= lists {len(per_panel)} windows for {len(normalized)} "
+                    "panels; give one per panel (None keeps a panel's own)."
+                )
+        else:
+            per_panel = [extent] * len(normalized)
+        for index, kind in enumerate(kinds):
+            if kind != "map" and per_panel[index] is not None and is_extent_list(extent):
+                raise TypeError(
+                    f"panel {index + 1} is not a map, so it has no window to frame; "
+                    "give it None in extent=."
+                )
+        map_panels = [panel for kind, (_, panel) in zip(kinds, normalized, strict=True) if kind == "map"]
+        map_values_in = [value for kind, value in zip(kinds, per_panel, strict=True) if kind == "map"]
+        boxes = [
+            None if value is None else panel.resolve_extent(value).wgs84
+            for panel, value in zip(map_panels, map_values_in, strict=True)
+        ]
+        synced_ids, distinct = _fit_map_views(fig, map_cells, boxes)
+        if distinct and sync_views:
+            raise ValueError(
+                "sync_views=True with panels framed to DIFFERENT extents: the first "
+                "pan would snap every panel to one window. Drop sync_views, or give "
+                "every panel the same extent."
+            )
+        sync = (not distinct) if sync_views is None else bool(sync_views)
+        if sync and len(synced_ids) >= 2 and hasattr(fig, "add_post_script"):
             fig.add_post_script(_map_sync_post_script(synced_ids))
 
     if "map" in kinds:

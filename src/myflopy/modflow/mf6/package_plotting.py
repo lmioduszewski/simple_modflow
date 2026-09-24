@@ -10,7 +10,14 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from myflopy.viz import Fig, _build_frame_figure, mpl_axes, mpl_colormap_for, subplots
+from myflopy.viz import (
+    Fig,
+    _build_frame_figure,
+    is_extent_list,
+    mpl_axes,
+    mpl_colormap_for,
+    subplots,
+)
 from myflopy.viz import mosaic as viz_mosaic
 
 if TYPE_CHECKING:
@@ -608,7 +615,7 @@ NOUN_MAP_PARAMS = (
     "contour_method",
     "select", "select_style", "select_color",
     "features", "hillshade_path",
-    "fit_bounds", "bounds_padding",
+    "fit_bounds", "bounds_padding", "extent",
     "hover", "show_layer_elevs", "hover_surfaces",
     "backend",
 )
@@ -1581,7 +1588,7 @@ class SpatialView:
         agg: str | None = None,
         ncols: int = 3,
         title: str | None = None,
-        sync_views: bool = True,
+        sync_views: bool | None = None,
         # -- colour of each panel ---------------------------------------------
         zmin: float | None = None,
         zmax: float | None = None,
@@ -1606,6 +1613,7 @@ class SpatialView:
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         # -- hover ---------------------------------------------------------------
         hover=None,
         show_layer_elevs: bool | None = None,
@@ -1654,10 +1662,11 @@ class SpatialView:
             Grid width; rows grow as needed.
         title : str, optional
             Overall figure title. Defaults to a label naming the field and axis.
-        sync_views : bool, default True
-            Pan and zoom every map panel together. Panels always START on one
-            shared extent so the small multiples line up; this controls the live
-            linking only, and is ignored for non-map kinds.
+        sync_views : bool, optional
+            Pan and zoom every map panel together. By default (``None``) panels on
+            ONE window -- the grid, or one shared ``extent`` -- are linked and
+            panels given a LIST of extents are not (the first pan would snap them
+            all to one window); ``True`` then raises. Ignored for non-map kinds.
         backend : {'plotly', 'mpl'}, default 'plotly'
             Which renderer draws the GRID of panels -- not each panel, which is
             always built as a ``Choro`` first. ``'plotly'`` returns one house
@@ -1752,6 +1761,19 @@ class SpatialView:
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -1791,12 +1813,20 @@ class SpatialView:
         """
 
         panel_options = _explicit_options(locals(), type(self).mosaic, PANEL_DRAWING_PARAMS)
+        # A LIST of extents is one per PANEL (ledger 309), so it is dealt out
+        # below instead of handed whole to every panel.
+        extents = (
+            list(panel_options.pop("extent"))
+            if is_extent_list(panel_options.get("extent"))
+            else None
+        )
         kind_key = str(kind).lower()
         if kind_key == "map":
             axis = (by or self._spatial_default_facet()).lower()
             fixed_per = self._single_period(per)
             panels = self._facet_panels(
-                axis, per=fixed_per, layer=layer, model=model, **panel_options, **kwargs
+                axis, per=fixed_per, layer=layer, model=model, extents=extents,
+                **panel_options, **kwargs,
             )
             heading = title or f"{self._spatial_value_label()} by {axis}"
             if self._normalize_backend(backend) == "plotly":
@@ -1804,6 +1834,8 @@ class SpatialView:
                     panels, ncols=int(ncols), title=heading, sync_views=sync_views
                 )
             return self._mpl_mosaic(panels, ncols=int(ncols), title=heading)
+        if extents is not None:
+            panel_options["extent"] = extents
         refuse_panel_drawing_options(kind_key, "mosaic", panel_options)
         if kind_key == "plot":
             return self._plot_mosaic(
@@ -1938,34 +1970,45 @@ class SpatialView:
             markers=False,
         )
 
-    def _facet_panels(self, axis, *, per, layer, model, **map_kwargs):
+    def _facet_panels(self, axis, *, per, layer, model, extents=None, **map_kwargs):
         """Build ``[(label, Choro), ...]`` mosaic panels faceted by ``"layer"`` or ``"model"``.
 
         A layer facet fixes the model (reference) and varies the layer; a model
         facet fixes the layer and varies the model. Both hold ``per`` constant.
+        ``extents`` -- one window per panel, in facet order -- frames each on its
+        own; its length must match the facet (ledger 309).
         """
 
         if axis == "layer":
             reference = None if self._spatial_models() is None else self._resolve_models(model)[0]
-            return [
-                (
-                    f"Layer {value + 1}",
-                    self._spatial_map(per=int(per), layer=value, model=reference, **map_kwargs),
-                )
+            facets = [
+                (f"Layer {value + 1}", {"layer": value, "model": reference})
                 for value in self._resolve_layers(layer)
             ]
-        if axis == "model":
+        elif axis == "model":
             base_layer = self._single_layer(layer)
-            return [
-                (
-                    str(name),
-                    self._spatial_map(per=int(per), layer=base_layer, model=name, **map_kwargs),
-                )
+            facets = [
+                (str(name), {"layer": base_layer, "model": name})
                 for name in self._resolve_models(model)
             ]
-        raise ValueError(f"by must be 'layer' or 'model', got {axis!r}.")
+        else:
+            raise ValueError(f"by must be 'layer' or 'model', got {axis!r}.")
+        if extents is None:
+            windows = [{} for _ in facets]
+        elif len(extents) != len(facets):
+            raise ValueError(
+                f"extent= lists {len(extents)} windows for {len(facets)} panels "
+                f"({', '.join(label for label, _ in facets)}); give one per panel, "
+                "or a single extent to frame them all."
+            )
+        else:
+            windows = [{} if value is None else {"extent": value} for value in extents]
+        return [
+            (label, self._spatial_map(per=int(per), **dims, **window, **map_kwargs))
+            for (label, dims), window in zip(facets, windows, strict=True)
+        ]
 
-    def _plotly_mosaic(self, panels, *, ncols, title, sync_views=True):
+    def _plotly_mosaic(self, panels, *, ncols, title, sync_views=None):
         """Compose ``Choro`` panels into one synchronized Plotly small-multiples figure."""
 
         return viz_mosaic(
@@ -2095,6 +2138,7 @@ class SpatialView:
         hillshade_path=None,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
+        extent=None,
         # -- hover ---------------------------------------------------------------
         hover=None,
         show_layer_elevs: bool | None = None,
@@ -2229,6 +2273,19 @@ class SpatialView:
             ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
+        extent : tuple, points, geometry, GeoDataFrame, area or str, optional
+            The window the map OPENS on, on both backends -- the one way to frame a
+            static (matplotlib) map, which cannot be zoomed. Four numbers
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS (shapely's order, NOT
+            FloPy's ``(xmin, xmax, ymin, ymax)``); a run of ``(x, y)`` points (their
+            bounding box); any shapely geometry -- a polygon, a transect line -- by its
+            bounds; a GeoDataFrame, reprojected from its own CRS; or the name of an
+            area of interest (``model.aoi``). It sets the VIEW only: no cell is
+            cropped and the colour scale still spans the whole field, so pass
+            ``zmin``/``zmax`` to tighten it for a close-up. ``bounds_padding`` pads it
+            as it pads the grid. A box off the grid raises, printing both boxes and
+            both CRSs. In a ``mosaic``, one extent frames every panel and a LIST of
+            them frames each panel on its own.
         hover : HoverSpec, optional
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
@@ -2267,6 +2324,11 @@ class SpatialView:
         """
 
         panel_options = _explicit_options(locals(), type(self).animate, PANEL_DRAWING_PARAMS)
+        if is_extent_list(panel_options.get("extent")):
+            raise TypeError(
+                "animate() has ONE view, shared by every frame, so it takes one "
+                "extent; a list of them is for a mosaic's panels."
+            )
         kind_key = str(kind).lower()
         if kind_key == "map":
             axis = str(over or "period").lower()
