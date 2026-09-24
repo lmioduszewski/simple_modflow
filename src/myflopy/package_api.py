@@ -688,7 +688,11 @@ def _explicit_areal(**declared: Any) -> dict[str, Any]:
     }
 
 
-def _refuse_caller_typed_cells(recipe: dict[str, Any], *, verb: str) -> None:
+def _refuse_caller_typed_cells(
+    recipe: dict[str, Any], *, verb: str,
+    value_keys: tuple[str, ...] = ("recharge", "rate", "depth", "surface"),
+    default_cells: str = "top_active",
+) -> None:
     """Refuse the parts of an areal declaration that name cells the caller chose.
 
     A lazy recipe is a promise that the package can be rebuilt on another mesh, and
@@ -707,7 +711,12 @@ def _refuse_caller_typed_cells(recipe: dict[str, Any], *, verb: str) -> None:
 
     All four are still available EAGERLY -- `context=` resolves them against a known
     grid and pins the result -- so this refuses a combination, not a capability, and
-    says which one to reach for. Refusing at the call rather than at build is the rule
+    says which one to reach for.
+
+    ``value_keys`` is which of the recipe's entries hold VALUES rather than settings, and
+    it is a parameter because the areal helpers and ``mf.uzf`` carry different ones (four
+    against thirteen). The RULE is identical, which is why there is one function
+    (ledger 304). Refusing at the call rather than at build is the rule
     `_lazy_bc_spec` already follows for a missing file and `nper=0`: neither needs a
     grid, so neither belongs at build time.
     """
@@ -718,11 +727,11 @@ def _refuse_caller_typed_cells(recipe: dict[str, Any], *, verb: str) -> None:
         return isinstance(value, Sequence) and not isinstance(value, str)
 
     offenders: list[str] = []
-    if not isinstance(recipe.get("cells", "top_active"), str):
+    if not isinstance(recipe.get("cells", default_cells), str):
         offenders.append("cells=[...] names cells by number")
     if recipe.get("name_by_cell") is not None:
         offenders.append("name_by_cell= is keyed by cell id")
-    for key in ("recharge", "rate", "depth", "surface"):
+    for key in value_keys:
         value = recipe.get(key)
         if value is None:
             continue
@@ -794,6 +803,114 @@ def _build_lazy_areal(package_class, model, *, _spec, **kwargs):
         model._myflopy_resolved = resolved
     resolved[_spec.name] = eager
     return eager.build(model)
+
+
+#: The declaration keys a UZF recipe carries. Everything else is a FloPy option, and the
+#: split has to be decidable because ``PackageSpec.build`` splats ``inputs`` and
+#: ``options`` into one call.
+_UZF_RECIPE_KEYS = frozenset(
+    {
+        "nper", "cells", "boundnames", "mover",
+        "vks", "thtr", "thts", "thti", "eps", "surfdep",
+        "finf", "pet", "extdp", "extwc", "ha", "hroot", "rootact",
+        "simulate_et", "linear_gwet", "square_gwet", "simulate_gwseep",
+        "unsat_etwc", "unsat_etae", "ntrailwaves", "nwavesets",
+    }
+)
+
+#: The UZF recipe entries that hold a VALUE rather than a setting -- what
+#: :func:`_refuse_caller_typed_cells` has to inspect for per-cell identity.
+_UZF_VALUE_KEYS = (
+    "vks", "thtr", "thts", "thti", "eps", "surfdep",
+    "finf", "pet", "extdp", "extwc", "ha", "hroot", "rootact",
+)
+
+
+def _build_lazy_uzf(model, *, _spec, **kwargs):
+    """Resolve a UZF declaration against the model's DOMAIN at build time.
+
+    ``needs_grid=False``, and for UZF that is not a concession -- it is the whole truth.
+    Measured with an attribute spy: ``UZFBuilder.build()`` touches exactly ONE grid
+    attribute, ``get_disv_gridprops``, and only from inside ``pin_metadata``; its cell set,
+    its ``iuzno`` numbering and its ``ivertcon`` all come from the IDOMAIN alone
+    (``uzf_cells`` walks each column, takes the first active layer as land surface and
+    descends while active). It builds byte-identical ``packagedata`` against a bare
+    ``ModelContext(domain=...)``. So it needs strictly LESS than ``mf.rch`` does.
+    """
+
+    recipe = {key: value for key, value in kwargs.items() if key in _UZF_RECIPE_KEYS}
+    options = {key: value for key, value in kwargs.items() if key not in _UZF_RECIPE_KEYS}
+    context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
+    eager = UZFBuilder(
+        context=context, name=_spec.name, options=options, **recipe
+    ).build()
+    if GRID_PIN not in (eager.metadata or {}):
+        # `UZFBuilder.build` pins through `pin_metadata`, which fingerprints
+        # `context.grid` -- and a model declared with no context has none, in which case
+        # it stamps the weaker cell-addressing marker instead (ledger 302). The built DISV
+        # is the same mesh by another route and `disv_pin` measured EQUAL to `grid_pin` on
+        # it, so the RESOLVED package records which mesh its records belong to rather than
+        # going out under a marker that means "could not tell".
+        disv = _built_discretization(model)
+        pin = disv_pin(disv) if disv is not None else None
+        if pin is not None:
+            eager = _replace(
+                eager,
+                metadata={
+                    key: value
+                    for key, value in (eager.metadata or {}).items()
+                    if key != CELLWISE_OPTIONS
+                },
+            ).with_metadata(**{GRID_PIN: pin, GRID_PIN_OPTIONS: ["packagedata"]})
+    # Record what was actually BUILT, so the run freezes records rather than this recipe.
+    # Without it a reopened run goes back to the recipe and re-resolves against whatever
+    # it finds -- the dependence ledger 251's snapshot exists to remove.
+    resolved = getattr(model, "_myflopy_resolved", None)
+    if resolved is None:
+        resolved = {}
+        model._myflopy_resolved = resolved
+    resolved[_spec.name] = eager
+    return eager.build(model)
+
+
+def _lazy_uzf_spec(*, name: str, recipe: dict[str, Any], options: dict[str, Any]):
+    """A lazy UZF spec: the declaration in ``inputs``, resolved at build time.
+
+    FLAT, like the areal recipe and for the same reason -- a recipe entry sharing a name
+    with a FloPy option must COLLIDE so ``packages.edit`` is refused by name rather than
+    reaching the builder twice (ledger 284). No source spec and no ``source_sha``: unlike
+    every other lazy form in this library, a UZF declaration names no FILE, so there is
+    nothing for the bundler, the project anchor or the content digest to get wrong.
+    """
+
+    verb = "mf.uzf"
+    _refuse_caller_typed_cells(
+        recipe, verb=verb, value_keys=_UZF_VALUE_KEYS, default_cells="all_active"
+    )
+    if int(recipe["nper"]) < 1:
+        raise ValueError("nper must be at least 1.")
+    if recipe.get("mover"):
+        # No `uzf_connection` exists -- there is none in the tree and no
+        # `MoverConnection("uzf", ...)` is constructed anywhere -- so a UZF mover endpoint
+        # can only be a hand-typed `iuzno`. That number is an enumeration over the ACTIVE
+        # CELLS, so it means something different on every mesh and is in range on both:
+        # measured, the column at (480, 150) is iuzno 18-20 on one mesh and 33-35 on
+        # another. Refused rather than moved wrongly (ledger 304); still available with
+        # `context=`, which pins it.
+        raise TypeError(
+            "mf.uzf(mover=True) needs `context=`. A UZF mover endpoint is a hand-typed "
+            "`iuzno`, which is an enumeration over the ACTIVE CELLS -- it names a "
+            "different column on every mesh and is in range on all of them, so a lazy "
+            "declaration cannot carry it. Pass `context=` to resolve and pin the package, "
+            "or drop `mover=True`."
+        )
+    return PackageSpec(
+        name,
+        _build_lazy_uzf,
+        dict(options),
+        requires=(),
+        inputs=dict(recipe),
+    )
 
 
 @functools.cache
@@ -4739,7 +4856,7 @@ class _UZFPackage:
     def __call__(
         self,
         *,
-        context: ModelContext,
+        context: ModelContext | None = None,
         nper: int,
         vks: Any,
         thtr: Any,
@@ -4809,6 +4926,21 @@ class _UZFPackage:
         ...        finf=3.0e-5, pet=1.0e-4, extdp=7.0)
         """
 
+        recipe = {
+            "nper": nper, "cells": cells, "boundnames": boundnames, "mover": mover,
+            "vks": vks, "thtr": thtr, "thts": thts, "thti": thti, "eps": eps,
+            "surfdep": surfdep, "finf": finf, "pet": pet, "extdp": extdp,
+            "extwc": extwc, "ha": ha, "hroot": hroot, "rootact": rootact,
+            "simulate_et": simulate_et, "linear_gwet": linear_gwet,
+            "square_gwet": square_gwet, "simulate_gwseep": simulate_gwseep,
+            "unsat_etwc": unsat_etwc, "unsat_etae": unsat_etae,
+            "ntrailwaves": ntrailwaves, "nwavesets": nwavesets,
+        }
+        if context is None:
+            # LAZY: the same declaration, resolved against whatever DOMAIN the build
+            # supplies. The trigger is exactly the call that raised `TypeError: missing a
+            # required argument` before, so no stored digest can move (ledger 284's rule).
+            return _lazy_uzf_spec(name=name, recipe=recipe, options=options)
         return UZFBuilder(
             context=context,
             nper=nper,

@@ -477,6 +477,34 @@ and the `<pkg>_spec` factories (`chd_spec`, `rch_spec`, `evt_spec`, …). E.g.
 
 ---
 
+### UZF without a grid — `mf.uzf` with no `context=`
+
+```python
+mf.uzf(nper=12, vks=0.25, thtr=0.08, thts=0.34, thti=0.17, finf=3.0e-5, pet=1.0e-4)
+```
+
+Omit `context=` and the package resolves at BUILD time from the model's DOMAIN, so one
+declaration builds on any mesh and `with_grid` reads it `rebuilt` (ledger 304). Measured:
+75 packagedata rows at ncpl 25 and 243 at ncpl 81, each byte-identical to a fresh eager
+declaration on that mesh.
+
+It needs no grid at all — the cell set, the `iuzno` numbering and `ivertcon` come from the
+idomain — so it also accepts a bare `ModelContext(domain=...)` or a model with no context,
+where the mesh arrives through a hand-written discretization. And unlike every other lazy
+form it names no file, so there is nothing to bundle or fingerprint; a recipe of scalars
+also means a model carrying a lazy UZF **saves**, where the eager form (records of cellid
+tuples) persists nothing.
+
+Refused at the declaration, each still available with `context=`:
+
+| refused lazily | why |
+| --- | --- |
+| `cells=[(0, 1), …]` | you cannot pin cell numbers the caller typed |
+| a per-cell `vks`/`finf`/… | its length is the cell count of the mesh it was written for |
+| `mover=True` | a UZF mover endpoint is a hand-typed `iuzno`, an enumeration over ACTIVE CELLS — in range on every mesh and a different column on each |
+
+`mf.sfr` and `mf.lak` still require `context=`.
+
 ### Moving a calibrated array to a new mesh — `with_grid(remap=True)`
 
 ```python

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 303 entries (304 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 304 entries (305 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 304 | `mf.uzf` needed a grid it never used | 2026-09-23 |
 | 303 | A water mover kept pointing at a reach that no longer existed | 2026-09-23 |
 | 302 | A UZF package declared without a grid moved to another mesh in silence | 2026-09-23 |
 | 301 | A LAK budget could not be read at all on an ordinary output-control setting | 2026-09-23 |
@@ -12409,6 +12410,62 @@ same day, which is the useful part of the result.
       ``mf.sfr_connection`` SYMBOLIC: it still resolves to an ``int`` at declaration, so
       the mover is refused rather than re-resolved. That is Path A's job, and this entry
       is what makes it safe to do.
+
+304. **`mf.uzf` needed a grid it never used (2026-09-23).**
+      Declared without ``context=`` it now resolves at BUILD time, so one declaration
+      builds correctly on two meshes and ``with_grid`` reads it ``rebuilt`` where the
+      eager form reads ``stale``. Measured: 75 packagedata rows at ncpl 25 and 243 at
+      ncpl 81, each byte-identical to a fresh EAGER declaration on that mesh.
+      The first of Path A -- making the advanced packages replayable when the caller has
+      the sources -- and the cheapest of the four by a wide margin.
+      **``needs_grid=False``, and for UZF that is the whole truth rather than a
+      concession.** An attribute spy shows ``UZFBuilder.build()`` touching exactly ONE
+      grid attribute, ``get_disv_gridprops``, and only from inside ``pin_metadata``: the
+      cell set, the ``iuzno`` numbering and ``ivertcon`` all come from the IDOMAIN alone,
+      since ``uzf_cells`` walks each column, takes the first active layer as land surface
+      and descends while active. So it needs strictly LESS than ``mf.rch`` (ledger 284),
+      and demanding a grid would make the lazy form NARROWER than the eager one, which
+      accepts a bare ``ModelContext(domain=...)`` and a model with no context at all.
+      **That is also the one thing a full test file failed to hold.** Every model in the
+      new suite carried ``ModelContext(grid=...)``, so a mutation setting
+      ``needs_grid=True`` passed all 35 tests. The case only shows on a model whose mesh
+      arrives through a HAND-WRITTEN discretization rather than the context, and the test
+      now builds exactly that, twice -- with no context at all and with a domain-only one.
+      **The recipe names no FILE**, which is what makes this the cheap one: alone among
+      the lazy forms there is no path to anchor, nothing for
+      ``project.save(bundle_sources=True)`` to archive, and no ``source_sha`` -- ledger
+      293's churn-and-blindness problem cannot arise because there is no content to key
+      on. A recipe of scalars also serializes, so a model carrying a lazy UZF **saves**
+      where one carrying the eager form persists nothing (records are lists of cellid
+      tuples).
+      **FLAT, not nested**, for ledger 284's reason: a recipe entry sharing a name with a
+      FloPy option -- ``boundnames`` is the live one -- must COLLIDE so
+      ``packages.edit``/``with_options`` is refused by name instead of reaching the builder
+      twice. A mutation nesting it under one key failed four tests.
+      **The resolved package is recorded into ``model._myflopy_resolved``** so the run
+      freezes RECORDS rather than the recipe (ledgers 251/270). And it falls back to
+      ``disv_pin`` when the resolved context carries no grid: ``UZFBuilder`` pins from
+      ``context.grid``, and without the fallback a lazily resolved package would go out
+      under ledger 302's weaker cell-addressing MARKER -- which means "could not tell
+      which mesh" -- when the built DISV names the mesh exactly.
+      **REFUSED at the declaration, each still available with ``context=``:** an explicit
+      ``cells=`` list, a per-cell value in any of the thirteen value fields, and
+      ``nper < 1``. These are ledger 284's rule applied to UZF's own arguments, through the
+      same function -- ``_refuse_caller_typed_cells`` grew a ``value_keys`` parameter
+      because the areal helpers and UZF carry different ones (four against thirteen) while
+      the RULE is identical.
+      **``mover=True`` is refused lazily, and that is not a mechanical limit.** A UZF mover
+      endpoint is a hand-typed ``iuzno``, which is an enumeration over the ACTIVE CELLS --
+      measured, the column at one location is ``iuzno`` 18-20 on one mesh and 33-35 on
+      another, **in range on both**. There is no ``uzf_connection`` anywhere in the tree
+      and no ``MoverConnection("uzf", ...)`` is constructed, so nothing could make it
+      symbolic. Ledger 303's mover verdict would catch the consequence after the fact;
+      refusing the declaration says it at the call.
+      **Not built here:** ``mf.sfr`` and ``mf.lak`` recipes (Path A's C5/C6, and SFR needs
+      the ``{top, botm}`` fix to ``_layer_elevations`` first -- measured, an
+      ``AttributeError`` for both today); ``mf.hfb``, which shares only the api_snapshot
+      gate and is on its own track; and a ``uzf_connection``, which would be what unblocks
+      ``mover=True``.
 
 301. **A LAK budget could not be read at all on an ordinary output-control setting
       (2026-09-23).**

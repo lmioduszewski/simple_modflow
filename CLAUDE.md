@@ -365,7 +365,7 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3832 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
+- Full suite (**3853 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
   measured on an otherwise idle machine (3808/6m31s earlier the same day; the 8 new
   tests are `test_budget_clocks.py`, 1.1 s, ledger 301). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
@@ -469,8 +469,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   RE-DECLARES it against the new mesh exactly, no overlay involved. Recorded rather
   than re-derived because `metadata['fields']` is three fields short -- `nper`,
   `edges_only`, `boundnames` -- and `edges_only` decides WHICH CELLS are kept, so a
-  guess writes a different package in silence. `mf.uzf`/`sfr`/`lak` still have no
-  recipe and stay `stale`, ledger 296), `unverifiable` (names cells with no pin --
+  guess writes a different package in silence. **`mf.uzf` now has a recipe too** --
+  declare it without `context=` and it resolves at BUILD from the DOMAIN, reading
+  `rebuilt` (ledger 304); `sfr`/`lak` still have none and stay `stale`, ledger 296), `unverifiable` (names cells with no pin --
   including the ARRAY forms, which name cells by POSITION and so carry no cellid to
   find, ledger 282; **and any package holding a per-cell ARRAY** -- `npf`/`ic`/`sto`
   take no `context=`, so nothing stamped them and they read `unchanged` while a lazy
@@ -977,8 +978,15 @@ disagrees with what the stack resolves is refused, naming both shapes.
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
   `mf.GridSpec.voronoi(...).resolve(workspace)`), put it in `ModelContext(grid=vor, domain=idomain)`,
-  then declare packages. **Required today** for `mf.uzf/sfr/lak` because they resolve cells
-  eagerly at declaration (e.g. `UZFBuilder.build()` bakes resolved data into the `PackageSpec`).
+  then declare packages. **Required today** for `mf.sfr`/`mf.lak` because they resolve cells
+  eagerly at declaration. **`mf.uzf` no longer needs it** (ledger 304): omit `context=` and
+  it resolves at BUILD from the domain -- it never used the grid for anything but its own
+  pin (measured, one attribute: `get_disv_gridprops`), so it needs strictly LESS than
+  `mf.rch`. Refused lazily, each still fine with `context=`: an explicit `cells=` list, a
+  per-cell value, and `mover=True` -- a UZF mover endpoint is a hand-typed `iuzno`, an
+  enumeration over ACTIVE CELLS that is in range on every mesh and means a different column
+  on each (measured 18-20 against 33-35), and no `uzf_connection` exists to make it
+  symbolic.
   **The seven `.gpkg` forms no longer need it** (ledger 279), and neither does
   `mf.rch(...)`/`mf.evt(...)` (ledger 284) — omit `context=` and they resolve at BUILD
   time against whatever grid the model supplies. Passing `context=` still resolves and

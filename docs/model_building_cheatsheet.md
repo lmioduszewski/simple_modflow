@@ -597,7 +597,8 @@ name one, the grid is built as `"EPSG:2927"` (Washington State Plane South, feet
 Always pass `crs=` to `GridSpec.voronoi`.
 
 **Why resolve now rather than defer?** Because a `LayerStack` and the GIS package
-helpers (`mf.uzf/sfr/lak`, `mf.X.gpkg`) resolve cells the moment you call them —
+helpers (`mf.sfr`/`mf.lak`, and `mf.X.gpkg`/`mf.uzf` when given `context=`) resolve cells
+the moment you call them —
 they need a grid object, not a recipe. Resolving from the library gets you both:
 the declaration lives in the project and survives `save()`, and you hold a real
 grid for the next four sections.
@@ -1347,7 +1348,8 @@ never a trailing `.plot()`.
 4. **`GridSpec.resolve` is keyword-only**: `resolve(workspace=...)`, not
    `resolve(path)`.
 5. **Build the grid eagerly.** Deferred `GridSpec` composes with disv + simple BCs
-   only — `mf.uzf/sfr/lak` and `.gpkg` helpers resolve cells at declaration.
+   only — `mf.sfr`/`mf.lak` resolve cells at declaration; `mf.uzf` and the `.gpkg`
+   helpers do too WITH `context=`, and resolve at build without it.
 6. **`attach=True`** on `stack.build()` whenever SFR or LAK is in the model.
 7. **Read `stack.qc()` before `build()`.** A silently pinched-out layer becomes an
    inactive region you'll spend an afternoon chasing in the head field.
