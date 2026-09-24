@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import flopy
 
 from myflopy._logging import get_logger
+from myflopy.areas import Area, register_project_areas
 from myflopy.library import (
+    AoiLibrary,
     GridLibrary,
     PackageLibrary,
     SimulationLibrary,
@@ -1183,6 +1185,8 @@ class SaveReport:
     simulations: int = 0
     packages: int = 0
     grids: int = 0
+    #: Areas of interest written (inline in the project spec).
+    aoi: int = 0
     pickled: int = 0
     skipped: tuple[tuple[str, str], ...] = ()
     #: Files copied into ``inputs/`` by ``save(bundle_sources=True)``, as
@@ -1210,7 +1214,7 @@ class SaveReport:
     def __bool__(self) -> bool:
         """Whether anything was persisted."""
 
-        return bool(self.simulations or self.packages or self.grids)
+        return bool(self.simulations or self.packages or self.grids or self.aoi)
 
     def __repr__(self) -> str:
         """Compact summary naming the skip count, never the full skip list."""
@@ -1220,6 +1224,7 @@ class SaveReport:
             f"simulations={self.simulations}",
             f"packages={self.packages}",
             f"grids={self.grids}",
+            f"aoi={self.aoi}",
             f"pickled={self.pickled}",
             f"skipped={len(self.skipped)}",
         ]
@@ -1847,6 +1852,10 @@ class Run:
 
         if self.built is not None and name in self.built.models:
             view = ModelView(run=self, model_name=name)
+            # Which project this model belongs to, so `model.aoi` shares its
+            # areas (ledger 310). The ROOT, not the Project: a view must not keep
+            # a project alive, and a reopened run has no Project object at all.
+            view._project_root = self.project_root
             self._model_views[name] = view
             return view
 
@@ -1856,6 +1865,7 @@ class Run:
                 model_name=name,
                 verbosity_level=0,
             )
+            view._project_root = self.project_root
             self._model_views[name] = view
             return view
 
@@ -2118,8 +2128,9 @@ class Project:
     ``prepare_run(name, sim)`` -- built in memory so you can inspect
     ``run.model(...)`` before ``run.execute()`` writes and runs MF6. Run manifests
     and MF6 files are durable on disk; the Python spec registry is in-memory
-    because its builders may be arbitrary callables. Geometry lives on the model
-    (``ModelContext``), not the project.
+    because its builders may be arbitrary callables. Model geometry lives on the
+    model (``ModelContext``), not the project; the project's ``aoi`` holds named
+    areas of interest -- places to look at, shared with its models (ledger 310).
 
     Parameters
     ----------
@@ -2162,8 +2173,13 @@ class Project:
         self.packages: PackageLibrary = PackageLibrary()
         self.grids: GridLibrary = GridLibrary()
         self.simulations: SimulationLibrary = SimulationLibrary()
-        for library in (self.packages, self.grids, self.simulations):
+        # Named areas of interest (ledger 310). Not model geometry -- places to
+        # LOOK at -- and shared with every model of this project: registered under
+        # the root so a model its run points here finds this live library.
+        self.aoi: AoiLibrary = AoiLibrary()
+        for library in (self.packages, self.grids, self.simulations, self.aoi):
             library._project_name = self.name
+        register_project_areas(self.root, self.aoi)
         self._runs: RunLibrary | None = None
 
     @property
@@ -2219,6 +2235,37 @@ class Project:
         grid = _grid_entry(grid)
         self.grids[key] = grid
         return grid
+
+    def add_aoi(
+        self,
+        name: str,
+        geometry: Any,
+        *,
+        crs=None,
+        layer: str | None = None,
+        note: str | None = None,
+        overwrite: bool = False,
+    ) -> Area:
+        """Name an area of interest -- a place to look at -- for every model here.
+
+        ``geometry`` is four numbers ``(xmin, ymin, xmax, ymax)``, a run of
+        ``(x, y)`` points, any shapely geometry, a GeoDataFrame, or a path to a
+        vector file (``layer=`` picks a GeoPackage layer). ``crs=None`` means the
+        grid's frame; a source carrying its own CRS keeps it. Then
+        ``model.plot.map(extent=name)``, ``select=name`` and ``features=
+        project.aoi[name]`` all mean this place, on every model of the project.
+        ``model.add_aoi(...)`` on one of those models is this same call.
+
+        Kept INLINE in the project spec by :meth:`save` (WKT + CRS), so a saved
+        project needs no file to restore it. Refuses an existing name unless
+        ``overwrite=True`` (ledger 208's rule); ``project.aoi[name] = ...``
+        replaces, as a dict does.
+        """
+
+        return self.aoi._define(
+            name, geometry, crs=crs, layer=layer, note=note, overwrite=overwrite,
+            where=f"Project '{self.name}'",
+        )
 
     def add_simulation(
         self, simulation: SimulationSpec, *, overwrite: bool = False
@@ -2302,7 +2349,8 @@ class Project:
         return self.grids[key]
 
     def summary(self) -> pd.DataFrame:
-        """Return one table covering all three spec libraries.
+        """Return one table covering every library -- the three spec libraries and
+        the areas of interest.
 
         A ``library`` column distinguishes them; per-library columns are collapsed
         into ``detail`` so the three shapes can share one frame. Use
@@ -2312,7 +2360,7 @@ class Project:
         import pandas as pd
 
         rows: list[dict[str, Any]] = []
-        for library in (self.packages, self.grids, self.simulations):
+        for library in (self.packages, self.grids, self.simulations, self.aoi):
             for key in library.names():
                 row = library._row(key, library[key])
                 identity = row.get("key") or row.get("name")
@@ -2336,7 +2384,7 @@ class Project:
         return (
             f"Project({self.name!r}, root={str(self.root)!r}, "
             f"packages={len(self.packages)}, grids={len(self.grids)}, "
-            f"simulations={len(self.simulations)})"
+            f"simulations={len(self.simulations)}, aoi={len(self.aoi)})"
         )
 
     def _repr_html_(self) -> str:
@@ -2346,7 +2394,7 @@ class Project:
             f"<h4>Project: <code>{escape(self.name)}</code></h4>",
             f"<p><code>{escape(str(self.root))}</code></p>",
         ]
-        for library in (self.packages, self.grids, self.simulations):
+        for library in (self.packages, self.grids, self.simulations, self.aoi):
             blocks.append(library._repr_html_())
         return "<div>" + "".join(blocks) + "</div>"
 
@@ -2665,6 +2713,11 @@ class Project:
             ),
             "packages": sorted(self.packages),
             "grids": sorted(self.grids),
+            # Inline, unlike the spec libraries' one-file-per-key: an area is a few
+            # hundred bytes of WKT, and a lower import layer can then read it
+            # straight from this document (myflopy.areas.saved_areas) without
+            # loading the project.
+            "aoi": {name: self.aoi[name].to_dict() for name in self.aoi.names()},
         }
 
     def _save_grid(self, key: str, grid: Any) -> bool:
@@ -2860,6 +2913,7 @@ class Project:
             simulations=len(written_names),
             packages=len(self.packages),
             grids=len(self.grids),
+            aoi=len(self.aoi),
             pickled=pickled,
             skipped=tuple(skipped),
             bundled=tuple(bundled),
@@ -3059,6 +3113,8 @@ class Project:
                     f"Project lists grid '{key}' but its spec is missing: {grid_path}"
                 )
             project.grids[key] = project._load_grid(key, _read_json(grid_path))
+        for name, doc in (data.get("aoi") or {}).items():
+            project.aoi[name] = Area.from_dict(doc, name=name)
         return project
 
     def _load_grid(self, key: str, doc: dict[str, Any]) -> GridSpec | GridRef:

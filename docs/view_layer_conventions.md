@@ -119,6 +119,15 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### A name is a place: `model.aoi`
+
+Ledger 310. `extent="site"`, `select="site"` and `features=model.aoi` read the model's
+areas of interest -- the SAME library as its live project's. `Choro.resolve_extent`
+and `_resolve_cells` ask `model.aoi` only for a NAME (reading it can open the
+project's saved spec, so a box or a cell list must never pay for it). `select=` tries
+a region, then an area, then a file -- a name that is both a region and an area is
+refused -- and a name that is none of them raises listing both sets.
+
 ### `extent=` is a window, resolved once, honoured by every renderer
 
 Ledger 309. `utils/datatypes/extent.resolve_extent` turns every accepted spelling

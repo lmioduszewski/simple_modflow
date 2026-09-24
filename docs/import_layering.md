@@ -21,6 +21,7 @@ review the diff, commit the regenerated files together.
 - `myflopy._logging`
 - `myflopy._optional`
 - `myflopy._warnings`
+- `myflopy.areas`
 - `myflopy.grid_identity`
 - `myflopy.modflow`
 - `myflopy.modflow.calcs`

@@ -6,6 +6,7 @@
  "myflopy._optional": 0,
  "myflopy._warnings": 0,
  "myflopy.advanced": 2,
+ "myflopy.areas": 0,
  "myflopy.builders": 2,
  "myflopy.geopackage": 3,
  "myflopy.grid_identity": 0,

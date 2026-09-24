@@ -173,6 +173,10 @@ def _as_spec(item, name: str | None = None) -> Feature:
 
     if isinstance(item, Feature):
         return replace(item, name=name) if name is not None else item
+    if hasattr(item, "to_geoseries"):
+        # An area of interest (`model.aoi["site"]`, or the whole `model.aoi`
+        # mapping, one layer per area) -- drawn as its geometry, in its own CRS.
+        return Feature(item.to_geoseries(), name=name or getattr(item, "name", None))
     if isinstance(item, (str, Path, gpd.GeoDataFrame, gpd.GeoSeries)) or _is_geometry(item):
         return Feature(item, name=name)
     if isinstance(item, Sequence) and not isinstance(item, str) and item and all(_is_geometry(g) for g in item):

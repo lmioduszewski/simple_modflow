@@ -149,6 +149,15 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**Named areas of interest: `model.aoi` / `project.aoi`** (ledger 310) -- `mf.Area`s by
+name, usable as `extent="site"`, `select="site"`, `features=model.aoi`. DEFINED ON THE
+MODEL, KEPT BY THE PROJECT: a model finds its live project through
+`myflopy.areas`' root-keyed WEAK registry (a live `Project` registers there; `Run.model`
+records `view._project_root`), NOT through the five Run construction paths. No live
+project -> the SAVED areas, additions session-only (the user's call). Saved INLINE in
+`project_spec.json`. Trap that cost a round: a pytest fixture holding the `Project`
+keeps it in the weak registry, so a "no live project" test passes for the wrong
+reason -- build and drop it inside the test and assert `live_areas(root) is None`.
 **`extent=` is the window a map opens on, at EVERY scope and backend** (ledger 309):
 VIEW ONLY (the user's rule -- no crop, no colour re-range; `zmin`/`zmax` tighten a
 close-up). One resolver, `utils/datatypes/extent.resolve_extent`, run at the call;
@@ -267,7 +276,8 @@ a figure the library already built.
 
 ## Browsing a Project: libraries, runs, forks (2026-09-04/06, ledger 179-191)
 **`docs/project_workflow.md` is the walkthrough**; `docs/project_libraries_design.md`
-is the reasoning record. `project.packages` / `.grids` / `.simulations` are `dict`
+is the reasoning record. `project.aoi` (areas of interest, ledger 310) is a fourth,
+coercing library. `project.packages` / `.grids` / `.simulations` are `dict`
 **subclasses** — every dict operation works unchanged, plus `names()`, `summary()`,
 a did-you-mean `KeyError`, and `_repr_html_`. `project.package(key)` / `.grid(key)`
 mirror the long-standing `simulation(name)`; `package_spec(key)` had existed on the
@@ -481,7 +491,8 @@ imperative path "more proven" — package-first is the same engine and is the on
 
 ### How it fits together (the mental model)
 ```
-Project            ← durable workspace + run/scenario lifecycle (workspace.py); holds NO geometry
+Project            ← durable workspace + run/scenario lifecycle (workspace.py); holds no MODEL geometry
+                     (its `aoi` areas of interest are places to LOOK at, ledger 310)
   └─ SimulationSpec ← one MF6 simulation: tdis + ims solver + the model(s)
        └─ ModelSpec = mf.gwf(name, context=…, packages=[…])   ← one model
             ├─ ModelContext(grid=, domain=, surfaces=, dates=)  ← geometry; rides on the MODEL, not the project

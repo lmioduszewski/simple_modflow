@@ -13,6 +13,8 @@ from flopy.mf6.mfbase import MFDataException
 
 from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
+from myflopy.areas import Area, live_areas, saved_areas
+from myflopy.library import AoiLibrary
 from myflopy.modflow.mf6.package_registry import _package_type_name
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
@@ -112,6 +114,12 @@ class SimulationBase:
     #: ``_initialize_from_built_run`` overrides it from the built flopy model. It
     #: gates the dependent-variable readers (``hds``/``conc``/``temp``).
     model_type = "gwf6"
+
+    #: The root of the project this model's run belongs to, recorded by
+    #: ``Run.model``; ``None`` for a model outside any project.
+    _project_root = None
+    #: This model's areas when no LIVE project holds them (see :attr:`aoi`).
+    _session_aoi = None
 
     def _initialize_model_state(
         self,
@@ -923,6 +931,89 @@ class SimulationBase:
         """Available ``(kstp, kper)`` output indices for this run."""
 
         return get_kstpkper(self)
+
+    def _project_roots(self) -> list[Path]:
+        """Where this model's project may be: the recorded root, then the run layout.
+
+        The second is ``<workspace>/../..`` holding a ``project.json`` -- a run
+        lives at ``<root>/runs/<name>`` -- which is what finds the project when it
+        was MOVED after the run recorded its old root (measured: a copied project's
+        runs still name the original directory).
+        """
+
+        roots: list[Path] = []
+        if self._project_root is not None:
+            roots.append(Path(self._project_root))
+        workspace = getattr(self, "workspace", None)
+        if workspace is not None:
+            guess = Path(workspace).parent.parent
+            if (guess / "project.json").is_file() and guess not in roots:
+                roots.append(guess)
+        return roots
+
+    @property
+    def aoi(self) -> AoiLibrary:
+        """This model's named areas of interest -- a dict of :class:`~myflopy.areas.Area`.
+
+        What ``plot.map(extent="site")`` and ``select="site"`` look names up in.
+        Defined here or on the project, and SHARED with the project (ledger 310):
+
+        * a model whose project is LIVE in this session -- it came from
+          ``prepare_run``, ``reopen_run``, ``project.runs[...]`` or ``load_run`` of
+          a run inside it -- answers with THAT project's library, so
+          ``model.add_aoi(...)`` is ``project.add_aoi(...)`` and ``project.save()``
+          keeps it;
+        * with no live project, the project's SAVED areas are read once, and
+          anything added lasts for this session only (only ``project.save()``
+          writes a project's files);
+        * a model in no project keeps its areas in memory, like ``regions``.
+        """
+
+        roots = self._project_roots()
+        for root in roots:
+            live = live_areas(root)
+            if live is not None:
+                return live
+        if self._session_aoi is None:
+            library = AoiLibrary()
+            for root in roots:
+                saved = saved_areas(root)
+                if saved is not None:
+                    library.update(saved)
+                    break
+            self._session_aoi = library
+        return self._session_aoi
+
+    def add_aoi(
+        self,
+        name: str,
+        geometry,
+        *,
+        crs=None,
+        layer: str | None = None,
+        note: str | None = None,
+        overwrite: bool = False,
+    ) -> Area:
+        """Name an area of interest on this model -- and on its project, if it has one.
+
+        ``geometry`` is four numbers ``(xmin, ymin, xmax, ymax)``, a run of
+        ``(x, y)`` points, any shapely geometry, a GeoDataFrame, or a path to a
+        vector file (``layer=`` picks a GeoPackage layer); ``crs=None`` means the
+        grid's frame. See :attr:`aoi` for where it is kept. Refuses an existing
+        name unless ``overwrite=True``; ``model.aoi[name] = ...`` replaces.
+
+        Examples
+        --------
+        >>> model.add_aoi("site", (500, 600, 1000, 1100))
+        >>> model.plot.map(layer=0, extent="site", backend="mpl")
+        >>> model.hds.mosaic(by="layer", extent="site")
+        """
+
+        library = self.aoi
+        return library._define(
+            name, geometry, crs=crs, layer=layer, note=note, overwrite=overwrite,
+            where=library._where() if library._project_name else f"Model '{self.name}'",
+        )
 
     def add_region(
         self,

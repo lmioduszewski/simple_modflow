@@ -1020,6 +1020,24 @@
     }
   },
   "surfaces": {
+    "AoiLibrary.members": [
+      "setdefault",
+      "update"
+    ],
+    "Area.fields": [
+      "crs",
+      "geometry",
+      "name",
+      "note",
+      "source"
+    ],
+    "Area.members": [
+      "bounds",
+      "coerce",
+      "from_dict",
+      "to_dict",
+      "to_geoseries"
+    ],
     "BoundarySource.fields": [
       "boundnames",
       "edges_only",
@@ -1183,6 +1201,7 @@
       "with_options"
     ],
     "Project.members": [
+      "add_aoi",
       "add_grid",
       "add_package",
       "add_simulation",
@@ -1233,6 +1252,7 @@
       "summary"
     ],
     "SaveReport.fields": [
+      "aoi",
       "bundled",
       "context_dropped",
       "grids",
@@ -1248,6 +1268,7 @@
       "all_conc",
       "all_heads",
       "all_temp",
+      "aoi",
       "budget",
       "budget_cumulative",
       "budget_incremental",
@@ -1447,6 +1468,7 @@
       "wel_spec"
     ],
     "myflopy.__preferred__": [
+      "Area",
       "Array",
       "BoundarySource",
       "BuiltModel",

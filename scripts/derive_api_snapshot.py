@@ -193,7 +193,9 @@ def collect_surfaces() -> dict[str, list[str]]:
 
         return sorted(field.name for field in dataclasses.fields(cls))
 
+    from myflopy.areas import Area
     from myflopy.library import (
+        AoiLibrary,
         GridLibrary,
         PackageLibrary,
         SimulationLibrary,
@@ -244,6 +246,10 @@ def collect_surfaces() -> dict[str, list[str]]:
         "PackageLibrary.members": members(PackageLibrary),
         "GridLibrary.members": members(GridLibrary),
         "SimulationLibrary.members": members(SimulationLibrary),
+        # Areas of interest (ledger 310): shared by a model and its project.
+        "AoiLibrary.members": members(AoiLibrary),
+        "Area.members": members(Area),
+        "Area.fields": spec_fields(Area),
         "RunLibrary.members": members(RunLibrary),
         # The SPEC surface. Covered by nothing before 2026-09-10: `SimulationSpec`
         # appeared in this file exactly once, as a bare name in `mf.__all__`, so a

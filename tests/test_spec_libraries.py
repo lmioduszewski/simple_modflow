@@ -170,7 +170,7 @@ def test_project_repr_touches_no_disk(tmp_path, monkeypatch):
 
     assert repr(project) == (
         f"Project('tentrails', root={str(project.root)!r}, "
-        "packages=2, grids=1, simulations=1)"
+        "packages=2, grids=1, simulations=1, aoi=0)"
     )
     assert "tentrails" in project._repr_html_()
     assert "runs" not in repr(project)          # runs live on disk; not counted here

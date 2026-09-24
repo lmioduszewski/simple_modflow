@@ -195,7 +195,10 @@ def _resolve_cells(select, *, vor, model=None):
     geometry branch this replaces.
 
     Accepts cell indices, a boolean mask of length ``ncpl``, a registered model
-    region name, a path to a vector file, or a shapely/GeoPandas geometry.
+    region name, an area-of-interest name or :class:`~myflopy.areas.Area`
+    (ledger 310), a path to a vector file, or a shapely/GeoPandas geometry. A
+    name that is BOTH a region and an area is refused rather than guessed, and a
+    name that is neither -- and no file -- raises naming what is defined.
     Returns a flat, sorted, de-duplicated ``list[int]`` and a legend label.
 
     Three bugs are deliberately NOT inherited from the code this supersedes:
@@ -211,16 +214,41 @@ def _resolve_cells(select, *, vor, model=None):
 
     label = "selection"
 
-    # A registered model region ("all_streams"), else a vector file path.
+    # A registered model region ("all_streams"), an area of interest, else a
+    # vector file path.
     if isinstance(select, str):
+        cells = None
         if model is not None:
             try:
                 cells = model.get_region_cells(select)
             except (KeyError, ValueError, AttributeError):
                 cells = None
-            if cells is not None:
-                return sorted({int(c) for c in cells}), select
-        select = Path(select)
+        areas = getattr(model, "aoi", None) if model is not None else None
+        in_areas = areas is not None and select in areas
+        if cells is not None and in_areas:
+            raise ValueError(
+                f"select={select!r} names BOTH a region (a set of cells) and an area "
+                "of interest (a geometry), which may not select the same cells. Pass "
+                f"model.aoi[{select!r}] for the area, or rename one of them."
+            )
+        if cells is not None:
+            return sorted({int(c) for c in cells}), select
+        if in_areas:
+            select = areas[select]
+        elif not Path(select).exists():
+            registry = getattr(model, "regions", None)
+            known_regions = sorted(registry.list()) if hasattr(registry, "list") else []
+            known_areas = sorted(areas) if areas is not None else []
+            raise ValueError(
+                f"select={select!r} is not a region, an area of interest or a file. "
+                f"Regions: {known_regions or 'none'}; areas: {known_areas or 'none'}."
+            )
+        else:
+            select = Path(select)
+
+    if hasattr(select, "to_geoseries"):
+        label = getattr(select, "name", None) or label
+        select = vor.get_vor_cells_as_series(select.to_geoseries())
 
     if isinstance(select, Path):
         label = select.stem
@@ -1178,7 +1206,13 @@ class Choro(Picture):
         """
 
         vor = self.vor
-        names = getattr(self._inputs, "aoi", None) if self._inputs is not None else None
+        # Only a NAME needs the areas, and reading them can touch the project's
+        # saved spec -- so every other extent (and None) never asks.
+        names = (
+            getattr(self._inputs, "aoi", None)
+            if isinstance(value, str) and self._inputs is not None
+            else None
+        )
         return resolve_extent(
             value,
             crs=getattr(vor, "crs", None),

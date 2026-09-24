@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         uzf_spec,
         wel_spec,
     )
+    from myflopy.areas import Area
     from myflopy.builders import (
         PackageBuilder,
         build_gwf_gwe_exchange,
@@ -301,6 +302,7 @@ _EXPORTS = {
     "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
     "BoundarySource": ("myflopy.sources", "BoundarySource"),
     "Polygons": ("myflopy.sources", "Polygons"),
+    "Area": ("myflopy.areas", "Area"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
     "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
     "LiteralSource": ("myflopy.sources", "LiteralSource"),

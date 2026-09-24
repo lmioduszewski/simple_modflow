@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from html import escape
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, TypeVar
 
+from myflopy.areas import Area
 from myflopy.specs import (
     GridRef,
     GridSpec,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 
 __all__ = [
+    "AoiLibrary",
     "GridLibrary",
     "PackageLibrary",
     "SimulationLibrary",
@@ -432,6 +434,71 @@ class GridLibrary(SpecLibrary["GridSpec | GridRef"]):
             "built": built,
             "cells": cells,
         }
+
+
+class AoiLibrary(SpecLibrary[Area]):
+    """Named areas of interest -- ``model.aoi`` and ``project.aoi`` (ledger 310).
+
+    A ``dict`` of :class:`~myflopy.areas.Area` by name, like the other libraries,
+    with one difference: ASSIGNMENT COERCES. ``model.aoi["site"] = (0, 0, 500,
+    500)`` stores an ``Area``, so the dict the user sketched and the registration
+    verb (``add_aoi``, which refuses an existing name unless ``overwrite=True``)
+    agree about what an entry is. Assignment replaces, as a dict does -- the
+    unguarded spelling, like ``packages.edit``.
+    """
+
+    _kind: ClassVar[str] = "area"
+    _columns: ClassVar[tuple[str, ...]] = ("key", "geometry", "crs", "bounds", "note")
+
+    def _row(self, key: str, entry: Area) -> dict[str, Any]:
+        """Summarize one area without reprojecting anything."""
+
+        xmin, ymin, xmax, ymax = entry.geometry.bounds
+        return {
+            "key": key,
+            "geometry": entry.geometry.geom_type,
+            "crs": entry.crs or "grid's",
+            "bounds": f"({xmin:.6g}, {ymin:.6g}, {xmax:.6g}, {ymax:.6g})",
+            "note": entry.note or "—",
+        }
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Store ``value`` as an :class:`Area` named ``key``."""
+
+        super().__setitem__(str(key), Area.coerce(value, name=str(key)))
+
+    def update(self, *args, **kwargs) -> None:
+        """``dict.update``, through the coercing assignment (dict's own skips it)."""
+
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def setdefault(self, key: str, default: Any = None) -> Area:
+        """``dict.setdefault``, through the coercing assignment."""
+
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def _define(
+        self, name: str, geometry: Any, *, crs=None, layer=None, note=None,
+        overwrite: bool = False, where: str = "This area library",
+    ) -> Area:
+        """Register one area, refusing an existing name unless ``overwrite``.
+
+        The engine of ``project.add_aoi`` and ``model.add_aoi`` -- one rule for
+        both, since the model's library IS the project's when it has one.
+        """
+
+        name = str(name)
+        if name in self and not overwrite:
+            raise KeyError(
+                f"{where} already has an area '{name}'. Pass overwrite=True to "
+                "replace it, or pick another name."
+            )
+        area = Area.coerce(geometry, crs=crs, layer=layer, note=note, name=name)
+        super().__setitem__(name, area)
+        return area
 
 
 class SimulationLibrary(SpecLibrary[SimulationSpec]):

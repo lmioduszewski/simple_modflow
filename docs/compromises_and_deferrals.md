@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 309 entries (310 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 310 entries (311 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 310 | Named areas of interest: defined on the model, kept by the project | 2026-09-24 |
 | 309 | `extent=` -- the window a map opens on, at every scope and backend | 2026-09-24 |
 | 308 | Transmissivity maps and nouns: saturated by default, and the choices behind it | 2026-09-23 |
 | 307 | A plotly map was fitted for a canvas nothing draws | 2026-09-23 |
@@ -12759,3 +12760,53 @@ same day, which is the useful part of the result.
       of mirrored defaults. Nor on ``section``/``surface``, which are not plan views.
       **Not built:** the JavaScript ``fitBounds`` (ledger 307's reason), so an inline
       notebook figure still frames by the default-canvas estimate.
+
+310. **Named areas of interest: defined on the model, kept by the project (2026-09-24).**
+      ``model.aoi`` / ``project.aoi`` -- an ``AoiLibrary`` of ``mf.Area`` (a geometry and
+      the CRS it is in) -- and ``add_aoi(name, place)`` on both. A name works wherever a
+      place does: ``extent="site"``, ``select="site"``, ``features=model.aoi``.
+      **The user's design, and the three calls it settled:** areas are DEFINED ON THE
+      MODEL and propagate to the project when the model belongs to one; they are
+      ``model.aoi``, NOT ``model.plot.aoi`` (``model.plot`` holds exactly the six drawing
+      verbs, and areas serve arrays and selections too); and a model with no LIVE project
+      -- a bare ``load_run``, a later session -- keeps what it adds for the session ONLY.
+      Only ``project.save()`` writes a project's files; a model that wrote them would be
+      the one place that did.
+      **How a model finds its project: a WEAK, root-keyed registry, not injection.** The
+      scoping planned to hand the live library to each ``Run`` at construction -- and the
+      critic found FIVE construction paths (``prepare_run``, ``reopen_run``,
+      ``RunLibrary.discover`` behind ``project.runs[...]``, ``discover_runs``,
+      ``discover_native_runs``), which is five places to forget one. Instead a live
+      ``Project`` registers its library under its root in ``myflopy.areas`` (import layer
+      0, so the model -- layer 8 -- can reach it without importing the workspace, layer
+      10), and ``Run.model`` records ``view._project_root``. Weak, so a view never keeps
+      a project alive; by ROOT, so several projects in one session never collide.
+      **Found when moved:** a copied project's runs still record the ORIGINAL root, so a
+      model also looks at ``<workspace>/../..`` for a ``project.json``.
+      **Saved INLINE** in ``project_spec.json`` as WKT + CRS at FULL precision (shapely
+      rounds WKT to 6 decimals by default -- ~0.1 m on a lon/lat vertex), like an eager
+      package: the file an area came from is read once and kept only as provenance, so an
+      archive needs nothing extra and a lower import layer reads saved areas straight from
+      the JSON (``areas.saved_areas``) without loading the project. A project saved before
+      this loads with none.
+      **``crs=None`` means the grid's frame** -- the ``features=`` rule -- and is never
+      filled in with ``DEFAULT_CRS``, so a box typed in model coordinates lands where it
+      was typed; a file or frame keeps its own CRS and a conflicting ``crs=`` raises
+      rather than relabelling it.
+      **Assignment coerces** (``model.aoi["x"] = (0, 0, 10, 10)`` stores an ``Area``) and
+      replaces, as a dict does; ``add_aoi`` refuses an existing name unless
+      ``overwrite=True`` (ledger 208's rule). Registration goes through ``add_aoi``, not a
+      public ``.add`` on the library, per the libraries' design.
+      **Names are looked up only when a NAME is passed:** ``model.aoi`` can open the
+      project's saved spec, so a box, a geometry or a cell list never asks (pinned).
+      ``select=`` tries a region, then an area, then a file; a name that is BOTH a region
+      and an area is refused rather than guessed (a region is cells, an area a shape --
+      they need not select the same cells), and a name that is none of them now raises
+      listing both sets instead of pyogrio's ``DataSourceError: No such file``.
+      **The trap that nearly shipped:** every "no live project" test first passed because
+      the pytest fixture held the ``Project``, keeping it in the weak registry -- two
+      mutations survived. The tests now build and drop the project inside the test and
+      assert ``live_areas(root) is None`` first.
+      **NOT built:** areas in ``hds.get(cells=)``, a section line from a named
+      LineString, ``Surface.within``/zones, a clipped ``to_xugrid``, and a bridge turning
+      an area into a model region -- each is a later wiring of the same library.

@@ -906,7 +906,13 @@ model.plot.map(layer=0, extent=[(500, 600), (1000, 1100)])              # points
 model.plot.map(layer=0, extent=transect_line)                           # any geometry's bounds
 model.packages.npf.transmissivity.mosaic(per=3, extent=site_gdf)        # every panel
 model.hds.mosaic(by="layer", extent=[site, None, north, None])          # one per panel
+model.add_aoi("site", (500, 600, 1000, 1100))                           # a named area...
+model.plot.map(layer=0, extent="site", backend="mpl")                   # ...used by name
 ```
+
+Named areas live in `model.aoi` / `project.aoi` (ledger 310): defined on a model,
+kept by its project, and usable as `extent=`, `select=` and `features=`. See
+`docs/project_workflow.md`, "Areas of interest".
 
 **Custom geometry over a map** — `features=` is an option on `map` at the same
 scopes (ledger 254): a vector file path, a `GeoDataFrame`, a shapely geometry,

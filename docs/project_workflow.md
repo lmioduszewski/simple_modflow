@@ -174,7 +174,7 @@ questions:
 
 ```python
 project                                  # Project('tentrails', root='…',
-                                         #         packages=14, grids=1, simulations=3)
+                                         #         packages=14, grids=1, simulations=3, aoi=2)
 project.packages.names()                 # ['chd/base', 'crisp/base', 'dis/base', …]
 project.packages.summary()               # key | package | builder | enabled | options | …
 project.package("npf/base")              # == project.packages["npf/base"]
@@ -202,6 +202,37 @@ by `names()`, `summary()`, the repr, and that `KeyError`.
 `repr(project)` touches no disk and counts no runs: runs live on the filesystem,
 and PyCharm calls `__repr__` on every debugger step. Use `project.discover_runs()`
 for those.
+
+## Areas of interest: places to look at
+
+`project.aoi` -- and `model.aoi` on any model of the project -- is a fourth library:
+named **areas of interest** (ledger 310). Not model geometry; places you keep going
+back to. A name then works wherever a place does:
+
+```python
+project.add_aoi("site", (500, 600, 1000, 1100))            # (xmin, ymin, xmax, ymax), grid CRS
+project.add_aoi("wetland", "gis/wetland.gpkg", layer="aoi")  # any geometry, a file, a GeoDataFrame
+model = run.model("flow")
+model.add_aoi("north", north_polygon)                      # defined on the model...
+sorted(project.aoi)                                        # ...kept by the project: ['north', 'site', 'wetland']
+model.plot.map(layer=0, extent="site", backend="mpl")      # the window a map opens on
+model.packages.npf.transmissivity.mosaic(per=3, extent="site")
+model.plot.map(layer=0, select="wetland")                  # the cells under it
+model.plot.map(layer=0, features=model.aoi)                # every area, one layer each
+```
+
+**Defined on the model, kept by the project.** A model that came from this project --
+`prepare_run`, `reopen_run`, `project.runs[...]`, or `mf.load_run` of one of its runs
+while the `Project` is alive -- answers `model.aoi` with the project's own library, so
+`model.add_aoi(...)` IS `project.add_aoi(...)` and `project.save()` keeps it. With no
+live `Project` object, a model reads the project's SAVED areas, and anything it adds
+lasts for the session only: only `project.save()` writes a project's files. A model in
+no project keeps its areas in memory, like `model.regions`.
+
+Saved INLINE in `project_spec.json` (WKT + CRS), so an archive needs no file to restore
+them. `crs=None` means the grid's frame. A name that is both an area and a model
+region is refused by `select=` rather than guessed. `project.aoi["x"] = geom` replaces
+as a dict does; `add_aoi` refuses an existing name unless `overwrite=True`.
 
 ## Forking and editing packages
 
