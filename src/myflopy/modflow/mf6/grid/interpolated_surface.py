@@ -36,6 +36,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     where_they_are,
 )
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
 
@@ -306,8 +307,15 @@ class InterpolatedSurface(Picture):
     def zs(self):
         """Per-cell surface values to interpolate: heads (``hds``) or a layer elevation (``lyr``).
 
-        Head surfaces read the selected ``kstpkper``/``layer`` (inactive-cell
-        sentinels become NaN); layer surfaces read ``gdf_topbtm``. Cached.
+        Head surfaces read the selected ``kstpkper``/``layer``, with MODFLOW's
+        no-value sentinels -- +1e30 inactive, -1e30 DRY -- as NaN and every real
+        head kept, whatever its size; layer surfaces read ``gdf_topbtm``. Cached.
+
+        The sentinels were cut at ``> 10_000``, which kept a dry cell's -1e30 as a
+        sample and erased real heads above 10,000 ft. On a 207-cell run with 25
+        dry cells, every finite ``griddata`` pixel fell outside the real 30-50 ft
+        range; with heads 9,950-10,050 ft, 115 cells were erased and the surface
+        stopped at 9,998 (ledger 315).
 
         Values the caller supplied are returned as given, without asking which
         cells ``clip=`` covers: that question needs a grid, and ran the selector
@@ -318,8 +326,11 @@ class InterpolatedSurface(Picture):
             cells = slice(None) if self.clipped_cells is None else self.clipped_cells
             if self.surf_type == 'hds':
                 """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
-                zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, cells], :].values
-                zs[zs > 10_000] = np.nan # remove large zs, which would be inactive cells
+                zs = np.asarray(
+                    self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, cells], :].values,
+                    dtype=float,
+                )
+                zs[_is_sentinel(zs)] = np.nan  # inactive (+1e30) and dry (-1e30) cells
                 self._zs = zs
             if self.surf_type == 'lyr':
                 zs = self.vor.gdf_topbtm.loc[cells, self.layer].values

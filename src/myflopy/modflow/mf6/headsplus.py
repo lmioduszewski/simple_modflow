@@ -46,6 +46,19 @@ from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_ho
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
 
+def _is_sentinel(values) -> np.ndarray:
+    """True where ``values`` is one of MODFLOW's no-value sentinels: ``|value| >= 1e29``.
+
+    MF6 writes a cell with no value as a number, not NaN: +1e30 for an inactive
+    cell and -1e30 for a DRY one. No real head, concentration or temperature
+    comes near either, so the test is the magnitude, and it has to take BOTH
+    signs. A head surface cut at ``> 10_000`` instead, which kept every dry cell
+    as a crater to -1e30 and erased every real head above 10,000 ft (ledger 315).
+    """
+
+    return np.abs(np.asarray(values, dtype=float)) >= 1.0e29
+
+
 def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
     """Return dependent-variable data as a consistent ``(nlay, ncpl)`` array."""
 
@@ -193,7 +206,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         frame = frame[frame["kstp"] == period_end].copy()
         frame = frame.rename(columns={self.store_column: value})
         frame[value] = pd.to_numeric(frame[value], errors="coerce")
-        frame.loc[frame[value].abs() >= 1e29, value] = np.nan
+        frame.loc[_is_sentinel(frame[value]), value] = np.nan
         for column, selector in (("per", per), ("layer", layer), ("cells", cells)):
             if selector is None:
                 continue
@@ -313,8 +326,8 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         The quick spatial accessor behind the choropleth maps: it picks a saved
         time, picks a ``layer``, reshapes to one value per Voronoi cell, and (by
-        default) converts MODFLOW's dry/no-flow sentinel (``1e30``) to ``NaN`` so
-        the result drops straight into a plot or a per-cell calculation.
+        default) converts MODFLOW's no-value sentinels (+1e30 inactive, -1e30 dry)
+        to ``NaN`` so the result drops straight into a plot or a per-cell calculation.
 
         Parameters
         ----------
@@ -327,8 +340,8 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         kstpkper
             Exact ``(kstp, kper)`` to read, taking precedence over ``per``.
         masked
-            Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN``
-            (default ``True``).
+            Replace MODFLOW's no-value sentinels (+1e30 inactive, -1e30 dry)
+            with ``NaN`` (default ``True``).
 
         Returns
         -------
@@ -356,7 +369,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         field = _as_layer_cell_heads(self.get_data(kstpkper=key), nlay=self.nlay, ncpl=ncpl)
         values = np.asarray(field[int(layer)], dtype=float)
         if masked:
-            values[np.abs(values) > 1.0e29] = np.nan
+            values[_is_sentinel(values)] = np.nan
         return values
 
     def to_xugrid(
@@ -390,7 +403,8 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         name
             Variable name for the field (default: this reader's ``value_name``).
         masked
-            Replace MODFLOW's ``1e30`` dry/no-flow sentinel with ``NaN`` (default).
+            Replace MODFLOW's no-value sentinels (+1e30 inactive, -1e30 dry) with
+            ``NaN`` (default).
         surfaces
             Also attach the grid's layer frame -- ``top`` and ``botm_1`` ...
             ``botm_n``, one FLAT variable per layer
@@ -482,7 +496,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             for li, layer in enumerate(lays):
                 data[ti, li, :] = np.asarray(field[layer], dtype=float)
         if masked:
-            data[np.abs(data) > 1.0e29] = np.nan
+            data[_is_sentinel(data)] = np.nan
 
         grid = self.vor.ugrid2d()
         face_dim = grid.face_dimension

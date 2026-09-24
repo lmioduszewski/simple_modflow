@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 314 entries (315 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 315 entries (316 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 315 | A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map... | 2026-09-24 |
 | 314 | A 3-D surface was drawn across every concavity of its domain, and the heatmap beside it was upside down | 2026-09-24 |
 | 313 | Transmissivity is written as a whole number with separators: 112,000 ft²/d | 2026-09-24 |
 | 312 | The same review, for the areas of interest: who a model's project is | 2026-09-24 |
@@ -12969,3 +12970,32 @@ same day, which is the useful part of the result.
       Reproducer: ``docs/reproducers/surface_domain_mask.py``; tests:
       ``tests/test_surface_domain_mask.py``, where each of fifteen single-piece mutations of
       the fix fails a named test.
+
+315. **A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map and the plain section still keep -1e30 (2026-09-24).**
+      ``InterpolatedSurface.zs`` cut MF6's no-value sentinels at ``> 10_000``. A DRY cell's
+      -1e30 (measured, non-Newton) is not above 10,000, so it stayed a sample, and the cubic
+      interpolators spread it over the WHOLE surface: 25 dry cells of 207 put all 13,924
+      finite ``griddata`` pixels outside the real 30-50 ft heads, -1.2e30 to +1.6e29. A real
+      head above 10,000 ft was erased: 9,950-10,050 ft drew a surface that stopped at 9,998
+      over 39% of the pixels. Every interpolator now stays within a foot of the real heads
+      (``rbf`` overshoots by 0.16 ft, as it does on any field); a dry region at the
+      domain's edge draws blank, not extrapolated into (ledger 248's call).
+      **One rule, ``headsplus._is_sentinel``: ``|value| >= 1e29``, both signs** (MF6 writes
+      +1e30 inactive, -1e30 dry). A judgment call where the brief could not be followed as
+      written: it asked to reuse a masking helper in ``headsplus.py``, and there was none,
+      only three inline copies, ``get()``'s ``>= 1e29`` and ``array()``/``to_xugrid()``'s
+      ``> 1e29``. All three and the surface now share the helper, so ``array()`` and
+      ``to_xugrid()`` also blank a value of exactly 1e29, which MF6 never writes.
+      ``interactive_plotting._clean_head_values``, ``canonical.py`` and ``parallel.py`` keep
+      their own copies of the same ``1e29`` rule, untouched.
+      **Not fixed here, measured on the same run.** ``hds.map()`` (``choros.py``) blanks
+      only ``== 1e30``, so a dry cell maps and hovers as -1e30, and with no ``zmin``/``zmax``
+      the colour range is -1e30 to 50: every wet cell draws one colour. Its mounding branch
+      reads a dry cell as 0, since the negative is clipped. Whether that should be 0 or
+      blank is the design fork that kept the map out of this change. ``hds.section()``
+      without ``interpolator=`` masks nothing: 6 of 14 head points at -1e30. With
+      ``interpolator=`` it samples this surface and is fixed. Revisit when either is next
+      touched; the rule to use is the same helper.
+      Reproducer: ``docs/reproducers/head_surface_sentinels.py``; tests:
+      ``tests/test_raster_nodata.py``, where reverting the surface fix fails the five tests
+      that read a real MF6 run, by name.

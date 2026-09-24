@@ -11,6 +11,7 @@ capped to it down and collapsed all three layers to `min_sep`.
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 
 import geopandas as gpd
@@ -238,3 +239,132 @@ def test_a_surface_with_no_nans_is_unchanged():
     inside = grid[np.isfinite(grid)]
     assert inside.size > 0
     assert 50 <= inside.min() and inside.max() <= 50 + 0.1 * 100 + 0.05 * 100 + 1e-6
+
+
+# --- MF6's no-value sentinels must not reach a head surface ------------------ #
+
+
+@pytest.fixture(scope="module")
+def sentinel_run(tmp_path_factory):
+    """One real MF6 run holding the three things a head surface must tell apart.
+
+    One layer, non-Newton, steady, on a real ``GridSpec.voronoi`` grid (600 ft
+    square). CHD holds 9,990 ft on the west edge and 10,010 ft on the east, so
+    real heads sit on BOTH sides of 10,000. The north-east corner's bottom is
+    above every head, so MF6 writes its cells DRY (-1e30), and an interior block
+    at idomain 0 comes back INACTIVE (+1e30). What MF6 writes is asserted by the
+    tests themselves, not assumed here.
+    """
+
+    root = tmp_path_factory.mktemp("sentinels")
+    boundary = root / "boundary.gpkg"
+    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927).to_file(boundary)
+    vor = mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=12_000.0
+    ).resolve(workspace=root / "grid")
+    x = np.asarray(vor.centroids_x, dtype=float)
+    y = np.asarray(vor.centroids_y, dtype=float)
+    raised = (x > 400) & (y > 400)
+    botm = np.where(raised, 10_050.0, 9_900.0)
+    idomain = np.where((x > 225) & (x < 375) & (y > 225) & (y < 375), 0, 1)
+
+    edges = vor.gdf_vorPolys.geometry.bounds
+    chd = [[(0, int(c)), 9_990.0] for c in np.flatnonzero(edges.minx <= 1e-6)]
+    chd += [[(0, int(c)), 10_010.0] for c in np.flatnonzero(edges.maxx >= 600 - 1e-6)
+            if not raised[c]]                   # MF6 refuses a CHD below its cell's bottom
+    props = vor.get_disv_gridprops()
+    model = mf.gwf("m", grid=vor, packages=[
+        mf.disv(nlay=1, ncpl=props["ncpl"], nvert=len(props["vertices"]),
+                vertices=props["vertices"], cell2d=props["cell2d"],
+                top=10_100.0, botm=[botm], idomain=[idomain]),
+        mf.npf(k=10.0, icelltype=1), mf.ic(strt=10_000.0),
+        mf.chd(stress_period_data={0: chd}),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["m"])])
+    with warnings.catch_warnings():
+        # A built grid object cannot be frozen into the run's snapshot. This run
+        # is never reopened, so that is not what these tests are about.
+        warnings.filterwarnings("ignore", "Run 'r' built but its frozen snapshot", UserWarning)
+        run = mf.Project(root / "p", name="p").run("r", simulation)
+    assert run.success, "\n".join(run.report[-20:])
+    return run.model()
+
+
+def test_a_head_surface_blanks_dry_and_inactive_cells_and_keeps_every_real_head(
+    sentinel_run,
+):
+    """``zs`` cut MF6's sentinels at ``> 10_000``, which is wrong in both directions.
+
+    A DRY cell is -1e30, which is not above 10,000, so it stayed a sample; and a
+    real head above 10,000 ft is, so it was erased. The rule is the one every
+    other reader of the head file uses, ``|value| >= 1e29``, so the surface and
+    ``hds.array()``/``hds.get()`` must agree cell for cell (ledger 315).
+    """
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    raw = np.asarray(sentinel_run.hds.array(masked=False), dtype=float)
+    real = raw[np.abs(raw) < 1e29]
+    assert (raw == -1e30).any(), "the fixture must hold a DRY cell"
+    assert (raw == 1e30).any(), "the fixture must hold an INACTIVE cell"
+    assert (real > 10_000).any() and (real < 10_000).any(), "heads on both sides of 10,000"
+
+    zs = np.asarray(
+        InterpolatedSurface(model=sentinel_run, kstpkper=(0, 0), layer=0, resolution=40).zs,
+        dtype=float,
+    ).ravel()
+
+    assert np.isnan(zs[raw == -1e30]).all(), "a dry cell's -1e30 was kept as a head"
+    assert np.isnan(zs[raw == 1e30]).all(), "an inactive cell's +1e30 was kept as a head"
+    np.testing.assert_array_equal(zs[np.abs(raw) < 1e29], real)   # every real head, kept
+    np.testing.assert_array_equal(zs, sentinel_run.hds.array())
+    np.testing.assert_array_equal(zs, sentinel_run.hds.get(per=0, layer=0)["head"].to_numpy())
+
+
+@pytest.mark.parametrize("interpolator", INTERPOLATORS)
+def test_every_interpolator_keeps_a_head_surface_inside_the_real_heads(
+    sentinel_run, interpolator
+):
+    """What is DRAWN, under each interpolator: no crater, and no ceiling at 10,000.
+
+    Within a foot of the real heads, not exactly inside them: ``rbf`` overshoots a
+    little on any field. Measured with the old cutoff on a 207-cell run: one dry
+    patch put every finite ``griddata`` pixel outside the real 30-50 ft range,
+    cubic overshoot reaching +1.6e29 as well as -1.2e30; and heads of
+    9,950-10,050 ft drew a surface that stopped at 9,998
+    (``docs/reproducers/head_surface_sentinels.py``).
+    """
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    raw = np.asarray(sentinel_run.hds.array(masked=False), dtype=float)
+    real = raw[np.abs(raw) < 1e29]
+    surf = InterpolatedSurface(
+        model=sentinel_run, kstpkper=(0, 0), layer=0, resolution=40,
+        interpolator=interpolator,
+    )
+    assert surf.interpolator == interpolator, "an unknown name falls back to griddata"
+    drawn = np.asarray(surf.fig.data[0].z, dtype=float)
+    drawn = drawn[np.isfinite(drawn)]
+
+    assert drawn.size > 0.5 * 40 * 40, f"{drawn.size} finite pixels of {40 * 40}"
+    assert drawn.min() >= real.min() - 1.0, f"a crater to {drawn.min():.4g}"
+    assert drawn.max() <= real.max() + 1.0, f"a spike to {drawn.max():.4g}"
+    assert drawn.max() >= real.max() - 1.0, (
+        f"the surface stops at {drawn.max():,.2f}; the highest head is {real.max():,.2f}"
+    )
+
+
+def test_a_sentinel_is_either_sign_of_1e30_and_never_a_real_value():
+    """The rule itself. One sign only is the trap: MF6 writes +1e30 for an
+    inactive cell and -1e30 for a dry one, and each reader that tested one
+    side kept the other."""
+
+    from myflopy.modflow.mf6.headsplus import _is_sentinel
+
+    values = [1e30, -1e30, 1e29, -1e29, 12_000.0, -12_000.0, 9.9e28, 0.0, np.nan]
+    assert _is_sentinel(values).tolist() == [
+        True, True, True, True, False, False, False, False, False
+    ]

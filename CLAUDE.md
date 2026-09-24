@@ -149,6 +149,12 @@ inside, `geometry_mask` on `transform`), and `transform` is registered to
 `xy_meshgrid`'s pixel CENTRES -- it sat half a pixel off, so a saved raster and
 `XSection(interpolate=True)` moved when that was fixed. The rim past the outermost
 centres stays empty (ledger 248).
+**A no-value cell is `|value| >= 1e29`, both signs: `headsplus._is_sentinel`**
+(ledger 315). MF6 writes +1e30 inactive and -1e30 DRY. The head surface cut at
+`> 10_000`, so a dry cell cratered it to -1e30 and real heads above 10,000 ft were
+erased. **Still letting -1e30 through, NOT fixed:** `hds.map()` (`choros.py` blanks
+only `== 1e30`: a dry cell maps as -1e30 and wrecks the colour range) and
+`hds.section()` without `interpolator=` (no mask at all).
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -427,8 +433,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4037 passed / 4 skipped**, 2026-09-24): serial (`-n0`) ≈ **6m29s**, with
-  no other MF6 workload running (3853/6m24s on 2026-09-23; 20 of the 184 new
+- Full suite (**4052 passed / 4 skipped**, 2026-09-24, with ledger 315): serial (`-n0`)
+  6m59s, but measured WHILE another session's MF6 sweep ran; the last quiet measurement
+  is **4037 in ≈ 6m29s** the same day (3853/6m24s on 2026-09-23; 20 of the 184 new
   tests are `test_surface_domain_mask.py`, under 1 s, ledger 314 -- the rest landed with
   ledgers 305-313 without a recount). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,

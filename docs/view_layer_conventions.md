@@ -68,6 +68,17 @@ which LOOKS like a clip and spans every concavity of a domain that is not convex
 stack's Plotly and VTK sheets draw: masked to `clip=`, else the grid's footprint.
 Anything new that draws an interpolated surface draws that, never `.surface`.
 
+**A cell with no value is `|value| >= 1e29`, of EITHER sign** (ledger 315). MF6
+writes +1e30 for an inactive cell and -1e30 for a DRY one, and no real head comes
+near either, so the test is the magnitude: `headsplus._is_sentinel`, which
+`get()`, `array()`, `to_xugrid()` and the head surface share. A cutoff on one side
+keeps the other. The surface cut at `> 10_000`, which kept a dry cell as a sample
+(a crater to -1e30 under every interpolator) and erased real heads above 10,000 ft.
+Anything new that reads the dependent-variable table masks through that helper.
+Two readers still let -1e30 through, measured and NOT fixed: the head map
+(`choros.py` blanks only `== 1e30`) and `hds.section()` without `interpolator=`,
+which masks nothing.
+
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
 Without it, `section` answers *what is the head along this line* -- a profile,
 two traces, no geometry. With it, *what does the model look like through here* --

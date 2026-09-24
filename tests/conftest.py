@@ -233,6 +233,9 @@ _SLOW_TESTS = {
     # test_layers.py -- flopy VTK -> pyvista export (heavy)
     "test_the_3d_grid_is_a_scene_that_writes_nothing_by_itself",
     "test_the_3d_grid_shows_a_subset_of_layers",
+    # test_raster_nodata.py -- one module-scoped MF6 run that dries a cell
+    "test_a_head_surface_blanks_dry_and_inactive_cells_and_keeps_every_real_head",
+    "test_every_interpolator_keeps_a_head_surface_inside_the_real_heads",
 }
 
 
