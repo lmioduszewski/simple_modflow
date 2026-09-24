@@ -10,6 +10,7 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.modflow.mf6.hydraulics import model_transmissivity
 from myflopy.modflow.mf6.package_explorer_utils import (
     _filter_normalized_table,
 )
@@ -1011,6 +1012,15 @@ class UzfInputsNamespace(FieldMappable):
 class StaticArrayFieldExplorer(SpatialView):
     """Explorer for static layer/cell arrays such as IC, NPF, and STO fields."""
 
+    #: The free verb's ``type`` for a DERIVED field this noun draws through
+    #: ``model.plot.map`` (transmissivity); ``None`` for a stored array.
+    _map_type: str | None = None
+
+    def _map_per(self, per):
+        """The ``per`` a derived field's map reads (``None``: it has no time)."""
+
+        return None
+
     def __init__(
         self,
         model: SimulationBase,
@@ -1206,12 +1216,13 @@ class StaticArrayFieldExplorer(SpatialView):
         ``fill_value``, no ``agg``. Pick a ``layer`` and the array is drawn as it
         stands.
 
-        **There is no time axis here, and ``per`` therefore does nothing.** A
-        static array is written once in the model's input file and never varies
-        by stress period; ``per`` is accepted only so that a caller sweeping the
-        same keyword across a row of mixed nouns -- an input record map beside a
-        ``k`` map -- does not have to special-case this one. It is documented
-        below and then discarded.
+        **There is no time axis here, and ``per`` therefore does nothing** -- with
+        one exception, ``npf.transmissivity``, whose thickness is the SATURATED
+        one and so moves with the heads. A static array is written once in the
+        model's input file and never varies by stress period; ``per`` is accepted
+        only so that a caller sweeping the same keyword across a row of mixed
+        nouns -- an input record map beside a ``k`` map -- does not have to
+        special-case this one.
 
         Every parameter is named rather than swept into ``**kwargs``: PyCharm and
         Pylance read the ``def`` line and never run the module, so a parameter
@@ -1229,7 +1240,10 @@ class StaticArrayFieldExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Accepted and ignored. A static array has no stress-period dimension,
+            Accepted and ignored -- except by ``npf.transmissivity``, where it
+            picks the stress period whose LAST saved heads set the saturated
+            thickness (``model.plot.map(type="trans", kstpkper=...)`` reaches any
+            other time step). A static array has no stress-period dimension,
             so every value of ``per`` draws the same picture. Present for
             uniformity with the record nouns (``ghb.inputs.cond.map(per=3)``),
             where it selects; if you want a quantity that varies with time, you
@@ -1392,6 +1406,42 @@ class StaticArrayFieldExplorer(SpatialView):
             trace_kwargs,
         )
         hover = resolve_noun_hover(hover, trace_kwargs)
+        drawing = dict(
+            zmin=zmin,
+            zmax=zmax,
+            colorscale=colorscale or self.colorscale,
+            logscale=logscale,
+            contours=contours,
+            contour_values=contour_values,
+            contour_levels=contour_levels,
+            contour_color=contour_color,
+            contour_width=contour_width,
+            contour_name=contour_name,
+            contour_clip=contour_clip,
+            contour_resolution=contour_resolution,
+            contour_method=contour_method,
+            select=select,
+            select_style=select_style,
+            select_color=select_color,
+            features=features,
+            hillshade_path=hillshade_path,
+            fit_bounds=fit_bounds,
+            bounds_padding=bounds_padding,
+            show_layer_elevs=show_layer_elevs,
+            hover_surfaces=hover_surfaces,
+        )
+        if self._map_type is not None:
+            # A DERIVED field the free verb already draws: this noun is that
+            # map's grammar, so it draws THROUGH it -- one picture, one hover.
+            choro = self.model.plot.map(
+                per=self._map_per(per),
+                layer=layer,
+                type=self._map_type,
+                hover=hover,
+                **drawing,
+                **trace_kwargs,
+            )
+            return _apply_backend(choro, backend)
         del per
         selected = self.get(layer=layer)
         values, cell_hover = build_cell_input_map_payload(
@@ -1419,36 +1469,159 @@ class StaticArrayFieldExplorer(SpatialView):
             # but leaves `choro.hover_spec` None, which disagrees with `model.hds`
             # and with what this noun did before the 8.8 conversion.
             hover=hover,
-            show_layer_elevs=show_layer_elevs,
-            hover_surfaces=hover_surfaces,
             hover_spec=cell_input_hover(
                 self.field_name,
                 extra_fields=siblings,
                 context_fields=_input_context_fields(cell_hover),
             ),
-            zmin=zmin,
-            zmax=zmax,
-            colorscale=colorscale or self.colorscale,
-            logscale=logscale,
-            contours=contours,
-            contour_values=contour_values,
-            contour_levels=contour_levels,
-            contour_color=contour_color,
-            contour_width=contour_width,
-            contour_name=contour_name,
-            contour_clip=contour_clip,
-            contour_resolution=contour_resolution,
-            contour_method=contour_method,
-            select=select,
-            select_style=select_style,
-            select_color=select_color,
-            features=features,
-            hillshade_path=hillshade_path,
-            fit_bounds=fit_bounds,
-            bounds_padding=bounds_padding,
+            **drawing,
             **trace_kwargs,
         )
         return _apply_backend(choro, backend)
+
+
+class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
+    """``model.packages.npf.transmissivity_max`` -- K times the FULL layer thickness.
+
+    The most a layer could conduct, so it needs no heads and draws on a model that
+    has not been run. Every verb reads :func:`~myflopy.modflow.mf6.hydraulics
+    .model_transmissivity`, and ``map`` draws through ``model.plot.map(type=
+    "trans_max")``, so this noun, its mosaic and the free map are one picture
+    (ledger 308).
+    """
+
+    _map_type = "trans_max"
+    _field = "transmissivity_max"
+    _label = "Max transmissivity (K x full thickness)"
+
+    def __init__(self, model: SimulationBase):
+        """Bind this transmissivity field of ``model``'s NPF package."""
+
+        super().__init__(model, "npf", self._field, label=self._label, colorscale="Viridis")
+
+    def _result(self, kstpkper=None):
+        """The :class:`~myflopy.modflow.mf6.hydraulics.Transmissivity` at ``kstpkper``."""
+
+        return model_transmissivity(self.model)
+
+    def _array(self) -> np.ndarray:
+        """``(nlay, ncpl)`` transmissivity (the last saved time, when saturated)."""
+
+        return self._result().transmissivity
+
+    def _spatial_layers(self) -> list[int]:
+        """Every grid layer (the base asks ``get()``, which would compute them all)."""
+
+        return list(range(int(self.model.gwf.modelgrid.nlay)))
+
+    def _times(self, per):
+        """``[(per, kstpkper)]`` this table covers: one untimed entry for the maximum."""
+
+        return [(None, None)]
+
+    def get(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """Transmissivity, K and thickness as a normalized layer/cell table.
+
+        ``per`` selects stress periods for the SATURATED noun -- each at its last
+        saved time step, every saved period by default -- and is ignored by the
+        maximum, which has no time. Built with numpy rather than one row at a
+        time: a saturated table is ``periods x layers x cells`` long.
+        """
+
+        frames = []
+        for period, key in self._times(per):
+            result = self._result(key)
+            nlay, ncpl = result.transmissivity.shape
+            frame = pd.DataFrame(
+                {
+                    "model": self.model.name,
+                    "package": self.package_name,
+                    "field": self.field_name,
+                    "layer": np.repeat(np.arange(nlay), ncpl),
+                    "cell": np.tile(np.arange(ncpl), nlay),
+                    self.field_name: result.transmissivity.reshape(-1),
+                    "k": result.k.reshape(-1),
+                    "thickness": result.thickness.reshape(-1),
+                }
+            )
+            if key is not None:
+                frame.insert(3, "per", int(period))
+                frame.insert(4, "kstp", int(key[0]))
+            frames.append(frame)
+        frame = pd.concat(frames, ignore_index=True)
+        return _filter_normalized_table(frame, layer=layer, cells=cells)
+
+
+class TransmissivityExplorer(TransmissivityMaxExplorer):
+    """``model.packages.npf.transmissivity`` -- K times the SATURATED thickness.
+
+    The default meaning of transmissivity here (the user's decision, ledger 308):
+    what the layer conducts at a stress period, following MF6's own ICELLTYPE rule
+    -- ``min(head, top) - bottom`` for a convertible layer, the full thickness for a
+    confined one. It needs heads, so a model that has not been run raises and
+    names ``transmissivity_max``. ``per`` selects the period (its last saved time
+    step); ``mosaic(by="layer")`` and ``animate()`` over periods work as on any
+    noun.
+    """
+
+    _map_type = "trans"
+    _field = "transmissivity"
+    _label = "Transmissivity (K x saturated thickness)"
+
+    def _map_per(self, per):
+        """The map reads the period asked for -- this field has a time."""
+
+        return int(per)
+
+    def _saved_times(self) -> list[tuple[int, int]]:
+        """Each saved period's LAST ``(kstp, kper)``, in order; refuses an unrun model."""
+
+        try:
+            keys = [tuple(int(v) for v in key) for key in self.model.hds.kstpkper]
+        except (OSError, ValueError, KeyError) as error:
+            raise ValueError(
+                "npf.transmissivity is the SATURATED transmissivity and needs heads; "
+                "this model has none yet. Run it, or use "
+                "model.packages.npf.transmissivity_max (K x full thickness)."
+            ) from error
+        last: dict[int, tuple[int, int]] = {}
+        for key in keys:
+            last[key[1]] = key
+        return [last[period] for period in sorted(last)]
+
+    def _times(self, per):
+        """``[(per, kstpkper)]`` for the requested periods (all saved, by default)."""
+
+        saved = {key[1]: key for key in self._saved_times()}
+        wanted = sorted(saved) if per is None else self._resolve_periods(per)
+        missing = [p for p in wanted if p not in saved]
+        if missing:
+            raise ValueError(
+                f"Stress period(s) {missing} have no saved heads. Available: {sorted(saved)}"
+            )
+        return [(p, saved[p]) for p in wanted]
+
+    def _result(self, kstpkper=None):
+        """Saturated transmissivity at ``kstpkper`` (the last saved time by default)."""
+
+        key = kstpkper if kstpkper is not None else self._saved_times()[-1]
+        nlay = int(self.model.gwf.modelgrid.nlay)
+        heads = np.vstack([
+            self.model.hds.array(layer=layer, kstpkper=key, masked=False)
+            for layer in range(nlay)
+        ])
+        return model_transmissivity(self.model, heads=heads)
+
+    def _spatial_periods(self) -> list[int]:
+        """The stress periods with saved heads."""
+
+        return [key[1] for key in self._saved_times()]
 
 
 __all__ = [
@@ -1457,4 +1630,6 @@ __all__ = [
     "UzfFieldInputsExplorer",
     "UzfInputsNamespace",
     "StaticArrayFieldExplorer",
+    "TransmissivityExplorer",
+    "TransmissivityMaxExplorer",
 ]

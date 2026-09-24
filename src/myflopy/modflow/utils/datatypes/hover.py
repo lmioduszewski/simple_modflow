@@ -635,6 +635,43 @@ def temp_hover(*, unit: str = "°C", layers: str = "active+strip", surfaces: boo
     )
 
 
+def trans_hover(
+    *,
+    saturated: bool = True,
+    length: str | None = None,
+    time: str | None = None,
+    layers: str = "active+strip",
+) -> HoverSpec:
+    """Transmissivity hover: T with its units, T across the layers, and the K and
+    thickness it is the product of (ledger 308).
+
+    ``length``/``time`` are the model's own unit abbreviations (``"ft"``, ``"d"``)
+    -- a transmissivity label is a product of two units, so a guessed one would be
+    wrong twice; with either missing the numbers carry no unit. ``saturated=False``
+    is the MAXIMUM (K times the full layer thickness), which has no time, so its
+    hover carries no period footer.
+    """
+
+    units: dict[str, str] = {}
+    if length and time:
+        units = {"T": f"{length}²/{time}", "K": f"{length}/{time}", "thickness": length}
+    elif length:
+        units = {"thickness": length}
+    return HoverSpec(
+        primary="T",
+        title="Transmissivity" if saturated else "Max transmissivity",
+        layers=layers,
+        blocks=(Fields(title=None, fields=("K", "thickness")),),
+        footer=("period", "date") if saturated else (),
+        units=units,
+        labels={
+            "T": "T",
+            "K": "K",
+            "thickness": "saturated thickness" if saturated else "thickness",
+        },
+    )
+
+
 _RESIDUAL_LABELS = {
     # Named, not signed into agreement: PEST's own .res file reports
     # measured - modelled, myflopy reports simulated - measured (the sign

@@ -164,6 +164,12 @@ takes, at every scope, verb and noun alike:
   same stops. An unknown name warns and draws `earth` — the deliberate inverse
   of `_field_map_policy`, which raises, because a typo in a notebook cell
   should cost a warning and not the figure.
+- **A DERIVED field the free verb already draws is a noun that draws THROUGH it**
+  (ledger 308). `npf.transmissivity`/`_max` set `StaticArrayFieldExplorer._map_type`,
+  so their `map` calls `model.plot.map(type="trans"|"trans_max")` and the noun, its
+  mosaic and the free map are one picture with one hover. They are PROPERTIES on
+  `NpfPackageExplorer`, not entries in the declared field table -- that table is what
+  the package file stores, and `summary()`/`ModelPackages.mosaic` enumerate it.
 - **A static-array map lists the package's OTHER arrays** (ledger 259). Mapping
   `npf.k` shows `k33` under the coloured value, plain rather than bold, and
   `npf.k33` shows `k`; `sto.ss` shows `sy`. One rule, not a K special case: the

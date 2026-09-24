@@ -312,14 +312,22 @@ def map(      # noqa: A001 - the verb IS `map`
         when ``kstpkper`` names the timestep outright.
     layer : int, default 0
         Zero-based layer. Layer 0 is the top.
-    type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
+    type : {'hds', 'conc', 'temp', 'rch', 'ks', 'trans', 'trans_max', 'custom'}, default 'hds'
         Which field to read when ``values`` is not given. ``'hds'`` heads,
         ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
         also select the default sectioned hover -- ``'rch'`` the simulated
         recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
-        ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
-        others are results and raise there. Case does not matter; any other
-        value raises, naming this set, rather than drawing node numbers.
+        ``'trans'`` is TRANSMISSIVITY, K times the SATURATED thickness at this
+        map's ``per``/``kstpkper`` -- ``min(head, top) - bottom`` in a
+        convertible layer, the full thickness in a confined one (MF6's own
+        ICELLTYPE rule) -- and ``'trans_max'`` is K times the FULL thickness;
+        both hover T with the K and thickness it multiplies, in the model's
+        units. ``'ks'`` and ``'trans_max'`` are INPUTS, so they draw on a model
+        that has not been run; the others are results and raise there. Case does
+        not matter; any other value raises, naming this set, rather than drawing
+        node numbers. The same two fields are nouns too:
+        ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+        ``.mosaic()`` draws one panel per layer.
     zmin, zmax : float, optional
         Fixed color-scale limits. Set both to hold the scale steady across
         frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -1523,14 +1531,22 @@ class ModelPlots:
             when ``kstpkper`` names the timestep outright.
         layer : int, default 0
             Zero-based layer. Layer 0 is the top.
-        type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
+        type : {'hds', 'conc', 'temp', 'rch', 'ks', 'trans', 'trans_max', 'custom'}, default 'hds'
             Which field to read when ``values`` is not given. ``'hds'`` heads,
             ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
             also select the default sectioned hover -- ``'rch'`` the simulated
             recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
-            ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
-            others are results and raise there. Case does not matter; any other
-            value raises, naming this set, rather than drawing node numbers.
+            ``'trans'`` is TRANSMISSIVITY, K times the SATURATED thickness at this
+            map's ``per``/``kstpkper`` -- ``min(head, top) - bottom`` in a
+            convertible layer, the full thickness in a confined one (MF6's own
+            ICELLTYPE rule) -- and ``'trans_max'`` is K times the FULL thickness;
+            both hover T with the K and thickness it multiplies, in the model's
+            units. ``'ks'`` and ``'trans_max'`` are INPUTS, so they draw on a model
+            that has not been run; the others are results and raise there. Case does
+            not matter; any other value raises, naming this set, rather than drawing
+            node numbers. The same two fields are nouns too:
+            ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+            ``.mosaic()`` draws one panel per layer.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat

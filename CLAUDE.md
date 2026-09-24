@@ -149,6 +149,13 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**Transmissivity: `map(type="trans")` is SATURATED, `"trans_max"` is K x full
+thickness** (ledger 308, the user's call), and `packages.npf.transmissivity`/`_max` are
+the nouns -- they draw THROUGH the free map (`StaticArrayFieldExplorer._map_type`), so
+one picture. Saturated follows MF6's ICELLTYPE rule (confined = full thickness;
+THICKSTRT honoured) and matches `DATA-SAT` to 5e-7. One computation:
+`modflow/mf6/hydraulics.model_transmissivity` (import layer 0). Total-over-layers is
+DEFERRED (needs a non-int `layer=` at every scope).
 **A plotly map is fitted for the canvas plotly will draw** (ledger 307): `viz.map_canvas`
 (the figure's size, else plotly's 700x450, less margins, times the subplot domain) into
 `Choro.map_view(size=)`. The old fit assumed 1000x700 and cropped single maps, mosaic

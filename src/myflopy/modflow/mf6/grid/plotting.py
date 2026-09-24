@@ -17,13 +17,14 @@ from myflopy.modflow.mf6.cross_section_plotting import (
     filled_section,
     mirror_horizontally,
 )
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     as_mpl_figure,
     normalize_backend,
 )
 from myflopy.modflow.utils.datatypes.choros import Choro
-from myflopy.modflow.utils.datatypes.hover import conc_hover, head_hover, temp_hover
+from myflopy.modflow.utils.datatypes.hover import conc_hover, head_hover, temp_hover, trans_hover
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
 
@@ -38,16 +39,22 @@ if TYPE_CHECKING:
 _HOVER_FOR_TYPE = {"hds": head_hover, "conc": conc_hover, "temp": temp_hover}
 
 
-def _default_hover_spec(map_type: str):
+def _default_hover_spec(map_type: str, model=None):
     """The default :class:`HoverSpec` for a map of ``map_type``, or None.
 
-    Only the three dependent variables get one. ``type="custom"`` is the
-    package/group path, which supplies its own ``custom_hover``; ``"rch"``/
-    ``"ks"`` read fields whose hover is assembled inline. Returning None for
-    those leaves their existing behaviour exactly as it was.
+    The three dependent variables and the two transmissivities get one -- the
+    latter labelled in the model's own units, read from ``model``.
+    ``type="custom"`` is the package/group path, which supplies its own
+    ``custom_hover``; ``"rch"``/``"ks"`` read fields whose hover is assembled
+    inline. Returning None for those leaves their existing behaviour exactly as
+    it was.
     """
 
-    builder = _HOVER_FOR_TYPE.get(str(map_type).lower())
+    key = str(map_type).lower()
+    if key in ("trans", "trans_max"):
+        length, time = unit_labels(model) if model is not None else (None, None)
+        return trans_hover(saturated=key == "trans", length=length, time=time)
+    builder = _HOVER_FOR_TYPE.get(key)
     return builder() if builder is not None else None
 
 
@@ -93,8 +100,9 @@ def _choropleth_factory(
     Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
     in particular is a matplotlib-only argument and raises there.
     """
-    if hover_spec is None and custom_hover is None and model is not None:
-        hover_spec = _default_hover_spec(type)
+    inputs = model if model is not None else choro_kwargs.get("input_model")
+    if hover_spec is None and custom_hover is None and inputs is not None:
+        hover_spec = _default_hover_spec(type, inputs)
     if zmin is not None and zmax is not None and zmin >= zmax:
         # Kept from `ModelVisualization.plotly_head_map_animation`, which 8.6b
         # deleted -- and moved DOWN here, so it now guards every map rather than
@@ -485,14 +493,22 @@ class GridPlots:
             when ``kstpkper`` names the timestep outright.
         layer : int, default 0
             Zero-based layer. Layer 0 is the top.
-        type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
+        type : {'hds', 'conc', 'temp', 'rch', 'ks', 'trans', 'trans_max', 'custom'}, default 'hds'
             Which field to read when ``values`` is not given. ``'hds'`` heads,
             ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
             also select the default sectioned hover -- ``'rch'`` the simulated
             recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
-            ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
-            others are results and raise there. Case does not matter; any other
-            value raises, naming this set, rather than drawing node numbers.
+            ``'trans'`` is TRANSMISSIVITY, K times the SATURATED thickness at this
+            map's ``per``/``kstpkper`` -- ``min(head, top) - bottom`` in a
+            convertible layer, the full thickness in a confined one (MF6's own
+            ICELLTYPE rule) -- and ``'trans_max'`` is K times the FULL thickness;
+            both hover T with the K and thickness it multiplies, in the model's
+            units. ``'ks'`` and ``'trans_max'`` are INPUTS, so they draw on a model
+            that has not been run; the others are results and raise there. Case does
+            not matter; any other value raises, naming this set, rather than drawing
+            node numbers. The same two fields are nouns too:
+            ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+            ``.mosaic()`` draws one panel per layer.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat

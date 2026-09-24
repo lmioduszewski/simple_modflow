@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 307 entries (308 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 308 entries (309 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 308 | Transmissivity maps and nouns: saturated by default, and the choices behind it | 2026-09-23 |
 | 307 | A plotly map was fitted for a canvas nothing draws | 2026-09-23 |
 | 306 | The composers named `zmin`/`zmax` and pooled over them; the static ones dropped every overlay | 2026-09-23 |
 | 305 | A map of an unrun model drew node numbers, and so did any `type` it did not know | 2026-09-23 |
@@ -12669,3 +12670,44 @@ same day, which is the useful part of the result.
       the default-size rule. ``layout.map.bounds`` is not the answer either: measured, it
       is MapLibre's ``maxBounds`` pan lock, which COVERS the box (cropping to 56% of its
       latitude) and clamps zoom-out.
+
+308. **Transmissivity maps and nouns: saturated by default, and the choices behind it (2026-09-23).**
+      ``model.plot.map(type="trans" | "trans_max")`` and
+      ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, one computation
+      (``modflow/mf6/hydraulics.model_transmissivity``, import layer 0) that all four read.
+      **SATURATED IS THE DEFAULT -- the user's decision, against the scoping's
+      recommendation** of geometric K x b. The two differ where it matters: on the
+      canonical model the water-table layer's saturated/full ratio has median 0.404, and
+      15 of 441 cells are zero (head below the layer bottom, kept wet by NEWTON). The
+      maximum is the option (``trans_max``), and the one an unrun model can draw; a
+      saturated map of an unrun model raises NAMING it.
+      **The thickness is MF6's, not "head minus bottom" everywhere**: ICELLTYPE != 0 ->
+      ``min(head, top) - bottom`` floored at 0; ICELLTYPE 0 -> the full thickness whatever
+      the head; ICELLTYPE < 0 under THICKSTRT -> from the STARTING head. Measured against
+      MF6's own ``DATA-SAT`` at every saved time: max difference 5e-7 (the binary's
+      precision), confined layers included. ``idomain <= 0`` is a gap -- MF6 removes a
+      ``-1`` pass-through cell from horizontal flow as well as a ``0``.
+      **K is ``npf.k``**, the major-axis horizontal conductivity the house labels "Kh".
+      ``k22``/``angle1`` anisotropy is not folded in: a T along the minor axis is a
+      different quantity, and none of the models here set ``k22``.
+      **Spellings (user):** the nouns are the per-layer mosaic
+      (``npf.transmissivity.mosaic()``), NOT ``model.plot.mosaic(type=)`` -- the free
+      mosaic takes finished pictures, and giving it a subject would break the pinned
+      free/bound mirror. ``trans_max`` is spelled the same on the map and as a noun.
+      **The nouns draw THROUGH the free map** (``StaticArrayFieldExplorer._map_type``),
+      so there is one picture and one hover (T in the model's units, from DIS/TDIS -- a
+      product of two units, so never guessed -- with K and the thickness under it).
+      They are properties on ``NpfPackageExplorer``, not entries in the declared field
+      table: that table is what the package file STORES, which ``summary()`` and
+      ``ModelPackages.mosaic`` enumerate.
+      **The noun's ``per`` is the period's LAST saved step**; an exact
+      ``kstpkper``/``per_timestep`` is the free map's (``model.plot.map(type="trans",
+      kstpkper=...)``). Naming those two on the noun would have meant overriding its
+      ``map`` -- a second 25-parameter signature and a new docstring target -- for a
+      selector the free verb already carries.
+      **Deleted as unfalsifiable:** a mask turning MF6's no-head sentinels into zero
+      thickness. A dry ACTIVE cell's head is DHDRY (-1e30), below every bottom, so the
+      clip already gives zero; a mutation removing the mask passed every test.
+      **DEFERRED:** total transmissivity over layers (``layer="total"`` would widen
+      ``layer`` at every scope, where it is pinned an int); groups and diffs have no
+      ``npf`` noun at all, so comparing T across scenarios is not reachable.

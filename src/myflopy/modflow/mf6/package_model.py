@@ -15,6 +15,8 @@ from myflopy._logging import get_logger
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
+    TransmissivityExplorer,
+    TransmissivityMaxExplorer,
     UzfInputsNamespace,
 )
 from myflopy.modflow.mf6.package_plotting import (
@@ -174,6 +176,29 @@ class StaticArrayPackageExplorer:
         """Return a supported static array field explorer."""
 
         return self._field(field_name)
+
+
+class NpfPackageExplorer(StaticArrayPackageExplorer):
+    """``model.packages.npf``: the stored arrays, plus the transmissivity they imply.
+
+    ``transmissivity`` (K x SATURATED thickness, needs heads) and
+    ``transmissivity_max`` (K x full thickness) are DERIVED, so they are
+    properties here rather than entries in the declared field table -- which
+    lists what the package file stores, and is what ``summary()`` and
+    ``ModelPackages.mosaic`` enumerate (ledger 308).
+    """
+
+    @property
+    def transmissivity(self) -> TransmissivityExplorer:
+        """K times the SATURATED thickness at a stress period (MF6's ICELLTYPE rule)."""
+
+        return TransmissivityExplorer(self.model)
+
+    @property
+    def transmissivity_max(self) -> TransmissivityMaxExplorer:
+        """K times the FULL layer thickness -- needs no heads."""
+
+        return TransmissivityMaxExplorer(self.model)
 
 
 class UzfPackageExplorer:
@@ -1379,10 +1404,11 @@ class ModelPackages:
         )
 
     @property
-    def npf(self) -> StaticArrayPackageExplorer:
-        """Node property flow array exploration helpers."""
+    def npf(self) -> NpfPackageExplorer:
+        """Node property flow arrays (``k``/``k22``/``k33``) and the transmissivity
+        they imply (``transmissivity``, ``transmissivity_max``)."""
 
-        return StaticArrayPackageExplorer(
+        return NpfPackageExplorer(
             self.model,
             "npf",
             {
@@ -1438,6 +1464,7 @@ __all__ = [
     "HfbPackageExplorer",
     "HfbResultsExplorer",
     "StaticArrayPackageExplorer",
+    "NpfPackageExplorer",
     "UzfPackageExplorer",
     "ModelPackages",
 ]

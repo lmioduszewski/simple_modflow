@@ -779,6 +779,17 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 
 **UZF** (`model.packages.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
 
+**Static arrays** (`model.packages.npf` / `.ic` / `.sto`): one noun per STORED array --
+`npf.k`/`k22`/`k33`, `ic.strt`, `sto.ss`/`sy`. Plus two DERIVED nouns on `npf` (ledger
+308): **`npf.transmissivity`** -- K times the SATURATED thickness at a stress period
+(`per=`, its last saved time step), by MF6's own ICELLTYPE rule: `min(head, top) -
+bottom` in a convertible layer, the full thickness in a confined one, matching MF6's
+`DATA-SAT` -- and **`npf.transmissivity_max`**, K times the full thickness, which needs no
+run. Both answer `get` (with `k` and `thickness` columns; `per` for the saturated one) /
+`summary` / `map` / `mosaic(by="layer")` / `animate()`, and draw THROUGH
+`model.plot.map(type="trans" | "trans_max")`, so the noun and the free map are one
+picture. They are not in `npf.fields`, which lists what the package file stores.
+
 **PRT** (a finished run's `PRTRunResults`, not `model.packages`): `results.pathlines`
 (trajectories — `map` draws polylines, not cells), `results.travel_time`,
 `results.endpoints`, `results.capture`. These are derived, time-integrated views, so

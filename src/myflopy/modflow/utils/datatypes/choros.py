@@ -26,6 +26,7 @@ from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
+from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.features import (
     Feature,
@@ -150,8 +151,14 @@ MAP_TYPES = {
     "rch": True,
     "output_rch": True,
     "ks": False,
+    "trans": True,
+    "trans_max": False,
     "custom": False,
 }
+
+#: The transmissivity types (ledger 308): ``'trans'`` is SATURATED at the map's
+#: time, so it needs results; ``'trans_max'`` is K times the full thickness.
+TRANSMISSIVITY_TYPES = ("trans", "trans_max")
 
 
 def check_map_type(value) -> str:
@@ -368,12 +375,23 @@ class Choro(Picture):
             and input_model is not None
             and custom_zs is None
         ):
+            instead = (
+                "type='trans_max' (K x FULL thickness) needs no heads"
+                if type == "trans"
+                else "map an input instead (type='ks', or a package noun such as "
+                "model.packages.npf.k.map())"
+            )
             raise ValueError(
                 f"type={type!r} maps a RESULT and this model has none yet -- it has "
-                "not been run, or its output files are unreadable. Run it first, map "
-                "an input instead (type='ks', or a package noun such as "
-                "model.packages.npf.k.map()), or pass values=."
+                f"not been run, or its output files are unreadable. Run it first; "
+                f"{instead}; or pass values=."
             )
+        if type in TRANSMISSIVITY_TYPES:
+            # Refused HERE, naming the flow model, rather than as an AttributeError
+            # on `.npf` at render: a transport model has no K to multiply.
+            flow_model(self._inputs)
+            # Its hover shows T, K and thickness; the heads rows would be noise.
+            hover_heads = False
         # Resolve which dependent-variable reader (heads/conc/temp) this map reads;
         # None for non-field types (ks/rch/...), which fall back to heads for timing.
         self._depvar_attr = _DEPVAR_READER_ATTR.get(type)
@@ -749,6 +767,28 @@ class Choro(Picture):
         return self._inputs.gwf.modelgrid.nlay
 
     @property
+    def _transmissivity(self):
+        """This map's :class:`~myflopy.modflow.mf6.hydraulics.Transmissivity`, cached.
+
+        Saturated for ``type='trans'`` -- at THIS map's ``kstpkper``, read from the
+        head file -- and the maximum for ``'trans_max'``. One computation for the
+        free map and the npf nouns, which call this map (ledger 308).
+        """
+
+        cached = getattr(self, "_transmissivity_cache", None)
+        if cached is None:
+            heads = None
+            if self.type == "trans":
+                reader = self.model.hds
+                heads = np.vstack([
+                    reader.array(layer=layer, kstpkper=self.kstpkper, masked=False)
+                    for layer in range(int(self.nlay))
+                ])
+            cached = model_transmissivity(self._inputs, heads=heads)
+            self._transmissivity_cache = cached
+        return cached
+
+    @property
     def _inputs(self):
         """The model this map reads INPUTS and names from, or None for a bare grid.
 
@@ -953,6 +993,9 @@ class Choro(Picture):
 
         elif self.type == 'ks' and self._inputs is not None:
             zs = self._cell_vector(self.all_ks[self.layer], f"layer {self.layer + 1} Kh").tolist()
+
+        elif self.type in TRANSMISSIVITY_TYPES and self._inputs is not None:
+            zs = self._transmissivity.transmissivity[self.layer].tolist()
 
         elif self.type in ('rch', 'output_rch') and self.model is not None:
             # `'rch'` was documented, carried a Recharge hover row, and had no
@@ -1329,6 +1372,11 @@ class Choro(Picture):
                 self._mounding_series().to_numpy(), 2
             ).tolist()
         layer_fields: dict[str, list] = {}
+        if self.type in TRANSMISSIVITY_TYPES and self._inputs is not None:
+            result = self._transmissivity
+            layer_fields["T"] = result.transmissivity.tolist()
+            payload.setdefault("K", result.k[self.layer].tolist())
+            payload.setdefault("thickness", result.thickness[self.layer].tolist())
         top = botm = None
         reads_field = self.model is not None and (
             self._depvar_attr is not None or self.hover_heads

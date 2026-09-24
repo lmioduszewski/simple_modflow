@@ -6,7 +6,7 @@ Both used to draw NODE NUMBERS -- 0..ncpl-1 under a colorbar -- with no error:
 * the dispatch bound a model only when it had RESULTS, so an unrun model was
   drawn as a bare grid: `type='ks'` could not read its K, and a region name in
   `select=` fell through to being opened as a FILE;
-* `type` was never checked, so `type='trans'`, a typo, and the documented
+* `type` was never checked, so a typo (`type='transmissivity'`) and the documented
   `'rch'` (which had no branch) all fell through to the cell-index branch.
 
 The unrun model is built privately: the session `canonical_model` is the same
@@ -103,7 +103,7 @@ def test_a_bare_grid_still_draws_its_node_numbers(canonical_model):
 # --- type is checked -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", ["trans", "bogus", "Ks_", ""])
+@pytest.mark.parametrize("value", ["transmissivity", "bogus", "Ks_", ""])
 def test_an_unknown_type_raises_naming_the_set(unrun_model, value):
     with pytest.raises(ValueError, match="not a map type") as caught:
         unrun_model.plot.map(type=value)

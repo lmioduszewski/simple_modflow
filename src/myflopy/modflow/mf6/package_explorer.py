@@ -39,6 +39,8 @@ from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputFieldExplorer,
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
+    TransmissivityExplorer,
+    TransmissivityMaxExplorer,
     UzfFieldInputsExplorer,
     UzfInputsNamespace,
 )
@@ -46,6 +48,7 @@ from myflopy.modflow.mf6.package_model import (
     HfbPackageExplorer,
     HfbResultsExplorer,
     ModelPackages,
+    NpfPackageExplorer,
     PackageExplorer,
     StaticArrayPackageExplorer,
     UzfPackageExplorer,
@@ -186,6 +189,8 @@ __all__ = [
     "UzfFieldInputsExplorer",
     "UzfInputsNamespace",
     "StaticArrayFieldExplorer",
+    "TransmissivityExplorer",
+    "TransmissivityMaxExplorer",
     "CellBudgetResultsExplorer",
     "StageResultsExplorer",
     "CellPackageResultsNamespace",
@@ -217,6 +222,7 @@ __all__ = [
     "HfbPackageExplorer",
     "HfbResultsExplorer",
     "StaticArrayPackageExplorer",
+    "NpfPackageExplorer",
     "UzfPackageExplorer",
     "ModelPackages",
 ]
